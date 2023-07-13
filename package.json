@@ -1,0 +1,78 @@
+{
+  "name": "qunitx-cli",
+  "type": "module",
+  "version": "0.0.1",
+  "description": "Browser runner for QUnitx: run your qunitx tests in google-chrome",
+  "main": "index.js",
+  "author": "Izel Nakri",
+  "license": "MIT",
+  "keywords": [
+    "test runner",
+    "testing",
+    "browser",
+    "ci",
+    "qunit",
+    "qunitx"
+  ],
+  "scripts": {
+    "bin": "chmod +x cli.js && ./cli.js",
+    "build": "node build.js",
+    "changelog:unreleased": "node_modules/.bin/auto-changelog --stdout --commit-limit false --package --unreleased-only --hide-credit --sort-commits date-desc",
+    "changelog:preview": "node_modules/.bin/auto-changelog --stdout --commit-limit false --package -u --sort-commits date-desc",
+    "changelog:update": "node_modules/.bin/auto-changelog --commit-limit false --package --sort-commits date-desc",
+    "prepack": "npm run build",
+    "release:alpha": "node_modules/.bin/release-it --preRelease=alpha --no-git.requireUpstream",
+    "release:beta": "node_modules/.bin/release-it --preRelease=beta --no-git.requireUpstream",
+    "release": "node_modules/.bin/release-it"
+  },
+  "engines": {
+    "node": ">=20.3.0"
+  },
+  "bin": {
+    "qunitx": "cli.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/izelnakri/qunitx-cli.git"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.10",
+    "chokidar": "^3.5.3",
+    "esbuild": "^0.18.12",
+    "js-yaml": "^4.1.0",
+    "jsdom": "^22.0.0",
+    "kleur": "^4.1.5",
+    "picomatch": "^2.3.1",
+    "puppeteer": "20.8.2",
+    "recursive-lookup": "1.1.0",
+    "ws": "^8.13.0"
+  },
+  "devDependencies": {
+    "auto-changelog": "^2.4.0",
+    "cors": "^2.8.5",
+    "express": "^4.17.3",
+    "prettier": "^3.0.0",
+    "qunit": "^2.19.4",
+    "qunitx": "^0.6.0",
+    "release-it": "^16.1.0"
+  },
+  "volta": {
+    "node": "20.4.0"
+  },
+  "prettier": {
+    "printWidth": 100,
+    "singleQuote": true,
+    "arrowParens": "always"
+  },
+  "release-it": {
+    "git": {
+      "changelog": "npm run changelog:unreleased"
+    },
+    "github": {
+      "release": true
+    },
+    "hooks": {
+      "after:bump": "npm run changelog:update"
+    }
+  }
+}
