@@ -24,7 +24,6 @@ Input options:
 - Combination: $ qunitx test/foo.js test/bar.js test/*-test.js test/logout
 
 Optional flags:
---browser : run qunit tests in chromium with puppeteer instead of node.js(which is the default)
 --debug : print console output when tests run in browser
 --watch : run the target file or folders, watch them for continuous run and expose http server under localhost
 --timeout : change default timeout per test case
@@ -33,7 +32,7 @@ Optional flags:
 --before : run a script before the tests(i.e start a new web server before tests)
 --after : run a script after the tests(i.e save test results to a file)
 
-Example: $ qunitx test/foo.ts app/e2e --browser --debug --watch --before=scripts/start-new-webserver.js --after=scripts/write-test-results.js
+Example: $ qunitx test/foo.ts app/e2e --debug --watch --before=scripts/start-new-webserver.js --after=scripts/write-test-results.js
 
 Commands:
 $ qunitx init               # Bootstraps qunitx base html and add qunitx config to package.json if needed
