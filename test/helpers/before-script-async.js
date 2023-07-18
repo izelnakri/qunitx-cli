@@ -3,7 +3,7 @@ import cors from "cors";
 import kleur from 'kleur';
 import bindServerToPort from '../../lib/setup/bind-server-to-port.js';
 import './before-script-basic.js';
-import QUnit from '../../index.js';
+import QUnit from 'qunitx';
 
 export default async function(config) {
   console.log('Starting before script with:');
