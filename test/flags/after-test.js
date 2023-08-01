@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { assertPassingTestCase, assertFailingTestCase, assertTAPResult } from '../helpers/assert-stdout.js';
+import { assertPassingTestCase, assertTAPResult } from '../helpers/assert-stdout.js';
 import shell from '../helpers/shell.js';
 
 module('--after script tests for browser mode', { concurrency: false }, (_hooks, moduleMetadata) => {
