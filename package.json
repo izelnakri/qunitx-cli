@@ -3,7 +3,7 @@
   "type": "module",
   "version": "0.1.0",
   "description": "Browser runner for QUnitx: run your qunitx tests in google-chrome",
-  "main": "index.js",
+  "main": "cli.js",
   "author": "Izel Nakri",
   "license": "MIT",
   "keywords": [
