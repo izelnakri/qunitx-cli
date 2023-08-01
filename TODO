@@ -1,6 +1,7 @@
 - "$ qunitx sanity-test.ts" made redundant due to (node --test mode) this should impact dependencies and internal modules
 - Implement other test cases in deno
 
+
 Shim dir structure should be: shims/nodejs/ shims/deno shims/browser
 Make package.json point to them correctly
 Make the package so esbuild build so esbuild builds when qunitx is vendored(if it needs to)
