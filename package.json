@@ -46,7 +46,7 @@
     "jsdom": "^22.0.0",
     "kleur": "^4.1.5",
     "picomatch": "^2.3.1",
-    "puppeteer": "20.8.3",
+    "puppeteer": "20.9.0",
     "recursive-lookup": "1.1.0",
     "ws": "^8.13.0"
   },
@@ -56,7 +56,7 @@
     "express": "^4.17.3",
     "prettier": "^3.0.0",
     "qunit": "^2.19.4",
-    "qunitx": "^0.6.0",
+    "qunitx": "^0.9.1",
     "release-it": "^16.1.2"
   },
   "volta": {
