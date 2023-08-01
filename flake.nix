@@ -19,7 +19,7 @@
 
     devShells."${system}".default = pkgs.mkShell {
       nativeBuildInputs = with pkgs; [
-        nodejs_20
+        nodejs-slim_20
       ];
     };
   };
