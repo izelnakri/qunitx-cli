@@ -13,7 +13,7 @@
     pkgs = nixpkgs.legacyPackages."${system}";
   in {
     packages."${system}".default = napalm.legacyPackages."${system}".buildPackage ./. {
-      nodejs = pkgs.nodejs_20;
+      nodejs = pkgs.nodejs-slim_20;
       PUPPETEER_SKIP_DOWNLOAD=1;
     };
 
