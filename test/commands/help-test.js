@@ -1,3 +1,5 @@
+process.env['FORCE_COLOR'] = 0;
+
 import { module, test } from 'qunitx';
 import process from "node:process";
 import fs from 'node:fs';

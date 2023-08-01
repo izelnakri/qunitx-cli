@@ -1,4 +1,5 @@
 import { module, test } from 'qunitx';
+import '../setup.js';
 import { assertPassingTestCase, assertFailingTestCase, assertTAPResult } from '../helpers/assert-stdout.js';
 import shell from '../helpers/shell.js';
 

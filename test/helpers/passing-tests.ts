@@ -1,6 +1,10 @@
 import { module, test } from 'qunitx';
 
-module('{{moduleName}} Passing Tests', function(hooks) {
+interface Person {
+  name: String;
+}
+
+module('{{moduleName}} Passing Tests', function (hooks) {
   test('assert true works', function (assert) {
     assert.expect(3);
     assert.ok(true);
@@ -20,10 +24,10 @@ module('{{moduleName}} Passing Tests', function(hooks) {
           placeholder: 1000,
           anotherObject: {
             firstName: 'Izel',
-            createdAt: new Date('2021-03-06')
-          }
+            createdAt: new Date('2021-03-06'),
+          },
         });
-        resolve(true)
+        resolve(true);
       }, 50);
     });
     const result = await wait;

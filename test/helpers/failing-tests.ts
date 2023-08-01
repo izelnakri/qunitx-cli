@@ -1,6 +1,10 @@
 import { module, test } from 'qunitx';
 
-module('{{moduleName}} Failing Tests', function(hooks) {
+interface Person {
+  name: String;
+}
+
+module('{{moduleName}} Failing Tests', function (hooks) {
   test('assert true works', function (assert) {
     assert.expect(3);
     assert.ok(true);
@@ -12,20 +16,21 @@ module('{{moduleName}} Failing Tests', function(hooks) {
   test('async test finishes', async function (assert) {
     assert.expect(4);
 
-    const wait = () => new Promise((resolve, reject) => {
-      window.setTimeout(() => {
-        console.log('resolving async test');
-        console.log({
-          moduleName: 'called resolved async test with object',
-          placeholder: 1000,
-          anotherObject: {
-            firstName: 'Izel',
-            createdAt: new Date('2021-03-06')
-          }
-        });
-        resolve(true);
-      }, 50);
-    });
+    const wait = () =>
+      new Promise((resolve, reject) => {
+        window.setTimeout(() => {
+          console.log('resolving async test');
+          console.log({
+            moduleName: 'called resolved async test with object',
+            placeholder: 1000,
+            anotherObject: {
+              firstName: 'Izel',
+              createdAt: new Date('2021-03-06'),
+            },
+          });
+          resolve(true);
+        }, 50);
+      });
     const result = await wait();
 
     assert.ok(true);
