@@ -13,13 +13,13 @@
     pkgs = nixpkgs.legacyPackages."${system}";
   in {
     packages."${system}".default = napalm.legacyPackages."${system}".buildPackage ./. {
-      nodejs = pkgs.nodejs-slim_20;
+      nodejs = pkgs.nodejs_20;
       PUPPETEER_SKIP_DOWNLOAD=1;
     };
 
     devShells."${system}".default = pkgs.mkShell {
       nativeBuildInputs = with pkgs; [
-        nodejs-slim_20
+        nodejs_20
       ];
     };
   };
