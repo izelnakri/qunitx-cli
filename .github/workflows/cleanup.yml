@@ -1,0 +1,24 @@
+name: Cleanup GHCR
+
+# Runs weekly and on demand. Deletes unprotected container versions (ephemeral
+# sha-* and nightly images) once they accumulate beyond the keep window.
+# Semver releases and `latest` are never deleted.
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'  # every Sunday at 03:00 UTC
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/delete-package-versions@v5
+        with:
+          package-name: qunitx-cli
+          package-type: container
+          token: ${{ secrets.GITHUB_TOKEN }}
+          min-versions-to-keep: 10
+          ignore-versions: '^(latest|\d+\.\d+(\.\d+)?)$'

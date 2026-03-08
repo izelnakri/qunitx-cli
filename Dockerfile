@@ -1,24 +1,22 @@
-FROM node:20.4.0-slim
+FROM node:22-slim
 
-ENV PUPPETEER_SKIP_DOWNLOAD=true CHROME_BIN=/usr/bin/google-chrome-stable
+ENV PUPPETEER_SKIP_DOWNLOAD=true \
+    CHROME_BIN=/usr/bin/google-chrome-stable \
+    FORCE_COLOR=0
 
 RUN apt-get update \
     && apt-get install -y wget gnupg \
     && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
     && apt-get update \
-    && apt-get install -y git libxshmfence-dev google-chrome-stable --no-install-recommends \
+    && apt-get install -y google-chrome-stable libxshmfence-dev --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /code/
+WORKDIR /code
 
-ADD package.json package-lock.json /code/
+COPY package.json package-lock.json ./
+RUN npm ci
 
-RUN npm install
+COPY . .
 
-ADD lib /code/lib
-ADD vendor /code/vendor
-ADD test /code/test
-ADD . /code/
-
-ENTRYPOINT "/bin/bash"
+CMD ["npm", "test"]
