@@ -13,7 +13,7 @@ export default async function execute(commandString, { moduleName = '', testName
   }
 
   try {
-    let result = await shell(command);
+    let result = await shell(command, { timeout: 60000 });
     let { stdout, stderr } = result;
 
     console.trace(`
