@@ -64,7 +64,7 @@ jobs:
           tags: |
             type=raw,value=nightly
             type=sha,prefix=sha-,format=short
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
