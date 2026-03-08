@@ -4,8 +4,8 @@ import { module, test } from 'qunitx';
 // folder/file doesnt exist to watch
 // unknown command
 
-module('Advanced Error Edge Cases Tests', function() {
-  test('todo', async function(assert) {
+module('Advanced Error Edge Cases Tests', function () {
+  test('todo', async function (assert) {
     assert.ok(true);
   });
 });
