@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   # ── Lint ──────────────────────────────────────────────────────────────────────
   # Surfaces formatting failures fast, independent of the slower test job.
@@ -18,7 +22,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx prettier --check .
+      - run: npm run lint
 
   # ── Test ──────────────────────────────────────────────────────────────────────
   # Runs in parallel with lint. Test files run concurrently (4-way) — safe
@@ -48,6 +52,7 @@ jobs:
     needs: [lint, test]
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       packages: write
     steps:
       - uses: actions/checkout@v4
@@ -55,7 +60,7 @@ jobs:
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/metadata-action@v5
         id: meta

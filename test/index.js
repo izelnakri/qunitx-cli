@@ -1,4 +1,4 @@
-import "./setup.js";
+import './setup.js';
 // import { tap } from 'node:test/reporters';
 // import { run } from 'node:test';
 
@@ -15,8 +15,7 @@ import "./setup.js";
 //   .compose(tap)
 //   .pipe(process.stdout);
 
-import "./commands/index.js";
-import "./flags/index.js";
-import "./inputs/index.js";
-import "./setup/index.js";
-
+import './commands/index.js';
+import './flags/index.js';
+import './inputs/index.js';
+import './setup/index.js';

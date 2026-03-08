@@ -13,5 +13,5 @@ await Promise.all([
   fs.writeFile('./tmp/test/failing-tests.js', failingTestContent.toString()),
   fs.writeFile('./tmp/test/failing-tests.ts', failingTestContent.toString()),
   fs.writeFile('./tmp/test/passing-tests.js', passingTestContent.toString()),
-  fs.writeFile('./tmp/test/passing-tests.ts', passingTestContent.toString())
+  fs.writeFile('./tmp/test/passing-tests.ts', passingTestContent.toString()),
 ]);

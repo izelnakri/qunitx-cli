@@ -1,8 +1,12 @@
-export function assertStdout(assert, folderNames, options={ checkFailure: false, debug: false }) {
+export function assertStdout(assert, folderNames, options = { checkFailure: false, debug: false }) {
   // folderNames.forEach((folder
 }
 
-export function assertPassingTestCase(assert, stdout, options={ moduleName: '{{moduleName}}', debug: false }) {
+export function assertPassingTestCase(
+  assert,
+  stdout,
+  options = { moduleName: '{{moduleName}}', debug: false },
+) {
   let { moduleName, debug } = options;
 
   if (debug) {
@@ -20,7 +24,11 @@ export function assertPassingTestCase(assert, stdout, options={ moduleName: '{{m
   }
 }
 
-export function assertFailingTestCase(assert, stdout, options={ moduleName: '{{moduleName}}', debug: false }) {
+export function assertFailingTestCase(
+  assert,
+  stdout,
+  options = { moduleName: '{{moduleName}}', debug: false },
+) {
   let { moduleName, debug } = options;
 
   if (debug) {
@@ -34,7 +42,8 @@ export function assertFailingTestCase(assert, stdout, options={ moduleName: '{{m
     assert.notOk(/(.+)placeholder(.+)/g.test(stdout));
     assert.notOk(/(.+)anotherObject(.+)/g.test(stdout));
 
-    assert.ok(new RegExp(`not ok 2 ${moduleName} | async test finishes # (\d+ ms)␊
+    assert.ok(
+      new RegExp(`not ok 2 ${moduleName} | async test finishes # (\d+ ms)␊
         ---␊
           name: 'Assertion #1'␊
           actual: null␊
@@ -52,8 +61,10 @@ export function assertFailingTestCase(assert, stdout, options={ moduleName: '{{m
           message: 'Expected 4 assertions, but 1 were run'␊
           stack: '    at Object.<anonymous> (\S+:\d+:\d+)'␊
           at: '\S+:\d+:\d+'␊
-        ...`).test(stdout));
-    assert.ok(new RegExp(`not ok 3 ${moduleName} | runtime error output # (\d+ ms)
+        ...`).test(stdout),
+    );
+    assert.ok(
+      new RegExp(`not ok 3 ${moduleName} | runtime error output # (\d+ ms)
       ---
         name: 'Assertion #1'
         actual: null
@@ -75,8 +86,10 @@ export function assertFailingTestCase(assert, stdout, options={ moduleName: '{{m
               at Object.<anonymous> (\S+:\d+:\d+)
         at: '\S+:\d+:\d+'
       ...
-    `).test(stdout));
-    assert.ok(new RegExp(`not ok 4 ${moduleName} | deepEqual true works # (\d+ ms)␊
+    `).test(stdout),
+    );
+    assert.ok(
+      new RegExp(`not ok 4 ${moduleName} | deepEqual true works # (\d+ ms)␊
         ---␊
           name: 'Assertion #1'␊
           actual:␊
@@ -88,25 +101,30 @@ export function assertFailingTestCase(assert, stdout, options={ moduleName: '{{m
           message: null␊
           stack: '    at Object.<anonymous> (\S+:\d+:\d+)'␊
           at: '\S+:\d+:\d+'␊
-        ...␊`).test(stdout));
+        ...␊`).test(stdout),
+    );
   }
 }
 
-export function assertTAPResult(assert, stdout, options={ testCount: 0, failCount: 0 }) {
+export function assertTAPResult(assert, stdout, options = { testCount: 0, failCount: 0 }) {
   if (options.failCount) {
-    return assert.ok(new RegExp(`# pass ${options.testCount - options.failCount}
+    return assert.ok(
+      new RegExp(`# pass ${options.testCount - options.failCount}
 # skip 0
-# fail (${options.failCount}|${options.failCount + 1})`).test(stdout));
+# fail (${options.failCount}|${options.failCount + 1})`).test(stdout),
+    );
   }
 
-  assert.ok(new RegExp(`# pass ${options.testCount}
+  assert.ok(
+    new RegExp(`# pass ${options.testCount}
 # skip 0
-# fail 0`).test(stdout));
+# fail 0`).test(stdout),
+  );
 }
 
 export default {
   assertStdout,
   assertPassingTestCase,
   assertFailingTestCase,
-  assertTAPResult
-}
+  assertTAPResult,
+};

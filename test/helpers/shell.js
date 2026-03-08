@@ -19,14 +19,20 @@ export default async function execute(commandString, { moduleName = '', testName
     console.trace(`
       TEST NAME: ${moduleName} | ${testName}
       TEST COMMAND: ${command}
-      ${stdout.split('\n').map((line, index) => `${index}: ${line}`).join('\n')}
+      ${stdout
+        .split('\n')
+        .map((line, index) => `${index}: ${line}`)
+        .join('\n')}
     `);
 
     if (stderr && stderr !== '') {
       console.trace(`
         TEST NAME: ${moduleName} | ${testName}
         TEST COMMAND: ${command}
-        ${stderr.split('\n').map((line, index) => `${index}: ${line}`).join('\n')}
+        ${stderr
+          .split('\n')
+          .map((line, index) => `${index}: ${line}`)
+          .join('\n')}
       `);
     }
 

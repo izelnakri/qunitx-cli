@@ -16,6 +16,8 @@
   ],
   "scripts": {
     "bin": "chmod +x cli.js && ./cli.js",
+    "lint": "prettier --check \"lib/**/*.js\" \"test/**/*.js\" \"*.js\" \"package.json\" \".github/**/*.yml\"",
+    "lint:fix": "prettier --write \"lib/**/*.js\" \"test/**/*.js\" \"*.js\" \"package.json\" \".github/**/*.yml\"",
     "build": "node build.js",
     "changelog:unreleased": "node_modules/.bin/auto-changelog --stdout --commit-limit false --package --unreleased-only --hide-credit --sort-commits date-desc",
     "changelog:preview": "node_modules/.bin/auto-changelog --stdout --commit-limit false --package -u --sort-commits date-desc",

@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 
-module('{{moduleName}} Before script web server tests', function(hooks) {
+module('{{moduleName}} Before script web server tests', function (hooks) {
   test('assert true works', async function (assert) {
     let json;
     try {
@@ -24,5 +24,9 @@ module('{{moduleName}} Before script web server tests', function(hooks) {
 });
 
 function wait(duration) {
-  return new Promise((resolve) => setTimeout(() => { resolve() }, duration));
+  return new Promise((resolve) =>
+    setTimeout(() => {
+      resolve();
+    }, duration),
+  );
 }
