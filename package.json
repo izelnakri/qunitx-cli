@@ -23,7 +23,7 @@
     "changelog:preview": "git-cliff",
     "changelog:update": "git-cliff --output CHANGELOG.md",
     "prepack": "npm run build",
-    "test": "node test/setup.js && node --test --test-concurrency=4 test/commands/index.js test/flags/index.js test/inputs/index.js test/setup/index.js",
+    "test": "node test/setup.js && node --test --test-concurrency=4 $(find test -name '*-test.js' | sort)",
     "test:sanity-first": "./cli.js test/helpers/failing-tests.js test/helpers/failing-tests.ts",
     "test:sanity-second": "./cli.js test/helpers/passing-tests.js test/helpers/passing-tests.ts"
   },
