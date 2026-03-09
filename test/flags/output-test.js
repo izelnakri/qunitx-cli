@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import { assertPassingTestCase, assertTAPResult } from '../helpers/assert-stdout.js';
 import shell from '../helpers/shell.js';
 
-module('--output flag tests for browser mode', { concurrency: false }, (_hooks, moduleMetadata) => {
+module('--output flag tests for browser mode', (_hooks, moduleMetadata) => {
   test('--output changes the output directory for built files', async (assert, testMetadata) => {
     let customOutput = 'tmp/custom-output-test';
 

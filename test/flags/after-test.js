@@ -8,7 +8,6 @@ import shell from '../helpers/shell.js';
 
 module(
   '--after script tests for browser mode',
-  { concurrency: false },
   (_hooks, moduleMetadata) => {
     test('--after works when it doesnt need to be awaited', async (assert, testMetadata) => {
       const { stdout } = await shell(

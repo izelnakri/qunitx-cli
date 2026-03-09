@@ -4,7 +4,6 @@ import shell from '../helpers/shell.js';
 
 module(
   '--failFast flag tests for browser mode',
-  { concurrency: false },
   (_hooks, moduleMetadata) => {
     test('--failFast with passing tests behaves the same as normal run', async (assert, testMetadata) => {
       const { stdout } = await shell('node cli.js tmp/test/passing-tests.js --failFast', {

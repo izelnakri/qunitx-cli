@@ -7,7 +7,7 @@ import {
 } from '../helpers/assert-stdout.js';
 import shell from '../helpers/shell.js';
 
-module('Folder Input Tests', { concurrency: false }, (_hooks, moduleMetadata) => {
+module('Folder Input Tests', (_hooks, moduleMetadata) => {
   // test('works for a single folder input with all passing tests', async (assert, testMetadata) => {
   //   let folderName = await writeTestFolder({ addFailingTests: false, });
 

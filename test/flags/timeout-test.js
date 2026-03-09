@@ -4,7 +4,6 @@ import shell from '../helpers/shell.js';
 
 module(
   '--timeout flag tests for browser mode',
-  { concurrency: false },
   (_hooks, moduleMetadata) => {
     test('--timeout=5000 with passing tests completes successfully', async (assert, testMetadata) => {
       const { stdout } = await shell('node cli.js tmp/test/passing-tests.js --timeout=5000', {

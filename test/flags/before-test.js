@@ -8,7 +8,6 @@ import shell from '../helpers/shell.js';
 
 module(
   '--before script tests for browser mode',
-  { concurrency: false },
   (_hooks, moduleMetadata) => {
     test('--before works when it doesnt need to be awaited', async (assert, testMetadata) => {
       const { stdout } = await shell(
@@ -23,7 +22,6 @@ module(
 
     test(
       '--before works it needs to be awaited',
-      { concurrency: false },
       async (assert, testMetadata) => {
         const { stdout } = await shell(
           'node cli.js test/helpers/passing-tests.js test/helpers/before-script-web-server-tests.js --before=test/helpers/before-script-async.js',

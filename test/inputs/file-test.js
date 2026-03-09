@@ -6,7 +6,7 @@ import {
 } from '../helpers/assert-stdout.js';
 import shell from '../helpers/shell.js';
 
-module('File Input Tests', { concurrency: false }, (_hooks, moduleMetadata) => {
+module('File Input Tests', (_hooks, moduleMetadata) => {
   // test('testing a single passing js file works', async (assert, testMetadata) => {
   //   const { stdout } = await shell('node tmp/test/passing-tests.js', { ...moduleMetadata, ...testMetadata });
 
