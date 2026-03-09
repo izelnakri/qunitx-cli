@@ -29,6 +29,7 @@ Optional flags:
 --timeout : change default timeout per test case
 --output : folder to distribute built qunitx html and js that a webservers can run[default: tmp]
 --failFast : run the target file or folders with immediate abort if a single test fails
+--port : HTTP server port (auto-selects a free port if the given port is taken)[default: 1234]
 --before : run a script before the tests(i.e start a new web server before tests)
 --after : run a script after the tests(i.e save test results to a file)
 
