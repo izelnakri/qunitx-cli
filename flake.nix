@@ -13,7 +13,7 @@
     pkgs = nixpkgs.legacyPackages."${system}";
   in {
     packages."${system}".default = napalm.legacyPackages."${system}".buildPackage ./. {
-      nodejs = pkgs.nodejs_22;
+      nodejs = pkgs.nodejs_24;
       PUPPETEER_SKIP_DOWNLOAD=1;
     };
 
@@ -21,7 +21,7 @@
       nativeBuildInputs = [
         pkgs.pkg-config
         pkgs.deno
-        pkgs.nodejs_22
+        pkgs.nodejs_24
         pkgs.git-cliff
         pkgs.vhs
         # self.packages.default.nativeBuildInputs
