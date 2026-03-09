@@ -19,13 +19,13 @@ import { module, test } from 'qunitx';
 //     // assert added
 //   });
 
-  // it('$ qunitx init warns existing files and assigns attributes to package.json', async function() {
+// it('$ qunitx init warns existing files and assigns attributes to package.json', async function() {
 
-  // });
+// });
 
-  // it('$ qunitx init -> recreates missing files from package.json if it exists', async function() {
+// it('$ qunitx init -> recreates missing files from package.json if it exists', async function() {
 
-  // });
+// });
 // });
 
 // async function stripQUnitXFromPackageJSON() {}

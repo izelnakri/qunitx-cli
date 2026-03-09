@@ -2,10 +2,9 @@ import net from 'node:net';
 import { availableParallelism } from 'node:os';
 import { writeFile } from 'node:fs/promises';
 
-// Each Chrome instance spawns browser + renderer + GPU processes, consuming
-// roughly 2-3 logical cores. Dividing by 3 gives the stable ceiling empirically:
-// 1 on ≤3-core, 2 on 4-6-core, 3 on 7-9-core (e.g. 8-core), etc.
-const MAX_CONCURRENT = Math.max(1, Math.ceil(availableParallelism() / 3));
+// Each Chrome instance spawns multiple OS processes (browser, renderer, GPU).
+// Cap at availableParallelism() and let the OS scheduler handle the rest.
+const MAX_CONCURRENT = availableParallelism();
 let slots = MAX_CONCURRENT;
 const waiting = [];
 let activeConnections = 0;
