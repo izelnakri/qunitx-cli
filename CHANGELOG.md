@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 ## Unreleased
+- Chore: update all GitHub Actions to latest major versions
+- Feat: concurrent mode splits test files across N groups in shared Chrome
+- Fix: removed redundant wait before tests start
+- Fix: eliminate IS_PUPPETEER race, zombie Chrome leak, and done-event TAP race
+- Fix: initial semaphore server for chrome processes/resources
+- Fix: important server/browser concurrency memory leak
+- Fix: make test runtime more resilient flakiness & memory-wise
+- Ci: optimize test suite time
+## 0.2.0 — 2026-03-09
+- Release 0.2.0
 - Ci: move project node.js target to v24 LTS
 - Dev: new CI release and demo workflow
 - Fix: make test runner more resilient
@@ -15,30 +25,12 @@ All notable changes to this project will be documented in this file.
 - Remove redundant jsdom package
 - Use non-slim flake & bump qunitx
 - Bump docker/setup-buildx-action from 2.9.0 to 2.9.1 (#2)
-
-Bumps [docker/setup-buildx-action](https://github.com/docker/setup-buildx-action) from 2.9.0 to 2.9.1.
-- [Release notes](https://github.com/docker/setup-buildx-action/releases)
-- [Commits](https://github.com/docker/setup-buildx-action/compare/v2.9.0...v2.9.1)
-
----
-updated-dependencies:
-- dependency-name: docker/setup-buildx-action
-  dependency-type: direct:production
-  update-type: version-update:semver-patch
-...
-
-Signed-off-by: dependabot[bot] <support@github.com>
-Co-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>
 - Release 0.1.1
 - Merge pull request #6 from izelnakri/update-deps
-
-Update puppeteer to 20.9.0 & qunitx to latest
 - Make default devShell also use the slim node v20.5
 - Update puppeteer to 20.9.0 & qunitx to latest
 - Fix docker-deploy.yml file
 - Merge pull request #3 from izelnakri/nix-ci
-
-Nix-based CI
 - Use nodejs-slim_20 flake
 - Run docker deploy on main branch or tags
 - Final nix-based-ci workflow

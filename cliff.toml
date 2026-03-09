@@ -10,7 +10,7 @@ body = """
 ## Unreleased
 {% endif %}\
 {% for commit in commits %}\
-- {{ commit.message | trim | upper_first }}
+- {{ commit.message | split(pat="\n") | first | trim | upper_first }}
 {% endfor %}
 """
 footer = ""

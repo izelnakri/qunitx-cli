@@ -16,6 +16,7 @@ with esbuild, runs them in headless Chrome, and streams TAP output to the termin
 - TypeScript works with zero configuration — esbuild handles transpilation
 - Inline source maps for accurate stack traces pointing to original source files
 - Streams TAP-formatted output to the terminal in real time
+- Concurrent mode (default) splits test files across all CPU cores for fast parallel runs
 - `--watch` mode re-runs affected tests on file change
 - `--failFast` stops the run after the first failing test
 - `--debug` prints the local server URL and pipes browser console to stdout
@@ -24,6 +25,8 @@ with esbuild, runs them in headless Chrome, and streams TAP output to the termin
 - Docker image for zero-install CI usage
 
 ## Installation
+
+Requires Node.js >= 24.
 
 ```sh
 npm install --save-dev qunitx-cli
@@ -138,7 +141,7 @@ Options:
   --watch             Re-run tests on file changes
   --failFast          Stop after the first failure
   --debug             Print the server URL; pipe browser console to stdout
-  --timeout=<ms>      Max ms to wait for the suite to finish  [default: 10000]
+  --timeout=<ms>      Max ms to wait for the suite to finish  [default: 20000]
   --output=<dir>      Directory for compiled test assets     [default: ./tmp]
   --before=<file>     Script to run (and optionally await) before tests start
   --after=<file>      Script to run (and optionally await) after tests finish
