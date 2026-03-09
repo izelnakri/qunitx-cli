@@ -19,13 +19,10 @@
     "lint": "prettier --check \"lib/**/*.js\" \"test/**/*.js\" \"*.js\" \"package.json\" \".github/**/*.yml\"",
     "lint:fix": "prettier --write \"lib/**/*.js\" \"test/**/*.js\" \"*.js\" \"package.json\" \".github/**/*.yml\"",
     "build": "node build.js",
-    "changelog:unreleased": "node_modules/.bin/auto-changelog --stdout --commit-limit false --package --unreleased-only --hide-credit --sort-commits date-desc",
-    "changelog:preview": "node_modules/.bin/auto-changelog --stdout --commit-limit false --package -u --sort-commits date-desc",
-    "changelog:update": "node_modules/.bin/auto-changelog --commit-limit false --package --sort-commits date-desc",
+    "changelog:unreleased": "git-cliff --unreleased --strip all",
+    "changelog:preview": "git-cliff",
+    "changelog:update": "git-cliff --output CHANGELOG.md",
     "prepack": "npm run build",
-    "release:alpha": "node_modules/.bin/release-it --preRelease=alpha --no-git.requireUpstream",
-    "release:beta": "node_modules/.bin/release-it --preRelease=beta --no-git.requireUpstream",
-    "release": "node_modules/.bin/release-it",
     "test": "node test/setup.js && node --test --test-concurrency=4 test/commands/index.js test/flags/index.js test/inputs/index.js test/setup/index.js",
     "test:sanity-first": "./cli.js test/helpers/failing-tests.js test/helpers/failing-tests.ts",
     "test:sanity-second": "./cli.js test/helpers/passing-tests.js test/helpers/passing-tests.ts"
@@ -52,13 +49,11 @@
     "ws": "^8.19.0"
   },
   "devDependencies": {
-    "auto-changelog": "^2.5.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "prettier": "^3.8.1",
     "qunit": "^2.25.0",
-    "qunitx": "^0.9.3",
-    "release-it": "^19.2.4"
+    "qunitx": "^0.9.3"
   },
   "volta": {
     "node": "22.15.0"
@@ -67,16 +62,5 @@
     "printWidth": 100,
     "singleQuote": true,
     "arrowParens": "always"
-  },
-  "release-it": {
-    "git": {
-      "changelog": "npm run changelog:unreleased"
-    },
-    "github": {
-      "release": true
-    },
-    "hooks": {
-      "after:bump": "npm run changelog:update"
-    }
   }
 }

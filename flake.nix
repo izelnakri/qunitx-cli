@@ -1,7 +1,7 @@
 {
   description = "A flake for napalm";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
   inputs.napalm.url = "github:nix-community/napalm";
 
   # NOTE: This is optional, but is how to configure napalm's env
@@ -22,8 +22,10 @@
         pkgs.pkg-config
         pkgs.deno
         pkgs.nodejs_22
-        self.packages.default.nativeBuildInputs
-        self.packages.default.buildInputs
+        pkgs.git-cliff
+        pkgs.vhs
+        # self.packages.default.nativeBuildInputs
+        # self.packages.default.buildInputs
       ];
 
       doCheck = false; # Disables automatically running tests for `$ nix develop` and direnv

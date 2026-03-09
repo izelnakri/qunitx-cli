@@ -46,6 +46,94 @@ jobs:
           CHROME_BIN: /usr/bin/google-chrome-stable
           FORCE_COLOR: 0
 
+  # ── Pages (main only) ─────────────────────────────────────────────────────────
+  # Runs the CLI against a passing test file to capture live demo output, builds
+  # a minimal site around it, and deploys to GitHub Pages.
+  # Concurrency guard cancels any stale in-flight deployment.
+  pages:
+    if: github.ref == 'refs/heads/main'
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: browser-actions/setup-chrome@v1
+      - run: npm ci
+      - name: Capture demo output
+        run: node cli.js demo/example-test.js --output=tmp/demo > demo-output.txt 2>&1 || true
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: true
+          CHROME_BIN: /usr/bin/google-chrome-stable
+          FORCE_COLOR: 0
+      - name: Assemble site
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          node - << 'NODESCRIPT'
+          const fs = require('fs');
+          const repo = process.env.REPO;
+          const raw = fs.readFileSync('demo-output.txt', 'utf8').trim();
+          const escaped = raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          fs.mkdirSync('_site', { recursive: true });
+          try { fs.copyFileSync('demo/demo.gif', '_site/demo.gif'); } catch (_) {}
+          fs.writeFileSync('_site/.nojekyll', '');
+          fs.writeFileSync('_site/index.html', `<!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>qunitx-cli</title>
+            <style>
+              * { margin: 0; padding: 0; box-sizing: border-box; }
+              html, body { height: 100%; font-family: system-ui, -apple-system, sans-serif; background: #0d1117; color: #e6edf3; }
+              body { display: flex; flex-direction: column; min-height: 100vh; }
+              header { flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 12px 24px; background: #161b22; border-bottom: 1px solid #30363d; flex-wrap: wrap; }
+              header h1 { font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
+              header a { font-size: 13px; color: #8b949e; text-decoration: none; }
+              header a:hover { color: #e6edf3; }
+              main { flex: 1; padding: 32px 24px; overflow: auto; }
+              h2 { font-size: 13px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 16px; }
+              pre { font-family: ui-monospace, 'JetBrains Mono', 'Fira Code', monospace; font-size: clamp(12px, 2vw, 15px); line-height: 1.6; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 24px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+              .prompt { color: #6e7681; user-select: none; }
+              .cmd { color: #79c0ff; }
+            </style>
+          </head>
+          <body>
+            <header>
+              <h1>qunitx-cli</h1>
+              <a href="https://github.com/${repo}">source</a>
+              <a href="https://npmjs.com/package/qunitx-cli">npm</a>
+              <a href="https://ghcr.io/v2/${repo}/tags/list">docker</a>
+            </header>
+            <main>
+              <h2>Live demo</h2>
+              <pre><span class="prompt">$ </span><span class="cmd">npx qunitx demo/example-test.js</span>
+          ${escaped}</pre>
+            </main>
+          </body>
+          </html>`);
+          NODESCRIPT
+      - uses: actions/configure-pages@v4
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
   # ── Docker nightly ─────────────────────────────────────────────────────────────
   # Builds and pushes a `nightly` image to GHCR on every successful main-branch
   # push. PRs only build (no push) so the image cache stays warm for main.

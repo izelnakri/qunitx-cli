@@ -79,7 +79,8 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ── GitHub release ─────────────────────────────────────────────────────────────
-  # Creates a GitHub release with auto-generated changelog notes.
+  # Generates release notes with git-cliff and pipes them directly into the
+  # GitHub release — no intermediate file, no npm install needed.
   github-release:
     needs: [test]
     runs-on: ubuntu-latest
@@ -89,17 +90,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: taiki-e/install-action@v2
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - name: Generate changelog
-        run: npm run changelog:unreleased > RELEASE_NOTES.md
+          tool: git-cliff
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" \
             --title "${{ github.ref_name }}" \
-            --notes-file RELEASE_NOTES.md
+            --notes "$(git-cliff --unreleased --strip all)"
