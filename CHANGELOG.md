@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 ## Unreleased
+- Dev: cleanup/improve package-lock.json
+- Doc: demo.gif update
+- Docs: update README, CHANGELOG, help, and tighten CI permissions
 - Chore: update all GitHub Actions to latest major versions
 - Feat: concurrent mode splits test files across N groups in shared Chrome
 - Fix: removed redundant wait before tests start
