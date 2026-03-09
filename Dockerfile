@@ -1,4 +1,4 @@
-FROM node:22-slim
+FROM node:24-slim
 
 ENV PUPPETEER_SKIP_DOWNLOAD=true \
     CHROME_BIN=/usr/bin/google-chrome-stable \

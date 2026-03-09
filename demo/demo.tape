@@ -12,9 +12,10 @@ Set Padding 20
 
 Env PUPPETEER_SKIP_DOWNLOAD "true"
 Env FORCE_COLOR "1"
+Env PS1 "$ "
 
 Sleep 500ms
 Type "npx qunitx demo/example-test.js"
 Sleep 500ms
 Enter
-Sleep 15s
+Sleep 5s

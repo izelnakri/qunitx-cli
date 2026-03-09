@@ -28,7 +28,7 @@
     "test:sanity-second": "./cli.js test/helpers/passing-tests.js test/helpers/passing-tests.ts"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=24.0.0"
   },
   "bin": {
     "qunitx": "cli.js"
@@ -56,7 +56,7 @@
     "qunitx": "^0.9.3"
   },
   "volta": {
-    "node": "22.15.0"
+    "node": "24.14.0"
   },
   "prettier": {
     "printWidth": 100,
