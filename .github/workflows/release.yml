@@ -1,7 +1,9 @@
 name: Release
 
-# Triggered by version tags (e.g. v0.2.0). Runs tests, then publishes to npm,
-# pushes a versioned Docker image, and creates a GitHub release with changelog.
+# Triggered by version tags pushed by `make release`.
+# npm is published locally by make release (like cargo release in gitprint).
+# CI only needs to verify the build and push the versioned Docker image.
+# The GitHub release is also created locally by make release — no secrets needed here.
 
 on:
   push:
@@ -27,26 +29,26 @@ jobs:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
 
-  # ── Publish to npm ─────────────────────────────────────────────────────────────
-  # `prepack` runs `npm run build` automatically before packing.
-  publish-npm:
+  # ── GitHub release ────────────────────────────────────────────────────────
+  # make release creates the GitHub release locally with proper changelog notes.
+  # This job is a race-condition fallback: if make release already created it,
+  # the create call fails silently (|| true) and we move on.
+  github-release:
     needs: [test]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-          registry-url: https://registry.npmjs.org
-      - run: npm ci
-      - run: npm publish --access public
+      - name: Create GitHub release (if not already created by make release)
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes 2>/dev/null || true
 
-  # ── Docker versioned image ──────────────────────────────────────────────────────
+  # ── Docker versioned image ─────────────────────────────────────────────────
   publish-docker:
     needs: [test]
     runs-on: ubuntu-latest
@@ -78,26 +80,3 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  # ── GitHub release ─────────────────────────────────────────────────────────────
-  # Generates release notes with git-cliff and pipes them directly into the
-  # GitHub release — no intermediate file, no npm install needed.
-  github-release:
-    needs: [test]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: git-cliff
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "${{ github.ref_name }}" \
-            --notes "$(git-cliff --unreleased --strip all)"
