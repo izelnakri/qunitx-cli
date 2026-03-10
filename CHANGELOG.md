@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## Unreleased
+- Fix: strip query params before route matching in HTTPServer
+- Feat: update vendor folder and .npmignore
+## 0.5.0 — 2026-03-10
+- Release 0.5.0
 ## 0.4.0 — 2026-03-09
 - Release 0.4.0
 - Fix: auto-discover Chrome via findChrome() utility, keeping Makefile simple
