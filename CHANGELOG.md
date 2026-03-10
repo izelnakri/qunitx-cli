@@ -1,7 +1,8 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-## Unreleased
+## 0.4.0 — 2026-03-09
+- Release 0.4.0
 - Fix: auto-discover Chrome via findChrome() utility, keeping Makefile simple
 - Fix: sync help test expected output with --port flag addition
 - Ci: adjust release pipeline according to gitprint
