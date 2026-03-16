@@ -1,6 +1,9 @@
 {
   "version": "5",
   "specifiers": {
+    "npm:@types/js-yaml@*": "4.0.9",
+    "npm:@types/picomatch@*": "4.0.2",
+    "npm:@types/ws@*": "8.18.1",
     "npm:cheerio@*": "1.2.0",
     "npm:cheerio@^1.2.0": "1.2.0",
     "npm:chokidar@*": "5.0.0",
@@ -183,10 +186,22 @@
     "@tootallnate/quickjs-emscripten@0.23.0": {
       "integrity": "sha512-C5Mc6rdnsaJDjO3UpGW/CQTHtCKaYlScZTly4JIu97Jxo/odCiH0ITnDXSJPTOrEKk/ycSZ0AOgTmkDtkOsvIA=="
     },
+    "@types/js-yaml@4.0.9": {
+      "integrity": "sha512-k4MGaQl5TGo/iipqb2UDG2UwjXziSWkh0uysQelTlJpX1qGlpUZYm8PnO4DxG1qBomtJUdYJ6qR6xdIah10JLg=="
+    },
     "@types/node@25.5.0": {
       "integrity": "sha512-jp2P3tQMSxWugkCUKLRPVUpGaL5MVFwF8RDuSRztfwgN1wmqJeMSbKlnEtQqU8UrhTmzEmZdu2I6v2dpp7XIxw==",
       "dependencies": [
         "undici-types"
+      ]
+    },
+    "@types/picomatch@4.0.2": {
+      "integrity": "sha512-qHHxQ+P9PysNEGbALT8f8YOSHW0KJu6l2xU8DYY0fu/EmGxXdVnuTLvFUvBgPJMSqXq29SYHveejeAha+4AYgA=="
+    },
+    "@types/ws@8.18.1": {
+      "integrity": "sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==",
+      "dependencies": [
+        "@types/node"
       ]
     },
     "@types/yauzl@2.10.3": {
