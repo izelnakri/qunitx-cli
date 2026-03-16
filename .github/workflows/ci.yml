@@ -119,7 +119,6 @@ jobs:
       - uses: browser-actions/setup-chrome@v2
         id: setup-chrome
       - run: npm ci
-      - run: deno install --allow-scripts=npm:puppeteer
       - name: Capture demo output
         run: node cli.js docs/demo-math-test.js --output=tmp/pages-demo > demo-output.txt 2>&1 || true
         env:

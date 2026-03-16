@@ -25,6 +25,7 @@
     "changelog:unreleased": "git-cliff --unreleased --strip all",
     "changelog:preview": "git-cliff",
     "changelog:update": "git-cliff --output CHANGELOG.md",
+    "postinstall": "deno install --allow-scripts=npm:puppeteer || true",
     "prepack": "npm run build",
     "test": "node test/setup.js && FORCE_COLOR=0 node --test test/**/*-test.js",
     "test:sanity-first": "./cli.js test/helpers/failing-tests.js test/helpers/failing-tests.ts",
