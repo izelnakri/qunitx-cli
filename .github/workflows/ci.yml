@@ -11,7 +11,8 @@ permissions:
 
 jobs:
   # ── Lint ──────────────────────────────────────────────────────────────────────
-  # Surfaces formatting failures fast, independent of the slower test job.
+  # Surfaces formatting (prettier) and code-quality (deno lint) failures fast,
+  # independent of the slower test job.
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -21,13 +22,17 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
       - run: npm ci
+      - run: npm run format
       - run: npm run lint
 
   # ── Test ──────────────────────────────────────────────────────────────────────
-  # Runs in parallel with lint. Test files run concurrently (4-way) — safe
-  # because each CLI invocation gets a unique --output dir and the port resolver
-  # now correctly syncs config.port after collision retries.
+  # Runs in parallel with lint. Test files run concurrently — safe because each
+  # CLI invocation gets a unique --output dir and the port resolver uses
+  # server.listen(0) to avoid collisions.
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -46,9 +51,44 @@ jobs:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
 
+  # ── Coverage ──────────────────────────────────────────────────────────────────
+  # Runs in parallel with test. c8 is the Node.js equivalent of `deno coverage`:
+  # both use V8's built-in coverage mechanism. c8 is required here because
+  # qunitx-cli tests launch headless Chrome via puppeteer — the code runs inside
+  # child `node cli.js` processes that can't execute under Deno.
+  # c8 sets NODE_V8_COVERAGE so all child processes write coverage data;
+  # it merges them and emits coverage/lcov.info for Codecov.
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: browser-actions/setup-chrome@v2
+        id: setup-chrome
+      - run: npm ci
+      - run: npx c8 --reporter=lcov --reporter=text --reporter=html npm test
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: true
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          FORCE_COLOR: 0
+      - uses: codecov/codecov-action@v5
+        with:
+          files: coverage/lcov.info
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/html/
+          retention-days: 1
+
   # ── Pages (main only) ─────────────────────────────────────────────────────────
-  # Runs the CLI against a passing test file to capture live demo output, builds
-  # a minimal site around it, and deploys to GitHub Pages.
+  # Runs the CLI against the demo test file to capture live TAP output, copies
+  # the composite demo GIF, builds a minimal site, and deploys to GitHub Pages.
   # Concurrency guard cancels any stale in-flight deployment.
   pages:
     if: github.ref == 'refs/heads/main'
@@ -75,7 +115,7 @@ jobs:
         id: setup-chrome
       - run: npm ci
       - name: Capture demo output
-        run: node cli.js demo/example-test.js --output=tmp/demo > demo-output.txt 2>&1 || true
+        run: node cli.js docs/demo-math-test.js --output=tmp/pages-demo > demo-output.txt 2>&1 || true
         env:
           PUPPETEER_SKIP_DOWNLOAD: true
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
@@ -90,7 +130,7 @@ jobs:
           const raw = fs.readFileSync('demo-output.txt', 'utf8').trim();
           const escaped = raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
           fs.mkdirSync('_site', { recursive: true });
-          try { fs.copyFileSync('demo/demo.gif', '_site/demo.gif'); } catch (_) {}
+          try { fs.copyFileSync('docs/demo.gif', '_site/demo.gif'); } catch (_) {}
           fs.writeFileSync('_site/.nojekyll', '');
           fs.writeFileSync('_site/index.html', `<!DOCTYPE html>
           <html lang="en">
@@ -108,6 +148,7 @@ jobs:
               header a:hover { color: #e6edf3; }
               main { flex: 1; padding: 32px 24px; overflow: auto; }
               h2 { font-size: 13px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 16px; }
+              img { max-width: 100%; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 32px; }
               pre { font-family: ui-monospace, 'JetBrains Mono', 'Fira Code', monospace; font-size: clamp(12px, 2vw, 15px); line-height: 1.6; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 24px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
               .prompt { color: #6e7681; user-select: none; }
               .cmd { color: #79c0ff; }
@@ -121,8 +162,9 @@ jobs:
               <a href="https://ghcr.io/v2/${repo}/tags/list">docker</a>
             </header>
             <main>
-              <h2>Live demo</h2>
-              <pre><span class="prompt">$ </span><span class="cmd">npx qunitx demo/example-test.js</span>
+              <img src="demo.gif" alt="qunitx-cli demo">
+              <h2>Live output</h2>
+              <pre><span class="prompt">$ </span><span class="cmd">npx qunitx docs/demo-math-test.js</span>
           ${escaped}</pre>
             </main>
           </body>

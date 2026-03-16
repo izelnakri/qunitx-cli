@@ -1,6 +1,7 @@
 # qunitx-cli
 
 [![CI](https://github.com/izelnakri/qunitx-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/izelnakri/qunitx-cli/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/izelnakri/qunitx-cli/branch/main/graph/badge.svg)](https://codecov.io/gh/izelnakri/qunitx-cli)
 [![npm](https://img.shields.io/npm/v/qunitx-cli)](https://www.npmjs.com/package/qunitx-cli)
 [![npm downloads](https://img.shields.io/npm/dm/qunitx-cli)](https://www.npmjs.com/package/qunitx-cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -8,7 +9,7 @@
 Browser-based test runner for [QUnitX](https://github.com/izelnakri/qunitx) — bundles your JS/TS tests
 with esbuild, runs them in headless Chrome, and streams TAP output to the terminal.
 
-![qunitx-cli demo](demo/demo.gif)
+![qunitx-cli demo](docs/demo.gif)
 
 ## Features
 
@@ -154,7 +155,7 @@ Options:
 npm install
 make check                 # lint + test (run before every commit)
 make test                  # run tests only
-make demo                  # regenerate demo output
+make demo                  # regenerate docs/demo.gif
 make release LEVEL=patch   # bump version, update changelog, tag, push
 ```
 

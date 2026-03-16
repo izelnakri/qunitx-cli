@@ -19,7 +19,7 @@ process.title = 'qunitx';
     return await initializeProject();
   }
 
-  let config = await setupConfig();
+  const config = await setupConfig();
 
   return await run(config);
 })();

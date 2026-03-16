@@ -1,9 +1,35 @@
-.PHONY: check test lint build demo release
+.DEFAULT_GOAL := help
 
-check: lint test
+LEVEL ?= patch
+
+.PHONY: help fix fmt format check lint test build coverage coverage-report demo release
+
+help:
+	@echo "Usage: make <target> [LEVEL=patch|minor|major]"
+	@echo ""
+	@echo "  fix             Auto-fix formatting"
+	@echo "  format          Check formatting (prettier)"
+	@echo "  lint            Check code quality (deno lint)"
+	@echo "  check           Format + lint + tests"
+	@echo "  test            Run all tests"
+	@echo "  build           Build the project"
+	@echo "  coverage        Run tests with coverage report"
+	@echo "  demo            Regenerate docs/demo.gif"
+	@echo "  release         Bump version, update changelog, tag, push, publish to npm"
+
+fix:
+	npm run format:fix
+
+fmt:
+	npm run format:fix
+
+format:
+	npm run format
 
 lint:
 	npm run lint
+
+check: format lint test
 
 test:
 	npm test
@@ -11,21 +37,24 @@ test:
 build:
 	npm run build
 
-# Regenerate demo/demo.gif using VHS.
-# Requires: vhs (brew install vhs | nix profile install nixpkgs#vhs)
-#           Chrome (google-chrome-stable or chromium)
+coverage:
+	npx c8 --reporter=lcov --reporter=text --reporter=html npm test
+
+coverage-report:
+	npx c8 --reporter=lcov --reporter=text --reporter=html --open npm test
+
+# Regenerate docs/demo.gif (composite terminal + browser GIF).
+# Requires: nix (for vhs, ffmpeg, gifsicle), CHROME_BIN set or Nix-resolved chromium.
 demo:
-	@which vhs > /dev/null 2>&1 || (echo "vhs not found — install: brew install vhs  or  nix profile install nixpkgs#vhs" && exit 1)
-	@CHROME=$$(which google-chrome-stable 2>/dev/null || which google-chrome 2>/dev/null || which chromium 2>/dev/null); \
-	test -n "$$CHROME" || (echo "Chrome not found — install google-chrome-stable or chromium" && exit 1); \
-	CHROME_BIN=$$CHROME vhs demo/demo.tape
+	bash docs/make-demo-gif.sh
 
 # Lint, bump version, update changelog, commit, tag, push, publish to npm.
-# CI then pushes the versioned Docker image and creates the GitHub release.
+# CI then pushes the versioned Docker image, builds binaries, and creates the GitHub release.
 # Usage: make release LEVEL=patch|minor|major
 release:
 	@test -n "$(LEVEL)" || (echo "Usage: make release LEVEL=patch|minor|major" && exit 1)
-	npm run lint
+	@npm whoami 2>/dev/null || npm login
+	$(MAKE) check
 	npm version $(LEVEL) --no-git-tag-version
 	npm run changelog:update
 	git add package.json package-lock.json CHANGELOG.md

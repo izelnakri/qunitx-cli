@@ -16,14 +16,15 @@
   ],
   "scripts": {
     "bin": "chmod +x cli.js && ./cli.js",
-    "lint": "prettier --check \"lib/**/*.js\" \"test/**/*.js\" \"*.js\" \"package.json\" \".github/**/*.yml\"",
-    "lint:fix": "prettier --write \"lib/**/*.js\" \"test/**/*.js\" \"*.js\" \"package.json\" \".github/**/*.yml\"",
+    "format": "prettier --check \"lib/**/*.js\" \"test/**/*.js\" \"*.js\" \"package.json\" \".github/**/*.yml\"",
+    "format:fix": "prettier --write \"lib/**/*.js\" \"test/**/*.js\" \"*.js\" \"package.json\" \".github/**/*.yml\"",
+    "lint": "deno lint lib/ cli.js",
     "build": "node build.js",
     "changelog:unreleased": "git-cliff --unreleased --strip all",
     "changelog:preview": "git-cliff",
     "changelog:update": "git-cliff --output CHANGELOG.md",
     "prepack": "npm run build",
-    "test": "node test/setup.js && node --test test/**/*-test.js",
+    "test": "node test/setup.js && FORCE_COLOR=0 node --test test/**/*-test.js",
     "test:sanity-first": "./cli.js test/helpers/failing-tests.js test/helpers/failing-tests.ts",
     "test:sanity-second": "./cli.js test/helpers/passing-tests.js test/helpers/passing-tests.ts"
   },
@@ -53,7 +54,7 @@
     "express": "^5.2.1",
     "prettier": "^3.8.1",
     "qunit": "^2.25.0",
-    "qunitx": "^0.9.3"
+    "qunitx": "^1.0.0"
   },
   "volta": {
     "node": "24.14.0"
