@@ -126,7 +126,7 @@ jobs:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
       - name: Generate API docs
-        run: npm run docs && cp -r docs/lib _site/api
+        run: npm run docs && mkdir -p _site && cp -r docs/lib _site/api
       - uses: actions/download-artifact@v4
         with:
           name: coverage-report
