@@ -87,7 +87,6 @@ jobs:
             --outfile=sea-entry.cjs \
             --external:fsevents \
             --external:typescript \
-            "--define:import.meta.url=require('url').pathToFileURL(__filename).href" \
             --log-level=warning
 
       - name: Create SEA blob
@@ -98,7 +97,12 @@ jobs:
             main: 'sea-entry.cjs',
             output: 'sea.blob',
             disableExperimentalSEAWarning: true,
-            useCodeCache: true
+            useCodeCache: true,
+            assets: {
+              'setup/tests.hbs': 'lib/boilerplates/setup/tests.hbs',
+              'setup/tsconfig.json': 'lib/boilerplates/setup/tsconfig.json',
+              'test.js': 'lib/boilerplates/test.js'
+            }
           }, null, 2));"
           node --experimental-sea-config sea-config.json
 
