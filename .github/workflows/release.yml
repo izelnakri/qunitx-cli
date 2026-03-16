@@ -170,6 +170,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4
         with:
+          pattern: qunitx-*
           merge-multiple: true
           path: artifacts
       - name: Generate SHA-256 checksums
