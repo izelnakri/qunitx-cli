@@ -152,7 +152,7 @@ jobs:
           Compress-Archive -Path "dist/qunitx-${{ matrix.target }}" `
             -DestinationPath "qunitx-${{ matrix.target }}.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: qunitx-${{ matrix.target }}
           path: qunitx-${{ matrix.target }}.*
