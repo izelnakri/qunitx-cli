@@ -32,7 +32,8 @@
     "test:sanity-second": "./cli.js test/helpers/passing-tests.js test/helpers/passing-tests.ts"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=24.0.0",
+    "deno": ">=2.7.0"
   },
   "bin": {
     "qunitx": "cli.js"
