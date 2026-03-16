@@ -24,7 +24,7 @@ jobs:
           cache: npm
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.x
+          deno-version: 2.6.x
       - run: npm ci
       - run: npm run format
       - run: npm run lint
@@ -115,7 +115,7 @@ jobs:
           cache: npm
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.x
+          deno-version: 2.6.x
       - uses: browser-actions/setup-chrome@v2
         id: setup-chrome
       - run: npm ci
