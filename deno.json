@@ -1,4 +1,5 @@
 {
+  "nodeModulesDir": "auto",
   "lint": {
     "rules": {
       "exclude": ["no-process-global", "no-node-globals", "no-window"]

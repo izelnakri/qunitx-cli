@@ -2,7 +2,7 @@
 
 LEVEL ?= patch
 
-.PHONY: help fix fmt format check lint test build coverage coverage-report demo release
+.PHONY: help fix fmt format check lint lint-docs test build coverage coverage-report docs demo release
 
 help:
 	@echo "Usage: make <target> [LEVEL=patch|minor|major]"
@@ -29,7 +29,13 @@ format:
 lint:
 	npm run lint
 
-check: format lint test
+lint-docs:
+	npm run lint:docs
+
+docs:
+	npm run docs
+
+check: format lint lint-docs test
 
 test:
 	npm test
@@ -56,7 +62,7 @@ release:
 	@npm whoami 2>/dev/null || npm login
 	$(MAKE) check
 	npm version $(LEVEL) --no-git-tag-version
-	npm run changelog:update
+	git-cliff --tag "v$$(node -p 'require("./package.json").version')" --output CHANGELOG.md
 	git add package.json package-lock.json CHANGELOG.md
 	git commit -m "Release $$(node -p 'require("./package.json").version')"
 	git tag "v$$(node -p 'require("./package.json").version')"

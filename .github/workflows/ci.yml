@@ -28,6 +28,7 @@ jobs:
       - run: npm ci
       - run: npm run format
       - run: npm run lint
+      - run: npm run lint:docs
 
   # ── Test ──────────────────────────────────────────────────────────────────────
   # Runs in parallel with lint. Test files run concurrently — safe because each
@@ -88,11 +89,12 @@ jobs:
 
   # ── Pages (main only) ─────────────────────────────────────────────────────────
   # Runs the CLI against the demo test file to capture live TAP output, copies
-  # the composite demo GIF, builds a minimal site, and deploys to GitHub Pages.
+  # the composite demo GIF, generates API docs (deno doc --html), embeds the
+  # coverage report, then deploys the full site to GitHub Pages.
   # Concurrency guard cancels any stale in-flight deployment.
   pages:
     if: github.ref == 'refs/heads/main'
-    needs: [lint, test]
+    needs: [lint, test, coverage]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
@@ -111,6 +113,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
       - uses: browser-actions/setup-chrome@v2
         id: setup-chrome
       - run: npm ci
@@ -120,6 +125,12 @@ jobs:
           PUPPETEER_SKIP_DOWNLOAD: true
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
+      - name: Generate API docs
+        run: npm run docs && cp -r docs/lib _site/api
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+          path: _site/coverage
       - name: Assemble site
         env:
           REPO: ${{ github.repository }}
@@ -160,6 +171,8 @@ jobs:
               <a href="https://github.com/${repo}">source</a>
               <a href="https://npmjs.com/package/qunitx-cli">npm</a>
               <a href="https://ghcr.io/v2/${repo}/tags/list">docker</a>
+              <a href="api/">api docs</a>
+              <a href="coverage/">coverage</a>
             </header>
             <main>
               <img src="demo.gif" alt="qunitx-cli demo">
