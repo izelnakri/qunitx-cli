@@ -86,6 +86,8 @@ jobs:
             --banner:js="$PREAMBLE" \
             --outfile=sea-entry.cjs \
             --external:fsevents \
+            --external:typescript \
+            "--define:import.meta.url=require('url').pathToFileURL(__filename).href" \
             --log-level=warning
 
       - name: Create SEA blob
