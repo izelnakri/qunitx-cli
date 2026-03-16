@@ -1,6 +1,8 @@
 # Changelog
 
-## [unreleased]
+## [0.5.2] - 2026-03-16
+[`v0.5.1...v0.5.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.5.1...v0.5.2)
+
 ### Features
 - Improve CHANGELOG.md generation — 2026-03-10 by [@izelnakri](https://github.com/izelnakri) ([`2fc700f`](https://github.com/izelnakri/qunitx-cli/commit/2fc700f54e63df2221ce4a33703a4e7d8c88908b))
 
