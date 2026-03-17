@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.6] - 2026-03-17
+[`v0.5.5...v0.5.6`](https://github.com/izelnakri/qunitx-cli/compare/v0.5.5...v0.5.6)
+
+### Bug Fixes
+- Add @deno-types hints for npm packages without bundled type declarations — 2026-03-16 by [@izelnakri](https://github.com/izelnakri) ([`a409f91`](https://github.com/izelnakri/qunitx-cli/commit/a409f91149c9b6697f886c833b33aa4e8d00d4d5))
+
+### Documentation
+- Add all the module docs — 2026-03-17 by [@izelnakri](https://github.com/izelnakri) ([`8e2c947`](https://github.com/izelnakri/qunitx-cli/commit/8e2c9472a2089240ab69113c2fabba7306a26ad6))
+
+### Features
+- More tests are and optimization of test suite — 2026-03-17 by [@izelnakri](https://github.com/izelnakri) ([`5e5c091`](https://github.com/izelnakri/qunitx-cli/commit/5e5c091ffa63a829a4207781f2ab100de8d5b183))
+- Runtime speed optimizations — 2026-03-17 by [@izelnakri](https://github.com/izelnakri) ([`f330119`](https://github.com/izelnakri/qunitx-cli/commit/f330119e0fd0c044e3f18177ed98ea05902aea56))
+
 ## [0.5.2] - 2026-03-16
 [`v0.5.1...v0.5.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.5.1...v0.5.2)
 
