@@ -7,10 +7,11 @@ CHANGELOG.md
 cliff.toml
 demo
 Dockerfile
+docs
 flake.lock
 flake.nix
 Makefile
-docs
+scripts
 test
 tmp
 TODO

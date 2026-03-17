@@ -32,7 +32,11 @@ module('--after script tests for browser mode', (_hooks, moduleMetadata) => {
     assert.ok(stdout.includes('After script result is written:'));
     assert.ok(
       stdout.includes(
-        JSON.stringify({ testCount: 3, failCount: 0, skipCount: 0, passCount: 3 }, null, 2),
+        JSON.stringify(
+          { testCount: 3, failCount: 0, skipCount: 0, passCount: 3, errorCount: 0 },
+          null,
+          2,
+        ),
       ),
     );
     assertPassingTestCase(assert, stdout, { testNo: 1, moduleName: '{{moduleName}}' });
