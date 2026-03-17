@@ -135,15 +135,24 @@ jobs:
         env:
           REPO: ${{ github.repository }}
         run: |
-          node - << 'NODESCRIPT'
-          const fs = require('fs');
+          node --input-type=module - << 'NODESCRIPT'
+          import fs from 'node:fs/promises';
           const repo = process.env.REPO;
-          const raw = fs.readFileSync('demo-output.txt', 'utf8').trim();
-          const escaped = raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-          fs.mkdirSync('_site', { recursive: true });
-          try { fs.copyFileSync('docs/demo.gif', '_site/demo.gif'); } catch (_) {}
-          fs.writeFileSync('_site/.nojekyll', '');
-          fs.writeFileSync('_site/index.html', `<!DOCTYPE html>
+          const [raw, apiIdx, readmePage] = await Promise.all([
+            fs.readFile('demo-output.txt', 'utf8'),
+            fs.readFile('_site/api/index.html', 'utf8'),
+            fs.readFile('_site/api/README.md/index.html', 'utf8'),
+          ]);
+          const escaped = raw.trim().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          // Inject README content into the empty /api/ homepage (deno doc leaves <main> empty on the root index)
+          const apiMain = readmePage.match(/<main>[\s\S]*?<\/main>/)[0]
+            .replace(/src="docs\/demo\.gif"/g, 'src="../demo.gif"');
+          await fs.mkdir('_site', { recursive: true });
+          await Promise.all([
+            fs.copyFile('docs/demo.gif', '_site/demo.gif').catch(() => {}),
+            fs.writeFile('_site/api/index.html', apiIdx.replace('<main></main>', apiMain)),
+            fs.writeFile('_site/.nojekyll', ''),
+            fs.writeFile('_site/index.html', `<!DOCTYPE html>
           <html lang="en">
           <head>
             <meta charset="UTF-8">
@@ -181,7 +190,8 @@ jobs:
           ${escaped}</pre>
             </main>
           </body>
-          </html>`);
+          </html>`),
+          ]);
           NODESCRIPT
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
