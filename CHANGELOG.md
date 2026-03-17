@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.7] - 2026-03-17
+[`v0.5.6...v0.5.7`](https://github.com/izelnakri/qunitx-cli/compare/v0.5.6...v0.5.7)
+
+### Bug Fixes
+- Bugfix for errorCount, timeout flag, fileWatcher unlinkdir — 2026-03-17 by [@izelnakri](https://github.com/izelnakri) ([`e8c6c7e`](https://github.com/izelnakri/qunitx-cli/commit/e8c6c7e453c2a051d9dee8427669893a9661399c))
+
 ## [0.5.6] - 2026-03-17
 [`v0.5.5...v0.5.6`](https://github.com/izelnakri/qunitx-cli/compare/v0.5.5...v0.5.6)
 
