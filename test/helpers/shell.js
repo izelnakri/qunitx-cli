@@ -49,8 +49,12 @@ export default async function execute(commandString, { moduleName = '', testName
     command = `${command} --output=tmp/run-${randomUUID()}`;
   }
 
-  const isBrowserCommand = /\bnode cli\.js\b/.test(commandString);
-  const sock = isBrowserCommand ? await acquireSlot() : null;
+  // The semaphore guards Chrome concurrency. Subcommands that never launch Chrome
+  // (generate / help / init) skip it so they don't occupy a slot that browser tests need.
+  const NON_CHROME_SUBCOMMAND = /\bnode cli\.js\b\s+(generate|g|new|n|help|h|p|print|init)\b/;
+  const needsChrome =
+    /\bnode cli\.js\b/.test(commandString) && !NON_CHROME_SUBCOMMAND.test(commandString);
+  const sock = needsChrome ? await acquireSlot() : null;
 
   try {
     let result = await shell(command, { timeout: 60000 });

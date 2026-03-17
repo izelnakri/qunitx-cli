@@ -22,4 +22,22 @@ module('--timeout flag tests for browser mode', (_hooks, moduleMetadata) => {
     assertPassingTestCase(assert, stdout, { testNo: 1, moduleName: '{{moduleName}}' });
     assertTAPResult(assert, stdout, { testCount: 3 });
   });
+
+  test('--timeout kills a test that hangs indefinitely and exits with code 1', async (assert, testMetadata) => {
+    // The window.testTimeout counter increments by 1000 every second and resets after each test.
+    // With --timeout=500, it triggers after ~1 second, before slow-tests.js can finish.
+    try {
+      await shell('node cli.js test/helpers/slow-tests.js --timeout=500', {
+        ...moduleMetadata,
+        ...testMetadata,
+      });
+      assert.ok(false, 'expected a non-zero exit code for a hanging test');
+    } catch (cmd) {
+      assert.ok(cmd.stdout.includes('TAP version 13'), 'TAP header is still printed');
+      assert.ok(
+        cmd.stdout.includes('BROWSER: TEST TIMED OUT'),
+        'timeout is reported with the name of the hanging test',
+      );
+    }
+  });
 });

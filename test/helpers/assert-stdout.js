@@ -107,17 +107,19 @@ export function assertFailingTestCase(
 }
 
 export function assertTAPResult(assert, stdout, options = { testCount: 0, failCount: 0 }) {
-  if (options.failCount) {
+  const { testCount, failCount = 0, skipCount = 0 } = options;
+
+  if (failCount) {
     return assert.ok(
-      new RegExp(`# pass ${options.testCount - options.failCount}
-# skip 0
-# fail (${options.failCount}|${options.failCount + 1})`).test(stdout),
+      new RegExp(`# pass ${testCount - failCount}
+# skip ${skipCount}
+# fail (${failCount}|${failCount + 1})`).test(stdout),
     );
   }
 
   assert.ok(
-    new RegExp(`# pass ${options.testCount}
-# skip 0
+    new RegExp(`# pass ${testCount}
+# skip ${skipCount}
 # fail 0`).test(stdout),
   );
 }

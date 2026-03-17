@@ -199,4 +199,24 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
       assertTAPResult(assert, cmd.stdout, { testCount: 4, failCount: 3 });
     }
   });
+
+  test('test.skip produces "ok ... # skip" TAP lines and test.todo produces "not ok ... # skip" without counting as failures', async (assert, testMetadata) => {
+    const { stdout } = await shell('node cli.js test/helpers/skip-todo-tests.js', {
+      ...moduleMetadata,
+      ...testMetadata,
+    });
+
+    // Skipped test: TAP line uses "ok ... # skip" format
+    assert.ok(
+      stdout.includes('skipped test is not executed # skip'),
+      'skipped test appears as "ok ... # skip"',
+    );
+    // Todo test: TAP line uses "not ok ... # skip" format but does NOT count as a failure
+    assert.ok(
+      stdout.includes('todo test is expected to fail # skip'),
+      'todo test appears as "not ok ... # skip"',
+    );
+    // 1 passing + 1 skipped + 1 todo: passCount=1, skipCount=1, failCount=0
+    assertTAPResult(assert, stdout, { testCount: 1, skipCount: 1 });
+  });
 });
