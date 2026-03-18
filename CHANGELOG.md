@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.0] - 2026-03-18
+[`v0.6.0...v0.7.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.6.0...v0.7.0)
+
+### Performance
+- Replace cheerio with regex in findInternalAssetsFromHTML (37% startup improvement) — 2026-03-18 by [@izelnakri](https://github.com/izelnakri) ([`244f06e`](https://github.com/izelnakri/qunitx-cli/commit/244f06e163ce121a18c3a33cf86989ec9f12504a))
+
 ## [0.6.0] - 2026-03-18
 [`v0.5.8...v0.6.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.5.8...v0.6.0)
 
