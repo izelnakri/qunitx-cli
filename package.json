@@ -43,7 +43,6 @@
     "url": "https://github.com/izelnakri/qunitx-cli.git"
   },
   "dependencies": {
-    "cheerio": "^1.2.0",
     "chokidar": "^5.0.0",
     "esbuild": "^0.27.3",
     "picomatch": "^4.0.3",
