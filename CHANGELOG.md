@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.0] - 2026-03-18
+[`v0.5.8...v0.6.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.5.8...v0.6.0)
+
+### Performance
+- Replace js-yaml with custom dumpYaml for TAP output (70% faster) — 2026-03-18 by [@izelnakri](https://github.com/izelnakri) ([`d65c38b`](https://github.com/izelnakri/qunitx-cli/commit/d65c38b576d77cd024911583490fc69bfa28b593))
+
 ## [0.5.8] - 2026-03-18
 [`v0.5.7...v0.5.8`](https://github.com/izelnakri/qunitx-cli/compare/v0.5.7...v0.5.8)
 
