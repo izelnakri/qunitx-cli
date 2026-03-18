@@ -13,6 +13,28 @@ function withArgv(args, fn) {
   }
 }
 
+module('Setup | parseCliFlags | --extensions', () => {
+  test('--extensions parses a single extension', (assert) => {
+    const flags = withArgv(['--extensions=mjs'], () => parseCliFlags(PROJECT_ROOT));
+    assert.deepEqual(flags.extensions, ['mjs']);
+  });
+
+  test('--extensions parses multiple comma-separated extensions', (assert) => {
+    const flags = withArgv(['--extensions=js,ts,mjs'], () => parseCliFlags(PROJECT_ROOT));
+    assert.deepEqual(flags.extensions, ['js', 'ts', 'mjs']);
+  });
+
+  test('--extensions trims whitespace around each extension', (assert) => {
+    const flags = withArgv(['--extensions=js, ts , mjs'], () => parseCliFlags(PROJECT_ROOT));
+    assert.deepEqual(flags.extensions, ['js', 'ts', 'mjs']);
+  });
+
+  test('--extensions is undefined when flag is not provided', (assert) => {
+    const flags = withArgv([], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.extensions, undefined);
+  });
+});
+
 module('Setup | parseCliFlags | --timeout', () => {
   test('--timeout value is parsed as a number, not a string', (assert) => {
     const flags = withArgv(['--timeout=5000'], () => parseCliFlags(PROJECT_ROOT));

@@ -25,15 +25,7 @@ module('Setup | mutateFSTree', () => {
   });
 });
 
-module('Setup | handleWatchEvent', (hooks) => {
-  hooks.beforeEach(() => {
-    global.chokidarBuild = false;
-  });
-
-  hooks.afterEach(() => {
-    global.chokidarBuild = false;
-  });
-
+module('Setup | handleWatchEvent', () => {
   test('js file change triggers onEventFunc and updates fsTree', (assert) => {
     const fsTree = { '/project/test/foo.js': null };
     const config = { fsTree, projectRoot: '/project' };
@@ -119,17 +111,41 @@ module('Setup | handleWatchEvent', (hooks) => {
     assert.equal(calls.length, 0);
   });
 
-  test('debounce: second event while chokidarBuild is active does not trigger onEventFunc', (assert) => {
+  test('debounce: second event while _building is active does not trigger onEventFunc', (assert) => {
     const fsTree = { '/project/test/foo.js': null };
-    const config = { fsTree, projectRoot: '/project' };
+    const config = { fsTree, projectRoot: '/project', _building: true };
     const calls = [];
-
-    global.chokidarBuild = true;
 
     handleWatchEvent(config, ['js', 'ts'], 'change', '/project/test/foo.js', (event, path) => {
       calls.push({ event, path });
     });
 
+    assert.equal(calls.length, 0);
+  });
+
+  test('custom extensions: .mjs file triggers onEventFunc when extensions includes mjs', (assert) => {
+    const fsTree = {};
+    const config = { fsTree, projectRoot: '/project' };
+    const calls = [];
+
+    handleWatchEvent(config, ['mjs'], 'add', '/project/test/new.mjs', (event, path) => {
+      calls.push({ event, path });
+    });
+
+    assert.deepEqual(config.fsTree, { '/project/test/new.mjs': null });
+    assert.equal(calls.length, 1);
+  });
+
+  test('custom extensions: .js file is ignored when extensions only includes mjs', (assert) => {
+    const fsTree = {};
+    const config = { fsTree, projectRoot: '/project' };
+    const calls = [];
+
+    handleWatchEvent(config, ['mjs'], 'add', '/project/test/new.js', (event, path) => {
+      calls.push({ event, path });
+    });
+
+    assert.deepEqual(config.fsTree, {});
     assert.equal(calls.length, 0);
   });
 });
