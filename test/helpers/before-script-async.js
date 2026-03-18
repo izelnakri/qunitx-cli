@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import kleur from 'kleur';
 import bindServerToPort from '../../lib/setup/bind-server-to-port.js';
 import './before-script-basic.js';
 import QUnit from 'qunitx';
