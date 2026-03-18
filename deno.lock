@@ -1,6 +1,7 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@std/fmt@*": "1.0.9",
     "npm:@types/js-yaml@*": "4.0.9",
     "npm:@types/picomatch@*": "4.0.2",
     "npm:@types/ws@*": "8.18.1",
@@ -27,6 +28,11 @@
     "npm:recursive-lookup@1.1.0": "1.1.0",
     "npm:ws@*": "8.19.0",
     "npm:ws@^8.19.0": "8.19.0"
+  },
+  "jsr": {
+    "@std/fmt@1.0.9": {
+      "integrity": "2487343e8899fb2be5d0e3d35013e54477ada198854e52dd05ed0422eddcabe0"
+    }
   },
   "npm": {
     "@babel/code-frame@7.29.0": {

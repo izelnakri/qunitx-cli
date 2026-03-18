@@ -2,10 +2,14 @@
 
 LEVEL ?= patch
 
-.PHONY: help fix fmt format check lint lint-docs test build coverage coverage-report docs demo release
+.PHONY: help fix fmt format check lint lint-docs test build coverage coverage-report docs demo bench-print bench bench-update bench-check release
+
+
+
+REGRESSION_THRESHOLD ?= 20
 
 help:
-	@echo "Usage: make <target> [LEVEL=patch|minor|major]"
+	@echo "Usage: make <target> [LEVEL=patch|minor|major] [REGRESSION_THRESHOLD=20]"
 	@echo ""
 	@echo "  fix             Auto-fix formatting"
 	@echo "  format          Check formatting (prettier)"
@@ -15,6 +19,10 @@ help:
 	@echo "  build           Build the project"
 	@echo "  coverage        Run tests with coverage report"
 	@echo "  demo            Regenerate docs/demo.gif"
+	@echo "  bench-print     Run all benchmarks (display only, no save)"
+	@echo "  bench           Run all benchmarks and save results as new baseline"
+	@echo "  bench-update    Alias for bench"
+	@echo "  bench-check     Run benchmarks and fail if regression > REGRESSION_THRESHOLD%"
 	@echo "  release         Bump version, update changelog, tag, push, publish to npm"
 
 fix:
@@ -54,6 +62,21 @@ coverage-report:
 demo:
 	bash docs/make-demo-gif.sh
 
+bench-print:
+	deno task bench
+
+bench:
+	deno task bench:update
+
+bench-update: bench
+
+# Runs all benchmarks and compares results against benches/results.json.
+# Exits non-zero if any benchmark regresses more than REGRESSION_THRESHOLD% (default: 20).
+# Run 'make bench-update' once first to establish the baseline.
+bench-check:
+	REGRESSION_THRESHOLD=$(REGRESSION_THRESHOLD) deno task bench:check
+
+
 # Lint, bump version, update changelog, commit, tag, push, publish to npm.
 # CI then pushes the versioned Docker image, builds binaries, and creates the GitHub release.
 # Usage: make release LEVEL=patch|minor|major
@@ -61,6 +84,7 @@ release:
 	@test -n "$(LEVEL)" || (echo "Usage: make release LEVEL=patch|minor|major" && exit 1)
 	@npm whoami 2>/dev/null || npm login
 	$(MAKE) check
+	$(MAKE) bench-check
 	npm version $(LEVEL) --no-git-tag-version
 	git-cliff --tag "v$$(node -p 'require("./package.json").version')" --output CHANGELOG.md
 	git add package.json package-lock.json CHANGELOG.md
@@ -68,3 +92,4 @@ release:
 	git tag "v$$(node -p 'require("./package.json").version')"
 	git push && git push --tags
 	npm publish --access public
+	$(MAKE) bench

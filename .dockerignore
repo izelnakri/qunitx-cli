@@ -2,16 +2,13 @@
 .env
 .github
 .gitignore
-build.js
+benches
 CHANGELOG.md
 cliff.toml
-demo
-Dockerfile
 docs
 flake.lock
 flake.nix
 Makefile
-benches
 scripts
 test
 tmp

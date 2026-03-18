@@ -11,6 +11,11 @@
     "recursive-lookup": "npm:recursive-lookup",
     "ws": "npm:ws"
   },
+  "tasks": {
+    "bench": "deno bench --allow-all benches/esbuild.bench.ts benches/server.bench.ts benches/tap.bench.ts benches/e2e.bench.ts",
+    "bench:check": "deno bench --allow-all --json benches/esbuild.bench.ts benches/server.bench.ts benches/tap.bench.ts benches/e2e.bench.ts | deno run --allow-all scripts/check-benchmarks.ts",
+    "bench:update": "deno bench --allow-all --json benches/esbuild.bench.ts benches/server.bench.ts benches/tap.bench.ts benches/e2e.bench.ts | deno run --allow-all scripts/check-benchmarks.ts --save"
+  },
   "lint": {
     "rules": {
       "exclude": ["no-process-global", "no-node-globals", "no-window"]

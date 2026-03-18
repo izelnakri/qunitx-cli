@@ -3,3 +3,4 @@ tmp
 test-output.log
 result
 docs/lib
+benches/results.json
