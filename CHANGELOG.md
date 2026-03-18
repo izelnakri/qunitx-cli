@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.8] - 2026-03-18
+[`v0.5.7...v0.5.8`](https://github.com/izelnakri/qunitx-cli/compare/v0.5.7...v0.5.8)
+
+### Bug Fixes
+- UnlinkDir events now correctly clean up fsTree in watch mode — 2026-03-18 by [@izelnakri](https://github.com/izelnakri) ([`cb176af`](https://github.com/izelnakri/qunitx-cli/commit/cb176afe8d70e394aa611513bbebb79c5a3c4e14))
+
+### Documentation
+- Document extensions config and all package.json qunitx keys in README — 2026-03-18 by [@izelnakri](https://github.com/izelnakri) ([`20e3f63`](https://github.com/izelnakri/qunitx-cli/commit/20e3f63b7d74edfd40882c24abdf451e8bea7359))
+
+### Features
+- Add benchmarking system! — 2026-03-18 by [@izelnakri](https://github.com/izelnakri) ([`076b9b7`](https://github.com/izelnakri/qunitx-cli/commit/076b9b774348a1bbdacc06eef5e2235a7eb9e9b8))
+- Add configurable extensions with fix for .mjs/.cjs false positives — 2026-03-18 by [@izelnakri](https://github.com/izelnakri) ([`7f198d4`](https://github.com/izelnakri/qunitx-cli/commit/7f198d415c7871dbafeefcbcf18ba18ad963fa09))
+
 ## [0.5.7] - 2026-03-17
 [`v0.5.6...v0.5.7`](https://github.com/izelnakri/qunitx-cli/compare/v0.5.6...v0.5.7)
 
