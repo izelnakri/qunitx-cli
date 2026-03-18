@@ -1,4 +1,5 @@
 .claude
+.dockerignore
 .env
 .github
 .gitignore
