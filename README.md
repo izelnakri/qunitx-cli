@@ -133,6 +133,34 @@ qunitx some-test.js --debug
 qunitx some-test.ts
 ```
 
+## Configuration
+
+All CLI flags can also be set in `package.json` under the `qunitx` key, so you don't have to repeat them on every invocation:
+
+```json
+{
+  "qunitx": {
+    "inputs": ["test/**/*-test.js", "test/**/*-test.ts"],
+    "extensions": ["js", "ts"],
+    "output": "tmp",
+    "timeout": 20000,
+    "failFast": false,
+    "port": 1234
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `inputs` | `[]` | Glob patterns, file paths, or directories to use as test entry points. Merged with any paths given on the CLI. |
+| `extensions` | `["js", "ts"]` | File extensions tracked for test discovery (directory scans) and watch-mode rebuild triggers. Add `"mjs"`, `"cjs"`, or any other extension your project uses. |
+| `output` | `"tmp"` | Directory where compiled test bundles are written. |
+| `timeout` | `20000` | Maximum milliseconds to wait for the full test suite before timing out. |
+| `failFast` | `false` | Stop the run after the first failing test. |
+| `port` | `1234` | Preferred HTTP server port. qunitx auto-selects a free port if this one is taken. |
+
+CLI flags always override `package.json` values when both are present.
+
 ## CLI Reference
 
 ```
@@ -144,6 +172,7 @@ Options:
   --debug             Print the server URL; pipe browser console to stdout
   --timeout=<ms>      Max ms to wait for the suite to finish  [default: 20000]
   --output=<dir>      Directory for compiled test assets     [default: ./tmp]
+  --extensions=<...>  Comma-separated file extensions to track  [default: js,ts]
   --before=<file>     Script to run (and optionally await) before tests start
   --after=<file>      Script to run (and optionally await) after tests finish
   --port=<n>          HTTP server port (auto-selects a free port if taken)
