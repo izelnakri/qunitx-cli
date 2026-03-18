@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.0] - 2026-03-18
+[`v0.7.0...v0.8.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.7.0...v0.8.0)
+
+### Performance
+- Replace chokidar with node:fs.watch in setupFileWatchers — 2026-03-18 by [@izelnakri](https://github.com/izelnakri) ([`7bb0bd8`](https://github.com/izelnakri/qunitx-cli/commit/7bb0bd89d40f2907ed57ae7fa339bc6c13805f6c))
+
 ## [0.7.0] - 2026-03-18
 [`v0.6.0...v0.7.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.6.0...v0.7.0)
 
