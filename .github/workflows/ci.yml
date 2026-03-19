@@ -99,7 +99,7 @@ jobs:
           files: coverage/lcov.info
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: coverage/
@@ -144,7 +144,7 @@ jobs:
           FORCE_COLOR: 0
       - name: Generate API docs
         run: npm run docs && mkdir -p _site && cp -r docs/lib _site/api
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: coverage-report
           path: _site/coverage

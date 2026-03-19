@@ -4,4 +4,14 @@ updates:
   - package-ecosystem: 'github-actions'
     directory: '/'
     schedule:
-      interval: 'daily'
+      interval: 'weekly'
+    groups:
+      # upload-artifact and download-artifact share an artifact API and must
+      # be updated together to stay compatible.
+      artifact-actions:
+        patterns:
+          - 'actions/upload-artifact'
+          - 'actions/download-artifact'
+      docker-actions:
+        patterns:
+          - 'docker/*'
