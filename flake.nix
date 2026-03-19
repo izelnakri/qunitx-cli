@@ -14,7 +14,6 @@
   in {
     packages."${system}".default = napalm.legacyPackages."${system}".buildPackage ./. {
       nodejs = pkgs.nodejs_24;
-      PUPPETEER_SKIP_DOWNLOAD=1;
     };
 
     devShells."${system}".default = pkgs.mkShell {

@@ -12,7 +12,7 @@
 #
 # Outputs:
 #   docs/terminal.gif           — terminal-only animation (VHS)
-#   docs/browser-*.png          — browser screenshots (puppeteer)
+#   docs/browser-*.png          — browser screenshots (Playwright)
 #   docs/demo.gif               — final composite (1000×500, ~500 KB)
 
 set -euo pipefail
@@ -26,7 +26,7 @@ echo "==> Recording terminal animation (VHS)..."
 nix run nixpkgs#vhs -- "$DOCS/demo.tape"
 echo "    terminal.gif: $(du -h "$DOCS/terminal.gif" | cut -f1)"
 
-# ── 2. Browser screenshots via puppeteer ──────────────────────────────────────
+# ── 2. Browser screenshots via Playwright ─────────────────────────────────────
 echo "==> Taking browser screenshots..."
 if [[ -z "${CHROME_BIN:-}" ]]; then
   CHROME_BIN=$(nix eval --raw nixpkgs#chromium.outPath)/bin/chromium

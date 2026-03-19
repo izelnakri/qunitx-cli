@@ -1,7 +1,6 @@
 FROM node:24-slim
 
-ENV PUPPETEER_SKIP_DOWNLOAD=true \
-    CHROME_BIN=/usr/bin/google-chrome-stable \
+ENV CHROME_BIN=/usr/bin/google-chrome-stable \
     FORCE_COLOR=0
 
 RUN apt-get update \
