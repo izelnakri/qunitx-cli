@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.9.0] - 2026-03-19
+[`v0.8.0...v0.9.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.8.0...v0.9.0)
+
+### Bug Fixes
+- Resolve deno doc lint errors on exported consts — 2026-03-19 by [@izelnakri](https://github.com/izelnakri) ([`898f7dc`](https://github.com/izelnakri/qunitx-cli/commit/898f7dcd2d86880a07f4242e81075fddddc211cb))
+- Delay testTimeout fallback to prevent WS/CDP race under concurrent load — 2026-03-19 by [@izelnakri](https://github.com/izelnakri) ([`858d791`](https://github.com/izelnakri/qunitx-cli/commit/858d7913fc72c26ee57772d7b0e3c0572c488ad6))
+
+### Documentation
+- Document Playwright multi-browser support — 2026-03-19 by [@izelnakri](https://github.com/izelnakri) ([`d59cf69`](https://github.com/izelnakri/qunitx-cli/commit/d59cf694ca14dfbf3d5f4284ada8c140c09a0ba3))
+
+### Features
+- Add multi-browser test support (firefox, webkit) — 2026-03-19 by [@izelnakri](https://github.com/izelnakri) ([`51de1e5`](https://github.com/izelnakri/qunitx-cli/commit/51de1e5778c7c681e8a6e53d000223178e5e3ee5))
+- Remove stale old dependencies — 2026-03-19 by [@izelnakri](https://github.com/izelnakri) ([`1b45bb8`](https://github.com/izelnakri/qunitx-cli/commit/1b45bb8d2ed4d7924ec1d37e7a2c7b283e128d0d))
+
+### Performance
+- Migrate to playwright-core + CDP pre-launch, add --browser flag, --trace-perf — 2026-03-19 by [@izelnakri](https://github.com/izelnakri) ([`1dcda0a`](https://github.com/izelnakri/qunitx-cli/commit/1dcda0aed7038593e4e6c6757afaa4b4aa749d2d))
+
+### Refactoring
+- Remove all puppeteer references, replace with playwright — 2026-03-19 by [@izelnakri](https://github.com/izelnakri) ([`3c9292e`](https://github.com/izelnakri/qunitx-cli/commit/3c9292e61b1999b08e48d8b1b35b8e4cdb8c9c4d))
+
 ## [0.8.0] - 2026-03-18
 [`v0.7.0...v0.8.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.7.0...v0.8.0)
 
