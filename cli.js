@@ -27,5 +27,13 @@ process.title = 'qunitx';
     import('./lib/commands/run.js'),
   ]);
 
-  return await run(config);
+  try {
+    return await run(config);
+  } catch (error) {
+    console.error(error);
+    // Flush stdout before exit so any queued console.log writes (e.g. from WS testEnd
+    // handlers that fired before the exception) are not lost when process.exit() runs.
+    process.exitCode = 1;
+    process.stdout.write('\n', () => process.exit(1));
+  }
 })();

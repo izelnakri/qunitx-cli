@@ -3,6 +3,7 @@ import process from 'node:process';
 import fs from 'node:fs';
 import { promisify } from 'node:util';
 import { exec } from 'node:child_process';
+import '../helpers/custom-asserts.js';
 
 const CWD = process.cwd();
 const VERSION = JSON.parse(fs.readFileSync(`${CWD}/package.json`)).version;
@@ -46,30 +47,30 @@ module('Commands | Help tests', () => {
     const { stdout } = await cli();
 
     console.log(stdout);
-    assert.ok(stdout.includes(printedHelpOutput));
+    assert.includes(stdout, printedHelpOutput);
   });
 
   test('$ qunitx print -> prints help text', async (assert) => {
     const { stdout } = await cli('print');
 
-    assert.ok(stdout.includes(printedHelpOutput));
+    assert.includes(stdout, printedHelpOutput);
   });
 
   test('$ qunitx p -> prints help text', async (assert) => {
     const { stdout } = await cli('p');
 
-    assert.ok(stdout.includes(printedHelpOutput));
+    assert.includes(stdout, printedHelpOutput);
   });
 
   test('$ qunitx help -> prints help text', async (assert) => {
     const { stdout } = await cli('help');
 
-    assert.ok(stdout.includes(printedHelpOutput));
+    assert.includes(stdout, printedHelpOutput);
   });
 
   test('$ qunitx h -> prints help text', async (assert) => {
     const { stdout } = await cli('h');
 
-    assert.ok(stdout.includes(printedHelpOutput));
+    assert.includes(stdout, printedHelpOutput);
   });
 });

@@ -4,3 +4,4 @@ import './failfast-test.js';
 import './output-test.js';
 import './port-test.js';
 import './timeout-test.js';
+import './watch-test.js';

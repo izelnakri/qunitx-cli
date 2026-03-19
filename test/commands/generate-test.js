@@ -1,6 +1,7 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import '../helpers/custom-asserts.js';
 import shell from '../helpers/shell.js';
 
 module('Commands | generate tests', (_hooks, moduleMetadata) => {
@@ -14,13 +15,14 @@ module('Commands | generate tests', (_hooks, moduleMetadata) => {
         ...testMetadata,
       });
 
-      assert.ok(stdout.includes('written'), 'prints a confirmation message');
-      assert.ok(stdout.includes(expectedPath), 'confirmation includes the full resolved path');
+      assert.includes(stdout, 'written', 'prints a confirmation message');
+      assert.includes(stdout, expectedPath, 'confirmation includes the full resolved path');
 
       const content = await fs.readFile(expectedPath, 'utf-8');
-      assert.ok(content.includes("module('"), 'generated file contains a module() call');
-      assert.ok(
-        content.includes(name),
+      assert.includes(content, "module('", 'generated file contains a module() call');
+      assert.includes(
+        content,
+        name,
         'the {{moduleName}} placeholder is replaced with the given path',
       );
     } finally {
@@ -38,10 +40,10 @@ module('Commands | generate tests', (_hooks, moduleMetadata) => {
         ...testMetadata,
       });
 
-      assert.ok(stdout.includes('written'), 'prints a confirmation message');
+      assert.includes(stdout, 'written', 'prints a confirmation message');
 
       const content = await fs.readFile(expectedPath, 'utf-8');
-      assert.ok(content.includes("module('"), 'generated file contains a module() call');
+      assert.includes(content, "module('", 'generated file contains a module() call');
     } finally {
       await fs.rm(expectedPath, { force: true });
     }
@@ -57,10 +59,10 @@ module('Commands | generate tests', (_hooks, moduleMetadata) => {
         ...testMetadata,
       });
 
-      assert.ok(stdout.includes('written'), 'prints a confirmation message');
+      assert.includes(stdout, 'written', 'prints a confirmation message');
 
       const content = await fs.readFile(expectedPath, 'utf-8');
-      assert.ok(content.includes("module('"), 'generated .ts file contains a module() call');
+      assert.includes(content, "module('", 'generated .ts file contains a module() call');
     } finally {
       await fs.rm(expectedPath, { force: true });
     }
@@ -77,15 +79,12 @@ module('Commands | generate tests', (_hooks, moduleMetadata) => {
         ...testMetadata,
       });
 
-      assert.ok(stdout.includes('written'), 'prints a confirmation message');
+      assert.includes(stdout, 'written', 'prints a confirmation message');
 
       const content = await fs.readFile(expectedPath, 'utf-8');
-      assert.ok(content.includes("module('"), 'file was created inside the nested directory');
+      assert.includes(content, "module('", 'file was created inside the nested directory');
     } finally {
-      await fs.rm(`${process.cwd()}/tmp/generated-dir-${uuid}`, {
-        recursive: true,
-        force: true,
-      });
+      await fs.rm(`${process.cwd()}/tmp/generated-dir-${uuid}`, { recursive: true, force: true });
     }
   });
 
@@ -103,7 +102,7 @@ module('Commands | generate tests', (_hooks, moduleMetadata) => {
         ...testMetadata,
       });
 
-      assert.ok(stdout.includes('already exists'), 'prints "already exists" when file is present');
+      assert.includes(stdout, 'already exists', 'prints "already exists" when file is present');
 
       const content = await fs.readFile(expectedPath, 'utf-8');
       assert.equal(content, originalContent, 'existing file content is not overwritten');
