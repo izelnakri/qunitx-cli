@@ -14,8 +14,7 @@
     "npm:picomatch@^4.0.3": "4.0.3",
     "npm:playwright-core@^1.58.2": "1.58.2",
     "npm:prettier@^3.8.1": "3.8.1",
-    "npm:qunit@^2.25.0": "2.25.0",
-    "npm:qunitx@1": "1.0.0",
+    "npm:qunitx@^1.0.3": "1.0.3",
     "npm:ws@*": "8.19.0",
     "npm:ws@^8.19.0": "8.19.0"
   },
@@ -214,9 +213,6 @@
         "get-intrinsic"
       ]
     },
-    "commander@7.2.0": {
-      "integrity": "sha512-QrWXB+ZQSVPmIWIhtEO9H+gwHaMGYiF5ChvoJ+K9ZGHG/sVsa6yiesAD1GC/x46sET00Xlwo1u49RVVVzvcSkw=="
-    },
     "content-disposition@1.0.1": {
       "integrity": "sha512-oIXISMynqSqm241k6kcQ5UwttDILMK4BiurCfGEREw6+X9jkkpEe5T9FZaApyLGGOnFuyMWZpdolTXMtvEJ08Q=="
     },
@@ -385,12 +381,6 @@
         "es-object-atoms"
       ]
     },
-    "globalyzer@0.1.0": {
-      "integrity": "sha512-40oNTM9UfG6aBmuKxk/giHn5nQ8RVz/SS4Ir6zgzOv9/qC3kKZ9v4etGTcJbEl/NyVQH7FGU7d+X1egr57Md2Q=="
-    },
-    "globrex@0.1.2": {
-      "integrity": "sha512-uHJgbwAMwNFf5mLst7IWLNg14x1CkeqglJb/K3doi4dw6q2IvAAmM/Y81kevy83wP+Sst+nutFTYOGg3d1lsxg=="
-    },
     "gopd@1.2.0": {
       "integrity": "sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg=="
     },
@@ -459,9 +449,6 @@
     "negotiator@1.0.0": {
       "integrity": "sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg=="
     },
-    "node-watch@0.7.3": {
-      "integrity": "sha512-3l4E8uMPY1HdMMryPRUAl+oIHtXtyiTlIiESNSVSNxcPfzAFzeTbXFQkZfAwBbo0B1qMSG8nUABx+Gd+YrbKrQ=="
-    },
     "object-assign@4.1.1": {
       "integrity": "sha512-rJgTQnkUnH1sFw8yT6VSU3zD3sWmu6sZhIseY8VX+GRu3P6F7Fu+JNDoXfklElbLJSnc3FUQHVe4cU5hj+BcUg=="
     },
@@ -510,17 +497,8 @@
         "side-channel"
       ]
     },
-    "qunit@2.25.0": {
-      "integrity": "sha512-MONPKgjavgTqArCwZOEz8nEMbA19zNXIp5ZOW9rPYj5cbgQp0fiI36c9dPTSzTRRzx+KcfB5eggYB/ENqxi0+w==",
-      "dependencies": [
-        "commander",
-        "node-watch",
-        "tiny-glob"
-      ],
-      "bin": true
-    },
-    "qunitx@1.0.0": {
-      "integrity": "sha512-YSlZcuX1nYLZKWUWxUM8bKPKAqHRR8L+lO6ALok311D/ZlDIdXb7XDsWaO4wvYuUYTwwm+MS1TnHLPckhENMwg=="
+    "qunitx@1.0.3": {
+      "integrity": "sha512-LdCQ0Sh85IvLqcAIIbIlNNC3NGEMlkuDUQl1gk3AH2d3Dv7HbEYEG+RW786c8w5gMfPh8gx1+PJKbuN2jqQf+g=="
     },
     "range-parser@1.2.1": {
       "integrity": "sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg=="
@@ -614,13 +592,6 @@
     "statuses@2.0.2": {
       "integrity": "sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw=="
     },
-    "tiny-glob@0.2.9": {
-      "integrity": "sha512-g/55ssRPUjShh+xkfx9UPDXqhckHEsHr4Vd9zX55oSdGZc/MD0m3sferOkwWtp98bv+kcVfEHtRJgBVJzelrzg==",
-      "dependencies": [
-        "globalyzer",
-        "globrex"
-      ]
-    },
     "toidentifier@1.0.1": {
       "integrity": "sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA=="
     },
@@ -663,8 +634,7 @@
         "npm:picomatch@^4.0.3",
         "npm:playwright-core@^1.58.2",
         "npm:prettier@^3.8.1",
-        "npm:qunit@^2.25.0",
-        "npm:qunitx@1",
+        "npm:qunitx@^1.0.3",
         "npm:ws@^8.19.0"
       ]
     }

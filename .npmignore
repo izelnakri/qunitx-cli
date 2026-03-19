@@ -3,7 +3,6 @@
 .env
 .github
 .gitignore
-build.js
 CHANGELOG.md
 cliff.toml
 demo

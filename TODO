@@ -1,6 +1,3 @@
-- Make test suite and preload for other browsers supported by playwright as well
-- Make sure fail 1 gets prevented. Debug and fix the flakiness
-
 - What if I didnt even bundle and transpile the files(?)
 
 - How does this work with test.html. Also document it

@@ -21,12 +21,10 @@
     "lint": "deno lint lib/ cli.js",
     "lint:docs": "node scripts/lint-docs.js",
     "docs": "deno doc --html --name=\"qunitx-cli\" --output=docs/lib 'lib/**/*.js' README.md",
-    "build": "node build.js",
     "changelog:unreleased": "git-cliff --unreleased --strip all",
     "changelog:preview": "git-cliff",
     "changelog:update": "git-cliff --output CHANGELOG.md",
     "postinstall": "deno install --allow-scripts=npm:playwright-core || true",
-    "prepack": "npm run build",
     "test": "node test/setup.js && FORCE_COLOR=0 node --test test/**/*-test.js",
     "test:browser": "node test/setup.js && FORCE_COLOR=0 node --test test/flags/*-test.js test/inputs/*-test.js",
     "test:sanity-first": "./cli.js test/helpers/failing-tests.js test/helpers/failing-tests.ts",
@@ -54,7 +52,7 @@
     "express": "^5.2.1",
     "js-yaml": "^4.1.1",
     "prettier": "^3.8.1",
-    "qunitx": "^1.0.0"
+    "qunitx": "^1.0.3"
   },
   "volta": {
     "node": "24.14.0"

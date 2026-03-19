@@ -13,8 +13,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const CHROME = process.env.CHROME_BIN || null;
 
-const qunitJS = await fs.readFile(path.join(ROOT, 'vendor/qunit.js'), 'utf8');
-const qunitCSS = await fs.readFile(path.join(ROOT, 'vendor/qunit.css'), 'utf8');
+const qunitJS = await fs.readFile(path.join(ROOT, 'node_modules/qunitx/vendor/qunit.js'), 'utf8');
+const qunitCSS = await fs.readFile(path.join(ROOT, 'node_modules/qunitx/vendor/qunit.css'), 'utf8');
 
 // ── Shared test suite ────────────────────────────────────────────────────────
 // Bug is in deepEqual: scores[1] is 87 in "actual" but 88 in "expected".
