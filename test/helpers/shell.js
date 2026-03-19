@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
-import { exec } from 'node:child_process';
+import { exec, spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import net from 'node:net';
 
@@ -11,11 +11,12 @@ const shell = promisify(exec);
 let semaphorePort = null;
 async function getPort() {
   if (!semaphorePort) {
-    semaphorePort = parseInt(await readFile('tmp/.semaphore-port', 'utf8'), 10);
+    semaphorePort = parseInt(await readFile('tmp/.semaphore-port', 'utf8'), 10); // NOTE: Should this in FS or in memory?
   }
   return semaphorePort;
 }
 
+// NOTE: What is the point of starting sockets and writing to them? Seems like quite a bit junk code here
 async function acquireSlot() {
   const port = await getPort();
   return new Promise((resolve, reject) => {
@@ -46,7 +47,63 @@ function releaseSlot(sock) {
 //   QUNITX_BROWSER=firefox npm test   or   make test-firefox
 const QUNITX_BROWSER = process.env.QUNITX_BROWSER;
 
-export default async function execute(commandString, { moduleName = '', testName = '' } = {}) {
+// Spawns a long-running CLI command (e.g. --watch mode), collects stdout until
+// `until(buf)` returns true, then kills the process and releases the semaphore.
+export async function shellWatch(commandString, { until, timeout = 45000 } = {}) {
+  let command = commandString;
+  if (/\bnode cli\.js\b/.test(command) && !/--output/.test(command)) {
+    command = `${command} --output=tmp/run-${randomUUID()}`;
+  }
+  if (QUNITX_BROWSER && !/--browser/.test(command)) {
+    command = `${command} --browser=${QUNITX_BROWSER}`;
+  }
+
+  const [, ...args] = command.split(/\s+/); // strip 'node', keep the rest
+  const sock = await acquireSlot();
+  const child = spawn(process.execPath, args);
+
+  try {
+    return await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`shellWatch timed out after ${timeout}ms`)),
+        timeout,
+      );
+      let buf = '';
+      child.stdout.on('data', (chunk) => {
+        buf += chunk.toString();
+        if (!until || until(buf)) {
+          clearTimeout(timer);
+          resolve(buf);
+        }
+      });
+      child.stderr.resume(); // drain stderr so it never blocks stdout
+      child.on('error', reject);
+    });
+  } finally {
+    child.kill('SIGTERM');
+    // Destroy the stdout/stderr pipes so their 'data' listeners don't keep the event loop
+    // alive if the child process is slow to exit (e.g. Playwright's SIGTERM handler tries
+    // to close Firefox gracefully and hangs, leaving the pipe open indefinitely).
+    child.stdout.destroy();
+    child.stderr.destroy();
+    await releaseSlot(sock);
+  }
+}
+
+export async function shellFails(commandString, options = {}) {
+  try {
+    const result = await execute(commandString, options);
+    result.code = 0;
+    return result;
+  } catch (error) {
+    return error;
+  }
+}
+
+export default async function execute(
+  commandString,
+  { moduleName = '', testName = '', noSemaphore = false } = {},
+) {
   // Each browser test run gets its own output dir so parallel runs never clobber each other.
   // Only applied when the command targets cli.js and doesn't already specify --output.
   let command = commandString;
@@ -65,9 +122,10 @@ export default async function execute(commandString, { moduleName = '', testName
     command = `${command} --browser=${QUNITX_BROWSER}`;
   }
 
-  const sock = needsBrowser ? await acquireSlot() : null;
+  let sock = null;
 
   try {
+    sock = needsBrowser && !noSemaphore ? await acquireSlot() : null;
     let result = await shell(command, { timeout: 60000 });
     let { stdout, stderr } = result;
 
@@ -93,6 +151,9 @@ export default async function execute(commandString, { moduleName = '', testName
 
     return result;
   } catch (error) {
+    error.stdout ??= '';
+    error.stderr ??= '';
+
     console.trace(`
       ERROR TEST Name: ${moduleName} | ${testName}
       ERROR TEST COMMAND: ${command}

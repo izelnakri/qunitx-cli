@@ -5,9 +5,23 @@ process.env['FORCE_COLOR'] = 0;
 
 await fs.rm('./tmp', { recursive: true, force: true });
 await fs.mkdir('./tmp/test', { recursive: true });
-let [failingTestContent, passingTestContent] = await Promise.all([
-  fs.readFile('./test/helpers/failing-tests.js'),
-  fs.readFile('./test/helpers/passing-tests.js'),
+
+// Start the semaphore server and read template files in parallel — both are
+// independent of each other and can proceed concurrently.
+const SEMAPHORE_PORT_FILE = 'tmp/.semaphore-port';
+const [[failingTestContent, passingTestContent]] = await Promise.all([
+  Promise.all([
+    fs.readFile('./test/helpers/failing-tests.js'),
+    fs.readFile('./test/helpers/passing-tests.js'),
+  ]),
+  new Promise((resolve) => {
+    spawn(process.execPath, ['test/semaphore-server.js', SEMAPHORE_PORT_FILE], {
+      detached: true,
+      stdio: 'ignore',
+      cwd: process.cwd(),
+    }).unref();
+    resolve();
+  }),
 ]);
 
 await Promise.all([
@@ -16,16 +30,6 @@ await Promise.all([
   fs.writeFile('./tmp/test/passing-tests.js', passingTestContent.toString()),
   fs.writeFile('./tmp/test/passing-tests.ts', passingTestContent.toString()),
 ]);
-
-// Start a cross-process Chrome concurrency semaphore server so all test workers
-// share a single global slot count instead of each maintaining their own counter.
-// The server writes its port to a file (passed as argv[2]) so no pipe is needed.
-const SEMAPHORE_PORT_FILE = 'tmp/.semaphore-port';
-spawn(process.execPath, ['test/semaphore-server.js', SEMAPHORE_PORT_FILE], {
-  detached: true,
-  stdio: 'ignore',
-  cwd: process.cwd(),
-}).unref();
 
 // Poll until the server writes its port file (should be near-instant).
 await new Promise((resolve) => {

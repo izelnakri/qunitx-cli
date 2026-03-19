@@ -17,10 +17,6 @@ module('{{moduleName}} Before script web server tests', function (hooks) {
 
     assert.deepEqual(json, { film: 'responsed correctly' });
   });
-
-  // test('async test finishes', async function (assert) {
-
-  // });
 });
 
 function wait(duration) {
