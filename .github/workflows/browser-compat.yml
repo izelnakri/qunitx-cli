@@ -1,0 +1,49 @@
+name: Browser Compatibility
+
+# Runs only the browser-specific tests (test/flags/ + test/inputs/) against Firefox
+# and WebKit. Unit tests (TAP, parse-cli-flags, servers, etc.) are browser-agnostic
+# and are already covered by the main CI test job on Chromium — no need to repeat them.
+#
+# Triggers:
+#   - Every push/merge to main (catches regressions before a release)
+#   - Weekly on Monday to detect upstream Playwright browser changes
+#   - Not on PRs — keeps PR feedback fast; Chromium coverage is sufficient for review
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1' # Every Monday at 06:00 UTC
+  workflow_dispatch: # Allow manual runs
+
+permissions:
+  contents: read
+
+jobs:
+  browser-compat:
+    name: ${{ matrix.browser }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false # Firefox failure should not cancel WebKit and vice versa
+      matrix:
+        browser: [firefox, webkit]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Playwright browser (${{ matrix.browser }})
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Run browser tests (${{ matrix.browser }})
+        run: npm run test:browser
+        env:
+          QUNITX_BROWSER: ${{ matrix.browser }}
+          FORCE_COLOR: 0

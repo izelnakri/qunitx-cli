@@ -28,6 +28,7 @@
     "postinstall": "deno install --allow-scripts=npm:playwright-core || true",
     "prepack": "npm run build",
     "test": "node test/setup.js && FORCE_COLOR=0 node --test test/**/*-test.js",
+    "test:browser": "node test/setup.js && FORCE_COLOR=0 node --test test/flags/*-test.js test/inputs/*-test.js",
     "test:sanity-first": "./cli.js test/helpers/failing-tests.js test/helpers/failing-tests.ts",
     "test:sanity-second": "./cli.js test/helpers/passing-tests.js test/helpers/passing-tests.ts"
   },

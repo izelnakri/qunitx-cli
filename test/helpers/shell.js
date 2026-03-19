@@ -41,6 +41,11 @@ function releaseSlot(sock) {
   });
 }
 
+// When QUNITX_BROWSER is set, all browser test runs use that engine (firefox, webkit, chromium).
+// This lets the same test files run against any Playwright-supported browser without modification:
+//   QUNITX_BROWSER=firefox npm test   or   make test-firefox
+const QUNITX_BROWSER = process.env.QUNITX_BROWSER;
+
 export default async function execute(commandString, { moduleName = '', testName = '' } = {}) {
   // Each browser test run gets its own output dir so parallel runs never clobber each other.
   // Only applied when the command targets cli.js and doesn't already specify --output.
@@ -49,12 +54,18 @@ export default async function execute(commandString, { moduleName = '', testName
     command = `${command} --output=tmp/run-${randomUUID()}`;
   }
 
-  // The semaphore guards Chrome concurrency. Subcommands that never launch Chrome
+  // The semaphore guards browser concurrency. Subcommands that never launch a browser
   // (generate / help / init) skip it so they don't occupy a slot that browser tests need.
-  const NON_CHROME_SUBCOMMAND = /\bnode cli\.js\b\s+(generate|g|new|n|help|h|p|print|init)\b/;
-  const needsChrome =
-    /\bnode cli\.js\b/.test(commandString) && !NON_CHROME_SUBCOMMAND.test(commandString);
-  const sock = needsChrome ? await acquireSlot() : null;
+  const NON_BROWSER_SUBCOMMAND = /\bnode cli\.js\b\s+(generate|g|new|n|help|h|p|print|init)\b/;
+  const needsBrowser =
+    /\bnode cli\.js\b/.test(commandString) && !NON_BROWSER_SUBCOMMAND.test(commandString);
+
+  // Inject --browser flag when QUNITX_BROWSER is set and the command doesn't already specify one.
+  if (needsBrowser && QUNITX_BROWSER && !/--browser/.test(command)) {
+    command = `${command} --browser=${QUNITX_BROWSER}`;
+  }
+
+  const sock = needsBrowser ? await acquireSlot() : null;
 
   try {
     let result = await shell(command, { timeout: 60000 });
