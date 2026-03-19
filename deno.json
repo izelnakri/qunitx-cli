@@ -1,13 +1,8 @@
 {
   "nodeModulesDir": "auto",
   "imports": {
-    "cheerio": "npm:cheerio",
-    "chokidar": "npm:chokidar",
     "esbuild": "npm:esbuild",
-    "js-yaml": "npm:js-yaml",
-    "kleur": "npm:kleur",
     "picomatch": "npm:picomatch",
-    "recursive-lookup": "npm:recursive-lookup",
     "ws": "npm:ws"
   },
   "tasks": {
