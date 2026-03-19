@@ -7,7 +7,6 @@
     "js-yaml": "npm:js-yaml",
     "kleur": "npm:kleur",
     "picomatch": "npm:picomatch",
-    "puppeteer": "npm:puppeteer",
     "recursive-lookup": "npm:recursive-lookup",
     "ws": "npm:ws"
   },
