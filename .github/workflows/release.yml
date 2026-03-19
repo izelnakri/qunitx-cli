@@ -86,6 +86,7 @@ jobs:
             --outfile=sea-entry.cjs \
             --external:fsevents \
             --external:typescript \
+            --external:chromium-bidi \
             --log-level=warning
 
       - name: Create SEA blob
