@@ -35,6 +35,18 @@ module('Setup | parseCliFlags | --extensions', () => {
   });
 });
 
+module('Setup | parseCliFlags | --failFast', () => {
+  test('--failFast sets failFast to true', (assert) => {
+    const flags = withArgv(['--failFast'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.failFast, true);
+  });
+
+  test('--failfast alias also sets failFast to true', (assert) => {
+    const flags = withArgv(['--failfast'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.failFast, true);
+  });
+});
+
 module('Setup | parseCliFlags | --timeout', () => {
   test('--timeout value is parsed as a number, not a string', (assert) => {
     const flags = withArgv(['--timeout=5000'], () => parseCliFlags(PROJECT_ROOT));
