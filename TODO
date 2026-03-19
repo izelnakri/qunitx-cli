@@ -1,3 +1,12 @@
+- This last commit, assert.includes is major. I need to review it on github the sole commit. Make sure we dont loose the object comparison on RegEx with custom assertions
+
+- Probably should have assert.includes (handles both strings and arrays) - let the llm decide whether they should be seperate functions and its naming, also check the assertions of node.js and deno to decide
+- Also make additional custom assertions based on assert.pushResult that exists in the changes now
+
+- probably a regex check custom assertion
+
+
+- Revert Sync calls to async calls once more once we can eliminate some cold start async functions like transpiling
 - What if I didnt even bundle and transpile the files(?)
 
 - How does this work with test.html. Also document it
