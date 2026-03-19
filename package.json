@@ -25,7 +25,7 @@
     "changelog:unreleased": "git-cliff --unreleased --strip all",
     "changelog:preview": "git-cliff",
     "changelog:update": "git-cliff --output CHANGELOG.md",
-    "postinstall": "deno install --allow-scripts=npm:puppeteer || true",
+    "postinstall": "deno install --allow-scripts=npm:playwright-core || true",
     "prepack": "npm run build",
     "test": "node test/setup.js && FORCE_COLOR=0 node --test test/**/*-test.js",
     "test:sanity-first": "./cli.js test/helpers/failing-tests.js test/helpers/failing-tests.ts",
@@ -45,12 +45,13 @@
   "dependencies": {
     "esbuild": "^0.27.3",
     "picomatch": "^4.0.3",
-    "puppeteer": "^24.38.0",
+    "playwright-core": "^1.58.2",
     "ws": "^8.19.0"
   },
   "devDependencies": {
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "js-yaml": "^4.1.1",
     "prettier": "^3.8.1",
     "qunit": "^2.25.0",
     "qunitx": "^1.0.0"

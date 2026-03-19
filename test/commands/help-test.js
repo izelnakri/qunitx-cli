@@ -31,6 +31,7 @@ Optional flags:
 --failFast : run the target file or folders with immediate abort if a single test fails
 --port : HTTP server port (auto-selects a free port if the given port is taken)[default: 1234]
 --extensions : comma-separated file extensions to track for discovery and watch-mode rebuilds[default: js,ts]
+--browser : browser engine to run tests in: chromium, firefox, webkit[default: chromium]
 --before : run a script before the tests(i.e start a new web server before tests)
 --after : run a script after the tests(i.e save test results to a file)
 

@@ -48,7 +48,6 @@ jobs:
       - run: npm ci
       - run: npm test
         env:
-          PUPPETEER_SKIP_DOWNLOAD: true
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
 
@@ -75,7 +74,7 @@ jobs:
   # ── Coverage ──────────────────────────────────────────────────────────────────
   # Runs in parallel with test. c8 is the Node.js equivalent of `deno coverage`:
   # both use V8's built-in coverage mechanism. c8 is required here because
-  # qunitx-cli tests launch headless Chrome via puppeteer — the code runs inside
+  # qunitx-cli tests launch headless Chrome via playwright — the code runs inside
   # child `node cli.js` processes that can't execute under Deno.
   # c8 sets NODE_V8_COVERAGE so all child processes write coverage data;
   # it merges them and emits coverage/lcov.info for Codecov.
@@ -93,7 +92,6 @@ jobs:
       - run: npm ci
       - run: npx c8 --reporter=lcov --reporter=text --reporter=html npm test
         env:
-          PUPPETEER_SKIP_DOWNLOAD: true
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
       - uses: codecov/codecov-action@v5
@@ -142,7 +140,6 @@ jobs:
       - name: Capture demo output
         run: node cli.js docs/demo-math-test.js --output=tmp/pages-demo > demo-output.txt 2>&1 || true
         env:
-          PUPPETEER_SKIP_DOWNLOAD: true
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
       - name: Generate API docs
