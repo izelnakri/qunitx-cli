@@ -25,7 +25,6 @@ jobs:
       - run: npm ci
       - run: npm test
         env:
-          PUPPETEER_SKIP_DOWNLOAD: true
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
 

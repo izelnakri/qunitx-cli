@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import process from 'node:process';
+import './lib/utils/early-chrome.js';
 import displayHelpOutput from './lib/commands/help.js';
 import initializeProject from './lib/commands/init.js';
 import generateTestFiles from './lib/commands/generate.js';
-import run from './lib/commands/run.js';
 import setupConfig from './lib/setup/config.js';
 
 process.title = 'qunitx';
@@ -19,7 +19,13 @@ process.title = 'qunitx';
     return await initializeProject();
   }
 
-  const config = await setupConfig();
+  // Lazy import: run.js (and its static imports like esbuild and playwright-core) are
+  // only loaded when actually running tests. Importing in parallel with setupConfig()
+  // lets playwright-core start loading while config is being assembled.
+  const [config, { default: run }] = await Promise.all([
+    setupConfig(),
+    import('./lib/commands/run.js'),
+  ]);
 
   return await run(config);
 })();
