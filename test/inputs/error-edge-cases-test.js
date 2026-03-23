@@ -7,7 +7,6 @@ module('Advanced Error Edge Cases Tests', (_hooks, moduleMetadata) => {
     const cmd = await shellFails('node cli.js tmp/this-file-does-not-exist.js', {
       ...moduleMetadata,
       ...testMetadata,
-      noSemaphore: true,
     });
     assert.exitCode(cmd, 1);
   });
@@ -16,7 +15,6 @@ module('Advanced Error Edge Cases Tests', (_hooks, moduleMetadata) => {
     const cmd = await shellFails('node cli.js tmp/this-folder-does-not-exist', {
       ...moduleMetadata,
       ...testMetadata,
-      noSemaphore: true,
     });
     assert.exitCode(cmd, 1);
   });
@@ -28,7 +26,6 @@ module('Advanced Error Edge Cases Tests', (_hooks, moduleMetadata) => {
     const cmd = await shellFails('node cli.js this-command-does-not-exist', {
       ...moduleMetadata,
       ...testMetadata,
-      noSemaphore: true,
     });
     assert.exitCode(cmd, 1);
   });

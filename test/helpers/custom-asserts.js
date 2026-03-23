@@ -206,8 +206,9 @@ export function assertFailingTestCase(
           'expected: true',
           'Died on test #2',
           /name: 'Assertion #\d+'/,
-          /stack:\s+at /,
-          /at: \S+:\d+:\d+/,
+          // Stack trace format differs by browser: Chrome uses 'at func (file:///...)',
+          // WebKit/Firefox use '@http://host:port/:line:col'. Match either prefix.
+          /stack:\s+'?(@|at )/,
         ],
       },
       `assertFailingTestCase: ${mod}`,
