@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { assertPassingTestCase, assertTAPResult } from '../helpers/custom-asserts.js';
+import { assertPassingTestCasesFor, assertTAPResult } from '../helpers/custom-asserts.js';
 import shell from '../helpers/shell.js';
 
 module('--output flag tests for browser mode', (_hooks, moduleMetadata) => {
@@ -14,7 +14,7 @@ module('--output flag tests for browser mode', (_hooks, moduleMetadata) => {
         ...testMetadata,
       });
 
-      assertPassingTestCase(assert, result, { testNo: 1, moduleName: '{{moduleName}}' });
+      assertPassingTestCasesFor(assert, result, { testNo: 1, moduleName: '{{moduleName}}' });
       assertTAPResult(assert, result, { testCount: 3 });
 
       const [indexStat, testsStat] = await Promise.allSettled([

@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import {
-  assertPassingTestCase,
+  assertPassingTestCasesFor,
   assertFailingTestCase,
   assertTAPResult,
 } from '../helpers/custom-asserts.js';
@@ -13,7 +13,7 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
       ...testMetadata,
     });
 
-    assertPassingTestCase(assert, result, { testNo: 1, moduleName: '{{moduleName}}' });
+    assertPassingTestCasesFor(assert, result, { testNo: 1, moduleName: '{{moduleName}}' });
     assertTAPResult(assert, result, { testCount: 3 });
   });
 
@@ -25,7 +25,11 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
 
     assert.hasDebugURL(result);
     assert.includes(result, 'TAP version 13');
-    assertPassingTestCase(assert, result, { debug: true, testNo: 1, moduleName: '{{moduleName}}' });
+    assertPassingTestCasesFor(assert, result, {
+      debug: true,
+      testNo: 1,
+      moduleName: '{{moduleName}}',
+    });
     assertTAPResult(assert, result, { testCount: 3 });
   });
 
@@ -65,7 +69,7 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
     });
 
     assert.includes(result, 'TAP version 13');
-    assertPassingTestCase(assert, result, { testNo: 1, moduleName: '{{moduleName}}' });
+    assertPassingTestCasesFor(assert, result, { testNo: 1, moduleName: '{{moduleName}}' });
     assertTAPResult(assert, result, { testCount: 3 });
   });
 
@@ -77,7 +81,11 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
 
     assert.hasDebugURL(result);
     assert.includes(result, 'TAP version 13');
-    assertPassingTestCase(assert, result, { debug: true, testNo: 1, moduleName: '{{moduleName}}' });
+    assertPassingTestCasesFor(assert, result, {
+      debug: true,
+      testNo: 1,
+      moduleName: '{{moduleName}}',
+    });
     assertTAPResult(assert, result, { testCount: 3 });
   });
 

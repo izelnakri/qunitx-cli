@@ -125,7 +125,7 @@ const FAILING_TEST_CASES = [
   { status: 'not ok', name: 'deepEqual true works' },
 ];
 
-export function assertPassingTestCase(
+export function assertPassingTestCasesFor(
   assert,
   result,
   options = { moduleName: '{{moduleName}}', debug: false },
@@ -151,7 +151,7 @@ export function assertPassingTestCase(
     {
       contains: [...testLines, ...(debug ? DEBUG_LOGS : [])],
     },
-    `assertPassingTestCase: ${mod}`,
+    `assertPassingTestCasesFor: ${mod}`,
   );
 }
 
@@ -244,7 +244,7 @@ export function assertTAPResult(assert, result, options = { testCount: 0, failCo
 }
 
 export default {
-  assertPassingTestCase,
+  assertPassingTestCasesFor,
   assertFailingTestCase,
   assertTAPResult,
 };

@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import { writeTestFolder } from '../helpers/fs-writers.js';
 import {
-  assertPassingTestCase,
+  assertPassingTestCasesFor,
   assertFailingTestCase,
   assertTAPResult,
 } from '../helpers/custom-asserts.js';
@@ -16,9 +16,9 @@ module('File and Folder Combination Tests', (_hooks, moduleMetadata) => {
       ...testMetadata,
     });
 
-    assertPassingTestCase(assert, result, { moduleName: `${folderName} | first-module-pass` });
-    assertPassingTestCase(assert, result, { moduleName: `${folderName} | second-module-pass` });
-    assertPassingTestCase(assert, result, { moduleName: '{{moduleName}}' });
+    assertPassingTestCasesFor(assert, result, { moduleName: `${folderName} | first-module-pass` });
+    assertPassingTestCasesFor(assert, result, { moduleName: `${folderName} | second-module-pass` });
+    assertPassingTestCasesFor(assert, result, { moduleName: '{{moduleName}}' });
     // folder: 2 files × 3 tests = 6; extra file: 3 tests → 9 total
     assertTAPResult(assert, result, { testCount: 9 });
   });
@@ -31,8 +31,8 @@ module('File and Folder Combination Tests', (_hooks, moduleMetadata) => {
       ...testMetadata,
     });
     assert.exitCode(cmd, 1, 'expected shell to exit non-zero due to failing tests');
-    assertPassingTestCase(assert, cmd, { moduleName: `${folderName} | first-module-pass` });
-    assertPassingTestCase(assert, cmd, { moduleName: `${folderName} | second-module-pass` });
+    assertPassingTestCasesFor(assert, cmd, { moduleName: `${folderName} | first-module-pass` });
+    assertPassingTestCasesFor(assert, cmd, { moduleName: `${folderName} | second-module-pass` });
     assertFailingTestCase(assert, cmd, { moduleName: `${folderName} | first-module-fail` });
     assertFailingTestCase(assert, cmd, { moduleName: `${folderName} | second-module-fail` });
     assertFailingTestCase(assert, cmd, { moduleName: `${folderName} | third-module-fail` });

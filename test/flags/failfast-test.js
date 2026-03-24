@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { assertPassingTestCase, assertTAPResult } from '../helpers/custom-asserts.js';
+import { assertPassingTestCasesFor, assertTAPResult } from '../helpers/custom-asserts.js';
 import shell, { shellFails } from '../helpers/shell.js';
 
 module('--failFast flag tests for browser mode', (_hooks, moduleMetadata) => {
@@ -9,7 +9,7 @@ module('--failFast flag tests for browser mode', (_hooks, moduleMetadata) => {
       ...testMetadata,
     });
 
-    assertPassingTestCase(assert, result, { testNo: 1, moduleName: '{{moduleName}}' });
+    assertPassingTestCasesFor(assert, result, { testNo: 1, moduleName: '{{moduleName}}' });
     assertTAPResult(assert, result, { testCount: 3 });
   });
 

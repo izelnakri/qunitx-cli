@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import { writeTestFolder } from '../helpers/fs-writers.js';
 import {
-  assertPassingTestCase,
+  assertPassingTestCasesFor,
   assertFailingTestCase,
   assertTAPResult,
 } from '../helpers/custom-asserts.js';
@@ -16,11 +16,11 @@ module('Folder Input Tests', (_hooks, moduleMetadata) => {
       ...testMetadata,
     });
 
-    assertPassingTestCase(assert, result, {
+    assertPassingTestCasesFor(assert, result, {
       debug: false,
       moduleName: `${folderName} | first-module-pass`,
     });
-    assertPassingTestCase(assert, result, {
+    assertPassingTestCasesFor(assert, result, {
       debug: false,
       moduleName: `${folderName} | second-module-pass`,
     });
@@ -35,11 +35,11 @@ module('Folder Input Tests', (_hooks, moduleMetadata) => {
       ...testMetadata,
     });
     assert.exitCode(cmd, 1, 'expected shell to exit non-zero due to failing tests');
-    assertPassingTestCase(assert, cmd, {
+    assertPassingTestCasesFor(assert, cmd, {
       debug: false,
       moduleName: `${folderName} | first-module-pass`,
     });
-    assertPassingTestCase(assert, cmd, {
+    assertPassingTestCasesFor(assert, cmd, {
       debug: false,
       moduleName: `${folderName} | second-module-pass`,
     });
@@ -74,19 +74,19 @@ module('Folder Input Tests', (_hooks, moduleMetadata) => {
       ...testMetadata,
     });
 
-    assertPassingTestCase(assert, result, {
+    assertPassingTestCasesFor(assert, result, {
       debug: false,
       moduleName: `${firstFolderName} | first-module-pass`,
     });
-    assertPassingTestCase(assert, result, {
+    assertPassingTestCasesFor(assert, result, {
       debug: false,
       moduleName: `${firstFolderName} | second-module-pass`,
     });
-    assertPassingTestCase(assert, result, {
+    assertPassingTestCasesFor(assert, result, {
       debug: false,
       moduleName: `${secondFolderName} | first-module-pass`,
     });
-    assertPassingTestCase(assert, result, {
+    assertPassingTestCasesFor(assert, result, {
       debug: false,
       moduleName: `${secondFolderName} | second-module-pass`,
     });
@@ -102,13 +102,21 @@ module('Folder Input Tests', (_hooks, moduleMetadata) => {
       ...testMetadata,
     });
     assert.exitCode(cmd, 1, 'expected shell to exit non-zero due to failing tests');
-    assertPassingTestCase(assert, cmd, { moduleName: `${firstFolderName} | first-module-pass` });
-    assertPassingTestCase(assert, cmd, { moduleName: `${firstFolderName} | second-module-pass` });
+    assertPassingTestCasesFor(assert, cmd, {
+      moduleName: `${firstFolderName} | first-module-pass`,
+    });
+    assertPassingTestCasesFor(assert, cmd, {
+      moduleName: `${firstFolderName} | second-module-pass`,
+    });
     assertFailingTestCase(assert, cmd, { moduleName: `${firstFolderName} | first-module-fail` });
     assertFailingTestCase(assert, cmd, { moduleName: `${firstFolderName} | second-module-fail` });
     assertFailingTestCase(assert, cmd, { moduleName: `${firstFolderName} | third-module-fail` });
-    assertPassingTestCase(assert, cmd, { moduleName: `${secondFolderName} | first-module-pass` });
-    assertPassingTestCase(assert, cmd, { moduleName: `${secondFolderName} | second-module-pass` });
+    assertPassingTestCasesFor(assert, cmd, {
+      moduleName: `${secondFolderName} | first-module-pass`,
+    });
+    assertPassingTestCasesFor(assert, cmd, {
+      moduleName: `${secondFolderName} | second-module-pass`,
+    });
     assert.outputContains(
       cmd,
       {
@@ -128,11 +136,11 @@ module('Folder Input Tests', (_hooks, moduleMetadata) => {
       ...testMetadata,
     });
 
-    assertPassingTestCase(assert, result, {
+    assertPassingTestCasesFor(assert, result, {
       debug: true,
       moduleName: `${folderName} | first-module-pass`,
     });
-    assertPassingTestCase(assert, result, {
+    assertPassingTestCasesFor(assert, result, {
       debug: true,
       moduleName: `${folderName} | second-module-pass`,
     });
@@ -142,19 +150,17 @@ module('Folder Input Tests', (_hooks, moduleMetadata) => {
   test('works for a single folder input in browser mode with debug and few failing tests', async (assert, testMetadata) => {
     let folderName = await writeTestFolder({ addFailingTests: true });
 
-    // TODO: This test is flaky
-
     const cmd = await shellFails(`node cli.js tmp/${folderName} --debug`, {
       ...moduleMetadata,
       ...testMetadata,
     }); // NOTE: instead of failing it succeeds, maybe due to timeout it fails before actually closing?
     assert.exitCode(cmd, 1, 'expected shell to exit non-zero due to failing tests');
 
-    assertPassingTestCase(assert, cmd, {
+    assertPassingTestCasesFor(assert, cmd, {
       debug: true,
       moduleName: `${folderName} | first-module-pass`,
     });
-    assertPassingTestCase(assert, cmd, {
+    assertPassingTestCasesFor(assert, cmd, {
       debug: true,
       moduleName: `${folderName} | second-module-pass`,
     });
@@ -182,19 +188,19 @@ module('Folder Input Tests', (_hooks, moduleMetadata) => {
       { ...moduleMetadata, ...testMetadata },
     );
 
-    assertPassingTestCase(assert, result, {
+    assertPassingTestCasesFor(assert, result, {
       debug: true,
       moduleName: `${firstFolderName} | first-module-pass`,
     });
-    assertPassingTestCase(assert, result, {
+    assertPassingTestCasesFor(assert, result, {
       debug: true,
       moduleName: `${firstFolderName} | second-module-pass`,
     });
-    assertPassingTestCase(assert, result, {
+    assertPassingTestCasesFor(assert, result, {
       debug: true,
       moduleName: `${secondFolderName} | first-module-pass`,
     });
-    assertPassingTestCase(assert, result, {
+    assertPassingTestCasesFor(assert, result, {
       debug: true,
       moduleName: `${secondFolderName} | second-module-pass`,
     });
@@ -210,11 +216,11 @@ module('Folder Input Tests', (_hooks, moduleMetadata) => {
       { ...moduleMetadata, ...testMetadata },
     );
     assert.exitCode(cmd, 1, 'expected shell to exit non-zero due to failing tests');
-    assertPassingTestCase(assert, cmd, {
+    assertPassingTestCasesFor(assert, cmd, {
       debug: true,
       moduleName: `${firstFolderName} | first-module-pass`,
     });
-    assertPassingTestCase(assert, cmd, {
+    assertPassingTestCasesFor(assert, cmd, {
       debug: true,
       moduleName: `${firstFolderName} | second-module-pass`,
     });
@@ -230,11 +236,11 @@ module('Folder Input Tests', (_hooks, moduleMetadata) => {
       debug: true,
       moduleName: `${firstFolderName} | third-module-fail`,
     });
-    assertPassingTestCase(assert, cmd, {
+    assertPassingTestCasesFor(assert, cmd, {
       debug: true,
       moduleName: `${secondFolderName} | first-module-pass`,
     });
-    assertPassingTestCase(assert, cmd, {
+    assertPassingTestCasesFor(assert, cmd, {
       debug: true,
       moduleName: `${secondFolderName} | second-module-pass`,
     });

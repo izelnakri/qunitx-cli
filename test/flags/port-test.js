@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { assertPassingTestCase, assertTAPResult } from '../helpers/custom-asserts.js';
+import { assertPassingTestCasesFor, assertTAPResult } from '../helpers/custom-asserts.js';
 import shell from '../helpers/shell.js';
 
 // Note: bindServerToPort always calls server.listen(0) so the OS assigns the actual port,
@@ -12,7 +12,7 @@ module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
       ...testMetadata,
     });
 
-    assertPassingTestCase(assert, result, { moduleName: '{{moduleName}}' });
+    assertPassingTestCasesFor(assert, result, { moduleName: '{{moduleName}}' });
     assertTAPResult(assert, result, { testCount: 3 });
   });
 
@@ -23,7 +23,7 @@ module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
     });
 
     assert.hasDebugURL(result, 'debug output includes the server URL with an assigned port');
-    assertPassingTestCase(assert, result, { debug: true, moduleName: '{{moduleName}}' });
+    assertPassingTestCasesFor(assert, result, { debug: true, moduleName: '{{moduleName}}' });
     assertTAPResult(assert, result, { testCount: 3 });
   });
 });

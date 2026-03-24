@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import {
-  assertPassingTestCase,
+  assertPassingTestCasesFor,
   assertFailingTestCase,
   assertTAPResult,
 } from '../helpers/custom-asserts.js';
@@ -14,7 +14,7 @@ module('--after script tests for browser mode', (_hooks, moduleMetadata) => {
     );
 
     assert.includes(result, 'This is running from after script!!');
-    assertPassingTestCase(assert, result, { moduleName: '{{moduleName}}' });
+    assertPassingTestCasesFor(assert, result, { moduleName: '{{moduleName}}' });
     assertTAPResult(assert, result, { testCount: 3 });
   });
 
@@ -34,7 +34,7 @@ module('--after script tests for browser mode', (_hooks, moduleMetadata) => {
         2,
       ),
     );
-    assertPassingTestCase(assert, result, { moduleName: '{{moduleName}}' });
+    assertPassingTestCasesFor(assert, result, { moduleName: '{{moduleName}}' });
     assertTAPResult(assert, result, { testCount: 3 });
   });
 });
