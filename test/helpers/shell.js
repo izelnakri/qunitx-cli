@@ -1,20 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { exec, spawn } from 'node:child_process';
-import { availableParallelism } from 'node:os';
 
 const shell = promisify(exec);
 
-// In-process async semaphore. node --test runs each test file in its own worker thread,
-// but --test-concurrency=1 ensures only one file runs at a time, so this semaphore is
-// effectively global across the entire test run. No TCP server needed.
+// In-process async semaphore — one slot per worker thread, one browser at a time per worker.
+// node --test runs each test file in its own worker thread. With --test-concurrency set to
+// availableParallelism() in package.json, up to N workers run in parallel, each with slots=1.
+// Total concurrent browsers = N (exactly availableParallelism()), safe for both CI and dev.
 //
-// Cap at availableParallelism() so CI (2-core) runs 2 concurrent browsers at most.
-// The "TAP version 13\n / exit 0" flakiness that previously forced slots=1 is fixed in
-// pre-launch-chrome.js: the earlyBrowserPromise now resolves null unconditionally when
-// Chrome exits before printing its CDP URL (OOM kill, clean exit, signal), so
-// launchBrowser always falls back to chromium.launch() instead of hanging forever.
-let slots = availableParallelism();
+// Do NOT increase slots above 1: each worker has its own module instance (own `slots` variable),
+// so slots=K with N workers would launch N*K concurrent browsers, easily overwhelming CI.
+let slots = 1;
 const waiters = [];
 
 function acquireSlot() {
