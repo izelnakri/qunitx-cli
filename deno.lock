@@ -10,13 +10,13 @@
     "npm:esbuild@~0.27.3": "0.27.4",
     "npm:express@^5.2.1": "5.2.1",
     "npm:js-yaml@^4.1.1": "4.1.1",
-    "npm:picomatch@*": "4.0.3",
-    "npm:picomatch@^4.0.3": "4.0.3",
+    "npm:picomatch@*": "4.0.4",
+    "npm:picomatch@^4.0.4": "4.0.4",
     "npm:playwright-core@^1.58.2": "1.58.2",
     "npm:prettier@^3.8.1": "3.8.1",
-    "npm:qunitx@^1.0.3": "1.0.3",
-    "npm:ws@*": "8.19.0",
-    "npm:ws@^8.19.0": "8.19.0"
+    "npm:qunitx@^1.0.4": "1.0.4",
+    "npm:ws@*": "8.20.0",
+    "npm:ws@^8.20.0": "8.20.0"
   },
   "jsr": {
     "@std/fmt@1.0.9": {
@@ -473,8 +473,8 @@
     "path-to-regexp@8.3.0": {
       "integrity": "sha512-7jdwVIRtsP8MYpdXSwOS0YdD0Du+qOoF/AEPIt88PcCFrZCzx41oxku1jD88hZBwbNUIEfpqvuhjFaMAqMTWnA=="
     },
-    "picomatch@4.0.3": {
-      "integrity": "sha512-5gTmgEY/sqK6gFXLIsQNH19lWb4ebPDLA4SdLP7dsWkIXHWlG66oPuVvXSGFPppYZz8ZDZq0dYYrbHfBCVUb1Q=="
+    "picomatch@4.0.4": {
+      "integrity": "sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A=="
     },
     "playwright-core@1.58.2": {
       "integrity": "sha512-yZkEtftgwS8CsfYo7nm0KE8jsvm6i/PTgVtB8DL726wNf6H2IMsDuxCpJj59KDaxCtSnrWan2AeDqM7JBaultg==",
@@ -497,8 +497,8 @@
         "side-channel"
       ]
     },
-    "qunitx@1.0.3": {
-      "integrity": "sha512-LdCQ0Sh85IvLqcAIIbIlNNC3NGEMlkuDUQl1gk3AH2d3Dv7HbEYEG+RW786c8w5gMfPh8gx1+PJKbuN2jqQf+g=="
+    "qunitx@1.0.4": {
+      "integrity": "sha512-iu3enOfQo5Ul5As+KFiN1Zm1kd8MWeeNcHFUbZpKYQn+y6f6V4yiDeehVc5LFSUFBOkutjnqHzZiqInCf0MutA=="
     },
     "range-parser@1.2.1": {
       "integrity": "sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg=="
@@ -615,8 +615,8 @@
     "wrappy@1.0.2": {
       "integrity": "sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ=="
     },
-    "ws@8.19.0": {
-      "integrity": "sha512-blAT2mjOEIi0ZzruJfIhb3nps74PRWTCz1IjglWEEpQl5XS/UNama6u2/rjFkDDouqr4L67ry+1aGIALViWjDg=="
+    "ws@8.20.0": {
+      "integrity": "sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA=="
     }
   },
   "workspace": {
@@ -631,11 +631,11 @@
         "npm:esbuild@~0.27.3",
         "npm:express@^5.2.1",
         "npm:js-yaml@^4.1.1",
-        "npm:picomatch@^4.0.3",
+        "npm:picomatch@^4.0.4",
         "npm:playwright-core@^1.58.2",
         "npm:prettier@^3.8.1",
-        "npm:qunitx@^1.0.3",
-        "npm:ws@^8.19.0"
+        "npm:qunitx@^1.0.4",
+        "npm:ws@^8.20.0"
       ]
     }
   }
