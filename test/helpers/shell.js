@@ -4,37 +4,11 @@ import { exec, spawn } from 'node:child_process';
 
 const shell = promisify(exec);
 
-// In-process async semaphore — one slot per worker thread, one browser at a time per worker.
-// node --test runs each test file in its own worker thread. With --test-concurrency set to
-// availableParallelism() in package.json, up to N workers run in parallel, each with slots=1.
-// Total concurrent browsers = N (exactly availableParallelism()), safe for both CI and dev.
-//
-// Do NOT increase slots above 1: each worker has its own module instance (own `slots` variable),
-// so slots=K with N workers would launch N*K concurrent browsers, easily overwhelming CI.
-let slots = 1;
-const waiters = [];
-
-function acquireSlot() {
-  if (slots > 0) {
-    slots--;
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => waiters.push(resolve));
-}
-
-function releaseSlot() {
-  if (waiters.length > 0) {
-    waiters.shift()();
-  } else {
-    slots++;
-  }
-}
-
 // When QUNITX_BROWSER is set, all browser test runs use that engine (firefox, webkit, chromium).
 const QUNITX_BROWSER = process.env.QUNITX_BROWSER;
 
 // Spawns a long-running CLI command (e.g. --watch mode), collects stdout until
-// `until(buf)` returns true, then kills the process and releases the semaphore.
+// `until(buf)` returns true, then kills the process.
 export async function shellWatch(commandString, { until, timeout = 45000 } = {}) {
   let command = commandString;
   if (/\bnode cli\.js\b/.test(command) && !/--output/.test(command)) {
@@ -45,7 +19,6 @@ export async function shellWatch(commandString, { until, timeout = 45000 } = {})
   }
 
   const [, ...args] = command.split(/\s+/); // strip 'node', keep the rest
-  await acquireSlot();
   const child = spawn(process.execPath, args);
 
   try {
@@ -79,7 +52,6 @@ export async function shellWatch(commandString, { until, timeout = 45000 } = {})
     // and the worker thread's event loop stays alive indefinitely. unref() lets the worker
     // exit without waiting for the child OS process to terminate.
     child.unref();
-    releaseSlot();
   }
 }
 
@@ -107,8 +79,6 @@ export default async function execute(commandString, { moduleName = '', testName
   if (needsBrowser && QUNITX_BROWSER && !/--browser/.test(command)) {
     command = `${command} --browser=${QUNITX_BROWSER}`;
   }
-
-  if (needsBrowser) await acquireSlot();
 
   try {
     let result = await shell(command, { timeout: 60000 });
@@ -146,7 +116,5 @@ export default async function execute(commandString, { moduleName = '', testName
     `);
 
     throw error;
-  } finally {
-    if (needsBrowser) releaseSlot();
   }
 }
