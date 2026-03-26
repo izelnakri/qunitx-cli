@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.2] - 2026-03-26
+[`v0.9.1...v0.9.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.1...v0.9.2)
+
+### Features
+- Small refactors & cleanups before release — 2026-03-24 by [@izelnakri](https://github.com/izelnakri) ([`cee5cd2`](https://github.com/izelnakri/qunitx-cli/commit/cee5cd25dd989e898c029d46d60e5de115d3e1d2))
+
+### Refactoring
+- MAJOR TEST SUITE REFACTOR — 2026-03-19 by [@izelnakri](https://github.com/izelnakri) ([`518bd64`](https://github.com/izelnakri/qunitx-cli/commit/518bd64ab2d467fb958b45d5da0cf4fe94044b21))
+
 ## [0.9.0] - 2026-03-19
 [`v0.8.0...v0.9.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.8.0...v0.9.0)
 
