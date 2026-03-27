@@ -18,7 +18,7 @@ await mkdir(`${PROJECT_ROOT}/tmp`, { recursive: true });
 function spawnCLI(args: string[]): Promise<{ code: number }> {
   const id = crypto.randomUUID();
   const cmd = new Deno.Command("node", {
-    args: ["cli.js", ...args, `--output=tmp/bench-run-${id}`],
+    args: ["--experimental-strip-types", "cli.ts", ...args, `--output=tmp/bench-run-${id}`],
     cwd: PROJECT_ROOT,
     env: { ...Deno.env.toObject(), FORCE_COLOR: "0" },
     stdout: "null",
@@ -38,7 +38,7 @@ Deno.bench("cli: startup time (help)", {
 
 }, async () => {
   const cmd = new Deno.Command("node", {
-    args: ["cli.js", "help"],
+    args: ["--experimental-strip-types", "cli.ts", "help"],
     cwd: PROJECT_ROOT,
     env: { ...Deno.env.toObject(), FORCE_COLOR: "0" },
     stdout: "null",
@@ -57,7 +57,7 @@ Deno.bench("cli: e2e run (1 passing test file)", {
   warmup: 0,
 
 }, async () => {
-  await spawnCLI(["test/helpers/passing-tests.js"]);
+  await spawnCLI(["test/helpers/passing-tests.ts"]);
 });
 
 // ─── e2e: multiple test files (concurrent groups) ─────────────────────────────
@@ -71,8 +71,8 @@ Deno.bench("cli: e2e run (3 passing test files, concurrent)", {
 
 }, async () => {
   await spawnCLI([
-    "test/helpers/passing-tests.js",
-    "test/helpers/passing-tests.js",
-    "test/helpers/passing-tests.js",
+    "test/helpers/passing-tests.ts",
+    "test/helpers/passing-tests.ts",
+    "test/helpers/passing-tests.ts",
   ]);
 });

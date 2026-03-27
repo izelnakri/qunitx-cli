@@ -33,7 +33,7 @@ jobs:
   # Executable Applications (node --experimental-sea-config, Node ≥ 22).
   #
   # How it works:
-  #   1. esbuild bundles cli.js + all pure-JS deps into one CJS file.
+  #   1. esbuild bundles cli.ts + all deps into one CJS file (esbuild strips types natively).
   #      A small preamble is prepended: at startup it sets ESBUILD_BINARY_PATH
   #      to the `esbuild` binary sitting next to the SEA executable, so the
   #      bundled esbuild JS can find and spawn its native helper.
@@ -78,7 +78,7 @@ jobs:
         shell: bash
         run: |
           PREAMBLE=';(function(){if(!process.env.ESBUILD_BINARY_PATH){var path=require("path"),fs=require("fs");["esbuild","esbuild.exe"].forEach(function(n){var p=path.join(path.dirname(process.execPath),n);try{fs.accessSync(p,fs.constants.X_OK);process.env.ESBUILD_BINARY_PATH=p;}catch(_){}});}})();'
-          npx esbuild cli.js \
+          npx esbuild cli.ts \
             --bundle \
             --platform=node \
             --format=cjs \

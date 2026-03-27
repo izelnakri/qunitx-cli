@@ -2,8 +2,8 @@
  * Benchmarks HTTP + WebSocket server lifecycle — creation and port binding.
  * This runs on every test-runner startup, so its cost adds directly to time-to-first-test.
  */
-import HTTPServer from "../lib/servers/http.js";
-import bindServerToPort from "../lib/setup/bind-server-to-port.js";
+import HTTPServer from "../lib/servers/http.ts";
+import bindServerToPort from "../lib/setup/bind-server-to-port.ts";
 
 function closeServer(server: InstanceType<typeof HTTPServer>): Promise<void> {
   return new Promise((resolve) => {
@@ -27,7 +27,7 @@ Deno.bench("server: create + bind to OS port + close", {
 
 }, async () => {
   const server = new HTTPServer();
-  const config: { port?: number } = {};
+  const config = { port: 0 };
   await bindServerToPort(server, config);
   await closeServer(server);
 });
