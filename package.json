@@ -3,7 +3,7 @@
   "type": "module",
   "version": "0.9.2",
   "description": "Browser runner for QUnitx: run your qunitx tests in google-chrome",
-  "main": "cli.js",
+  "main": "cli.ts",
   "author": "Izel Nakri",
   "license": "MIT",
   "keywords": [
@@ -15,27 +15,27 @@
     "qunitx"
   ],
   "scripts": {
-    "bin": "chmod +x cli.js && ./cli.js",
-    "format": "prettier --check \"lib/**/*.js\" \"test/**/*.js\" \"*.js\" \"package.json\" \".github/**/*.yml\"",
-    "format:fix": "prettier --write \"lib/**/*.js\" \"test/**/*.js\" \"*.js\" \"package.json\" \".github/**/*.yml\"",
-    "lint": "deno lint lib/ cli.js",
+    "bin": "chmod +x cli.ts && ./cli.ts",
+    "format": "prettier --check \"lib/**/*.ts\" \"test/**/*.ts\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
+    "format:fix": "prettier --write \"lib/**/*.ts\" \"test/**/*.ts\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
+    "lint": "deno lint lib/ cli.ts",
     "lint:docs": "node scripts/lint-docs.js",
-    "docs": "deno doc --html --name=\"qunitx-cli\" --output=docs/lib 'lib/**/*.js' README.md",
+    "docs": "deno doc --html --name=\"qunitx-cli\" --output=docs/lib 'lib/**/*.ts' README.md",
     "changelog:unreleased": "git-cliff --unreleased --strip all",
     "changelog:preview": "git-cliff",
     "changelog:update": "git-cliff --output CHANGELOG.md",
     "postinstall": "deno install --allow-scripts=npm:playwright-core || true",
-    "test": "node test/setup.js && FORCE_COLOR=0 node --test --test-concurrency=$(node -p 'require(\"os\").availableParallelism()') test/**/*-test.js",
-    "test:browser": "node test/setup.js && FORCE_COLOR=0 node --test --test-concurrency=$(node -p 'require(\"os\").availableParallelism()') test/flags/*-test.js test/inputs/*-test.js",
-    "test:sanity-first": "./cli.js test/helpers/failing-tests.js test/helpers/failing-tests.ts",
-    "test:sanity-second": "./cli.js test/helpers/passing-tests.js test/helpers/passing-tests.ts"
+    "test": "node --experimental-strip-types test/setup.ts && FORCE_COLOR=0 node --experimental-strip-types --test --test-concurrency=$(node -p 'require(\"os\").availableParallelism()') test/**/*-test.ts",
+    "test:browser": "node --experimental-strip-types test/setup.ts && FORCE_COLOR=0 node --experimental-strip-types --test --test-concurrency=$(node -p 'require(\"os\").availableParallelism()') test/flags/*-test.ts test/inputs/*-test.ts",
+    "test:sanity-first": "./cli.ts test/helpers/failing-tests.js test/helpers/failing-tests.ts",
+    "test:sanity-second": "./cli.ts test/helpers/passing-tests.js test/helpers/passing-tests.ts"
   },
   "engines": {
     "node": ">=24.0.0",
     "deno": ">=2.7.0"
   },
   "bin": {
-    "qunitx": "cli.js"
+    "qunitx": "cli.ts"
   },
   "repository": {
     "type": "git",
@@ -52,7 +52,8 @@
     "express": "^5.2.1",
     "js-yaml": "^4.1.1",
     "prettier": "^3.8.1",
-    "qunitx": "^1.0.4"
+    "qunitx": "^1.0.4",
+    "typescript": "^5.0.0"
   },
   "volta": {
     "node": "24.14.0"
