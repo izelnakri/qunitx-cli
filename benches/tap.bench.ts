@@ -3,8 +3,8 @@
  * With large test suites these functions are called thousands of times, so
  * per-call cost compounds directly into total wall-clock output time.
  */
-import TAPDisplayTestResult from "../lib/tap/display-test-result.js";
-import TAPDisplayFinalResult from "../lib/tap/display-final-result.js";
+import TAPDisplayTestResult from "../lib/tap/display-test-result.ts";
+import TAPDisplayFinalResult from "../lib/tap/display-final-result.ts";
 
 // Suppress console output — we're measuring CPU cost, not I/O.
 const noop = () => {};
@@ -78,7 +78,7 @@ Deno.bench("tap: display final result summary", {
   const orig = console.log;
   console.log = noop;
   TAPDisplayFinalResult(
-    { testCount: 100, passCount: 80, skipCount: 10, failCount: 10 },
+    { testCount: 100, passCount: 80, skipCount: 10, failCount: 10, errorCount: 10 },
     1234,
   );
   console.log = orig;
