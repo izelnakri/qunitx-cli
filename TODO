@@ -1,101 +1,14 @@
-- hanging could be in the timeout case or lib/commands/run.js or lib/commands/run/tests-in-browser and lib/setup/web-server.js and lib/utils/pre-launch-chrome.js and tests/setup.js
-
 - file-watcher.js: Make an index.html that displays build errors in browser (watch mode); requires deriving error type from the caught error
 - generate.js: Classify moduleName parsing (currently reuses process.argv[3] as both moduleName and file path)
 
 Latest notes:
-- Could init-test.js#47 cause any issues?
--> Improve custom-asserts.js assert.outputContains(result, { contains[], notContains[] })
-also check assertPassingTestCase testNo was really redundant. assertPassingTestCase had testNo 4 on before-test
-- test/helpers/shell.js#60 why do I do the command split?
 - test/inputs/advanced-htmls-test.js REMOVED. Is it a good idea?
-
-
-test/helpers/assert-stdout.js‎ -> BECAME -> custom-asserts.js | Check according to this
-
-
-
 
 - Optimize run.js completely. refactor run.js .some() and .forEach() can be optimized.
 - FIX: init.js misses a test case when package.json doesnt exist. line 22-23 seems redundant(?)
 - watch-test.js is missing now, is it needed(?)
-- move asserts to a file. and read assert-stdout.js better, if it misses improvements, 
-seems like each assert.pushResult in test suite could be a custom assert with a good name & api & implementation
-- file-test.js check one more time if I missed the previous existing or commented our tests
-
-- check assertFailingTestCase since it still exists to see if its good.
-
-- IMPROVE: assert.outputContains need improvements: assert-stdout.js can contains/notContains be a RegExp?
 
 - check lua's error handling for JavaScript on all my JS code, if this is a better way to do error handling.
-
-- advanced-html-test.js missing. Should I implement this?
-
-- Check the commit diff to see if its the best solution
-
-
-- Seems like test output could be improved as well since it is soo hard for you to find the bugs/flakinesses. 
-Is there a change we can make it make it easy for you to find the issues while keeping the outputs TAP and in an 
-expected/assumed way. I just want to outputs to be easily debugged by me and you, suggest me how we can improve it.
-
-
-- This last commit, assert.includes is major. I need to review it on github the sole commit. Make sure we dont loose the object comparison on RegEx with custom assertions
-
-- Probably should have assert.includes (handles both strings and arrays) - let the llm decide whether they should be seperate functions and its naming, also check the assertions of node.js and deno to decide
-- Also make additional custom assertions based on assert.pushResult that exists in the changes now
-
-- probably a regex check custom assertion
-
-
-- Test suite is still flaky(something related the --output test). We'll fix it:
-ℹ tests 143
-ℹ suites 30
-ℹ pass 142
-ℹ fail 1
-ℹ cancelled 0
-ℹ skipped 0
-ℹ todo 0
-ℹ duration_ms 29984.73963
-
-✖ failing tests:
-
-test at node_modules/qunitx/shims/node/test.js:15:10
-✖ runs a file and a folder together when all tests pass (6226.333663ms)
-  AssertionError [ERR_ASSERTION]: assertPassingTestCase: b9fc9824-042e-4351-b948-1c72dbb39406 | first-module-pass Passing Tests
-      at Assert.outputContains (file:///home/runner/work/qunitx-cli/qunitx-cli/test/helpers/assert-stdout.js:31:8)
-      at assertPassingTestCase (file:///home/runner/work/qunitx-cli/qunitx-cli/test/helpers/assert-stdout.js:56:10)
-      at TestContext.<anonymous> (file:///home/runner/work/qunitx-cli/qunitx-cli/test/inputs/file-and-folder-test.js:19:5)
-      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
-      at async TestContext.<anonymous> (file:///home/runner/work/qunitx-cli/qunitx-cli/node_modules/qunitx/shims/node/test.js:22:20)
-      at async Test.run (node:internal/test_runner/test:1125:7)
-      at async Promise.all (index 0)
-      at async Suite.run (node:internal/test_runner/test:1533:7)
-      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
-    generatedMessage: false,
-    code: 'ERR_ASSERTION',
-    actual: { missing: [ 'b9fc9824-042e-4351-b948-1c72dbb39406 | first-module-pass Passing Tests | assert true works', 'b9fc9824-042e-4351-b948-1c72dbb39406 | first-module-pass Passing Tests | async test finishes', 'b9fc9824-042e-4351-b948-1c72dbb39406 | first-module-pass Passing Tests | deepEqual true works' ], unexpectedlyFound: [], stdout: '' },
-    expected: { missing: [], unexpectedlyFound: [] },
-    operator: undefined,
-    diff: 'simple'
-  }
-
-test at node_modules/qunitx/shims/node/module.js:13:10
-✖ Folder Input Tests (16995.599392ms)
-  AssertionError [ERR_ASSERTION]: Expected at least one assertion to be run for test: Folder Input Tests | works for a multiple folders input in browser mode with few failing tests
-      at TestContext.finish (file:///home/runner/work/qunitx-cli/qunitx-cli/node_modules/qunitx/shims/shared/test-context.js:79:19)
-      at SuiteContext.<anonymous> (file:///home/runner/work/qunitx-cli/qunitx-cli/node_modules/qunitx/shims/node/module.js:50:32)
-      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
-      at async TestHook.run (node:internal/test_runner/test:1125:7)
-      at async Suite.runHook (node:internal/test_runner/test:1036:9)
-      at async Suite.run (node:internal/test_runner/test:1534:7)
-      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
-    generatedMessage: false,
-    code: 'ERR_ASSERTION',
-    actual: 0,
-    expected: '> 0',
-    operator: undefined,
-    diff: 'simple'
-  }
 
 - Maybe add npm test:dev so it failsFast for faster feedback loop.
 
@@ -117,6 +30,5 @@ pass timezone: https://stackoverflow.com/questions/16448754/how-to-use-a-custom-
 = qunitx --timezone="US/Pacific"
 
 markdown reporter(interesting: https://mochajs.org/#markdown)
-
 
 - Think about error handling in JS. Maybe find a better solution than shellFails

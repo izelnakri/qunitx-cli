@@ -1,9 +1,5 @@
 import { module, test } from 'qunitx';
-import {
-  assertPassingTestCasesFor,
-  assertFailingTestCase,
-  assertTAPResult,
-} from '../helpers/custom-asserts.ts';
+import '../helpers/custom-asserts.ts';
 import shell from '../helpers/shell.ts';
 
 module('--after script tests for browser mode', (_hooks, moduleMetadata) => {
@@ -14,8 +10,8 @@ module('--after script tests for browser mode', (_hooks, moduleMetadata) => {
     );
 
     assert.includes(result, 'This is running from after script!!');
-    assertPassingTestCasesFor(assert, result, { moduleName: '{{moduleName}}' });
-    assertTAPResult(assert, result, { testCount: 3 });
+    assert.passingTestCaseFor(result, { moduleName: '{{moduleName}}' });
+    assert.tapResult(result, { testCount: 3 });
   });
 
   test('--after works when it needs to be awaited', async (assert, testMetadata) => {
@@ -34,7 +30,7 @@ module('--after script tests for browser mode', (_hooks, moduleMetadata) => {
         2,
       ),
     );
-    assertPassingTestCasesFor(assert, result, { moduleName: '{{moduleName}}' });
-    assertTAPResult(assert, result, { testCount: 3 });
+    assert.passingTestCaseFor(result, { moduleName: '{{moduleName}}' });
+    assert.tapResult(result, { testCount: 3 });
   });
 });

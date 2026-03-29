@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { assertPassingTestCasesFor, assertTAPResult } from '../helpers/custom-asserts.ts';
+import '../helpers/custom-asserts.ts';
 import shell from '../helpers/shell.ts';
 
 module('--before script tests for browser mode', (_hooks, moduleMetadata) => {
@@ -10,8 +10,8 @@ module('--before script tests for browser mode', (_hooks, moduleMetadata) => {
     );
 
     assert.includes(result, 'This is running from before script!!');
-    assertPassingTestCasesFor(assert, result, { moduleName: '{{moduleName}}' });
-    assertTAPResult(assert, result, { testCount: 3 });
+    assert.passingTestCaseFor(result, { moduleName: '{{moduleName}}' });
+    assert.tapResult(result, { testCount: 3 });
   });
 
   test('--before works it needs to be awaited', async (assert, testMetadata) => {
@@ -22,8 +22,8 @@ module('--before script tests for browser mode', (_hooks, moduleMetadata) => {
 
     assert.includes(result, 'This is running from before script!!');
     assert.includes(result, 'Starting before script with:');
-    assertPassingTestCasesFor(assert, result, { moduleName: '{{moduleName}}' });
+    assert.passingTestCaseFor(result, { moduleName: '{{moduleName}}' });
     assert.includes(result, '{{moduleName}} Before script web server tests | assert true works');
-    assertTAPResult(assert, result, { testCount: 4 });
+    assert.tapResult(result, { testCount: 4 });
   });
 });

@@ -1,10 +1,6 @@
 import { module, test } from 'qunitx';
 import { writeTestFolder } from '../helpers/fs-writers.ts';
-import {
-  assertPassingTestCasesFor,
-  assertFailingTestCase,
-  assertTAPResult,
-} from '../helpers/custom-asserts.ts';
+import '../helpers/custom-asserts.ts';
 import shell, { shellFails } from '../helpers/shell.ts';
 
 module('File and Folder Combination Tests', (_hooks, moduleMetadata) => {
@@ -16,11 +12,13 @@ module('File and Folder Combination Tests', (_hooks, moduleMetadata) => {
       ...testMetadata,
     });
 
-    assertPassingTestCasesFor(assert, result, { moduleName: `${folderName} | first-module-pass` });
-    assertPassingTestCasesFor(assert, result, { moduleName: `${folderName} | second-module-pass` });
-    assertPassingTestCasesFor(assert, result, { moduleName: '{{moduleName}}' });
+    assert.passingTestCasesFor(result, [
+      { moduleName: `${folderName} | first-module-pass` },
+      { moduleName: `${folderName} | second-module-pass` },
+      { moduleName: '{{moduleName}}' },
+    ]);
     // folder: 2 files × 3 tests = 6; extra file: 3 tests → 9 total
-    assertTAPResult(assert, result, { testCount: 9 });
+    assert.tapResult(result, { testCount: 9 });
   });
 
   test('runs a file and a folder together when the folder has failing tests', async (assert, testMetadata) => {
@@ -31,11 +29,15 @@ module('File and Folder Combination Tests', (_hooks, moduleMetadata) => {
       ...testMetadata,
     });
     assert.exitCode(cmd, 1, 'expected shell to exit non-zero due to failing tests');
-    assertPassingTestCasesFor(assert, cmd, { moduleName: `${folderName} | first-module-pass` });
-    assertPassingTestCasesFor(assert, cmd, { moduleName: `${folderName} | second-module-pass` });
-    assertFailingTestCase(assert, cmd, { moduleName: `${folderName} | first-module-fail` });
-    assertFailingTestCase(assert, cmd, { moduleName: `${folderName} | second-module-fail` });
-    assertFailingTestCase(assert, cmd, { moduleName: `${folderName} | third-module-fail` });
+    assert.passingTestCasesFor(cmd, [
+      { moduleName: `${folderName} | first-module-pass` },
+      { moduleName: `${folderName} | second-module-pass` },
+    ]);
+    assert.failingTestCasesFor(cmd, [
+      { moduleName: `${folderName} | first-module-fail` },
+      { moduleName: `${folderName} | second-module-fail` },
+      { moduleName: `${folderName} | third-module-fail` },
+    ]);
     assert.outputContains(
       cmd,
       {
@@ -45,6 +47,6 @@ module('File and Folder Combination Tests', (_hooks, moduleMetadata) => {
     );
     // folder (addFailingTests:true): 2 passing files×3 + 3 failing files×4 = 18 tests (9 pass, 9 fail)
     // extra passing-tests.js: 3 tests → grand total 21 tests (12 pass, 9 fail)
-    assertTAPResult(assert, cmd, { testCount: 21, failCount: 9 });
+    assert.tapResult(cmd, { testCount: 21, failCount: 9 });
   });
 });

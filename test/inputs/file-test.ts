@@ -1,9 +1,5 @@
 import { module, test } from 'qunitx';
-import {
-  assertPassingTestCasesFor,
-  assertFailingTestCase,
-  assertTAPResult,
-} from '../helpers/custom-asserts.ts';
+import '../helpers/custom-asserts.ts';
 import shell, { shellFails } from '../helpers/shell.ts';
 
 module('File Input Tests', (_hooks, moduleMetadata) => {
@@ -13,8 +9,8 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
       ...testMetadata,
     });
 
-    assertPassingTestCasesFor(assert, result, { testNo: 1, moduleName: '{{moduleName}}' });
-    assertTAPResult(assert, result, { testCount: 3 });
+    assert.passingTestCaseFor(result, { testNo: 1, moduleName: '{{moduleName}}' });
+    assert.tapResult(result, { testCount: 3 });
   });
 
   test('testing a single passing js file with --debug works', async (assert, testMetadata) => {
@@ -25,12 +21,12 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
 
     assert.hasDebugURL(result);
     assert.includes(result, 'TAP version 13');
-    assertPassingTestCasesFor(assert, result, {
+    assert.passingTestCaseFor(result, {
       debug: true,
       testNo: 1,
       moduleName: '{{moduleName}}',
     });
-    assertTAPResult(assert, result, { testCount: 3 });
+    assert.tapResult(result, { testCount: 3 });
   });
 
   test('testing a single failing js file works', async (assert, testMetadata) => {
@@ -40,7 +36,7 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
     });
     assert.exitCode(cmd, 1, 'expected shell to exit non-zero due to failing tests');
     assert.includes(cmd, 'TAP version 13');
-    assertFailingTestCase(assert, cmd, { testNo: 1, moduleName: '{{moduleName}}' });
+    assert.failingTestCaseFor(cmd, { testNo: 1, moduleName: '{{moduleName}}' });
     assert.outputContains(
       cmd,
       {
@@ -48,7 +44,7 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
       },
       'deepEqual failure shows structured YAML object diff',
     );
-    assertTAPResult(assert, cmd, { testCount: 4, failCount: 3 });
+    assert.tapResult(cmd, { testCount: 4, failCount: 3 });
   });
 
   test('testing a single failing js file with --debug works', async (assert, testMetadata) => {
@@ -58,8 +54,8 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
     });
     assert.exitCode(cmd, 1, 'expected shell to exit non-zero due to failing tests');
     assert.includes(cmd, 'TAP version 13');
-    assertFailingTestCase(assert, cmd, { debug: true, testNo: 1, moduleName: '{{moduleName}}' });
-    assertTAPResult(assert, cmd, { testCount: 4, failCount: 3 });
+    assert.failingTestCaseFor(cmd, { debug: true, testNo: 1, moduleName: '{{moduleName}}' });
+    assert.tapResult(cmd, { testCount: 4, failCount: 3 });
   });
 
   test('testing a single passing ts file works, console output supressed', async (assert, testMetadata) => {
@@ -69,8 +65,8 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
     });
 
     assert.includes(result, 'TAP version 13');
-    assertPassingTestCasesFor(assert, result, { testNo: 1, moduleName: '{{moduleName}}' });
-    assertTAPResult(assert, result, { testCount: 3 });
+    assert.passingTestCaseFor(result, { testNo: 1, moduleName: '{{moduleName}}' });
+    assert.tapResult(result, { testCount: 3 });
   });
 
   test('testing a single passing ts file with --debug works', async (assert, testMetadata) => {
@@ -81,12 +77,12 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
 
     assert.hasDebugURL(result);
     assert.includes(result, 'TAP version 13');
-    assertPassingTestCasesFor(assert, result, {
+    assert.passingTestCaseFor(result, {
       debug: true,
       testNo: 1,
       moduleName: '{{moduleName}}',
     });
-    assertTAPResult(assert, result, { testCount: 3 });
+    assert.tapResult(result, { testCount: 3 });
   });
 
   test('testing a single failing ts file works', async (assert, testMetadata) => {
@@ -96,7 +92,7 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
     });
     assert.exitCode(cmd, 1, 'expected shell to exit non-zero due to failing tests');
     assert.includes(cmd, 'TAP version 13');
-    assertFailingTestCase(assert, cmd, { testNo: 1, moduleName: '{{moduleName}}' });
+    assert.failingTestCaseFor(cmd, { testNo: 1, moduleName: '{{moduleName}}' });
     assert.outputContains(
       cmd,
       {
@@ -104,7 +100,7 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
       },
       'deepEqual failure shows structured YAML object diff',
     );
-    assertTAPResult(assert, cmd, { testCount: 4, failCount: 3 });
+    assert.tapResult(cmd, { testCount: 4, failCount: 3 });
   });
 
   test('testing a single failing ts file with --debug works', async (assert, testMetadata) => {
@@ -114,8 +110,8 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
     });
     assert.exitCode(cmd, 1, 'expected shell to exit non-zero due to failing tests');
     assert.includes(cmd, 'TAP version 13');
-    assertFailingTestCase(assert, cmd, { debug: true, testNo: 1, moduleName: '{{moduleName}}' });
-    assertTAPResult(assert, cmd, { testCount: 4, failCount: 3 });
+    assert.failingTestCaseFor(cmd, { debug: true, testNo: 1, moduleName: '{{moduleName}}' });
+    assert.tapResult(cmd, { testCount: 4, failCount: 3 });
   });
 
   test('test.skip produces "ok ... # skip" TAP lines and test.todo produces "not ok ... # skip" without counting as failures', async (assert, testMetadata) => {
@@ -134,6 +130,6 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
       'todo test is expected to fail # skip',
       'todo test appears as "not ok ... # skip"',
     );
-    assertTAPResult(assert, result, { testCount: 1, skipCount: 1 });
+    assert.tapResult(result, { testCount: 1, skipCount: 1 });
   });
 });

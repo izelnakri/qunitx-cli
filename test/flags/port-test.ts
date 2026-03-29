@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { assertPassingTestCasesFor, assertTAPResult } from '../helpers/custom-asserts.ts';
+import '../helpers/custom-asserts.ts';
 import shell from '../helpers/shell.ts';
 
 // Note: bindServerToPort always calls server.listen(0) so the OS assigns the actual port,
@@ -12,8 +12,8 @@ module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
       ...testMetadata,
     });
 
-    assertPassingTestCasesFor(assert, result, { moduleName: '{{moduleName}}' });
-    assertTAPResult(assert, result, { testCount: 3 });
+    assert.passingTestCaseFor(result, { moduleName: '{{moduleName}}' });
+    assert.tapResult(result, { testCount: 3 });
   });
 
   test('--port flag combined with --debug still shows the server URL', async (assert, testMetadata) => {
@@ -23,7 +23,7 @@ module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
     });
 
     assert.hasDebugURL(result, 'debug output includes the server URL with an assigned port');
-    assertPassingTestCasesFor(assert, result, { debug: true, moduleName: '{{moduleName}}' });
-    assertTAPResult(assert, result, { testCount: 3 });
+    assert.passingTestCaseFor(result, { debug: true, moduleName: '{{moduleName}}' });
+    assert.tapResult(result, { testCount: 3 });
   });
 });

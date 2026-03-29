@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { assertPassingTestCasesFor, assertTAPResult } from '../helpers/custom-asserts.ts';
+import '../helpers/custom-asserts.ts';
 import { shellWatch } from '../helpers/shell.ts';
 
 module('--watch flag tests', () => {
@@ -8,8 +8,8 @@ module('--watch flag tests', () => {
       until: (buf) => buf.includes('Press "qq"'),
     });
 
-    assertPassingTestCasesFor(assert, stdout, { moduleName: '{{moduleName}}' });
-    assertTAPResult(assert, stdout, { testCount: 3 });
+    assert.passingTestCaseFor(stdout, { moduleName: '{{moduleName}}' });
+    assert.tapResult(stdout, { testCount: 3 });
     assert.includes(stdout, 'Watching files...');
     assert.includes(stdout, 'http://localhost:');
     assert.includes(stdout, 'Press "qq"');

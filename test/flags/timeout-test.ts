@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { assertPassingTestCasesFor, assertTAPResult } from '../helpers/custom-asserts.ts';
+import '../helpers/custom-asserts.ts';
 import shell, { shellFails } from '../helpers/shell.ts';
 
 module('--timeout flag tests for browser mode', (_hooks, moduleMetadata) => {
@@ -9,8 +9,8 @@ module('--timeout flag tests for browser mode', (_hooks, moduleMetadata) => {
       ...testMetadata,
     });
 
-    assertPassingTestCasesFor(assert, result, { testNo: 1, moduleName: '{{moduleName}}' });
-    assertTAPResult(assert, result, { testCount: 3 });
+    assert.passingTestCaseFor(result, { testNo: 1, moduleName: '{{moduleName}}' });
+    assert.tapResult(result, { testCount: 3 });
   });
 
   test('--timeout kills a test that hangs indefinitely and exits with code 1', async (assert, testMetadata) => {

@@ -76,7 +76,7 @@ Assert.prototype.hasDebugURL = function (result, message) {
 };
 
 /**
- * assert.matchesOutput(result, pattern, message)
+ * assert.regex(result, pattern, message)
  * Asserts that stdout matches a regex pattern.
  * On failure: actual shows stdout (and stderr if present).
  */
@@ -125,106 +125,132 @@ const FAILING_TEST_CASES = [
   { status: 'not ok', name: 'deepEqual true works' },
 ];
 
-export function assertPassingTestCasesFor(
-  assert,
-  result,
-  options = { moduleName: '{{moduleName}}', debug: false },
+/**
+ * assert.passingTestCaseFor(output, { moduleName, debug?, testNo? })
+ * Asserts that output contains TAP lines for all passing test cases in the given module.
+ */
+Assert.prototype.passingTestCaseFor = function (
+  output,
+  { moduleName = '{{moduleName}}', debug = false, testNo } = {},
 ) {
-  const { moduleName, debug, testNo } = options;
   const mod = `${moduleName} Passing Tests`;
+  const escaped = escapeRegex(mod);
 
   const testLines =
     testNo != null
       ? PASSING_TEST_CASES.map(
           (name, i) =>
-            new RegExp(
-              `ok ${testNo + i} ${escapeRegex(mod)} \\| ${escapeRegex(name)} # \\(\\d+ ms\\)`,
-            ),
+            new RegExp(`ok ${testNo + i} ${escaped} \\| ${escapeRegex(name)} # \\(\\d+ ms\\)`),
         )
       : PASSING_TEST_CASES.map(
-          (name) =>
-            new RegExp(`ok \\d+ ${escapeRegex(mod)} \\| ${escapeRegex(name)} # \\(\\d+ ms\\)`),
+          (name) => new RegExp(`ok \\d+ ${escaped} \\| ${escapeRegex(name)} # \\(\\d+ ms\\)`),
         );
 
-  assert.outputContains(
-    result,
-    {
-      contains: [...testLines, ...(debug ? DEBUG_LOGS : [])],
-    },
-    `assertPassingTestCasesFor: ${mod}`,
+  this.outputContains(
+    output,
+    { contains: [...testLines, ...(debug ? DEBUG_LOGS : [])] },
+    `passingTestCaseFor: ${mod}`,
   );
-}
+};
 
-export function assertFailingTestCase(
-  assert,
-  result,
-  options = { moduleName: '{{moduleName}}', debug: false },
+/**
+ * assert.passingTestCasesFor(output, [{ moduleName, debug?, testNo? }, ...])
+ * Asserts passing test cases for each module in the array. debug defaults to false per entry.
+ */
+Assert.prototype.passingTestCasesFor = function (output, arrayOfOptions) {
+  for (const options of arrayOfOptions) {
+    this.passingTestCaseFor(output, options);
+  }
+};
+
+/**
+ * assert.failingTestCaseFor(output, { moduleName, debug?, testNo? })
+ * Asserts that output contains TAP lines for the failing test cases in the given module.
+ */
+Assert.prototype.failingTestCaseFor = function (
+  output,
+  { moduleName = '{{moduleName}}', debug = false, testNo } = {},
 ) {
-  const { moduleName, debug, testNo } = options;
   const mod = `${moduleName} Failing Tests`;
+  const escaped = escapeRegex(mod);
+
+  if (debug) {
+    this.outputContains(
+      output,
+      {
+        contains: [
+          'calling assert true test case',
+          'resolving async test',
+          'placeholder',
+          'anotherObject',
+        ],
+      },
+      `failingTestCaseFor debug: ${mod}`,
+    );
+    return;
+  }
 
   const failLines =
     testNo != null
       ? FAILING_TEST_CASES.map(
           ({ status, name }, i) =>
             new RegExp(
-              `${status} ${testNo + i} ${escapeRegex(mod)} \\| ${escapeRegex(name)} # \\(\\d+ ms\\)`,
+              `${status} ${testNo + i} ${escaped} \\| ${escapeRegex(name)} # \\(\\d+ ms\\)`,
             ),
         )
       : FAILING_TEST_CASES.filter(({ status }) => status === 'not ok').map(
           ({ name }) =>
-            new RegExp(`not ok \\d+ ${escapeRegex(mod)} \\| ${escapeRegex(name)} # \\(\\d+ ms\\)`),
+            new RegExp(`not ok \\d+ ${escaped} \\| ${escapeRegex(name)} # \\(\\d+ ms\\)`),
         );
 
-  if (debug) {
-    assert.outputContains(
-      result,
-      {
-        contains: [
-          'calling assert true test case',
-          'resolving async test',
-          'placeholder',
-          'anotherObject',
-        ],
-      },
-      `assertFailingTestCase debug: ${mod}`,
-    );
-  } else {
-    assert.outputContains(
-      result,
-      {
-        notContains: [
-          'calling assert true test case',
-          'resolving async test',
-          'placeholder',
-          'anotherObject',
-        ],
-        contains: [
-          ...failLines,
-          'Expected 4 assertions, but 3 were run',
-          'actual: null',
-          'expected: true',
-          'Died on test #2',
-          /name: 'Assertion #\d+'/,
-          // Stack trace format differs by browser: Chrome uses 'at func (file:///...)',
-          // WebKit/Firefox use '@http://host:port/:line:col'. Match either prefix.
-          /stack:\s+'?(@|at )/,
-        ],
-      },
-      `assertFailingTestCase: ${mod}`,
-    );
-  }
-}
+  this.outputContains(
+    output,
+    {
+      notContains: [
+        'calling assert true test case',
+        'resolving async test',
+        'placeholder',
+        'anotherObject',
+      ],
+      contains: [
+        ...failLines,
+        'Expected 4 assertions, but 3 were run',
+        'actual: null',
+        'expected: true',
+        'Died on test #2',
+        /name: 'Assertion #\d+'/,
+        // Stack trace format differs by browser: Chrome uses 'at func (file:///...)',
+        // WebKit/Firefox use '@http://host:port/:line:col'. Match either prefix.
+        /stack:\s+'?(@|at )/,
+      ],
+    },
+    `failingTestCaseFor: ${mod}`,
+  );
+};
 
-export function assertTAPResult(assert, result, options = { testCount: 0, failCount: 0 }) {
+/**
+ * assert.failingTestCasesFor(output, [{ moduleName, debug?, testNo? }, ...])
+ * Asserts failing test cases for each module in the array. debug defaults to false per entry.
+ */
+Assert.prototype.failingTestCasesFor = function (output, arrayOfOptions) {
+  for (const options of arrayOfOptions) {
+    this.failingTestCaseFor(output, options);
+  }
+};
+
+/**
+ * assert.tapResult(output, { testCount, failCount?, skipCount? })
+ * Asserts that output's TAP summary line matches the expected counts.
+ */
+Assert.prototype.tapResult = function (output, options = { testCount: 0, failCount: 0 }) {
   const { testCount, failCount = 0, skipCount = 0 } = options;
-  const { stdout, stderr } = extractOutput(result);
+  const { stdout, stderr } = extractOutput(output);
   const expectedPass = testCount - failCount;
   const tail = stdout.slice(-300);
   const actual = stderr ? { stdout: tail, stderr } : tail;
 
   if (failCount) {
-    assert.pushResult({
+    this.pushResult({
       result: new RegExp(
         `# pass ${expectedPass}\n# skip ${skipCount}\n# fail (${failCount}|${failCount + 1})`,
       ).test(stdout),
@@ -235,16 +261,10 @@ export function assertTAPResult(assert, result, options = { testCount: 0, failCo
     return;
   }
 
-  assert.pushResult({
+  this.pushResult({
     result: new RegExp(`# pass ${testCount}\n# skip ${skipCount}\n# fail 0`).test(stdout),
     actual,
     expected: `# pass ${testCount}\n# skip ${skipCount}\n# fail 0`,
     message: `TAP summary should show pass=${testCount} skip=${skipCount} fail=0`,
   });
-}
-
-export default {
-  assertPassingTestCasesFor,
-  assertFailingTestCase,
-  assertTAPResult,
 };
