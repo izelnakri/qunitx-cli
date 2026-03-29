@@ -1,5 +1,8 @@
-// @deno-types="npm:@types/picomatch"
-import picomatch from 'picomatch';
+import { matchesGlob } from 'node:path';
+
+function isGlob(str: string): boolean {
+  return /[*?{[]/.test(str);
+}
 
 interface PathMeta {
   input: string;
@@ -15,20 +18,12 @@ export default function setupTestFilePaths(_projectRoot: string, inputs: string[
   // NOTE: very complex algorithm, order is very important
   const [folders, filesWithGlob, filesWithoutGlob] = inputs.reduce(
     (result, input) => {
-      const isGlob = picomatch.scan(input).isGlob;
+      const glob = isGlob(input);
 
       if (!pathIsFile(input)) {
-        result[0].push({
-          input,
-          isFile: false,
-          isGlob,
-        });
+        result[0].push({ input, isFile: false, isGlob: glob });
       } else {
-        result[isGlob ? 1 : 2].push({
-          input,
-          isFile: true,
-          isGlob,
-        });
+        result[glob ? 1 : 2].push({ input, isFile: true, isGlob: glob });
       }
 
       return result;
@@ -70,23 +65,10 @@ function pathIsIncludedInPaths(paths: PathMeta[], targetPath: PathMeta): boolean
       return false;
     }
 
-    const globFormat = buildGlobFormat(path);
-
-    return picomatch.isMatch(targetPath.input, globFormat, { bash: true });
+    return matchesGlob(targetPath.input, buildGlobFormat(path));
   });
 }
 
 function buildGlobFormat(path: PathMeta): string {
-  if (!path.isFile) {
-    if (!path.isGlob) {
-      return `${path.input}/*`;
-    } else if (path.input.endsWith('*')) {
-      // NOTE: could be problematic in future, investigate if I should check endsWith /*
-      return path.input;
-    }
-
-    return `${path.input}/*`;
-  }
-
-  return path.input;
+  return path.isFile ? path.input : `${path.input}/**`;
 }
