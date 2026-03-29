@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.4] - 2026-03-29
+[`v0.9.3...v0.9.4`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.3...v0.9.4)
+
+### Features
+- Remove "picomatch" dependency — 2026-03-29 by [@izelnakri](https://github.com/izelnakri) ([`952b33b`](https://github.com/izelnakri/qunitx-cli/commit/952b33bf16842a336768033fcb5ed2d963f91afd))
+
 ## [0.9.3] - 2026-03-29
 [`v0.9.2...v0.9.3`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.2...v0.9.3)
 
