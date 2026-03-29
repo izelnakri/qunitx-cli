@@ -1,7 +1,7 @@
 {
   "name": "qunitx-cli",
   "type": "module",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Browser runner for QUnitx: run your qunitx tests in google-chrome",
   "main": "cli.ts",
   "author": "Izel Nakri",

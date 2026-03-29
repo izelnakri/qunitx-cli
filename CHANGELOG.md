@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.3] - 2026-03-29
+[`v0.9.2...v0.9.3`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.2...v0.9.3)
+
+### Features
+- Moved entire project to TypeScript — 2026-03-27 by [@izelnakri](https://github.com/izelnakri) ([`eaf09ab`](https://github.com/izelnakri/qunitx-cli/commit/eaf09ab0beb13e6c96f76b5bed76c015611ff2aa))
+
+### Refactoring
+- Custom-asserts output for readability — 2026-03-29 by [@izelnakri](https://github.com/izelnakri) ([`be2f61d`](https://github.com/izelnakri/qunitx-cli/commit/be2f61d3e83b14ac9c9cdf3310507476d0a87ab9))
+
 ## [0.9.2] - 2026-03-26
 [`v0.9.1...v0.9.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.1...v0.9.2)
 
