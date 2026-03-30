@@ -105,7 +105,9 @@ build-sea:
 	PREAMBLE=';(function(){if(!process.env.ESBUILD_BINARY_PATH){var path=require("path"),fs=require("fs");["esbuild","esbuild.exe"].forEach(function(n){var p=path.join(path.dirname(process.execPath),n);try{fs.accessSync(p,fs.constants.X_OK);process.env.ESBUILD_BINARY_PATH=p;}catch(_){}});}})();'; \
 	npx esbuild cli.ts --bundle --platform=node --format=cjs --banner:js="$$PREAMBLE" \
 	  --outfile=sea-entry.cjs --external:fsevents --external:typescript --external:chromium-bidi \
-	  --log-level=warning; \
+	  --log-level=warning \
+	  --log-override:empty-import-meta=silent \
+	  --log-override:require-resolve-not-external=silent; \
 	node scripts/write-sea-config.js; \
 	node --experimental-sea-config sea-config.json; \
 	rm -f qunitx-sea; \
@@ -122,7 +124,7 @@ build-sea:
 	fi; \
 	codesign --sign - qunitx-sea 2>/dev/null || true; \
 	chmod +x qunitx-sea; \
-	mkdir -p npm/$$TARGET/bin; \
+	rm -rf npm/$$TARGET/bin && mkdir -p npm/$$TARGET/bin; \
 	cp qunitx-sea npm/$$TARGET/bin/qunitx; \
 	VERSION=$$(node -p 'require("./package.json").version'); \
 	node scripts/set-pkg-version.js npm/$$TARGET/package.json $$VERSION; \
