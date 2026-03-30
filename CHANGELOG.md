@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.8] - 2026-03-30
+[`v0.9.7...v0.9.8`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.7...v0.9.8)
+
+### Bug Fixes
+- Clear further warnings on make release for SEA — 2026-03-30 by [@izelnakri](https://github.com/izelnakri) ([`b69383b`](https://github.com/izelnakri/qunitx-cli/commit/b69383b59ffed2b51fe082dd4ca8506e5afbc8a3))
+
 ## [0.9.7] - 2026-03-30
 [`v0.9.6...v0.9.7`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.6...v0.9.7)
 
