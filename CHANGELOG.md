@@ -1,7 +1,7 @@
 # Changelog
 
-## [0.9.5] - 2026-03-30
-[`v0.9.4...v0.9.5`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.4...v0.9.5)
+## [0.9.6] - 2026-03-30
+[`v0.9.4...v0.9.6`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.4...v0.9.6)
 
 ### Features
 - Upgrade typescript to v6 — 2026-03-29 by [@izelnakri](https://github.com/izelnakri) ([`6739ed5`](https://github.com/izelnakri/qunitx-cli/commit/6739ed5e3179eb9daa3f81b83fb75347745249e0))
