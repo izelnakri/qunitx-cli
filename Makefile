@@ -108,7 +108,9 @@ build-sea:
 	  --log-level=warning; \
 	node scripts/write-sea-config.js; \
 	node --experimental-sea-config sea-config.json; \
+	rm -f qunitx-sea; \
 	cp "$$(node --input-type=commonjs -e 'process.stdout.write(process.execPath)')" qunitx-sea; \
+	chmod u+w qunitx-sea; \
 	codesign --remove-signature qunitx-sea 2>/dev/null || true; \
 	if [ "$$NODE_PLATFORM" = "darwin" ]; then \
 	  npx --yes postject qunitx-sea NODE_SEA_BLOB sea.blob \

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.5] - 2026-03-30
+[`v0.9.4...v0.9.5`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.4...v0.9.5)
+
+### Features
+- Upgrade typescript to v6 — 2026-03-29 by [@izelnakri](https://github.com/izelnakri) ([`6739ed5`](https://github.com/izelnakri/qunitx-cli/commit/6739ed5e3179eb9daa3f81b83fb75347745249e0))
+- Qunitx-cli now SEA(Single Executable Application) — 2026-03-30 by [@izelnakri](https://github.com/izelnakri) ([`0f11fbd`](https://github.com/izelnakri/qunitx-cli/commit/0f11fbdb31be29fdbc82a9354229befe407ee1f3))
+
 ## [0.9.4] - 2026-03-29
 [`v0.9.3...v0.9.4`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.3...v0.9.4)
 
