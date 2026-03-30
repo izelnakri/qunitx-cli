@@ -3,7 +3,6 @@
   "type": "module",
   "version": "0.9.4",
   "description": "Browser runner for QUnitx: run your qunitx tests in google-chrome",
-  "main": "cli.ts",
   "author": "Izel Nakri",
   "license": "MIT",
   "keywords": [
@@ -14,10 +13,17 @@
     "qunit",
     "qunitx"
   ],
+  "files": [
+    "bin/",
+    "dist/",
+    "templates/"
+  ],
   "scripts": {
+    "build": "node scripts/build-cli.js",
     "bin": "chmod +x cli.ts && ./cli.ts",
-    "format": "prettier --check \"lib/**/*.ts\" \"test/**/*.ts\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
-    "format:fix": "prettier --write \"lib/**/*.ts\" \"test/**/*.ts\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
+    "prepublishOnly": "npm run build",
+    "format": "prettier --check \"lib/**/*.ts\" \"test/**/*.ts\" \"scripts/**/*.js\" \"bin/**/*.js\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
+    "format:fix": "prettier --write \"lib/**/*.ts\" \"test/**/*.ts\" \"scripts/**/*.js\" \"bin/**/*.js\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
     "lint": "deno lint lib/ cli.ts",
     "lint:docs": "node scripts/lint-docs.js",
     "docs": "deno doc --html --name=\"qunitx-cli\" --output=docs/lib 'lib/**/*.ts' README.md",
@@ -35,7 +41,7 @@
     "deno": ">=2.7.0"
   },
   "bin": {
-    "qunitx": "cli.ts"
+    "qunitx": "bin/qunitx.js"
   },
   "repository": {
     "type": "git",
@@ -51,7 +57,7 @@
     "express": "^5.2.1",
     "js-yaml": "^4.1.1",
     "prettier": "^3.8.1",
-    "qunitx": "^1.0.4",
+    "qunitx": "^1.1.2",
     "typescript": "^6.0.2"
   },
   "volta": {

@@ -1,4 +1,4 @@
-import Assert from '../../node_modules/qunitx/shims/shared/assert.js';
+import Assert from 'qunitx/assert';
 
 // Extracts stdout string and optional stderr from either a plain string or a
 // result/error object ({ stdout, stderr }). This lets every assertion helper

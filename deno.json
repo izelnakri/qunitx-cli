@@ -2,7 +2,6 @@
   "nodeModulesDir": "auto",
   "imports": {
     "esbuild": "npm:esbuild",
-    "picomatch": "npm:picomatch",
     "ws": "npm:ws"
   },
   "tasks": {

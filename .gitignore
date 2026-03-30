@@ -4,3 +4,5 @@ test-output.log
 result
 docs/lib
 benches/results.json
+dist/
+npm/*/bin/

@@ -3,12 +3,16 @@
 .github
 .gitignore
 benches
+bin
 CHANGELOG.md
 cliff.toml
+dist
 docs
 flake.lock
 flake.nix
 Makefile
+node_modules
+npm
 scripts
 test
 tmp

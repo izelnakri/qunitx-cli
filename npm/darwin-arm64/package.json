@@ -1,0 +1,11 @@
+{
+  "name": "qunitx-cli-darwin-arm64",
+  "version": "0.0.0",
+  "description": "macOS arm64 SEA binary for qunitx-cli",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "bin": { "qunitx": "bin/qunitx" },
+  "files": ["bin/"],
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/izelnakri/qunitx-cli.git" }
+}
