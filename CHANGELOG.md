@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.9] - 2026-03-30
+[`v0.9.8...v0.9.9`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.8...v0.9.9)
+
+### Bug Fixes
+- Now SEA has playwright dep explicity stated to fix the resolve bug — 2026-03-30 by [@izelnakri](https://github.com/izelnakri) ([`884138a`](https://github.com/izelnakri/qunitx-cli/commit/884138aa41c4ff90805e5f06a0857932a8640377))
+
 ## [0.9.8] - 2026-03-30
 [`v0.9.7...v0.9.8`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.7...v0.9.8)
 
