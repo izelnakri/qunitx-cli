@@ -1,6 +1,7 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@std/fmt@*": "1.0.9",
     "npm:@types/ws@*": "8.18.1",
     "npm:cors@^2.8.6": "2.8.6",
     "npm:esbuild@*": "0.27.4",
@@ -13,6 +14,11 @@
     "npm:typescript@^6.0.2": "6.0.2",
     "npm:ws@*": "8.20.0",
     "npm:ws@^8.20.0": "8.20.0"
+  },
+  "jsr": {
+    "@std/fmt@1.0.9": {
+      "integrity": "2487343e8899fb2be5d0e3d35013e54477ada198854e52dd05ed0422eddcabe0"
+    }
   },
   "npm": {
     "@esbuild/aix-ppc64@0.27.4": {

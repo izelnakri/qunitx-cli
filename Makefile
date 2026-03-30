@@ -128,7 +128,7 @@ build-sea:
 	cp qunitx-sea npm/$$TARGET/bin/qunitx; \
 	VERSION=$$(node -p 'require("./package.json").version'); \
 	node scripts/set-pkg-version.js npm/$$TARGET/package.json $$VERSION; \
-	npm publish npm/$$TARGET --access public; \
+	npm publish ./npm/$$TARGET --access public; \
 	rm -f sea-entry.cjs sea-config.json sea.blob qunitx-sea
 
 # Lint, bump version, update changelog, commit, tag, push, publish to npm.
