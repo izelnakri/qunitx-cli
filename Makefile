@@ -105,6 +105,7 @@ build-sea:
 	PREAMBLE=';(function(){if(!process.env.ESBUILD_BINARY_PATH){var path=require("path"),fs=require("fs");["esbuild","esbuild.exe"].forEach(function(n){var p=path.join(path.dirname(process.execPath),n);try{fs.accessSync(p,fs.constants.X_OK);process.env.ESBUILD_BINARY_PATH=p;}catch(_){}});}})();'; \
 	npx esbuild cli.ts --bundle --platform=node --format=cjs --banner:js="$$PREAMBLE" \
 	  --outfile=sea-entry.cjs --external:fsevents --external:typescript --external:chromium-bidi \
+	  --external:playwright-core \
 	  --log-level=warning \
 	  --log-override:empty-import-meta=silent \
 	  --log-override:require-resolve-not-external=silent; \

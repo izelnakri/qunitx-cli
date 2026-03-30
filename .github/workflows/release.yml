@@ -87,7 +87,10 @@ jobs:
             --external:fsevents \
             --external:typescript \
             --external:chromium-bidi \
-            --log-level=warning
+            --external:playwright-core \
+            --log-level=warning \
+            --log-override:empty-import-meta=silent \
+            --log-override:require-resolve-not-external=silent
 
       - name: Create SEA blob
         shell: bash
