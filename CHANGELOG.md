@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.10] - 2026-03-31
+[`v0.9.9...v0.9.10`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.9...v0.9.10)
+
+### Features
+- Qunitx binary runs when there is no html! — 2026-03-31 by [@izelnakri](https://github.com/izelnakri) ([`84ca12a`](https://github.com/izelnakri/qunitx-cli/commit/84ca12ae6177338aa3428a3fba46067adf6b18f4))
+
 ## [0.9.9] - 2026-03-30
 [`v0.9.8...v0.9.9`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.8...v0.9.9)
 
