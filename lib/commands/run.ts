@@ -187,11 +187,15 @@ export default async function run(config: Config): Promise<void> {
 }
 
 async function buildCachedContent(config: Config, htmlPaths: string[]): Promise<CachedContent> {
-  const htmlBuffers = await Promise.all(config.htmlPaths.map((htmlPath) => fs.readFile(htmlPath)));
+  const htmlBuffers = await Promise.all(
+    config.htmlPaths.map((htmlPath) => fs.readFile(htmlPath).catch(() => null)),
+  );
   const cachedContent = htmlPaths.reduce(
     (result, _htmlPath, index) => {
+      const buffer = htmlBuffers[index];
+      if (buffer === null) return result;
       const filePath = config.htmlPaths[index];
-      const html = htmlBuffers[index].toString();
+      const html = buffer.toString();
 
       if (html.includes('{{content}}')) {
         result.dynamicContentHTMLs[filePath] = html;

@@ -1,59 +1,66 @@
-05:14:27 izelnakri ~/Github/qunitx-trial node --version
-v24.14.1
-05:14:29 izelnakri ~/Github/qunitx-trial node_modules/.bin/qunitx
-node:internal/modules/typescript:183
-    throw new ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING(filename);
-          ^
+Improve --watch flags on --watch test
 
-Error [ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING]: Stripping types is currently unsupported for files under node_modules, for "file:///home/izelnakri/Github/qunitx-trial/node_modules/.deno/qunitx-cli@0.9.4/node_modules/qunitx-cli/cli.ts"
-    at stripTypeScriptModuleTypes (node:internal/modules/typescript:183:11)
-    at ModuleLoader.<anonymous> (node:internal/modules/esm/translators:640:29)
-    at #translate (node:internal/modules/esm/loader:473:20)
-    at afterLoad (node:internal/modules/esm/loader:529:29)
-    at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:534:12)
-    at #getOrCreateModuleJobAfterResolve (node:internal/modules/esm/loader:577:36)
-    at afterResolve (node:internal/modules/esm/loader:625:52)
-    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:631:12)
-    at onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:650:32)
-    at TracingChannel.tracePromise (node:diagnostics_channel:350:14) {
-  code: 'ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING'
+Add a feature so people can pass a custom.html instead, if the html has {{}} then make it replace the test/tests.html?
+
+--open feature
+
+Current feature without test/tests.html maybe works but are we sure it works on --watch ?! These tests are required.
+
+
+Document test/tests.html file in README.md
+
+❯ Binary works but I have a logical issue. The binary requires (test/tests.html) file it seems. This file should rather be optional, runner should be able to work even without it
+but when there is smt it should take precedence: ```22:44:50 izelnakri ~/Github/qunitx-trial node_modules/.bin/qunitx test/index.js
+TAP version 13
+# QUnitX running: http://localhost:45697/test/tests.html
+# [HTTPServer] GET /node_modules/qunitx/vendor/qunit.css 200 - 3ms
+ok 1 My first test | some case # (3 ms)
+# [HTTPServer] GET /favicon.ico 404 - 1ms
+
+1..1
+# tests 1
+# pass 1
+# skip 0
+# fail 0
+# duration 385
+
+
+22:44:54 izelnakri ~/Github/qunitx-trial nvim .
+22:45:05 izelnakri ~/Github/qunitx-trial node_modules/.bin/qunitx test/index.js
+Error: ENOENT: no such file or directory, open '/home/izelnakri/Github/qunitx-trial/test/tests.html'
+    at async open (node:internal/fs/promises:636:25)
+    at async Object.readFile (node:internal/fs/promises:1235:14)
+    at async Promise.all (index 0)
+    at async buildCachedContent (sea-entry.cjs:7626:23)
+    at async run (sea-entry.cjs:7500:25)
+    at async sea-entry.cjs:8171:12 {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/home/izelnakri/Github/qunitx-trial/test/tests.html'
 }
 
-Node.js v24.14.1
+22:45:07 izelnakri ~/Github/qunitx-trial qunitx tests/index.js
+22:45:20 izelnakri ~/Github/qunitx-trial qunitx init
+qunitx: command not found
+22:45:24 izelnakri ~/Github/qunitx-trial node_modules/.bin/qunitx init
+/home/izelnakri/Github/qunitx-trial/tsconfig.json written
+/home/izelnakri/Github/qunitx-trial/test/tests.html written
+22:45:28 izelnakri ~/Github/qunitx-trial qunitx tests/index.js
+22:45:36 izelnakri ~/Github/qunitx-trial node_modules/.bin/qunitx test/index.js
+TAP version 13
+# QUnitX running: http://localhost:43823/test/tests.html
+# [HTTPServer] GET /node_modules/qunitx/vendor/qunit.css 200 - 2ms
+ok 1 My first test | some case # (2 ms)
+# [HTTPServer] GET /favicon.ico 404 - 1ms
 
-
-
-
-05:08:29 izelnakri ~/Github/qunitx-trial npx qunitx-cli@latest
-Need to install the following packages:
-qunitx-cli@0.9.4
-Ok to proceed? (y)
-
-npm warn EBADENGINE Unsupported engine {
-npm warn EBADENGINE   package: 'qunitx-cli@0.9.4',
-npm warn EBADENGINE   required: { node: '>=24.0.0', deno: '>=2.7.0' },
-npm warn EBADENGINE   current: { node: 'v22.22.0', npm: '10.9.4' }
-npm warn EBADENGINE }
-node:internal/modules/typescript:156
-    throw new ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING(filename);
-          ^
-
-Error [ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING]: Stripping types is currently unsupported for files under node_modules, for "file:///home/izelnakri/.npm/_npx/132680e1a729690a/node_modules/qunitx-cli/cli.ts"
-    at stripTypeScriptModuleTypes (node:internal/modules/typescript:156:11)
-    at ModuleLoader.<anonymous> (node:internal/modules/esm/translators:605:16)
-    at #translate (node:internal/modules/esm/loader:546:20)
-    at afterLoad (node:internal/modules/esm/loader:596:29)
-    at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:601:12)
-    at #createModuleJob (node:internal/modules/esm/loader:624:36)
-    at #getJobFromResolveResult (node:internal/modules/esm/loader:343:34)
-    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:311:41)
-    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:664:25) {
-  code: 'ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING'
-}
-
-Node.js v22.22.0
-
-
+1..1
+# tests 1
+# pass 1
+# skip 0
+# fail 0
+# duration 406
+```
 
 - Shouldnt shims/deno/vendor-types folder be generated by deno?
 
