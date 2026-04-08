@@ -42,6 +42,26 @@ Commands:
 $ qunitx init               # Bootstraps qunitx base html and add qunitx config to package.json if needed
 $ qunitx new $testFileName  # Creates a qunitx test file`;
 
+module('Commands | Version tests', () => {
+  test('$ qunitx --version -> prints only the version number', async (assert) => {
+    const { stdout } = await cli('--version');
+
+    assert.strictEqual(stdout.trim(), VERSION);
+  });
+
+  test('$ qunitx -v -> prints only the version number', async (assert) => {
+    const { stdout } = await cli('-v');
+
+    assert.strictEqual(stdout.trim(), VERSION);
+  });
+
+  test('$ qunitx version -> prints only the version number', async (assert) => {
+    const { stdout } = await cli('version');
+
+    assert.strictEqual(stdout.trim(), VERSION);
+  });
+});
+
 module('Commands | Help tests', () => {
   test('$ qunitx -> prints help text', async (assert) => {
     const { stdout } = await cli();

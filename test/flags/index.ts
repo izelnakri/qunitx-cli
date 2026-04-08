@@ -5,3 +5,4 @@ import './output-test.ts';
 import './port-test.ts';
 import './timeout-test.ts';
 import './watch-test.ts';
+import './watch-rerun-test.ts';

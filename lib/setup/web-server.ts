@@ -146,7 +146,7 @@ function testRuntimeToInject(port: number, config: Config): string {
 
     (function() {
       let wsRetryCount = 0;
-      const WS_MAX_RETRIES = 50; // 500ms total before giving up
+      const WS_MAX_RETRIES = 500; // 5000ms total before giving up
 
       function setupWebSocket() {
         try {

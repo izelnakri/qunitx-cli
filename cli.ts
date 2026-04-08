@@ -5,12 +5,15 @@ import displayHelpOutput from './lib/commands/help.ts';
 import initializeProject from './lib/commands/init.ts';
 import generateTestFiles from './lib/commands/generate.ts';
 import setupConfig from './lib/setup/config.ts';
+import pkg from './package.json' with { type: 'json' };
 
 process.title = 'qunitx';
 
 (async () => {
   if (!process.argv[2]) {
     return await displayHelpOutput();
+  } else if (['--version', '-v', 'version'].includes(process.argv[2])) {
+    return process.stdout.write(pkg.version + '\n');
   } else if (['help', 'h', 'p', 'print'].includes(process.argv[2])) {
     return await displayHelpOutput();
   } else if (['new', 'n', 'g', 'generate'].includes(process.argv[2])) {
