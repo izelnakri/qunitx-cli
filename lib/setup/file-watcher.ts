@@ -15,8 +15,13 @@ export default function setupFileWatchers(
   config: Config,
   onEventFunc: (event: string, file: string) => unknown,
   onFinishFunc: ((path: string, event: string) => void) | null | undefined,
-): { fileWatchers: Record<string, FSWatcher>; killFileWatchers: () => Record<string, FSWatcher> } {
+): {
+  fileWatchers: Record<string, FSWatcher>;
+  killFileWatchers: () => Record<string, FSWatcher>;
+  ready: Promise<void>;
+} {
   const extensions = config.extensions || ['js', 'ts'];
+  const readyPromises: Promise<void>[] = [];
   const fileWatchers = testFileLookupPaths.reduce((watchers, watchPath) => {
     let ready = false;
     const watcher = fs.watch(watchPath, { recursive: true }, async (eventType, filename) => {
@@ -40,14 +45,20 @@ export default function setupFileWatchers(
         handleWatchEvent(config, extensions, event, fullPath, onEventFunc, onFinishFunc);
       }
     });
-    setImmediate(() => {
-      ready = true;
-    });
+    readyPromises.push(
+      new Promise<void>((resolve) =>
+        setImmediate(() => {
+          ready = true;
+          resolve();
+        }),
+      ),
+    );
     return Object.assign(watchers, { [watchPath]: watcher });
   }, {});
 
   return {
     fileWatchers,
+    ready: Promise.all(readyPromises).then(() => {}),
     killFileWatchers() {
       Object.keys(fileWatchers).forEach((watcherKey) => fileWatchers[watcherKey].close());
 

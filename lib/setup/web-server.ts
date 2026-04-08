@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import findInternalAssetsFromHTML from '../utils/find-internal-assets-from-html.ts';
+import { replaceHTMLContentMarker } from '../utils/html-content-marker.ts';
 import TAPDisplayTestResult from '../tap/display-test-result.ts';
 import pathExists from '../utils/path-exists.ts';
 import HTTPServer, { MIME_TYPES } from '../servers/http.ts';
@@ -267,8 +268,8 @@ function escapeAndInjectTestsToHTML(
   testRuntimeCode: string,
   testContentCode: Buffer | string | null | undefined,
 ): string {
-  return html.replace(
-    '{{content}}',
+  return replaceHTMLContentMarker(
+    html,
     testRuntimeCode.replace('{{allTestCode}}', testContentCode).replace('</script>', '<\/script>'), // NOTE: remove this when simple-html-tokenizer PR gets merged
   );
 }

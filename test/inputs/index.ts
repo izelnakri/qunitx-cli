@@ -1,3 +1,4 @@
+import './custom-html-test.ts';
 import './error-edge-cases-test.ts';
 import './file-and-folder-test.ts';
 import './file-test.ts';

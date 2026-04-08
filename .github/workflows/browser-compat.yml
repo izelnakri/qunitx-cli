@@ -46,7 +46,7 @@ jobs:
           key: playwright-${{ matrix.browser }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install Playwright browser (${{ matrix.browser }})
-        run: npx playwright install --with-deps ${{ matrix.browser }}
+        run: npx playwright@$(node -p "require('playwright-core/package.json').version") install --with-deps ${{ matrix.browser }}
 
       - name: Run browser tests (${{ matrix.browser }})
         run: npm run test:browser

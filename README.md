@@ -89,6 +89,7 @@ qunitx test/**/*.js --browser=webkit
 ```
 
 > **Prerequisite for Firefox / WebKit:** install the Playwright browser binaries once:
+>
 > ```sh
 > npx playwright install firefox
 > npx playwright install webkit
@@ -153,6 +154,7 @@ All CLI flags can also be set in `package.json` under the `qunitx` key, so you d
 {
   "qunitx": {
     "inputs": ["test/**/*-test.js", "test/**/*-test.ts"],
+    "htmlPaths": ["test/tests.html"],
     "extensions": ["js", "ts"],
     "output": "tmp",
     "timeout": 20000,
@@ -163,17 +165,28 @@ All CLI flags can also be set in `package.json` under the `qunitx` key, so you d
 }
 ```
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `inputs` | `[]` | Glob patterns, file paths, or directories to use as test entry points. Merged with any paths given on the CLI. |
-| `extensions` | `["js", "ts"]` | File extensions tracked for test discovery (directory scans) and watch-mode rebuild triggers. Add `"mjs"`, `"cjs"`, or any other extension your project uses. |
-| `output` | `"tmp"` | Directory where compiled test bundles are written. |
-| `timeout` | `20000` | Maximum milliseconds to wait for the full test suite before timing out. |
-| `failFast` | `false` | Stop the run after the first failing test. |
-| `port` | `1234` | Preferred HTTP server port. qunitx auto-selects a free port if this one is taken. |
-| `browser` | `"chromium"` | Browser engine to use: `"chromium"`, `"firefox"`, or `"webkit"`. Overridden by `--browser` on the CLI. |
+| Key          | Default        | Description                                                                                                                                                             |
+| ------------ | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `inputs`     | `[]`           | Glob patterns, file paths, or directories to use as test entry points. Merged with any paths given on the CLI.                                                          |
+| `htmlPaths`  | `[]`           | Optional HTML templates to run tests inside. Any listed `.html` file that contains `{{content}}` or other handlebars-style tokens is treated as a test runner template. |
+| `extensions` | `["js", "ts"]` | File extensions tracked for test discovery (directory scans) and watch-mode rebuild triggers. Add `"mjs"`, `"cjs"`, or any other extension your project uses.           |
+| `output`     | `"tmp"`        | Directory where compiled test bundles are written.                                                                                                                      |
+| `timeout`    | `20000`        | Maximum milliseconds to wait for the full test suite before timing out.                                                                                                 |
+| `failFast`   | `false`        | Stop the run after the first failing test.                                                                                                                              |
+| `port`       | `1234`         | Preferred HTTP server port. qunitx auto-selects a free port if this one is taken.                                                                                       |
+| `browser`    | `"chromium"`   | Browser engine to use: `"chromium"`, `"firefox"`, or `"webkit"`. Overridden by `--browser` on the CLI.                                                                  |
 
 CLI flags always override `package.json` values when both are present.
+
+If you do not provide any HTML template, qunitx falls back to its built-in `test/tests.html` boilerplate internally, so `qunitx init` is optional.
+
+You can also pass a custom HTML file on the CLI:
+
+```sh
+qunitx test/**/*.js custom.html
+```
+
+If that file contains `{{content}}`, qunitx injects the runner at that exact spot. If it contains other handlebars-style tokens, qunitx still treats it as the custom runner template and injects the runner before `</body>`.
 
 ## CLI Reference
 

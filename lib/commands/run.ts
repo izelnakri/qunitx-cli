@@ -12,6 +12,7 @@ import writeOutputStaticFiles from '../setup/write-output-static-files.ts';
 import timeCounter from '../utils/time-counter.ts';
 import TAPDisplayFinalResult from '../tap/display-final-result.ts';
 import readBoilerplate from '../utils/read-boilerplate.ts';
+import { htmlHasDynamicContentMarker } from '../utils/html-content-marker.ts';
 import type { Config, CachedContent } from '../types.ts';
 
 /**
@@ -46,20 +47,24 @@ export default async function run(config: Config): Promise<void> {
       throw error;
     }
 
-    logWatcherAndKeyboardShortcutInfo(config, connections.server);
-
-    await fileWatcher(
+    const { ready: watcherReady } = fileWatcher(
       config.testFileLookupPaths,
       config,
       async (event, file) => {
         if (event === 'addDir') return;
-        if (['unlink', 'unlinkDir'].includes(event)) {
+        if (['change', 'unlink', 'unlinkDir'].includes(event)) {
+          // Clear the cached bundle so the next full re-run rebuilds without the deleted file.
+          // `change` events can fire while a file is being rewritten, so a filtered bundle
+          // may catch the file in a transient empty/partial state and produce a broken rerun.
+          cachedContent.allTestCode = null;
           return await runTestsInBrowser(config, cachedContent, connections);
         }
         await runTestsInBrowser(config, cachedContent, connections, [file]);
       },
       (_path, _event) => connections.server.publish('refresh', 'refresh'),
     );
+    await watcherReady;
+    logWatcherAndKeyboardShortcutInfo(config, connections.server);
   } else {
     // CONCURRENT MODE: split test files across N groups = availableParallelism().
     // All group bundles are built while Chrome is starting up, so esbuild time
@@ -197,14 +202,14 @@ async function buildCachedContent(config: Config, htmlPaths: string[]): Promise<
       const filePath = config.htmlPaths[index];
       const html = buffer.toString();
 
-      if (html.includes('{{content}}')) {
+      if (htmlHasDynamicContentMarker(html)) {
         result.dynamicContentHTMLs[filePath] = html;
         result.htmlPathsToRunTests.push(filePath.replace(config.projectRoot, ''));
       } else {
         console.log(
           '#',
           yellow(
-            `WARNING: Static html file with no {{content}} detected. Therefore ignoring ${filePath}`,
+            `WARNING: Static html file with no {{content}} or handlebars-style tokens detected. Therefore ignoring ${filePath}`,
           ),
         );
         result.staticHTMLs[filePath] = html;
