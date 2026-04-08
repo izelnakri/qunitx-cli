@@ -41,8 +41,11 @@ export default function setupFileWatchers(
           onFinishFunc,
         );
       } catch {
-        const event = config.fsTree && fullPath in config.fsTree ? 'unlink' : 'unlinkDir';
-        handleWatchEvent(config, extensions, event, fullPath, onEventFunc, onFinishFunc);
+        // stat failed — either the file was deleted or the event carried a stale/wrong path.
+        // Only act when we can confirm the path was previously tracked; otherwise ignore.
+        // Spurious unlinkDir for unknown paths clears allTestCode and triggers a full run.
+        if (!(config.fsTree && fullPath in config.fsTree)) return;
+        handleWatchEvent(config, extensions, 'unlink', fullPath, onEventFunc, onFinishFunc);
       }
     });
     readyPromises.push(

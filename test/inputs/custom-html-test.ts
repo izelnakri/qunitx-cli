@@ -12,18 +12,23 @@ const CLI = path.resolve('cli.ts');
 async function makeCustomHTMLProject() {
   const id = randomUUID();
   const dir = path.resolve(`tmp/custom-html-${id}`);
-  await fs.mkdir(`${dir}/tests`, { recursive: true });
-  await fs.writeFile(
-    `${dir}/package.json`,
-    JSON.stringify({ name: id, version: '0.0.1', type: 'module' }, null, 2),
-  );
-  await fs.symlink(path.resolve('node_modules'), `${dir}/node_modules`);
+  const testsDir = `${dir}/tests`;
+  await fs.mkdir(testsDir, { recursive: true });
 
-  const template = await fs.readFile(path.resolve('test/helpers/passing-tests.ts'), 'utf8');
-  await fs.writeFile(`${dir}/tests/passing-tests.ts`, template.replace('{{moduleName}}', id));
-  await fs.writeFile(
-    `${dir}/custom.html`,
-    `<!DOCTYPE html>
+  const [template] = await Promise.all([
+    fs.readFile(path.resolve('test/helpers/passing-tests.ts'), 'utf8'),
+    fs.writeFile(
+      `${dir}/package.json`,
+      JSON.stringify({ name: id, version: '0.0.1', type: 'module' }, null, 2),
+    ),
+    fs.symlink(path.resolve('node_modules'), `${dir}/node_modules`),
+  ]);
+
+  await Promise.all([
+    fs.writeFile(`${testsDir}/passing-tests.ts`, template.replace('{{moduleName}}', id)),
+    fs.writeFile(
+      `${dir}/custom.html`,
+      `<!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8">
@@ -34,7 +39,8 @@ async function makeCustomHTMLProject() {
     <section data-template="{{pageShell}}"></section>
   </body>
 </html>`,
-  );
+    ),
+  ]);
 
   return { dir, id };
 }

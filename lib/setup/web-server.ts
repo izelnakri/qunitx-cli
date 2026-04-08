@@ -16,6 +16,11 @@ const fsPromise = fs.promises;
 export default function setupWebServer(config: Config, cachedContent: CachedContent): HTTPServer {
   const STATIC_FILES_PATH = path.join(config.projectRoot, config.output);
   const server = new HTTPServer();
+  const mainHTMLWithReplacedAssets = replaceAssetPaths(
+    cachedContent.mainHTML.html,
+    cachedContent.mainHTML.filePath,
+    config.projectRoot,
+  );
 
   server.wss.on('connection', function connection(socket) {
     socket.on('message', function message(data) {
@@ -45,11 +50,7 @@ export default function setupWebServer(config: Config, cachedContent: CachedCont
   server.get('/', async (_req, res) => {
     const TEST_RUNTIME_TO_INJECT = testRuntimeToInject(config.port, config);
     const htmlContent = escapeAndInjectTestsToHTML(
-      replaceAssetPaths(
-        cachedContent.mainHTML.html,
-        cachedContent.mainHTML.filePath,
-        config.projectRoot,
-      ),
+      mainHTMLWithReplacedAssets,
       TEST_RUNTIME_TO_INJECT,
       cachedContent.allTestCode,
     );
@@ -66,11 +67,7 @@ export default function setupWebServer(config: Config, cachedContent: CachedCont
   server.get('/qunitx.html', async (_req, res) => {
     const TEST_RUNTIME_TO_INJECT = testRuntimeToInject(config.port, config);
     const htmlContent = escapeAndInjectTestsToHTML(
-      replaceAssetPaths(
-        cachedContent.mainHTML.html,
-        cachedContent.mainHTML.filePath,
-        config.projectRoot,
-      ),
+      mainHTMLWithReplacedAssets,
       TEST_RUNTIME_TO_INJECT,
       cachedContent.filteredTestCode,
     );
