@@ -3,7 +3,7 @@ interface ParsedFlags {
   inputs: string[];
   debug?: boolean;
   watch?: boolean;
-  open?: boolean;
+  open?: boolean | string;
   failFast?: boolean;
   timeout?: number;
   output?: string;
@@ -28,7 +28,10 @@ export default function parseCliFlags(projectRoot: string): ParsedFlags {
       } else if (arg.startsWith('--watch')) {
         return Object.assign(result, { watch: parseBoolean(arg.split('=')[1]) });
       } else if (arg === '-o' || arg.startsWith('--open')) {
-        return Object.assign(result, { open: parseBoolean(arg.split('=')[1]) });
+        const value = arg.split('=')[1];
+        const open =
+          value === undefined || value === 'true' ? true : value === 'false' ? false : value;
+        return Object.assign(result, { open });
       } else if (arg.startsWith('--failfast') || arg.startsWith('--failFast')) {
         return Object.assign(result, { failFast: parseBoolean(arg.split('=')[1]) });
       } else if (arg.startsWith('--timeout')) {

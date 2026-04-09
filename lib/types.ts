@@ -39,7 +39,7 @@ export interface Config {
   before?: string | false;
   after?: string | false;
   watch?: boolean;
-  open?: boolean;
+  open?: boolean | string;
   debug?: boolean;
   COUNTER: Counter;
   lastFailedTestFiles: string[] | null;

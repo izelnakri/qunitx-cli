@@ -33,7 +33,11 @@ module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
       ...testMetadata,
     });
 
-    assert.regex(result, /# QUnitX running: http:\/\/localhost:1234\b/, 'server binds to port 1234 by default');
+    assert.regex(
+      result,
+      /# QUnitX running: http:\/\/localhost:1234\b/,
+      'server binds to port 1234 by default',
+    );
     assert.tapResult(result, { testCount: 3 });
   });
 
@@ -45,7 +49,11 @@ module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
         ...testMetadata,
       });
 
-      assert.regex(result, /# QUnitX running: http:\/\/localhost:1235\b/, 'server bound to 1235 because 1234 was taken');
+      assert.regex(
+        result,
+        /# QUnitX running: http:\/\/localhost:1235\b/,
+        'server bound to 1235 because 1234 was taken',
+      );
       assert.tapResult(result, { testCount: 3 });
     } finally {
       await releasePort(blocker);
@@ -78,10 +86,7 @@ module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
             await portAcceptsConnections(1235),
             'TCP connect to port 1235 succeeds — process is truly listening',
           );
-          assert.notOk(
-            await portIsFree(1234),
-            'port 1234 is still occupied by the blocker',
-          );
+          assert.notOk(await portIsFree(1234), 'port 1234 is still occupied by the blocker');
         },
       );
 
@@ -94,10 +99,10 @@ module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
   test('fails with a clear error when --port is explicitly taken', async (assert, testMetadata) => {
     const blocker = await occupyPort(5679);
     try {
-      const result = await shellFails(
-        'node cli.ts tmp/test/passing-tests.js --port=5679',
-        { ...moduleMetadata, ...testMetadata },
-      );
+      const result = await shellFails('node cli.ts tmp/test/passing-tests.js --port=5679', {
+        ...moduleMetadata,
+        ...testMetadata,
+      });
 
       assert.exitCode(result, 1, 'should exit non-zero when the explicit port is in use');
     } finally {
@@ -124,7 +129,10 @@ function releasePort(server: net.Server): Promise<void> {
 function portAcceptsConnections(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = net.createConnection({ port, host: '127.0.0.1' });
-    socket.once('connect', () => { socket.destroy(); resolve(true); });
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
     socket.once('error', () => resolve(false));
   });
 }
@@ -134,7 +142,10 @@ function portIsFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const server = net.createServer();
     server.once('error', () => resolve(false));
-    server.once('listening', () => { server.close(); resolve(true); });
+    server.once('listening', () => {
+      server.close();
+      resolve(true);
+    });
     server.listen(port, '127.0.0.1');
   });
 }
@@ -153,11 +164,17 @@ async function withRunningServer(
     cmd = `${cmd} --output=tmp/run-${randomUUID()}`;
   }
 
-  const child = spawn(process.execPath, ['--experimental-strip-types', ...cmd.split(/\s+/).slice(1)]);
+  const child = spawn(process.execPath, [
+    '--experimental-strip-types',
+    ...cmd.split(/\s+/).slice(1),
+  ]);
 
   let accum = '';
   const port = await new Promise<number>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`withRunningServer timed out for: ${cmd}`)), 45000);
+    const timer = setTimeout(
+      () => reject(new Error(`withRunningServer timed out for: ${cmd}`)),
+      45000,
+    );
     child.stdout.on('data', (chunk: Buffer) => {
       accum += chunk.toString();
       const match = accum.match(/http:\/\/localhost:(\d+)/);

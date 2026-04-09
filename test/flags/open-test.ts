@@ -40,4 +40,16 @@ module('--open flag tests', (_hooks, moduleMetadata) => {
 
     assert.tapResult(result, { testCount: 3 });
   });
+
+  test('--open=<binary> accepts a custom browser binary and tests still complete', async (assert, testMetadata) => {
+    // Use `echo` as a stand-in binary — it accepts any argument and exits cleanly,
+    // so the test runs on any OS without a real browser installed under that name.
+    // The key assertion is that the CLI parses the value, does not crash, and tests run normally.
+    const result = await execute(`node cli.ts tmp/test/passing-tests.js --open=echo`, {
+      ...moduleMetadata,
+      ...testMetadata,
+    });
+
+    assert.tapResult(result, { testCount: 3 });
+  });
 });

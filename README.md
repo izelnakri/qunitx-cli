@@ -22,7 +22,7 @@ output to the terminal.
 - `--watch` mode re-runs affected tests on file change
 - `--failFast` stops the run after the first failing test
 - `--debug` prints the local server URL and pipes browser console to stdout
-- `--open` / `-o` opens the test output in the same browser the tests run in, as soon as the bundle is ready
+- `--open` / `-o` opens the test output in the same browser the tests run in as soon as the bundle is ready; `--open=brave` opens in a specific binary instead
 - `--before` / `--after` hook scripts for server setup and teardown
 - `--timeout` controls the maximum ms to wait for the full suite to finish
 - `--port` defaults to 1234 and auto-increments if taken; fails fast if an explicit port is unavailable
@@ -76,6 +76,13 @@ qunitx test/**/*.js --failFast
 
 # Print the server URL and pipe browser console to stdout
 qunitx test/**/*.js --debug
+
+# Open output in the test browser as soon as the bundle is ready
+qunitx test/**/*.js --open
+
+# Open output in a specific browser binary instead
+qunitx test/**/*.js --open=brave
+qunitx test/**/*.js --open=google-chrome-lts
 
 # Custom timeout (ms)
 qunitx test/**/*.js --timeout=30000
@@ -205,6 +212,8 @@ Options:
   --extensions=<...>  Comma-separated file extensions to track  [default: js,ts]
   --before=<file>     Script to run (and optionally await) before tests start
   --after=<file>      Script to run (and optionally await) after tests finish
+  --open, -o          Open output in the test browser as soon as the bundle is ready
+  --open=<binary>     Open output in a specific browser binary (e.g. brave, google-chrome-lts)
   --port=<n>          HTTP server port (auto-selects a free port if taken)
   --browser=<name>    Browser engine: chromium (default), firefox, or webkit
 ```
