@@ -27,7 +27,7 @@ export default function parseCliFlags(projectRoot: string): ParsedFlags {
         return Object.assign(result, { debug: parseBoolean(arg.split('=')[1]) });
       } else if (arg.startsWith('--watch')) {
         return Object.assign(result, { watch: parseBoolean(arg.split('=')[1]) });
-      } else if (arg === '-o' || arg.startsWith('--open')) {
+      } else if (arg === '-o' || arg.startsWith('-o=') || arg.startsWith('--open')) {
         const value = arg.split('=')[1];
         const open =
           value === undefined || value === 'true' ? true : value === 'false' ? false : value;

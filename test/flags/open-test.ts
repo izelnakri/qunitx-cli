@@ -5,7 +5,9 @@ import execute from '../helpers/shell.ts';
 
 module('--open flag tests', (_hooks, moduleMetadata) => {
   test('--open runs tests headlessly and exits normally with TAP output', async (assert, testMetadata) => {
-    const result = await execute(`node cli.ts tmp/test/passing-tests.js --open`, {
+    // Use `echo` as the open binary — avoids spawning a real browser on CI where a second
+    // browser instance would compete for the two available CPU cores with the Playwright browser.
+    const result = await execute(`node cli.ts tmp/test/passing-tests.js --open=echo`, {
       ...moduleMetadata,
       ...testMetadata,
     });
@@ -18,7 +20,7 @@ module('--open flag tests', (_hooks, moduleMetadata) => {
     const { randomUUID } = await import('node:crypto');
     const customOutput = `tmp/open-output-${randomUUID()}`;
 
-    await execute(`node cli.ts tmp/test/passing-tests.js --open --output=${customOutput}`, {
+    await execute(`node cli.ts tmp/test/passing-tests.js --open=echo --output=${customOutput}`, {
       ...moduleMetadata,
       ...testMetadata,
     });
@@ -32,8 +34,9 @@ module('--open flag tests', (_hooks, moduleMetadata) => {
     assert.ok(testsStat.value, 'tests.js was written to output directory');
   });
 
-  test('-o shorthand works the same as --open', async (assert, testMetadata) => {
-    const result = await execute(`node cli.ts tmp/test/passing-tests.js -o`, {
+  test('-o shorthand accepts a value the same way --open does', async (assert, testMetadata) => {
+    // -o=echo: shorthand -o with an explicit binary value — avoids spawning a real browser on CI.
+    const result = await execute(`node cli.ts tmp/test/passing-tests.js -o=echo`, {
       ...moduleMetadata,
       ...testMetadata,
     });
