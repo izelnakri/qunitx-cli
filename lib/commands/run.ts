@@ -109,6 +109,11 @@ export default async function run(config: Config): Promise<void> {
         ),
       ),
     ]);
+
+    // Open immediately after static files are ready — no need to wait for tests to finish.
+    if (config.open) {
+      openOutputInBrowser(config);
+    }
     const TIME_COUNTER = timeCounter();
 
     // 3-minute per-group deadline. Firefox/WebKit can hang indefinitely in any Playwright
@@ -189,9 +194,6 @@ export default async function run(config: Config): Promise<void> {
     // If the write callback never fires (theoretical), the unref'd exitTimer is the fallback.
     const exitTimer = setTimeout(() => process.exit(exitCode), 5000);
     exitTimer.unref();
-    if (config.open) {
-      openOutputInBrowser(config);
-    }
 
     process.stdout.write('\n', () => {
       clearTimeout(exitTimer);

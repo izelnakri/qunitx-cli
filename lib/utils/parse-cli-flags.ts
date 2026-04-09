@@ -9,6 +9,7 @@ interface ParsedFlags {
   output?: string;
   htmlPaths?: string[];
   port?: number;
+  portExplicit?: boolean;
   extensions?: string[];
   browser?: 'chromium' | 'firefox' | 'webkit';
   before?: string | false;
@@ -43,7 +44,7 @@ export default function parseCliFlags(projectRoot: string): ParsedFlags {
 
         return result;
       } else if (arg.startsWith('--port')) {
-        return Object.assign(result, { port: Number(arg.split('=')[1]) });
+        return Object.assign(result, { port: Number(arg.split('=')[1]), portExplicit: true });
       } else if (arg.startsWith('--extensions')) {
         return Object.assign(result, {
           extensions: arg

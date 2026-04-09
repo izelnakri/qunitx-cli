@@ -22,9 +22,12 @@ output to the terminal.
 - `--watch` mode re-runs affected tests on file change
 - `--failFast` stops the run after the first failing test
 - `--debug` prints the local server URL and pipes browser console to stdout
+- `--open` / `-o` opens the test output in the same browser the tests run in, as soon as the bundle is ready
 - `--before` / `--after` hook scripts for server setup and teardown
 - `--timeout` controls the maximum ms to wait for the full suite to finish
+- `--port` defaults to 1234 and auto-increments if taken; fails fast if an explicit port is unavailable
 - `--browser` flag to run tests in Chromium, Firefox, or WebKit
+- `--version` / `-v` prints the installed version
 - Docker image for zero-install CI usage
 
 ## Installation

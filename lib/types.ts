@@ -28,6 +28,7 @@ export interface Config {
   timeout: number;
   failFast: boolean;
   port: number;
+  portExplicit?: boolean;
   extensions: string[];
   browser: 'chromium' | 'firefox' | 'webkit';
   projectRoot: string;
