@@ -12,11 +12,13 @@ const CDP_URL_REGEX = /DevTools listening on (ws:\/\/[^\s]+)/;
 export default function preLaunchChrome(
   chromePath: string | null | undefined,
   args: string[],
+  headless = true,
 ): Promise<EarlyChrome | null> {
   if (!chromePath) return Promise.resolve(null);
 
+  const headlessArgs = headless ? ['--headless=new'] : [];
   return new Promise((resolve) => {
-    const proc = spawn(chromePath, ['--remote-debugging-port=0', '--headless=new', ...args], {
+    const proc = spawn(chromePath, ['--remote-debugging-port=0', ...headlessArgs, ...args], {
       stdio: ['ignore', 'ignore', 'pipe'],
     });
 

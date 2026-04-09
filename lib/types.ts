@@ -38,6 +38,7 @@ export interface Config {
   before?: string | false;
   after?: string | false;
   watch?: boolean;
+  open?: boolean;
   debug?: boolean;
   COUNTER: Counter;
   lastFailedTestFiles: string[] | null;
@@ -46,6 +47,7 @@ export interface Config {
   _resetTestTimeout: (() => void) | null;
   _groupMode?: boolean;
   _building?: boolean;
+  _pendingBuildTrigger?: (() => void) | null;
   expressApp?: unknown;
 }
 

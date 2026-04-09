@@ -27,6 +27,7 @@ Input options:
 Optional flags:
 --debug : print console output when tests run in browser
 --watch : run the target file or folders, watch them for continuous run and expose http server under localhost
+--open : run tests in a visible browser window instead of headless; keeps the server alive (short: -o)
 --timeout : change default timeout per test case
 --output : folder to distribute built qunitx html and js that a webservers can run[default: tmp]
 --failFast : run the target file or folders with immediate abort if a single test fails

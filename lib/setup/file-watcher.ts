@@ -6,7 +6,9 @@ import type { FSWatcher } from 'node:fs';
 import type { Config, FSTree } from '../types.ts';
 
 /**
- * Starts `fs.watch` watchers for each lookup path and calls `onEventFunc` on JS/TS file changes, debounced via a flag.
+ * Starts `fs.watch` watchers for each lookup path and calls `onEventFunc` on JS/TS file changes,
+ * debounced via a flag. Also watches each path's parent directory to detect when a watched
+ * directory is renamed or deleted (since fs.watch tracks by inode, not path).
  * Uses `config.fsTree` to distinguish `unlink` (tracked file) from `unlinkDir` (directory) on deletion.
  * @returns {object}
  */
@@ -22,9 +24,13 @@ export default function setupFileWatchers(
 } {
   const extensions = config.extensions || ['js', 'ts'];
   const readyPromises: Promise<void>[] = [];
+  const parentWatchers: FSWatcher[] = [];
+
   const fileWatchers = testFileLookupPaths.reduce((watchers, watchPath) => {
     let ready = false;
-    const watcher = fs.watch(watchPath, { recursive: true }, async (eventType, filename) => {
+
+    // Child watcher: tracks file-level events within watchPath.
+    const childWatcher = fs.watch(watchPath, { recursive: true }, async (eventType, filename) => {
       if (!ready || !filename) return;
       const fullPath = path.join(watchPath, filename);
       if (eventType === 'change') {
@@ -48,6 +54,29 @@ export default function setupFileWatchers(
         handleWatchEvent(config, extensions, 'unlink', fullPath, onEventFunc, onFinishFunc);
       }
     });
+
+    // Parent watcher: detects when watchPath itself is renamed or deleted.
+    // fs.watch tracks inodes, so the child watcher would keep firing after a directory rename
+    // but path.join(watchPath, filename) would use the stale original path. Watching the parent
+    // catches the disappearance of watchPath and fires unlinkDir to clean up tracked files.
+    const parentDir = path.dirname(watchPath);
+    const watchedBasename = path.basename(watchPath);
+    const parentWatcher = fs.watch(parentDir, async (eventType, filename) => {
+      if (!ready || filename !== watchedBasename || eventType !== 'rename') return;
+      try {
+        await stat(watchPath);
+        // Directory still exists — spurious event, ignore.
+      } catch {
+        // watchPath was renamed or deleted. Fire unlinkDir so fsTree is cleaned up and a
+        // re-run is triggered, then close both watchers to stop stale-path events.
+        handleWatchEvent(config, extensions, 'unlinkDir', watchPath, onEventFunc, onFinishFunc);
+        childWatcher.close();
+        parentWatcher.close();
+        delete watchers[watchPath];
+      }
+    });
+    parentWatchers.push(parentWatcher);
+
     readyPromises.push(
       new Promise<void>((resolve) =>
         setImmediate(() => {
@@ -56,15 +85,15 @@ export default function setupFileWatchers(
         }),
       ),
     );
-    return Object.assign(watchers, { [watchPath]: watcher });
+    return Object.assign(watchers, { [watchPath]: childWatcher });
   }, {});
 
   return {
     fileWatchers,
     ready: Promise.all(readyPromises).then(() => {}),
     killFileWatchers() {
-      Object.keys(fileWatchers).forEach((watcherKey) => fileWatchers[watcherKey].close());
-
+      Object.keys(fileWatchers).forEach((key) => fileWatchers[key].close());
+      parentWatchers.forEach((pw) => pw.close());
       return fileWatchers;
     },
   };
@@ -73,6 +102,8 @@ export default function setupFileWatchers(
 /**
  * Routes a file-system event to fsTree mutation and optional rebuild trigger.
  * `unlinkDir` bypasses the extension filter so deleted directories always clean up fsTree.
+ * When a build is already in progress, queues the event as a pending trigger so it fires
+ * immediately after the current build completes (last-write-wins for rapid changes).
  * @returns {void}
  */
 export function handleWatchEvent(
@@ -117,7 +148,20 @@ export function handleWatchEvent(
       .catch((error) => {
         console.error('#', red('Build error:'), error.message || error);
       })
-      .finally(() => (config._building = false));
+      .finally(() => {
+        config._building = false;
+        // Fire the last event that arrived while we were building (last-write-wins).
+        if (config._pendingBuildTrigger) {
+          const trigger = config._pendingBuildTrigger;
+          config._pendingBuildTrigger = null;
+          trigger();
+        }
+      });
+  } else {
+    // A build is in progress — queue this event, overwriting any previous pending one.
+    // The finally block above will pick it up after the current build finishes.
+    config._pendingBuildTrigger = () =>
+      handleWatchEvent(config, extensions, event, filePath, onEventFunc, onFinishFunc);
   }
 }
 

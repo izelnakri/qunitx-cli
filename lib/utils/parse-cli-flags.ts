@@ -1,8 +1,9 @@
-// { inputs: [], debug: true, watch: true, failFast: true, htmlPaths: [], output }
+// { inputs: [], debug: true, watch: true, open: true, failFast: true, htmlPaths: [], output }
 interface ParsedFlags {
   inputs: string[];
   debug?: boolean;
   watch?: boolean;
+  open?: boolean;
   failFast?: boolean;
   timeout?: number;
   output?: string;
@@ -25,6 +26,8 @@ export default function parseCliFlags(projectRoot: string): ParsedFlags {
         return Object.assign(result, { debug: parseBoolean(arg.split('=')[1]) });
       } else if (arg.startsWith('--watch')) {
         return Object.assign(result, { watch: parseBoolean(arg.split('=')[1]) });
+      } else if (arg === '-o' || arg.startsWith('--open')) {
+        return Object.assign(result, { open: parseBoolean(arg.split('=')[1]) });
       } else if (arg.startsWith('--failfast') || arg.startsWith('--failFast')) {
         return Object.assign(result, { failFast: parseBoolean(arg.split('=')[1]) });
       } else if (arg.startsWith('--timeout')) {
@@ -66,6 +69,10 @@ export default function parseCliFlags(projectRoot: string): ParsedFlags {
       }
 
       // maybe set watch depth via micromatch(so incl metadata)
+      if (arg.startsWith('-')) {
+        console.warn(`# Warning: Unknown flag "${arg}" — ignored`);
+        return result;
+      }
       result.inputs.add(arg.startsWith(projectRoot) ? arg : `${process.cwd()}/${arg}`);
 
       return result;

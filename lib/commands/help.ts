@@ -19,6 +19,7 @@ ${highlight('Input options:')}
 ${highlight('Optional flags:')}
 ${color('--debug')} : print console output when tests run in browser
 ${color('--watch')} : run the target file or folders, watch them for continuous run and expose http server under localhost
+${color('--open')} : run tests in a visible browser window instead of headless; keeps the server alive (short: ${color('-o')})
 ${color('--timeout')} : change default timeout per test case
 ${color('--output')} : folder to distribute built qunitx html and js that a webservers can run[default: tmp]
 ${color('--failFast')} : run the target file or folders with immediate abort if a single test fails

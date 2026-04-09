@@ -145,6 +145,13 @@ function testRuntimeToInject(port: number, config: Config): string {
     }, 1000);
 
     (function() {
+      // When opened as a static file (file:// protocol), there is no WebSocket server.
+      // Defer so the test bundle (injected after this IIFE) registers all modules before QUnit.start().
+      if (window.location.protocol === 'file:') {
+        window.setTimeout(setupQUnit, 0);
+        return;
+      }
+
       let wsRetryCount = 0;
       const WS_MAX_RETRIES = 500; // 5000ms total before giving up
 

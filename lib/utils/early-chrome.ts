@@ -11,11 +11,23 @@ import { perfLog } from './perf-logger.ts';
 
 const NON_RUN_COMMANDS = new Set(['help', 'h', 'p', 'print', 'new', 'n', 'g', 'generate', 'init']);
 const isRunCommand = Boolean(process.argv[2]) && !NON_RUN_COMMANDS.has(process.argv[2]);
-const browserFromArgv =
-  process.argv.find((arg) => arg.startsWith('--browser='))?.split('=')[1] || 'chromium';
+const { browserFromArgv, openFromArgv, watchFromArgv } = process.argv.reduce(
+  (flags, arg) => {
+    if (arg.startsWith('--browser=')) flags.browserFromArgv = arg.slice(10);
+    else if (arg === '--open' || arg === '-o') flags.openFromArgv = true;
+    else if (arg === '--watch' || arg === '-w') flags.watchFromArgv = true;
+    return flags;
+  },
+  { browserFromArgv: 'chromium', openFromArgv: false, watchFromArgv: false },
+);
+// With --open --watch, Chrome is left alive after qunitx exits so the visible browser window persists.
+// With --open alone, qunitx exits after tests complete; the detached browser is opened separately.
+const openWatchMode = openFromArgv && watchFromArgv;
 
 let earlyChromeProcRef = null;
-process.on('exit', () => earlyChromeProcRef?.kill());
+if (!openWatchMode) {
+  process.on('exit', () => earlyChromeProcRef?.kill());
+}
 
 perfLog('early-chrome.js: module evaluated');
 
@@ -29,7 +41,7 @@ export const earlyBrowserPromise =
     ? findChrome()
         .then((chromePath) => {
           perfLog('early-chrome.js: findChrome resolved', chromePath);
-          return preLaunchChrome(chromePath, CHROMIUM_ARGS);
+          return preLaunchChrome(chromePath, CHROMIUM_ARGS, !openWatchMode);
         })
         .then((info) => {
           perfLog('early-chrome.js: Chrome CDP ready', info?.cdpEndpoint ?? null);

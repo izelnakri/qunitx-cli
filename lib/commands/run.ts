@@ -1,4 +1,5 @@
 import setupBrowser, { launchBrowser } from '../setup/browser.ts';
+import openOutputInBrowser from '../utils/open-output-in-browser.ts';
 import fs from 'node:fs/promises';
 import { normalize } from 'node:path';
 import { availableParallelism } from 'node:os';
@@ -47,23 +48,30 @@ export default async function run(config: Config): Promise<void> {
       throw error;
     }
 
-    const { ready: watcherReady } = fileWatcher(
-      config.testFileLookupPaths,
-      config,
-      async (event, file) => {
-        if (event === 'addDir') return;
-        if (['change', 'unlink', 'unlinkDir'].includes(event)) {
-          // Clear the cached bundle so the next full re-run rebuilds without the deleted file.
-          // `change` events can fire while a file is being rewritten, so a filtered bundle
-          // may catch the file in a transient empty/partial state and produce a broken rerun.
-          cachedContent.allTestCode = null;
-          return await runTestsInBrowser(config, cachedContent, connections);
-        }
-        await runTestsInBrowser(config, cachedContent, connections, [file]);
-      },
-      (_path, _event) => connections.server.publish('refresh', 'refresh'),
-    );
-    await watcherReady;
+    if (config.watch) {
+      const { ready: watcherReady } = fileWatcher(
+        config.testFileLookupPaths,
+        config,
+        async (event, file) => {
+          if (event === 'addDir') return;
+          if (['change', 'unlink', 'unlinkDir'].includes(event)) {
+            // Ignore `change` events for files not yet in fsTree: fs.watch fires `change`
+            // before `rename` (→ `add`) when a file is first created. The `add` event
+            // will follow and trigger the correct filtered re-run.
+            if (event === 'change' && !(file in config.fsTree)) return;
+            // Clear the cached bundle so the next full re-run rebuilds without the deleted file.
+            // `change` events can fire while a file is being rewritten, so a filtered bundle
+            // may catch the file in a transient empty/partial state and produce a broken rerun.
+            cachedContent.allTestCode = null;
+            return await runTestsInBrowser(config, cachedContent, connections);
+          }
+          await runTestsInBrowser(config, cachedContent, connections, [file]);
+        },
+        (_path, _event) => connections.server.publish('refresh', 'refresh'),
+      );
+      await watcherReady;
+    }
+
     logWatcherAndKeyboardShortcutInfo(config, connections.server);
   } else {
     // CONCURRENT MODE: split test files across N groups = availableParallelism().
@@ -181,6 +189,10 @@ export default async function run(config: Config): Promise<void> {
     // If the write callback never fires (theoretical), the unref'd exitTimer is the fallback.
     const exitTimer = setTimeout(() => process.exit(exitCode), 5000);
     exitTimer.unref();
+    if (config.open) {
+      openOutputInBrowser(config);
+    }
+
     process.stdout.write('\n', () => {
       clearTimeout(exitTimer);
       clearInterval(keepAlive);
@@ -264,9 +276,10 @@ function splitIntoGroups(files: string[], groupCount: number): string[][] {
 }
 
 function logWatcherAndKeyboardShortcutInfo(config: Config, _server: unknown): void {
+  const prefix = 'Watching files...';
   console.log(
     '#',
-    blue(`Watching files... You can browse the tests on http://localhost:${config.port} ...`),
+    blue(`${prefix} You can browse the tests on http://localhost:${config.port} ...`),
   );
   console.log(
     '#',

@@ -54,7 +54,7 @@ export async function launchBrowser(config: Config): Promise<Browser> {
   }
 
   const playwrightCore = await playwrightCorePromise;
-  return playwrightCore[browserName].launch({ headless: true });
+  return playwrightCore[browserName].launch({ headless: !(config.open && config.watch) });
 }
 
 /**

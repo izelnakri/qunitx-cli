@@ -218,6 +218,109 @@ module('--watch re-run tests', () => {
     }
   });
 
+  test('renaming a file triggers remove+add and the renamed file is re-run', async (assert) => {
+    const { dir, id, testsDir, testContent } = await makeWatchProject();
+
+    // Second file so fsTree is non-empty after the renamed file's unlink fires first.
+    const id2 = randomUUID();
+    await fs.writeFile(`${testsDir}/extra-tests.ts`, testContent.replace(id, id2));
+
+    const session = spawnWatch(['tests', '--watch'], { cwd: dir });
+
+    try {
+      await session.waitFor((buf) => buf.includes('Press "qq"'));
+      assert.passingTestCaseFor(session.stdout, { moduleName: id });
+      assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
+
+      await fs.rename(`${testsDir}/passing-tests.ts`, `${testsDir}/renamed-tests.ts`);
+
+      // REMOVED: and ADDED: are logged before the _building guard so they always appear.
+      await session.waitFor((buf) => buf.includes('REMOVED:') && buf.includes('ADDED:'));
+
+      // Pending trigger: the add's filtered run fires after the unlink's full re-run completes.
+      // Wait for both runs to complete (initial + at least 2 more: unlink full-run + add filtered-run).
+      await session.waitFor((buf) => countOccurrences(buf, 'QUnitX running:') >= 3);
+      await session.waitFor((buf) => {
+        const idx = buf.lastIndexOf('QUnitX running:');
+        return buf.includes('# duration', idx);
+      });
+
+      // Final run is the filtered run of the renamed file — same content (id), passes.
+      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      assert.includes(rerunOutput, '# fail 0');
+      assert.includes(rerunOutput, id);
+    } finally {
+      session.kill();
+    }
+  });
+
+  test('renaming a watched directory removes its files from tracking', async (assert) => {
+    const { dir, id, testsDir, testContent } = await makeWatchProject();
+
+    // Second directory so there is still something to run after the rename.
+    const otherDir = `${dir}/other-tests`;
+    const id2 = randomUUID();
+    await fs.mkdir(otherDir, { recursive: true });
+    await fs.writeFile(`${otherDir}/other-tests.ts`, testContent.replace(id, id2));
+
+    const session = spawnWatch(['tests', 'other-tests', '--watch'], { cwd: dir });
+
+    try {
+      await session.waitFor((buf) => buf.includes('Press "qq"'));
+      assert.passingTestCaseFor(session.stdout, { moduleName: id });
+      assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
+
+      // Rename tests/ — parent watcher detects disappearance and fires unlinkDir.
+      await fs.rename(testsDir, `${dir}/old-tests`);
+
+      await session.waitFor((buf) => buf.includes('REMOVED:'));
+      await session.waitFor((buf) => countOccurrences(buf, 'QUnitX running:') >= 2);
+      await session.waitFor((buf) => {
+        const idx = buf.lastIndexOf('QUnitX running:');
+        return buf.includes('# duration', idx);
+      });
+
+      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      // Only the other-tests file runs — renamed directory's files are no longer tracked.
+      assert.includes(rerunOutput, id2);
+      assert.false(rerunOutput.includes(id), 'renamed-away directory files absent from re-run');
+    } finally {
+      session.kill();
+    }
+  });
+
+  test('rapid file changes coalesce: only the final state is tested', async (assert) => {
+    const { dir, id, testFile, testContent } = await makeWatchProject();
+    const session = spawnWatch(['tests', '--watch'], { cwd: dir });
+
+    try {
+      await session.waitFor((buf) => buf.includes('Press "qq"'));
+      assert.passingTestCaseFor(session.stdout, { moduleName: id });
+
+      // Write the file three times in quick succession. The pending-trigger mechanism
+      // ensures the last write wins: intermediate builds are coalesced.
+      const finalId = randomUUID();
+      await fs.writeFile(testFile, testContent + '\n// intermediate 1');
+      await fs.writeFile(testFile, testContent + '\n// intermediate 2');
+      await fs.writeFile(testFile, testContent.replace(id, finalId));
+
+      // Wait until finalId has actually appeared in a completed run.
+      // Using count >= 2 is not enough: the first re-run may show an intermediate state while
+      // the pending trigger's build (which reads finalId) hasn't finished yet.
+      await session.waitFor((buf) => {
+        const idx = buf.indexOf(finalId);
+        return idx !== -1 && buf.includes('# duration', idx);
+      });
+
+      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      // The final state (finalId) ran — no crash, no broken intermediate state.
+      assert.includes(rerunOutput, '# fail 0');
+      assert.includes(rerunOutput, finalId);
+    } finally {
+      session.kill();
+    }
+  });
+
   test('a build error in watch mode prints the error without exiting', async (assert) => {
     const { dir, id, testFile, testContent } = await makeWatchProject();
     const session = spawnWatch(['tests', '--watch'], { cwd: dir });
