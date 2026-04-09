@@ -48,13 +48,29 @@ export async function launchBrowser(config: Config): Promise<Browser> {
 
     // Pre-launch failed (Chrome not found, wrong version, etc.) — fall back to normal launch.
     const executablePath = await findChrome();
-    const launchOptions = { args: CHROMIUM_ARGS, headless: true };
+    const launchOptions: Parameters<typeof playwrightCore.chromium.launch>[0] = {
+      args: CHROMIUM_ARGS,
+      headless: true,
+      // Disable Playwright's async SIGTERM/SIGHUP handlers. When the CLI is killed by an
+      // external signal (e.g. exec() timeout in tests), those handlers start an async browser
+      // graceful-close that can hang indefinitely on CI, preventing the process from exiting
+      // and blocking the test runner. With these disabled, Node.js's default signal behaviour
+      // (synchronous process.exit) runs instead, and Playwright's synchronous exitHandler
+      // (registered via process.on('exit')) still kills the browser correctly.
+      handleSIGTERM: false,
+      handleSIGHUP: false,
+    };
     if (executablePath) launchOptions.executablePath = executablePath;
     return playwrightCore.chromium.launch(launchOptions);
   }
 
   const playwrightCore = await playwrightCorePromise;
-  return playwrightCore[browserName].launch({ headless: !(config.open && config.watch) });
+  return playwrightCore[browserName].launch({
+    headless: !(config.open && config.watch),
+    // See comment in the chromium fallback path above for why these are disabled.
+    handleSIGTERM: false,
+    handleSIGHUP: false,
+  });
 }
 
 /**

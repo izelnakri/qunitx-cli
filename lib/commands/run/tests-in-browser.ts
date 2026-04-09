@@ -172,14 +172,7 @@ async function runTestInsideHTMLFile(
     });
 
     const targetUrl = `http://localhost:${config.port}${filePath}`;
-    if (page.url() === targetUrl) {
-      // Re-run in watch mode: same URL — use reload() to guarantee a full fresh navigation.
-      // page.goto(same_url) can silently no-op or serve cached HTML on some Playwright/Chrome
-      // versions, leaving the old WebSocket in place and causing a 20s timeout.
-      await page.reload({ timeout: config.timeout + 10000 });
-    } else {
-      await page.goto(targetUrl, { timeout: config.timeout + 10000 });
-    }
+    await page.goto(targetUrl, { timeout: config.timeout + 10000 });
 
     config._resetTestTimeout(); // start idle countdown once the page is loaded
 
