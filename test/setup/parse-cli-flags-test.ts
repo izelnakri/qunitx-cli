@@ -35,6 +35,42 @@ module('Setup | parseCliFlags | --extensions', () => {
   });
 });
 
+module('Setup | parseCliFlags | --port', () => {
+  test('--port parses as a number and sets portExplicit', (assert) => {
+    const flags = withArgv(['--port=5678'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.port, 5678);
+    assert.strictEqual(flags.portExplicit, true);
+  });
+
+  test('--port is undefined (not 1234) when not provided — default comes from default-project-config-values', (assert) => {
+    const flags = withArgv([], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.port, undefined, 'parseCliFlags yields no port when flag is absent');
+    assert.strictEqual(flags.portExplicit, undefined);
+  });
+});
+
+module('Setup | parseCliFlags | --open', () => {
+  test('--open with no value sets open to true', (assert) => {
+    const flags = withArgv(['--open'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.open, true);
+  });
+
+  test('-o shorthand sets open to true', (assert) => {
+    const flags = withArgv(['-o'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.open, true);
+  });
+
+  test('--open=false sets open to false', (assert) => {
+    const flags = withArgv(['--open=false'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.open, false);
+  });
+
+  test('--open=brave sets open to the string "brave"', (assert) => {
+    const flags = withArgv(['--open=brave'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.open, 'brave');
+  });
+});
+
 module('Setup | parseCliFlags | --failFast', () => {
   test('--failFast sets failFast to true', (assert) => {
     const flags = withArgv(['--failFast'], () => parseCliFlags(PROJECT_ROOT));

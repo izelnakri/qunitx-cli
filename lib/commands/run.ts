@@ -34,6 +34,12 @@ export default async function run(config: Config): Promise<void> {
     config.expressApp = connections.server;
     setupKeyboardEvents(config, cachedContent, connections);
 
+    // Open immediately once server is bound and port is known.
+    // Subsequent reruns are handled by the WebSocket 'refresh' → window.location.reload().
+    if (config.open) {
+      void openOutputInBrowser(config);
+    }
+
     if (config.before) {
       await runUserModule(`${process.cwd()}/${config.before}`, config, 'before');
     }
@@ -112,7 +118,7 @@ export default async function run(config: Config): Promise<void> {
 
     // Open immediately after static files are ready — no need to wait for tests to finish.
     if (config.open) {
-      openOutputInBrowser(config);
+      void openOutputInBrowser(config);
     }
     const TIME_COUNTER = timeCounter();
 

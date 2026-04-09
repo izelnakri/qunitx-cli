@@ -1,6 +1,8 @@
 import { module, test } from 'qunitx';
 import http from 'node:http';
+import net from 'node:net';
 import HTTPServer from '../../lib/servers/http.ts';
+import bindServerToPort from '../../lib/setup/bind-server-to-port.ts';
 
 function request(port, path) {
   return new Promise((resolve, reject) => {
@@ -27,6 +29,51 @@ async function withServer(fn) {
     await new Promise((resolve) => server._server.close(resolve));
   }
 }
+
+module('Servers | bindServerToPort | port selection', () => {
+  test('binds to the requested port when it is free', async (assert) => {
+    const server = new HTTPServer();
+    const blocker = await findFreePort();
+    const port = blocker.port;
+    await blocker.release();
+
+    const config = { port };
+    await bindServerToPort(server, config);
+    assert.equal(config.port, port, 'config.port is updated to the bound port');
+    await server.close();
+  });
+
+  test('auto-increments to port+1 when the requested port is taken (portExplicit not set)', async (assert) => {
+    const blocker = await findFreePort();
+    const takenPort = blocker.port;
+    // Keep blocker running so takenPort stays occupied
+    const next = new HTTPServer();
+    const config = { port: takenPort };
+    await bindServerToPort(next, config);
+    assert.equal(config.port, takenPort + 1, 'binds to port+1 when port is taken');
+    await blocker.release();
+    await next.close();
+  });
+
+  test('throws EADDRINUSE when portExplicit is true and the port is taken', async (assert) => {
+    const blocker = await findFreePort();
+    const takenPort = blocker.port;
+    const server = new HTTPServer();
+    try {
+      await bindServerToPort(server, { port: takenPort, portExplicit: true });
+      assert.ok(false, 'should have thrown');
+    } catch (err: unknown) {
+      assert.equal(
+        (err as NodeJS.ErrnoException).code,
+        'EADDRINUSE',
+        'throws EADDRINUSE for explicit taken port',
+      );
+    } finally {
+      await blocker.release();
+      server._server.close();
+    }
+  });
+});
 
 module('Servers | HTTPServer | query param routing', () => {
   test('GET / serves correctly without query params', async (assert) => {
@@ -74,3 +121,17 @@ module('Servers | HTTPServer | query param routing', () => {
     });
   });
 });
+
+// Finds a free OS-assigned port by binding to :0, then releases it.
+// Returns the port number and a release() fn so callers can hold it open.
+function findFreePort(): Promise<{ port: number; release: () => Promise<void> }> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.once('listening', () => {
+      const port = (server.address() as net.AddressInfo).port;
+      resolve({ port, release: () => new Promise((res) => server.close(res)) });
+    });
+    server.listen(0, '127.0.0.1');
+  });
+}

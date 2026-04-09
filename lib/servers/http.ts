@@ -118,6 +118,9 @@ export default class HTTPServer {
     });
     this.wss = new WebSocketServer({ server: this._server });
     this.wss.on('error', (error) => {
+      // EADDRINUSE is forwarded from the HTTP server during bindServerToPort retries — suppress it,
+      // it is already handled there. Only log genuinely unexpected WebSocket errors.
+      if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') return;
       console.log('# [WebSocketServer] Error:');
       console.log(error);
     });

@@ -7,7 +7,9 @@ import shell, { shellFails } from '../helpers/shell.ts';
 
 module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
   test('--port flag is accepted and tests complete successfully', async (assert, testMetadata) => {
-    const result = await shell('node cli.ts tmp/test/passing-tests.js --port=5678', {
+    const { port, release } = await findFreePort();
+    await release();
+    const result = await shell(`node cli.ts tmp/test/passing-tests.js --port=${port}`, {
       ...moduleMetadata,
       ...testMetadata,
     });
@@ -17,112 +19,76 @@ module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
   });
 
   test('--port flag combined with --debug shows the correct port in the server URL', async (assert, testMetadata) => {
-    const result = await shell('node cli.ts tmp/test/passing-tests.js --port=5678 --debug', {
+    const { port, release } = await findFreePort();
+    await release();
+    const result = await shell(`node cli.ts tmp/test/passing-tests.js --port=${port} --debug`, {
       ...moduleMetadata,
       ...testMetadata,
     });
 
     assert.hasDebugURL(result, 'debug output includes the server URL with the assigned port');
+    assert.regex(
+      result,
+      new RegExp(`# QUnitX running: http://localhost:${port}\\b`),
+      'URL shows the explicitly requested port',
+    );
     assert.passingTestCaseFor(result, { debug: true, moduleName: '{{moduleName}}' });
     assert.tapResult(result, { testCount: 3 });
   });
 
-  test('default port 1234 is used when --port is not specified (visible in --debug output)', async (assert, testMetadata) => {
-    const result = await shell('node cli.ts tmp/test/passing-tests.js --debug', {
-      ...moduleMetadata,
-      ...testMetadata,
-    });
+  test('process truly occupies the bound port while running (TCP connect succeeds)', async (assert) => {
+    // Use a dynamically found free port via --port so the test is isolated from concurrent runs.
+    const free = await findFreePort();
+    const port = free.port;
+    await free.release();
 
-    assert.regex(
-      result,
-      /# QUnitX running: http:\/\/localhost:1234\b/,
-      'server binds to port 1234 by default',
-    );
-    assert.tapResult(result, { testCount: 3 });
-  });
-
-  test('auto-increments to 1235 when 1234 is taken (no --port)', async (assert, testMetadata) => {
-    const blocker = await occupyPort(1234);
-    try {
-      const result = await shell('node cli.ts tmp/test/passing-tests.js --debug', {
-        ...moduleMetadata,
-        ...testMetadata,
-      });
-
-      assert.regex(
-        result,
-        /# QUnitX running: http:\/\/localhost:1235\b/,
-        'server bound to 1235 because 1234 was taken',
-      );
-      assert.tapResult(result, { testCount: 3 });
-    } finally {
-      await releasePort(blocker);
-    }
-  });
-
-  test('process truly occupies port 1234 while running (TCP connect succeeds)', async (assert) => {
     const boundPort = await withRunningServer(
-      'node cli.ts tmp/test/passing-tests.js --watch',
-      async (port) => {
-        assert.equal(port, 1234, 'server URL reports port 1234');
+      `node cli.ts tmp/test/passing-tests.js --watch --port=${port}`,
+      async (actualPort) => {
+        assert.equal(actualPort, port, 'server URL reports the requested port');
         assert.ok(
-          await portAcceptsConnections(1234),
-          'TCP connect to port 1234 succeeds — process is truly listening',
+          await portAcceptsConnections(actualPort),
+          'TCP connect succeeds — process is truly listening on that port',
         );
       },
     );
 
-    assert.ok(await portIsFree(boundPort), 'port 1234 is released after the process exits');
-  });
-
-  test('process truly occupies port 1235 when 1234 is taken (TCP connect succeeds)', async (assert) => {
-    const blocker = await occupyPort(1234);
-    try {
-      const boundPort = await withRunningServer(
-        'node cli.ts tmp/test/passing-tests.js --watch',
-        async (port) => {
-          assert.equal(port, 1235, 'server URL reports port 1235');
-          assert.ok(
-            await portAcceptsConnections(1235),
-            'TCP connect to port 1235 succeeds — process is truly listening',
-          );
-          assert.notOk(await portIsFree(1234), 'port 1234 is still occupied by the blocker');
-        },
-      );
-
-      assert.ok(await portIsFree(boundPort), 'port 1235 is released after the process exits');
-    } finally {
-      await releasePort(blocker);
-    }
+    assert.ok(await portIsFree(boundPort), 'port is released after the process exits');
   });
 
   test('fails with a clear error when --port is explicitly taken', async (assert, testMetadata) => {
-    const blocker = await occupyPort(5679);
+    const free = await findFreePort();
+    const takenPort = free.port;
+    // Keep it occupied for the duration of the test.
     try {
-      const result = await shellFails('node cli.ts tmp/test/passing-tests.js --port=5679', {
+      const result = await shellFails(`node cli.ts tmp/test/passing-tests.js --port=${takenPort}`, {
         ...moduleMetadata,
         ...testMetadata,
       });
 
       assert.exitCode(result, 1, 'should exit non-zero when the explicit port is in use');
     } finally {
-      await releasePort(blocker);
+      await free.release();
     }
   });
 });
 
-// Occupies a port with a plain TCP server so we can simulate a conflict.
-function occupyPort(port: number): Promise<net.Server> {
+// Finds a free OS-assigned port by binding to :: (all interfaces) to match how the CLI binds.
+// Returns { port, release }. Caller can hold the server open to occupy the port, or call
+// release() immediately to free it.
+function findFreePort(): Promise<{ port: number; release: () => Promise<void> }> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
     server.once('error', reject);
-    server.once('listening', () => resolve(server));
-    server.listen(port, '127.0.0.1');
+    server.once('listening', () => {
+      const port = (server.address() as net.AddressInfo).port;
+      resolve({ port, release: () => new Promise((res) => server.close(res)) });
+    });
+    // Bind :: (all interfaces) to match the CLI's bind address, so the occupied check is
+    // consistent with how the CLI claims the port. Binding 127.0.0.1 here while the CLI
+    // binds :: would not reserve the port on the :: side, causing a false-free detection.
+    server.listen(0, '::');
   });
-}
-
-function releasePort(server: net.Server): Promise<void> {
-  return new Promise((resolve) => server.close(resolve));
 }
 
 // Tries a TCP connect to confirm the port is accepting connections (server truly running).
@@ -137,7 +103,7 @@ function portAcceptsConnections(port: number): Promise<boolean> {
   });
 }
 
-// Tries to bind to confirm the port is free (opposite of above).
+// Tries to bind to confirm the port is free.
 function portIsFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const server = net.createServer();
@@ -151,8 +117,8 @@ function portIsFree(port: number): Promise<boolean> {
 }
 
 /**
- * Starts qunitx in --watch mode, waits until the server is up (port appears in output),
- * calls `fn(port, stdout)` while the process is still running, then kills the process.
+ * Starts qunitx in --watch mode, waits until the server URL appears in output,
+ * calls `fn(port)` while the process is still running, then kills the process.
  * Returns the port that was bound.
  */
 async function withRunningServer(

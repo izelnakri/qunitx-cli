@@ -32,8 +32,8 @@ jobs:
 
   # ── Test ──────────────────────────────────────────────────────────────────────
   # Runs in parallel with lint. Test files run concurrently — safe because each
-  # CLI invocation gets a unique --output dir and the port resolver uses
-  # server.listen(0) to avoid collisions.
+  # CLI invocation gets a unique --output dir and the port binder starts from
+  # 1234 and auto-increments on EADDRINUSE to avoid collisions.
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15

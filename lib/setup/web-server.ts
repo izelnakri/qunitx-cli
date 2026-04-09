@@ -55,6 +55,7 @@ export default function setupWebServer(config: Config, cachedContent: CachedCont
       cachedContent.allTestCode,
     );
 
+    res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
     res.write(htmlContent);
     res.end();
 
@@ -72,6 +73,7 @@ export default function setupWebServer(config: Config, cachedContent: CachedCont
       cachedContent.filteredTestCode,
     );
 
+    res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
     res.write(htmlContent);
     res.end();
 
@@ -92,6 +94,7 @@ export default function setupWebServer(config: Config, cachedContent: CachedCont
         cachedContent.allTestCode,
       );
 
+      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
       res.write(htmlContent);
       res.end();
 
@@ -153,7 +156,7 @@ function testRuntimeToInject(port: number, config: Config): string {
       }
 
       let wsRetryCount = 0;
-      const WS_MAX_RETRIES = 500; // 5000ms total before giving up
+      const WS_MAX_RETRIES = Math.ceil(${config.timeout} / 10); // retry for the full test timeout window
 
       function setupWebSocket() {
         try {

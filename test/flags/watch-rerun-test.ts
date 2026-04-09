@@ -21,7 +21,8 @@ function countOccurrences(str: string, needle: string): number {
 interface WatchSession {
   /** Resolves once `condition(accumulatedStdout)` returns true, or rejects after 45s. */
   waitFor(condition: (buf: string) => boolean): Promise<string>;
-  kill(): void;
+  /** Sends SIGTERM and resolves once the child process has fully exited. */
+  kill(): Promise<void>;
   readonly stdout: string;
 }
 
@@ -71,11 +72,20 @@ function spawnWatch(
       });
     },
     kill() {
-      child.kill('SIGTERM');
-      child.stdin.destroy();
-      child.stdout.destroy();
-      child.stderr.destroy();
-      child.unref();
+      return new Promise<void>((resolve) => {
+        // Resolve after exit so the next test doesn't start until Chrome and the
+        // HTTP server from this run are fully released (prevents resource contention
+        // on CI where consecutive Chrome instances can starve the new one).
+        const done = () => resolve();
+        child.once('exit', done);
+        // Safety valve: resolve after 5 s if the process ignores SIGTERM.
+        const timer = setTimeout(done, 5000);
+        timer.unref();
+        child.kill('SIGTERM');
+        child.stdin.destroy();
+        child.stdout.destroy();
+        child.stderr.destroy();
+      });
     },
     get stdout() {
       return buf;
@@ -142,7 +152,7 @@ module('--watch re-run tests', () => {
       assert.includes(rerunOutput, '# pass 3');
       assert.includes(rerunOutput, '# fail 0');
     } finally {
-      session.kill();
+      await session.kill();
     }
   });
 
@@ -175,7 +185,7 @@ module('--watch re-run tests', () => {
       // The new file's module name appears in the filtered re-run output.
       assert.includes(rerunOutput, newId);
     } finally {
-      session.kill();
+      await session.kill();
     }
   });
 
@@ -214,7 +224,7 @@ module('--watch re-run tests', () => {
       assert.false(rerunOutput.includes(id), 'deleted file module absent from re-run output');
       assert.includes(rerunOutput, id2);
     } finally {
-      session.kill();
+      await session.kill();
     }
   });
 
@@ -250,7 +260,7 @@ module('--watch re-run tests', () => {
       assert.includes(rerunOutput, '# fail 0');
       assert.includes(rerunOutput, id);
     } finally {
-      session.kill();
+      await session.kill();
     }
   });
 
@@ -285,7 +295,7 @@ module('--watch re-run tests', () => {
       assert.includes(rerunOutput, id2);
       assert.false(rerunOutput.includes(id), 'renamed-away directory files absent from re-run');
     } finally {
-      session.kill();
+      await session.kill();
     }
   });
 
@@ -317,7 +327,7 @@ module('--watch re-run tests', () => {
       assert.includes(rerunOutput, '# fail 0');
       assert.includes(rerunOutput, finalId);
     } finally {
-      session.kill();
+      await session.kill();
     }
   });
 
@@ -351,7 +361,7 @@ module('--watch re-run tests', () => {
       assert.includes(rerunOutput, '# pass 3');
       assert.includes(rerunOutput, '# fail 0');
     } finally {
-      session.kill();
+      await session.kill();
     }
   });
 });
