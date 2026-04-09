@@ -33,7 +33,11 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
       logLevel: 'error',
       outfile: `${projectRoot}/${output}/tests.js`,
       keepNames: true,
-      sourcemap: config.debug || config.watch ? 'inline' : false,
+      // In watch+debug mode use inline so the DevTools console shows original source.
+      // In watch-only mode use 'linked' so the source map is a separate file that DevTools
+      // loads on demand — this keeps the inlined HTML bundle ~3x smaller and avoids a
+      // multi-second JS parse under CI load that was causing WebSocket connection timeouts.
+      sourcemap: config.debug ? 'inline' : config.watch ? 'linked' : false,
     }),
     Promise.all(
       cachedContent.htmlPathsToRunTests.map(async (htmlPath) => {
@@ -139,7 +143,7 @@ function buildFilteredTests(
     bundle: true,
     logLevel: 'error',
     outfile: outputPath,
-    sourcemap: config.debug || config.watch ? 'inline' : false,
+    sourcemap: config.debug ? 'inline' : config.watch ? 'linked' : false,
   });
 }
 
