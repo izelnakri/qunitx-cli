@@ -7,7 +7,7 @@ import shell, { shellFails } from '../helpers/shell.ts';
 
 module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
   test('--port flag is accepted and tests complete successfully', async (assert, testMetadata) => {
-    const { port, release } = await findFreePort();
+    const { number: port, release } = await findFreePort();
     await release();
     const result = await shell(`node cli.ts tmp/test/passing-tests.js --port=${port}`, {
       ...moduleMetadata,
@@ -19,7 +19,7 @@ module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
   });
 
   test('--port flag combined with --debug shows the correct port in the server URL', async (assert, testMetadata) => {
-    const { port, release } = await findFreePort();
+    const { number: port, release } = await findFreePort();
     await release();
     const result = await shell(`node cli.ts tmp/test/passing-tests.js --port=${port} --debug`, {
       ...moduleMetadata,
@@ -39,7 +39,7 @@ module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
   test('process truly occupies the bound port while running (TCP connect succeeds)', async (assert) => {
     // Use a dynamically found free port via --port so the test is isolated from concurrent runs.
     const free = await findFreePort();
-    const port = free.port;
+    const port = free.number;
     await free.release();
 
     const boundPort = await withRunningServer(
@@ -58,7 +58,7 @@ module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
 
   test('fails with a clear error when --port is explicitly taken', async (assert, testMetadata) => {
     const free = await findFreePort();
-    const takenPort = free.port;
+    const takenPort = free.number;
     // Keep it occupied for the duration of the test.
     try {
       const result = await shellFails(`node cli.ts tmp/test/passing-tests.js --port=${takenPort}`, {
@@ -74,15 +74,15 @@ module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
 });
 
 // Finds a free OS-assigned port by binding to :: (all interfaces) to match how the CLI binds.
-// Returns { port, release }. Caller can hold the server open to occupy the port, or call
+// Returns { number, release }. Caller can hold the server open to occupy the port, or call
 // release() immediately to free it.
-function findFreePort(): Promise<{ port: number; release: () => Promise<void> }> {
+function findFreePort(): Promise<{ number: number; release: () => Promise<void> }> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
     server.once('error', reject);
     server.once('listening', () => {
-      const port = (server.address() as net.AddressInfo).port;
-      resolve({ port, release: () => new Promise((res) => server.close(res)) });
+      const number = (server.address() as net.AddressInfo).port;
+      resolve({ number, release: () => new Promise((res) => server.close(res)) });
     });
     // Bind :: (all interfaces) to match the CLI's bind address, so the occupied check is
     // consistent with how the CLI claims the port. Binding 127.0.0.1 here while the CLI

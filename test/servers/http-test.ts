@@ -34,7 +34,7 @@ module('Servers | bindServerToPort | port selection', () => {
   test('binds to the requested port when it is free', async (assert) => {
     const server = new HTTPServer();
     const blocker = await findFreePort();
-    const port = blocker.port;
+    const port = blocker.number;
     await blocker.release();
 
     const config = { port };
@@ -45,7 +45,7 @@ module('Servers | bindServerToPort | port selection', () => {
 
   test('auto-increments to port+1 when the requested port is taken (portExplicit not set)', async (assert) => {
     const blocker = await findFreePort();
-    const takenPort = blocker.port;
+    const takenPort = blocker.number;
     // Keep blocker running so takenPort stays occupied
     const next = new HTTPServer();
     const config = { port: takenPort };
@@ -57,7 +57,7 @@ module('Servers | bindServerToPort | port selection', () => {
 
   test('throws EADDRINUSE when portExplicit is true and the port is taken', async (assert) => {
     const blocker = await findFreePort();
-    const takenPort = blocker.port;
+    const takenPort = blocker.number;
     const server = new HTTPServer();
     try {
       await bindServerToPort(server, { port: takenPort, portExplicit: true });
@@ -123,14 +123,14 @@ module('Servers | HTTPServer | query param routing', () => {
 });
 
 // Finds a free OS-assigned port by binding to :0, then releases it.
-// Returns the port number and a release() fn so callers can hold it open.
-function findFreePort(): Promise<{ port: number; release: () => Promise<void> }> {
+// Returns { number, release } so callers can hold it open or release immediately.
+function findFreePort(): Promise<{ number: number; release: () => Promise<void> }> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
     server.once('error', reject);
     server.once('listening', () => {
-      const port = (server.address() as net.AddressInfo).port;
-      resolve({ port, release: () => new Promise((res) => server.close(res)) });
+      const number = (server.address() as net.AddressInfo).port;
+      resolve({ number, release: () => new Promise((res) => server.close(res)) });
     });
     server.listen(0, '127.0.0.1');
   });
