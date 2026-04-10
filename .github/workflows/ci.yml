@@ -106,7 +106,7 @@ jobs:
           name: coverage-test-output
           path: /tmp/coverage-test-output.txt
           retention-days: 3
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v6
         with:
           files: coverage/lcov.info
           fail_ci_if_error: false
