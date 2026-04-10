@@ -46,6 +46,7 @@ export interface Config {
   lastRanTestFiles: string[] | null;
   _testRunDone: (() => void) | null;
   _resetTestTimeout: (() => void) | null;
+  _onWsOpen: (() => void) | null;
   _groupMode?: boolean;
   _building?: boolean;
   _pendingBuildTrigger?: (() => void) | null;

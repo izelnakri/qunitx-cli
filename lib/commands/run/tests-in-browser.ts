@@ -33,11 +33,12 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
       logLevel: 'error',
       outfile: `${projectRoot}/${output}/tests.js`,
       keepNames: true,
-      // In watch+debug mode use inline so the DevTools console shows original source.
-      // In watch-only mode use 'linked' so the source map is a separate file that DevTools
-      // loads on demand — this keeps the inlined HTML bundle ~3x smaller and avoids a
-      // multi-second JS parse under CI load that was causing WebSocket connection timeouts.
       sourcemap: config.debug ? 'inline' : config.watch ? 'linked' : false,
+      // Signal the runtime that all test modules are registered. The runtime's maybeStart()
+      // waits for both this event and the WebSocket 'open' event before calling QUnit.start().
+      // Dispatching from the bundle (rather than from a script onload attr) is reliable across
+      // all browsers and does not require changes to user test code.
+      footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
     }),
     Promise.all(
       cachedContent.htmlPathsToRunTests.map(async (htmlPath) => {
@@ -144,6 +145,7 @@ function buildFilteredTests(
     logLevel: 'error',
     outfile: outputPath,
     sourcemap: config.debug ? 'inline' : config.watch ? 'linked' : false,
+    footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
   });
 }
 
@@ -155,6 +157,9 @@ async function runTestInsideHTMLFile(
   let QUNIT_RESULT;
   let targetError;
   let timeoutHandle;
+  // wsConnected is set by config._onWsOpen when Chrome's WS socket opens (< 1s after navigation,
+  // before test bundle compilation finishes). Distinguishes "WS never opened" from "WS opened
+  // but tests.js compiled too slowly" — both appear as TIMEOUT but have different root causes.
   let wsConnected = false;
   try {
     console.log('#', blue(`QUnitX running: http://localhost:${config.port}${filePath}`));
@@ -166,18 +171,18 @@ async function runTestInsideHTMLFile(
     // under load: CDP could win and trigger cleanup before Node.js processed the pending messages.
     //
     // resolveTestRace is extracted from the Promise constructor (synchronous) so we can fire
-    // the initial timer directly — its budget is 3× config.timeout to tolerate CPU-starved CI
-    // runners that need extra time to parse/JIT-compile the inline test bundle before WebSocket
-    // setup runs. Once the WS 'connection' event arrives, _resetTestTimeout() is called from
-    // web-server.ts with the standard config.timeout, switching to the tighter per-test budget.
+    // the initial timer directly — its budget is 3× config.timeout as a safety net for extreme
+    // CPU starvation. In normal runs Chrome's WS 'open' fires in < 1s (tests.js compiles in
+    // a background thread), so this budget is almost never fully consumed. Once 'connection'
+    // (QUnit.begin) arrives, _resetTestTimeout() switches to the tighter per-test budget.
     let resolveTestRace!: () => void;
     const testRaceResult = new Promise<void>((resolve) => {
       resolveTestRace = resolve;
     });
     config._testRunDone = resolveTestRace;
-    // wsConnected is set on the first call to _resetTestTimeout, which only comes from
-    // WS events (web-server.ts). This distinguishes "WS never connected" (Chrome CPU-starved
-    // or page load failed) from "WS connected but tests stalled/errored".
+    config._onWsOpen = () => {
+      wsConnected = true;
+    };
     config._resetTestTimeout = () => {
       wsConnected = true;
       clearTimeout(timeoutHandle);
@@ -203,11 +208,11 @@ async function runTestInsideHTMLFile(
       await page.goto(targetUrl, navOptions);
     }
 
-    // Start the initial wait with a 3× budget. Chrome needs time to parse/execute the bundle
-    // before WebSocket setup runs. 3× (instead of 2×) because CI coverage jobs (c8/NODE_V8_COVERAGE)
-    // add V8 instrumentation overhead to the CLI process, compounding CPU starvation when many
-    // Chrome instances compete for cores — observed: 40s for a 2× budget, WS never connected.
-    // WS 'connection' (web-server.ts) resets to the tighter config.timeout per-test budget.
+    // Initial wait uses a 3× budget as a safety net for extreme CPU starvation (e.g. many
+    // concurrent Chrome instances on a 2-core CI runner). In normal runs the WS 'wsOpen' event
+    // fires in < 1s (the runtime script is tiny; tests.js compiles in background), so this
+    // budget is almost never fully consumed. WS 'connection' (QUnit.begin) resets to the
+    // tighter config.timeout per-test budget once tests start running.
     clearTimeout(timeoutHandle);
     timeoutHandle = setTimeout(resolveTestRace, config.timeout * 3);
 
@@ -220,6 +225,7 @@ async function runTestInsideHTMLFile(
     console.error(error);
   } finally {
     clearTimeout(timeoutHandle);
+    config._onWsOpen = null;
     config._resetTestTimeout = null;
     config._testRunDone = null;
   }
