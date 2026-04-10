@@ -48,10 +48,31 @@ function spawnWatch(
   });
   child.stderr.resume();
 
+  // Track unexpected exits so waitFor can reject immediately instead of hanging.
+  let exitCode: number | null = null;
+  let exitReject: ((err: Error) => void) | null = null;
+  child.once('exit', (code) => {
+    exitCode = code ?? 0;
+    exitReject?.(
+      new Error(
+        `Watch process exited unexpectedly (code=${exitCode}). Last 500 chars:\n${buf.slice(-500)}`,
+      ),
+    );
+    exitReject = null;
+  });
+
   return {
     waitFor(condition) {
       if (condition(buf)) return Promise.resolve(buf);
+      if (exitCode !== null) {
+        return Promise.reject(
+          new Error(
+            `Watch process already exited (code=${exitCode}). Last 500 chars:\n${buf.slice(-500)}`,
+          ),
+        );
+      }
       return new Promise((resolve, reject) => {
+        exitReject = reject;
         const timer = setTimeout(
           () =>
             reject(
@@ -64,6 +85,7 @@ function spawnWatch(
         const listener = (newBuf: string) => {
           if (condition(newBuf)) {
             clearTimeout(timer);
+            exitReject = null;
             listeners.splice(listeners.indexOf(listener), 1);
             resolve(newBuf);
           }
@@ -73,14 +95,26 @@ function spawnWatch(
     },
     kill() {
       return new Promise<void>((resolve) => {
+        // Safety valve: if the process hasn't exited in 5 s, stop waiting.
+        // Crucially: remove the 'exit' listener and unref() the child so the
+        // ChildProcess handle no longer keeps the Node.js event loop alive.
+        // Without this, a stuck child (rare but observed on CI) causes the
+        // test runner to hang indefinitely after the test function resolves.
+        const timer = setTimeout(() => {
+          child.removeListener('exit', done);
+          child.unref();
+          resolve();
+        }, 5000);
+        timer.unref();
+
         // Resolve after exit so the next test doesn't start until Chrome and the
         // HTTP server from this run are fully released (prevents resource contention
         // on CI where consecutive Chrome instances can starve the new one).
-        const done = () => resolve();
+        const done = () => {
+          clearTimeout(timer);
+          resolve();
+        };
         child.once('exit', done);
-        // Safety valve: resolve after 5 s if the process ignores SIGTERM.
-        const timer = setTimeout(done, 5000);
-        timer.unref();
         child.kill('SIGTERM');
         child.stdin.destroy();
         child.stdout.destroy();

@@ -28,12 +28,28 @@ export default function setupFileWatchers(
 
   const fileWatchers = testFileLookupPaths.reduce((watchers, watchPath) => {
     let ready = false;
+    // Per-file timestamps of the last processed 'change' event.
+    // inotify (Linux) and FSEvents (macOS) often emit 2–3 change events per
+    // writeFile; if esbuild finishes between events (fast for small files),
+    // _building is already false and each event triggers a redundant build.
+    // A 30 ms deduplication window coalesces these without adding noticeable lag.
+    const lastChangeMs: Record<string, number> = {};
+    const CHANGE_DEDUPE_MS = 30;
 
     // Child watcher: tracks file-level events within watchPath.
     const childWatcher = fs.watch(watchPath, { recursive: true }, async (eventType, filename) => {
       if (!ready || !filename) return;
       const fullPath = path.join(watchPath, filename);
       if (eventType === 'change') {
+        // Only deduplicate when no build is already in progress. When _building is true,
+        // the pending-trigger mechanism (last-write-wins) already coalesces concurrent events;
+        // applying the debounce there could suppress a later valid-file event if it arrives
+        // within CHANGE_DEDUPE_MS of an earlier invalid-file event that was itself only queued.
+        if (!config._building) {
+          const now = Date.now();
+          if (now - (lastChangeMs[fullPath] ?? 0) < CHANGE_DEDUPE_MS) return;
+          lastChangeMs[fullPath] = now;
+        }
         return handleWatchEvent(config, extensions, 'change', fullPath, onEventFunc, onFinishFunc);
       }
       try {

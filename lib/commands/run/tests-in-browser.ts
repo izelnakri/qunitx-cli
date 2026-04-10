@@ -163,23 +163,31 @@ async function runTestInsideHTMLFile(
     //   config._resetTestTimeout() → reset idle timer; fires as timeout if silent for config.timeout ms
     // This replaces waitForFunction (CDP polling), which raced against WS testEnd messages
     // under load: CDP could win and trigger cleanup before Node.js processed the pending messages.
-    const testRaceResult = new Promise((resolve) => {
-      config._testRunDone = () => resolve(false);
-      config._resetTestTimeout = () => {
-        clearTimeout(timeoutHandle);
-        timeoutHandle = setTimeout(() => resolve(true), config.timeout);
-      };
+    //
+    // resolveTestRace is extracted from the Promise constructor (synchronous) so we can fire
+    // the initial timer directly — its budget is 2× config.timeout to tolerate CPU-starved CI
+    // runners that need extra time to parse/JIT-compile the inline test bundle before WebSocket
+    // setup runs. Once the WS 'connection' event arrives, _resetTestTimeout() is called from
+    // web-server.ts with the standard config.timeout, switching to the tighter per-test budget.
+    let resolveTestRace!: () => void;
+    const testRaceResult = new Promise<void>((resolve) => {
+      resolveTestRace = resolve;
     });
+    config._testRunDone = resolveTestRace;
+    config._resetTestTimeout = () => {
+      clearTimeout(timeoutHandle);
+      timeoutHandle = setTimeout(resolveTestRace, config.timeout);
+    };
 
     const targetUrl = `http://localhost:${config.port}${filePath}`;
-    const navOptions = { timeout: config.timeout + 10000, waitUntil: 'domcontentloaded' as const };
-    // Use 'domcontentloaded' rather than the default 'load' so that goto() returns as soon as
-    // the HTML is parsed and synchronous inline scripts (including the test bundle) have executed.
-    // 'load' waits for ALL resources — including the linked source-map (tests.js.map) which
-    // Playwright's CDP debugger fetches asynchronously; under CI load that fetch can stall for
-    // ~10 s, pushing the total navigation time past the 20 s timeout and causing the re-run to
-    // see 0 tests. DOMContentLoaded is sufficient: the WebSocket setup is initiated synchronously
-    // inside the inline script, and the _resetTestTimeout idle timer handles the rest.
+    const navOptions = { timeout: config.timeout + 10000, waitUntil: 'commit' as const };
+    // Use 'commit' (navigation committed, HTTP response started) rather than 'domcontentloaded'.
+    // 'domcontentloaded' waits for all synchronous scripts — including our large inline test
+    // bundle — to complete. Under CI load with many concurrent Chrome processes, V8 can be
+    // CPU-starved for 10+ s, stalling the navigation wait and then immediately triggering the
+    // idle timer, producing a 20 s timeout with 0 tests run. 'commit' returns as soon as the
+    // server has started sending the response (fast, server-side), independently of Chrome's
+    // render-thread CPU time. The WS 'connection' event provides the real readiness signal.
     //
     // page.goto(same_url) can silently trigger a same-document navigation shortcut in Chrome —
     // not a true reload, so old scripts and the WebSocket from the previous run remain alive.
@@ -190,7 +198,10 @@ async function runTestInsideHTMLFile(
       await page.goto(targetUrl, navOptions);
     }
 
-    config._resetTestTimeout(); // start idle countdown once the page is loaded
+    // Start the initial wait with a 2× budget. Chrome needs time to parse/execute the bundle
+    // before WebSocket setup runs. WS 'connection' (web-server.ts) resets to config.timeout.
+    clearTimeout(timeoutHandle);
+    timeoutHandle = setTimeout(resolveTestRace, config.timeout * 2);
 
     await testRaceResult;
 
@@ -202,6 +213,7 @@ async function runTestInsideHTMLFile(
   } finally {
     clearTimeout(timeoutHandle);
     config._resetTestTimeout = null;
+    config._testRunDone = null;
   }
 
   if (!QUNIT_RESULT || QUNIT_RESULT.totalTests === 0) {
