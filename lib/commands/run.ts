@@ -229,7 +229,7 @@ async function buildCachedContent(config: Config, htmlPaths: string[]): Promise<
         console.log(
           '#',
           yellow(
-            `WARNING: Static html file with no {{content}} or handlebars-style tokens detected. Therefore ignoring ${filePath}`,
+            `WARNING: Static html file with no {{qunitxScript}} or handlebars-style tokens detected. Therefore ignoring ${filePath}`,
           ),
         );
         result.staticHTMLs[filePath] = html;
