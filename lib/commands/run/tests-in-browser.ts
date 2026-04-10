@@ -172,7 +172,23 @@ async function runTestInsideHTMLFile(
     });
 
     const targetUrl = `http://localhost:${config.port}${filePath}`;
-    await page.goto(targetUrl, { timeout: config.timeout + 10000 });
+    const navOptions = { timeout: config.timeout + 10000, waitUntil: 'domcontentloaded' as const };
+    // Use 'domcontentloaded' rather than the default 'load' so that goto() returns as soon as
+    // the HTML is parsed and synchronous inline scripts (including the test bundle) have executed.
+    // 'load' waits for ALL resources — including the linked source-map (tests.js.map) which
+    // Playwright's CDP debugger fetches asynchronously; under CI load that fetch can stall for
+    // ~10 s, pushing the total navigation time past the 20 s timeout and causing the re-run to
+    // see 0 tests. DOMContentLoaded is sufficient: the WebSocket setup is initiated synchronously
+    // inside the inline script, and the _resetTestTimeout idle timer handles the rest.
+    //
+    // page.goto(same_url) can silently trigger a same-document navigation shortcut in Chrome —
+    // not a true reload, so old scripts and the WebSocket from the previous run remain alive.
+    // page.reload() forces a real reload when already on the right page.
+    if (page.url().split('?')[0] === targetUrl) {
+      await page.reload(navOptions);
+    } else {
+      await page.goto(targetUrl, navOptions);
+    }
 
     config._resetTestTimeout(); // start idle countdown once the page is loaded
 

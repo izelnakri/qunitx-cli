@@ -331,6 +331,7 @@ module('--watch re-run tests', () => {
     }
   });
 
+  // NOTE: This flaky typically:
   test('a build error in watch mode prints the error without exiting', async (assert) => {
     const { dir, id, testFile, testContent } = await makeWatchProject();
     const session = spawnWatch(['tests', '--watch'], { cwd: dir });
