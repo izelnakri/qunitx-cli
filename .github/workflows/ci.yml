@@ -46,10 +46,16 @@ jobs:
       - uses: browser-actions/setup-chrome@v2
         id: setup-chrome
       - run: npm ci
-      - run: npm test
+      - run: npm test 2>&1 | tee /tmp/test-output.txt; exit ${PIPESTATUS[0]}
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-output
+          path: /tmp/test-output.txt
+          retention-days: 3
 
   # ── Bench ─────────────────────────────────────────────────────────────────────
   # Runs fast microbenchmarks (esbuild bundling, HTTP server, TAP display) on
@@ -90,10 +96,16 @@ jobs:
       - uses: browser-actions/setup-chrome@v2
         id: setup-chrome
       - run: npm ci
-      - run: npx c8 --reporter=lcov --reporter=text --reporter=html npm test
+      - run: npx c8 --reporter=lcov --reporter=text --reporter=html npm test 2>&1 | tee /tmp/coverage-test-output.txt; exit ${PIPESTATUS[0]}
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: coverage-test-output
+          path: /tmp/coverage-test-output.txt
+          retention-days: 3
       - uses: codecov/codecov-action@v5
         with:
           files: coverage/lcov.info

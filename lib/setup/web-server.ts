@@ -26,7 +26,12 @@ export default function setupWebServer(config: Config, cachedContent: CachedCont
     socket.on('message', function message(data) {
       const { event, details, abort } = JSON.parse(data);
 
-      if (event === 'connection') {
+      if (event === 'wsOpen') {
+        // WebSocket socket opened — test bundle is still compiling in the background.
+        // Signal Node.js so it can flip wsConnected for accurate TIMEOUT diagnostics
+        // without resetting the per-test timer (that happens on 'connection' below).
+        config._onWsOpen?.();
+      } else if (event === 'connection') {
         if (!config._groupMode) console.log('TAP version 13');
         config._resetTestTimeout?.();
       } else if (event === 'testEnd' && !abort) {
@@ -47,12 +52,26 @@ export default function setupWebServer(config: Config, cachedContent: CachedCont
     });
   });
 
+  // Serve the compiled test bundle and (when filtering) the filtered bundle as separate
+  // JS files. This lets Chrome compile them in background threads while the main thread
+  // is free to process the WebSocket 'open' event, decoupling WS connection time from
+  // bundle compilation time and eliminating the "WS never connected" timeout on CI.
+  server.get('/tests.js', (_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
+    res.end(cachedContent.allTestCode);
+  });
+
+  server.get('/filtered-tests.js', (_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
+    res.end(cachedContent.filteredTestCode);
+  });
+
   server.get('/', async (_req, res) => {
     const TEST_RUNTIME_TO_INJECT = testRuntimeToInject(config.port, config);
     const htmlContent = escapeAndInjectTestsToHTML(
       mainHTMLWithReplacedAssets,
       TEST_RUNTIME_TO_INJECT,
-      cachedContent.allTestCode,
+      './tests.js',
     );
 
     res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
@@ -70,7 +89,7 @@ export default function setupWebServer(config: Config, cachedContent: CachedCont
     const htmlContent = escapeAndInjectTestsToHTML(
       mainHTMLWithReplacedAssets,
       TEST_RUNTIME_TO_INJECT,
-      cachedContent.filteredTestCode,
+      './filtered-tests.js',
     );
 
     res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
@@ -91,7 +110,7 @@ export default function setupWebServer(config: Config, cachedContent: CachedCont
       const htmlContent = escapeAndInjectTestsToHTML(
         possibleDynamicHTML,
         TEST_RUNTIME_TO_INJECT,
-        cachedContent.allTestCode,
+        '/tests.js',
       );
 
       res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
@@ -148,12 +167,28 @@ function testRuntimeToInject(port: number, config: Config): string {
     }, 1000);
 
     (function() {
-      // When opened as a static file (file:// protocol), there is no WebSocket server.
-      // Defer so the test bundle (injected after this IIFE) registers all modules before QUnit.start().
-      if (window.location.protocol === 'file:') {
-        window.setTimeout(setupQUnit, 0);
-        return;
+      // wsOpenStatus: true once the WebSocket 'open' event fires (or immediately for static files).
+      // testsLoaded: true once tests.js has executed and dispatched 'qunitx:tests-ready'.
+      // Both must be true before setupQUnit() is called, ensuring QUnit.start() only runs
+      // after all test modules are registered.
+      let wsOpenStatus = window.location.protocol === 'file:';
+      let testsLoaded = false;
+
+      function maybeStart() {
+        if (wsOpenStatus && testsLoaded) setupQUnit();
       }
+
+      // tests.js (loaded as an async external script) dispatches this event after registering
+      // all test modules. Decoupled from WS so Chrome can compile tests.js in a background
+      // thread while the main thread handles the WebSocket handshake.
+      window.addEventListener('qunitx:tests-ready', function() {
+        testsLoaded = true;
+        maybeStart();
+      });
+
+      // For static files (file:// protocol) there is no WebSocket server.
+      // wsOpenStatus is already true above; setupQUnit fires when tests load.
+      if (window.location.protocol === 'file:') return;
 
       let wsRetryCount = 0;
       const WS_MAX_RETRIES = Math.ceil(${config.timeout} / 10); // retry for the full test timeout window
@@ -168,7 +203,14 @@ function testRuntimeToInject(port: number, config: Config): string {
         }
 
         window.socket.addEventListener('open', function() {
-          setupQUnit();
+          wsOpenStatus = true;
+          // Notify Node.js that the WS socket is open. This fires immediately (< 1 s) because
+          // this runtime script is tiny — tests.js background compilation hasn't finished yet.
+          // Node.js uses this to distinguish "WS never connected" from "WS connected but bundle slow".
+          if (window.IS_PLAYWRIGHT) {
+            window.socket.send(JSON.stringify({ event: 'wsOpen' }));
+          }
+          maybeStart();
         });
         window.socket.addEventListener('error', function() {
           retryOrFail();
@@ -196,8 +238,6 @@ function testRuntimeToInject(port: number, config: Config): string {
 
       setupWebSocket();
     })();
-
-    {{allTestCode}}
 
     function getCircularReplacer() {
       const ancestors = [];
@@ -273,10 +313,14 @@ function testRuntimeToInject(port: number, config: Config): string {
 function escapeAndInjectTestsToHTML(
   html: string,
   testRuntimeCode: string,
-  testContentCode: Buffer | string | null | undefined,
+  testBundleUrl: string,
 ): string {
+  // The test bundle is an external async script — Chrome compiles it in a background thread
+  // so the WS 'open' event (fired by the tiny runtime above) is not blocked by compilation.
+  // No need to escape </script> here: testRuntimeCode's closing tag is the legitimate script
+  // closer, and user test code in tests.js is external (not inlined) so it can't break HTML.
   return replaceHTMLContentMarker(
     html,
-    testRuntimeCode.replace('{{allTestCode}}', testContentCode).replace('</script>', '<\/script>'), // NOTE: remove this when simple-html-tokenizer PR gets merged
+    `${testRuntimeCode}\n<script src="${testBundleUrl}" async></script>`,
   );
 }
