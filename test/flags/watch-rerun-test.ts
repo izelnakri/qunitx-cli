@@ -19,7 +19,7 @@ function countOccurrences(str: string, needle: string): number {
 }
 
 interface WatchSession {
-  /** Resolves once `condition(accumulatedStdout)` returns true, or rejects after 45s. */
+  /** Resolves once `condition(accumulatedStdout)` returns true, or rejects after 90s. */
   waitFor(condition: (buf: string) => boolean, description?: string): Promise<string>;
   /** Sends SIGTERM and resolves once the child process has fully exited. */
   kill(): Promise<void>;
@@ -30,7 +30,7 @@ interface WatchSession {
 // wait for incremental stdout output and kill the child when done.
 function spawnWatch(
   args: string[],
-  { cwd = process.cwd(), timeout = 45000 }: { cwd?: string; timeout?: number } = {},
+  { cwd = process.cwd(), timeout = 90000 }: { cwd?: string; timeout?: number } = {},
 ): WatchSession {
   const outputDir = `${process.cwd()}/tmp/run-${randomUUID()}`;
   const allArgs = ['--experimental-strip-types', CLI, ...args, `--output=${outputDir}`];

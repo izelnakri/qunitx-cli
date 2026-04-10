@@ -166,7 +166,7 @@ async function runTestInsideHTMLFile(
     // under load: CDP could win and trigger cleanup before Node.js processed the pending messages.
     //
     // resolveTestRace is extracted from the Promise constructor (synchronous) so we can fire
-    // the initial timer directly — its budget is 2× config.timeout to tolerate CPU-starved CI
+    // the initial timer directly — its budget is 3× config.timeout to tolerate CPU-starved CI
     // runners that need extra time to parse/JIT-compile the inline test bundle before WebSocket
     // setup runs. Once the WS 'connection' event arrives, _resetTestTimeout() is called from
     // web-server.ts with the standard config.timeout, switching to the tighter per-test budget.
@@ -203,10 +203,13 @@ async function runTestInsideHTMLFile(
       await page.goto(targetUrl, navOptions);
     }
 
-    // Start the initial wait with a 2× budget. Chrome needs time to parse/execute the bundle
-    // before WebSocket setup runs. WS 'connection' (web-server.ts) resets to config.timeout.
+    // Start the initial wait with a 3× budget. Chrome needs time to parse/execute the bundle
+    // before WebSocket setup runs. 3× (instead of 2×) because CI coverage jobs (c8/NODE_V8_COVERAGE)
+    // add V8 instrumentation overhead to the CLI process, compounding CPU starvation when many
+    // Chrome instances compete for cores — observed: 40s for a 2× budget, WS never connected.
+    // WS 'connection' (web-server.ts) resets to the tighter config.timeout per-test budget.
     clearTimeout(timeoutHandle);
-    timeoutHandle = setTimeout(resolveTestRace, config.timeout * 2);
+    timeoutHandle = setTimeout(resolveTestRace, config.timeout * 3);
 
     await testRaceResult;
 
@@ -222,7 +225,7 @@ async function runTestInsideHTMLFile(
   }
 
   if (!QUNIT_RESULT || QUNIT_RESULT.totalTests === 0) {
-    console.log(targetError);
+    if (targetError) console.log(targetError);
     const wsReason = !wsConnected
       ? 'WebSocket connection never received — Chrome may be CPU-starved or the page failed to load'
       : 'WebSocket connected but no tests ran — QUnit may have failed to start';
@@ -231,7 +234,7 @@ async function runTestInsideHTMLFile(
     console.error('BROWSER: runtime error thrown during executing tests');
     await failOnNonWatchMode(config.watch, { server, browser }, config._groupMode);
   } else if (QUNIT_RESULT.totalTests > QUNIT_RESULT.finishedTests) {
-    console.log(targetError);
+    if (targetError) console.log(targetError);
     console.log(
       `# TIMEOUT: test stalled after ${QUNIT_RESULT.finishedTests}/${QUNIT_RESULT.totalTests} finished — last active: ${QUNIT_RESULT.currentTest}`,
     );
