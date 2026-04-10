@@ -20,7 +20,7 @@ function countOccurrences(str: string, needle: string): number {
 
 interface WatchSession {
   /** Resolves once `condition(accumulatedStdout)` returns true, or rejects after 45s. */
-  waitFor(condition: (buf: string) => boolean): Promise<string>;
+  waitFor(condition: (buf: string) => boolean, description?: string): Promise<string>;
   /** Sends SIGTERM and resolves once the child process has fully exited. */
   kill(): Promise<void>;
   readonly stdout: string;
@@ -62,12 +62,13 @@ function spawnWatch(
   });
 
   return {
-    waitFor(condition) {
+    waitFor(condition, description) {
       if (condition(buf)) return Promise.resolve(buf);
+      const what = description ? `waiting for '${description}'` : 'waiting for condition';
       if (exitCode !== null) {
         return Promise.reject(
           new Error(
-            `Watch process already exited (code=${exitCode}). Last 500 chars:\n${buf.slice(-500)}`,
+            `Watch process already exited (code=${exitCode}) while ${what}. Last 500 chars:\n${buf.slice(-500)}`,
           ),
         );
       }
@@ -77,7 +78,7 @@ function spawnWatch(
           () =>
             reject(
               new Error(
-                `spawnWatch timed out after ${timeout}ms. Last 500 chars:\n${buf.slice(-500)}`,
+                `spawnWatch timed out after ${timeout}ms while ${what}. Last 500 chars:\n${buf.slice(-500)}`,
               ),
             ),
           timeout,
@@ -165,7 +166,7 @@ module('--watch re-run tests', () => {
 
     try {
       // Wait for the initial run to complete.
-      await session.waitFor((buf) => buf.includes('Press "qq"'));
+      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
 
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
 
@@ -173,13 +174,16 @@ module('--watch re-run tests', () => {
       await fs.writeFile(testFile, testContent + '\n// re-run trigger');
 
       // Each test run prints one "QUnitX running:" line; wait for the second one.
-      await session.waitFor((buf) => countOccurrences(buf, 'QUnitX running:') >= 2);
+      await session.waitFor(
+        (buf) => countOccurrences(buf, 'QUnitX running:') >= 2,
+        're-run to start',
+      );
 
       // Wait for the re-run's TAP summary to appear after the second run header.
       await session.waitFor((buf) => {
         const idx = buf.lastIndexOf('QUnitX running:');
         return buf.includes('# duration', idx);
-      });
+      }, 're-run to complete');
 
       assert.includes(session.stdout, 'CHANGED:');
       const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
@@ -196,7 +200,7 @@ module('--watch re-run tests', () => {
 
     try {
       // Wait for the initial run to complete.
-      await session.waitFor((buf) => buf.includes('Press "qq"'));
+      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
 
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
 
@@ -206,11 +210,14 @@ module('--watch re-run tests', () => {
       await fs.writeFile(`${testsDir}/extra-tests.ts`, newContent);
 
       // Wait for the filtered re-run triggered by the new file.
-      await session.waitFor((buf) => countOccurrences(buf, 'QUnitX running:') >= 2);
+      await session.waitFor(
+        (buf) => countOccurrences(buf, 'QUnitX running:') >= 2,
+        're-run to start',
+      );
       await session.waitFor((buf) => {
         const idx = buf.lastIndexOf('QUnitX running:');
         return buf.includes('# duration', idx);
-      });
+      }, 're-run to complete');
 
       const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
       // Filtered run only executes the newly added file (3 tests).
@@ -234,7 +241,7 @@ module('--watch re-run tests', () => {
 
     try {
       // Initial run: both files → 6 passing tests (all bundled together in watch mode).
-      await session.waitFor((buf) => buf.includes('Press "qq"'));
+      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
 
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
       assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
@@ -243,11 +250,14 @@ module('--watch re-run tests', () => {
       await fs.unlink(`${testsDir}/passing-tests.ts`);
 
       // Wait for the full re-run (unlink path in run.ts → cache cleared → rebuild).
-      await session.waitFor((buf) => countOccurrences(buf, 'QUnitX running:') >= 2);
+      await session.waitFor(
+        (buf) => countOccurrences(buf, 'QUnitX running:') >= 2,
+        're-run to start',
+      );
       await session.waitFor((buf) => {
         const idx = buf.lastIndexOf('QUnitX running:');
         return buf.includes('# duration', idx);
-      });
+      }, 're-run to complete');
 
       assert.includes(session.stdout, 'REMOVED:');
       const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
@@ -272,22 +282,28 @@ module('--watch re-run tests', () => {
     const session = spawnWatch(['tests', '--watch'], { cwd: dir });
 
     try {
-      await session.waitFor((buf) => buf.includes('Press "qq"'));
+      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
       assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
 
       await fs.rename(`${testsDir}/passing-tests.ts`, `${testsDir}/renamed-tests.ts`);
 
       // REMOVED: and ADDED: are logged before the _building guard so they always appear.
-      await session.waitFor((buf) => buf.includes('REMOVED:') && buf.includes('ADDED:'));
+      await session.waitFor(
+        (buf) => buf.includes('REMOVED:') && buf.includes('ADDED:'),
+        'REMOVED and ADDED events',
+      );
 
       // Pending trigger: the add's filtered run fires after the unlink's full re-run completes.
       // Wait for both runs to complete (initial + at least 2 more: unlink full-run + add filtered-run).
-      await session.waitFor((buf) => countOccurrences(buf, 'QUnitX running:') >= 3);
+      await session.waitFor(
+        (buf) => countOccurrences(buf, 'QUnitX running:') >= 3,
+        'unlink full-run + add filtered-run',
+      );
       await session.waitFor((buf) => {
         const idx = buf.lastIndexOf('QUnitX running:');
         return buf.includes('# duration', idx);
-      });
+      }, 'final re-run to complete');
 
       // Final run is the filtered run of the renamed file — same content (id), passes.
       const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
@@ -310,19 +326,25 @@ module('--watch re-run tests', () => {
     const session = spawnWatch(['tests', 'other-tests', '--watch'], { cwd: dir });
 
     try {
-      await session.waitFor((buf) => buf.includes('Press "qq"'));
+      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
       assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
 
       // Rename tests/ — parent watcher detects disappearance and fires unlinkDir.
       await fs.rename(testsDir, `${dir}/old-tests`);
 
-      await session.waitFor((buf) => buf.includes('REMOVED:'));
-      await session.waitFor((buf) => countOccurrences(buf, 'QUnitX running:') >= 2);
+      await session.waitFor(
+        (buf) => buf.includes('REMOVED:'),
+        'REMOVED event for renamed directory',
+      );
+      await session.waitFor(
+        (buf) => countOccurrences(buf, 'QUnitX running:') >= 2,
+        're-run to start',
+      );
       await session.waitFor((buf) => {
         const idx = buf.lastIndexOf('QUnitX running:');
         return buf.includes('# duration', idx);
-      });
+      }, 're-run to complete');
 
       const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
       // Only the other-tests file runs — renamed directory's files are no longer tracked.
@@ -338,7 +360,7 @@ module('--watch re-run tests', () => {
     const session = spawnWatch(['tests', '--watch'], { cwd: dir });
 
     try {
-      await session.waitFor((buf) => buf.includes('Press "qq"'));
+      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
 
       // Write the file three times in quick succession. The pending-trigger mechanism
@@ -354,7 +376,7 @@ module('--watch re-run tests', () => {
       await session.waitFor((buf) => {
         const idx = buf.indexOf(finalId);
         return idx !== -1 && buf.includes('# duration', idx);
-      });
+      }, 'final coalesced re-run with finalId to complete');
 
       const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
       // The final state (finalId) ran — no crash, no broken intermediate state.
@@ -365,14 +387,13 @@ module('--watch re-run tests', () => {
     }
   });
 
-  // NOTE: This flaky typically:
   test('a build error in watch mode prints the error without exiting', async (assert) => {
     const { dir, id, testFile, testContent } = await makeWatchProject();
     const session = spawnWatch(['tests', '--watch'], { cwd: dir });
 
     try {
       // Wait for the initial passing run.
-      await session.waitFor((buf) => buf.includes('Press "qq"'));
+      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
 
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
 
@@ -380,17 +401,23 @@ module('--watch re-run tests', () => {
       await fs.writeFile(testFile, 'this is not valid typescript !!@#$%^&*');
 
       // Wait for the bundle error message to appear.
-      await session.waitFor((buf) => buf.includes('esbuild Bundle Error:'));
+      await session.waitFor(
+        (buf) => buf.includes('esbuild Bundle Error:'),
+        'esbuild Bundle Error to appear',
+      );
       assert.includes(session.stdout, 'esbuild Bundle Error:');
 
       // Fix the file — a still-alive process will pick this up and re-run.
       await fs.writeFile(testFile, testContent);
 
-      await session.waitFor((buf) => countOccurrences(buf, 'QUnitX running:') >= 2);
+      await session.waitFor(
+        (buf) => countOccurrences(buf, 'QUnitX running:') >= 2,
+        're-run after fix to start',
+      );
       await session.waitFor((buf) => {
         const idx = buf.lastIndexOf('QUnitX running:');
         return buf.includes('# duration', idx);
-      });
+      }, 're-run after fix to complete');
 
       const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
       assert.includes(rerunOutput, '# pass 3');

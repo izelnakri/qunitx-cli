@@ -155,6 +155,7 @@ async function runTestInsideHTMLFile(
   let QUNIT_RESULT;
   let targetError;
   let timeoutHandle;
+  let wsConnected = false;
   try {
     console.log('#', blue(`QUnitX running: http://localhost:${config.port}${filePath}`));
 
@@ -174,7 +175,11 @@ async function runTestInsideHTMLFile(
       resolveTestRace = resolve;
     });
     config._testRunDone = resolveTestRace;
+    // wsConnected is set on the first call to _resetTestTimeout, which only comes from
+    // WS events (web-server.ts). This distinguishes "WS never connected" (Chrome CPU-starved
+    // or page load failed) from "WS connected but tests stalled/errored".
     config._resetTestTimeout = () => {
+      wsConnected = true;
       clearTimeout(timeoutHandle);
       timeoutHandle = setTimeout(resolveTestRace, config.timeout);
     };
@@ -218,11 +223,18 @@ async function runTestInsideHTMLFile(
 
   if (!QUNIT_RESULT || QUNIT_RESULT.totalTests === 0) {
     console.log(targetError);
+    const wsReason = !wsConnected
+      ? 'WebSocket connection never received — Chrome may be CPU-starved or the page failed to load'
+      : 'WebSocket connected but no tests ran — QUnit may have failed to start';
+    console.log(`# TIMEOUT: ${wsReason}`);
     console.log('BROWSER: runtime error thrown during executing tests');
     console.error('BROWSER: runtime error thrown during executing tests');
     await failOnNonWatchMode(config.watch, { server, browser }, config._groupMode);
   } else if (QUNIT_RESULT.totalTests > QUNIT_RESULT.finishedTests) {
     console.log(targetError);
+    console.log(
+      `# TIMEOUT: test stalled after ${QUNIT_RESULT.finishedTests}/${QUNIT_RESULT.totalTests} finished — last active: ${QUNIT_RESULT.currentTest}`,
+    );
     console.log(`BROWSER: TEST TIMED OUT: ${QUNIT_RESULT.currentTest}`);
     console.error(`BROWSER: TEST TIMED OUT: ${QUNIT_RESULT.currentTest}`);
     await failOnNonWatchMode(config.watch, { server, browser }, config._groupMode);
