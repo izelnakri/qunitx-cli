@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.10.0] - 2026-04-10
+[`v0.9.10...v0.10.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.10...v0.10.0)
+
+### Bug Fixes
+- Ignore spurious inotify stat failures and cache mainHTML asset replacement — 2026-04-08 by [@izelnakri](https://github.com/izelnakri) ([`49fcba4`](https://github.com/izelnakri/qunitx-cli/commit/49fcba425fd2ad1a8425bace282ce6b667eee0b1))
+- Important changes to --open and port assignments — 2026-04-09 by [@izelnakri](https://github.com/izelnakri) ([`34d09af`](https://github.com/izelnakri/qunitx-cli/commit/34d09af34f2d2bd8b58b895117cda51124f510a8))
+- --open=echo works for tests — 2026-04-09 by [@izelnakri](https://github.com/izelnakri) ([`3637378`](https://github.com/izelnakri/qunitx-cli/commit/3637378e9d9ce02593fa53b92e15dab20453e60b))
+- Handle browser sighup & sigterm better for more stable tests — 2026-04-09 by [@izelnakri](https://github.com/izelnakri) ([`9bcb454`](https://github.com/izelnakri/qunitx-cli/commit/9bcb45459086b70c2910673ea20685bc69694bc7))
+- Use domcontentloaded instead of load for page navigation — 2026-04-10 by [@izelnakri](https://github.com/izelnakri) ([`56e6510`](https://github.com/izelnakri/qunitx-cli/commit/56e65104b5577a1e131081f173470d5d2635e41c))
+- Various watcher test stablization & small test run fix — 2026-04-10 by [@izelnakri](https://github.com/izelnakri) ([`be629e8`](https://github.com/izelnakri/qunitx-cli/commit/be629e80e67c9d5fbc2a1f8da7263fd7d5a207ee))
+
+### Features
+- Support dynamic custom HTML templates and stabilize watch reruns — 2026-04-08 by [@izelnakri](https://github.com/izelnakri) ([`4ccbd01`](https://github.com/izelnakri/qunitx-cli/commit/4ccbd01caa25c044049add42adac0b082ca1fc73))
+- Add --version flag and wire watch-rerun tests — 2026-04-08 by [@izelnakri](https://github.com/izelnakri) ([`83a9207`](https://github.com/izelnakri/qunitx-cli/commit/83a9207e38389462041c2bfd752b063cc4f421d1))
+- Add --open flag, warn on unknown flags, and harden file watcher — 2026-04-09 by [@izelnakri](https://github.com/izelnakri) ([`4cc29e7`](https://github.com/izelnakri/qunitx-cli/commit/4cc29e7bb2a2bc2f5f0a545c10beb005be2706cf))
+- Qunitx port start from 1234 and auto-increment now for DX — 2026-04-09 by [@izelnakri](https://github.com/izelnakri) ([`7a3be1e`](https://github.com/izelnakri/qunitx-cli/commit/7a3be1e619d0bece277122324fcc9dfc3a1dc437))
+- --open flag now accepts binary references — 2026-04-09 by [@izelnakri](https://github.com/izelnakri) ([`c2a0bfc`](https://github.com/izelnakri/qunitx-cli/commit/c2a0bfc6180a428eb2eaf9708dd9a9ba3fe09067))
+- Rename {{content}} to {{qunitxScript}} for test HTMLs — 2026-04-10 by [@izelnakri](https://github.com/izelnakri) ([`7bfa520`](https://github.com/izelnakri/qunitx-cli/commit/7bfa52054fe06dad36fa5cadc535a232ca400f9c))
+- MAJOR runtime CPU-time optimization JS/HTML runtime bundle processing — 2026-04-10 by [@izelnakri](https://github.com/izelnakri) ([`67fa9e6`](https://github.com/izelnakri/qunitx-cli/commit/67fa9e6d54d1e051908bd53f44d3b44b8d9451b4))
+
+### Performance
+- Use linked sourcemap in watch mode to shrink inlined bundle 3x — 2026-04-09 by [@izelnakri](https://github.com/izelnakri) ([`3c0710a`](https://github.com/izelnakri/qunitx-cli/commit/3c0710ab01afdc75a012072366ec67e8dcfa215c))
+
+### Refactoring
+- Refactor findFreePort() test util — 2026-04-10 by [@izelnakri](https://github.com/izelnakri) ([`935047b`](https://github.com/izelnakri/qunitx-cli/commit/935047bb4f7b51688c68e85183ead68fdd6d6128))
+
 ## [0.9.10] - 2026-03-31
 [`v0.9.9...v0.9.10`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.9...v0.9.10)
 
