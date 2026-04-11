@@ -32,23 +32,28 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
     return;
   }
 
+  const outfile = `${projectRoot}/${output}/tests.js`;
+
   await Promise.all([
-    esbuild.build({
-      stdin: {
-        contents: allTestFilePaths.map((f) => `import "${f}";`).join(''),
-        resolveDir: process.cwd(),
+    buildWithOverlayfsRetry(
+      {
+        stdin: {
+          contents: allTestFilePaths.map((f) => `import "${f}";`).join(''),
+          resolveDir: process.cwd(),
+        },
+        bundle: true,
+        logLevel: 'error',
+        outfile,
+        keepNames: true,
+        sourcemap: config.debug ? 'inline' : config.watch ? 'linked' : false,
+        // Signal the runtime that all test modules are registered. The runtime's maybeStart()
+        // waits for both this event and the WebSocket 'open' event before calling QUnit.start().
+        // Dispatching from the bundle (rather than from a script onload attr) is reliable across
+        // all browsers and does not require changes to user test code.
+        footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
       },
-      bundle: true,
-      logLevel: 'error',
-      outfile: `${projectRoot}/${output}/tests.js`,
-      keepNames: true,
-      sourcemap: config.debug ? 'inline' : config.watch ? 'linked' : false,
-      // Signal the runtime that all test modules are registered. The runtime's maybeStart()
-      // waits for both this event and the WebSocket 'open' event before calling QUnit.start().
-      // Dispatching from the bundle (rather than from a script onload attr) is reliable across
-      // all browsers and does not require changes to user test code.
-      footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
-    }),
+      outfile,
+    ),
     Promise.all(
       cachedContent.htmlPathsToRunTests.map(async (htmlPath) => {
         const targetPath = `${config.projectRoot}/${config.output}${htmlPath}`;
@@ -60,7 +65,7 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
     ),
   ]);
 
-  cachedContent.allTestCode = await fs.readFile(`${projectRoot}/${output}/tests.js`);
+  cachedContent.allTestCode = await fs.readFile(outfile);
 }
 
 /**
@@ -151,17 +156,58 @@ function buildFilteredTests(
   outputPath: string,
   config: Config,
 ): Promise<esbuild.BuildResult> {
-  return esbuild.build({
-    stdin: {
-      contents: filteredTests.map((f) => `import "${f}";`).join(''),
-      resolveDir: process.cwd(),
+  return buildWithOverlayfsRetry(
+    {
+      stdin: {
+        contents: filteredTests.map((f) => `import "${f}";`).join(''),
+        resolveDir: process.cwd(),
+      },
+      bundle: true,
+      logLevel: 'error',
+      outfile: outputPath,
+      sourcemap: config.debug ? 'inline' : config.watch ? 'linked' : false,
+      footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
     },
-    bundle: true,
-    logLevel: 'error',
-    outfile: outputPath,
-    sourcemap: config.debug ? 'inline' : config.watch ? 'linked' : false,
-    footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
-  });
+    outputPath,
+  );
+}
+
+// On Docker/overlayfs CI, a newly written file may be visible to inotify (IN_CREATE fires)
+// but its content hasn't propagated to the upper layer yet. esbuild reads 0 bytes and emits
+// a footer-only IIFE (~110-150 bytes) instead of the real bundle. Any genuine test bundle
+// includes QUnit via qunitx (~270 KB), so < 500 bytes always means an empty-input artifact.
+// Retry up to MAX_RETRIES times (300 ms total) to give overlayfs time to flush the content.
+async function buildWithOverlayfsRetry(
+  options: Parameters<typeof esbuild.build>[0],
+  outfile: string,
+): Promise<esbuild.BuildResult> {
+  const RETRY_DELAY_MS = 100;
+  const MAX_RETRIES = 3;
+  const EMPTY_BUNDLE_THRESHOLD = 500;
+
+  let result = await esbuild.build(options);
+
+  for (let retry = 1; retry <= MAX_RETRIES; retry++) {
+    const bytes = (await fs.stat(outfile)).size;
+
+    if (bytes >= EMPTY_BUNDLE_THRESHOLD) return result;
+
+    console.log(
+      `# [buildWithOverlayfsRetry] bundle is ${bytes} bytes (< ${EMPTY_BUNDLE_THRESHOLD}) on attempt ${retry}/${MAX_RETRIES} — overlayfs flush race, retrying in ${RETRY_DELAY_MS}ms`,
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+    result = await esbuild.build(options);
+  }
+
+  // After all retries, check once more and log if still too small (then proceed anyway).
+  const bytes = (await fs.stat(outfile)).size;
+  if (bytes < EMPTY_BUNDLE_THRESHOLD) {
+    console.log(
+      `# [buildWithOverlayfsRetry] bundle is ${bytes} bytes after ${MAX_RETRIES} retries — proceeding`,
+    );
+  }
+
+  return result;
 }
 
 async function runTestInsideHTMLFile(
