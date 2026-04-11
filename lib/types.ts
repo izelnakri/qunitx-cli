@@ -52,6 +52,7 @@ export interface Config {
   _phase?: 'bundling' | 'connecting' | 'loading' | 'running' | 'done';
   _building?: boolean;
   _pendingBuildTrigger?: (() => void) | null;
+  _justAddedFiles?: Set<string>;
   expressApp?: unknown;
 }
 

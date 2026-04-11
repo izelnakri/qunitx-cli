@@ -123,6 +123,65 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
     assert.equal(calls.length, 0);
   });
 
+  test('spurious change for just-added file is ignored while building (no pending trigger queued)', (assert) => {
+    // Simulates the post-add inotify flush: rename (→ add) fires first, then change fires
+    // after the file content is written to disk. The add's filtered run is still in progress
+    // (_building = true), so the change must not queue a full re-run as a pending trigger.
+    const fsTree = { '/project/test/new.ts': null };
+    const config = {
+      fsTree,
+      projectRoot: '/project',
+      _building: true,
+      _justAddedFiles: new Set(['/project/test/new.ts']),
+    };
+    const calls = [];
+
+    handleWatchEvent(config, ['js', 'ts'], 'change', '/project/test/new.ts', (event, path) => {
+      calls.push({ event, path });
+    });
+
+    assert.equal(calls.length, 0, 'onEventFunc not called for spurious change');
+    assert.notOk(config._pendingBuildTrigger, 'no pending trigger queued for spurious change');
+  });
+
+  test('second add while building adds to _justAddedFiles so its spurious change is also filtered', (assert) => {
+    // When two files are added in rapid succession, the second add goes through the pending
+    // trigger path. Its file must also be tracked in _justAddedFiles so the spurious post-add
+    // change for it does not overwrite the pending add trigger with a full re-run.
+    const fsTree = { '/project/test/first.ts': null };
+    const config = {
+      fsTree,
+      projectRoot: '/project',
+      _building: true,
+      _justAddedFiles: new Set(['/project/test/first.ts']),
+    };
+    const calls = [];
+
+    // Second add queues a pending trigger and should add the file to _justAddedFiles.
+    handleWatchEvent(config, ['js', 'ts'], 'add', '/project/test/second.ts', (event, path) => {
+      calls.push({ event, path });
+    });
+
+    assert.ok(
+      config._justAddedFiles?.has('/project/test/second.ts'),
+      'second file tracked in _justAddedFiles',
+    );
+    assert.ok(config._pendingBuildTrigger, 'pending trigger set for the second add');
+
+    // Spurious change for second file must be filtered (no overwrite of pending trigger).
+    const pendingBeforeChange = config._pendingBuildTrigger;
+    handleWatchEvent(config, ['js', 'ts'], 'change', '/project/test/second.ts', (event, path) => {
+      calls.push({ event, path });
+    });
+
+    assert.equal(
+      config._pendingBuildTrigger,
+      pendingBeforeChange,
+      'pending trigger not overwritten by spurious change',
+    );
+    assert.equal(calls.length, 0, 'onEventFunc not called');
+  });
+
   test('custom extensions: .mjs file triggers onEventFunc when extensions includes mjs', (assert) => {
     const fsTree = {};
     const config = { fsTree, projectRoot: '/project' };

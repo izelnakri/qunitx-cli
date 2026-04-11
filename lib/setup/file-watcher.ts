@@ -153,6 +153,10 @@ export function handleWatchEvent(
 
   if (!isFileEvent && event !== 'unlinkDir') return;
 
+  // Spurious 'change' events fire after 'add' (inotify flushes content after rename).
+  // Ignore them while the add's filtered run is in progress so they don't queue a full re-run.
+  if (event === 'change' && config._building && config._justAddedFiles?.has(filePath)) return;
+
   mutateFSTree(config.fsTree, event, filePath);
 
   console.log(
@@ -167,6 +171,8 @@ export function handleWatchEvent(
 
   if (!config._building) {
     config._building = true;
+    // Record which file triggered this build so spurious post-add change events are filtered above.
+    config._justAddedFiles = event === 'add' ? new Set([filePath]) : new Set();
 
     const result = onEventFunc(event, filePath);
 
@@ -195,6 +201,9 @@ export function handleWatchEvent(
   } else {
     // A build is in progress — queue this event, overwriting any previous pending one.
     // The finally block above will pick it up after the current build finishes.
+    // If the pending event is an 'add', track the file so its spurious post-creation
+    // change events are also filtered above (handles rapid multi-file add sequences).
+    if (event === 'add') config._justAddedFiles?.add(filePath);
     config._pendingBuildTrigger = () =>
       handleWatchEvent(config, extensions, event, filePath, onEventFunc, onFinishFunc);
   }
