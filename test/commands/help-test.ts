@@ -8,12 +8,15 @@ import '../helpers/custom-asserts.ts';
 const CWD = process.cwd();
 const VERSION = JSON.parse(fs.readFileSync(`${CWD}/package.json`)).version;
 const shell = promisify(exec);
+const CLI_ENV = { ...process.env, FORCE_COLOR: '0' };
 const cli = async function (arg = '') {
   if (process.argv[0].includes('deno')) {
-    return await shell(`deno run --allow-read --allow-env ${CWD}/deno/cli.ts ${arg}`);
+    return await shell(`deno run --allow-read --allow-env ${CWD}/deno/cli.ts ${arg}`, {
+      env: CLI_ENV,
+    });
   }
 
-  return await shell(`node --experimental-strip-types ${CWD}/cli.ts ${arg}`);
+  return await shell(`node --experimental-strip-types ${CWD}/cli.ts ${arg}`, { env: CLI_ENV });
 };
 
 const printedHelpOutput = `[qunitx v${VERSION}] Usage: qunitx [targets] --$flags
@@ -67,7 +70,6 @@ module('Commands | Help tests', () => {
   test('$ qunitx -> prints help text', async (assert) => {
     const { stdout } = await cli();
 
-    console.log(stdout);
     assert.includes(stdout, printedHelpOutput);
   });
 

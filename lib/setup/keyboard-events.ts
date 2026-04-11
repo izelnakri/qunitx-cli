@@ -34,5 +34,5 @@ export default function setupKeyboardEvents(
 }
 
 function abortBrowserQUnit(_config: Config, connections: Connections): void {
-  connections.server.publish('abort', 'abort');
+  connections.server.publish('abort');
 }

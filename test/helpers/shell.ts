@@ -49,7 +49,7 @@ export async function shellWatch(
         ]
       : [process.execPath, ['--experimental-strip-types', ...command.split(/\s+/).slice(1)]];
 
-  const child = spawn(bin, spawnArgs);
+  const child = spawn(bin, spawnArgs, { env: { ...process.env, FORCE_COLOR: '0' } });
 
   try {
     return await new Promise((resolve, reject) => {
@@ -87,9 +87,10 @@ export async function shellWatch(
 
 export async function shellFails(commandString: string, options = {}) {
   try {
-    const result = (await execute(commandString, options)) as ReturnType<typeof execute> & {
-      code: number;
-    };
+    const result = (await execute(commandString, {
+      ...options,
+      expectFailure: true,
+    })) as ReturnType<typeof execute> & { code: number };
     result.code = 0;
     return result;
   } catch (error) {
@@ -99,7 +100,11 @@ export async function shellFails(commandString: string, options = {}) {
 
 export default async function execute(
   commandString: string,
-  { moduleName = '', testName = '' }: { moduleName?: string; testName?: string } = {},
+  {
+    moduleName = '',
+    testName = '',
+    expectFailure = false,
+  }: { moduleName?: string; testName?: string; expectFailure?: boolean } = {},
 ) {
   // Each browser test run gets its own output dir so parallel runs never clobber each other.
   const withOutput =
@@ -130,27 +135,14 @@ export default async function execute(
         );
 
   try {
-    const result = await shell(command, { timeout: 60000 });
-    const { stdout, stderr } = result;
+    const result = await shell(command, {
+      timeout: 60000,
+      env: { ...process.env, FORCE_COLOR: '0' },
+    });
 
-    console.trace(`
-      TEST NAME: ${moduleName} | ${testName}
-      TEST COMMAND: ${command}
-      ${stdout
-        .split('\n')
-        .map((line, index) => `${index}: ${line}`)
-        .join('\n')}
-    `);
-
-    if (stderr && stderr !== '') {
-      console.trace(`
-        TEST NAME: ${moduleName} | ${testName}
-        TEST COMMAND: ${command}
-        ${stderr
-          .split('\n')
-          .map((line, index) => `${index}: ${line}`)
-          .join('\n')}
-      `);
+    if (process.env.QUNITX_VERBOSE) {
+      console.error(`COMMAND: ${command}\n${result.stdout}`);
+      if (result.stderr) console.error(`STDERR: ${result.stderr}`);
     }
 
     return result;
@@ -159,11 +151,9 @@ export default async function execute(
     err.stdout ??= '';
     err.stderr ??= '';
 
-    console.trace(`
-      ERROR TEST Name: ${moduleName} | ${testName}
-      ERROR TEST COMMAND: ${command}
-      ${error}
-    `);
+    if (!expectFailure) {
+      console.error(`TEST FAILED: ${moduleName} | ${testName}\nCOMMAND: ${command}\n${error}`);
+    }
 
     throw error;
   }

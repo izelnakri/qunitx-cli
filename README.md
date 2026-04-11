@@ -188,6 +188,13 @@ All CLI flags can also be set in `package.json` under the `qunitx` key, so you d
 
 CLI flags always override `package.json` values when both are present.
 
+### Environment variables
+
+| Variable         | Description                                                                                                   |
+|------------------|---------------------------------------------------------------------------------------------------------------|
+| `CHROME_BIN`     | Path to the Chrome/Chromium executable. Required on systems where Chrome is not on `PATH` (e.g. many CI environments). Set automatically when using `browser-actions/setup-chrome` in GitHub Actions. |
+| `QUNITX_BROWSER` | Browser engine to use (`chromium`, `firefox`, `webkit`). Equivalent to `--browser` on the CLI. Useful in CI matrix jobs. |
+
 If you do not provide any HTML template, qunitx falls back to its built-in `test/tests.html` boilerplate internally, so `qunitx init` is optional.
 
 You can also pass a custom HTML file on the CLI:

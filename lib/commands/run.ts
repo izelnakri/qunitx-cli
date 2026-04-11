@@ -83,7 +83,7 @@ export default async function run(config: Config): Promise<void> {
           }
           await runTestsInBrowser(config, cachedContent, connections, [file]);
         },
-        (_path, _event) => connections.server.publish('refresh', 'refresh'),
+        (_path, _event) => connections.server.publish('refresh'),
       );
       await watcherReady;
     }

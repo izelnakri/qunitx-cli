@@ -23,6 +23,8 @@ export default async function runUserModule(
     console.trace(error);
     console.error(error);
 
-    return process.exit(1);
+    // Flush stdout before exiting — in piped contexts stdout is buffered and
+    // process.exit() can drop pending writes before they reach the OS.
+    process.stdout.write('', () => process.exit(1));
   }
 }
