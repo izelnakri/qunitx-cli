@@ -28,6 +28,59 @@ jobs:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
 
+  # ── Release consumer test ─────────────────────────────────────────────────
+  # Packs the built artefact, installs it into a throwaway consumer directory,
+  # and runs the test suite with QUNITX_BIN pointing at the installed binary —
+  # catching packaging bugs that source tests cannot see.
+  # Mirrors browser-compat.yml: chromium runs the full suite, firefox/webkit
+  # run only the browser-specific subset (test:browser) at concurrency=1.
+  release-consumer-test:
+    needs: [test]
+    name: Release consumer test · ${{ matrix.browser }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - browser: chromium
+            test_script: test
+          - browser: firefox
+            test_script: test:browser
+          - browser: webkit
+            test_script: test:browser
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: browser-actions/setup-chrome@v2
+        if: matrix.browser == 'chromium'
+        id: setup-chrome
+
+      - name: Cache Playwright browser (${{ matrix.browser }})
+        if: matrix.browser != 'chromium'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ matrix.browser }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright browser (${{ matrix.browser }})
+        if: matrix.browser != 'chromium'
+        run: npx playwright@$(node -p "require('playwright-core/package.json').version") install --with-deps ${{ matrix.browser }}
+
+      - run: npm ci
+
+      - run: bash scripts/test-release.sh
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          QUNITX_BROWSER: ${{ matrix.browser }}
+          TEST_SCRIPT: ${{ matrix.test_script }}
+          FORCE_COLOR: 0
+
   # ── Node.js SEA binaries ───────────────────────────────────────────────────
   # Builds a standalone native binary per platform using Node.js Single
   # Executable Applications (node --experimental-sea-config, Node ≥ 22).
@@ -165,7 +218,7 @@ jobs:
   # This job uploads all platform binaries (with checksums) to that release.
   # The create fallback handles the rare case where CI wins the race.
   github-release:
-    needs: [test, build-binaries]
+    needs: [test, build-binaries, release-consumer-test]
     runs-on: ubuntu-latest
     permissions:
       contents: write

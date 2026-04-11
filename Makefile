@@ -2,7 +2,7 @@
 
 LEVEL ?= patch
 
-.PHONY: help fix fmt format check lint lint-docs test test-chrome test-firefox test-webkit test-all-browsers build coverage coverage-report docs demo bench-print bench bench-update bench-check build-sea release
+.PHONY: help fix fmt format check lint lint-docs test test-chrome test-firefox test-webkit test-all-browsers test-release build coverage coverage-report docs demo bench-print bench bench-update bench-check build-sea release
 
 
 
@@ -20,6 +20,7 @@ help:
 	@echo "  test-firefox    Run browser tests with Firefox (requires: npx playwright install firefox)"
 	@echo "  test-webkit     Run browser tests with WebKit (requires: npx playwright install webkit)"
 	@echo "  test-all-browsers Run full suite on chromium, then browser tests on firefox + webkit"
+	@echo "  test-release    Build, pack, install tarball, run full suite against the binary"
 	@echo "  build           Build the project"
 	@echo "  coverage        Run tests with coverage report"
 	@echo "  demo            Regenerate docs/demo.gif"
@@ -62,6 +63,9 @@ test-webkit:
 	QUNITX_BROWSER=webkit npm run test:browser
 
 test-all-browsers: test test-firefox test-webkit
+
+test-release:
+	bash scripts/test-release.sh
 
 build:
 	npm run build
@@ -141,6 +145,7 @@ release:
 	@npm whoami 2>/dev/null || npm login
 	$(MAKE) check
 	$(MAKE) bench-check
+	npm run test:release
 	npm version $(LEVEL) --no-git-tag-version
 	git-cliff --tag "v$$(node -p 'require("./package.json").version')" --output CHANGELOG.md
 	git add package.json package-lock.json CHANGELOG.md

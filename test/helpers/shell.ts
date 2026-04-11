@@ -6,6 +6,12 @@ const shell = promisify(exec);
 
 // When QUNITX_BROWSER is set, all browser test runs use that engine (firefox, webkit, chromium).
 const QUNITX_BROWSER = process.env.QUNITX_BROWSER;
+// When QUNITX_BIN is set, `node cli.ts` is replaced with the installed binary.
+// Used by scripts/test-release.sh to verify the published package end-to-end.
+const QUNITX_BIN = process.env.QUNITX_BIN;
+
+const IS_CLI = /\bnode cli\.ts\b/;
+const NON_BROWSER_SUBCOMMAND = /\bnode cli\.ts\b\s+(generate|g|new|n|help|h|p|print|init)\b/;
 
 // Spawns a long-running CLI command (e.g. --watch mode), collects stdout until
 // `until(buf)` returns true, then kills the process.
@@ -13,18 +19,29 @@ export async function shellWatch(
   commandString: string,
   { until, timeout = 45000 }: { until?: (buf: string) => boolean; timeout?: number } = {},
 ): Promise<string> {
-  let command = commandString;
-  if (/\bnode cli\.ts\b/.test(command) && !/--output/.test(command)) {
-    command = `${command} --output=tmp/run-${randomUUID()}`;
-  }
-  if (QUNITX_BROWSER && !/--browser/.test(command)) {
-    command = `${command} --browser=${QUNITX_BROWSER}`;
-  }
+  const withOutput =
+    IS_CLI.test(commandString) && !/--output/.test(commandString)
+      ? `${commandString} --output=tmp/run-${randomUUID()}`
+      : commandString;
 
-  const child = spawn(process.execPath, [
-    '--experimental-strip-types',
-    ...command.split(/\s+/).slice(1),
-  ]);
+  const command =
+    QUNITX_BROWSER && !/--browser/.test(withOutput)
+      ? `${withOutput} --browser=${QUNITX_BROWSER}`
+      : withOutput;
+
+  const [bin, spawnArgs] =
+    QUNITX_BIN && IS_CLI.test(commandString)
+      ? [
+          QUNITX_BIN,
+          command
+            .replace(/\bnode\s+cli\.ts\b/, '')
+            .trim()
+            .split(/\s+/)
+            .filter(Boolean),
+        ]
+      : [process.execPath, ['--experimental-strip-types', ...command.split(/\s+/).slice(1)]];
+
+  const child = spawn(bin, spawnArgs);
 
   try {
     return await new Promise((resolve, reject) => {
@@ -77,28 +94,31 @@ export default async function execute(
   { moduleName = '', testName = '' }: { moduleName?: string; testName?: string } = {},
 ) {
   // Each browser test run gets its own output dir so parallel runs never clobber each other.
-  let command = commandString;
-  if (/\bnode cli\.ts\b/.test(command) && !/--output/.test(command)) {
-    command = `${command} --output=tmp/run-${randomUUID()}`;
-  }
+  const withOutput =
+    IS_CLI.test(commandString) && !/--output/.test(commandString)
+      ? `${commandString} --output=tmp/run-${randomUUID()}`
+      : commandString;
 
-  const NON_BROWSER_SUBCOMMAND = /\bnode cli\.ts\b\s+(generate|g|new|n|help|h|p|print|init)\b/;
-  const needsBrowser =
-    /\bnode cli\.ts\b/.test(commandString) && !NON_BROWSER_SUBCOMMAND.test(commandString);
+  const needsBrowser = IS_CLI.test(commandString) && !NON_BROWSER_SUBCOMMAND.test(commandString);
 
-  if (needsBrowser && QUNITX_BROWSER && !/--browser/.test(command)) {
-    command = `${command} --browser=${QUNITX_BROWSER}`;
-  }
+  const withBrowser =
+    needsBrowser && QUNITX_BROWSER && !/--browser/.test(withOutput)
+      ? `${withOutput} --browser=${QUNITX_BROWSER}`
+      : withOutput;
 
-  // Ensure --experimental-strip-types is present for all Node invocations so .ts files load.
-  command = command.replace(
-    /\bnode\b(?!\s+--experimental-strip-types)/,
-    'node --experimental-strip-types',
-  );
+  // When releasing: swap `node cli.ts` for the installed binary (no strip-types needed).
+  // In development: ensure --experimental-strip-types is present so .ts files load.
+  const command =
+    QUNITX_BIN && IS_CLI.test(commandString)
+      ? withBrowser.replace(/\bnode\s+cli\.ts\b/, QUNITX_BIN)
+      : withBrowser.replace(
+          /\bnode\b(?!\s+--experimental-strip-types)/,
+          'node --experimental-strip-types',
+        );
 
   try {
-    let result = await shell(command, { timeout: 60000 });
-    let { stdout, stderr } = result;
+    const result = await shell(command, { timeout: 60000 });
+    const { stdout, stderr } = result;
 
     console.trace(`
       TEST NAME: ${moduleName} | ${testName}
