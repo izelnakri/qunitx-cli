@@ -49,15 +49,15 @@
     "url": "git+https://github.com/izelnakri/qunitx-cli.git"
   },
   "dependencies": {
-    "esbuild": "^0.27.3",
-    "playwright-core": "^1.58.2",
+    "esbuild": "^0.28.0",
+    "playwright-core": "^1.59.1",
     "ws": "^8.20.0"
   },
   "devDependencies": {
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "js-yaml": "^4.1.1",
-    "prettier": "^3.8.1",
+    "prettier": "^3.8.2",
     "qunitx": "^1.2.1",
     "typescript": "^6.0.2"
   },
