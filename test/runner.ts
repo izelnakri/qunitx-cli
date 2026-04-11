@@ -28,20 +28,26 @@ const semaphorePort = semaphore.port;
 
 // ─── Run tests ────────────────────────────────────────────────────────────────
 
-const explicitFiles = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const watchMode = argv.includes('--watch');
+const explicitFiles = argv.filter((a) => a !== '--watch');
 const testFiles =
   explicitFiles.length > 0
     ? explicitFiles
     : (await Array.fromAsync(fs.glob('test/**/*-test.ts'))).sort();
 
-const child = spawn(process.execPath, ['--test', ...testFiles], {
-  stdio: 'inherit',
-  env: {
-    ...process.env,
-    FORCE_COLOR: '0',
-    QUNITX_SEMAPHORE_PORT: String(semaphorePort),
+const child = spawn(
+  process.execPath,
+  watchMode ? ['--test', '--watch', ...testFiles] : ['--test', ...testFiles],
+  {
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      FORCE_COLOR: '0',
+      QUNITX_SEMAPHORE_PORT: String(semaphorePort),
+    },
   },
-});
+);
 
 const exitCode = await new Promise<number>((resolve) =>
   child.on('exit', (code) => resolve(code ?? 0)),

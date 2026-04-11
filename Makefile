@@ -155,8 +155,9 @@ release:
 	$(MAKE) bench-check
 	npm run test:release
 	npm version $(LEVEL) --no-git-tag-version
+	@for d in npm/*/; do node scripts/set-pkg-version.js "$$d/package.json" "$$(node -p 'require("./package.json").version')"; done
 	git-cliff --tag "v$$(node -p 'require("./package.json").version')" --output CHANGELOG.md
-	git add package.json package-lock.json CHANGELOG.md
+	git add package.json package-lock.json CHANGELOG.md npm/*/package.json
 	git commit -m "Release $$(node -p 'require("./package.json").version')"
 	git tag "v$$(node -p 'require("./package.json").version')"
 	git push && git push --tags

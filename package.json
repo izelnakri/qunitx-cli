@@ -33,7 +33,7 @@
     "postinstall": "PLAYWRIGHT_SKIP_DOWNLOAD=true deno install --allow-scripts=npm:playwright-core || true",
     "test": "node test/runner.ts",
     "test:debug": "QUNITX_DEBUG=1 node test/runner.ts",
-    "dev": "node test/runner.ts",
+    "dev": "node test/runner.ts --watch",
     "test:browser": "node test/runner.ts test/flags/*-test.ts test/inputs/*-test.ts",
     "test:release": "bash scripts/test-release.sh",
     "test:sanity-first": "./cli.ts test/helpers/failing-tests.js test/helpers/failing-tests.ts",
