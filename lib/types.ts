@@ -53,6 +53,7 @@ export interface Config {
   _building?: boolean;
   _pendingBuildTrigger?: (() => void) | null;
   _justAddedFiles?: Set<string>;
+  _lastBuildEndMs?: number;
   expressApp?: unknown;
 }
 
