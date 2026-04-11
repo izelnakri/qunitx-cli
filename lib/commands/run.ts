@@ -69,7 +69,17 @@ export default async function run(config: Config): Promise<void> {
             // `change` events can fire while a file is being rewritten, so a filtered bundle
             // may catch the file in a transient empty/partial state and produce a broken rerun.
             cachedContent.allTestCode = null;
+            if (config.debug) {
+              console.log(
+                `# Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
+              );
+            }
             return await runTestsInBrowser(config, cachedContent, connections);
+          }
+          if (config.debug) {
+            console.log(
+              `# Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
+            );
           }
           await runTestsInBrowser(config, cachedContent, connections, [file]);
         },
@@ -98,10 +108,14 @@ export default async function run(config: Config): Promise<void> {
       // Single group keeps the root output dir for backward-compatible file paths.
       output: groupCount === 1 ? config.output : `${config.output}/group-${i}`,
       _groupMode: true,
+      _phase: 'bundling' as Config['_phase'],
     }));
     const groupCachedContents = groups.map(() => ({ ...cachedContent }));
 
     console.log('TAP version 13');
+    console.log(
+      `# Running ${allFiles.length} test file${allFiles.length === 1 ? '' : 's'} across ${groupCount} group${groupCount === 1 ? '' : 's'}`,
+    );
 
     // Build all group bundles and write static files while the browser is starting up.
     const [browser] = await Promise.all([
@@ -139,15 +153,22 @@ export default async function run(config: Config): Promise<void> {
     const groupResults = await Promise.allSettled(
       groupConfigs.map((groupConfig, i) => {
         const groupTimeout = new Promise((_, reject) => {
-          const t = setTimeout(
-            () => reject(new Error(`Group ${i} timed out after ${GROUP_TIMEOUT_MS}ms`)),
-            GROUP_TIMEOUT_MS,
-          );
+          const t = setTimeout(() => {
+            const files = Object.keys(groupConfig.fsTree).map((f) =>
+              f.replace(`${groupConfig.projectRoot}/`, ''),
+            );
+            reject(
+              new Error(
+                `Group ${i} timed out after ${GROUP_TIMEOUT_MS / 1000}s in phase '${groupConfig._phase ?? 'unknown'}'\n  Files: ${files.join(', ')}`,
+              ),
+            );
+          }, GROUP_TIMEOUT_MS);
           t.unref();
         });
 
         return Promise.race([
           (async () => {
+            groupConfig._phase = 'connecting';
             const connections = await setupBrowser(groupConfig, groupCachedContents[i], browser);
             groupConfig.expressApp = connections.server;
 

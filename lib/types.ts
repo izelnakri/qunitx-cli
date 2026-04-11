@@ -49,6 +49,7 @@ export interface Config {
   _onWsOpen: (() => void) | null;
   _onTestsJsServed: (() => void) | null;
   _groupMode?: boolean;
+  _phase?: 'bundling' | 'connecting' | 'loading' | 'running' | 'done';
   _building?: boolean;
   _pendingBuildTrigger?: (() => void) | null;
   expressApp?: unknown;

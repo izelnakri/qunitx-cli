@@ -3,6 +3,7 @@ import path from 'node:path';
 import findInternalAssetsFromHTML from '../utils/find-internal-assets-from-html.ts';
 import { replaceHTMLContentMarker } from '../utils/html-content-marker.ts';
 import TAPDisplayTestResult from '../tap/display-test-result.ts';
+import { blue } from '../utils/color.ts';
 import pathExists from '../utils/path-exists.ts';
 import HTTPServer, { MIME_TYPES } from '../servers/http.ts';
 import type { Config, CachedContent } from '../types.ts';
@@ -30,20 +31,41 @@ export default function setupWebServer(config: Config, cachedContent: CachedCont
         // WebSocket socket opened — test bundle is still compiling in the background.
         // Signal Node.js so it can flip wsConnected for accurate TIMEOUT diagnostics
         // without resetting the per-test timer (that happens on 'connection' below).
+        config._phase = 'loading';
         config._onWsOpen?.();
       } else if (event === 'connection') {
+        config._phase = 'running';
         if (!config._groupMode) console.log('TAP version 13');
+        if (config.debug && config._groupMode) {
+          const allFiles = Object.keys(config.fsTree);
+          const relFiles = allFiles.map((f) => f.replace(`${config.projectRoot}/`, ''));
+          const shown = relFiles.slice(0, 2);
+          const rest = relFiles.length - shown.length;
+          const fileList = rest > 0 ? `${shown.join('  ')}  +${rest} more` : shown.join('  ');
+          console.log('#', blue(`── ${fileList} ──`));
+        }
         config._resetTestTimeout?.();
       } else if (event === 'testEnd' && !abort) {
         if (details.status === 'failed') {
           config.lastFailedTestFiles = config.lastRanTestFiles;
         }
 
+        if (config.debug && details.runtime > config.timeout * 0.8) {
+          console.log(
+            `# SLOW (${details.runtime.toFixed(0)}ms / ${config.timeout}ms timeout): ${details.fullName.join(' | ')}`,
+          );
+        }
         config._resetTestTimeout?.();
         TAPDisplayTestResult(config.COUNTER, details);
       } else if (event === 'done') {
         // Signal test completion. TCP ordering guarantees all testEnd messages
         // preceding this on the same connection are already processed by Node.js.
+        config._phase = 'done';
+        if (config.debug && config._groupMode) {
+          console.log(
+            `# group done: ${details.passed} passed, ${details.failed} failed (${details.runtime}ms)`,
+          );
+        }
         if (typeof config._testRunDone === 'function') {
           config._testRunDone();
           config._testRunDone = null;

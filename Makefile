@@ -2,7 +2,7 @@
 
 LEVEL ?= patch
 
-.PHONY: help fix fmt format check lint lint-docs test test-chrome test-firefox test-webkit test-all-browsers test-release build coverage coverage-report docs demo bench-print bench bench-update bench-check build-sea release
+.PHONY: help fix fmt format check lint lint-docs test test-debug dev test-chrome test-firefox test-webkit test-all-browsers test-release build coverage coverage-report docs demo bench-print bench bench-update bench-check build-sea release
 
 
 
@@ -16,6 +16,8 @@ help:
 	@echo "  lint            Check code quality (deno lint)"
 	@echo "  check           Format + lint + tests"
 	@echo "  test            Run full test suite (chromium)"
+	@echo "  test-debug      Run full test suite with --debug on all qunitx invocations"
+	@echo "  dev             Watch all tests with --debug (for development)"
 	@echo "  test-chrome     Alias for test"
 	@echo "  test-firefox    Run browser tests with Firefox (requires: npx playwright install firefox)"
 	@echo "  test-webkit     Run browser tests with WebKit (requires: npx playwright install webkit)"
@@ -53,6 +55,12 @@ check: format lint lint-docs test
 
 test:
 	npm test
+
+test-debug:
+	npm run test:debug
+
+dev:
+	npm run dev
 
 test-chrome: test
 

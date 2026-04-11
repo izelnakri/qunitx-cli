@@ -9,6 +9,9 @@ const QUNITX_BROWSER = process.env.QUNITX_BROWSER;
 // When QUNITX_BIN is set, `node cli.ts` is replaced with the installed binary.
 // Used by scripts/test-release.sh to verify the published package end-to-end.
 const QUNITX_BIN = process.env.QUNITX_BIN;
+// When QUNITX_DEBUG is set, --debug is appended to all browser CLI invocations.
+// Used by `npm run test:debug` / `make test-debug` to surface debug TAP comments.
+const QUNITX_DEBUG = process.env.QUNITX_DEBUG;
 
 const IS_CLI = /\bnode cli\.ts\b/;
 const NON_BROWSER_SUBCOMMAND = /\bnode cli\.ts\b\s+(generate|g|new|n|help|h|p|print|init)\b/;
@@ -24,10 +27,15 @@ export async function shellWatch(
       ? `${commandString} --output=tmp/run-${randomUUID()}`
       : commandString;
 
-  const command =
+  const withBrowser =
     QUNITX_BROWSER && !/--browser/.test(withOutput)
       ? `${withOutput} --browser=${QUNITX_BROWSER}`
       : withOutput;
+
+  const command =
+    QUNITX_DEBUG && IS_CLI.test(commandString) && !/--debug/.test(withBrowser)
+      ? `${withBrowser} --debug`
+      : withBrowser;
 
   const [bin, spawnArgs] =
     QUNITX_BIN && IS_CLI.test(commandString)
@@ -106,12 +114,17 @@ export default async function execute(
       ? `${withOutput} --browser=${QUNITX_BROWSER}`
       : withOutput;
 
+  const withDebug =
+    needsBrowser && QUNITX_DEBUG && !/--debug/.test(withBrowser)
+      ? `${withBrowser} --debug`
+      : withBrowser;
+
   // When releasing: swap `node cli.ts` for the installed binary (no strip-types needed).
   // In development: ensure --experimental-strip-types is present so .ts files load.
   const command =
     QUNITX_BIN && IS_CLI.test(commandString)
-      ? withBrowser.replace(/\bnode\s+cli\.ts\b/, QUNITX_BIN)
-      : withBrowser.replace(
+      ? withDebug.replace(/\bnode\s+cli\.ts\b/, QUNITX_BIN)
+      : withDebug.replace(
           /\bnode\b(?!\s+--experimental-strip-types)/,
           'node --experimental-strip-types',
         );
