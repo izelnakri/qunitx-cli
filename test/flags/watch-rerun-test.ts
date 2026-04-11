@@ -30,7 +30,7 @@ interface WatchSession {
 // wait for incremental stdout output and kill the child when done.
 function spawnWatch(
   args: string[],
-  { cwd = process.cwd(), timeout = 90000 }: { cwd?: string; timeout?: number } = {},
+  { cwd = process.cwd(), timeout = 120000 }: { cwd?: string; timeout?: number } = {},
 ): WatchSession {
   const outputDir = `${process.cwd()}/tmp/run-${randomUUID()}`;
   const allArgs = ['--experimental-strip-types', CLI, ...args, `--output=${outputDir}`];

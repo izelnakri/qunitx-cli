@@ -47,6 +47,7 @@ export interface Config {
   _testRunDone: (() => void) | null;
   _resetTestTimeout: (() => void) | null;
   _onWsOpen: (() => void) | null;
+  _onTestsJsServed: (() => void) | null;
   _groupMode?: boolean;
   _building?: boolean;
   _pendingBuildTrigger?: (() => void) | null;

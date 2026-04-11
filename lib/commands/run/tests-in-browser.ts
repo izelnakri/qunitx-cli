@@ -192,6 +192,15 @@ async function runTestInsideHTMLFile(
       clearTimeout(timeoutHandle);
       timeoutHandle = setTimeout(resolveTestRace, config.timeout * 3);
     };
+    config._onTestsJsServed = () => {
+      // tests.js was fetched by Chrome — V8 is about to start (or has started)
+      // compiling it. Give Chrome a fresh 4× budget from this moment so that
+      // slow V8 compilation under CI load does not race against the WS-open timer.
+      // This fires after _onWsOpen (inline runtime script runs first, then async
+      // tests.js is fetched), so it extends the effective budget beyond 3×.
+      clearTimeout(timeoutHandle);
+      timeoutHandle = setTimeout(resolveTestRace, config.timeout * 4);
+    };
     config._resetTestTimeout = () => {
       wsConnected = true;
       clearTimeout(timeoutHandle);
@@ -237,6 +246,7 @@ async function runTestInsideHTMLFile(
   } finally {
     clearTimeout(timeoutHandle);
     config._onWsOpen = null;
+    config._onTestsJsServed = null;
     config._resetTestTimeout = null;
     config._testRunDone = null;
   }

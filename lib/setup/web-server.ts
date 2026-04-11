@@ -57,11 +57,41 @@ export default function setupWebServer(config: Config, cachedContent: CachedCont
   // is free to process the WebSocket 'open' event, decoupling WS connection time from
   // bundle compilation time and eliminating the "WS never connected" timeout on CI.
   server.get('/tests.js', (_req, res) => {
+    const bytes = cachedContent.allTestCode?.length ?? null;
+    console.log(
+      `# [HTTPServer] GET /tests.js → ${bytes !== null ? `${bytes} bytes` : 'NOT READY (allTestCode is null)'}`,
+    );
+    if (bytes === null) {
+      // allTestCode not yet built — serve a JS error so Chrome logs a visible message
+      // instead of silently executing an empty script. This should never happen in
+      // normal operation (buildTestBundle is always awaited before navigation), but
+      // guards against unexpected race conditions.
+      res.writeHead(503, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
+      res.end(
+        'console.error("[qunitx] /tests.js requested before bundle was built — allTestCode is null");',
+      );
+      return;
+    }
+    // Signal Node.js that Chrome has fetched the bundle. Resets the idle timer so Chrome
+    // gets a fresh budget to compile and execute tests.js — decoupled from WS open time.
+    config._onTestsJsServed?.();
     res.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
     res.end(cachedContent.allTestCode);
   });
 
   server.get('/filtered-tests.js', (_req, res) => {
+    const bytes = cachedContent.filteredTestCode?.length ?? null;
+    console.log(
+      `# [HTTPServer] GET /filtered-tests.js → ${bytes !== null ? `${bytes} bytes` : 'NOT READY (filteredTestCode is null)'}`,
+    );
+    if (bytes === null) {
+      res.writeHead(503, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
+      res.end(
+        'console.error("[qunitx] /filtered-tests.js requested before bundle was built — filteredTestCode is null");',
+      );
+      return;
+    }
+    config._onTestsJsServed?.();
     res.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
     res.end(cachedContent.filteredTestCode);
   });

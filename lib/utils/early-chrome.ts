@@ -26,7 +26,18 @@ const openWatchMode = openFromArgv && watchFromArgv;
 
 let earlyChromeProcRef = null;
 if (!openWatchMode) {
-  process.on('exit', () => earlyChromeProcRef?.kill());
+  process.on('exit', () => {
+    if (!earlyChromeProcRef) return;
+    // SIGKILL ensures Chrome terminates immediately on exit, preventing zombie Chrome
+    // processes from consuming CPU on CI during subsequent test runs. SIGTERM can take
+    // 1-3s for Chrome to process; SIGKILL is instantaneous. Chrome's child processes
+    // (renderer, GPU) are supervised by Chrome and die when the browser process dies.
+    try {
+      earlyChromeProcRef.kill('SIGKILL');
+    } catch {
+      // Already dead — ignore.
+    }
+  });
 }
 
 perfLog('early-chrome.js: module evaluated');

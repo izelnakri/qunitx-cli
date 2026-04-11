@@ -100,7 +100,11 @@ export default async function setupBrowser(
   });
 
   page.on('console', async (msg) => {
-    if (!config.debug) return;
+    const type = msg.type();
+    // Always surface warnings and errors so CI logs capture browser-side failures
+    // without requiring --debug. Other log levels are debug-only to avoid noise.
+    const alwaysShow = type === 'warning' || type === 'error';
+    if (!alwaysShow && !config.debug) return;
     try {
       const values = await Promise.all(msg.args().map((arg) => arg.jsonValue()));
       console.log(...values);

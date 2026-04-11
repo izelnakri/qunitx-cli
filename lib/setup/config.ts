@@ -28,6 +28,8 @@ export default async function setupConfig(): Promise<Config> {
     COUNTER: { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 },
     _testRunDone: null as (() => void) | null,
     _resetTestTimeout: null as (() => void) | null,
+    _onWsOpen: null as (() => void) | null,
+    _onTestsJsServed: null as (() => void) | null,
   };
   config.htmlPaths = normalizeHTMLPaths(config.projectRoot, config.htmlPaths);
   config.fsTree = await setupFSTree(config.testFileLookupPaths, config);
