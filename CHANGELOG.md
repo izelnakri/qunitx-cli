@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.12.0] - 2026-04-11
+[`v0.11.0...v0.12.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.11.0...v0.12.0)
+
+### Bug Fixes
+- Improve dev/CI debugging and test isolation — 2026-04-11 by [@izelnakri](https://github.com/izelnakri) ([`6718976`](https://github.com/izelnakri/qunitx-cli/commit/67189762bee77d1b0642936f08a587eb49e17e69))
+- Stream logs directly instead of piping through tee — 2026-04-11 by [@izelnakri](https://github.com/izelnakri) ([`b96d673`](https://github.com/izelnakri/qunitx-cli/commit/b96d6733f901f7eae132689da0bdf4ac57a78b09))
+- Ignore spurious change events for newly added files — 2026-04-11 by [@izelnakri](https://github.com/izelnakri) ([`6315440`](https://github.com/izelnakri/qunitx-cli/commit/63154408743e26a75bd18244348cb901a47c26a1))
+- Wait for child process exit instead of fixed delay in port-test — 2026-04-11 by [@izelnakri](https://github.com/izelnakri) ([`382b975`](https://github.com/izelnakri/qunitx-cli/commit/382b975794409f4e47253fe210181ab7875b23c6))
+
+### Features
+- Improve CI/local debugging with phase tracking and debug output — 2026-04-11 by [@izelnakri](https://github.com/izelnakri) ([`a77498f`](https://github.com/izelnakri/qunitx-cli/commit/a77498fef476a75fd85d9694727e361c9fbffc17))
+
+### Performance
+- Enable within-module concurrency for safe tests and drop redundant --test-concurrency flag — 2026-04-11 by [@izelnakri](https://github.com/izelnakri) ([`3d0554b`](https://github.com/izelnakri/qunitx-cli/commit/3d0554bb9e633527718cf2c89d503c7caa80a6df))
+- Tighten regression gate with magnitude-aware thresholds — 2026-04-11 by [@izelnakri](https://github.com/izelnakri) ([`552d25e`](https://github.com/izelnakri/qunitx-cli/commit/552d25ebdb3fba40520193658072a1818e4c739d))
+
 ## [0.11.0] - 2026-04-11
 [`v0.10.0...v0.11.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.10.0...v0.11.0)
 
