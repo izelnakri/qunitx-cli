@@ -52,7 +52,7 @@ module('Input | custom html', () => {
 
     try {
       const { stdout } = await exec(
-        `node --experimental-strip-types ${CLI} tests/passing-tests.ts custom.html --output=${outputDir}`,
+        `node ${CLI} tests/passing-tests.ts custom.html --output=${outputDir}`,
         { cwd: dir, timeout: 60000 },
       );
 
@@ -86,14 +86,7 @@ async function runWatch(dir: string): Promise<string> {
   const outputDir = path.resolve(`tmp/run-${randomUUID()}`);
   const child = spawn(
     process.execPath,
-    [
-      '--experimental-strip-types',
-      CLI,
-      'tests/passing-tests.ts',
-      'custom.html',
-      '--watch',
-      `--output=${outputDir}`,
-    ],
+    [CLI, 'tests/passing-tests.ts', 'custom.html', '--watch', `--output=${outputDir}`],
     { cwd: dir },
   );
 

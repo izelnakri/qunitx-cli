@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --experimental-strip-types
+#!/usr/bin/env node
 import process from 'node:process';
 import './lib/utils/early-chrome.ts';
 import displayHelpOutput from './lib/commands/help.ts';

@@ -16,7 +16,7 @@ const cli = async function (arg = '') {
     });
   }
 
-  return await shell(`node --experimental-strip-types ${CWD}/cli.ts ${arg}`, { env: CLI_ENV });
+  return await shell(`node ${CWD}/cli.ts ${arg}`, { env: CLI_ENV });
 };
 
 const printedHelpOutput = `[qunitx v${VERSION}] Usage: qunitx [targets] --$flags

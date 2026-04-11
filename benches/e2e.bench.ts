@@ -18,7 +18,7 @@ await mkdir(`${PROJECT_ROOT}/tmp`, { recursive: true });
 function spawnCLI(args: string[]): Promise<{ code: number }> {
   const id = crypto.randomUUID();
   const cmd = new Deno.Command("node", {
-    args: ["--experimental-strip-types", "cli.ts", ...args, `--output=tmp/bench-run-${id}`],
+    args: ["cli.ts", ...args, `--output=tmp/bench-run-${id}`],
     cwd: PROJECT_ROOT,
     env: { ...Deno.env.toObject(), FORCE_COLOR: "0" },
     stdout: "null",
@@ -38,7 +38,7 @@ Deno.bench("cli: startup time (help)", {
 
 }, async () => {
   const cmd = new Deno.Command("node", {
-    args: ["--experimental-strip-types", "cli.ts", "help"],
+    args: ["cli.ts", "help"],
     cwd: PROJECT_ROOT,
     env: { ...Deno.env.toObject(), FORCE_COLOR: "0" },
     stdout: "null",
