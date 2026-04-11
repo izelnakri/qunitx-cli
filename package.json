@@ -70,8 +70,5 @@
     "printWidth": 100,
     "singleQuote": true,
     "arrowParens": "always"
-  },
-  "optionalDependencies": {
-    "qunitx-cli-linux-x64": "*"
   }
 }

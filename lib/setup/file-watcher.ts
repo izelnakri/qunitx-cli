@@ -47,7 +47,19 @@ export default function setupFileWatchers(
         // within CHANGE_DEDUPE_MS of an earlier invalid-file event that was itself only queued.
         if (!config._building) {
           const now = Date.now();
-          if (now - (lastChangeMs[fullPath] ?? 0) < CHANGE_DEDUPE_MS) return;
+          if (now - (lastChangeMs[fullPath] ?? 0) < CHANGE_DEDUPE_MS) {
+            // Even within the dedup window, let the event through if a build has completed since
+            // the last recorded change time: the current event is a new write (e.g. "fix" after a
+            // failed build), not a duplicate inotify event for the same write. Without this check,
+            // a fast-failing build (< 30ms) followed by an immediate new write causes the fix's
+            // change event to be silently dropped, leaving watch mode stuck.
+            if (
+              !config._lastBuildEndMs ||
+              config._lastBuildEndMs <= (lastChangeMs[fullPath] ?? 0)
+            ) {
+              return;
+            }
+          }
           lastChangeMs[fullPath] = now;
         }
         return handleWatchEvent(config, extensions, 'change', fullPath, onEventFunc, onFinishFunc);
@@ -83,10 +95,22 @@ export default function setupFileWatchers(
           // Still unavailable after retry — treat as a genuine unlink.
         }
         // stat failed — either the file was deleted or the event carried a stale/wrong path.
-        // Only act when we can confirm the path was previously tracked; otherwise ignore.
-        // Spurious unlinkDir for unknown paths clears allTestCode and triggers a full run.
-        if (!(config.fsTree && fullPath in config.fsTree)) return;
-        handleWatchEvent(config, extensions, 'unlink', fullPath, onEventFunc, onFinishFunc);
+        if (config.fsTree && fullPath in config.fsTree) {
+          // Confirmed tracked file — fire a single 'unlink'.
+          handleWatchEvent(config, extensions, 'unlink', fullPath, onEventFunc, onFinishFunc);
+          return;
+        }
+        // Not a tracked file path. Check whether it is a subdirectory that still has tracked
+        // files under it. This handles the case where a nested directory inside the watched
+        // path is renamed/deleted: fs.watch fires one 'rename' event for the directory itself
+        // (filename = 'subdir') but no individual events for its contents. Firing 'unlinkDir'
+        // here coalesces all child file removals into a single rebuild instead of silently
+        // dropping the event (old behaviour) or triggering N individual unlink rebuilds.
+        if (!config.fsTree) return;
+        const dirPrefix = fullPath + '/';
+        const hasTrackedChildren = Object.keys(config.fsTree).some((p) => p.startsWith(dirPrefix));
+        if (!hasTrackedChildren) return;
+        handleWatchEvent(config, extensions, 'unlinkDir', fullPath, onEventFunc, onFinishFunc);
       }
     });
 
@@ -96,11 +120,20 @@ export default function setupFileWatchers(
     // catches the disappearance of watchPath and fires unlinkDir to clean up tracked files.
     const parentDir = path.dirname(watchPath);
     const watchedBasename = path.basename(watchPath);
+    // Guard against concurrent callbacks: on Linux, a directory rename fires both IN_MOVED_FROM
+    // and IN_MOVED_TO as separate 'rename' events on the parent. Both callbacks can pass the
+    // initial guard checks before either reaches the async stat(), causing unlinkDir to fire
+    // twice. Setting this flag synchronously (before the first await) ensures the second
+    // concurrent callback exits immediately.
+    let parentUnlinkFired = false;
     const parentWatcher = fs.watch(parentDir, async (eventType, filename) => {
       if (!ready || filename !== watchedBasename || eventType !== 'rename') return;
+      if (parentUnlinkFired) return;
+      parentUnlinkFired = true;
       try {
         await stat(watchPath);
-        // Directory still exists — spurious event, ignore.
+        // Directory still exists — spurious event; reset so future rename events are handled.
+        parentUnlinkFired = false;
       } catch {
         // watchPath was renamed or deleted. Fire unlinkDir so fsTree is cleaned up and a
         // re-run is triggered, then close both watchers to stop stale-path events.
@@ -191,6 +224,7 @@ export function handleWatchEvent(
       })
       .finally(() => {
         config._building = false;
+        config._lastBuildEndMs = Date.now();
         // Fire the last event that arrived while we were building (last-write-wins).
         if (config._pendingBuildTrigger) {
           const trigger = config._pendingBuildTrigger;
@@ -219,8 +253,11 @@ export function mutateFSTree(fsTree: FSTree, event: string, path: string): void 
   } else if (event === 'unlink') {
     delete fsTree[path];
   } else if (event === 'unlinkDir') {
+    // Append the path separator so that sibling directories that share a name prefix are not
+    // incorrectly matched. e.g. removing 'tests/' must not delete 'tests2/foo.ts' entries.
+    const dirPrefix = path.endsWith('/') ? path : path + '/';
     for (const treePath of Object.keys(fsTree)) {
-      if (treePath.startsWith(path)) delete fsTree[treePath];
+      if (treePath.startsWith(dirPrefix)) delete fsTree[treePath];
     }
   }
 }

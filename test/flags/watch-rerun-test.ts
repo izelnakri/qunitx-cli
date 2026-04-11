@@ -387,6 +387,203 @@ module('--watch re-run tests', () => {
     }
   });
 
+  test('simultaneous writes to files in two watched directories both appear in the rebuild', async (assert) => {
+    const {
+      dir,
+      id: id1,
+      testsDir: testsDir1,
+      testFile: testFile1,
+      testContent,
+    } = await makeWatchProject();
+
+    // Second watched directory shares the same project root (node_modules symlink, package.json).
+    const testsDir2 = `${dir}/tests2`;
+    const id2 = randomUUID();
+    const content2 = testContent.replace(id1, id2);
+    const testFile2 = `${testsDir2}/extra-tests.ts`;
+    await fs.mkdir(testsDir2, { recursive: true });
+    await fs.writeFile(testFile2, content2);
+
+    const session = spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
+
+    try {
+      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+      assert.passingTestCaseFor(session.stdout, { moduleName: id1 });
+      assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
+
+      // Write to both files at the same time. Both change events arrive in rapid succession;
+      // the first starts a full rebuild (all fsTree files) and the second queues as a pending
+      // trigger. Either way, a full rebuild always bundles all files' latest content, so both
+      // new module names must appear in the output.
+      const newId1 = randomUUID();
+      const newId2 = randomUUID();
+      await Promise.all([
+        fs.writeFile(testFile1, testContent.replace(id1, newId1)),
+        fs.writeFile(testFile2, content2.replace(id2, newId2)),
+      ]);
+
+      await session.waitFor(
+        (buf) => countOccurrences(buf, 'QUnitX running:') >= 2,
+        're-run to start',
+      );
+      // Wait for the final re-run to complete (handles the case where two rebuilds fire).
+      await session.waitFor((buf) => {
+        const idx = buf.lastIndexOf('QUnitX running:');
+        return buf.includes('# duration', idx);
+      }, 're-run to complete');
+
+      // Both new IDs must appear: full rebuilds bundle all files regardless of which event
+      // triggered the run, so both simultaneous writes are always reflected in the output.
+      assert.includes(session.stdout, newId1);
+      assert.includes(session.stdout, newId2);
+      assert.includes(session.stdout, '# fail 0');
+    } finally {
+      await session.kill();
+    }
+  });
+
+  test('removing one of multiple watched directories fires REMOVED exactly once and leaves the other watcher active', async (assert) => {
+    const { dir, id: id1, testsDir: testsDir1, testContent } = await makeWatchProject();
+
+    const testsDir2 = `${dir}/tests2`;
+    const id2 = randomUUID();
+    const content2 = testContent.replace(id1, id2);
+    const testFile2 = `${testsDir2}/extra-tests.ts`;
+    await fs.mkdir(testsDir2, { recursive: true });
+    await fs.writeFile(testFile2, content2);
+
+    const session = spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
+
+    try {
+      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+      assert.passingTestCaseFor(session.stdout, { moduleName: id1 });
+      assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
+
+      // Rename tests/ away — the parent watcher fires a 'rename' event (Linux: IN_MOVED_FROM +
+      // IN_MOVED_TO appear as two separate events). The parentUnlinkFired guard ensures unlinkDir
+      // fires exactly once even if both arrive before the async stat() check completes.
+      await fs.rename(testsDir1, `${dir}/old-tests`);
+
+      await session.waitFor(
+        (buf) => buf.includes('REMOVED:'),
+        'REMOVED event for renamed directory',
+      );
+      await session.waitFor(
+        (buf) => countOccurrences(buf, 'QUnitX running:') >= 2,
+        're-run to start after removal',
+      );
+      await session.waitFor((buf) => {
+        const idx = buf.lastIndexOf('QUnitX running:');
+        return buf.includes('# duration', idx);
+      }, 're-run to complete');
+
+      // Removed directory's files are absent; remaining directory's files are present.
+      const afterRemoval = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      assert.false(afterRemoval.includes(id1), 'removed directory module absent from re-run');
+      assert.includes(afterRemoval, id2);
+
+      // REMOVED: must appear exactly once — verifies the parentUnlinkFired double-fire fix.
+      assert.equal(
+        countOccurrences(session.stdout, 'REMOVED:'),
+        1,
+        'REMOVED: printed exactly once',
+      );
+
+      // Verify the remaining watcher (tests2/) is still functional after the removal.
+      const newId2 = randomUUID();
+      await fs.writeFile(testFile2, content2.replace(id2, newId2));
+
+      await session.waitFor(
+        (buf) => countOccurrences(buf, 'QUnitX running:') >= 3,
+        'second re-run to start',
+      );
+      await session.waitFor((buf) => {
+        const idx = buf.lastIndexOf('QUnitX running:');
+        return buf.includes('# duration', idx);
+      }, 'second re-run to complete');
+
+      assert.includes(session.stdout, newId2);
+    } finally {
+      await session.kill();
+    }
+  });
+
+  test('renaming a nested subdirectory fires one REMOVED event and re-runs with remaining files across all watched paths', async (assert) => {
+    // Scenario: multiple watched dirs, one of which has a deep nested structure.
+    // Renaming a subdirectory inside a watched path fires a single 'rename' event for the
+    // directory itself (not individual events per file). The child watcher must detect that
+    // the renamed path has tracked children and fire one unlinkDir — not silently ignore it.
+    const { dir, id: rootId, testsDir, testContent } = await makeWatchProject();
+
+    // Nested structure inside tests/:
+    //   tests/subdir/nested1.ts   (nestedId1)
+    //   tests/subdir/nested2.ts   (nestedId2)
+    //   tests/subdir/deeper/deep.ts (deepId)
+    const subdir = `${testsDir}/subdir`;
+    const deeper = `${subdir}/deeper`;
+    await fs.mkdir(deeper, { recursive: true });
+    const nestedId1 = randomUUID();
+    const nestedId2 = randomUUID();
+    const deepId = randomUUID();
+    await fs.writeFile(`${subdir}/nested1.ts`, testContent.replace(rootId, nestedId1));
+    await fs.writeFile(`${subdir}/nested2.ts`, testContent.replace(rootId, nestedId2));
+    await fs.writeFile(`${deeper}/deep.ts`, testContent.replace(rootId, deepId));
+
+    // Second watched directory (separate from tests/).
+    const testsDir2 = `${dir}/tests2`;
+    const id2 = randomUUID();
+    await fs.mkdir(testsDir2, { recursive: true });
+    await fs.writeFile(`${testsDir2}/extra.ts`, testContent.replace(rootId, id2));
+
+    // Watch both directories.
+    const session = spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
+
+    try {
+      // Initial run: 5 modules × 3 tests = 15 tests.
+      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+      assert.passingTestCaseFor(session.stdout, { moduleName: rootId });
+      assert.passingTestCaseFor(session.stdout, { moduleName: nestedId1 });
+      assert.passingTestCaseFor(session.stdout, { moduleName: nestedId2 });
+      assert.passingTestCaseFor(session.stdout, { moduleName: deepId });
+      assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
+
+      // Rename tests/subdir/ away — fires ONE 'rename' event for the directory itself.
+      // The child watcher detects tracked children and fires a single unlinkDir.
+      await fs.rename(subdir, `${dir}/old-subdir`);
+
+      await session.waitFor((buf) => buf.includes('REMOVED:'), 'REMOVED event for renamed subdir');
+      await session.waitFor(
+        (buf) => countOccurrences(buf, 'QUnitX running:') >= 2,
+        're-run to start',
+      );
+      await session.waitFor((buf) => {
+        const idx = buf.lastIndexOf('QUnitX running:');
+        return buf.includes('# duration', idx);
+      }, 're-run to complete');
+
+      // Re-run must include tests/root.ts and tests2/extra.ts only (6 tests).
+      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      assert.includes(rerunOutput, '# pass 6');
+      assert.includes(rerunOutput, '# fail 0');
+      assert.includes(rerunOutput, rootId);
+      assert.includes(rerunOutput, id2);
+      assert.false(rerunOutput.includes(nestedId1), 'subdir files absent from re-run');
+      assert.false(rerunOutput.includes(nestedId2), 'subdir files absent from re-run');
+      assert.false(rerunOutput.includes(deepId), 'deeper files absent from re-run');
+
+      // Exactly one REMOVED: must appear — the directory rename fires one child-watcher
+      // 'rename' event which the new unlinkDir detection coalesces into a single event,
+      // rather than N separate unlink events for each file inside the directory.
+      assert.equal(
+        countOccurrences(session.stdout, 'REMOVED:'),
+        1,
+        'exactly one REMOVED: for the whole renamed subdirectory',
+      );
+    } finally {
+      await session.kill();
+    }
+  });
+
   test('a build error in watch mode prints the error without exiting', async (assert) => {
     const { dir, id, testFile, testContent } = await makeWatchProject();
     const session = spawnWatch(['tests', '--watch'], { cwd: dir });

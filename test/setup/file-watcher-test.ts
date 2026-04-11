@@ -23,6 +23,24 @@ module('Setup | mutateFSTree', { concurrency: true }, () => {
     mutateFSTree(fsTree, 'unlinkDir', '/project/test');
     assert.deepEqual(fsTree, { '/project/other/baz.js': null });
   });
+
+  test('unlinkDir does not remove files in sibling directories that share a name prefix', (assert) => {
+    // Regression: startsWith('/project/test') also matches '/project/test2/...' and
+    // '/project/testcases/...' because it is a string prefix, not a path prefix.
+    // The fix appends '/' so only entries strictly inside the removed directory are deleted.
+    const fsTree = {
+      '/project/test/foo.js': null,
+      '/project/test2/bar.js': null,
+      '/project/testcases/baz.js': null,
+      '/project/other/qux.js': null,
+    };
+    mutateFSTree(fsTree, 'unlinkDir', '/project/test');
+    assert.deepEqual(fsTree, {
+      '/project/test2/bar.js': null,
+      '/project/testcases/baz.js': null,
+      '/project/other/qux.js': null,
+    });
+  });
 });
 
 module('Setup | handleWatchEvent', { concurrency: true }, () => {
@@ -83,6 +101,33 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
     assert.equal(calls.length, 1);
     assert.equal(calls[0].event, 'unlinkDir');
     assert.equal(calls[0].path, '/project/test/unit');
+  });
+
+  test('unlinkDir on a nested subdirectory removes its entire subtree and leaves sibling paths untouched', (assert) => {
+    // Verifies both the mutateFSTree prefix fix and that handleWatchEvent correctly coalesces
+    // a nested directory removal into a single onEventFunc call.
+    const fsTree = {
+      '/project/tests/subdir/nested1.ts': null,
+      '/project/tests/subdir/nested2.ts': null,
+      '/project/tests/subdir/deeper/deep.ts': null,
+      '/project/tests/root.ts': null,
+      '/project/tests2/extra.ts': null,
+    };
+    const config = { fsTree, projectRoot: '/project' };
+    const calls = [];
+
+    handleWatchEvent(config, ['js', 'ts'], 'unlinkDir', '/project/tests/subdir', (event, path) => {
+      calls.push({ event, path });
+    });
+
+    // All three files under subdir/ are gone; root.ts and tests2/extra.ts are untouched.
+    assert.deepEqual(config.fsTree, {
+      '/project/tests/root.ts': null,
+      '/project/tests2/extra.ts': null,
+    });
+    assert.equal(calls.length, 1, 'onEventFunc called exactly once');
+    assert.equal(calls[0].event, 'unlinkDir');
+    assert.equal(calls[0].path, '/project/tests/subdir');
   });
 
   test('unlinkDir with no matching files is a no-op on fsTree but still calls onEventFunc', (assert) => {
@@ -206,5 +251,123 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
 
     assert.deepEqual(config.fsTree, {});
     assert.equal(calls.length, 0);
+  });
+
+  test('_lastBuildEndMs is set after an async build completes successfully', async (assert) => {
+    const fsTree = { '/project/test/foo.js': null };
+    const config = { fsTree, projectRoot: '/project' };
+
+    handleWatchEvent(
+      config,
+      ['js', 'ts'],
+      'change',
+      '/project/test/foo.js',
+      () => new Promise<void>((resolve) => setTimeout(resolve, 10)),
+      null,
+    );
+
+    assert.notOk(config._lastBuildEndMs, '_lastBuildEndMs not set while build is in progress');
+    assert.equal(config._building, true, '_building is true during async build');
+
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        if (!config._building) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 5);
+    });
+
+    assert.equal(config._building, false, '_building reset after build');
+    assert.ok(config._lastBuildEndMs, '_lastBuildEndMs set after successful build');
+    assert.ok(config._lastBuildEndMs <= Date.now(), '_lastBuildEndMs is a valid timestamp');
+  });
+
+  test('_lastBuildEndMs is set even when the async build fails (catch path)', async (assert) => {
+    const fsTree = { '/project/test/foo.js': null };
+    const config = { fsTree, projectRoot: '/project' };
+
+    handleWatchEvent(
+      config,
+      ['js', 'ts'],
+      'change',
+      '/project/test/foo.js',
+      () => Promise.reject(new Error('simulated build failure')),
+      null,
+    );
+
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        if (!config._building) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 5);
+    });
+
+    assert.equal(config._building, false, '_building reset after failed build');
+    assert.ok(config._lastBuildEndMs, '_lastBuildEndMs set even after a failed build');
+  });
+
+  test('_lastBuildEndMs is NOT set when onEventFunc returns synchronously (no async build)', (assert) => {
+    const fsTree = { '/project/test/foo.js': null };
+    const config = { fsTree, projectRoot: '/project' };
+
+    handleWatchEvent(config, ['js', 'ts'], 'change', '/project/test/foo.js', () => undefined, null);
+
+    assert.notOk(
+      config._lastBuildEndMs,
+      '_lastBuildEndMs not set for sync (non-build) onEventFunc',
+    );
+    assert.equal(config._building, false, '_building reset synchronously');
+  });
+
+  test('_lastBuildEndMs is updated on each successive build completion', async (assert) => {
+    const fsTree = { '/project/test/foo.js': null };
+    const config = { fsTree, projectRoot: '/project' };
+
+    // First build
+    handleWatchEvent(
+      config,
+      ['js', 'ts'],
+      'change',
+      '/project/test/foo.js',
+      () => new Promise<void>((resolve) => setTimeout(resolve, 10)),
+      null,
+    );
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        if (!config._building) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 5);
+    });
+    const firstEndMs = config._lastBuildEndMs;
+    assert.ok(firstEndMs, 'first build sets _lastBuildEndMs');
+
+    // Allow a small gap so the timestamp is guaranteed to advance.
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    // Second build (pending trigger path: reset _building to allow)
+    config._building = false;
+    handleWatchEvent(
+      config,
+      ['js', 'ts'],
+      'change',
+      '/project/test/foo.js',
+      () => new Promise<void>((resolve) => setTimeout(resolve, 10)),
+      null,
+    );
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        if (!config._building) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 5);
+    });
+
+    assert.ok(config._lastBuildEndMs > firstEndMs, '_lastBuildEndMs advances with each build');
   });
 });

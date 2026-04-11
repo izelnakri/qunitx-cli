@@ -1,9 +1,28 @@
 import { module, test } from 'qunitx';
-import { writeTestFolder } from '../helpers/fs-writers.ts';
+import { writeTestFolder, writeNestedTestFolder } from '../helpers/fs-writers.ts';
 import '../helpers/custom-asserts.ts';
 import shell, { shellFails } from '../helpers/shell.ts';
 
 module('File and Folder Combination Tests', (_hooks, moduleMetadata) => {
+  test('runs a file and a nested folder together when all tests pass', async (assert, testMetadata) => {
+    const folderName = await writeNestedTestFolder();
+
+    const result = await shell(`node cli.ts tmp/${folderName} tmp/test/passing-tests.js`, {
+      ...moduleMetadata,
+      ...testMetadata,
+    });
+
+    // nested folder: flat + subdir/nested + subdir/deeper/deep = 3 files × 3 tests = 9
+    // extra file: 3 tests → 12 total
+    assert.passingTestCasesFor(result, [
+      { moduleName: `${folderName} | flat` },
+      { moduleName: `${folderName} | subdir-nested` },
+      { moduleName: `${folderName} | subdir-deeper-deep` },
+      { moduleName: '{{moduleName}}' },
+    ]);
+    assert.tapResult(result, { testCount: 12 });
+  });
+
   test('runs a file and a folder together when all tests pass', async (assert, testMetadata) => {
     const folderName = await writeTestFolder({ addFailingTests: false });
 
