@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.0] - 2026-04-11
+[`v0.10.0...v0.11.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.10.0...v0.11.0)
+
+### Bug Fixes
+- Kill chrome zombie processes on CI and add better debug prints — 2026-04-11 by [@izelnakri](https://github.com/izelnakri) ([`61b2af6`](https://github.com/izelnakri/qunitx-cli/commit/61b2af658ef4b1a764462220791cab1a93ca5b17))
+- Prevent 110-byte empty bundle from overlayfs IN_DELETE race on CI — 2026-04-11 by [@izelnakri](https://github.com/izelnakri) ([`3befe68`](https://github.com/izelnakri/qunitx-cli/commit/3befe6882b9edf13911e922e419b5e071a92dcc8))
+- Retry esbuild when bundle is too small due to overlayfs content lag — 2026-04-11 by [@izelnakri](https://github.com/izelnakri) ([`8ccf4c2`](https://github.com/izelnakri/qunitx-cli/commit/8ccf4c279a443f3c16f05b55de5f1ec395cb07ce))
+
 ## [0.10.0] - 2026-04-10
 [`v0.9.10...v0.10.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.9.10...v0.10.0)
 
