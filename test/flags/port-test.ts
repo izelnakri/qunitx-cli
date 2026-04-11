@@ -130,10 +130,7 @@ async function withRunningServer(
     cmd = `${cmd} --output=tmp/run-${randomUUID()}`;
   }
 
-  const child = spawn(process.execPath, [
-    '--experimental-strip-types',
-    ...cmd.split(/\s+/).slice(1),
-  ]);
+  const child = spawn(process.execPath, cmd.split(/\s+/).slice(1));
 
   let accum = '';
   const port = await new Promise<number>((resolve, reject) => {

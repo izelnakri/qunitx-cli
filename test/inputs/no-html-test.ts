@@ -47,13 +47,7 @@ async function runWatch(dir: string, id: string) {
   const outputDir = `${process.cwd()}/tmp/run-${randomUUID()}`;
   const child = spawn(
     process.execPath,
-    [
-      '--experimental-strip-types',
-      CLI,
-      'tests/passing-tests.ts',
-      '--watch',
-      `--output=${outputDir}`,
-    ],
+    [CLI, 'tests/passing-tests.ts', '--watch', `--output=${outputDir}`],
     { cwd: dir },
   );
 
@@ -89,10 +83,10 @@ module('No-HTML project tests', (_hooks, moduleMetadata) => {
     const { dir, id } = await makeMinimalProject({ withHtmlPaths: false });
     const outputDir = `${process.cwd()}/tmp/run-${randomUUID()}`;
 
-    const result = await execAsync(
-      `node --experimental-strip-types ${CLI} tests/passing-tests.ts --output=${outputDir}`,
-      { cwd: dir, timeout: 60000 },
-    );
+    const result = await execAsync(`node ${CLI} tests/passing-tests.ts --output=${outputDir}`, {
+      cwd: dir,
+      timeout: 60000,
+    });
 
     assert.includes(result, 'TAP version 13');
     assert.passingTestCaseFor(result, { moduleName: id });
@@ -116,10 +110,10 @@ module('No-HTML project tests', (_hooks, moduleMetadata) => {
     const { dir, id } = await makeMinimalProject({ withHtmlPaths: true });
     const outputDir = `${process.cwd()}/tmp/run-${randomUUID()}`;
 
-    const result = await execAsync(
-      `node --experimental-strip-types ${CLI} tests/passing-tests.ts --output=${outputDir}`,
-      { cwd: dir, timeout: 60000 },
-    );
+    const result = await execAsync(`node ${CLI} tests/passing-tests.ts --output=${outputDir}`, {
+      cwd: dir,
+      timeout: 60000,
+    });
 
     assert.includes(result, 'TAP version 13');
     assert.passingTestCaseFor(result, { moduleName: id });

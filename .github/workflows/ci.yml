@@ -151,7 +151,7 @@ jobs:
         id: setup-chrome
       - run: npm ci
       - name: Capture demo output
-        run: node --experimental-strip-types cli.ts docs/demo-math-test.js --output=tmp/pages-demo > demo-output.txt 2>&1 || true
+        run: node cli.ts docs/demo-math-test.js --output=tmp/pages-demo > demo-output.txt 2>&1 || true
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0

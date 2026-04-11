@@ -33,7 +33,7 @@ function spawnWatch(
   { cwd = process.cwd(), timeout = 120000 }: { cwd?: string; timeout?: number } = {},
 ): WatchSession {
   const outputDir = `${process.cwd()}/tmp/run-${randomUUID()}`;
-  const allArgs = ['--experimental-strip-types', CLI, ...args, `--output=${outputDir}`];
+  const allArgs = [CLI, ...args, `--output=${outputDir}`];
   if (QUNITX_BROWSER && !args.some((a) => a.startsWith('--browser'))) {
     allArgs.push(`--browser=${QUNITX_BROWSER}`);
   }

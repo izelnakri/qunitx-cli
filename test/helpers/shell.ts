@@ -47,7 +47,7 @@ export async function shellWatch(
             .split(/\s+/)
             .filter(Boolean),
         ]
-      : [process.execPath, ['--experimental-strip-types', ...command.split(/\s+/).slice(1)]];
+      : [process.execPath, command.split(/\s+/).slice(1)];
 
   const child = spawn(bin, spawnArgs, { env: { ...process.env, FORCE_COLOR: '0' } });
 
@@ -124,15 +124,10 @@ export default async function execute(
       ? `${withBrowser} --debug`
       : withBrowser;
 
-  // When releasing: swap `node cli.ts` for the installed binary (no strip-types needed).
-  // In development: ensure --experimental-strip-types is present so .ts files load.
   const command =
     QUNITX_BIN && IS_CLI.test(commandString)
       ? withDebug.replace(/\bnode\s+cli\.ts\b/, QUNITX_BIN)
-      : withDebug.replace(
-          /\bnode\b(?!\s+--experimental-strip-types)/,
-          'node --experimental-strip-types',
-        );
+      : withDebug;
 
   try {
     const result = await shell(command, {
