@@ -160,9 +160,7 @@ async function withRunningServer(
     child.stdin.destroy();
     child.stdout.destroy();
     child.stderr.destroy();
-    child.unref();
-    // Give the OS a moment to release the port after SIGTERM.
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise<void>((resolve) => child.once('exit', resolve));
   }
 
   return port;
