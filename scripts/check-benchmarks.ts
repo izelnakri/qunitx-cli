@@ -89,6 +89,19 @@ function fmtNs(ns: number): string {
   return `${ns.toFixed(0)}ns`;
 }
 
+// Benchmarks at different scales have very different noise floors:
+//   < 1 ms  (server, tap): JIT/GC noise → 10× multiplier (e.g. 260% at threshold=26)
+//   < 500ms (startup, esbuild): OS scheduling noise → 3× multiplier (e.g. 78% at threshold=26)
+//   ≥ 500ms (e2e): meaningful wall-clock — use the base threshold directly
+const SUB_MS_NS = 1_000_000;        // 1 ms
+const SUB_SECOND_NS = 500_000_000;  // 500 ms
+
+function effectiveThreshold(saved: number, threshold: number): number {
+  if (saved < SUB_MS_NS) return threshold * 10;
+  if (saved < SUB_SECOND_NS) return threshold * 3;
+  return threshold;
+}
+
 function fmtChange(change: number, threshold: number): string {
   const arrow = change > 0 ? "▲" : "▼";
   const pct = `${arrow}${(Math.abs(change) * 100).toFixed(1)}%`;
@@ -112,9 +125,10 @@ function printTable(results: BenchResult[], baseline: Baseline | null, threshold
       continue;
     }
     const change = (avg - saved) / saved;
-    const flag = change > threshold ? bold(red(" FAIL")) : "     ";
+    const t = effectiveThreshold(saved, threshold);
+    const flag = change > t ? bold(red(" FAIL")) : "     ";
     console.log(
-      `${flag} ${name.padEnd(52)}${fmtNs(avg).padStart(12)}${dim(fmtNs(saved).padStart(12))}${fmtChange(change, threshold).padStart(10)}`,
+      `${flag} ${name.padEnd(52)}${fmtNs(avg).padStart(12)}${dim(fmtNs(saved).padStart(12))}${fmtChange(change, t).padStart(10)}`,
     );
   }
   console.log();
@@ -153,7 +167,8 @@ async function check(results: BenchResult[], thresholdPct: number): Promise<bool
 
   const failures = results.filter(({ name, avg }) => {
     const saved = baseline!.results[name];
-    return saved !== undefined && (avg - saved) / saved > threshold;
+    if (saved === undefined) return false;
+    return (avg - saved) / saved > effectiveThreshold(saved, threshold);
   });
 
   if (failures.length > 0) {

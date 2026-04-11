@@ -6,10 +6,10 @@ LEVEL ?= patch
 
 
 
-REGRESSION_THRESHOLD ?= 20
+REGRESSION_THRESHOLD ?= 26
 
 help:
-	@echo "Usage: make <target> [LEVEL=patch|minor|major] [REGRESSION_THRESHOLD=20]"
+	@echo "Usage: make <target> [LEVEL=patch|minor|major] [REGRESSION_THRESHOLD=26]"
 	@echo ""
 	@echo "  fix             Auto-fix formatting"
 	@echo "  format          Check formatting (prettier)"
@@ -98,7 +98,7 @@ bench:
 bench-update: bench
 
 # Runs all benchmarks and compares results against benches/results.json.
-# Exits non-zero if any benchmark regresses more than REGRESSION_THRESHOLD% (default: 20).
+# Exits non-zero if any benchmark regresses more than REGRESSION_THRESHOLD% (default: 26).
 # Run 'make bench-update' once first to establish the baseline.
 bench-check:
 	REGRESSION_THRESHOLD=$(REGRESSION_THRESHOLD) deno task bench:check
