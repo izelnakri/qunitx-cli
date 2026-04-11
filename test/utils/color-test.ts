@@ -4,7 +4,7 @@ import { createColors } from '../../lib/utils/color.ts';
 const on = createColors(true);
 const off = createColors(false);
 
-module('Utils | color | enabled', () => {
+module('Utils | color | enabled', { concurrency: true }, () => {
   test('red wraps text with ANSI red codes', (assert) => {
     assert.equal(on.red('hello'), '\x1b[31mhello\x1b[39m');
   });
@@ -38,7 +38,7 @@ module('Utils | color | enabled', () => {
   });
 });
 
-module('Utils | color | disabled', () => {
+module('Utils | color | disabled', { concurrency: true }, () => {
   test('red returns plain text', (assert) => {
     assert.equal(off.red('hello'), 'hello');
   });

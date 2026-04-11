@@ -46,7 +46,7 @@ Commands:
 $ qunitx init               # Bootstraps qunitx base html and add qunitx config to package.json if needed
 $ qunitx new $testFileName  # Creates a qunitx test file`;
 
-module('Commands | Version tests', () => {
+module('Commands | Version tests', { concurrency: true }, () => {
   test('$ qunitx --version -> prints only the version number', async (assert) => {
     const { stdout } = await cli('--version');
 
@@ -66,7 +66,7 @@ module('Commands | Version tests', () => {
   });
 });
 
-module('Commands | Help tests', () => {
+module('Commands | Help tests', { concurrency: true }, () => {
   test('$ qunitx -> prints help text', async (assert) => {
     const { stdout } = await cli();
 

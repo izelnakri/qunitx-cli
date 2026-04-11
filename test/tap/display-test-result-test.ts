@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import TAPDisplayTestResult from '../../lib/tap/display-test-result.ts';
 
-module('TAP | TAPDisplayTestResult | COUNTER', () => {
+module('TAP | TAPDisplayTestResult | COUNTER', { concurrency: true }, () => {
   test('COUNTER.errorCount is initialized and incremented as a number', (assert) => {
     const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
     TAPDisplayTestResult(COUNTER, {

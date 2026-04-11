@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import setupTestFilePaths from '../../lib/setup/test-file-paths.ts';
 
-module('Setup | glob(*) input tests | test-file-paths tests', () => {
+module('Setup | glob(*) input tests | test-file-paths tests', { concurrency: true }, () => {
   test('setupTestFilePaths() works correctly on different inputs', (assert) => {
     let projectRoot = '/home/izelnakri/Github/qunitx';
 

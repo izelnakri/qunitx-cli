@@ -30,7 +30,7 @@ async function withServer(fn) {
   }
 }
 
-module('Servers | bindServerToPort | port selection', () => {
+module('Servers | bindServerToPort | port selection', { concurrency: true }, () => {
   test('binds to the requested port when it is free', async (assert) => {
     const server = new HTTPServer();
     const blocker = await findFreePort();
@@ -75,7 +75,7 @@ module('Servers | bindServerToPort | port selection', () => {
   });
 });
 
-module('Servers | HTTPServer | query param routing', () => {
+module('Servers | HTTPServer | query param routing', { concurrency: true }, () => {
   test('GET / serves correctly without query params', async (assert) => {
     await withServer(async (port) => {
       const { statusCode, body } = await request(port, '/');

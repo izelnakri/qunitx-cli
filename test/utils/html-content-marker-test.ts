@@ -5,7 +5,7 @@ import {
   replaceHTMLContentMarker,
 } from '../../lib/utils/html-content-marker.ts';
 
-module('Utils | html content marker', () => {
+module('Utils | html content marker', { concurrency: true }, () => {
   test('detects the existing {{qunitxScript}} marker', (assert) => {
     assert.equal(findHTMLContentMarker('<body>{{qunitxScript}}</body>'), '{{qunitxScript}}');
     assert.true(htmlHasDynamicContentMarker('<body>{{qunitxScript}}</body>'));

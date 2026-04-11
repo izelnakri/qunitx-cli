@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
 import shell from '../helpers/shell.ts';
 
-module('Commands | generate tests', (_hooks, moduleMetadata) => {
+module('Commands | generate tests', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('appends .js extension and writes boilerplate when no extension is given', async (assert, testMetadata) => {
     const name = `tmp/generated-${randomUUID()}`;
     const expectedPath = `${process.cwd()}/${name}.js`;

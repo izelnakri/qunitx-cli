@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import { mutateFSTree, handleWatchEvent } from '../../lib/setup/file-watcher.ts';
 
-module('Setup | mutateFSTree', () => {
+module('Setup | mutateFSTree', { concurrency: true }, () => {
   test('add event inserts path into fsTree', (assert) => {
     const fsTree = {};
     mutateFSTree(fsTree, 'add', '/project/test/foo.js');
@@ -25,7 +25,7 @@ module('Setup | mutateFSTree', () => {
   });
 });
 
-module('Setup | handleWatchEvent', () => {
+module('Setup | handleWatchEvent', { concurrency: true }, () => {
   test('js file change triggers onEventFunc and updates fsTree', (assert) => {
     const fsTree = { '/project/test/foo.js': null };
     const config = { fsTree, projectRoot: '/project' };

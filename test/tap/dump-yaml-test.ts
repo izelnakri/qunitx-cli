@@ -15,7 +15,7 @@ function roundtrip(value) {
   return load(out).actual;
 }
 
-module('TAP | dumpYaml | primitives', () => {
+module('TAP | dumpYaml | primitives', { concurrency: true }, () => {
   test('null round-trips', (assert) => {
     assert.strictEqual(roundtrip(null), null);
   });
@@ -49,7 +49,7 @@ module('TAP | dumpYaml | primitives', () => {
   });
 });
 
-module('TAP | dumpYaml | strings', () => {
+module('TAP | dumpYaml | strings', { concurrency: true }, () => {
   test('plain string round-trips', (assert) => {
     assert.strictEqual(roundtrip('hello world'), 'hello world');
   });
@@ -145,7 +145,7 @@ module('TAP | dumpYaml | strings', () => {
   });
 });
 
-module('TAP | dumpYaml | arrays', () => {
+module('TAP | dumpYaml | arrays', { concurrency: true }, () => {
   test('empty array round-trips', (assert) => {
     assert.deepEqual(roundtrip([]), []);
   });
@@ -187,7 +187,7 @@ module('TAP | dumpYaml | arrays', () => {
   });
 });
 
-module('TAP | dumpYaml | objects', () => {
+module('TAP | dumpYaml | objects', { concurrency: true }, () => {
   test('empty object round-trips', (assert) => {
     assert.deepEqual(roundtrip({}), {});
   });
@@ -220,7 +220,7 @@ module('TAP | dumpYaml | objects', () => {
   });
 });
 
-module('TAP | dumpYaml | full output structure', () => {
+module('TAP | dumpYaml | full output structure', { concurrency: true }, () => {
   test('all 6 keys are present in output', (assert) => {
     const out = dumpYaml({
       name: 'Assertion #1',

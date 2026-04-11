@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import findInternalAssetsFromHTML from '../../lib/utils/find-internal-assets-from-html.ts';
 
-module('Utils | findInternalAssetsFromHTML', () => {
+module('Utils | findInternalAssetsFromHTML', { concurrency: true }, () => {
   test('extracts internal script src paths', (assert) => {
     const html = '<html><body><script src="/app.js"></script></body></html>';
     assert.deepEqual(findInternalAssetsFromHTML(html), ['/app.js']);

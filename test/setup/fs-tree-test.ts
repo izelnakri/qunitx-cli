@@ -16,7 +16,7 @@ async function makeTempDir(files: string[]): Promise<string> {
   return dir;
 }
 
-module('Setup | buildFSTree | extensions', () => {
+module('Setup | buildFSTree | extensions', { concurrency: true }, () => {
   test('includes .js and .ts files by default (no config.extensions)', async (assert) => {
     const dir = await makeTempDir(['a.js', 'b.ts', 'c.css', 'd.mjs']);
     const fsTree = await buildFSTree([dir]);
@@ -47,7 +47,7 @@ module('Setup | buildFSTree | extensions', () => {
   });
 });
 
-module('Setup | buildFSTree | file input', () => {
+module('Setup | buildFSTree | file input', { concurrency: true }, () => {
   test('a direct file path adds exactly that file', async (assert) => {
     const dir = await makeTempDir(['a.ts', 'b.ts']);
     const filePath = path.join(dir, 'a.ts');
@@ -63,7 +63,7 @@ module('Setup | buildFSTree | file input', () => {
   });
 });
 
-module('Setup | buildFSTree | glob input', () => {
+module('Setup | buildFSTree | glob input', { concurrency: true }, () => {
   test('a glob pattern expands to matching files', async (assert) => {
     const dir = await makeTempDir(['a.ts', 'b.ts', 'c.js']);
     const fsTree = await buildFSTree([`${dir}/*.ts`]);

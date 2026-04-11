@@ -13,7 +13,7 @@ function withArgv(args, fn) {
   }
 }
 
-module('Setup | parseCliFlags | --extensions', () => {
+module('Setup | parseCliFlags | --extensions', { concurrency: true }, () => {
   test('--extensions parses a single extension', (assert) => {
     const flags = withArgv(['--extensions=mjs'], () => parseCliFlags(PROJECT_ROOT));
     assert.deepEqual(flags.extensions, ['mjs']);
@@ -35,7 +35,7 @@ module('Setup | parseCliFlags | --extensions', () => {
   });
 });
 
-module('Setup | parseCliFlags | --port', () => {
+module('Setup | parseCliFlags | --port', { concurrency: true }, () => {
   test('--port parses as a number and sets portExplicit', (assert) => {
     const flags = withArgv(['--port=5678'], () => parseCliFlags(PROJECT_ROOT));
     assert.strictEqual(flags.port, 5678);
@@ -49,7 +49,7 @@ module('Setup | parseCliFlags | --port', () => {
   });
 });
 
-module('Setup | parseCliFlags | --open', () => {
+module('Setup | parseCliFlags | --open', { concurrency: true }, () => {
   test('--open with no value sets open to true', (assert) => {
     const flags = withArgv(['--open'], () => parseCliFlags(PROJECT_ROOT));
     assert.strictEqual(flags.open, true);
@@ -71,7 +71,7 @@ module('Setup | parseCliFlags | --open', () => {
   });
 });
 
-module('Setup | parseCliFlags | --failFast', () => {
+module('Setup | parseCliFlags | --failFast', { concurrency: true }, () => {
   test('--failFast sets failFast to true', (assert) => {
     const flags = withArgv(['--failFast'], () => parseCliFlags(PROJECT_ROOT));
     assert.strictEqual(flags.failFast, true);
@@ -83,7 +83,7 @@ module('Setup | parseCliFlags | --failFast', () => {
   });
 });
 
-module('Setup | parseCliFlags | --timeout', () => {
+module('Setup | parseCliFlags | --timeout', { concurrency: true }, () => {
   test('--timeout value is parsed as a number, not a string', (assert) => {
     const flags = withArgv(['--timeout=5000'], () => parseCliFlags(PROJECT_ROOT));
     assert.strictEqual(typeof flags.timeout, 'number', 'timeout must be a number');

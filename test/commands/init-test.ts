@@ -9,7 +9,7 @@ import '../helpers/custom-asserts.ts';
 const exec = promisify(execCb);
 const CLI = path.resolve('cli.ts');
 
-module('Commands | init tests', (_hooks, moduleMetadata) => {
+module('Commands | init tests', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('$ qunitx init -> writes test/tests.html, tsconfig.json and updates package.json', async (assert) => {
     const dir = path.resolve(`tmp/init-${randomUUID()}`);
     await fs.mkdir(dir, { recursive: true });
