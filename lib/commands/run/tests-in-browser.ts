@@ -23,6 +23,15 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
   const { projectRoot, output } = config;
   const allTestFilePaths = Object.keys(config.fsTree);
 
+  // Defensive guard: if fsTree is empty (e.g. due to a spurious unlink from an overlayfs
+  // copy-on-write race on CI), skip the build rather than writing a useless ~110-byte bundle
+  // with no test modules. The pending-trigger mechanism will fire a correct rebuild once
+  // the IN_CREATE event re-adds the file to fsTree.
+  if (allTestFilePaths.length === 0) {
+    console.log('# [buildTestBundle] fsTree is empty — skipping build (no test files found)');
+    return;
+  }
+
   await Promise.all([
     esbuild.build({
       stdin: {
@@ -78,6 +87,12 @@ export default async function runTestsInBrowser(
     // Skip bundle build if run.js already pre-built it (group mode optimization).
     if (!cachedContent.allTestCode) {
       await buildTestBundle(config, cachedContent);
+    }
+
+    // buildTestBundle bails early when fsTree is empty (spurious unlink race on overlayfs).
+    // Don't navigate the browser — the pending-trigger mechanism will fire a correct rebuild.
+    if (!cachedContent.allTestCode) {
+      return connections;
     }
 
     if (runHasFilter) {

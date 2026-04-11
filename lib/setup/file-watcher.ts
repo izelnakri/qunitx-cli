@@ -63,6 +63,25 @@ export default function setupFileWatchers(
           onFinishFunc,
         );
       } catch {
+        // stat failed on the first attempt. On overlayfs (Docker CI), a writeFile triggers
+        // IN_DELETE + IN_CREATE via copy-on-write semantics, making the file temporarily
+        // unavailable. Retry once after 50 ms before concluding the file is genuinely gone.
+        // Without this, the unlink path empties config.fsTree and produces a 110-byte bundle.
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        try {
+          const s = await stat(fullPath);
+          handleWatchEvent(
+            config,
+            extensions,
+            s.isDirectory() ? 'addDir' : 'add',
+            fullPath,
+            onEventFunc,
+            onFinishFunc,
+          );
+          return;
+        } catch {
+          // Still unavailable after retry — treat as a genuine unlink.
+        }
         // stat failed — either the file was deleted or the event carried a stale/wrong path.
         // Only act when we can confirm the path was previously tracked; otherwise ignore.
         // Spurious unlinkDir for unknown paths clears allTestCode and triggers a full run.
