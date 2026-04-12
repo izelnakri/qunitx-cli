@@ -1,11 +1,22 @@
 {
   "name": "qunitx-cli-darwin-x64",
-  "version": "0.0.0",
+  "version": "0.17.0",
   "description": "macOS x64 SEA binary for qunitx-cli",
-  "os": ["darwin"],
-  "cpu": ["x64"],
-  "bin": { "qunitx": "bin/qunitx" },
-  "files": ["bin/"],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "bin": {
+    "qunitx": "bin/qunitx"
+  },
+  "files": [
+    "bin/"
+  ],
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/izelnakri/qunitx-cli.git" }
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/izelnakri/qunitx-cli.git"
+  }
 }

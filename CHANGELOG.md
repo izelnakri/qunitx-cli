@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.0] - 2026-04-12
+[`v0.16.0...v0.17.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.16.0...v0.17.0)
+
+### Bug Fixes
+- Force-exit runner, skip semaphore for non-browser commands, label bench-check silence — 2026-04-12 by [@izelnakri](https://github.com/izelnakri) ([`6a63a9e`](https://github.com/izelnakri/qunitx-cli/commit/6a63a9e6f5adb9a3ac5240bfdc31f55ca042ac85))
+
 ## [0.16.0] - 2026-04-12
 [`v0.15.0...v0.16.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.15.0...v0.16.0)
 
