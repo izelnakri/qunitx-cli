@@ -34,6 +34,7 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
   }
 
   const outfile = `${projectRoot}/${output}/tests.js`;
+  await fs.mkdir(`${projectRoot}/${output}`, { recursive: true });
   const sourcemap: esbuild.BuildOptions['sourcemap'] = config.debug
     ? 'inline'
     : config.watch

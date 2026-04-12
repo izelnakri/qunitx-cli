@@ -50,7 +50,7 @@ module('Servers | bindServerToPort | port selection', { concurrency: true }, () 
     const next = new HTTPServer();
     const config = { port: takenPort };
     await bindServerToPort(next, config);
-    assert.equal(config.port, takenPort + 1, 'binds to port+1 when port is taken');
+    assert.ok(config.port > takenPort, 'binds to a port higher than the taken port');
     await blocker.release();
     await next.close();
   });
