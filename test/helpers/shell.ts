@@ -148,7 +148,7 @@ export default async function execute(
       ? withDebug.replace(/\bnode\s+cli\.ts\b/, QUNITX_BIN)
       : withDebug;
 
-  const permit = await acquireBrowser();
+  const permit = needsBrowser ? await acquireBrowser() : { release: () => {} };
   try {
     const result = await shell(command, {
       timeout: 60000,

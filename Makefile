@@ -101,6 +101,7 @@ bench-update: bench
 # Exits non-zero if any benchmark regresses more than REGRESSION_THRESHOLD% (default: 26).
 # Run 'make bench-update' once first to establish the baseline.
 bench-check:
+	@echo "Running benchmark regression check (silent until done, ~30s)..."
 	REGRESSION_THRESHOLD=$(REGRESSION_THRESHOLD) deno task bench:check
 
 

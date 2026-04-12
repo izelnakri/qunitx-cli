@@ -38,7 +38,7 @@ const testFiles =
 
 const child = spawn(
   process.execPath,
-  watchMode ? ['--test', '--watch', ...testFiles] : ['--test', ...testFiles],
+  watchMode ? ['--test', '--watch', ...testFiles] : ['--test', '--test-force-exit', ...testFiles],
   {
     stdio: 'inherit',
     env: {
