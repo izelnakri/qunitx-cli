@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.1] - 2026-04-12
+[`v0.17.0...v0.17.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.17.0...v0.17.1)
+
+### Bug Fixes
+- Relax simultaneous-writes assertion to tolerate split runs — 2026-04-12 by [@izelnakri](https://github.com/izelnakri) ([`597589f`](https://github.com/izelnakri/qunitx-cli/commit/597589fac192fac91e1ee31dab62964bf122f777))
+
 ## [0.17.0] - 2026-04-12
 [`v0.16.0...v0.17.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.16.0...v0.17.0)
 
