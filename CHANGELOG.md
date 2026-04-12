@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.17.2] - 2026-04-12
+[`v0.17.1...v0.17.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.17.1...v0.17.2)
+
+### Bug Fixes
+- Prevent two flaky test failures — 2026-04-12 by [@izelnakri](https://github.com/izelnakri) ([`7021d81`](https://github.com/izelnakri/qunitx-cli/commit/7021d81e4f7699bf248503e678ca7b626d58f979))
+
+### Documentation
+- Significantly improve docs — 2026-04-12 by [@izelnakri](https://github.com/izelnakri) ([`6c74d73`](https://github.com/izelnakri/qunitx-cli/commit/6c74d738a37d7deaedaa8c5e8744f1128c13488d))
+
+### Features
+- Smarter $ qunitx generate command — 2026-04-12 by [@izelnakri](https://github.com/izelnakri) ([`57d147b`](https://github.com/izelnakri/qunitx-cli/commit/57d147b41577ee8053f555a418d9d3b418a9a00c))
+
 ## [0.17.1] - 2026-04-12
 [`v0.17.0...v0.17.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.17.0...v0.17.1)
 
