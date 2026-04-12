@@ -38,7 +38,9 @@ export default function setupWebServer(config: Config, cachedContent: CachedCont
         if (!config._groupMode) console.log('TAP version 13');
         if (config.debug && config._groupMode) {
           const allFiles = Object.keys(config.fsTree);
-          const relFiles = allFiles.map((f) => f.replace(`${config.projectRoot}/`, ''));
+          const relFiles = allFiles.map((filePath) =>
+            filePath.replace(`${config.projectRoot}/`, ''),
+          );
           const shown = relFiles.slice(0, 2);
           const rest = relFiles.length - shown.length;
           const fileList = rest > 0 ? `${shown.join('  ')}  +${rest} more` : shown.join('  ');

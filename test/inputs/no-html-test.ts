@@ -4,6 +4,7 @@ import { exec, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
+import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 
 const execAsync = promisify(exec);
 
@@ -45,15 +46,10 @@ async function makeMinimalProject({ withHtmlPaths }: { withHtmlPaths: boolean })
 
 async function runWatch(dir: string, id: string) {
   const outputDir = `${process.cwd()}/tmp/run-${randomUUID()}`;
+  const permit = await acquireBrowser();
   const child = spawn(
     process.execPath,
-    [
-      '--experimental-strip-types',
-      CLI,
-      'tests/passing-tests.ts',
-      '--watch',
-      `--output=${outputDir}`,
-    ],
+    [CLI, 'tests/passing-tests.ts', '--watch', `--output=${outputDir}`],
     { cwd: dir },
   );
 
@@ -80,19 +76,21 @@ async function runWatch(dir: string, id: string) {
     child.stdout.destroy();
     child.stderr.destroy();
     child.unref();
+    permit.release();
   }
 }
 
-module('No-HTML project tests', (_hooks, moduleMetadata) => {
+module('No-HTML project tests', { concurrency: true }, (_hooks, moduleMetadata) => {
   // Scenario A: qunitx init was never run — no htmlPaths in package.json, no tests.html.
   test('runs in normal mode when qunitx init was never run (no htmlPaths configured)', async (assert) => {
     const { dir, id } = await makeMinimalProject({ withHtmlPaths: false });
     const outputDir = `${process.cwd()}/tmp/run-${randomUUID()}`;
 
-    const result = await execAsync(
-      `node --experimental-strip-types ${CLI} tests/passing-tests.ts --output=${outputDir}`,
-      { cwd: dir, timeout: 60000 },
-    );
+    const permit = await acquireBrowser();
+    const result = await execAsync(`node ${CLI} tests/passing-tests.ts --output=${outputDir}`, {
+      cwd: dir,
+      timeout: 60000,
+    }).finally(() => permit.release());
 
     assert.includes(result, 'TAP version 13');
     assert.passingTestCaseFor(result, { moduleName: id });
@@ -116,10 +114,11 @@ module('No-HTML project tests', (_hooks, moduleMetadata) => {
     const { dir, id } = await makeMinimalProject({ withHtmlPaths: true });
     const outputDir = `${process.cwd()}/tmp/run-${randomUUID()}`;
 
-    const result = await execAsync(
-      `node --experimental-strip-types ${CLI} tests/passing-tests.ts --output=${outputDir}`,
-      { cwd: dir, timeout: 60000 },
-    );
+    const permit = await acquireBrowser();
+    const result = await execAsync(`node ${CLI} tests/passing-tests.ts --output=${outputDir}`, {
+      cwd: dir,
+      timeout: 60000,
+    }).finally(() => permit.release());
 
     assert.includes(result, 'TAP version 13');
     assert.passingTestCaseFor(result, { moduleName: id });

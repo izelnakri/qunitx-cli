@@ -15,7 +15,7 @@ export type FSTree = Record<string, null>;
 
 export interface CachedContent {
   allTestCode: Buffer | string | null;
-  filteredTestCode?: string;
+  filteredTestCode?: Buffer | string;
   assets: Set<string>;
   htmlPathsToRunTests: string[];
   mainHTML: { filePath: string | null; html: string | null };
@@ -66,4 +66,6 @@ export interface Connections {
 export interface EarlyChrome {
   proc: ChildProcess;
   cdpEndpoint: string;
+  /** Kills Chrome and awaits async temp-dir cleanup. Call before process.exit(). */
+  shutdown: () => Promise<void>;
 }

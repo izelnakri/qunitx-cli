@@ -24,16 +24,18 @@ const { browserFromArgv, openFromArgv, watchFromArgv } = process.argv.reduce(
 // With --open alone, qunitx exits after tests complete; the detached browser is opened separately.
 const openWatchMode = openFromArgv && watchFromArgv;
 
-let earlyChromeProcRef = null;
+// Stored so the process.on('exit') safety net and shutdownEarlyBrowser() can reach Chrome.
+let earlyChrome: import('../types.ts').EarlyChrome | null = null;
+
 if (!openWatchMode) {
   process.on('exit', () => {
-    if (!earlyChromeProcRef) return;
-    // SIGKILL ensures Chrome terminates immediately on exit, preventing zombie Chrome
-    // processes from consuming CPU on CI during subsequent test runs. SIGTERM can take
-    // 1-3s for Chrome to process; SIGKILL is instantaneous. Chrome's child processes
-    // (renderer, GPU) are supervised by Chrome and die when the browser process dies.
+    if (!earlyChrome) return;
+    // Last-resort kill: fires in edge cases where process.exit() is called without going
+    // through shutdownEarlyBrowser() (e.g. buildFSTree ENOENT, signal kills). The normal
+    // path calls shutdownEarlyBrowser() first, so Chrome is already dead here and this is
+    // a no-op. SIGKILL is used so Chrome cannot stall the exit.
     try {
-      earlyChromeProcRef.kill('SIGKILL');
+      earlyChrome.proc.kill('SIGKILL');
     } catch {
       // Already dead — ignore.
     }
@@ -43,9 +45,21 @@ if (!openWatchMode) {
 perfLog('early-chrome.js: module evaluated');
 
 /**
- * Resolves to `{ proc, cdpEndpoint }` when Chrome is pre-launched and ready,
+ * Kills the pre-launched Chrome process and awaits its async temp-dir cleanup.
+ * Must be called before process.exit() so the event loop is still alive and the
+ * async rm() inside preLaunchChrome's close handler can run to completion.
+ * Safe to call multiple times or when Chrome was never pre-launched (no-op).
+ */
+export async function shutdownEarlyBrowser(): Promise<void> {
+  if (!earlyChrome) return;
+  const { shutdown } = earlyChrome;
+  earlyChrome = null; // prevent double-shutdown
+  await shutdown();
+}
+
+/**
+ * Resolves to `{ proc, cdpEndpoint, shutdown }` when Chrome is pre-launched and ready,
  * or `null` if pre-launch was skipped (non-run command or non-chromium browser).
- * @type {Promise<{proc: import('node:child_process').ChildProcess, cdpEndpoint: string} | null>}
  */
 export const earlyBrowserPromise =
   isRunCommand && browserFromArgv === 'chromium'
@@ -56,7 +70,7 @@ export const earlyBrowserPromise =
         })
         .then((info) => {
           perfLog('early-chrome.js: Chrome CDP ready', info?.cdpEndpoint ?? null);
-          if (info) earlyChromeProcRef = info.proc;
+          if (info) earlyChrome = info;
           return info;
         })
     : Promise.resolve(null);

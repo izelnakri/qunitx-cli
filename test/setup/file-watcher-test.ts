@@ -279,6 +279,26 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
     assert.equal(config._building, false, '_building reset synchronously');
   });
 
+  test('onFinishFunc receives (filePath, event) — path first, event second', async (assert) => {
+    // Regression: the call was onFinishFunc(event, filePath) — args in the wrong order.
+    // The type signature is (path: string, event: string), so filePath must be arg[0].
+    const config = { fsTree: { '/project/test/foo.js': null }, projectRoot: '/project' };
+    const calls: Array<[string, string]> = [];
+
+    await handleWatchEvent(
+      config,
+      ['js', 'ts'],
+      'change',
+      '/project/test/foo.js',
+      () => Promise.resolve(),
+      (path, event) => calls.push([path, event]),
+    );
+
+    assert.equal(calls.length, 1, 'onFinishFunc called once');
+    assert.equal(calls[0][0], '/project/test/foo.js', 'first arg is the file path');
+    assert.equal(calls[0][1], 'change', 'second arg is the event name');
+  });
+
   test('_lastBuildEndMs is updated on each successive build completion', async (assert) => {
     const config = { fsTree: { '/project/test/foo.js': null }, projectRoot: '/project' };
     const asyncBuild = () => new Promise<void>((resolve) => setTimeout(resolve, 10));

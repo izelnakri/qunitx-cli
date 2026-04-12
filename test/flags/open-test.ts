@@ -3,11 +3,11 @@ import fs from 'node:fs/promises';
 import '../helpers/custom-asserts.ts';
 import execute from '../helpers/shell.ts';
 
-module('--open flag tests', (_hooks, moduleMetadata) => {
+module('--open flag tests', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('--open runs tests headlessly and exits normally with TAP output', async (assert, testMetadata) => {
     // Use `echo` as the open binary — avoids spawning a real browser on CI where a second
     // browser instance would compete for the two available CPU cores with the Playwright browser.
-    const result = await execute(`node cli.ts tmp/test/passing-tests.js --open=echo`, {
+    const result = await execute(`node cli.ts test/fixtures/passing-tests.js --open=echo`, {
       ...moduleMetadata,
       ...testMetadata,
     });
@@ -20,10 +20,13 @@ module('--open flag tests', (_hooks, moduleMetadata) => {
     const { randomUUID } = await import('node:crypto');
     const customOutput = `tmp/open-output-${randomUUID()}`;
 
-    await execute(`node cli.ts tmp/test/passing-tests.js --open=echo --output=${customOutput}`, {
-      ...moduleMetadata,
-      ...testMetadata,
-    });
+    await execute(
+      `node cli.ts test/fixtures/passing-tests.js --open=echo --output=${customOutput}`,
+      {
+        ...moduleMetadata,
+        ...testMetadata,
+      },
+    );
 
     const [indexStat, testsStat] = await Promise.allSettled([
       fs.stat(`${customOutput}/index.html`),
@@ -36,7 +39,7 @@ module('--open flag tests', (_hooks, moduleMetadata) => {
 
   test('-o shorthand accepts a value the same way --open does', async (assert, testMetadata) => {
     // -o=echo: shorthand -o with an explicit binary value — avoids spawning a real browser on CI.
-    const result = await execute(`node cli.ts tmp/test/passing-tests.js -o=echo`, {
+    const result = await execute(`node cli.ts test/fixtures/passing-tests.js -o=echo`, {
       ...moduleMetadata,
       ...testMetadata,
     });
@@ -48,7 +51,7 @@ module('--open flag tests', (_hooks, moduleMetadata) => {
     // Use `echo` as a stand-in binary — it accepts any argument and exits cleanly,
     // so the test runs on any OS without a real browser installed under that name.
     // The key assertion is that the CLI parses the value, does not crash, and tests run normally.
-    const result = await execute(`node cli.ts tmp/test/passing-tests.js --open=echo`, {
+    const result = await execute(`node cli.ts test/fixtures/passing-tests.js --open=echo`, {
       ...moduleMetadata,
       ...testMetadata,
     });

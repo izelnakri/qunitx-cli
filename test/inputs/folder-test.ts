@@ -3,7 +3,7 @@ import { writeTestFolder, writeNestedTestFolder } from '../helpers/fs-writers.ts
 import '../helpers/custom-asserts.ts';
 import shell, { shellFails } from '../helpers/shell.ts';
 
-module('Folder Input Tests', (_hooks, moduleMetadata) => {
+module('Folder Input Tests', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('discovers and runs test files in nested subdirectories', async (assert, testMetadata) => {
     const folderName = await writeNestedTestFolder();
 

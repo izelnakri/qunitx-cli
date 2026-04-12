@@ -4,12 +4,16 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import '../helpers/custom-asserts.ts';
 import shell, { shellFails } from '../helpers/shell.ts';
+import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 
-module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
+// Maximum time to wait for a child process to exit after SIGTERM before giving up.
+const CHILD_EXIT_GRACE_MS = 5000;
+
+module('--port flag tests for browser mode', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('--port flag is accepted and tests complete successfully', async (assert, testMetadata) => {
     const { number: port, release } = await findFreePort();
     await release();
-    const result = await shell(`node cli.ts tmp/test/passing-tests.js --port=${port}`, {
+    const result = await shell(`node cli.ts test/fixtures/passing-tests.js --port=${port}`, {
       ...moduleMetadata,
       ...testMetadata,
     });
@@ -21,10 +25,13 @@ module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
   test('--port flag combined with --debug shows the correct port in the server URL', async (assert, testMetadata) => {
     const { number: port, release } = await findFreePort();
     await release();
-    const result = await shell(`node cli.ts tmp/test/passing-tests.js --port=${port} --debug`, {
-      ...moduleMetadata,
-      ...testMetadata,
-    });
+    const result = await shell(
+      `node cli.ts test/fixtures/passing-tests.js --port=${port} --debug`,
+      {
+        ...moduleMetadata,
+        ...testMetadata,
+      },
+    );
 
     assert.hasDebugURL(result, 'debug output includes the server URL with the assigned port');
     assert.regex(
@@ -43,7 +50,7 @@ module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
     await free.release();
 
     const boundPort = await withRunningServer(
-      `node cli.ts tmp/test/passing-tests.js --watch --port=${port}`,
+      `node cli.ts test/fixtures/passing-tests.js --watch --port=${port}`,
       async (actualPort) => {
         assert.equal(actualPort, port, 'server URL reports the requested port');
         assert.ok(
@@ -56,15 +63,34 @@ module('--port flag tests for browser mode', (_hooks, moduleMetadata) => {
     assert.ok(await portIsFree(boundPort), 'port is released after the process exits');
   });
 
+  test('recovers when explicit port is transiently occupied (TOCTOU retry)', async (assert, testMetadata) => {
+    // Simulate a TOCTOU race: another process grabbed the port just after findFreePort()
+    // released it. The CLI must retry and claim the port once the transient holder releases.
+    const { number: port, release } = await findFreePort();
+    // Hold the port — don't release yet. The CLI will hit EADDRINUSE on first bind attempt.
+    setTimeout(() => release(), 30);
+
+    const result = await shell(`node cli.ts test/fixtures/passing-tests.js --port=${port}`, {
+      ...moduleMetadata,
+      ...testMetadata,
+    });
+
+    assert.passingTestCaseFor(result, { moduleName: '{{moduleName}}' });
+    assert.tapResult(result, { testCount: 3 });
+  });
+
   test('fails with a clear error when --port is explicitly taken', async (assert, testMetadata) => {
     const free = await findFreePort();
     const takenPort = free.number;
     // Keep it occupied for the duration of the test.
     try {
-      const result = await shellFails(`node cli.ts tmp/test/passing-tests.js --port=${takenPort}`, {
-        ...moduleMetadata,
-        ...testMetadata,
-      });
+      const result = await shellFails(
+        `node cli.ts test/fixtures/passing-tests.js --port=${takenPort}`,
+        {
+          ...moduleMetadata,
+          ...testMetadata,
+        },
+      );
 
       assert.exitCode(result, 1, 'should exit non-zero when the explicit port is in use');
     } finally {
@@ -130,10 +156,8 @@ async function withRunningServer(
     cmd = `${cmd} --output=tmp/run-${randomUUID()}`;
   }
 
-  const child = spawn(process.execPath, [
-    '--experimental-strip-types',
-    ...cmd.split(/\s+/).slice(1),
-  ]);
+  const permit = await acquireBrowser();
+  const child = spawn(process.execPath, cmd.split(/\s+/).slice(1));
 
   let accum = '';
   const port = await new Promise<number>((resolve, reject) => {
@@ -160,7 +184,19 @@ async function withRunningServer(
     child.stdin.destroy();
     child.stdout.destroy();
     child.stderr.destroy();
-    await new Promise<void>((resolve) => child.once('exit', resolve));
+    // Wait for the child to exit before releasing the permit so the next test does
+    // not start while this process's HTTP server is still bound to its port.
+    // Race against CHILD_EXIT_GRACE_MS in case the child hangs on SIGTERM.
+    await new Promise<void>((resolve) => {
+      const exitTimer = setTimeout(resolve, CHILD_EXIT_GRACE_MS);
+      exitTimer.unref();
+      child.once('exit', () => {
+        clearTimeout(exitTimer);
+        resolve();
+      });
+    });
+    child.unref();
+    permit.release();
   }
 
   return port;

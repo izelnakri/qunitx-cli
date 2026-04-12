@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { stat, lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { green, magenta, red, yellow } from '../utils/color.ts';
 import type { FSWatcher } from 'node:fs';
@@ -27,6 +27,32 @@ export default function setupFileWatchers(
   const readyPromises: Promise<void>[] = [];
   const parentWatchers: FSWatcher[] = [];
   const fileWatchers: Record<string, FSWatcher> = {};
+  // Cancellers for fs.watchFile polls on symlink files.
+  // On Linux, fs.unlink on a symlink fires NO fs.watch rename event, so the child watcher
+  // never sees the deletion. fs.watchFile (stat-polling) fills that gap: when stat() on the
+  // symlink path fails (symlink deleted or target gone/moved), nlink drops to 0 and we
+  // synthesize an 'unlink' event. A 500 ms interval balances latency vs CPU cost.
+  const symlinkPollers = new Map<string, () => void>();
+
+  function trackSymlink(filePath: string) {
+    if (symlinkPollers.has(filePath)) return;
+    const handler = (curr: fs.Stats) => {
+      if (curr.nlink === 0) {
+        fs.unwatchFile(filePath, handler);
+        symlinkPollers.delete(filePath);
+        if (filePath in config.fsTree) {
+          handleWatchEvent(config, extensions, 'unlink', filePath, onEventFunc, onFinishFunc);
+        }
+      }
+    };
+    fs.watchFile(filePath, { interval: 500, persistent: false }, handler);
+    symlinkPollers.set(filePath, () => fs.unwatchFile(filePath, handler));
+  }
+
+  function untrackSymlink(filePath: string) {
+    symlinkPollers.get(filePath)?.();
+    symlinkPollers.delete(filePath);
+  }
 
   for (const watchPath of testFileLookupPaths) {
     let ready = false;
@@ -57,7 +83,22 @@ export default function setupFileWatchers(
 
       // 'rename' event — stat to classify as add / addDir / unlink / unlinkDir.
       const event = await classifyRenameEvent(fullPath, config.fsTree);
-      if (event) handleWatchEvent(config, extensions, event, fullPath, onEventFunc, onFinishFunc);
+      if (!event) return;
+
+      if (event === 'add') {
+        // If the added path is a symlink, set up deletion polling (fs.watch rename events are
+        // not fired for symlink unlink on Linux, so polling is the only reliable detection).
+        try {
+          const lstatResult = await lstat(fullPath);
+          if (lstatResult.isSymbolicLink()) trackSymlink(fullPath);
+        } catch {
+          /* path already gone */
+        }
+      } else if (event === 'unlink') {
+        untrackSymlink(fullPath);
+      }
+
+      handleWatchEvent(config, extensions, event, fullPath, onEventFunc, onFinishFunc);
     });
 
     // Parent watcher: detects when watchPath itself is renamed or deleted.
@@ -96,12 +137,30 @@ export default function setupFileWatchers(
     );
   }
 
+  // Scan the initial fsTree for symlinks and set up deletion polling for each.
+  // This covers symlinks that already existed when the watcher started — without this, only
+  // symlinks added after startup would get polling (via the child watcher 'add' path above).
+  readyPromises.push(
+    (async () => {
+      for (const filePath of Object.keys(config.fsTree)) {
+        try {
+          const lstatResult = await lstat(filePath);
+          if (lstatResult.isSymbolicLink()) trackSymlink(filePath);
+        } catch {
+          /* file gone or inaccessible — skip */
+        }
+      }
+    })(),
+  );
+
   return {
     fileWatchers,
     ready: Promise.all(readyPromises).then(() => {}),
     killFileWatchers() {
       Object.keys(fileWatchers).forEach((key) => fileWatchers[key].close());
       parentWatchers.forEach((pw) => pw.close());
+      symlinkPollers.forEach((cancel) => cancel());
+      symlinkPollers.clear();
       return fileWatchers;
     },
   };
@@ -119,8 +178,8 @@ async function classifyRenameEvent(
   for (const delay of [0, 50]) {
     if (delay) await new Promise<void>((resolve) => setTimeout(resolve, delay));
     try {
-      const s = await stat(fullPath);
-      return s.isDirectory() ? 'addDir' : 'add';
+      const statResult = await stat(fullPath);
+      return statResult.isDirectory() ? 'addDir' : 'add';
     } catch {
       // File/dir not yet available — retry or fall through to unlink classification.
     }
@@ -133,7 +192,9 @@ async function classifyRenameEvent(
   // event for the directory itself (not per-child), so we coalesce all child removals into one
   // unlinkDir rather than silently ignoring the event.
   const dirPrefix = fullPath + '/';
-  return Object.keys(fsTree).some((p) => p.startsWith(dirPrefix)) ? 'unlinkDir' : null;
+  return Object.keys(fsTree).some((trackedPath) => trackedPath.startsWith(dirPrefix))
+    ? 'unlinkDir'
+    : null;
 }
 
 /**
@@ -189,7 +250,7 @@ export function handleWatchEvent(
   }
 
   return result
-    .then(() => onFinishFunc?.(event, filePath))
+    .then(() => onFinishFunc?.(filePath, event))
     .catch((error) => console.error('#', red('Build error:'), error.message || error))
     .finally(() => {
       config._building = false;

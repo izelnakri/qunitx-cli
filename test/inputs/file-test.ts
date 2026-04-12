@@ -2,9 +2,9 @@ import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
 import shell, { shellFails } from '../helpers/shell.ts';
 
-module('File Input Tests', (_hooks, moduleMetadata) => {
+module('File Input Tests', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('testing a single passing js file with works, console output supressed', async (assert, testMetadata) => {
-    const result = await shell('node cli.ts tmp/test/passing-tests.js', {
+    const result = await shell('node cli.ts test/fixtures/passing-tests.js', {
       ...moduleMetadata,
       ...testMetadata,
     });
@@ -14,7 +14,7 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
   });
 
   test('testing a single passing js file with --debug works', async (assert, testMetadata) => {
-    const result = await shell('node cli.ts tmp/test/passing-tests.js --debug', {
+    const result = await shell('node cli.ts test/fixtures/passing-tests.js --debug', {
       ...moduleMetadata,
       ...testMetadata,
     });
@@ -30,7 +30,7 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
   });
 
   test('testing a single failing js file works', async (assert, testMetadata) => {
-    const cmd = await shellFails('node cli.ts tmp/test/failing-tests.js', {
+    const cmd = await shellFails('node cli.ts test/fixtures/failing-tests.js', {
       ...moduleMetadata,
       ...testMetadata,
     });
@@ -48,7 +48,7 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
   });
 
   test('testing a single failing js file with --debug works', async (assert, testMetadata) => {
-    const cmd = await shellFails('node cli.ts tmp/test/failing-tests.js --debug', {
+    const cmd = await shellFails('node cli.ts test/fixtures/failing-tests.js --debug', {
       ...moduleMetadata,
       ...testMetadata,
     });
@@ -59,7 +59,7 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
   });
 
   test('testing a single passing ts file works, console output supressed', async (assert, testMetadata) => {
-    const result = await shell('node cli.ts tmp/test/passing-tests.ts', {
+    const result = await shell('node cli.ts test/fixtures/passing-tests.ts', {
       ...moduleMetadata,
       ...testMetadata,
     });
@@ -70,7 +70,7 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
   });
 
   test('testing a single passing ts file with --debug works', async (assert, testMetadata) => {
-    const result = await shell('node cli.ts tmp/test/passing-tests.ts --debug', {
+    const result = await shell('node cli.ts test/fixtures/passing-tests.ts --debug', {
       ...moduleMetadata,
       ...testMetadata,
     });
@@ -86,7 +86,7 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
   });
 
   test('testing a single failing ts file works', async (assert, testMetadata) => {
-    const cmd = await shellFails('node cli.ts tmp/test/failing-tests.ts', {
+    const cmd = await shellFails('node cli.ts test/fixtures/failing-tests.ts', {
       ...moduleMetadata,
       ...testMetadata,
     });
@@ -104,7 +104,7 @@ module('File Input Tests', (_hooks, moduleMetadata) => {
   });
 
   test('testing a single failing ts file with --debug works', async (assert, testMetadata) => {
-    const cmd = await shellFails('node cli.ts tmp/test/failing-tests.ts --debug', {
+    const cmd = await shellFails('node cli.ts test/fixtures/failing-tests.ts --debug', {
       ...moduleMetadata,
       ...testMetadata,
     });

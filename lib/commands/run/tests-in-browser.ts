@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import { blue } from '../../utils/color.ts';
+import { shutdownEarlyBrowser } from '../../utils/early-chrome.ts';
 import esbuild from 'esbuild';
 import timeCounter from '../../utils/time-counter.ts';
 import runUserModule from '../../utils/run-user-module.ts';
@@ -33,26 +34,37 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
   }
 
   const outfile = `${projectRoot}/${output}/tests.js`;
+  const sourcemap: esbuild.BuildOptions['sourcemap'] = config.debug
+    ? 'inline'
+    : config.watch
+      ? 'linked'
+      : false;
+  // tests.js is always written to disk: it is a useful build artifact, --open serves it
+  // as a static file, and linked sourcemaps require a companion .js.map on disk.
+  // The bundle is captured in memory from write:false so we never need a redundant readFile.
+  const needsDisk = true;
 
-  await Promise.all([
+  const [allTestCode] = await Promise.all([
     buildWithOverlayfsRetry(
       {
         stdin: {
-          contents: allTestFilePaths.map((f) => `import "${f}";`).join(''),
+          contents: allTestFilePaths.map((filePath) => `import "${filePath}";`).join(''),
           resolveDir: process.cwd(),
         },
         bundle: true,
         logLevel: 'error',
         outfile,
         keepNames: true,
-        sourcemap: config.debug ? 'inline' : config.watch ? 'linked' : false,
+        legalComments: 'none',
+        target: esbuildTarget(config.browser),
+        sourcemap,
         // Signal the runtime that all test modules are registered. The runtime's maybeStart()
         // waits for both this event and the WebSocket 'open' event before calling QUnit.start().
         // Dispatching from the bundle (rather than from a script onload attr) is reliable across
         // all browsers and does not require changes to user test code.
         footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
       },
-      outfile,
+      needsDisk,
     ),
     Promise.all(
       cachedContent.htmlPathsToRunTests.map(async (htmlPath) => {
@@ -65,7 +77,7 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
     ),
   ]);
 
-  cachedContent.allTestCode = await fs.readFile(outfile);
+  cachedContent.allTestCode = allTestCode;
 }
 
 /**
@@ -102,8 +114,11 @@ export default async function runTestsInBrowser(
 
     if (runHasFilter) {
       const outputPath = `${projectRoot}/${output}/filtered-tests.js`;
-      await buildFilteredTests(targetTestFilesToFilter, outputPath, config);
-      cachedContent.filteredTestCode = (await fs.readFile(outputPath)).toString();
+      cachedContent.filteredTestCode = await buildFilteredTests(
+        targetTestFilesToFilter,
+        outputPath,
+        config,
+      );
     }
 
     const TIME_COUNTER = timeCounter();
@@ -133,6 +148,7 @@ export default async function runTestsInBrowser(
           connections.server && connections.server.close(),
           connections.browser && connections.browser.close(),
         ]);
+        await shutdownEarlyBrowser();
         return process.exit(config.COUNTER.failCount > 0 ? 1 : 0);
       }
     }
@@ -155,20 +171,28 @@ function buildFilteredTests(
   filteredTests: string[],
   outputPath: string,
   config: Config,
-): Promise<esbuild.BuildResult> {
+): Promise<Buffer> {
+  const sourcemap: esbuild.BuildOptions['sourcemap'] = config.debug
+    ? 'inline'
+    : config.watch
+      ? 'linked'
+      : false;
+  const needsDisk = sourcemap === 'linked' || Boolean(config.open);
   return buildWithOverlayfsRetry(
     {
       stdin: {
-        contents: filteredTests.map((f) => `import "${f}";`).join(''),
+        contents: filteredTests.map((filePath) => `import "${filePath}";`).join(''),
         resolveDir: process.cwd(),
       },
       bundle: true,
       logLevel: 'error',
       outfile: outputPath,
-      sourcemap: config.debug ? 'inline' : config.watch ? 'linked' : false,
+      legalComments: 'none',
+      target: esbuildTarget(config.browser),
+      sourcemap,
       footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
     },
-    outputPath,
+    needsDisk,
   );
 }
 
@@ -177,37 +201,63 @@ function buildFilteredTests(
 // a footer-only IIFE (~110-150 bytes) instead of the real bundle. Any genuine test bundle
 // includes QUnit via qunitx (~270 KB), so < 500 bytes always means an empty-input artifact.
 // Retry up to MAX_RETRIES times (300 ms total) to give overlayfs time to flush the content.
+//
+// Always builds with write:false so the bundle is available in memory immediately — no extra
+// fs.readFile round-trip. When needsDisk is true (linked sourcemap or --open static serving),
+// all output files (js + map) are written to disk after the in-memory check passes.
 async function buildWithOverlayfsRetry(
-  options: Parameters<typeof esbuild.build>[0],
-  outfile: string,
-): Promise<esbuild.BuildResult> {
+  options: esbuild.BuildOptions,
+  needsDisk: boolean,
+): Promise<Buffer> {
   const RETRY_DELAY_MS = 100;
   const MAX_RETRIES = 3;
   const EMPTY_BUNDLE_THRESHOLD = 500;
 
-  let result = await esbuild.build(options);
+  const buildOpts: esbuild.BuildOptions = { ...options, write: false };
+
+  const getContents = async (): Promise<{ result: esbuild.BuildResult; js: Buffer }> => {
+    const result = await esbuild.build(buildOpts);
+    const jsFile = result.outputFiles!.find((outputFile) => !outputFile.path.endsWith('.map'))!;
+    return { result, js: Buffer.from(jsFile.contents) };
+  };
+
+  let { result, js } = await getContents();
 
   for (let retry = 1; retry <= MAX_RETRIES; retry++) {
-    const bytes = (await fs.stat(outfile)).size;
-
-    if (bytes >= EMPTY_BUNDLE_THRESHOLD) return result;
+    if (js.length >= EMPTY_BUNDLE_THRESHOLD) break;
 
     console.log(
-      `# [buildWithOverlayfsRetry] bundle is ${bytes} bytes (< ${EMPTY_BUNDLE_THRESHOLD}) on attempt ${retry}/${MAX_RETRIES} — overlayfs flush race, retrying in ${RETRY_DELAY_MS}ms`,
+      `# [buildWithOverlayfsRetry] bundle is ${js.length} bytes (< ${EMPTY_BUNDLE_THRESHOLD}) on attempt ${retry}/${MAX_RETRIES} — overlayfs flush race, retrying in ${RETRY_DELAY_MS}ms`,
     );
     await new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-    result = await esbuild.build(options);
+    ({ result, js } = await getContents());
   }
 
-  // After all retries, check once more and log if still too small (then proceed anyway).
-  const bytes = (await fs.stat(outfile)).size;
-  if (bytes < EMPTY_BUNDLE_THRESHOLD) {
+  if (js.length < EMPTY_BUNDLE_THRESHOLD) {
     console.log(
-      `# [buildWithOverlayfsRetry] bundle is ${bytes} bytes after ${MAX_RETRIES} retries — proceeding`,
+      `# [buildWithOverlayfsRetry] bundle is ${js.length} bytes after ${MAX_RETRIES} retries — proceeding`,
     );
   }
 
-  return result;
+  if (needsDisk) {
+    await Promise.all(
+      result.outputFiles!.map((outputFile) => fs.writeFile(outputFile.path, outputFile.contents)),
+    );
+  }
+
+  return js;
+}
+
+/**
+ * Returns the esbuild target matching the browser engine in use.
+ * Keeps output syntax modern (no unnecessary transpilation) while staying within what
+ * each engine actually supports. Affects only output syntax — users can write any
+ * modern TS/JS syntax in their test files regardless of this setting.
+ */
+function esbuildTarget(browser?: string): string[] {
+  if (browser === 'firefox') return ['firefox115']; // Firefox ESR
+  if (browser === 'webkit') return ['safari16'];
+  return ['chrome120']; // default chromium; any system running qunitx has at least Chrome 120
 }
 
 async function runTestInsideHTMLFile(
@@ -236,6 +286,14 @@ async function runTestInsideHTMLFile(
     // CPU starvation. In normal runs Chrome's WS 'open' fires in < 1s (tests.js compiles in
     // a background thread), so this budget is almost never fully consumed. Once 'connection'
     // (QUnit.begin) arrives, _resetTestTimeout() switches to the tighter per-test budget.
+    // navMs is the budget Playwright gets to commit the navigation. Startup race timers must
+    // never expire before navigation can complete — they are floored at navMs so that small
+    // per-test timeouts (e.g. --timeout=500 for testing the timeout feature) don't starve
+    // Chrome's launch sequence, which is a platform characteristic unrelated to test duration.
+    const navMs = config.timeout + 10_000;
+    const startupMs = Math.max(config.timeout * 3, navMs);
+    const testsJsMs = Math.max(config.timeout * 4, navMs);
+
     let resolveTestRace!: () => void;
     const testRaceResult = new Promise<void>((resolve) => {
       resolveTestRace = resolve;
@@ -251,7 +309,7 @@ async function runTestInsideHTMLFile(
       // compilation can easily consume the remaining initial 3× budget after WS
       // connects (observed: WS at t≈5s but tests-ready never fired within 60s).
       clearTimeout(timeoutHandle);
-      timeoutHandle = setTimeout(resolveTestRace, config.timeout * 3);
+      timeoutHandle = setTimeout(resolveTestRace, startupMs);
     };
     config._onTestsJsServed = () => {
       // tests.js was fetched by Chrome — V8 is about to start (or has started)
@@ -260,7 +318,7 @@ async function runTestInsideHTMLFile(
       // This fires after _onWsOpen (inline runtime script runs first, then async
       // tests.js is fetched), so it extends the effective budget beyond 3×.
       clearTimeout(timeoutHandle);
-      timeoutHandle = setTimeout(resolveTestRace, config.timeout * 4);
+      timeoutHandle = setTimeout(resolveTestRace, testsJsMs);
     };
     config._resetTestTimeout = () => {
       wsConnected = true;
@@ -269,7 +327,7 @@ async function runTestInsideHTMLFile(
     };
 
     const targetUrl = `http://localhost:${config.port}${filePath}`;
-    const navOptions = { timeout: config.timeout + 10000, waitUntil: 'commit' as const };
+    const navOptions = { timeout: navMs, waitUntil: 'commit' as const };
     // Use 'commit' (navigation committed, HTTP response started) rather than 'domcontentloaded'.
     // The test bundle (tests.js) is an external async script — it does NOT block DOMContentLoaded.
     // However, 'commit' is still preferred over 'domcontentloaded' because Chrome's render thread
@@ -288,14 +346,14 @@ async function runTestInsideHTMLFile(
       await page.goto(targetUrl, navOptions);
     }
 
-    // Initial wait uses a 3× budget as a safety net for extreme CPU starvation (e.g. many
+    // Initial wait uses startupMs (≥ 15s) as a safety net for extreme CPU starvation (e.g. many
     // concurrent Chrome instances on a 2-core CI runner). This covers the time until the WS
     // 'wsOpen' event fires (the inline runtime script is tiny, so WS opens quickly in < 1s
-    // normally). Once 'wsOpen' arrives, _onWsOpen() resets this timer to a fresh 3× budget,
+    // normally). Once 'wsOpen' arrives, _onWsOpen() resets this timer to a fresh startupMs budget,
     // giving tests.js a full window to compile/execute and dispatch 'qunitx:tests-ready'.
     // WS 'connection' (QUnit.begin) then resets to the tighter config.timeout per-test budget.
     clearTimeout(timeoutHandle);
-    timeoutHandle = setTimeout(resolveTestRace, config.timeout * 3);
+    timeoutHandle = setTimeout(resolveTestRace, startupMs);
 
     await testRaceResult;
 
@@ -350,6 +408,7 @@ async function failOnNonWatchMode(
       connections.server && connections.server.close(),
       connections.browser && connections.browser.close(),
     ]);
+    await shutdownEarlyBrowser();
     process.exit(1);
   }
 }

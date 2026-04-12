@@ -3,8 +3,8 @@
  * @example
  * ```js
  * import timeCounter from './lib/utils/time-counter.ts';
- * const t = timeCounter();
- * const ms = t.stop();
+ * const timer = timeCounter();
+ * const ms = timer.stop();
  * console.assert(ms >= 0);
  * ```
  * @returns {{ startTime: Date, stop: () => number }}

@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import '../helpers/custom-asserts.ts';
+import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 
 const exec = promisify(execCb);
 const CLI = path.resolve('cli.ts');
@@ -45,16 +46,17 @@ async function makeCustomHTMLProject() {
   return { dir, id };
 }
 
-module('Input | custom html', () => {
+module('Input | custom html', { concurrency: true }, () => {
   test('runs tests inside a passed custom.html that uses handlebars-style syntax', async (assert) => {
     const { dir, id } = await makeCustomHTMLProject();
     const outputDir = path.resolve(`tmp/run-${randomUUID()}`);
 
     try {
+      const permit = await acquireBrowser();
       const { stdout } = await exec(
-        `node --experimental-strip-types ${CLI} tests/passing-tests.ts custom.html --output=${outputDir}`,
+        `node ${CLI} tests/passing-tests.ts custom.html --output=${outputDir}`,
         { cwd: dir, timeout: 60000 },
-      );
+      ).finally(() => permit.release());
 
       assert.includes(stdout, 'QUnitX running: http://localhost:');
       assert.includes(stdout, '/custom.html');
@@ -84,16 +86,10 @@ module('Input | custom html', () => {
 
 async function runWatch(dir: string): Promise<string> {
   const outputDir = path.resolve(`tmp/run-${randomUUID()}`);
+  const permit = await acquireBrowser();
   const child = spawn(
     process.execPath,
-    [
-      '--experimental-strip-types',
-      CLI,
-      'tests/passing-tests.ts',
-      'custom.html',
-      '--watch',
-      `--output=${outputDir}`,
-    ],
+    [CLI, 'tests/passing-tests.ts', 'custom.html', '--watch', `--output=${outputDir}`],
     { cwd: dir },
   );
 
@@ -120,5 +116,6 @@ async function runWatch(dir: string): Promise<string> {
     child.stdout.destroy();
     child.stderr.destroy();
     child.unref();
+    permit.release();
   }
 }

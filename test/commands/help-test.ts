@@ -1,12 +1,12 @@
 import { module, test } from 'qunitx';
 import process from 'node:process';
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { exec } from 'node:child_process';
 import '../helpers/custom-asserts.ts';
 
 const CWD = process.cwd();
-const VERSION = JSON.parse(fs.readFileSync(`${CWD}/package.json`)).version;
+const VERSION = JSON.parse(await fs.readFile(`${CWD}/package.json`, 'utf8')).version;
 const shell = promisify(exec);
 const CLI_ENV = { ...process.env, FORCE_COLOR: '0' };
 const cli = async function (arg = '') {
@@ -16,7 +16,7 @@ const cli = async function (arg = '') {
     });
   }
 
-  return await shell(`node --experimental-strip-types ${CWD}/cli.ts ${arg}`, { env: CLI_ENV });
+  return await shell(`node ${CWD}/cli.ts ${arg}`, { env: CLI_ENV });
 };
 
 const printedHelpOutput = `[qunitx v${VERSION}] Usage: qunitx [targets] --$flags

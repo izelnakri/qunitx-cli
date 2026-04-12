@@ -3,8 +3,12 @@ import fs from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
+import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 
 const CLI = `${process.cwd()}/cli.ts`;
+
+// Maximum time to wait for a child process to exit after SIGTERM before giving up.
+const CHILD_EXIT_GRACE_MS = 5000;
 const QUNITX_BROWSER = process.env.QUNITX_BROWSER;
 
 // Count non-overlapping occurrences of `needle` in `str`.
@@ -28,16 +32,17 @@ interface WatchSession {
 
 // Spawns a long-running watch-mode process. Returns a session object that lets tests
 // wait for incremental stdout output and kill the child when done.
-function spawnWatch(
+async function spawnWatch(
   args: string[],
   { cwd = process.cwd(), timeout = 120000 }: { cwd?: string; timeout?: number } = {},
-): WatchSession {
+): Promise<WatchSession> {
   const outputDir = `${process.cwd()}/tmp/run-${randomUUID()}`;
-  const allArgs = ['--experimental-strip-types', CLI, ...args, `--output=${outputDir}`];
-  if (QUNITX_BROWSER && !args.some((a) => a.startsWith('--browser'))) {
+  const allArgs = [CLI, ...args, `--output=${outputDir}`];
+  if (QUNITX_BROWSER && !args.some((arg) => arg.startsWith('--browser'))) {
     allArgs.push(`--browser=${QUNITX_BROWSER}`);
   }
 
+  const permit = await acquireBrowser();
   const child = spawn(process.execPath, allArgs, { cwd });
   let buf = '';
   const listeners: Array<(buf: string) => void> = [];
@@ -74,15 +79,17 @@ function spawnWatch(
       }
       return new Promise((resolve, reject) => {
         exitReject = reject;
-        const timer = setTimeout(
-          () =>
-            reject(
-              new Error(
-                `spawnWatch timed out after ${timeout}ms while ${what}. Last 500 chars:\n${buf.slice(-500)}`,
-              ),
+        const timer = setTimeout(() => {
+          // Remove the stale listener so it cannot fire exitReject = null on a future
+          // waitFor call's reject function, silently breaking crash-detection.
+          listeners.splice(listeners.indexOf(listener), 1);
+          if (exitReject === reject) exitReject = null;
+          reject(
+            new Error(
+              `spawnWatch timed out after ${timeout}ms while ${what}. Last 500 chars:\n${buf.slice(-500)}`,
             ),
-          timeout,
-        );
+          );
+        }, timeout);
         const listener = (newBuf: string) => {
           if (condition(newBuf)) {
             clearTimeout(timer);
@@ -96,7 +103,7 @@ function spawnWatch(
     },
     kill() {
       return new Promise<void>((resolve) => {
-        // Safety valve: if the process hasn't exited in 5 s, stop waiting.
+        // Safety valve: if the process hasn't exited in CHILD_EXIT_GRACE_MS, stop waiting.
         // Crucially: remove the 'exit' listener and unref() the child so the
         // ChildProcess handle no longer keeps the Node.js event loop alive.
         // Without this, a stuck child (rare but observed on CI) causes the
@@ -104,8 +111,9 @@ function spawnWatch(
         const timer = setTimeout(() => {
           child.removeListener('exit', done);
           child.unref();
+          permit.release();
           resolve();
-        }, 5000);
+        }, CHILD_EXIT_GRACE_MS);
         timer.unref();
 
         // Resolve after exit so the next test doesn't start until Chrome and the
@@ -113,6 +121,7 @@ function spawnWatch(
         // on CI where consecutive Chrome instances can starve the new one).
         const done = () => {
           clearTimeout(timer);
+          permit.release();
           resolve();
         };
         child.once('exit', done);
@@ -169,11 +178,33 @@ async function waitForRunComplete(
   await session.waitFor((buf) => buf.includes('# duration', buf.lastIndexOf('QUnitX running:')));
 }
 
-module('--watch re-run tests', () => {
+// Creates a project with an extra symlink .ts file inside tests/.
+// The symlink points to a real file OUTSIDE the watched directory so that
+// deleting the symlink does not also destroy the content.
+async function makeWatchProjectWithSymlink(): Promise<{
+  dir: string;
+  id: string;
+  testsDir: string;
+  testFile: string;
+  testContent: string;
+  target: string;
+  symlink: string;
+  symlinkId: string;
+}> {
+  const project = await makeWatchProject();
+  const symlinkId = randomUUID();
+  const target = `${project.dir}/symlink-target.ts`; // outside tests/
+  const symlink = `${project.testsDir}/symlink.ts`; // inside tests/ (watched)
+  await fs.writeFile(target, project.testContent.replace(project.id, symlinkId));
+  await fs.symlink(target, symlink);
+  return { ...project, target, symlink, symlinkId };
+}
+
+module('--watch re-run tests', { concurrency: true }, () => {
   test('changing a file in watched directory triggers a re-run', async (assert) => {
     const { dir, id, testFile, testContent } = await makeWatchProject();
     // Watch the `tests/` directory so the file watcher resolves paths correctly.
-    const session = spawnWatch(['tests', '--watch'], { cwd: dir });
+    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
 
     try {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
@@ -195,7 +226,7 @@ module('--watch re-run tests', () => {
 
   test('adding a new file to the watched directory triggers a filtered re-run', async (assert) => {
     const { dir, id, testsDir, testContent } = await makeWatchProject();
-    const session = spawnWatch(['tests', '--watch'], { cwd: dir });
+    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
 
     try {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
@@ -226,7 +257,7 @@ module('--watch re-run tests', () => {
     const id2 = randomUUID();
     await fs.writeFile(`${testsDir}/extra-tests.ts`, testContent.replace(id, id2));
 
-    const session = spawnWatch(['tests', '--watch'], { cwd: dir });
+    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
 
     try {
       // Initial run: both files → 6 passing tests (all bundled together in watch mode).
@@ -259,7 +290,7 @@ module('--watch re-run tests', () => {
     const id2 = randomUUID();
     await fs.writeFile(`${testsDir}/extra-tests.ts`, testContent.replace(id, id2));
 
-    const session = spawnWatch(['tests', '--watch'], { cwd: dir });
+    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
 
     try {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
@@ -296,7 +327,7 @@ module('--watch re-run tests', () => {
     await fs.mkdir(otherDir, { recursive: true });
     await fs.writeFile(`${otherDir}/other-tests.ts`, testContent.replace(id, id2));
 
-    const session = spawnWatch(['tests', 'other-tests', '--watch'], { cwd: dir });
+    const session = await spawnWatch(['tests', 'other-tests', '--watch'], { cwd: dir });
 
     try {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
@@ -323,7 +354,7 @@ module('--watch re-run tests', () => {
 
   test('rapid file changes coalesce: only the final state is tested', async (assert) => {
     const { dir, id, testFile, testContent } = await makeWatchProject();
-    const session = spawnWatch(['tests', '--watch'], { cwd: dir });
+    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
 
     try {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
@@ -370,7 +401,7 @@ module('--watch re-run tests', () => {
     await fs.mkdir(testsDir2, { recursive: true });
     await fs.writeFile(testFile2, content2);
 
-    const session = spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
+    const session = await spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
 
     try {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
@@ -410,7 +441,7 @@ module('--watch re-run tests', () => {
     await fs.mkdir(testsDir2, { recursive: true });
     await fs.writeFile(testFile2, content2);
 
-    const session = spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
+    const session = await spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
 
     try {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
@@ -479,7 +510,7 @@ module('--watch re-run tests', () => {
     await fs.mkdir(testsDir2, { recursive: true });
     await fs.writeFile(`${testsDir2}/extra.ts`, testContent.replace(rootId, id2));
 
-    const session = spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
+    const session = await spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
 
     try {
       // Initial run: 5 modules × 3 tests = 15 tests.
@@ -522,7 +553,7 @@ module('--watch re-run tests', () => {
 
   test('a build error in watch mode prints the error without exiting', async (assert) => {
     const { dir, id, testFile, testContent } = await makeWatchProject();
-    const session = spawnWatch(['tests', '--watch'], { cwd: dir });
+    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
 
     try {
       // Wait for the initial passing run.
@@ -547,6 +578,188 @@ module('--watch re-run tests', () => {
       const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
       assert.includes(rerunOutput, '# pass 3');
       assert.includes(rerunOutput, '# fail 0');
+    } finally {
+      await session.kill();
+    }
+  });
+
+  // ── Symlink tests ────────────────────────────────────────────────────────────────────────────
+  // Background: on Linux, fs.unlink on a symlink fires NO fs.watch rename events (unlike regular
+  // files). The watcher compensates with fs.watchFile polling (500 ms interval). All symlink
+  // deletion tests therefore wait up to 3 s for the polling cycle to fire.
+  // fs.readdir withFileTypes reports symlinks as isSymbolicLink(), not isFile(), so buildFSTree
+  // previously excluded them from the initial scan; that bug is also covered here.
+
+  test('a symlink to a .ts file present at startup is tracked and its module runs', async (assert) => {
+    // Verifies the buildFSTree fix: symlinks inside the watched directory are included in the
+    // initial fsTree scan and therefore bundled in the first run.
+    const { dir, id, symlinkId } = await makeWatchProjectWithSymlink();
+    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+
+    try {
+      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+      // Both the regular test file and the symlinked file must be in the initial bundle.
+      assert.passingTestCaseFor(session.stdout, { moduleName: id });
+      assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
+    } finally {
+      await session.kill();
+    }
+  });
+
+  test('adding a symlink to a .ts file into the watched directory triggers a filtered re-run', async (assert) => {
+    // fs.watch fires a rename event when a symlink is created; classifyRenameEvent follows the
+    // symlink via stat() and classifies it as 'add', triggering a filtered re-run.
+    const { dir, id, testsDir, testContent } = await makeWatchProject();
+    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+
+    try {
+      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+      assert.passingTestCaseFor(session.stdout, { moduleName: id });
+
+      const symlinkId = randomUUID();
+      const target = `${dir}/new-target.ts`;
+      await fs.writeFile(target, testContent.replace(id, symlinkId));
+      await fs.symlink(target, `${testsDir}/new-symlink.ts`);
+
+      await waitForRunComplete(session, 2, 'symlink add re-run to start');
+
+      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      assert.includes(rerunOutput, symlinkId);
+      assert.includes(rerunOutput, '# fail 0');
+    } finally {
+      await session.kill();
+    }
+  });
+
+  test('writing through a symlink (modifying its target) triggers a re-run', async (assert) => {
+    // writeFile on a symlink path opens and modifies the TARGET file. On Linux this fires
+    // rename events for the symlink name, which the change deduplicator handles normally.
+    const { dir, id, symlink, target, testContent, symlinkId } =
+      await makeWatchProjectWithSymlink();
+    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+
+    try {
+      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+      assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
+
+      const newId = randomUUID();
+      await fs.writeFile(symlink, testContent.replace(id, newId)); // writes through symlink to target
+
+      await waitForRunComplete(session, 2, 'symlink write-through re-run to start');
+
+      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      assert.includes(rerunOutput, newId);
+      assert.includes(rerunOutput, '# fail 0');
+    } finally {
+      await session.kill();
+    }
+  });
+
+  test('deleting a symlink .ts file triggers a full re-run without it', async (assert) => {
+    // fs.unlink on a symlink fires NO fs.watch events on Linux. The watcher uses fs.watchFile
+    // polling (500 ms interval) to detect the deletion.
+    const { dir, id, symlink, symlinkId } = await makeWatchProjectWithSymlink();
+    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+
+    try {
+      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+      assert.passingTestCaseFor(session.stdout, { moduleName: id });
+      assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
+
+      await fs.unlink(symlink);
+
+      // Poll detection fires within ~500 ms; use a 3 s cap to keep CI stable.
+      await waitForRunComplete(session, 2, 'symlink deletion re-run to start');
+
+      assert.includes(session.stdout, 'REMOVED:');
+      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      assert.includes(rerunOutput, id);
+      assert.false(rerunOutput.includes(symlinkId), 'deleted symlink module absent from re-run');
+    } finally {
+      await session.kill();
+    }
+  });
+
+  test('deleting the target of a symlink (making it dangling) triggers a full re-run', async (assert) => {
+    // When the symlink's target is removed, stat() on the symlink path starts failing.
+    // The fs.watchFile poll detects nlink === 0 and fires 'unlink' for the symlink path.
+    const { dir, id, symlink, target, symlinkId } = await makeWatchProjectWithSymlink();
+    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+
+    try {
+      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+      assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
+
+      // Delete the target (outside the watched dir). The symlink in tests/ becomes dangling.
+      await fs.unlink(target);
+
+      await waitForRunComplete(session, 2, 'dangling symlink re-run to start');
+
+      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      assert.includes(rerunOutput, id);
+      assert.false(rerunOutput.includes(symlinkId), 'dangling symlink module absent from re-run');
+    } finally {
+      await session.kill();
+    }
+  });
+
+  test('renaming a symlink fires an immediate add then a polling-delayed unlink', async (assert) => {
+    // Unlike regular file renames (where both unlink and add come from fs.watch immediately),
+    // a symlink rename fires only the destination rename event via fs.watch — the source's
+    // disappearance is detected by the fs.watchFile poll ~500 ms later.
+    // This test verifies both mechanisms compose correctly.
+    const { dir, id, testsDir, symlink, symlinkId, testContent } =
+      await makeWatchProjectWithSymlink();
+    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+
+    try {
+      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+      assert.passingTestCaseFor(session.stdout, { moduleName: id });
+      assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
+
+      // Rename the symlink within the watched dir. fs.watch fires 'rename' for the destination
+      // (add), while the source's removal is detected only by the fs.watchFile poll (~500 ms).
+      const renamedSymlink = `${testsDir}/renamed-symlink.ts`;
+      await fs.rename(symlink, renamedSymlink);
+
+      // The add fires first — wait for the filtered re-run of the renamed symlink.
+      await session.waitFor((buf) => buf.includes('ADDED:'), 'ADDED event for renamed symlink');
+      await waitForRunComplete(session, 2, 'filtered re-run after add');
+
+      // The unlink fires later via polling — wait for a second re-run.
+      await session.waitFor((buf) => buf.includes('REMOVED:'), 'REMOVED event via polling');
+      await waitForRunComplete(session, 3, 'full re-run after polling unlink');
+
+      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      // Final state: renamed symlink's content (same symlinkId) present, original path gone.
+      assert.includes(rerunOutput, symlinkId);
+      assert.includes(rerunOutput, '# fail 0');
+    } finally {
+      await session.kill();
+    }
+  });
+
+  test('a dangling symlink added to the watched directory is silently ignored', async (assert) => {
+    // classifyRenameEvent: stat() fails on the dangling symlink, path is not in fsTree → null.
+    // No re-run, no crash, no ADDED: in output.
+    const { dir, id, testsDir } = await makeWatchProject();
+    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+
+    try {
+      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+
+      await fs.symlink(`${dir}/nonexistent.ts`, `${testsDir}/dangling.ts`);
+
+      // Give the watcher time to process. If a spurious re-run fires, waitForRunComplete
+      // would capture it and the ADDED: assertion below would catch the mistake.
+      await new Promise<void>((resolve) => setTimeout(resolve, 800));
+
+      assert.equal(
+        countOccurrences(session.stdout, 'QUnitX running:'),
+        1,
+        'no extra run triggered by dangling symlink',
+      );
+      assert.false(session.stdout.includes('ADDED:'), 'no ADDED: logged for dangling symlink');
     } finally {
       await session.kill();
     }

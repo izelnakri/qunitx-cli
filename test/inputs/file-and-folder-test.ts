@@ -3,11 +3,11 @@ import { writeTestFolder, writeNestedTestFolder } from '../helpers/fs-writers.ts
 import '../helpers/custom-asserts.ts';
 import shell, { shellFails } from '../helpers/shell.ts';
 
-module('File and Folder Combination Tests', (_hooks, moduleMetadata) => {
+module('File and Folder Combination Tests', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('runs a file and a nested folder together when all tests pass', async (assert, testMetadata) => {
     const folderName = await writeNestedTestFolder();
 
-    const result = await shell(`node cli.ts tmp/${folderName} tmp/test/passing-tests.js`, {
+    const result = await shell(`node cli.ts tmp/${folderName} test/fixtures/passing-tests.js`, {
       ...moduleMetadata,
       ...testMetadata,
     });
@@ -26,7 +26,7 @@ module('File and Folder Combination Tests', (_hooks, moduleMetadata) => {
   test('runs a file and a folder together when all tests pass', async (assert, testMetadata) => {
     const folderName = await writeTestFolder({ addFailingTests: false });
 
-    const result = await shell(`node cli.ts tmp/${folderName} tmp/test/passing-tests.js`, {
+    const result = await shell(`node cli.ts tmp/${folderName} test/fixtures/passing-tests.js`, {
       ...moduleMetadata,
       ...testMetadata,
     });
@@ -43,7 +43,7 @@ module('File and Folder Combination Tests', (_hooks, moduleMetadata) => {
   test('runs a file and a folder together when the folder has failing tests', async (assert, testMetadata) => {
     const folderName = await writeTestFolder({ addFailingTests: true });
 
-    const cmd = await shellFails(`node cli.ts tmp/${folderName} tmp/test/passing-tests.js`, {
+    const cmd = await shellFails(`node cli.ts tmp/${folderName} test/fixtures/passing-tests.js`, {
       ...moduleMetadata,
       ...testMetadata,
     });

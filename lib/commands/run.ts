@@ -1,4 +1,5 @@
 import setupBrowser, { launchBrowser } from '../setup/browser.ts';
+import { shutdownEarlyBrowser } from '../utils/early-chrome.ts';
 import openOutputInBrowser from '../utils/open-output-in-browser.ts';
 import fs from 'node:fs/promises';
 import { normalize } from 'node:path';
@@ -104,7 +105,7 @@ export default async function run(config: Config): Promise<void> {
 
     const groupConfigs = groups.map((groupFiles, i) => ({
       ...config,
-      fsTree: Object.fromEntries(groupFiles.map((f) => [f, config.fsTree[f]])),
+      fsTree: Object.fromEntries(groupFiles.map((filePath) => [filePath, config.fsTree[filePath]])),
       // Single group keeps the root output dir for backward-compatible file paths.
       output: groupCount === 1 ? config.output : `${config.output}/group-${i}`,
       _groupMode: true,
@@ -153,9 +154,9 @@ export default async function run(config: Config): Promise<void> {
     const groupResults = await Promise.allSettled(
       groupConfigs.map((groupConfig, i) => {
         const groupTimeout = new Promise((_, reject) => {
-          const t = setTimeout(() => {
-            const files = Object.keys(groupConfig.fsTree).map((f) =>
-              f.replace(`${groupConfig.projectRoot}/`, ''),
+          const timeoutId = setTimeout(() => {
+            const files = Object.keys(groupConfig.fsTree).map((filePath) =>
+              filePath.replace(`${groupConfig.projectRoot}/`, ''),
             );
             reject(
               new Error(
@@ -163,7 +164,7 @@ export default async function run(config: Config): Promise<void> {
               ),
             );
           }, GROUP_TIMEOUT_MS);
-          t.unref();
+          timeoutId.unref();
         });
 
         return Promise.race([
@@ -187,8 +188,8 @@ export default async function run(config: Config): Promise<void> {
                   Promise.race([
                     connections.page.close(),
                     new Promise((resolve) => {
-                      const t = setTimeout(resolve, 10000);
-                      t.unref();
+                      const pageCloseTimeoutId = setTimeout(resolve, 10000);
+                      pageCloseTimeoutId.unref();
                     }),
                   ]).catch(() => {}),
               ]);
@@ -216,17 +217,18 @@ export default async function run(config: Config): Promise<void> {
       await runUserModule(`${process.cwd()}/${config.after}`, config.COUNTER, 'after');
     }
 
-    // Flush stdout then exit. keepAlive holds the event loop open until this callback fires,
-    // at which point process.exit() takes over — so clearInterval happens here, not earlier.
+    // Flush stdout, shut down Chrome cleanly, then exit.
+    // keepAlive holds the event loop open until this callback fires, at which point
+    // process.exit() takes over — so clearInterval happens here, not earlier.
     // If the write callback never fires (theoretical), the unref'd exitTimer is the fallback.
     const exitTimer = setTimeout(() => process.exit(exitCode), 5000);
     exitTimer.unref();
 
-    process.stdout.write('\n', () => {
+    process.stdout.write('\n', async () => {
       clearTimeout(exitTimer);
       clearInterval(keepAlive);
-      // Close browser after stdout is flushed; fire-and-forget since process.exit follows.
-      browser.close().catch(() => {});
+      await browser.close().catch(() => {});
+      await shutdownEarlyBrowser();
       process.exit(exitCode);
     });
   }
@@ -301,7 +303,7 @@ async function addCachedContentMainHTML(
 function splitIntoGroups(files: string[], groupCount: number): string[][] {
   const groups = Array.from({ length: groupCount }, () => []);
   files.forEach((file, i) => groups[i % groupCount].push(file));
-  return groups.filter((g) => g.length > 0);
+  return groups.filter((group) => group.length > 0);
 }
 
 function logWatcherAndKeyboardShortcutInfo(config: Config, _server: unknown): void {

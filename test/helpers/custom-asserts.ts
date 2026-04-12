@@ -41,9 +41,10 @@ Assert.prototype.outputContains = function (
   message,
 ) {
   const { stdout, stderr } = extractOutput(result);
-  const matches = (p) => (p instanceof RegExp ? p.test(stdout) : stdout.includes(p));
-  const missing = contains.filter((p) => !matches(p));
-  const unexpectedlyFound = notContains.filter((p) => matches(p));
+  const matches = (pattern) =>
+    pattern instanceof RegExp ? pattern.test(stdout) : stdout.includes(pattern);
+  const missing = contains.filter((pattern) => !matches(pattern));
+  const unexpectedlyFound = notContains.filter((pattern) => matches(pattern));
   const passed = missing.length === 0 && unexpectedlyFound.length === 0;
 
   this.pushResult({

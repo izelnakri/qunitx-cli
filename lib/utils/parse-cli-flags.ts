@@ -53,7 +53,7 @@ export default function parseCliFlags(projectRoot: string): ParsedFlags {
           extensions: arg
             .split('=')[1]
             .split(',')
-            .map((e) => e.trim()),
+            .map((extension) => extension.trim()),
         });
       } else if (arg.startsWith('--browser')) {
         const value = arg.split('=')[1];

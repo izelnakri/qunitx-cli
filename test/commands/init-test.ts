@@ -16,7 +16,7 @@ module('Commands | init tests', { concurrency: true }, (_hooks, moduleMetadata) 
     await fs.writeFile(`${dir}/package.json`, JSON.stringify({ name: 'test-project' }, null, 2));
 
     try {
-      const { stdout } = await exec(`node --experimental-strip-types ${CLI} init`, { cwd: dir });
+      const { stdout } = await exec(`node ${CLI} init`, { cwd: dir });
 
       assert.includes(stdout, 'written', 'prints a confirmation message');
 
@@ -44,9 +44,7 @@ module('Commands | init tests', { concurrency: true }, (_hooks, moduleMetadata) 
     await fs.mkdir(dir, { recursive: true });
 
     try {
-      const error = await exec(`node --experimental-strip-types ${CLI} init`, { cwd: dir }).catch(
-        (e) => e,
-      );
+      const error = await exec(`node ${CLI} init`, { cwd: dir }).catch((error) => error);
 
       assert.exitCode(error, 1, 'exits with code 1 when no package.json found');
       assert.ok(error.stdout.includes('package.json'), 'prints error about missing package.json');
@@ -64,7 +62,7 @@ module('Commands | init tests', { concurrency: true }, (_hooks, moduleMetadata) 
     ]);
 
     try {
-      const { stdout } = await exec(`node --experimental-strip-types ${CLI} init`, { cwd: dir });
+      const { stdout } = await exec(`node ${CLI} init`, { cwd: dir });
 
       assert.includes(stdout, 'already exists', 'reports existing html file');
 

@@ -2,7 +2,7 @@ import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
 import shell, { shellFails } from '../helpers/shell.ts';
 
-module('--after script tests for browser mode', (_hooks, moduleMetadata) => {
+module('--after script tests for browser mode', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('--after works when it doesnt need to be awaited', async (assert, testMetadata) => {
     const result = await shell(
       'node cli.ts test/helpers/passing-tests.ts --after=test/helpers/after-script-basic.ts',

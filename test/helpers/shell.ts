@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { exec, spawn } from 'node:child_process';
+import { acquireBrowser } from './browser-semaphore-queue.ts';
 
 const shell = promisify(exec);
 
@@ -15,6 +16,11 @@ const QUNITX_DEBUG = process.env.QUNITX_DEBUG;
 
 const IS_CLI = /\bnode cli\.ts\b/;
 const NON_BROWSER_SUBCOMMAND = /\bnode cli\.ts\b\s+(generate|g|new|n|help|h|p|print|init)\b/;
+
+// Maximum time to wait for a child process to exit after SIGTERM before giving up.
+// Prevents a stuck child (e.g. Firefox/WebKit SIGTERM deadlock) from indefinitely
+// blocking the semaphore permit and starving subsequent test workers.
+const CHILD_EXIT_GRACE_MS = 5000;
 
 // Spawns a long-running CLI command (e.g. --watch mode), collects stdout until
 // `until(buf)` returns true, then kills the process.
@@ -47,8 +53,9 @@ export async function shellWatch(
             .split(/\s+/)
             .filter(Boolean),
         ]
-      : [process.execPath, ['--experimental-strip-types', ...command.split(/\s+/).slice(1)]];
+      : [process.execPath, command.split(/\s+/).slice(1)];
 
+  const permit = await acquireBrowser();
   const child = spawn(bin, spawnArgs, { env: { ...process.env, FORCE_COLOR: '0' } });
 
   try {
@@ -76,12 +83,24 @@ export async function shellWatch(
     child.stdin.destroy();
     child.stdout.destroy();
     child.stderr.destroy();
-    // Unref the child process itself. Even after destroying all stdio pipes, the
-    // ChildProcess handle is ref'd until the OS process exits. If Playwright's SIGTERM
-    // handler hangs (e.g. Firefox/WebKit graceful-close deadlock), the child never exits
-    // and the worker thread's event loop stays alive indefinitely. unref() lets the worker
-    // exit without waiting for the child OS process to terminate.
+    // Wait for the child to fully exit before releasing the permit. This prevents the next
+    // test from acquiring the permit (and launching a new Chrome) while the previous
+    // Chrome and its HTTP server are still shutting down.
+    //
+    // Race against CHILD_EXIT_GRACE_MS: if the child hangs (e.g. Firefox/WebKit SIGTERM
+    // deadlock), we stop waiting so the permit is eventually released and the suite can
+    // continue. After the grace period, unref() lets the worker event loop exit without
+    // waiting for the OS process to terminate.
+    await new Promise<void>((resolve) => {
+      const exitTimer = setTimeout(resolve, CHILD_EXIT_GRACE_MS);
+      exitTimer.unref();
+      child.once('exit', () => {
+        clearTimeout(exitTimer);
+        resolve();
+      });
+    });
     child.unref();
+    permit.release();
   }
 }
 
@@ -124,16 +143,12 @@ export default async function execute(
       ? `${withBrowser} --debug`
       : withBrowser;
 
-  // When releasing: swap `node cli.ts` for the installed binary (no strip-types needed).
-  // In development: ensure --experimental-strip-types is present so .ts files load.
   const command =
     QUNITX_BIN && IS_CLI.test(commandString)
       ? withDebug.replace(/\bnode\s+cli\.ts\b/, QUNITX_BIN)
-      : withDebug.replace(
-          /\bnode\b(?!\s+--experimental-strip-types)/,
-          'node --experimental-strip-types',
-        );
+      : withDebug;
 
+  const permit = await acquireBrowser();
   try {
     const result = await shell(command, {
       timeout: 60000,
@@ -156,5 +171,7 @@ export default async function execute(
     }
 
     throw error;
+  } finally {
+    permit.release();
   }
 }

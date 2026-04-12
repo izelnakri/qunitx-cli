@@ -2,7 +2,7 @@ import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
 import shell, { shellFails } from '../helpers/shell.ts';
 
-module('Advanced Error Edge Cases Tests', (_hooks, moduleMetadata) => {
+module('Advanced Error Edge Cases Tests', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('passing a non-existent file path exits with code 1', async (assert, testMetadata) => {
     const cmd = await shellFails('node cli.ts tmp/this-file-does-not-exist.js', {
       ...moduleMetadata,

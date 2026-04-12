@@ -38,19 +38,24 @@ function dumpValue(value: unknown, indent: string): string {
   if (Array.isArray(value)) {
     if (value.length === 0) return '[]';
     const next = `${indent}  `;
-    return '\n' + value.map((v) => `${next}- ${dumpValue(v, next)}`).join('\n');
+    return '\n' + value.map((item) => `${next}- ${dumpValue(item, next)}`).join('\n');
   }
   // Plain object
   const entries = Object.entries(value);
   if (entries.length === 0) return '{}';
   const next = `${indent}  `;
-  return '\n' + entries.map(([k, v]) => `${next}${k}: ${dumpValue(v, next)}`).join('\n');
+  return (
+    '\n' +
+    entries
+      .map(([entryKey, entryValue]) => `${next}${entryKey}: ${dumpValue(entryValue, next)}`)
+      .join('\n')
+  );
 }
 
 // Emits `key: value\n` or `key:\n  ...\n` — no trailing space before block scalars.
 function yamlLine(key: string, value: unknown): string {
-  const v = dumpValue(value, '');
-  return v[0] === '\n' ? `${key}:${v}\n` : `${key}: ${v}\n`;
+  const serialized = dumpValue(value, '');
+  return serialized[0] === '\n' ? `${key}:${serialized}\n` : `${key}: ${serialized}\n`;
 }
 
 /**

@@ -2,9 +2,9 @@ import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
 import shell, { shellFails } from '../helpers/shell.ts';
 
-module('--timeout flag tests for browser mode', (_hooks, moduleMetadata) => {
+module('--timeout flag tests for browser mode', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('--timeout=5000 with passing tests completes successfully', async (assert, testMetadata) => {
-    const result = await shell('node cli.ts tmp/test/passing-tests.js --timeout=5000', {
+    const result = await shell('node cli.ts test/fixtures/passing-tests.js --timeout=5000', {
       ...moduleMetadata,
       ...testMetadata,
     });

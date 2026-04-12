@@ -8,9 +8,25 @@ function isGlob(str: string): boolean {
 
 async function readDirRecursive(dir: string, filter: (name: string) => boolean): Promise<string[]> {
   const entries = await fs.readdir(dir, { recursive: true, withFileTypes: true });
-  return entries
-    .filter((e) => e.isFile() && filter(e.name))
-    .map((e) => path.join(e.parentPath, e.name));
+  const candidates = entries.filter(
+    (dirent) => (dirent.isFile() || dirent.isSymbolicLink()) && filter(dirent.name),
+  );
+
+  const resolvedPaths = await Promise.all(
+    candidates.map(async (dirent) => {
+      const fullPath = path.join(dirent.parentPath, dirent.name);
+      if (dirent.isFile()) return fullPath;
+      // Symlink — follow it and verify it resolves to a file, not a directory or a broken target.
+      try {
+        const statResult = await fs.stat(fullPath);
+        return statResult.isFile() ? fullPath : null;
+      } catch {
+        return null; // dangling symlink — skip
+      }
+    }),
+  );
+
+  return resolvedPaths.filter((resolvedPath): resolvedPath is string => resolvedPath !== null);
 }
 
 /**

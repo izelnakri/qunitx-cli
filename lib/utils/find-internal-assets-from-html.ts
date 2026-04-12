@@ -8,10 +8,10 @@ const LINK_HREF_REGEX = /<link[^>]+\bhref=['"]([^'"]+)['"]/gi;
  */
 export default function findInternalAssetsFromHTML(htmlContent: string): string[] {
   const links = [...htmlContent.matchAll(LINK_HREF_REGEX)]
-    .map((m) => m[1])
+    .map((match) => match[1])
     .filter((uri) => !ABSOLUTE_URL_REGEX.test(uri));
   const scripts = [...htmlContent.matchAll(SCRIPT_SRC_REGEX)]
-    .map((m) => m[1])
+    .map((match) => match[1])
     .filter((uri) => !ABSOLUTE_URL_REGEX.test(uri));
 
   return links.concat(scripts);
