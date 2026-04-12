@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
  * Reads a boilerplate file by relative path, using the SEA asset store when running as a Node.js binary.
  * @returns {Promise<string>}
  */
-export default async function readBoilerplate(relativePath: string): Promise<string> {
+export async function readBoilerplate(relativePath: string): Promise<string> {
   const sea = await import('node:sea').catch(() => null);
   if (sea?.isSea()) return sea.getAsset(relativePath, 'utf8');
   const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -24,3 +24,5 @@ export default async function readBoilerplate(relativePath: string): Promise<str
     `qunitx-cli: template "${relativePath}" not found — try reinstalling the package.`,
   );
 }
+
+export { readBoilerplate as default };

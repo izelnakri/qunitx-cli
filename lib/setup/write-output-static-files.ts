@@ -5,7 +5,7 @@ import type { CachedContent } from '../types.ts';
  * Copies static HTML files and referenced assets from the project into the configured output directory.
  * @returns {Promise<void>}
  */
-export default async function writeOutputStaticFiles(
+export async function writeOutputStaticFiles(
   { projectRoot, output }: { projectRoot: string; output: string },
   cachedContent: CachedContent,
 ): Promise<void> {
@@ -31,3 +31,5 @@ export default async function writeOutputStaticFiles(
 async function ensureFolderExists(assetPath: string): Promise<void> {
   await fs.mkdir(assetPath.split('/').slice(0, -1).join('/'), { recursive: true });
 }
+
+export { writeOutputStaticFiles as default };

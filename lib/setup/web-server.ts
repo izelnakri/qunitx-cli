@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import findInternalAssetsFromHTML from '../utils/find-internal-assets-from-html.ts';
+import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
 import { replaceHTMLContentMarker } from '../utils/html-content-marker.ts';
-import TAPDisplayTestResult from '../tap/display-test-result.ts';
+import { TAPDisplayTestResult } from '../tap/display-test-result.ts';
 import { blue } from '../utils/color.ts';
-import pathExists from '../utils/path-exists.ts';
-import HTTPServer, { MIME_TYPES } from '../servers/http.ts';
+import { pathExists } from '../utils/path-exists.ts';
+import { HTTPServer, MIME_TYPES } from '../servers/http.ts';
 import type { Config, CachedContent } from '../types.ts';
 
 const fsPromise = fs.promises;
@@ -14,7 +14,7 @@ const fsPromise = fs.promises;
  * Creates and returns an HTTPServer with routes for the test HTML, filtered test page, and static assets, plus a WebSocket handler that streams TAP events.
  * @returns {object}
  */
-export default function setupWebServer(config: Config, cachedContent: CachedContent): HTTPServer {
+export function setupWebServer(config: Config, cachedContent: CachedContent): HTTPServer {
   const STATIC_FILES_PATH = path.join(config.projectRoot, config.output);
   const server = new HTTPServer();
   const mainHTMLWithReplacedAssets = replaceAssetPaths(
@@ -378,3 +378,5 @@ function escapeAndInjectTestsToHTML(
     `${testRuntimeCode}\n<script src="${testBundleUrl}" async></script>`,
   );
 }
+
+export { setupWebServer as default };

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import findChrome from './find-chrome.ts';
+import { findChrome } from './find-chrome.ts';
 import type { Config } from '../types.ts';
 
 /**
@@ -8,7 +8,7 @@ import type { Config } from '../types.ts';
  * In normal mode, opens the static file:// URL (the bundle is self-contained, no server needed).
  * If config.open is a string, it is used as the browser binary/command directly (e.g. 'brave', 'google-chrome-lts').
  */
-export default async function openOutputInBrowser(config: Config): Promise<void> {
+export async function openOutputInBrowser(config: Config): Promise<void> {
   try {
     const outputFile = config.watch
       ? `http://localhost:${config.port}`
@@ -43,3 +43,5 @@ function spawnDetached(cmd: string, args: string[]): void {
   child.on('error', () => {}); // suppress ENOENT / sandbox errors — viewer Chrome is best-effort
   child.unref();
 }
+
+export { openOutputInBrowser as default };

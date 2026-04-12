@@ -9,7 +9,7 @@
  * ```
  * @returns {{ startTime: Date, stop: () => number }}
  */
-export default function timeCounter(): { startTime: Date; stop: () => number } {
+export function timeCounter(): { startTime: Date; stop: () => number } {
   const startTime = new Date();
 
   return {
@@ -17,3 +17,5 @@ export default function timeCounter(): { startTime: Date; stop: () => number } {
     stop: () => +new Date() - +startTime,
   };
 }
+
+export { timeCounter as default };

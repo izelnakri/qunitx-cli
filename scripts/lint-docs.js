@@ -13,8 +13,6 @@
 // - `private-type-ref`: fires when public symbols reference types from external npm packages
 //   (Browser/Page from playwright-core, WebSocketServer from ws). These can't be fixed
 //   without re-exporting third-party types, which would bloat the public API.
-// - errors in `lib/types.ts`: internal shared type definitions; deno doc requires JSDoc on
-//   every interface member, which is excessive for a pure-types implementation file.
 import { spawn } from 'node:child_process';
 
 const proc = spawn('deno', ['doc', '--lint', '--quiet', 'lib/', 'cli.ts'], { encoding: 'utf8' });
@@ -31,8 +29,7 @@ proc.on('close', () => {
     (b) =>
       !b.startsWith('error[missing-return-type]') &&
       !b.startsWith('error[missing-explicit-type]') &&
-      !b.startsWith('error[private-type-ref]') &&
-      !b.includes('lib/types.ts'),
+      !b.startsWith('error[private-type-ref]'),
   );
   const result = relevant.join('').trim();
 

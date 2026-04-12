@@ -33,7 +33,7 @@ async function readDirRecursive(dir: string, filter: (name: string) => boolean):
  * Resolves an array of file paths, directories, or glob patterns into a flat `{ absolutePath: null }` map.
  * @returns {Promise<object>}
  */
-export default async function buildFSTree(
+export async function buildFSTree(
   fileAbsolutePaths: string[],
   config: { extensions?: string[] } = {},
 ): Promise<FSTree> {
@@ -74,3 +74,5 @@ export default async function buildFSTree(
 
   return fsTree;
 }
+
+export { buildFSTree as default };

@@ -10,9 +10,11 @@
  * convertToPascalCase('UserContactDetails')   // 'UserContactDetails'
  * convertToPascalCase('my_api-handler')       // 'MyApiHandler'
  */
-export default function convertToPascalCase(str: string): string {
+export function convertToPascalCase(str: string): string {
   return str
     .split(/[-_]+/)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join('');
 }
+
+export { convertToPascalCase as default };

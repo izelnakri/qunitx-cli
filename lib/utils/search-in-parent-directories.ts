@@ -1,10 +1,10 @@
-import pathExists from './path-exists.ts';
+import { pathExists } from './path-exists.ts';
 
 /**
  * Recursively searches `directory` and its ancestors for a file or folder named `targetEntry`; returns the absolute path or `undefined`.
  * @returns {Promise<string|undefined>}
  */
-async function searchInParentDirectories(
+export async function searchInParentDirectories(
   directory: string,
   targetEntry: string,
 ): Promise<string | undefined> {
@@ -22,4 +22,4 @@ async function searchInParentDirectories(
   );
 }
 
-export default searchInParentDirectories;
+export { searchInParentDirectories as default };

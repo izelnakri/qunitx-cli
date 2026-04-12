@@ -20,7 +20,7 @@ interface ParsedFlags {
  * Parses `process.argv` into a qunitx flag object (`inputs`, `debug`, `watch`, `failFast`, `timeout`, `output`, `port`, `before`, `after`).
  * @returns {object}
  */
-export default function parseCliFlags(projectRoot: string): ParsedFlags {
+export function parseCliFlags(projectRoot: string): ParsedFlags {
   const providedFlags = process.argv.slice(2).reduce(
     (result, arg) => {
       if (arg.startsWith('--debug')) {
@@ -104,3 +104,5 @@ function parseModule(value: string): string | false {
 
   return value;
 }
+
+export { parseCliFlags as default };

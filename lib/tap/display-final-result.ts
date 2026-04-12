@@ -5,7 +5,7 @@ import type { Counter } from '../types.ts';
  * @returns {void}
  */
 
-export default function TAPDisplayFinalResult(
+export function TAPDisplayFinalResult(
   { testCount, passCount, skipCount, failCount }: Counter,
   timeTaken: number,
 ): void {
@@ -23,3 +23,5 @@ export default function TAPDisplayFinalResult(
   console.log('');
 }
 // console.log(details.timeTaken); // runtime
+
+export { TAPDisplayFinalResult as default };

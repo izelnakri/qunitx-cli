@@ -1,5 +1,5 @@
-import dumpYaml from './dump-yaml.ts';
-import indentString from '../utils/indent-string.ts';
+import { dumpYaml } from './dump-yaml.ts';
+import { indentString } from '../utils/indent-string.ts';
 import type { Counter } from '../types.ts';
 
 interface TestAssertion {
@@ -23,7 +23,7 @@ interface TestDetails {
  * Formats and prints a single QUnit testEnd event as a TAP `ok`/`not ok` line with optional YAML failure block.
  * @returns {void}
  */
-export default function TAPDisplayTestResult(COUNTER: Counter, details: TestDetails): void {
+export function TAPDisplayTestResult(COUNTER: Counter, details: TestDetails): void {
   // NOTE: https://github.com/qunitjs/qunit/blob/master/src/html-reporter/diff.js
   COUNTER.testCount++;
 
@@ -107,3 +107,5 @@ function getCircularReplacer(): (_key: string, value: unknown) => unknown {
 //           at process.<anonymous> (/home/izelnakri/ava-test/node_modules/tape/index.js:85:19)
 //           at process.emit (node:events:376:20)
 //   ...
+
+export { TAPDisplayTestResult as default };

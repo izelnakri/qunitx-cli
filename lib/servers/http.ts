@@ -1,7 +1,7 @@
 import http from 'node:http';
 // @deno-types="npm:@types/ws"
 import WebSocket, { WebSocketServer } from 'ws';
-import bindServerToPort from '../setup/bind-server-to-port.ts';
+import { bindServerToPort } from '../setup/bind-server-to-port.ts';
 
 declare module 'node:http' {
   interface IncomingMessage {
@@ -50,7 +50,7 @@ export const MIME_TYPES: Record<string, string> = {
 };
 
 /** Minimal HTTP + WebSocket server used to serve test bundles and push reload events. */
-export default class HTTPServer {
+export class HTTPServer {
   /** Registered routes keyed by HTTP method then path. */
   routes: Record<string, Record<string, Route>>;
   /** Registered middleware functions, applied in order before each route handler. */
@@ -322,3 +322,5 @@ export default class HTTPServer {
     return params;
   }
 }
+
+export { HTTPServer as default };

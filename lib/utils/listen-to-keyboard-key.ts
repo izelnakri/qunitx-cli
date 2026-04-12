@@ -10,7 +10,7 @@ let listenerAdded = false;
  * Registers a stdin listener that fires `closure` when the user types `inputString` (case-insensitive by default).
  * @returns {void}
  */
-export default function listenToKeyboardKey(
+export function listenToKeyboardKey(
   inputString: string,
   closure: (input: string) => void,
   options: { caseSensitive: boolean } = { caseSensitive: false },
@@ -55,3 +55,5 @@ function targetListenerConformsToCase(
 
   return true;
 }
+
+export { listenToKeyboardKey as default };

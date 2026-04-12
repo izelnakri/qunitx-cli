@@ -1,9 +1,9 @@
 import fs from 'node:fs/promises';
 import { green } from '../utils/color.ts';
-import findProjectRoot from '../utils/find-project-root.ts';
-import pathExists from '../utils/path-exists.ts';
-import readBoilerplate from '../utils/read-boilerplate.ts';
-import convertToPascalCase from '../utils/convert-to-pascal-case.ts';
+import { findProjectRoot } from '../utils/find-project-root.ts';
+import { pathExists } from '../utils/path-exists.ts';
+import { readBoilerplate } from '../utils/read-boilerplate.ts';
+import { convertToPascalCase } from '../utils/convert-to-pascal-case.ts';
 
 function pathToModuleName(filePath: string): string {
   const withoutExt = filePath.replace(/\.(js|ts)$/, '');
@@ -17,7 +17,7 @@ function pathToModuleName(filePath: string): string {
  * Generates a new test file from the boilerplate template.
  * @returns {Promise<void>}
  */
-export default async function generateTestFiles() {
+export async function generateTestFiles() {
   const projectRoot = await findProjectRoot();
   const moduleName = pathToModuleName(process.argv[3]);
   const path =
@@ -40,3 +40,5 @@ export default async function generateTestFiles() {
 
   console.log(green(`${path} written`));
 }
+
+export { generateTestFiles as default };

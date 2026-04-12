@@ -10,7 +10,7 @@ import fs from 'node:fs/promises';
  * ```
  * @returns {Promise<boolean>}
  */
-export default async function pathExists(path: string): Promise<boolean> {
+export async function pathExists(path: string): Promise<boolean> {
   try {
     await fs.access(path);
 
@@ -19,3 +19,5 @@ export default async function pathExists(path: string): Promise<boolean> {
     return false;
   }
 }
+
+export { pathExists as default };

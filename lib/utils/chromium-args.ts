@@ -8,7 +8,7 @@
  * service worker behaviour) is intentionally left at its default so user test suites behave
  * the same as they would in a real browser.
  */
-export default [
+export const CHROMIUM_ARGS: string[] = [
   // ── Sandbox / rendering ──────────────────────────────────────────────────────
   '--no-sandbox', // required in most CI/container environments
   '--disable-gpu', // no GPU in headless; avoids GPU process startup
@@ -73,4 +73,4 @@ export default [
   // Translate             — translation UI.
   // AvoidUnnecessaryBeforeUnloadCheckSync — reduces beforeunload handler overhead.
   '--disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,OptimizationHints,PaintHolding,Translate',
-] as string[];
+];

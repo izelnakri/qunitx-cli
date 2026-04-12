@@ -6,7 +6,7 @@ const LINK_HREF_REGEX = /<link[^>]+\bhref=['"]([^'"]+)['"]/gi;
  * Parses an HTML string and returns all internal (non-absolute-URL) `<script src>` and `<link href>` paths.
  * @returns {string[]}
  */
-export default function findInternalAssetsFromHTML(htmlContent: string): string[] {
+export function findInternalAssetsFromHTML(htmlContent: string): string[] {
   const links = [...htmlContent.matchAll(LINK_HREF_REGEX)]
     .map((match) => match[1])
     .filter((uri) => !ABSOLUTE_URL_REGEX.test(uri));
@@ -16,3 +16,5 @@ export default function findInternalAssetsFromHTML(htmlContent: string): string[
 
   return links.concat(scripts);
 }
+
+export { findInternalAssetsFromHTML as default };

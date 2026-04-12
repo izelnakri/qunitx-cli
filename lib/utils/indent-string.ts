@@ -7,7 +7,7 @@
  * ```
  * @returns {string}
  */
-export default function indentString(
+export function indentString(
   string: string,
   count: number = 1,
   options: { indent?: string; includeEmptyLines?: boolean } = {},
@@ -22,3 +22,5 @@ export default function indentString(
 
   return string.replace(regex, indent.repeat(count));
 }
+
+export { indentString as default };

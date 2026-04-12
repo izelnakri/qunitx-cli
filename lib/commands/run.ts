@@ -1,19 +1,19 @@
-import setupBrowser, { launchBrowser } from '../setup/browser.ts';
+import { setupBrowser, launchBrowser } from '../setup/browser.ts';
 import { shutdownEarlyBrowser } from '../utils/early-chrome.ts';
-import openOutputInBrowser from '../utils/open-output-in-browser.ts';
+import { openOutputInBrowser } from '../utils/open-output-in-browser.ts';
 import fs from 'node:fs/promises';
 import { normalize } from 'node:path';
 import { availableParallelism } from 'node:os';
 import { blue, yellow } from '../utils/color.ts';
-import runTestsInBrowser, { buildTestBundle } from './run/tests-in-browser.ts';
-import fileWatcher from '../setup/file-watcher.ts';
-import findInternalAssetsFromHTML from '../utils/find-internal-assets-from-html.ts';
-import runUserModule from '../utils/run-user-module.ts';
-import setupKeyboardEvents from '../setup/keyboard-events.ts';
-import writeOutputStaticFiles from '../setup/write-output-static-files.ts';
-import timeCounter from '../utils/time-counter.ts';
-import TAPDisplayFinalResult from '../tap/display-final-result.ts';
-import readBoilerplate from '../utils/read-boilerplate.ts';
+import { runTestsInBrowser, buildTestBundle } from './run/tests-in-browser.ts';
+import { setupFileWatchers } from '../setup/file-watcher.ts';
+import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
+import { runUserModule } from '../utils/run-user-module.ts';
+import { setupKeyboardEvents } from '../setup/keyboard-events.ts';
+import { writeOutputStaticFiles } from '../setup/write-output-static-files.ts';
+import { timeCounter } from '../utils/time-counter.ts';
+import { TAPDisplayFinalResult } from '../tap/display-final-result.ts';
+import { readBoilerplate } from '../utils/read-boilerplate.ts';
 import { htmlHasDynamicContentMarker } from '../utils/html-content-marker.ts';
 import type { Config, CachedContent } from '../types.ts';
 
@@ -21,7 +21,7 @@ import type { Config, CachedContent } from '../types.ts';
  * Runs qunitx tests in headless Chrome, either in watch mode or concurrent batch mode.
  * @returns {Promise<void>}
  */
-export default async function run(config: Config): Promise<void> {
+export async function run(config: Config): Promise<void> {
   const cachedContent = await buildCachedContent(config, config.htmlPaths);
 
   if (config.watch) {
@@ -56,7 +56,7 @@ export default async function run(config: Config): Promise<void> {
     }
 
     if (config.watch) {
-      const { ready: watcherReady } = fileWatcher(
+      const { ready: watcherReady } = setupFileWatchers(
         config.testFileLookupPaths,
         config,
         async (event, file) => {
@@ -330,3 +330,5 @@ function normalizeInternalAssetPathFromHTML(
     ? normalize(`${currentDirectory}/${assetPath.slice(2)}`)
     : normalize(`${currentDirectory}/${assetPath}`);
 }
+
+export { run as default };

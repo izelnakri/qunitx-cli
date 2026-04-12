@@ -1,7 +1,7 @@
-import setupWebServer from './web-server.ts';
-import bindServerToPort from './bind-server-to-port.ts';
-import findChrome from '../utils/find-chrome.ts';
-import CHROMIUM_ARGS from '../utils/chromium-args.ts';
+import { setupWebServer } from './web-server.ts';
+import { bindServerToPort } from './bind-server-to-port.ts';
+import { findChrome } from '../utils/find-chrome.ts';
+import { CHROMIUM_ARGS } from '../utils/chromium-args.ts';
 import { earlyBrowserPromise } from '../utils/early-chrome.ts';
 import { perfLog } from '../utils/perf-logger.ts';
 import type { Browser } from 'playwright-core';
@@ -77,7 +77,7 @@ export async function launchBrowser(config: Config): Promise<Browser> {
  * Launches a Playwright browser (or reuses an existing one), starts the web server, and returns the page/server/browser connection object.
  * @returns {Promise<{server: object, browser: object, page: object}>}
  */
-export default async function setupBrowser(
+export async function setupBrowser(
   config: Config,
   cachedContent: CachedContent,
   existingBrowser: Browser | null = null,
@@ -119,3 +119,5 @@ export default async function setupBrowser(
 
   return { server, browser, page };
 }
+
+export { setupBrowser as default };

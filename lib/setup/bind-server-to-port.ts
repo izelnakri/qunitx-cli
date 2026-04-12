@@ -1,4 +1,4 @@
-import type HTTPServer from '../servers/http.ts';
+import type { HTTPServer } from '../servers/http.ts';
 
 // Maximum number of retries when an explicitly requested port is transiently occupied.
 // Covers the TOCTOU window between findFreePort() and the CLI's own bind: another concurrent
@@ -14,7 +14,7 @@ const EXPLICIT_PORT_RETRY_DELAY_MS = 20;
  *   to recover from transient TOCTOU races, then throws if still occupied.
  * Uses try-catch on the actual listen() call — never check-then-listen (TOCTOU).
  */
-export default async function bindServerToPort(
+export async function bindServerToPort(
   server: HTTPServer,
   config: { port: number; portExplicit?: boolean },
 ): Promise<HTTPServer> {
@@ -42,3 +42,5 @@ export default async function bindServerToPort(
   config.port = (server._server.address() as import('node:net').AddressInfo).port;
   return server;
 }
+
+export { bindServerToPort as default };

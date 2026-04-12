@@ -1,12 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import findProjectRoot from '../utils/find-project-root.ts';
-import pathExists from '../utils/path-exists.ts';
-import defaultProjectConfigValues from '../setup/default-project-config-values.ts';
-import readBoilerplate from '../utils/read-boilerplate.ts';
+import { findProjectRoot } from '../utils/find-project-root.ts';
+import { pathExists } from '../utils/path-exists.ts';
+import { defaultProjectConfigValues } from '../setup/default-project-config-values.ts';
+import { readBoilerplate } from '../utils/read-boilerplate.ts';
 
 /** Bootstraps a new qunitx project: writes the test HTML template, updates package.json, and optionally writes tsconfig.json. */
-export default async function initializeProject() {
+export async function initializeProject() {
   const projectRoot = await findProjectRoot();
   const oldPackageJSON = JSON.parse(await fs.readFile(`${projectRoot}/package.json`));
   const existingQunitx = oldPackageJSON.qunitx || {};
@@ -75,3 +75,5 @@ async function writeTSConfigIfNeeded(projectRoot: string): Promise<void> {
     console.log(`${targetPath} written`);
   }
 }
+
+export { initializeProject as default };

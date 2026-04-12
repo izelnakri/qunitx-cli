@@ -144,7 +144,7 @@ jobs:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
       - name: Generate API docs
-        run: npm run docs && mkdir -p _site && cp -r docs/lib _site/api
+        run: npm run docs && mkdir -p _site && cp -r docs/lib _site/docs
       - uses: actions/download-artifact@v8
         with:
           name: coverage-report
@@ -158,17 +158,17 @@ jobs:
           const repo = process.env.REPO;
           const [raw, apiIdx, readmePage] = await Promise.all([
             fs.readFile('demo-output.txt', 'utf8'),
-            fs.readFile('_site/api/index.html', 'utf8'),
-            fs.readFile('_site/api/README.md/index.html', 'utf8'),
+            fs.readFile('_site/docs/index.html', 'utf8'),
+            fs.readFile('_site/docs/README.md/index.html', 'utf8'),
           ]);
           const escaped = raw.trim().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-          // Inject README content into the empty /api/ homepage (deno doc leaves <main> empty on the root index)
+          // Inject README content into the empty /docs/ homepage (deno doc leaves <main> empty on the root index)
           const apiMain = readmePage.match(/<main>[\s\S]*?<\/main>/)[0]
             .replace(/src="docs\/demo\.gif"/g, 'src="../demo.gif"');
           await fs.mkdir('_site', { recursive: true });
           await Promise.all([
             fs.copyFile('docs/demo.gif', '_site/demo.gif').catch(() => {}),
-            fs.writeFile('_site/api/index.html', apiIdx.replace('<main></main>', apiMain)),
+            fs.writeFile('_site/docs/index.html', apiIdx.replace('<main></main>', apiMain)),
             fs.writeFile('_site/.nojekyll', ''),
             fs.writeFile('_site/index.html', `<!DOCTYPE html>
           <html lang="en">
@@ -198,7 +198,7 @@ jobs:
               <a href="https://github.com/${repo}">source</a>
               <a href="https://npmjs.com/package/qunitx-cli">npm</a>
               <a href="https://ghcr.io/v2/${repo}/tags/list">docker</a>
-              <a href="api/">api docs</a>
+              <a href="docs/">api docs</a>
               <a href="coverage/">coverage</a>
             </header>
             <main>

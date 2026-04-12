@@ -1,6 +1,6 @@
-import findChrome from './find-chrome.ts';
-import preLaunchChrome from './pre-launch-chrome.ts';
-import CHROMIUM_ARGS from './chromium-args.ts';
+import { findChrome } from './find-chrome.ts';
+import { preLaunchChrome } from './pre-launch-chrome.ts';
+import { CHROMIUM_ARGS } from './chromium-args.ts';
 import { perfLog } from './perf-logger.ts';
 
 // This module is statically imported by cli.ts so its module-level code runs

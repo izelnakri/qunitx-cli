@@ -33,6 +33,8 @@ function findChromeSync(): string | null {
  * with callers, but the resolution is synchronous.
  * @returns {Promise<string|null>}
  */
-export default function findChrome(): Promise<string | null> {
+export function findChrome(): Promise<string | null> {
   return Promise.resolve(findChromeSync());
 }
+
+export { findChrome as default };

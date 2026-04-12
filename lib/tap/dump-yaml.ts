@@ -63,7 +63,7 @@ function yamlLine(key: string, value: unknown): string {
  * Uses a template literal (no Object.entries overhead) for the known top-level keys.
  * @returns {string}
  */
-export default function dumpYaml({
+export function dumpYaml({
   name,
   actual,
   expected,
@@ -87,3 +87,5 @@ export default function dumpYaml({
     yamlLine('at', at)
   );
 }
+
+export { dumpYaml as default };

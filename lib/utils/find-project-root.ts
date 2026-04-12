@@ -1,11 +1,11 @@
 import process from 'node:process';
-import searchInParentDirectories from './search-in-parent-directories.ts';
+import { searchInParentDirectories } from './search-in-parent-directories.ts';
 
 /**
  * Walks up parent directories from `cwd` to find the nearest `package.json` and returns its directory path.
  * @returns {Promise<string>}
  */
-export default async function findProjectRoot(): Promise<string> {
+export async function findProjectRoot(): Promise<string> {
   try {
     const absolutePath = await searchInParentDirectories('.', 'package.json');
     if (!absolutePath!.includes('package.json')) {
@@ -18,3 +18,5 @@ export default async function findProjectRoot(): Promise<string> {
     process.exit(1);
   }
 }
+
+export { findProjectRoot as default };

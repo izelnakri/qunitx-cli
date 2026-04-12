@@ -4,7 +4,7 @@ import { red } from './color.ts';
  * Dynamically imports `modulePath` and calls its default export with `params`; exits with code 1 on error.
  * @returns {Promise<void>}
  */
-export default async function runUserModule(
+export async function runUserModule(
   modulePath: string,
   params: unknown,
   scriptPosition: string,
@@ -28,3 +28,5 @@ export default async function runUserModule(
     process.stdout.write('', () => process.exit(1));
   }
 }
+
+export { runUserModule as default };

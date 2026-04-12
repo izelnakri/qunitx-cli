@@ -5,7 +5,7 @@ const highlight = (text) => magenta().bold(text);
 const color = (text) => blue(text);
 
 /** Prints qunitx-cli usage information to stdout. */
-export default function displayHelpOutput() {
+export function displayHelpOutput() {
   const config = pkg;
 
   console.log(`${highlight('[qunitx v' + config.version + '] Usage:')} qunitx ${color('[targets] --$flags')}
@@ -36,3 +36,5 @@ ${color('$ qunitx init')}               # Bootstraps qunitx base html and add qu
 ${color('$ qunitx new $testFileName')}  # Creates a qunitx test file
 `);
 }
+
+export { displayHelpOutput as default };

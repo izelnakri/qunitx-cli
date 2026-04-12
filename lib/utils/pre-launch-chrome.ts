@@ -11,7 +11,7 @@ const CDP_URL_REGEX = /DevTools listening on (ws:\/\/[^\s]+)/;
  * CDP WebSocket endpoint appears on stderr. Returns null if Chrome is unavailable or fails
  * to start, so callers can fall back to playwright's normal `chromium.launch()`.
  */
-export default async function preLaunchChrome(
+export async function preLaunchChrome(
   chromePath: string | null | undefined,
   args: string[],
   headless = true,
@@ -83,3 +83,5 @@ export default async function preLaunchChrome(
     await closed.then(() => cleanup());
   }
 }
+
+export { preLaunchChrome as default };

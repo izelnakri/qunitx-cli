@@ -14,7 +14,7 @@ interface PathMeta {
  * Deduplicates a list of file, folder, and glob inputs so that more-specific paths covered by broader ones are removed.
  * @returns {string[]}
  */
-export default function setupTestFilePaths(_projectRoot: string, inputs: string[]): string[] {
+export function setupTestFilePaths(_projectRoot: string, inputs: string[]): string[] {
   // NOTE: very complex algorithm, order is very important
   const [folders, filesWithGlob, filesWithoutGlob] = inputs.reduce(
     (result, input) => {
@@ -72,3 +72,5 @@ function pathIsIncludedInPaths(paths: PathMeta[], targetPath: PathMeta): boolean
 function buildGlobFormat(path: PathMeta): string {
   return path.isFile ? path.input : `${path.input}/**`;
 }
+
+export { setupTestFilePaths as default };

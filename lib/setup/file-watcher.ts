@@ -13,7 +13,7 @@ const CHANGE_DEDUPE_MS = 30;
  * watched directory is renamed or deleted (since fs.watch tracks by inode, not path).
  * Uses `config.fsTree` to distinguish `unlink` (tracked file) from `unlinkDir` (directory) on deletion.
  */
-export default function setupFileWatchers(
+export function setupFileWatchers(
   testFileLookupPaths: string[],
   config: Config,
   onEventFunc: (event: string, file: string) => unknown,
@@ -286,3 +286,5 @@ function colorEvent(event: string): unknown {
   if (event === 'add' || event === 'addDir') return green('ADDED:');
   return red('REMOVED:');
 }
+
+export { setupFileWatchers as default };

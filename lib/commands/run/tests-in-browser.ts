@@ -2,11 +2,11 @@ import fs from 'node:fs/promises';
 import { blue } from '../../utils/color.ts';
 import { shutdownEarlyBrowser } from '../../utils/early-chrome.ts';
 import esbuild from 'esbuild';
-import timeCounter from '../../utils/time-counter.ts';
-import runUserModule from '../../utils/run-user-module.ts';
-import TAPDisplayFinalResult from '../../tap/display-final-result.ts';
+import { timeCounter } from '../../utils/time-counter.ts';
+import { runUserModule } from '../../utils/run-user-module.ts';
+import { TAPDisplayFinalResult } from '../../tap/display-final-result.ts';
 import type { Config, CachedContent, Connections } from '../../types.ts';
-import type HTTPServer from '../../servers/http.ts';
+import type { HTTPServer } from '../../servers/http.ts';
 
 class BundleError extends Error {
   constructor(message: unknown) {
@@ -85,7 +85,7 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
  * Runs the esbuild-bundled tests inside a Playwright-controlled browser page and streams TAP output.
  * @returns {Promise<object>}
  */
-export default async function runTestsInBrowser(
+export async function runTestsInBrowser(
   config: Config,
   cachedContent: CachedContent = {} as CachedContent,
   connections: Connections,
@@ -413,3 +413,5 @@ async function failOnNonWatchMode(
     process.exit(1);
   }
 }
+
+export { runTestsInBrowser as default };
