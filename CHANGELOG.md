@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.16.0] - 2026-04-12
+[`v0.15.0...v0.16.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.15.0...v0.16.0)
+
+### Bug Fixes
+- Repair five file-watcher correctness bugs and expand test coverage — 2026-04-11 by [@izelnakri](https://github.com/izelnakri) ([`a27bb65`](https://github.com/izelnakri/qunitx-cli/commit/a27bb656856b6bc9d2bf78a8e4e7a2f8772a34dd))
+
+### Features
+- TCP semaphore concurrency, esbuild memory-first, expanded Chromium args — 2026-04-12 by [@izelnakri](https://github.com/izelnakri) ([`a715412`](https://github.com/izelnakri/qunitx-cli/commit/a715412257faedde56afdc5120c99c9073c8d231))
+
+### Refactoring
+- Simplify file-watcher and related tests — 2026-04-11 by [@izelnakri](https://github.com/izelnakri) ([`4c1bab6`](https://github.com/izelnakri/qunitx-cli/commit/4c1bab6f2273512891a86b67614fb7c3a5d238e9))
+
 ## [0.12.0] - 2026-04-11
 [`v0.11.0...v0.12.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.11.0...v0.12.0)
 
