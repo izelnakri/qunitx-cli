@@ -3,6 +3,15 @@ import { green } from '../utils/color.ts';
 import findProjectRoot from '../utils/find-project-root.ts';
 import pathExists from '../utils/path-exists.ts';
 import readBoilerplate from '../utils/read-boilerplate.ts';
+import convertToPascalCase from '../utils/convert-to-pascal-case.ts';
+
+function pathToModuleName(filePath: string): string {
+  const withoutExt = filePath.replace(/\.(js|ts)$/, '');
+  const segments = withoutExt.split('/');
+  const targetNames =
+    segments[0] === 'test' || segments[0] === 'tests' ? segments.slice(1) : segments;
+  return targetNames.map(convertToPascalCase).join(' | ');
+}
 
 /**
  * Generates a new test file from the boilerplate template.
@@ -10,7 +19,7 @@ import readBoilerplate from '../utils/read-boilerplate.ts';
  */
 export default async function generateTestFiles() {
   const projectRoot = await findProjectRoot();
-  const moduleName = process.argv[3];
+  const moduleName = pathToModuleName(process.argv[3]);
   const path =
     process.argv[3].endsWith('.js') || process.argv[3].endsWith('.ts')
       ? `${projectRoot}/${process.argv[3]}`

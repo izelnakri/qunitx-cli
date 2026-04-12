@@ -1,8 +1,6 @@
 - is stdout during qunitx and its test suite runs, runs in streaming fashion for the ultimate user and developer 
 experience and speed to make everything feel real-time? If not, check to see if it can be optimized, explain it to me and we can optimize it if needed
 
-- generate.js: Classify moduleName parsing: `$qunitx generate user-contact-details.ts` (or also inside folder) (currently reuses process.argv[3] as both moduleName and file path)
-
 qunitx-cli JS API should be very usable from outside by JS/TS only, by users of this library. Do them, document it well
 in the codebase and also on the README.md(if needed).
 
@@ -34,3 +32,8 @@ the worst by having:
 - rename: utils/read-boilerplate.ts
 
 - check if there are any variables we can remove and/or rename on lib/types.ts
+
+Given the existing benchmarks, is there any other important one I should add and then more importantly is there any
+opportunities to optimize/refactor the runtime of my tests with this binary(qunitx)/project for the end user when
+they run their suite of tests or a test?
+

@@ -20,11 +20,6 @@ module('Commands | generate tests', { concurrency: true }, (_hooks, moduleMetada
 
       const content = await fs.readFile(expectedPath, 'utf-8');
       assert.includes(content, "module('", 'generated file contains a module() call');
-      assert.includes(
-        content,
-        name,
-        'the {{moduleName}} placeholder is replaced with the given path',
-      );
     } finally {
       await fs.rm(expectedPath, { force: true });
     }
@@ -85,6 +80,42 @@ module('Commands | generate tests', { concurrency: true }, (_hooks, moduleMetada
       assert.includes(content, "module('", 'file was created inside the nested directory');
     } finally {
       await fs.rm(`${process.cwd()}/tmp/generated-dir-${uuid}`, { recursive: true, force: true });
+    }
+  });
+
+  test('derives PascalCase moduleName from a kebab-case filename', async (assert, testMetadata) => {
+    const targetPath = 'test/user-contact-details.ts';
+    const expectedPath = `${process.cwd()}/${targetPath}`;
+
+    try {
+      await shell(`node cli.ts generate ${targetPath}`, { ...moduleMetadata, ...testMetadata });
+
+      const content = await fs.readFile(expectedPath, 'utf-8');
+      assert.includes(
+        content,
+        "module('UserContactDetails'",
+        'module name is PascalCase of the filename',
+      );
+    } finally {
+      await fs.rm(expectedPath, { force: true });
+    }
+  });
+
+  test('builds "Folder | FileName" moduleName for nested paths', async (assert, testMetadata) => {
+    const targetPath = 'tmp/controllers/user-contact-details.ts';
+    const expectedPath = `${process.cwd()}/${targetPath}`;
+
+    try {
+      await shell(`node cli.ts generate ${targetPath}`, { ...moduleMetadata, ...testMetadata });
+
+      const content = await fs.readFile(expectedPath, 'utf-8');
+      assert.includes(
+        content,
+        "module('Tmp | Controllers | UserContactDetails'",
+        'module name combines all path segments separated by " | "',
+      );
+    } finally {
+      await fs.rm(expectedPath, { recursive: true, force: true });
     }
   });
 
