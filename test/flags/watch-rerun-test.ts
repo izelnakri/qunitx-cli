@@ -408,10 +408,11 @@ module('--watch re-run tests', { concurrency: true }, () => {
       assert.passingTestCaseFor(session.stdout, { moduleName: id1 });
       assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
 
-      // Write to both files at the same time. Both change events arrive in rapid succession;
-      // the first starts a full rebuild (all fsTree files) and the second queues as a pending
-      // trigger. Either way, a full rebuild always bundles all files' latest content, so both
-      // new module names must appear in the output.
+      // Write to both files at the same time. The two separate fs.watch instances can
+      // deliver their change events at different times: the first event starts a full
+      // rebuild while the second queues as a pending trigger and fires after. On slower
+      // CI environments both new IDs may therefore appear across two consecutive runs
+      // rather than a single one. Wait for both IDs anywhere in the accumulated output.
       const newId1 = randomUUID();
       const newId2 = randomUUID();
       await Promise.all([
@@ -419,10 +420,11 @@ module('--watch re-run tests', { concurrency: true }, () => {
         fs.writeFile(testFile2, content2.replace(id2, newId2)),
       ]);
 
-      await waitForRunComplete(session, 2, 're-run to start');
+      await session.waitFor(
+        (buf) => buf.includes(newId1) && buf.includes(newId2),
+        'both new module IDs appear in output',
+      );
 
-      // Both new IDs must appear: full rebuilds bundle all files regardless of which event
-      // triggered the run, so both simultaneous writes are always reflected in the output.
       assert.includes(session.stdout, newId1);
       assert.includes(session.stdout, newId2);
       assert.includes(session.stdout, '# fail 0');
