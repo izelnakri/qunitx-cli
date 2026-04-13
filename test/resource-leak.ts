@@ -3,10 +3,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import shell from './helpers/shell.ts';
 
-module('resource leak tests', { concurrency: true }, () => {
-  // A Chrome dir is orphaned only if no process in /proc still references it.
-  // Dirs from concurrently-running other tests are excluded because their active
-  // Chrome processes appear in /proc cmdlines — they are not orphans.
+// Resource leak tests check global state (/tmp dirs, /proc, inotify counts).
+// They run sequentially so no concurrent Chrome processes pollute the scan.
+module('resource leak tests', () => {
   test(
     'no orphaned Chrome user-data-dirs after a completed run',
     { skip: process.platform !== 'linux' },
@@ -20,34 +19,40 @@ module('resource leak tests', { concurrency: true }, () => {
         return;
       }
 
-      // Build the set of dirs still held by a live process. Any dir not in this
-      // set has no owner — it was never cleaned up after its Chrome was killed.
-      const procEntries = await fs.readdir('/proc');
-      const activeDirs = new Set<string>();
+      // With sequential execution there are no concurrent Chrome processes, so any
+      // qunitx-chrome-* dir still present is genuinely orphaned. Scan /proc to
+      // produce a useful diagnostic: find which process (if any) holds it as cwd.
+      const cwdHolders: string[] = [];
+      const procEntries = await fs.readdir('/proc').catch(() => [] as string[]);
       await Promise.all(
         procEntries.map(async (entry) => {
           if (!/^\d+$/.test(entry)) return;
           try {
-            const cmdline = await fs.readFile(`/proc/${entry}/cmdline`, 'utf8');
-            for (const dir of chromeDirs) {
-              if (cmdline.includes(dir)) activeDirs.add(dir);
-            }
+            const cwd = await fs.readlink(`/proc/${entry}/cwd`).catch(() => '');
+            const matched = chromeDirs.find((d) => cwd.startsWith(`${os.tmpdir()}/${d}`));
+            if (!matched) return;
+            const cmdline = await fs.readFile(`/proc/${entry}/cmdline`, 'utf8').catch(() => '');
+            cwdHolders.push(
+              `pid ${entry} cwd=${cwd} cmdline=${cmdline.replace(/\0/g, ' ').slice(0, 120)}`,
+            );
           } catch {}
         }),
       );
 
-      const orphaned = chromeDirs.filter((d) => !activeDirs.has(d));
+      const detail =
+        cwdHolders.length > 0
+          ? `\n  processes still holding dirs as cwd:\n  ${cwdHolders.join('\n  ')}`
+          : '\n  no process found holding these dirs as cwd (rm() failed silently)';
       assert.equal(
-        orphaned.length,
+        chromeDirs.length,
         0,
-        `Chrome dirs with no live process holding them: ${orphaned.join(', ')}`,
+        `Chrome dirs not cleaned up after completed run: ${chromeDirs.join(', ')}${detail}`,
       );
     },
   );
 
   // A Chrome process is orphaned when its parent node-cli was SIGKILL'd without
   // running the process-group shutdown. The kernel then reparents it to init (ppid=1).
-  // Active Chrome from concurrent tests still has a live node parent (ppid > 1).
   test(
     'no orphaned Chrome processes in /proc after a completed run',
     { skip: process.platform !== 'linux' },

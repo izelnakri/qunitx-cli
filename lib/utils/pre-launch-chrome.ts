@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { killProcessGroup } from './kill-process-group.ts';
+import { cleanupBrowserDir } from './cleanup-browser-dir.ts';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -85,14 +86,11 @@ export async function preLaunchChrome(
     if (proc.exitCode === null) killProcessGroup(proc.pid!);
     await closed;
     // `closed` fires when the main Chrome process exits, but renderer/GPU/utility
-    // subprocesses received the same SIGKILL and may still hold the user-data dir
-    // as cwd, causing rmdir to fail with EBUSY. On the fast path rm() succeeds
-    // immediately. On failure, poll until the entire process group is confirmed gone
-    // (process.kill(-pgid, 0) throws ESRCH), then retry.
+    // subprocesses have separate PGIDs (setpgrp for sandboxing) and may still hold
+    // the user-data dir as cwd. On the fast path rm() succeeds immediately.
+    // On failure, wait for Chrome main's group to fully exit, then delegate to
+    // cleanupChromeDir which kills surviving helpers and retries rm().
     await rm(userDataDir, { recursive: true, force: true }).catch(async () => {
-      // rm() failed — renderer/GPU subprocesses still hold the dir as cwd (EBUSY).
-      // Poll until the process group is gone, then retry. No timeout: SIGKILL is a
-      // POSIX guarantee, so the group always terminates — this loop always exits.
       const pgid = proc.pid!;
       const warnTimer = setTimeout(
         () =>
@@ -102,16 +100,18 @@ export async function preLaunchChrome(
         500,
       );
       warnTimer.unref();
+      // Wait for Chrome main's process group to fully exit. No timeout:
+      // SIGKILL is a POSIX guarantee, so the group always terminates.
       while (true) {
         try {
           process.kill(-pgid, 0);
         } catch {
           break;
         } // ESRCH → group gone
-        await new Promise((r) => setTimeout(r, 20));
+        await new Promise((resolve) => setTimeout(resolve, 20));
       }
       clearTimeout(warnTimer);
-      await rm(userDataDir, { recursive: true, force: true }).catch(() => {});
+      await cleanupBrowserDir(userDataDir);
     });
   }
 }

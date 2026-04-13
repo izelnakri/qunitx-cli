@@ -17,6 +17,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import createSemaphoreServer from './helpers/semaphore-server.ts';
 import { killProcessGroup } from '../lib/utils/kill-process-group.ts';
+import { cleanupBrowserDir } from '../lib/utils/cleanup-browser-dir.ts';
 
 const watchMode = process.argv.includes('--watch');
 // --watch is never mixed with explicit file paths (see package.json scripts), so when
@@ -72,11 +73,13 @@ async function sweepOrphanedChrome(): Promise<void> {
   if (process.platform === 'win32') return;
   try {
     const tmpDir = os.tmpdir();
-    const chromeDirs = (await fs.readdir(tmpDir)).filter((e) => e.startsWith('qunitx-chrome-'));
+    const chromeDirs = (await fs.readdir(tmpDir)).filter((entry) =>
+      entry.startsWith('qunitx-chrome-'),
+    );
     if (chromeDirs.length === 0) return;
 
+    const killedPids = new Set<number>();
     if (process.platform === 'linux') {
-      const killedPids = new Set<number>();
       await Promise.all(
         (await fs.readdir('/proc')).map(async (entry) => {
           if (!/^\d+$/.test(entry)) return;
@@ -100,23 +103,6 @@ async function sweepOrphanedChrome(): Promise<void> {
           } catch {}
         }),
       );
-
-      // Wait for killed processes to fully exit before removing their dirs.
-      // A renderer still holding the dir as cwd causes rmdir to fail with EBUSY,
-      // silently swallowed by .catch(() => {}). Poll /proc until confirmed gone.
-      let remaining = [...killedPids];
-      const deadline = Date.now() + 1000;
-      while (remaining.length && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 20));
-        remaining = remaining.filter((pid) => {
-          try {
-            process.kill(pid, 0);
-            return true;
-          } catch {
-            return false;
-          }
-        });
-      }
     } else {
       // macOS: no /proc. Use pkill -f to match by user-data-dir path in argv.
       await Promise.all(
@@ -130,10 +116,37 @@ async function sweepOrphanedChrome(): Promise<void> {
     }
 
     // Remove dirs left behind when Chrome was killed before its async rm() ran.
+    // After the sweep's own kills are confirmed dead (Phase 1), delegate to
+    // cleanupChromeDir which kills any surviving helpers and retries rm().
     await Promise.all(
-      chromeDirs.map((dir) =>
-        fs.rm(path.join(tmpDir, dir), { recursive: true, force: true }).catch(() => {}),
-      ),
+      chromeDirs.map(async (dir) => {
+        const dirPath = path.join(tmpDir, dir);
+        await fs.rm(dirPath, { recursive: true, force: true }).catch(async () => {
+          const warnTimer = setTimeout(
+            () =>
+              process.stderr.write(
+                `# [qunitx] warning: Chrome dir ${dir} still occupied 500ms after SIGKILL, waiting...\n`,
+              ),
+            500,
+          );
+          warnTimer.unref();
+          // Phase 1: wait for the Chrome main PIDs the sweep killed to fully exit.
+          while (
+            [...killedPids].some((pid) => {
+              try {
+                process.kill(pid, 0);
+                return true;
+              } catch {
+                return false;
+              }
+            })
+          ) {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+          clearTimeout(warnTimer);
+          await cleanupBrowserDir(dirPath);
+        });
+      }),
     );
   } catch {
     /* best effort — never block suite exit */
