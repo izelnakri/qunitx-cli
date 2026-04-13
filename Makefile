@@ -145,9 +145,13 @@ build-sea:
 	npm publish ./npm/$$TARGET --access public; \
 	rm -f sea-entry.cjs sea-config.json sea.blob qunitx-sea
 
-# Lint, bump version, update changelog, commit, tag, push, publish to npm.
+# Lint, bump version, changelog, publish (SEA + JS), commit, tag, push.
 # Publishes the main package (JS fallback) and the local platform's SEA package.
 # CI then pushes the versioned Docker image, builds binaries, and creates the GitHub release.
+#
+# Order matters: publish before commit/tag so the release commit contains the final
+# clean state of package.json/package-lock.json (no leftover optionalDependencies).
+#
 # Usage: make release LEVEL=patch|minor|major
 release:
 	@test -n "$(LEVEL)" || (echo "Usage: make release LEVEL=patch|minor|major" && exit 1)
@@ -157,11 +161,6 @@ release:
 	npm run test:release
 	npm version $(LEVEL) --no-git-tag-version
 	@for d in npm/*/; do node scripts/set-pkg-version.js "$$d/package.json" "$$(node -p 'require("./package.json").version')"; done
-	git-cliff --tag "v$$(node -p 'require("./package.json").version')" --output CHANGELOG.md
-	git add package.json package-lock.json CHANGELOG.md npm/*/package.json
-	git commit -m "Release $$(node -p 'require("./package.json").version')"
-	git tag "v$$(node -p 'require("./package.json").version')"
-	git push && git push --tags
 	$(MAKE) build-sea
 	@NODE_PLATFORM=$$(node -p "process.platform"); \
 	NODE_ARCH=$$(node -p "process.arch"); \
@@ -176,4 +175,9 @@ release:
 	npm publish --access public
 	@node scripts/remove-optional-deps.js
 	@npm install --package-lock-only --ignore-scripts
+	git-cliff --tag "v$$(node -p 'require("./package.json").version')" --output CHANGELOG.md
+	git add package.json package-lock.json CHANGELOG.md npm/*/package.json
+	git commit -m "Release $$(node -p 'require("./package.json").version')"
+	git tag "v$$(node -p 'require("./package.json").version')"
+	git push && git push --tags
 	$(MAKE) bench
