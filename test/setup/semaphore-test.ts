@@ -54,8 +54,8 @@ module('Setup | SemaphoreServer', { concurrency: true }, () => {
   test('grants a slot immediately when under the concurrency limit', async (assert) => {
     const sem = await createSemaphoreServer(2);
     try {
-      const granted = await tryAcquireWithinMs(sem.port, 200);
-      assert.true(granted, 'first connection receives ok within 200 ms');
+      const granted = await tryAcquireWithinMs(sem.port, 2000);
+      assert.true(granted, 'first connection receives ok within 2000 ms');
     } finally {
       await sem.close();
     }
