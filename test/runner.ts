@@ -76,6 +76,7 @@ async function sweepOrphanedChrome(): Promise<void> {
     if (chromeDirs.length === 0) return;
 
     if (process.platform === 'linux') {
+      const killedPids = new Set<number>();
       await Promise.all(
         (await fs.readdir('/proc')).map(async (entry) => {
           if (!/^\d+$/.test(entry)) return;
@@ -95,9 +96,27 @@ async function sweepOrphanedChrome(): Promise<void> {
                 process.kill(pid, 'SIGKILL');
               } catch {}
             }
+            killedPids.add(pid);
           } catch {}
         }),
       );
+
+      // Wait for killed processes to fully exit before removing their dirs.
+      // A renderer still holding the dir as cwd causes rmdir to fail with EBUSY,
+      // silently swallowed by .catch(() => {}). Poll /proc until confirmed gone.
+      let remaining = [...killedPids];
+      const deadline = Date.now() + 1000;
+      while (remaining.length && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 20));
+        remaining = remaining.filter((pid) => {
+          try {
+            process.kill(pid, 0);
+            return true;
+          } catch {
+            return false;
+          }
+        });
+      }
     } else {
       // macOS: no /proc. Use pkill -f to match by user-data-dir path in argv.
       await Promise.all(
