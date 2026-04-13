@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.6] - 2026-04-13
+[`v0.17.5...v0.17.6`](https://github.com/izelnakri/qunitx-cli/compare/v0.17.5...v0.17.6)
+
+### Bug Fixes
+- Publish before commit so release tag contains clean lockfile — 2026-04-13 by [@izelnakri](https://github.com/izelnakri) ([`6dbf85a`](https://github.com/izelnakri/qunitx-cli/commit/6dbf85a9b5674fae81a6304396f086cae9ffba2f))
+- Poll /proc until killed Chrome PIDs exit before rmdir in sweep — 2026-04-13 by [@izelnakri](https://github.com/izelnakri) ([`1785ed8`](https://github.com/izelnakri/qunitx-cli/commit/1785ed8481f7c72e8b5e1abba94dfc1857643ccb))
+- Retry rm() after process group exits to avoid EBUSY on user-data dir — 2026-04-13 by [@izelnakri](https://github.com/izelnakri) ([`4c63808`](https://github.com/izelnakri/qunitx-cli/commit/4c63808c4ff062fb72c0678d35f603398b7e6983))
+
 ## [0.17.5] - 2026-04-13
 [`v0.17.4...v0.17.5`](https://github.com/izelnakri/qunitx-cli/compare/v0.17.4...v0.17.5)
 
