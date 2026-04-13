@@ -1,5 +1,6 @@
 import { findChrome } from './find-chrome.ts';
 import { preLaunchChrome } from './pre-launch-chrome.ts';
+import { killProcessGroup } from './kill-process-group.ts';
 import { CHROMIUM_ARGS } from './chromium-args.ts';
 import { perfLog } from './perf-logger.ts';
 
@@ -34,11 +35,7 @@ if (!openWatchMode) {
     // through shutdownEarlyBrowser() (e.g. buildFSTree ENOENT, signal kills). The normal
     // path calls shutdownEarlyBrowser() first, so Chrome is already dead here and this is
     // a no-op. SIGKILL is used so Chrome cannot stall the exit.
-    try {
-      earlyChrome.proc.kill('SIGKILL');
-    } catch {
-      // Already dead — ignore.
-    }
+    killProcessGroup(earlyChrome.proc.pid!);
   });
 }
 

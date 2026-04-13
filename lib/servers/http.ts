@@ -132,8 +132,11 @@ export class HTTPServer {
    * @returns {Promise<void>}
    */
   close(): Promise<void> {
+    this.wss.clients.forEach((client) => client.terminate());
+    const wssClose = new Promise<void>((resolve) => this.wss.close(() => resolve()));
     this._server.closeAllConnections?.();
-    return new Promise((resolve) => this._server.close(resolve as () => void));
+    const serverClose = new Promise<void>((resolve) => this._server.close(resolve as () => void));
+    return Promise.all([wssClose, serverClose]).then(() => {});
   }
 
   /** Registers a GET route handler. */

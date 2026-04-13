@@ -88,17 +88,28 @@ export async function shellWatch(
     // Chrome and its HTTP server are still shutting down.
     //
     // Race against CHILD_EXIT_GRACE_MS: if the child hangs (e.g. Firefox/WebKit SIGTERM
-    // deadlock), we stop waiting so the permit is eventually released and the suite can
-    // continue. After the grace period, unref() lets the worker event loop exit without
-    // waiting for the OS process to terminate.
-    await new Promise<void>((resolve) => {
-      const exitTimer = setTimeout(resolve, CHILD_EXIT_GRACE_MS);
+    // deadlock), force-kill it so it doesn't linger as an orphan holding Chrome processes
+    // and inotify watches. Any Chrome subprocesses that survive the SIGKILL (because
+    // process.on('exit') doesn't fire on SIGKILL) are swept up by runner.ts on suite exit.
+    const childExited = await new Promise<boolean>((resolve) => {
+      const exitTimer = setTimeout(() => resolve(false), CHILD_EXIT_GRACE_MS);
       exitTimer.unref();
       child.once('exit', () => {
         clearTimeout(exitTimer);
-        resolve();
+        resolve(true);
       });
     });
+    // Force-kill if SIGTERM didn't work within the grace period. child.unref() and
+    // permit.release() still run regardless: unref() lets our event loop drain without
+    // blocking on the (now dying) child; permit.release() lets the next test acquire a
+    // browser slot immediately rather than waiting for an OS process we no longer need
+    // to track. Any Chrome subprocesses orphaned because SIGKILL bypasses the
+    // process.on('exit') handler are swept up by runner.ts after the full suite exits.
+    if (!childExited) {
+      try {
+        child.kill('SIGKILL');
+      } catch {}
+    }
     child.unref();
     permit.release();
   }

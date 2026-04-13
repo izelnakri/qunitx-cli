@@ -32,3 +32,8 @@ Given the existing benchmarks, is there any other important one I should add and
 opportunities to optimize/refactor the runtime of my tests with this binary(qunitx)/project for the end user when
 they run their suite of tests or a test?
 
+--watch tests are slow because I've a suspicious node still prefers single thread over fs calls. It does distribute them
+across cores but that thread pool doesnt get utilized or doesnt utilize all my cores and machine resources effectively.
+Am I correct with my assumption?
+
+--refactor the `test/helpers/before-script-async.ts` while keeping a similar behavior(or at least similar use when the file is used in tests it should be a backend async service I suspect that we verify in tests it gets loaded correctly) so I can remove express and cors devDependencies from my project. Also rewrite expressApp name to something correct now in my runtime, since I dont use express anymore, should it be `webServer` instead?
