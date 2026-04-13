@@ -84,7 +84,35 @@ export async function preLaunchChrome(
     });
     if (proc.exitCode === null) killProcessGroup(proc.pid!);
     await closed;
-    await rm(userDataDir, { recursive: true, force: true }).catch(() => {});
+    // `closed` fires when the main Chrome process exits, but renderer/GPU/utility
+    // subprocesses received the same SIGKILL and may still hold the user-data dir
+    // as cwd, causing rmdir to fail with EBUSY. On the fast path rm() succeeds
+    // immediately. On failure, poll until the entire process group is confirmed gone
+    // (process.kill(-pgid, 0) throws ESRCH), then retry.
+    await rm(userDataDir, { recursive: true, force: true }).catch(async () => {
+      // rm() failed — renderer/GPU subprocesses still hold the dir as cwd (EBUSY).
+      // Poll until the process group is gone, then retry. No timeout: SIGKILL is a
+      // POSIX guarantee, so the group always terminates — this loop always exits.
+      const pgid = proc.pid!;
+      const warnTimer = setTimeout(
+        () =>
+          process.stderr.write(
+            `# [qunitx] warning: Chrome process group ${pgid} still alive 500ms after SIGKILL, waiting...\n`,
+          ),
+        500,
+      );
+      warnTimer.unref();
+      while (true) {
+        try {
+          process.kill(-pgid, 0);
+        } catch {
+          break;
+        } // ESRCH → group gone
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      clearTimeout(warnTimer);
+      await rm(userDataDir, { recursive: true, force: true }).catch(() => {});
+    });
   }
 }
 
