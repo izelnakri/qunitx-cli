@@ -1,11 +1,17 @@
 # Changelog
 
+## [0.17.5] - 2026-04-13
+[`v0.17.4...v0.17.5`](https://github.com/izelnakri/qunitx-cli/compare/v0.17.4...v0.17.5)
+
+### Bug Fixes
+- Kill Chrome process groups and prevent resource leaks — 2026-04-13 by [@izelnakri](https://github.com/izelnakri) ([`f1a3c28`](https://github.com/izelnakri/qunitx-cli/commit/f1a3c28bef508b54462f0efbe99b6700cc8ad37b))
+
 ## [0.17.3] - 2026-04-13
 [`v0.17.2...v0.17.3`](https://github.com/izelnakri/qunitx-cli/compare/v0.17.2...v0.17.3)
 
 ### Bug Fixes
-- Skip outdated optional SEA binary and lint bin/ directory — 2026-04-13 by Izel Nakri ([`7b0aa91`](https://github.com/izelnakri/qunitx-cli/commit/7b0aa9176e3f65414b2dbd418ffb5f600ea96846))
-- Widen semaphore grant timeout from 200ms to 2000ms to avoid flake under load — 2026-04-13 by Izel Nakri ([`80404ed`](https://github.com/izelnakri/qunitx-cli/commit/80404edc3945d22ea8c0e035a5b54c7c74e7208c))
+- Skip outdated optional SEA binary and lint bin/ directory — 2026-04-13 by [@izelnakri](https://github.com/izelnakri) ([`7b0aa91`](https://github.com/izelnakri/qunitx-cli/commit/7b0aa9176e3f65414b2dbd418ffb5f600ea96846))
+- Widen semaphore grant timeout from 200ms to 2000ms to avoid flake under load — 2026-04-13 by [@izelnakri](https://github.com/izelnakri) ([`80404ed`](https://github.com/izelnakri/qunitx-cli/commit/80404edc3945d22ea8c0e035a5b54c7c74e7208c))
 
 ## [0.17.2] - 2026-04-12
 [`v0.17.1...v0.17.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.17.1...v0.17.2)
