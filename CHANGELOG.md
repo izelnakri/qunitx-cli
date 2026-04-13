@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.7] - 2026-04-13
+[`v0.17.6...v0.17.7`](https://github.com/izelnakri/qunitx-cli/compare/v0.17.6...v0.17.7)
+
+### Bug Fixes
+- Poll killedPids in rm() catch instead of pre-polling, matching pre-launch-chrome pattern — 2026-04-13 by [@izelnakri](https://github.com/izelnakri) ([`9dc0b2c`](https://github.com/izelnakri/qunitx-cli/commit/9dc0b2cb976e8611cd16b8b285fdecf1deb5bd3a))
+
 ## [0.17.6] - 2026-04-13
 [`v0.17.5...v0.17.6`](https://github.com/izelnakri/qunitx-cli/compare/v0.17.5...v0.17.6)
 

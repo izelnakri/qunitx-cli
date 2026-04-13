@@ -1,6 +1,6 @@
 {
   "name": "qunitx-cli-darwin-x64",
-  "version": "0.17.6",
+  "version": "0.17.7",
   "description": "macOS x64 SEA binary for qunitx-cli",
   "os": [
     "darwin"
