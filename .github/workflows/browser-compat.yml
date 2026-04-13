@@ -39,14 +39,24 @@ jobs:
 
       - run: npm ci
 
+      - name: Get Playwright version
+        id: pw-version
+        run: echo "version=$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+
       - name: Cache Playwright browser (${{ matrix.browser }})
+        id: playwright-cache
         uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ matrix.browser }}-${{ hashFiles('package-lock.json') }}
+          key: playwright-${{ matrix.browser }}-${{ steps.pw-version.outputs.version }}
 
       - name: Install Playwright browser (${{ matrix.browser }})
-        run: npx playwright@$(node -p "require('playwright-core/package.json').version") install --with-deps ${{ matrix.browser }}
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright@${{ steps.pw-version.outputs.version }} install --with-deps ${{ matrix.browser }}
+
+      - name: Install Playwright system deps (${{ matrix.browser }})
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright@${{ steps.pw-version.outputs.version }} install-deps ${{ matrix.browser }}
 
       - name: Run browser tests (${{ matrix.browser }})
         run: npm run test:browser

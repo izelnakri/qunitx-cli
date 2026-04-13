@@ -61,18 +61,28 @@ jobs:
         if: matrix.browser == 'chromium'
         id: setup-chrome
 
+      - run: npm ci
+
+      - name: Get Playwright version
+        if: matrix.browser != 'chromium'
+        id: pw-version
+        run: echo "version=$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+
       - name: Cache Playwright browser (${{ matrix.browser }})
         if: matrix.browser != 'chromium'
+        id: playwright-cache
         uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ matrix.browser }}-${{ hashFiles('package-lock.json') }}
+          key: playwright-${{ matrix.browser }}-${{ steps.pw-version.outputs.version }}
 
       - name: Install Playwright browser (${{ matrix.browser }})
-        if: matrix.browser != 'chromium'
-        run: npx playwright@$(node -p "require('playwright-core/package.json').version") install --with-deps ${{ matrix.browser }}
+        if: matrix.browser != 'chromium' && steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright@${{ steps.pw-version.outputs.version }} install --with-deps ${{ matrix.browser }}
 
-      - run: npm ci
+      - name: Install Playwright system deps (${{ matrix.browser }})
+        if: matrix.browser != 'chromium' && steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright@${{ steps.pw-version.outputs.version }} install-deps ${{ matrix.browser }}
 
       - run: bash scripts/test-release.sh
         env:
