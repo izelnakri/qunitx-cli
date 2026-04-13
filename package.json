@@ -24,7 +24,7 @@
     "prepublishOnly": "npm run build",
     "format": "prettier --check \"lib/**/*.ts\" \"test/**/*.ts\" \"scripts/**/*.js\" \"bin/**/*.js\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
     "format:fix": "prettier --write \"lib/**/*.ts\" \"test/**/*.ts\" \"scripts/**/*.js\" \"bin/**/*.js\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
-    "lint": "deno lint lib/ cli.ts",
+    "lint": "deno lint lib/ bin/ cli.ts",
     "lint:docs": "node scripts/lint-docs.js",
     "docs": "deno doc --html --name=\"qunitx-cli\" --output=docs/lib 'lib/**/*.ts' README.md",
     "changelog:unreleased": "git-cliff --unreleased --strip all",
@@ -70,5 +70,8 @@
     "printWidth": 100,
     "singleQuote": true,
     "arrowParens": "always"
+  },
+  "optionalDependencies": {
+    "qunitx-cli-linux-x64": "*"
   }
 }

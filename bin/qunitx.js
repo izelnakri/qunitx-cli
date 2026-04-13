@@ -4,13 +4,17 @@
 // (qunitx-cli-linux-x64, qunitx-cli-darwin-arm64, etc.) when available.
 // Falls back to the bundled JS CLI (dist/cli.js) which requires Node.js + node_modules.
 import { spawn } from 'node:child_process';
-import { access, constants } from 'node:fs/promises';
+import { access, constants, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
+
+const currentVersion = JSON.parse(
+  await readFile(join(__dirname, '../package.json'), 'utf8'),
+).version;
 
 const platformMap = {
   'linux-x64': { seaPkg: 'qunitx-cli-linux-x64', esbuildPkg: '@esbuild/linux-x64', bin: 'qunitx' },
@@ -41,7 +45,10 @@ const target = platformMap[`${process.platform}-${process.arch}`];
 async function trySeaBinary() {
   if (!target) return false;
   try {
-    const pkgDir = dirname(require.resolve(`${target.seaPkg}/package.json`));
+    const pkgJsonPath = require.resolve(`${target.seaPkg}/package.json`);
+    const seaVersion = JSON.parse(await readFile(pkgJsonPath, 'utf8')).version;
+    if (seaVersion !== currentVersion) return false;
+    const pkgDir = dirname(pkgJsonPath);
     const binaryPath = join(pkgDir, 'bin', target.bin);
     await access(binaryPath, constants.X_OK);
 
@@ -52,10 +59,12 @@ async function trySeaBinary() {
           `${target.esbuildPkg}/bin/esbuild${process.platform === 'win32' ? '.exe' : ''}`,
         );
         env = { ...env, ESBUILD_BINARY_PATH: esbuildBin };
-      } catch (_) {}
+      } catch (_e) {
+        // esbuild binary not found in optional package — env stays as-is
+      }
     }
 
-    await new Promise((resolve, reject) => {
+    await new Promise((_resolve, reject) => {
       const child = spawn(binaryPath, process.argv.slice(2), { stdio: 'inherit', env });
       child.on('close', (code) => process.exit(code ?? 1));
       child.on('error', reject);
