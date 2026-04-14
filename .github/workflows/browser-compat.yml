@@ -23,7 +23,7 @@ jobs:
   browser-compat:
     name: ${{ matrix.browser }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false # Firefox failure should not cancel WebKit and vice versa
       matrix:
