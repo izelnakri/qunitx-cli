@@ -2,6 +2,7 @@ import type { HTTPServer } from './servers/http.ts';
 import type { Browser, Page } from 'playwright-core';
 import type { ChildProcess } from 'node:child_process';
 import type { Buffer } from 'node:buffer';
+import type { BuildContext } from 'esbuild';
 
 /**
  * Running totals of test outcomes for a single test run.
@@ -45,6 +46,10 @@ export interface CachedContent {
   staticHTMLs: Record<string, string>;
   /** HTML pages whose bundle content is injected at request time, keyed by server-relative path. */
   dynamicContentHTMLs: Record<string, string>;
+  /** Live esbuild incremental context, kept warm between watch-mode rebuilds. */
+  _esbuildContext?: BuildContext | null;
+  /** Cache key for `_esbuildContext`: `allTestFilePaths.join('\0')`. Invalidated when files change. */
+  _esbuildContextKey?: string;
 }
 
 /**

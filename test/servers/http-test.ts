@@ -1,6 +1,8 @@
 import { module, test } from 'qunitx';
 import http from 'node:http';
 import net from 'node:net';
+// @deno-types="npm:@types/ws"
+import WebSocket from 'ws';
 import HTTPServer from '../../lib/servers/http.ts';
 import bindServerToPort from '../../lib/setup/bind-server-to-port.ts';
 
@@ -119,6 +121,59 @@ module('Servers | HTTPServer | query param routing', { concurrency: true }, () =
         moduleId: 'f0109ef0',
       });
     });
+  });
+});
+
+module('Servers | HTTPServer | close()', { concurrency: true }, () => {
+  test('close() terminates all connected WebSocket clients', async (assert) => {
+    const server = new HTTPServer();
+    server.get('/', (req, res) => res.end('ok'));
+    await server.listen(0);
+    const port = (server._server.address() as net.AddressInfo).port;
+
+    // Connect two clients and wait for both to be fully open.
+    const ws1 = new WebSocket(`ws://127.0.0.1:${port}`);
+    const ws2 = new WebSocket(`ws://127.0.0.1:${port}`);
+    await Promise.all([
+      new Promise<void>((r) => ws1.once('open', r)),
+      new Promise<void>((r) => ws2.once('open', r)),
+    ]);
+
+    // Capture close events before calling server.close() so we don't miss them.
+    const close1 = new Promise<void>((r) => ws1.once('close', r));
+    const close2 = new Promise<void>((r) => ws2.once('close', r));
+
+    await server.close();
+
+    // Both clients must receive the close event — the Promise would hang
+    // if server.close() left any WebSocket connections open.
+    await Promise.all([close1, close2]);
+
+    assert.strictEqual(ws1.readyState, WebSocket.CLOSED, 'first client is closed');
+    assert.strictEqual(ws2.readyState, WebSocket.CLOSED, 'second client is closed');
+  });
+
+  test('close() resolves only after the server stops accepting new connections', async (assert) => {
+    const server = new HTTPServer();
+    await server.listen(0);
+    const port = (server._server.address() as net.AddressInfo).port;
+
+    await server.close();
+
+    // Any connection attempt after close() must fail; the port is no longer bound.
+    await assert.rejects(
+      new Promise<void>((resolve, reject) => {
+        const sock = net.createConnection({ port, host: '127.0.0.1' });
+        sock.once('connect', () => {
+          sock.destroy();
+          // If we somehow connected, the server wasn't fully closed — test should fail.
+          resolve();
+        });
+        sock.once('error', reject);
+      }),
+      /ECONNREFUSED/,
+      'port is no longer accessible after close()',
+    );
   });
 });
 
