@@ -28,4 +28,62 @@ module('--timeout flag tests for browser mode', { concurrency: true }, (_hooks, 
       'timeout is reported with the name of the hanging test',
     );
   });
+
+  // assert.timeout(ms) tests — per-test deadline set inside the test body (QUnit native).
+  // Unlike --timeout (which polls window.testTimeout and kills the whole run), assert.timeout()
+  // fails only the individual test and lets the suite finish normally.
+
+  test('assert.timeout() passes when test finishes before its deadline', async (assert, testMetadata) => {
+    const result = await shell('node cli.ts test/fixtures/assert-timeout-tests.ts', {
+      ...moduleMetadata,
+      ...testMetadata,
+    });
+
+    assert.outputContains(result, {
+      contains: [
+        'TAP version 13',
+        /ok \d+ .* assert\.timeout passes when test completes before deadline/,
+        /ok \d+ .* assert\.timeout\(0\) passes for synchronous tests/,
+      ],
+    });
+    assert.tapResult(result, { testCount: 2 });
+  });
+
+  test('assert.timeout() fails the individual test when its deadline is exceeded', async (assert, testMetadata) => {
+    const cmd = await shellFails('node cli.ts test/fixtures/assert-timeout-slow-tests.ts', {
+      ...moduleMetadata,
+      ...testMetadata,
+    });
+
+    assert.exitCode(cmd, 1, 'suite exits with code 1 when a test times out via assert.timeout()');
+    assert.includes(cmd, 'TAP version 13', 'TAP header is printed');
+    assert.outputContains(cmd, {
+      contains: [
+        // QUnit's per-test timeout message
+        /Test took longer than \d+ms; test timed out\./,
+        // The test itself is marked not-ok in TAP
+        /not ok \d+ .* assert\.timeout fails when test exceeds deadline/,
+      ],
+      // assert.timeout() must NOT trigger the CLI-level watchdog message
+      notContains: ['BROWSER: TEST TIMED OUT'],
+    });
+    assert.tapResult(cmd, { testCount: 1, failCount: 1 });
+  });
+
+  test('assert.timeout(0) enforces synchronous completion — fails async test', async (assert, testMetadata) => {
+    // assert.timeout(0) means the test must not yield control at all.
+    // An async test that awaits anything will fail with the sync-enforcement message.
+    const cmd = await shellFails('node cli.ts test/fixtures/assert-timeout-sync-tests.ts', {
+      ...moduleMetadata,
+      ...testMetadata,
+    });
+
+    assert.exitCode(cmd, 1, 'async test with timeout(0) exits with code 1');
+    assert.outputContains(cmd, {
+      contains: [
+        /Test did not finish synchronously even though assert\.timeout\( 0 \) was used\./,
+        /not ok \d+ .* assert\.timeout\(0\) fails async test/,
+      ],
+    });
+  });
 });

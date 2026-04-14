@@ -42,4 +42,3 @@ Am I correct with my assumption?
   Every qunitx invocation today: Node startup → load 40+ files → connect to Chrome → esbuild → navigate → run → exit. A qunitx serve daemon would keep Chrome alive and hold the
   esbuild incremental context warm. qunitx run test/file.ts sends the file list over a Unix socket and streams TAP back. Subsequent runs: ~200–300ms (just esbuild rebuild +
   navigate). This is the single biggest UX improvement possible for developers running tests frequently in a non-watch workflow.
-

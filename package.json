@@ -60,7 +60,7 @@
     "express": "^5.2.1",
     "js-yaml": "^4.1.1",
     "prettier": "^3.8.2",
-    "qunitx": "^1.2.1",
+    "qunitx": "^1.2.7",
     "typescript": "^6.0.2"
   },
   "volta": {
