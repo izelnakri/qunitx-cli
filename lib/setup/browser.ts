@@ -113,8 +113,8 @@ export async function setupBrowser(
     }
   });
   page.on('pageerror', (error) => {
-    console.log(error.toString());
     console.error(error.toString());
+    config.COUNTER.failCount++;
   });
 
   return { server, browser, page };
