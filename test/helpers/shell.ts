@@ -99,16 +99,29 @@ export async function shellWatch(
         resolve(true);
       });
     });
-    // Force-kill if SIGTERM didn't work within the grace period. child.unref() and
-    // permit.release() still run regardless: unref() lets our event loop drain without
-    // blocking on the (now dying) child; permit.release() lets the next test acquire a
-    // browser slot immediately rather than waiting for an OS process we no longer need
-    // to track. Any Chrome subprocesses orphaned because SIGKILL bypasses the
-    // process.on('exit') handler are swept up by runner.ts after the full suite exits.
+    // Force-kill if SIGTERM didn't work within the grace period. Any Chrome subprocesses
+    // orphaned because SIGKILL bypasses the process.on('exit') handler are swept up by
+    // runner.ts after the full suite exits.
     if (!childExited) {
       try {
         child.kill('SIGKILL');
       } catch {}
+      // SIGKILL delivery and process termination are asynchronous at the OS level.
+      // The child may still hold its HTTP server port for a brief moment after kill()
+      // returns. Wait for the 'exit' event before releasing the permit so the next
+      // test worker does not try to bind the same port while the child is still dying.
+      await new Promise<void>((resolve) => {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          resolve();
+          return;
+        }
+        const t = setTimeout(resolve, 2000);
+        (t as NodeJS.Timeout).unref();
+        child.once('exit', () => {
+          clearTimeout(t);
+          resolve();
+        });
+      });
     }
     child.unref();
     permit.release();
