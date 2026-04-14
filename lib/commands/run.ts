@@ -28,6 +28,14 @@ export async function run(config: Config): Promise<void> {
     // WATCH MODE: single browser, all test files bundled together.
     // The HTTP server stays alive so the user can browse http://localhost:PORT
     // and see all tests running in a single QUnit view.
+    //
+    // Start esbuild immediately so it races Chrome setup: Chrome connect + newPage (~150ms)
+    // and esbuild (~300–600ms) have no mutual dependency until page.goto() fires inside
+    // runTestsInBrowser. The promise is stored on cachedContent so runTestsInBrowser can
+    // await it inside its own try/catch — errors surface as BundleErrors there, keeping
+    // the watcher alive exactly as they would for a normal watch-mode build failure.
+    cachedContent._preBuildPromise = buildTestBundle(config, cachedContent);
+
     const [connections] = await Promise.all([
       setupBrowser(config, cachedContent),
       writeOutputStaticFiles(config, cachedContent),

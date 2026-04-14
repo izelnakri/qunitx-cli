@@ -50,6 +50,12 @@ export interface CachedContent {
   _esbuildContext?: BuildContext | null;
   /** Cache key for `_esbuildContext`: `allTestFilePaths.join('\0')`. Invalidated when files change. */
   _esbuildContextKey?: string;
+  /**
+   * In-flight build promise started by `run.ts` before Chrome setup completes, so esbuild
+   * races `setupBrowser()` rather than running sequentially after it. Consumed and cleared
+   * by the first `runTestsInBrowser()` call; subsequent watch-mode reruns build normally.
+   */
+  _preBuildPromise?: Promise<void> | null;
 }
 
 /**

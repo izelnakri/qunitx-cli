@@ -103,9 +103,15 @@ export async function runTestsInBrowser(
   config.lastRanTestFiles = targetTestFilesToFilter || allTestFilePaths;
 
   try {
-    // Skip bundle build if run.js already pre-built it (group mode optimization).
+    // In watch mode, run.js fires buildTestBundle before setupBrowser completes and stores
+    // the promise on _preBuildPromise so esbuild races Chrome setup. Always clear it here so
+    // watch-mode re-runs always call buildTestBundle fresh — if we skip the await below (because
+    // allTestCode is already set from a race win by esbuild), a stale resolved promise would
+    // otherwise be consumed by the next re-run instead of triggering a real rebuild.
+    const preBuildPromise = cachedContent._preBuildPromise;
+    cachedContent._preBuildPromise = null;
     if (!cachedContent.allTestCode) {
-      await buildTestBundle(config, cachedContent);
+      await (preBuildPromise ?? buildTestBundle(config, cachedContent));
     }
 
     // buildTestBundle bails early when fsTree is empty (spurious unlink race on overlayfs).
