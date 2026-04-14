@@ -6,10 +6,13 @@
 import TAPDisplayTestResult from "../lib/tap/display-test-result.ts";
 import TAPDisplayFinalResult from "../lib/tap/display-final-result.ts";
 
-// Suppress console output once at module level — patching inside each
-// iteration deoptimises V8's JIT-compiled inline cache for console.log,
-// inflating measurements and creating GC pressure for the entire process.
+// Suppress all output once at module level — patching inside each
+// iteration deoptimises V8's JIT-compiled inline cache, inflating
+// measurements and creating GC pressure for the entire process.
+// Must suppress process.stdout.write too: TAP functions use it directly
+// (not console.log) after the a63db40 overhaul.
 console.log = () => {};
+process.stdout.write = () => true;
 
 const PASSING_DETAILS = {
   status: "passed",

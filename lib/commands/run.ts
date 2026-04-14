@@ -121,9 +121,9 @@ export async function run(config: Config): Promise<void> {
     }));
     const groupCachedContents = groups.map(() => ({ ...cachedContent }));
 
-    console.log('TAP version 13');
-    console.log(
-      `# Running ${allFiles.length} test file${allFiles.length === 1 ? '' : 's'} across ${groupCount} group${groupCount === 1 ? '' : 's'}`,
+    process.stdout.write('TAP version 13\n');
+    process.stdout.write(
+      `# Running ${allFiles.length} test file${allFiles.length === 1 ? '' : 's'} across ${groupCount} group${groupCount === 1 ? '' : 's'}\n`,
     );
 
     // Build all group bundles and write static files while the browser is starting up.

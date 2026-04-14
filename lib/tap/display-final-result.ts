@@ -9,19 +9,14 @@ export function TAPDisplayFinalResult(
   { testCount, passCount, skipCount, failCount }: Counter,
   timeTaken: number,
 ): void {
-  console.log('');
-  console.log(`1..${testCount}`);
-  console.log(`# tests ${testCount}`);
-  console.log(`# pass ${passCount}`);
-  console.log(`# skip ${skipCount}`);
-  console.log(`# fail ${failCount}`);
-
-  // let seconds = timeTaken > 1000 ? Math.floor(timeTaken / 1000) : 0;
-  // let milliseconds = timeTaken % 100;
-
-  console.log(`# duration ${timeTaken}`);
-  console.log('');
+  process.stdout.write('\n');
+  process.stdout.write(`1..${testCount}\n`);
+  process.stdout.write(`# tests ${testCount}\n`);
+  process.stdout.write(`# pass ${passCount}\n`);
+  process.stdout.write(`# skip ${skipCount}\n`);
+  process.stdout.write(`# fail ${failCount}\n`);
+  process.stdout.write(`# duration ${timeTaken}\n`);
+  process.stdout.write('\n');
 }
-// console.log(details.timeTaken); // runtime
 
 export { TAPDisplayFinalResult as default };

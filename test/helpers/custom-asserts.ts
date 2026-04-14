@@ -30,6 +30,21 @@ Assert.prototype.includes = function (result, needle, message) {
 };
 
 /**
+ * assert.notIncludes(result, needle, message?)
+ * result may be a plain string (stdout) or a { stdout, stderr } object.
+ * On failure: actual shows stdout (and stderr if present) so you see the full context.
+ */
+Assert.prototype.notIncludes = function (result, needle, message) {
+  const { stdout, stderr } = extractOutput(result);
+  this.pushResult({
+    result: !stdout.includes(needle),
+    actual: stderr ? { stdout, stderr } : stdout,
+    expected: `should NOT contain: ${needle}`,
+    message: message || `should not contain: ${needle}`,
+  });
+};
+
+/**
  * assert.outputContains(result, { contains: [...], notContains: [...] }, message?)
  * result may be a plain string (stdout) or a { stdout, stderr } object.
  * On failure: actual shows { missing, unexpectedlyFound, stdout, stderr? } so you see

@@ -13,9 +13,10 @@
 // - Timestamp-like strings that YAML 1.1 auto-casts to Date
 // - Contains ': ' (key–value) or '#' anywhere (comment)
 // - Empty string
+// - Starts with whitespace (would render as "key:   value" with ambiguous extra spaces)
 // Also covers single-letter YAML 1.1 booleans: y/Y → true, n/N → false
 const NEEDS_QUOTING =
-  /^$|^(null|true|false|~|yes|no|on|off|y|n)$|^[{[!|>'"#%@`]|^[-?:](\s|$)|^---|^[-+]?(\d|\.\d)|^\d{4}-\d{2}-\d{2}|: |#/i;
+  /^$|^\s|^(null|true|false|~|yes|no|on|off|y|n)$|^[{[!|>'"#%@`]|^[-?:](\s|$)|^---|^[-+]?(\d|\.\d)|^\d{4}-\d{2}-\d{2}|: |#/i;
 
 function needsQuoting(str: string): boolean {
   return NEEDS_QUOTING.test(str);
@@ -38,7 +39,16 @@ function dumpValue(value: unknown, indent: string): string {
   if (Array.isArray(value)) {
     if (value.length === 0) return '[]';
     const next = `${indent}  `;
-    return '\n' + value.map((item) => `${next}- ${dumpValue(item, next)}`).join('\n');
+    return (
+      '\n' +
+      value
+        .map((item) => {
+          const v = dumpValue(item, next);
+          // Avoid trailing space before block values: "-\n  key: val" not "- \n  key: val"
+          return v[0] === '\n' ? `${next}-${v}` : `${next}- ${v}`;
+        })
+        .join('\n')
+    );
   }
   // Plain object
   const entries = Object.entries(value);
@@ -47,7 +57,11 @@ function dumpValue(value: unknown, indent: string): string {
   return (
     '\n' +
     entries
-      .map(([entryKey, entryValue]) => `${next}${entryKey}: ${dumpValue(entryValue, next)}`)
+      .map(([entryKey, entryValue]) => {
+        const v = dumpValue(entryValue, next);
+        // Avoid trailing space before block values: "key:\n  val" not "key: \n  val"
+        return v[0] === '\n' ? `${next}${entryKey}:${v}` : `${next}${entryKey}: ${v}`;
+      })
       .join('\n')
   );
 }
@@ -78,13 +92,15 @@ export function dumpYaml({
   stack: string | null;
   at: string | null;
 }): string {
+  // actual and expected are always emitted — they are the core comparison data.
+  // message, stack, and at are supplementary context: omit when null to reduce noise.
   return (
     `name: ${dumpString(name, '')}\n` +
     yamlLine('actual', actual) +
     yamlLine('expected', expected) +
-    yamlLine('message', message) +
-    yamlLine('stack', stack) +
-    yamlLine('at', at)
+    (message !== null ? yamlLine('message', message) : '') +
+    (stack !== null ? yamlLine('stack', stack) : '') +
+    (at !== null ? yamlLine('at', at) : '')
   );
 }
 

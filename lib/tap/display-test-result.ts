@@ -29,50 +29,65 @@ export function TAPDisplayTestResult(COUNTER: Counter, details: TestDetails): vo
 
   if (details.status === 'skipped') {
     COUNTER.skipCount++;
-    console.log(`ok ${COUNTER.testCount}`, details.fullName.join(' | '), '# skip');
+    process.stdout.write(`ok ${COUNTER.testCount} ${details.fullName.join(' | ')} # skip\n`);
   } else if (details.status === 'todo') {
-    console.log(`not ok ${COUNTER.testCount}`, details.fullName.join(' | '), '# skip');
+    process.stdout.write(`not ok ${COUNTER.testCount} ${details.fullName.join(' | ')} # skip\n`);
   } else if (details.status === 'failed') {
     COUNTER.failCount++;
-    console.log(
-      `not ok ${COUNTER.testCount}`,
-      details.fullName.join(' | '),
-      `# (${details.runtime.toFixed(0)} ms)`,
+    process.stdout.write(
+      `not ok ${COUNTER.testCount} ${details.fullName.join(' | ')} # (${details.runtime.toFixed(0)} ms)\n`,
     );
     details.assertions.forEach((assertion, index) => {
       if (!assertion.passed && assertion.todo === false) {
         COUNTER.errorCount = (COUNTER.errorCount ?? 0) + 1;
-        const stack = assertion.stack?.match(/\(.+\)/g);
 
-        console.log('  ---');
-        console.log(
+        process.stdout.write('  ---\n');
+        process.stdout.write(
           indentString(
             dumpYaml({
               name: `Assertion #${index + 1}`,
-              actual: assertion.actual
-                ? JSON.parse(JSON.stringify(assertion.actual, getCircularReplacer()))
-                : assertion.actual,
-              expected: assertion.expected
-                ? JSON.parse(JSON.stringify(assertion.expected, getCircularReplacer()))
-                : assertion.expected,
+              actual:
+                assertion.actual !== null && typeof assertion.actual === 'object'
+                  ? JSON.parse(JSON.stringify(assertion.actual, getCircularReplacer()))
+                  : assertion.actual,
+              expected:
+                assertion.expected !== null && typeof assertion.expected === 'object'
+                  ? JSON.parse(JSON.stringify(assertion.expected, getCircularReplacer()))
+                  : assertion.expected,
               message: assertion.message || null,
-              stack: assertion.stack || null,
-              at: stack ? stack[0].replace('(file://', '').replace(')', '') : null,
+              // Trim leading/trailing whitespace: Chrome stacks start with "    at ..."
+              // (4 spaces per frame) which would otherwise render as "stack:     at ..." in YAML.
+              stack: assertion.stack?.trim() || null,
+              at: extractStackAt(assertion.stack),
             }),
             4,
           ),
         );
-        console.log('  ...');
+        process.stdout.write('  ...\n');
       }
     });
   } else if (details.status === 'passed') {
     COUNTER.passCount++;
-    console.log(
-      `ok ${COUNTER.testCount}`,
-      details.fullName.join(' | '),
-      `# (${details.runtime.toFixed(0)} ms)`,
+    process.stdout.write(
+      `ok ${COUNTER.testCount} ${details.fullName.join(' | ')} # (${details.runtime.toFixed(0)} ms)\n`,
     );
   }
+}
+
+/**
+ * Extracts the source location from a stack trace string.
+ * Supports Chrome/Node style "at func (url:line:col)" and Firefox/WebKit style "@url:line:col".
+ * Returns a clean location string without surrounding parens, or null if nothing can be extracted.
+ */
+export function extractStackAt(stack: string | null | undefined): string | null {
+  if (!stack) return null;
+  // Chrome/Node: "at func (url:line:col)" — capture inside parens
+  const chromeMatch = stack.match(/\(([^)\n]+:[0-9]+:[0-9]+)\)/);
+  if (chromeMatch) return chromeMatch[1].replace('file://', '');
+  // Firefox/WebKit: "funcname@url:line:col" or just "@url:line:col"
+  const geckoMatch = stack.match(/@([^\s\n@]+:[0-9]+:[0-9]+)/);
+  if (geckoMatch) return geckoMatch[1];
+  return null;
 }
 
 function getCircularReplacer(): (_key: string, value: unknown) => unknown {

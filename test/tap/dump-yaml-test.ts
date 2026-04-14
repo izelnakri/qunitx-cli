@@ -1,6 +1,7 @@
 import { module, test } from 'qunitx';
 import { load } from 'js-yaml';
 import dumpYaml from '../../lib/tap/dump-yaml.ts';
+import '../helpers/custom-asserts.ts';
 
 // Roundtrip helper: our output must parse back to the same value via js-yaml
 function roundtrip(value) {
@@ -143,6 +144,11 @@ module('TAP | dumpYaml | strings', { concurrency: true }, () => {
     const stack = 'Error: boom\n    at foo (file.js:1:1)\n    at bar (file.js:2:2)';
     assert.strictEqual(roundtrip(stack), stack);
   });
+
+  test('string starting with whitespace is quoted to avoid ambiguous YAML spacing', (assert) => {
+    assert.strictEqual(roundtrip('   leading spaces'), '   leading spaces');
+    assert.strictEqual(roundtrip('\ttab indented'), '\ttab indented');
+  });
 });
 
 module('TAP | dumpYaml | arrays', { concurrency: true }, () => {
@@ -180,10 +186,27 @@ module('TAP | dumpYaml | arrays', { concurrency: true }, () => {
       stack: null,
       at: null,
     });
-    assert.false(
-      out.includes('actual: \n'),
+    assert.notIncludes(
+      out,
+      'actual: \n',
       'must not have "actual: \\n" — trailing space before block',
     );
+  });
+
+  test('array of objects round-trips', (assert) => {
+    assert.deepEqual(roundtrip([{ a: 1 }, { b: 'two' }]), [{ a: 1 }, { b: 'two' }]);
+  });
+
+  test('no trailing space before array-of-objects block entries', (assert) => {
+    const out = dumpYaml({
+      name: 'x',
+      actual: [{ key: 'val' }],
+      expected: null,
+      message: null,
+      stack: null,
+      at: null,
+    });
+    assert.notIncludes(out, '- \n', 'array entry must not have trailing space before object block');
   });
 });
 
@@ -213,8 +236,9 @@ module('TAP | dumpYaml | objects', { concurrency: true }, () => {
       stack: null,
       at: null,
     });
-    assert.false(
-      out.includes('actual: \n'),
+    assert.notIncludes(
+      out,
+      'actual: \n',
       'must not have "actual: \\n" — trailing space before block',
     );
   });
@@ -239,7 +263,7 @@ module('TAP | dumpYaml | full output structure', { concurrency: true }, () => {
     assert.strictEqual(parsed.at, 'test.js:5:3');
   });
 
-  test('null fields serialize as null', (assert) => {
+  test('null actual and expected are kept in output', (assert) => {
     const out = dumpYaml({
       name: 'x',
       actual: null,
@@ -249,8 +273,22 @@ module('TAP | dumpYaml | full output structure', { concurrency: true }, () => {
       at: null,
     });
     const parsed = load(out);
-    assert.strictEqual(parsed.actual, null);
-    assert.strictEqual(parsed.message, null);
+    assert.strictEqual(parsed.actual, null, 'actual: null must always be emitted');
+    assert.strictEqual(parsed.expected, null, 'expected: null must always be emitted');
+  });
+
+  test('null message, stack, and at are omitted from output', (assert) => {
+    const out = dumpYaml({
+      name: 'x',
+      actual: false,
+      expected: true,
+      message: null,
+      stack: null,
+      at: null,
+    });
+    assert.notIncludes(out, 'message:', 'null message must not appear — it is just noise');
+    assert.notIncludes(out, 'stack:', 'null stack must not appear — it is just noise');
+    assert.notIncludes(out, 'at:', 'null at must not appear — it is just noise');
   });
 
   test('output ends with a single newline', (assert) => {

@@ -35,7 +35,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         config._onWsOpen?.();
       } else if (event === 'connection') {
         config._phase = 'running';
-        if (!config._groupMode) console.log('TAP version 13');
+        if (!config._groupMode) process.stdout.write('TAP version 13\n');
         if (config.debug && config._groupMode) {
           const allFiles = Object.keys(config.fsTree);
           const relFiles = allFiles.map((filePath) =>
@@ -44,7 +44,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
           const shown = relFiles.slice(0, 2);
           const rest = relFiles.length - shown.length;
           const fileList = rest > 0 ? `${shown.join('  ')}  +${rest} more` : shown.join('  ');
-          console.log('#', blue(`── ${fileList} ──`));
+          process.stdout.write(`# ${blue(`── ${fileList} ──`)}\n`);
         }
         config._resetTestTimeout?.();
       } else if (event === 'testEnd' && !abort) {
@@ -53,8 +53,8 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         }
 
         if (config.debug && details.runtime > config.timeout * 0.8) {
-          console.log(
-            `# SLOW (${details.runtime.toFixed(0)}ms / ${config.timeout}ms timeout): ${details.fullName.join(' | ')}`,
+          process.stdout.write(
+            `# SLOW (${details.runtime.toFixed(0)}ms / ${config.timeout}ms timeout): ${details.fullName.join(' | ')}\n`,
           );
         }
         config._resetTestTimeout?.();
@@ -64,8 +64,8 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         // preceding this on the same connection are already processed by Node.js.
         config._phase = 'done';
         if (config.debug && config._groupMode) {
-          console.log(
-            `# group done: ${details.passed} passed, ${details.failed} failed (${details.runtime}ms)`,
+          process.stdout.write(
+            `# group done: ${details.passed} passed, ${details.failed} failed (${details.runtime}ms)\n`,
           );
         }
         if (typeof config._testRunDone === 'function') {
@@ -82,8 +82,8 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
   // bundle compilation time and eliminating the "WS never connected" timeout on CI.
   server.get('/tests.js', (_req, res) => {
     const bytes = cachedContent.allTestCode?.length ?? null;
-    console.log(
-      `# [HTTPServer] GET /tests.js → ${bytes !== null ? `${bytes} bytes` : 'NOT READY (allTestCode is null)'}`,
+    process.stdout.write(
+      `# [HTTPServer] GET /tests.js → ${bytes !== null ? `${bytes} bytes` : 'NOT READY (allTestCode is null)'}\n`,
     );
     if (bytes === null) {
       // allTestCode not yet built — serve a JS error so Chrome logs a visible message
@@ -105,8 +105,8 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
 
   server.get('/filtered-tests.js', (_req, res) => {
     const bytes = cachedContent.filteredTestCode?.length ?? null;
-    console.log(
-      `# [HTTPServer] GET /filtered-tests.js → ${bytes !== null ? `${bytes} bytes` : 'NOT READY (filteredTestCode is null)'}`,
+    process.stdout.write(
+      `# [HTTPServer] GET /filtered-tests.js → ${bytes !== null ? `${bytes} bytes` : 'NOT READY (filteredTestCode is null)'}\n`,
     );
     if (bytes === null) {
       res.writeHead(503, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
@@ -196,7 +196,9 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
       fs.createReadStream(filePath).pipe(res);
     }
 
-    console.log(`# [HTTPServer] GET ${url} ${statusCode} - ${new Date() - requestStartedAt}ms`);
+    process.stdout.write(
+      `# [HTTPServer] GET ${url} ${statusCode} - ${new Date() - requestStartedAt}ms\n`,
+    );
   });
 
   return server;

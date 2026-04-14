@@ -1,5 +1,10 @@
-- is stdout during qunitx and its test suite runs, runs in streaming fashion for the ultimate user and developer 
-experience and speed to make everything feel real-time? If not, check to see if it can be optimized, explain it to me and we can optimize it if needed
+Should todos increase the skipCount or should we have another count display for todos? Check how deno and node does it,
+show me options and your suggestion and I'll decide
+
+Should I also first print test case name(when test starts), then print the duration when test ends.. 
+Would this cause issues on parallelization, when multiple tests run, can they ever run right now or in future, and when
+this would ever cause a trouble for the consistency of the output(one line has to be for the test fully, its title and 
+duration).
 
 qunitx-cli JS API should be very usable from outside by JS/TS only, by users of this library. Do them, document it well
 in the codebase and also on the README.md(if needed).
