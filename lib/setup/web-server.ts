@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
-import { replaceHTMLContentMarker } from '../utils/html-content-marker.ts';
+import { injectScript } from '../utils/html.ts';
 import { TAPDisplayTestResult } from '../tap/display-test-result.ts';
 import { blue } from '../utils/color.ts';
 import { pathExists } from '../utils/path-exists.ts';
@@ -373,10 +373,7 @@ function escapeAndInjectTestsToHTML(
   // so the WS 'open' event (fired by the tiny runtime above) is not blocked by compilation.
   // No need to escape </script> here: testRuntimeCode's closing tag is the legitimate script
   // closer, and user test code in tests.js is external (not inlined) so it can't break HTML.
-  return replaceHTMLContentMarker(
-    html,
-    `${testRuntimeCode}\n<script src="${testBundleUrl}" async></script>`,
-  );
+  return injectScript(html, `${testRuntimeCode}\n<script src="${testBundleUrl}" async></script>`);
 }
 
 export { setupWebServer as default };

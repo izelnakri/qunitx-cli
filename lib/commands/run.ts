@@ -1,5 +1,5 @@
 import { setupBrowser, launchBrowser } from '../setup/browser.ts';
-import { shutdownEarlyBrowser } from '../utils/early-chrome.ts';
+import { shutdownPrelaunch } from '../utils/chrome-prelaunch.ts';
 import { openOutputInBrowser } from '../utils/open-output-in-browser.ts';
 import fs from 'node:fs/promises';
 import { normalize } from 'node:path';
@@ -13,8 +13,8 @@ import { setupKeyboardEvents } from '../setup/keyboard-events.ts';
 import { writeOutputStaticFiles } from '../setup/write-output-static-files.ts';
 import { timeCounter } from '../utils/time-counter.ts';
 import { TAPDisplayFinalResult } from '../tap/display-final-result.ts';
-import { readBoilerplate } from '../utils/read-boilerplate.ts';
-import { htmlHasDynamicContentMarker } from '../utils/html-content-marker.ts';
+import { readTemplate } from '../utils/read-template.ts';
+import { isCustomTemplate } from '../utils/html.ts';
 import type { Config, CachedContent } from '../types.ts';
 
 /**
@@ -236,7 +236,7 @@ export async function run(config: Config): Promise<void> {
       clearTimeout(exitTimer);
       clearInterval(keepAlive);
       await browser.close().catch(() => {});
-      await shutdownEarlyBrowser();
+      await shutdownPrelaunch();
       process.exit(exitCode);
     });
   }
@@ -253,7 +253,7 @@ async function buildCachedContent(config: Config, htmlPaths: string[]): Promise<
       const filePath = config.htmlPaths[index];
       const html = buffer.toString();
 
-      if (htmlHasDynamicContentMarker(html)) {
+      if (isCustomTemplate(html)) {
         result.dynamicContentHTMLs[filePath] = html;
         result.htmlPathsToRunTests.push(filePath.replace(config.projectRoot, ''));
       } else {
@@ -300,7 +300,7 @@ async function addCachedContentMainHTML(
       html: cachedContent.dynamicContentHTMLs[mainHTMLPath],
     };
   } else {
-    const html = await readBoilerplate('setup/tests.hbs');
+    const html = await readTemplate('setup/tests.hbs');
     cachedContent.mainHTML = { filePath: `${projectRoot}/test/tests.html`, html };
     cachedContent.assets.add(`${projectRoot}/node_modules/qunitx/vendor/qunit.css`);
   }

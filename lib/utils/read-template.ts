@@ -3,10 +3,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * Reads a boilerplate file by relative path, using the SEA asset store when running as a Node.js binary.
+ * Reads a template file by relative path, using the SEA asset store when running as a Node.js binary.
  * @returns {Promise<string>}
  */
-export async function readBoilerplate(relativePath: string): Promise<string> {
+export async function readTemplate(relativePath: string): Promise<string> {
   const sea = await import('node:sea').catch(() => null);
   if (sea?.isSea()) return sea.getAsset(relativePath, 'utf8');
   const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -25,4 +25,4 @@ export async function readBoilerplate(relativePath: string): Promise<string> {
   );
 }
 
-export { readBoilerplate as default };
+export { readTemplate as default };

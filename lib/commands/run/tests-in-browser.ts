@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import { blue } from '../../utils/color.ts';
-import { shutdownEarlyBrowser } from '../../utils/early-chrome.ts';
+import { shutdownPrelaunch } from '../../utils/chrome-prelaunch.ts';
 import esbuild from 'esbuild';
 import { timeCounter } from '../../utils/time-counter.ts';
 import { runUserModule } from '../../utils/run-user-module.ts';
@@ -156,7 +156,7 @@ export async function runTestsInBrowser(
           connections.server && connections.server.close(),
           connections.browser && connections.browser.close(),
         ]);
-        await shutdownEarlyBrowser();
+        await shutdownPrelaunch();
         return process.exit(config.COUNTER.failCount > 0 ? 1 : 0);
       }
     }
@@ -447,7 +447,7 @@ async function failOnNonWatchMode(
       connections.server && connections.server.close(),
       connections.browser && connections.browser.close(),
     ]);
-    await shutdownEarlyBrowser();
+    await shutdownPrelaunch();
     process.exit(1);
   }
 }

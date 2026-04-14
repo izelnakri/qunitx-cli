@@ -3,7 +3,7 @@ import path from 'node:path';
 import { findProjectRoot } from '../utils/find-project-root.ts';
 import { pathExists } from '../utils/path-exists.ts';
 import { defaultProjectConfigValues } from '../setup/default-project-config-values.ts';
-import { readBoilerplate } from '../utils/read-boilerplate.ts';
+import { readTemplate } from '../utils/read-template.ts';
 
 /** Bootstraps a new qunitx project: writes the test HTML template, updates package.json, and optionally writes tsconfig.json. */
 export async function initializeProject() {
@@ -28,7 +28,7 @@ async function writeTestsHTML(
   config: { htmlPaths: string[]; output: string },
   oldPackageJSON: Record<string, unknown>,
 ): Promise<unknown[]> {
-  const testHTMLTemplateBuffer = await readBoilerplate('setup/tests.hbs');
+  const testHTMLTemplateBuffer = await readTemplate('setup/tests.hbs');
 
   return await Promise.all(
     config.htmlPaths.map(async (htmlPath) => {
@@ -68,7 +68,7 @@ async function rewritePackageJSON(
 async function writeTSConfigIfNeeded(projectRoot: string): Promise<void> {
   const targetPath = `${projectRoot}/tsconfig.json`;
   if (!(await pathExists(targetPath))) {
-    const tsConfigTemplate = await readBoilerplate('setup/tsconfig.json');
+    const tsConfigTemplate = await readTemplate('setup/tsconfig.json');
 
     await fs.writeFile(targetPath, tsConfigTemplate);
 

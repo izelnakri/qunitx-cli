@@ -1,3 +1,5 @@
+- CI failed due to long-running webkit fetching: https://github.com/izelnakri/qunitx-cli/actions/runs/24391412726/job/71238123649. Why wasn't this cached, I had many commit pushes should have been cached too. Seems like we need to fix the workflow
+
 - is stdout during qunitx and its test suite runs, runs in streaming fashion for the ultimate user and developer 
 experience and speed to make everything feel real-time? If not, check to see if it can be optimized, explain it to me and we can optimize it if needed
 
@@ -37,3 +39,11 @@ across cores but that thread pool doesnt get utilized or doesnt utilize all my c
 Am I correct with my assumption?
 
 --refactor the `test/helpers/before-script-async.ts` while keeping a similar behavior(or at least similar use when the file is used in tests it should be a backend async service I suspect that we verify in tests it gets loaded correctly) so I can remove express and cors devDependencies from my project. Also rewrite expressApp name to something correct now in my runtime, since I dont use express anymore, should it be `webServer` instead?
+
+- come up with an answer for jsx and tsx
+
+- maybe add persisten-daemon mode to shave off ~800ms saved on every run after the first.
+  Every qunitx invocation today: Node startup → load 40+ files → connect to Chrome → esbuild → navigate → run → exit. A qunitx serve daemon would keep Chrome alive and hold the
+  esbuild incremental context warm. qunitx run test/file.ts sends the file list over a Unix socket and streams TAP back. Subsequent runs: ~200–300ms (just esbuild rebuild +
+  navigate). This is the single biggest UX improvement possible for developers running tests frequently in a non-watch workflow.
+

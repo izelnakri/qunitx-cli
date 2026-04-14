@@ -143,7 +143,7 @@ export interface Connections {
 
 /**
  * A Chrome process started via CDP pre-launch before `playwright-core` has loaded.
- * Stored in a module-level promise in `early-chrome.ts` and consumed by `browser.ts`.
+ * Stored in a module-level promise in `chrome-prelaunch.ts` and consumed by `browser.ts`.
  */
 export interface EarlyChrome {
   /** The spawned Chrome child process. */

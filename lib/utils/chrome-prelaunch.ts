@@ -25,21 +25,21 @@ const { browserFromArgv, openFromArgv, watchFromArgv } = process.argv.reduce(
 // With --open alone, qunitx exits after tests complete; the detached browser is opened separately.
 const openWatchMode = openFromArgv && watchFromArgv;
 
-// Stored so the process.on('exit') safety net and shutdownEarlyBrowser() can reach Chrome.
+// Stored so the process.on('exit') safety net and shutdownPrelaunch() can reach Chrome.
 let earlyChrome: import('../types.ts').EarlyChrome | null = null;
 
 if (!openWatchMode) {
   process.on('exit', () => {
     if (!earlyChrome) return;
     // Last-resort kill: fires in edge cases where process.exit() is called without going
-    // through shutdownEarlyBrowser() (e.g. buildFSTree ENOENT, signal kills). The normal
-    // path calls shutdownEarlyBrowser() first, so Chrome is already dead here and this is
+    // through shutdownPrelaunch() (e.g. buildFSTree ENOENT, signal kills). The normal
+    // path calls shutdownPrelaunch() first, so Chrome is already dead here and this is
     // a no-op. SIGKILL is used so Chrome cannot stall the exit.
     killProcessGroup(earlyChrome.proc.pid!);
   });
 }
 
-perfLog('early-chrome.js: module evaluated');
+perfLog('chrome-prelaunch.ts: module evaluated');
 
 /**
  * Kills the pre-launched Chrome process and awaits its async temp-dir cleanup.
@@ -47,7 +47,7 @@ perfLog('early-chrome.js: module evaluated');
  * async rm() inside preLaunchChrome's close handler can run to completion.
  * Safe to call multiple times or when Chrome was never pre-launched (no-op).
  */
-export async function shutdownEarlyBrowser(): Promise<void> {
+export async function shutdownPrelaunch(): Promise<void> {
   if (!earlyChrome) return;
   const { shutdown } = earlyChrome;
   earlyChrome = null; // prevent double-shutdown
@@ -58,15 +58,15 @@ export async function shutdownEarlyBrowser(): Promise<void> {
  * Resolves to `{ proc, cdpEndpoint, shutdown }` when Chrome is pre-launched and ready,
  * or `null` if pre-launch was skipped (non-run command or non-chromium browser).
  */
-export const earlyBrowserPromise =
+export const prelaunchPromise =
   isRunCommand && browserFromArgv === 'chromium'
     ? findChrome()
         .then((chromePath) => {
-          perfLog('early-chrome.js: findChrome resolved', chromePath);
+          perfLog('chrome-prelaunch.ts: findChrome resolved', chromePath);
           return preLaunchChrome(chromePath, CHROMIUM_ARGS, !openWatchMode);
         })
         .then((info) => {
-          perfLog('early-chrome.js: Chrome CDP ready', info?.cdpEndpoint ?? null);
+          perfLog('chrome-prelaunch.ts: Chrome CDP ready', info?.cdpEndpoint ?? null);
           if (info) earlyChrome = info;
           return info;
         })

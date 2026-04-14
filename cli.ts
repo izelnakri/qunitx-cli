@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import process from 'node:process';
-import './lib/utils/early-chrome.ts';
+import './lib/utils/chrome-prelaunch.ts';
 import { displayHelpOutput } from './lib/commands/help.ts';
 import { initializeProject } from './lib/commands/init.ts';
 import { generateTestFiles } from './lib/commands/generate.ts';

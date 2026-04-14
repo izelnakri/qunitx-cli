@@ -2,7 +2,7 @@ import { setupWebServer } from './web-server.ts';
 import { bindServerToPort } from './bind-server-to-port.ts';
 import { findChrome } from '../utils/find-chrome.ts';
 import { CHROMIUM_ARGS } from '../utils/chromium-args.ts';
-import { earlyBrowserPromise } from '../utils/early-chrome.ts';
+import { prelaunchPromise } from '../utils/chrome-prelaunch.ts';
 import { perfLog } from '../utils/perf-logger.ts';
 import type { Browser } from 'playwright-core';
 import type { Config, CachedContent, Connections } from '../types.ts';
@@ -11,7 +11,7 @@ import type { Config, CachedContent, Connections } from '../types.ts';
 // browser.js is intentionally the first import in run.js so playwright-core
 // starts loading before heavier deps (esbuild, chokidar) queue up I/O reads
 // and saturate libuv's thread pool, which would delay the dynamic import resolution.
-// early-chrome.ts (statically imported by cli.ts) already started Chrome pre-launch,
+// chrome-prelaunch.ts (statically imported by cli.ts) already started Chrome pre-launch,
 // so both race in parallel — Chrome is typically ready when playwright-core finishes.
 const playwrightCorePromise = import('playwright-core');
 perfLog('browser.js: playwright-core import started');
@@ -28,19 +28,19 @@ export async function launchBrowser(config: Config): Promise<Browser> {
 
   if (browserName === 'chromium') {
     const waitStart = Date.now();
-    const [playwrightCore, earlyChrome] = await Promise.all([
+    const [playwrightCore, prelaunch] = await Promise.all([
       playwrightCorePromise,
-      earlyBrowserPromise,
+      prelaunchPromise,
     ]);
     perfLog(
-      `browser.js: playwright-core + earlyChrome resolved in ${Date.now() - waitStart}ms, earlyChrome:`,
-      earlyChrome?.cdpEndpoint ?? null,
+      `browser.js: playwright-core + prelaunch resolved in ${Date.now() - waitStart}ms, prelaunch:`,
+      prelaunch?.cdpEndpoint ?? null,
     );
 
-    if (earlyChrome) {
+    if (prelaunch) {
       const connectStart = Date.now();
       const browser = await playwrightCore.chromium.connectOverCDP({
-        endpointURL: earlyChrome.cdpEndpoint,
+        endpointURL: prelaunch.cdpEndpoint,
       });
       perfLog(`browser.js: connectOverCDP took ${Date.now() - connectStart}ms`);
       return browser;

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import { green } from '../utils/color.ts';
 import { findProjectRoot } from '../utils/find-project-root.ts';
 import { pathExists } from '../utils/path-exists.ts';
-import { readBoilerplate } from '../utils/read-boilerplate.ts';
+import { readTemplate } from '../utils/read-template.ts';
 import { convertToPascalCase } from '../utils/convert-to-pascal-case.ts';
 
 function pathToModuleName(filePath: string): string {
@@ -30,7 +30,7 @@ export async function generateTestFiles() {
     return;
   }
 
-  const testJSContent = await readBoilerplate('test.js');
+  const testJSContent = await readTemplate('test.js');
   const targetFolderPaths = path.split('/');
 
   targetFolderPaths.pop();
