@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.18.0] - 2026-04-14
+[`v0.17.8...v0.18.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.17.8...v0.18.0)
+
+### Bug Fixes
+- Scope Chrome dir leak check to dirs created by this test's run — 2026-04-14 by [@izelnakri](https://github.com/izelnakri) ([`edc0c2f`](https://github.com/izelnakri/qunitx-cli/commit/edc0c2fbc6811cd143d720402f1337e399ef7d66))
+- Wait for child exit after SIGKILL before releasing semaphore permit — 2026-04-14 by [@izelnakri](https://github.com/izelnakri) ([`eddcde1`](https://github.com/izelnakri/qunitx-cli/commit/eddcde170df6816bba6cde7ace88e5d584bc105e))
+
+### Features
+- Overhaul TAP output — stream via process.stdout.write, fix serialization, add unit tests — 2026-04-14 by [@izelnakri](https://github.com/izelnakri) ([`b3c6234`](https://github.com/izelnakri/qunitx-cli/commit/b3c6234ed5216ea345b1e01f7b02278e79f968ff))
+
 ## [0.17.8] - 2026-04-14
 [`v0.17.7...v0.17.8`](https://github.com/izelnakri/qunitx-cli/compare/v0.17.7...v0.17.8)
 
