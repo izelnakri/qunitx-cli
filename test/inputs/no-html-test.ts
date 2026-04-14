@@ -81,59 +81,70 @@ async function runWatch(dir: string, id: string) {
 }
 
 module('No-HTML project tests', { concurrency: true }, (_hooks, moduleMetadata) => {
-  // Scenario A: qunitx init was never run — no htmlPaths in package.json, no tests.html.
-  test('runs in normal mode when qunitx init was never run (no htmlPaths configured)', async (assert) => {
-    const { dir, id } = await makeMinimalProject({ withHtmlPaths: false });
-    const outputDir = `${process.cwd()}/tmp/run-${randomUUID()}`;
+  // Both normal-mode scenarios (no htmlPaths config vs missing htmlPaths file) are
+  // independent — run them concurrently within a single test so both Chrome instances
+  // acquire their semaphore slots simultaneously (wall time = max(a,b), not a+b).
+  test('runs in normal mode regardless of whether htmlPaths is configured', async (assert) => {
+    const [projectA, projectB] = await Promise.all([
+      makeMinimalProject({ withHtmlPaths: false }),
+      makeMinimalProject({ withHtmlPaths: true }),
+    ]);
 
-    const permit = await acquireBrowser();
-    const result = await execAsync(`node ${CLI} tests/passing-tests.ts --output=${outputDir}`, {
-      cwd: dir,
-      timeout: 60000,
-    }).finally(() => permit.release());
+    const [permitA, permitB] = await Promise.all([acquireBrowser(), acquireBrowser()]);
+    const [resultA, resultB] = await Promise.all([
+      execAsync(
+        `node ${CLI} tests/passing-tests.ts --output=${process.cwd()}/tmp/run-${randomUUID()}`,
+        {
+          cwd: projectA.dir,
+          timeout: 60000,
+        },
+      ).finally(() => permitA.release()),
+      execAsync(
+        `node ${CLI} tests/passing-tests.ts --output=${process.cwd()}/tmp/run-${randomUUID()}`,
+        {
+          cwd: projectB.dir,
+          timeout: 60000,
+        },
+      ).finally(() => permitB.release()),
+    ]);
 
-    assert.includes(result, 'TAP version 13');
-    assert.passingTestCaseFor(result, { moduleName: id });
-    assert.tapResult(result, { testCount: 3 });
+    // Scenario A: no htmlPaths configured (qunitx init never run)
+    assert.includes(resultA, 'TAP version 13');
+    assert.passingTestCaseFor(resultA, { moduleName: projectA.id });
+    assert.tapResult(resultA, { testCount: 3 });
+
+    // Scenario B: htmlPaths configured but test/tests.html was deleted
+    assert.includes(resultB, 'TAP version 13');
+    assert.passingTestCaseFor(resultB, { moduleName: projectB.id });
+    assert.tapResult(resultB, { testCount: 3 });
   });
 
-  test('runs in --watch mode when qunitx init was never run (no htmlPaths configured)', async (assert) => {
-    const { dir, id } = await makeMinimalProject({ withHtmlPaths: false });
-    const stdout = await runWatch(dir, id);
+  // Same pairing for watch mode.
+  test('runs in --watch mode regardless of whether htmlPaths is configured', async (assert) => {
+    const [projectA, projectB] = await Promise.all([
+      makeMinimalProject({ withHtmlPaths: false }),
+      makeMinimalProject({ withHtmlPaths: true }),
+    ]);
 
-    assert.includes({ stdout }, 'TAP version 13');
-    assert.passingTestCaseFor({ stdout }, { moduleName: id });
-    assert.tapResult({ stdout }, { testCount: 3 });
-    assert.includes({ stdout }, 'Watching files...');
-    assert.includes({ stdout }, 'http://localhost:');
-    assert.includes({ stdout }, 'Press "qq"');
-  });
+    const [stdoutA, stdoutB] = await Promise.all([
+      runWatch(projectA.dir, projectA.id),
+      runWatch(projectB.dir, projectB.id),
+    ]);
 
-  // Scenario B: qunitx init was run (htmlPaths configured) but tests.html was deleted.
-  test('runs in normal mode when htmlPaths is configured but test/tests.html was deleted', async (assert) => {
-    const { dir, id } = await makeMinimalProject({ withHtmlPaths: true });
-    const outputDir = `${process.cwd()}/tmp/run-${randomUUID()}`;
+    // Scenario A: no htmlPaths configured
+    assert.includes({ stdout: stdoutA }, 'TAP version 13');
+    assert.passingTestCaseFor({ stdout: stdoutA }, { moduleName: projectA.id });
+    assert.tapResult({ stdout: stdoutA }, { testCount: 3 });
+    assert.includes({ stdout: stdoutA }, 'Watching files...');
+    assert.includes({ stdout: stdoutA }, 'http://localhost:');
+    assert.includes({ stdout: stdoutA }, 'Press "qq"');
 
-    const permit = await acquireBrowser();
-    const result = await execAsync(`node ${CLI} tests/passing-tests.ts --output=${outputDir}`, {
-      cwd: dir,
-      timeout: 60000,
-    }).finally(() => permit.release());
-
-    assert.includes(result, 'TAP version 13');
-    assert.passingTestCaseFor(result, { moduleName: id });
-    assert.tapResult(result, { testCount: 3 });
-  });
-
-  test('runs in --watch mode when htmlPaths is configured but test/tests.html was deleted', async (assert) => {
-    const { dir, id } = await makeMinimalProject({ withHtmlPaths: true });
-    const stdout = await runWatch(dir, id);
-
-    assert.includes({ stdout }, 'TAP version 13');
-    assert.passingTestCaseFor({ stdout }, { moduleName: id });
-    assert.tapResult({ stdout }, { testCount: 3 });
-    assert.includes({ stdout }, 'Watching files...');
-    assert.includes({ stdout }, 'http://localhost:');
-    assert.includes({ stdout }, 'Press "qq"');
+    // Scenario B: htmlPaths configured but tests.html deleted
+    assert.includes({ stdout: stdoutB }, 'TAP version 13');
+    assert.passingTestCaseFor({ stdout: stdoutB }, { moduleName: projectB.id });
+    assert.tapResult({ stdout: stdoutB }, { testCount: 3 });
+    assert.includes({ stdout: stdoutB }, 'Watching files...');
+    assert.includes({ stdout: stdoutB }, 'http://localhost:');
+    assert.includes({ stdout: stdoutB }, 'Press "qq"');
   });
 });

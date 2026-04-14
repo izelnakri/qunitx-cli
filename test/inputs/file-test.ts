@@ -3,115 +3,116 @@ import '../helpers/custom-asserts.ts';
 import shell, { shellFails } from '../helpers/shell.ts';
 
 module('File Input Tests', { concurrency: true }, (_hooks, moduleMetadata) => {
-  test('testing a single passing js file with works, console output supressed', async (assert, testMetadata) => {
-    const result = await shell('node cli.ts test/fixtures/passing-tests.js', {
-      ...moduleMetadata,
-      ...testMetadata,
-    });
+  // Each paired test runs two `node cli.ts` invocations concurrently via Promise.all.
+  // Both semaphore slots are acquired simultaneously, so wall time = max(a, b) not a + b.
+
+  test('testing passing js file: without and with --debug', async (assert, testMetadata) => {
+    const [result, debugResult] = await Promise.all([
+      shell('node cli.ts test/fixtures/passing-tests.js', { ...moduleMetadata, ...testMetadata }),
+      shell('node cli.ts test/fixtures/passing-tests.js --debug', {
+        ...moduleMetadata,
+        ...testMetadata,
+      }),
+    ]);
 
     assert.passingTestCaseFor(result, { testNo: 1, moduleName: '{{moduleName}}' });
     assert.tapResult(result, { testCount: 3 });
-  });
 
-  test('testing a single passing js file with --debug works', async (assert, testMetadata) => {
-    const result = await shell('node cli.ts test/fixtures/passing-tests.js --debug', {
-      ...moduleMetadata,
-      ...testMetadata,
-    });
-
-    assert.hasDebugURL(result);
-    assert.includes(result, 'TAP version 13');
-    assert.passingTestCaseFor(result, {
+    assert.hasDebugURL(debugResult);
+    assert.includes(debugResult, 'TAP version 13');
+    assert.passingTestCaseFor(debugResult, {
       debug: true,
       testNo: 1,
       moduleName: '{{moduleName}}',
     });
-    assert.tapResult(result, { testCount: 3 });
+    assert.tapResult(debugResult, { testCount: 3 });
   });
 
-  test('testing a single failing js file works', async (assert, testMetadata) => {
-    const cmd = await shellFails('node cli.ts test/fixtures/failing-tests.js', {
-      ...moduleMetadata,
-      ...testMetadata,
-    });
+  test('testing failing js file: without and with --debug', async (assert, testMetadata) => {
+    const [cmd, debugCmd] = await Promise.all([
+      shellFails('node cli.ts test/fixtures/failing-tests.js', {
+        ...moduleMetadata,
+        ...testMetadata,
+      }),
+      shellFails('node cli.ts test/fixtures/failing-tests.js --debug', {
+        ...moduleMetadata,
+        ...testMetadata,
+      }),
+    ]);
+
     assert.exitCode(cmd, 1, 'expected shell to exit non-zero due to failing tests');
     assert.includes(cmd, 'TAP version 13');
     assert.failingTestCaseFor(cmd, { testNo: 1, moduleName: '{{moduleName}}' });
     assert.outputContains(
       cmd,
-      {
-        contains: [/actual:\n\s+firstName: Izel/, /expected:\n\s+firstName: Isaac/],
-      },
+      { contains: [/actual:\n\s+firstName: Izel/, /expected:\n\s+firstName: Isaac/] },
       'deepEqual failure shows structured YAML object diff',
     );
     assert.tapResult(cmd, { testCount: 4, failCount: 3 });
+
+    assert.exitCode(
+      debugCmd,
+      1,
+      'debug mode: expected shell to exit non-zero due to failing tests',
+    );
+    assert.includes(debugCmd, 'TAP version 13');
+    assert.failingTestCaseFor(debugCmd, { debug: true, testNo: 1, moduleName: '{{moduleName}}' });
+    assert.tapResult(debugCmd, { testCount: 4, failCount: 3 });
   });
 
-  test('testing a single failing js file with --debug works', async (assert, testMetadata) => {
-    const cmd = await shellFails('node cli.ts test/fixtures/failing-tests.js --debug', {
-      ...moduleMetadata,
-      ...testMetadata,
-    });
-    assert.exitCode(cmd, 1, 'expected shell to exit non-zero due to failing tests');
-    assert.includes(cmd, 'TAP version 13');
-    assert.failingTestCaseFor(cmd, { debug: true, testNo: 1, moduleName: '{{moduleName}}' });
-    assert.tapResult(cmd, { testCount: 4, failCount: 3 });
-  });
-
-  test('testing a single passing ts file works, console output supressed', async (assert, testMetadata) => {
-    const result = await shell('node cli.ts test/fixtures/passing-tests.ts', {
-      ...moduleMetadata,
-      ...testMetadata,
-    });
+  test('testing passing ts file: without and with --debug', async (assert, testMetadata) => {
+    const [result, debugResult] = await Promise.all([
+      shell('node cli.ts test/fixtures/passing-tests.ts', { ...moduleMetadata, ...testMetadata }),
+      shell('node cli.ts test/fixtures/passing-tests.ts --debug', {
+        ...moduleMetadata,
+        ...testMetadata,
+      }),
+    ]);
 
     assert.includes(result, 'TAP version 13');
     assert.passingTestCaseFor(result, { testNo: 1, moduleName: '{{moduleName}}' });
     assert.tapResult(result, { testCount: 3 });
-  });
 
-  test('testing a single passing ts file with --debug works', async (assert, testMetadata) => {
-    const result = await shell('node cli.ts test/fixtures/passing-tests.ts --debug', {
-      ...moduleMetadata,
-      ...testMetadata,
-    });
-
-    assert.hasDebugURL(result);
-    assert.includes(result, 'TAP version 13');
-    assert.passingTestCaseFor(result, {
+    assert.hasDebugURL(debugResult);
+    assert.includes(debugResult, 'TAP version 13');
+    assert.passingTestCaseFor(debugResult, {
       debug: true,
       testNo: 1,
       moduleName: '{{moduleName}}',
     });
-    assert.tapResult(result, { testCount: 3 });
+    assert.tapResult(debugResult, { testCount: 3 });
   });
 
-  test('testing a single failing ts file works', async (assert, testMetadata) => {
-    const cmd = await shellFails('node cli.ts test/fixtures/failing-tests.ts', {
-      ...moduleMetadata,
-      ...testMetadata,
-    });
+  test('testing failing ts file: without and with --debug', async (assert, testMetadata) => {
+    const [cmd, debugCmd] = await Promise.all([
+      shellFails('node cli.ts test/fixtures/failing-tests.ts', {
+        ...moduleMetadata,
+        ...testMetadata,
+      }),
+      shellFails('node cli.ts test/fixtures/failing-tests.ts --debug', {
+        ...moduleMetadata,
+        ...testMetadata,
+      }),
+    ]);
+
     assert.exitCode(cmd, 1, 'expected shell to exit non-zero due to failing tests');
     assert.includes(cmd, 'TAP version 13');
     assert.failingTestCaseFor(cmd, { testNo: 1, moduleName: '{{moduleName}}' });
     assert.outputContains(
       cmd,
-      {
-        contains: [/actual:\n\s+firstName: Izel/, /expected:\n\s+firstName: Isaac/],
-      },
+      { contains: [/actual:\n\s+firstName: Izel/, /expected:\n\s+firstName: Isaac/] },
       'deepEqual failure shows structured YAML object diff',
     );
     assert.tapResult(cmd, { testCount: 4, failCount: 3 });
-  });
 
-  test('testing a single failing ts file with --debug works', async (assert, testMetadata) => {
-    const cmd = await shellFails('node cli.ts test/fixtures/failing-tests.ts --debug', {
-      ...moduleMetadata,
-      ...testMetadata,
-    });
-    assert.exitCode(cmd, 1, 'expected shell to exit non-zero due to failing tests');
-    assert.includes(cmd, 'TAP version 13');
-    assert.failingTestCaseFor(cmd, { debug: true, testNo: 1, moduleName: '{{moduleName}}' });
-    assert.tapResult(cmd, { testCount: 4, failCount: 3 });
+    assert.exitCode(
+      debugCmd,
+      1,
+      'debug mode: expected shell to exit non-zero due to failing tests',
+    );
+    assert.includes(debugCmd, 'TAP version 13');
+    assert.failingTestCaseFor(debugCmd, { debug: true, testNo: 1, moduleName: '{{moduleName}}' });
+    assert.tapResult(debugCmd, { testCount: 4, failCount: 3 });
   });
 
   test('test.skip produces "ok ... # skip" TAP lines and test.todo produces "not ok ... # skip" without counting as failures', async (assert, testMetadata) => {

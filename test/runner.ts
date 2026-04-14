@@ -5,6 +5,13 @@
  * cleaned up when the test run finishes. Its port is forwarded to all test worker threads
  * via the QUNITX_SEMAPHORE_PORT environment variable.
  *
+ * Three-phase execution:
+ *   Phase 1 — fast suite: all *-test.ts except watch-rerun. These complete in seconds.
+ *   Phase 2 — watch-rerun suite: runs alone so its 17 long-lived Chrome slots (17–37 s each)
+ *              don't starve Phase 1 tests. Without this separation, Phase 1 tests spend
+ *              35–57 s waiting in the semaphore queue despite taking only ~2 s to execute.
+ *   Phase 3 — leak tests (*-leak.ts): isolated after a sweep so they see clean /proc + /tmp.
+ *
  * The semaphore is a throttle ceiling, not a speedup mechanism. Tests run with
  * { concurrency: true } so they all fire in parallel; the semaphore caps concurrent
  * Chrome instances at availableParallelism() to keep the queue full and busy without
@@ -26,34 +33,47 @@ const cliFiles = watchMode ? [] : process.argv.slice(2);
 
 // Clearing artifacts, starting the semaphore server, and discovering test files are all
 // independent — run them concurrently to cut startup time.
-const [, semaphore, [mainFiles, leakFiles]] = await Promise.all([
+const [, semaphore, [fastFiles, watchReruns, leakFiles]] = await Promise.all([
   fs.rm('./tmp', { recursive: true, force: true }),
   createSemaphoreServer(availableParallelism()),
   cliFiles.length > 0
-    ? Promise.resolve([cliFiles, []] as [string[], string[]])
+    ? Promise.resolve([cliFiles, [], []] as [string[], string[], string[]])
     : Promise.all([
-        // *-test.ts  — main suite, runs concurrently.
+        // *-test.ts (excluding watch-rerun) — fast suite, runs concurrently.
+        // watch-rerun-test.ts  — slow suite; runs alone in Phase 2 so its 17 long-lived
+        //                        Chrome slots don't starve Phase 1 tests.
         // *-leak.ts  — isolation tests; must run after the main suite + sweep because they
         //              check global state (/tmp dirs, /proc) and would see false orphans
         //              from concurrent watch-mode tests that legitimately SIGKILL node-cli.
-        Array.fromAsync(fs.glob('test/**/*-test.ts')),
+        Array.fromAsync(fs.glob('test/**/*-test.ts')).then((files) =>
+          files.filter((f) => !f.includes('watch-rerun')),
+        ),
+        Array.fromAsync(fs.glob('test/**/watch-rerun-test.ts')),
         Array.fromAsync(fs.glob('test/**/*-leak.ts')),
       ]),
 ]);
 
-// Phase 1: main suite (concurrent)
-const exitCode = await spawnTests(mainFiles);
+// Phase 1: fast suite — all tests except watch-rerun (concurrent)
+const exitCode1 = await spawnTests(fastFiles);
 
-// Kill Chrome processes orphaned when node-cli was SIGKILL'd by shellWatch's grace-period
-// timeout. Chrome runs with detached: true so it survives without its exit handler running.
+// Sweep between phases: kill Chrome orphaned by SIGKILL'd watch-test.ts children before
+// Phase 2 runs, so orphans from Phase 1 don't inflate the Phase 3 leak-test counts.
 await sweepOrphanedChrome();
 
-// Phase 2: resource-leak tests, isolated after the sweep so they see a clean state.
+// Phase 2: watch-rerun suite — runs alone so its long-lived Chrome slots don't starve
+// Phase 1 tests. Skipped in watch mode (watch-rerun tests are not meaningful there).
+const exitCode2 = !watchMode && watchReruns.length > 0 ? await spawnTests(watchReruns) : 0;
+
+// Sweep again: kill Chrome orphaned by the watch-rerun tests (SIGKILL'd on grace-period
+// timeout) before the leak tests inspect /tmp and /proc.
+await sweepOrphanedChrome();
+
+// Phase 3: resource-leak tests, isolated after both sweeps so they see a clean state.
 // Skipped in watch mode — interactive, and leak tests are not meaningful there.
-const leakExitCode = !watchMode && leakFiles.length > 0 ? await spawnTests(leakFiles) : 0;
+const exitCode3 = !watchMode && leakFiles.length > 0 ? await spawnTests(leakFiles) : 0;
 
 semaphore.close();
-process.exit(exitCode || leakExitCode);
+process.exit(exitCode1 || exitCode2 || exitCode3);
 
 function spawnTests(files: string[]): Promise<number> {
   return new Promise((resolve) => {
@@ -130,7 +150,7 @@ async function sweepOrphanedChrome(): Promise<void> {
             500,
           );
           warnTimer.unref();
-          // Phase 1: wait for the Chrome main PIDs the sweep killed to fully exit.
+          // Wait for the Chrome main PIDs the sweep killed to fully exit.
           while (
             [...killedPids].some((pid) => {
               try {
