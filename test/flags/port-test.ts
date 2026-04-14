@@ -159,21 +159,44 @@ async function withRunningServer(
   const permit = await acquireBrowser();
   const child = spawn(process.execPath, cmd.split(/\s+/).slice(1));
 
+  let stderrBuf = '';
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderrBuf += chunk.toString();
+  });
+
   let accum = '';
+  let urlFound = false;
   const port = await new Promise<number>((resolve, reject) => {
     const timer = setTimeout(
-      () => reject(new Error(`withRunningServer timed out for: ${cmd}`)),
+      () =>
+        reject(
+          new Error(
+            `withRunningServer timed out for: ${cmd}\nstdout: ${accum}\nstderr: ${stderrBuf}`,
+          ),
+        ),
       45000,
     );
     child.stdout.on('data', (chunk: Buffer) => {
       accum += chunk.toString();
       const match = accum.match(/http:\/\/localhost:(\d+)/);
       if (match) {
+        urlFound = true;
         clearTimeout(timer);
         resolve(Number(match[1]));
       }
     });
-    child.stderr.resume();
+    // If the child exits before printing the URL (e.g. port conflict after retries
+    // exhausted, or Chrome error), reject immediately so the test fails fast with
+    // actionable output rather than waiting the full 45s timeout.
+    child.once('exit', (code) => {
+      if (urlFound) return;
+      clearTimeout(timer);
+      reject(
+        new Error(
+          `withRunningServer: child exited with code ${code} before printing URL\nstdout: ${accum}\nstderr: ${stderrBuf}`,
+        ),
+      );
+    });
     child.on('error', reject);
   });
 

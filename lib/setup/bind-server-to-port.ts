@@ -4,8 +4,11 @@ import type { HTTPServer } from '../servers/http.ts';
 // Covers the TOCTOU window between findFreePort() and the CLI's own bind: another concurrent
 // process may grab the port in that gap. Each retry waits RETRY_DELAY_MS before trying again.
 // A genuinely occupied port (held indefinitely) exhausts all retries and still throws.
-const EXPLICIT_PORT_RETRIES = 5;
-const EXPLICIT_PORT_RETRY_DELAY_MS = 20;
+//
+// Budget: 20 retries × 50ms = 1000ms total. This covers the CLI startup window (~300–800ms on a
+// loaded CI machine) between the test releasing the port and bindServerToPort actually running.
+const EXPLICIT_PORT_RETRIES = 20;
+const EXPLICIT_PORT_RETRY_DELAY_MS = 50;
 
 /**
  * Binds an HTTPServer to `config.port` (default 1234).
