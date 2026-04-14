@@ -10,7 +10,7 @@
     "npm:js-yaml@^4.1.1": "4.1.1",
     "npm:playwright-core@^1.59.1": "1.59.1",
     "npm:prettier@^3.8.2": "3.8.2",
-    "npm:qunitx@^1.2.1": "1.2.1",
+    "npm:qunitx@^1.2.7": "1.2.7",
     "npm:typescript@^6.0.2": "6.0.2",
     "npm:ws@*": "8.20.0",
     "npm:ws@^8.20.0": "8.20.0"
@@ -485,8 +485,8 @@
         "side-channel"
       ]
     },
-    "qunitx@1.2.1": {
-      "integrity": "sha512-BBH5dcBrChwfNucLuHjkEHUTQU/nwN8UZ1eQCVG3Rtf+AlL87QQdvALSR33QNGLsxDT30HLsgbZE/MM7FRO+mw=="
+    "qunitx@1.2.7": {
+      "integrity": "sha512-1doZj3cbqlqUslog+p8+KB37U5zvNroUDWLjw2GfCayXa8E/GZpY71g4HLVrwNFUhluv2/s1xAZ+z37ZVD+iTw=="
     },
     "range-parser@1.2.1": {
       "integrity": "sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg=="
@@ -624,7 +624,7 @@
         "npm:js-yaml@^4.1.1",
         "npm:playwright-core@^1.59.1",
         "npm:prettier@^3.8.2",
-        "npm:qunitx@^1.2.1",
+        "npm:qunitx@^1.2.7",
         "npm:typescript@^6.0.2",
         "npm:ws@^8.20.0"
       ]

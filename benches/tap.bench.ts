@@ -6,8 +6,10 @@
 import TAPDisplayTestResult from "../lib/tap/display-test-result.ts";
 import TAPDisplayFinalResult from "../lib/tap/display-final-result.ts";
 
-// Suppress console output — we're measuring CPU cost, not I/O.
-const noop = () => {};
+// Suppress console output once at module level — patching inside each
+// iteration deoptimises V8's JIT-compiled inline cache for console.log,
+// inflating measurements and creating GC pressure for the entire process.
+console.log = () => {};
 
 const PASSING_DETAILS = {
   status: "passed",
@@ -44,42 +46,30 @@ Deno.bench("tap: display single passing result", {
   baseline: true,
 }, () => {
   const counter = { testCount: 0, passCount: 0, skipCount: 0, failCount: 0, errorCount: 0 };
-  const orig = console.log;
-  console.log = noop;
   TAPDisplayTestResult(counter, PASSING_DETAILS);
-  console.log = orig;
 });
 
 Deno.bench("tap: display single failing result", {
   group: "tap",
 }, () => {
   const counter = { testCount: 0, passCount: 0, skipCount: 0, failCount: 0, errorCount: 0 };
-  const orig = console.log;
-  console.log = noop;
   TAPDisplayTestResult(counter, FAILING_DETAILS);
-  console.log = orig;
 });
 
 Deno.bench("tap: display 100 mixed results", {
   group: "tap",
 }, () => {
   const counter = { testCount: 0, passCount: 0, skipCount: 0, failCount: 0, errorCount: 0 };
-  const orig = console.log;
-  console.log = noop;
   for (let i = 0; i < 80; i++) TAPDisplayTestResult(counter, PASSING_DETAILS);
   for (let i = 0; i < 10; i++) TAPDisplayTestResult(counter, FAILING_DETAILS);
   for (let i = 0; i < 10; i++) TAPDisplayTestResult(counter, SKIPPED_DETAILS);
-  console.log = orig;
 });
 
 Deno.bench("tap: display final result summary", {
   group: "tap",
 }, () => {
-  const orig = console.log;
-  console.log = noop;
   TAPDisplayFinalResult(
     { testCount: 100, passCount: 80, skipCount: 10, failCount: 10, errorCount: 10 },
     1234,
   );
-  console.log = orig;
 });

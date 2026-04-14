@@ -155,7 +155,14 @@ build-sea:
 # Usage: make release LEVEL=patch|minor|major
 release:
 	@test -n "$(LEVEL)" || (echo "Usage: make release LEVEL=patch|minor|major" && exit 1)
-	@npm whoami 2>/dev/null || npm login
+	@if [ -n "$$(git status --porcelain)" ]; then \
+		echo "WARNING: Uncommitted changes detected — these will NOT be included in the release:"; \
+		git status --short; \
+		echo ""; \
+	fi
+	@eval $$(ssh-agent -s); trap "ssh-agent -k > /dev/null" EXIT; ssh-add
+	@npm whoami > /dev/null 2>&1 || npm login
+	@echo "npm user: $$(npm whoami) | $$(date '+%Y-%m-%d %H:%M:%S %Z')"
 	$(MAKE) check
 	$(MAKE) bench-check
 	npm run test:release
