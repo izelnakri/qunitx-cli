@@ -4,23 +4,32 @@ import os from 'node:os';
 import shell from './helpers/shell.ts';
 
 // Resource leak tests check global state (/tmp dirs, /proc, inotify counts).
-// They run sequentially so no concurrent Chrome processes pollute the scan.
+// Tests within this module run sequentially; other test files may run concurrently.
 module('resource leak tests', () => {
   test(
     'no orphaned Chrome user-data-dirs after a completed run',
     { skip: process.platform !== 'linux' },
     async (assert) => {
+      // Snapshot dirs before our run — dirs already present belong to concurrent test files
+      // (the suite runs with --test-concurrency=16) and must not be counted as our leak.
+      const dirsBefore = new Set(
+        (await fs.readdir(os.tmpdir())).filter((e) => e.startsWith('qunitx-chrome-')),
+      );
+
       await shell('node cli.ts test/fixtures/passing-tests.ts');
 
       const entries = await fs.readdir(os.tmpdir());
-      const chromeDirs = entries.filter((e) => e.startsWith('qunitx-chrome-'));
+      // Only dirs that appeared during our run (not pre-existing from concurrent tests).
+      const chromeDirs = entries.filter(
+        (e) => e.startsWith('qunitx-chrome-') && !dirsBefore.has(e),
+      );
       if (chromeDirs.length === 0) {
         assert.ok(true, 'no Chrome dirs in tmpdir');
         return;
       }
 
-      // With sequential execution there are no concurrent Chrome processes, so any
-      // qunitx-chrome-* dir still present is genuinely orphaned. Scan /proc to
+      // Any qunitx-chrome-* dir that appeared during our run and is still present
+      // after our CLI exits is genuinely orphaned by our run. Scan /proc to
       // produce a useful diagnostic: find which process (if any) holds it as cwd.
       const cwdHolders: string[] = [];
       const procEntries = await fs.readdir('/proc').catch(() => [] as string[]);
