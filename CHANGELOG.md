@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.17.8] - 2026-04-14
+[`v0.17.7...v0.17.8`](https://github.com/izelnakri/qunitx-cli/compare/v0.17.7...v0.17.8)
+
+### Bug Fixes
+- Treat pageerror as hard failure by incrementing failCount — 2026-04-14 by [@izelnakri](https://github.com/izelnakri) ([`cadff59`](https://github.com/izelnakri/qunitx-cli/commit/cadff59aaaf6e0f06efa724b9cafdae75950dedc))
+- Detect child exit early in withRunningServer, widen port retry budget — 2026-04-14 by [@izelnakri](https://github.com/izelnakri) ([`a64857b`](https://github.com/izelnakri/qunitx-cli/commit/a64857b9653269d4cf2b4fe9708d71cd7937a9a7))
+- Always clear _preBuildPromise on first runTestsInBrowser entry — 2026-04-14 by [@izelnakri](https://github.com/izelnakri) ([`d35f80d`](https://github.com/izelnakri/qunitx-cli/commit/d35f80dfa41e0fd830b3d40d02ab0fe10c330925))
+- Increase browser-compat timeout to 30m to break webkit cache bootstrap deadlock — 2026-04-14 by [@izelnakri](https://github.com/izelnakri) ([`92ec6dc`](https://github.com/izelnakri/qunitx-cli/commit/92ec6dcb46c121b2769d369bcd118e0a5134415b))
+- Overhaul regression checker for stable make release — 2026-04-14 by [@izelnakri](https://github.com/izelnakri) ([`bd57740`](https://github.com/izelnakri/qunitx-cli/commit/bd577405516c0478076e466ecd3891a1bd5b9a7a))
+
+### Features
+- Esbuild incremental context for ~2.3x faster watch-mode rebuilds — 2026-04-14 by [@izelnakri](https://github.com/izelnakri) ([`8e0af33`](https://github.com/izelnakri/qunitx-cli/commit/8e0af336f5641a71bf65b85098d79de264c5a6f5))
+- Add assert.timeout() e2e tests, upgrade qunitx to 1.2.7 — 2026-04-14 by [@izelnakri](https://github.com/izelnakri) ([`028a89f`](https://github.com/izelnakri/qunitx-cli/commit/028a89ffe25816bab37fc149b0ff684ef23c50dd))
+
 ## [0.17.7] - 2026-04-13
 [`v0.17.6...v0.17.7`](https://github.com/izelnakri/qunitx-cli/compare/v0.17.6...v0.17.7)
 
