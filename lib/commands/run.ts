@@ -108,7 +108,14 @@ export async function run(config: Config): Promise<void> {
     const groups = splitIntoGroups(allFiles, groupCount);
 
     // Shared COUNTER so TAP test numbers are globally sequential across all groups.
-    config.COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+    config.COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
     config.lastRanTestFiles = allFiles;
 
     const groupConfigs = groups.map((groupFiles, i) => ({

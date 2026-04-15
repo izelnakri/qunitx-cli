@@ -255,11 +255,11 @@ Assert.prototype.failingTestCasesFor = function (output, arrayOfOptions) {
 };
 
 /**
- * assert.tapResult(output, { testCount, failCount?, skipCount? })
+ * assert.tapResult(output, { testCount, failCount?, skipCount?, todoCount? })
  * Asserts that output's TAP summary line matches the expected counts.
  */
 Assert.prototype.tapResult = function (output, options = { testCount: 0, failCount: 0 }) {
-  const { testCount, failCount = 0, skipCount = 0 } = options;
+  const { testCount, failCount = 0, skipCount = 0, todoCount = 0 } = options;
   const { stdout, stderr } = extractOutput(output);
   const expectedPass = testCount - failCount;
   const tail = stdout.slice(-300);
@@ -268,19 +268,21 @@ Assert.prototype.tapResult = function (output, options = { testCount: 0, failCou
   if (failCount) {
     this.pushResult({
       result: new RegExp(
-        `# pass ${expectedPass}\n# skip ${skipCount}\n# fail (${failCount}|${failCount + 1})`,
+        `# pass ${expectedPass}\n# skip ${skipCount}\n# todo ${todoCount}\n# fail (${failCount}|${failCount + 1})`,
       ).test(stdout),
       actual,
-      expected: `# pass ${expectedPass}\n# skip ${skipCount}\n# fail ${failCount}`,
-      message: `TAP summary should show pass=${expectedPass} skip=${skipCount} fail=${failCount}`,
+      expected: `# pass ${expectedPass}\n# skip ${skipCount}\n# todo ${todoCount}\n# fail ${failCount}`,
+      message: `TAP summary should show pass=${expectedPass} skip=${skipCount} todo=${todoCount} fail=${failCount}`,
     });
     return;
   }
 
   this.pushResult({
-    result: new RegExp(`# pass ${testCount}\n# skip ${skipCount}\n# fail 0`).test(stdout),
+    result: new RegExp(
+      `# pass ${testCount}\n# skip ${skipCount}\n# todo ${todoCount}\n# fail 0`,
+    ).test(stdout),
     actual,
-    expected: `# pass ${testCount}\n# skip ${skipCount}\n# fail 0`,
-    message: `TAP summary should show pass=${testCount} skip=${skipCount} fail=0`,
+    expected: `# pass ${testCount}\n# skip ${skipCount}\n# todo ${todoCount}\n# fail 0`,
+    message: `TAP summary should show pass=${testCount} skip=${skipCount} todo=${todoCount} fail=0`,
   });
 };

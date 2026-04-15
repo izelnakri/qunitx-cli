@@ -115,7 +115,7 @@ module('File Input Tests', { concurrency: true }, (_hooks, moduleMetadata) => {
     assert.tapResult(debugCmd, { testCount: 4, failCount: 3 });
   });
 
-  test('test.skip produces "ok ... # skip" TAP lines and test.todo produces "not ok ... # skip" without counting as failures', async (assert, testMetadata) => {
+  test('test.skip produces "ok ... # skip" TAP lines and test.todo produces "not ok ... # TODO" without counting as failures', async (assert, testMetadata) => {
     const result = await shell('node cli.ts test/helpers/skip-todo-tests.ts', {
       ...moduleMetadata,
       ...testMetadata,
@@ -128,9 +128,9 @@ module('File Input Tests', { concurrency: true }, (_hooks, moduleMetadata) => {
     );
     assert.includes(
       result,
-      'todo test is expected to fail # skip',
-      'todo test appears as "not ok ... # skip"',
+      'todo test is expected to fail # TODO',
+      'todo test appears as "not ok ... # TODO"',
     );
-    assert.tapResult(result, { testCount: 1, skipCount: 1 });
+    assert.tapResult(result, { testCount: 1, skipCount: 1, todoCount: 1 });
   });
 });

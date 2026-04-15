@@ -6,7 +6,7 @@ import type { Counter } from '../types.ts';
  */
 
 export function TAPDisplayFinalResult(
-  { testCount, passCount, skipCount, failCount }: Counter,
+  { testCount, passCount, skipCount, todoCount, failCount }: Counter,
   timeTaken: number,
 ): void {
   process.stdout.write('\n');
@@ -14,6 +14,7 @@ export function TAPDisplayFinalResult(
   process.stdout.write(`# tests ${testCount}\n`);
   process.stdout.write(`# pass ${passCount}\n`);
   process.stdout.write(`# skip ${skipCount}\n`);
+  process.stdout.write(`# todo ${todoCount}\n`);
   process.stdout.write(`# fail ${failCount}\n`);
   process.stdout.write(`# duration ${timeTaken}\n`);
   process.stdout.write('\n');

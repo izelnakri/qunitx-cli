@@ -36,7 +36,14 @@ module('TAP | extractStackAt', { concurrency: true }, () => {
 
 module('TAP | TAPDisplayTestResult | output', { concurrency: true }, () => {
   test('null message and stack are not printed in YAML block', (assert) => {
-    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+    const COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
     const output = captureStdout(() => {
       TAPDisplayTestResult(COUNTER, {
         status: 'failed',
@@ -58,7 +65,14 @@ module('TAP | TAPDisplayTestResult | output', { concurrency: true }, () => {
       [false, true, 'actual: false'],
       [null, true, 'actual: null'],
     ] as const) {
-      const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+      const COUNTER = {
+        testCount: 0,
+        failCount: 0,
+        skipCount: 0,
+        todoCount: 0,
+        passCount: 0,
+        errorCount: 0,
+      };
       const output = captureStdout(() => {
         TAPDisplayTestResult(COUNTER, {
           status: 'failed',
@@ -72,7 +86,14 @@ module('TAP | TAPDisplayTestResult | output', { concurrency: true }, () => {
   });
 
   test('non-null message appears in YAML block', (assert) => {
-    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+    const COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
     const output = captureStdout(() => {
       TAPDisplayTestResult(COUNTER, {
         status: 'failed',
@@ -87,7 +108,14 @@ module('TAP | TAPDisplayTestResult | output', { concurrency: true }, () => {
   });
 
   test('Chrome stack: leading whitespace is trimmed so YAML renders "stack: at ..." not "stack:     at ..."', (assert) => {
-    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+    const COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
     const output = captureStdout(() => {
       TAPDisplayTestResult(COUNTER, {
         status: 'failed',
@@ -111,7 +139,14 @@ module('TAP | TAPDisplayTestResult | output', { concurrency: true }, () => {
   });
 
   test('Chrome stack: at field is a clean URL without surrounding parens', (assert) => {
-    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+    const COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
     const output = captureStdout(() => {
       TAPDisplayTestResult(COUNTER, {
         status: 'failed',
@@ -133,7 +168,14 @@ module('TAP | TAPDisplayTestResult | output', { concurrency: true }, () => {
   });
 
   test('YAML block is wrapped in --- / ... delimiters', (assert) => {
-    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+    const COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
     const output = captureStdout(() => {
       TAPDisplayTestResult(COUNTER, {
         status: 'failed',
@@ -147,7 +189,14 @@ module('TAP | TAPDisplayTestResult | output', { concurrency: true }, () => {
   });
 
   test('passed assertion emits "ok N module | test # (Nms)" line', (assert) => {
-    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+    const COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
     const output = captureStdout(() => {
       TAPDisplayTestResult(COUNTER, {
         status: 'passed',
@@ -160,7 +209,14 @@ module('TAP | TAPDisplayTestResult | output', { concurrency: true }, () => {
   });
 
   test('skipped assertion emits "ok N ... # skip" line', (assert) => {
-    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+    const COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
     const output = captureStdout(() => {
       TAPDisplayTestResult(COUNTER, {
         status: 'skipped',
@@ -172,8 +228,15 @@ module('TAP | TAPDisplayTestResult | output', { concurrency: true }, () => {
     assert.includes(output, 'ok 1 myModule | my test # skip\n');
   });
 
-  test('todo assertion emits "not ok N ... # skip" line', (assert) => {
-    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+  test('todo assertion emits "not ok N ... # TODO" line', (assert) => {
+    const COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
     const output = captureStdout(() => {
       TAPDisplayTestResult(COUNTER, {
         status: 'todo',
@@ -182,11 +245,18 @@ module('TAP | TAPDisplayTestResult | output', { concurrency: true }, () => {
         assertions: [],
       });
     });
-    assert.includes(output, 'not ok 1 myModule | my test # skip\n');
+    assert.includes(output, 'not ok 1 myModule | my test # TODO\n');
   });
 
   test('multiple failed assertions each produce their own YAML block', (assert) => {
-    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+    const COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
     const output = captureStdout(() => {
       TAPDisplayTestResult(COUNTER, {
         status: 'failed',
@@ -206,7 +276,14 @@ module('TAP | TAPDisplayTestResult | output', { concurrency: true }, () => {
   });
 
   test('passed assertion within a failed test does not produce a YAML block', (assert) => {
-    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+    const COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
     const output = captureStdout(() => {
       TAPDisplayTestResult(COUNTER, {
         status: 'failed',
@@ -224,7 +301,14 @@ module('TAP | TAPDisplayTestResult | output', { concurrency: true }, () => {
   });
 
   test('todo assertion within a failed test does not produce a YAML block', (assert) => {
-    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+    const COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
     const output = captureStdout(() => {
       TAPDisplayTestResult(COUNTER, {
         status: 'failed',
@@ -244,7 +328,14 @@ module('TAP | TAPDisplayTestResult | output', { concurrency: true }, () => {
 
 module('TAP | TAPDisplayTestResult | COUNTER state', { concurrency: true }, () => {
   test('passed status increments testCount and passCount only', (assert) => {
-    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+    const COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
     captureStdout(() =>
       TAPDisplayTestResult(COUNTER, {
         status: 'passed',
@@ -260,7 +351,14 @@ module('TAP | TAPDisplayTestResult | COUNTER state', { concurrency: true }, () =
   });
 
   test('skipped status increments testCount and skipCount only', (assert) => {
-    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+    const COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
     captureStdout(() =>
       TAPDisplayTestResult(COUNTER, {
         status: 'skipped',
@@ -276,7 +374,14 @@ module('TAP | TAPDisplayTestResult | COUNTER state', { concurrency: true }, () =
   });
 
   test('failed status increments testCount and failCount only (errorCount via assertions)', (assert) => {
-    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+    const COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
     captureStdout(() =>
       TAPDisplayTestResult(COUNTER, {
         status: 'failed',
@@ -292,8 +397,15 @@ module('TAP | TAPDisplayTestResult | COUNTER state', { concurrency: true }, () =
     assert.strictEqual(COUNTER.errorCount, 1);
   });
 
-  test('todo status increments testCount only', (assert) => {
-    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+  test('todo status increments testCount and todoCount only', (assert) => {
+    const COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
     captureStdout(() =>
       TAPDisplayTestResult(COUNTER, {
         status: 'todo',
@@ -303,6 +415,7 @@ module('TAP | TAPDisplayTestResult | COUNTER state', { concurrency: true }, () =
       }),
     );
     assert.strictEqual(COUNTER.testCount, 1);
+    assert.strictEqual(COUNTER.todoCount, 1);
     assert.strictEqual(COUNTER.failCount, 0);
     assert.strictEqual(COUNTER.skipCount, 0);
     assert.strictEqual(COUNTER.passCount, 0);
@@ -311,7 +424,14 @@ module('TAP | TAPDisplayTestResult | COUNTER state', { concurrency: true }, () =
 
 module('TAP | TAPDisplayTestResult | COUNTER', { concurrency: true }, () => {
   test('COUNTER.errorCount is initialized and incremented as a number', (assert) => {
-    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+    const COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
     TAPDisplayTestResult(COUNTER, {
       status: 'failed',
       fullName: ['some module', 'some test'],
@@ -328,7 +448,7 @@ module('TAP | TAPDisplayTestResult | COUNTER', { concurrency: true }, () => {
 
   test('COUNTER starts with no errorCount property and TAPDisplayTestResult leaves it as a valid number', (assert) => {
     // Simulates how COUNTER is actually created in run.js / tests-in-browser.js (no errorCount key)
-    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0 };
+    const COUNTER = { testCount: 0, failCount: 0, skipCount: 0, todoCount: 0, passCount: 0 };
     TAPDisplayTestResult(COUNTER, {
       status: 'failed',
       fullName: ['mod', 'test'],

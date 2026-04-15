@@ -13,8 +13,10 @@ export interface Counter {
   testCount: number;
   /** Number of test cases that had at least one failing assertion. */
   failCount: number;
-  /** Number of test cases marked as skipped or todo. */
+  /** Number of test cases explicitly marked as skipped (not run). */
   skipCount: number;
+  /** Number of test cases marked as todo (expected to fail, work in progress). */
+  todoCount: number;
   /** Number of test cases where every assertion passed. */
   passCount: number;
   /** Number of test cases that threw an unexpected error outside of assertions. */

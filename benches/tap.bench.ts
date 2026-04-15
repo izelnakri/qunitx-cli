@@ -48,21 +48,21 @@ Deno.bench("tap: display single passing result", {
   group: "tap",
   baseline: true,
 }, () => {
-  const counter = { testCount: 0, passCount: 0, skipCount: 0, failCount: 0, errorCount: 0 };
+  const counter = { testCount: 0, passCount: 0, skipCount: 0, todoCount: 0, failCount: 0, errorCount: 0 };
   TAPDisplayTestResult(counter, PASSING_DETAILS);
 });
 
 Deno.bench("tap: display single failing result", {
   group: "tap",
 }, () => {
-  const counter = { testCount: 0, passCount: 0, skipCount: 0, failCount: 0, errorCount: 0 };
+  const counter = { testCount: 0, passCount: 0, skipCount: 0, todoCount: 0, failCount: 0, errorCount: 0 };
   TAPDisplayTestResult(counter, FAILING_DETAILS);
 });
 
 Deno.bench("tap: display 100 mixed results", {
   group: "tap",
 }, () => {
-  const counter = { testCount: 0, passCount: 0, skipCount: 0, failCount: 0, errorCount: 0 };
+  const counter = { testCount: 0, passCount: 0, skipCount: 0, todoCount: 0, failCount: 0, errorCount: 0 };
   for (let i = 0; i < 80; i++) TAPDisplayTestResult(counter, PASSING_DETAILS);
   for (let i = 0; i < 10; i++) TAPDisplayTestResult(counter, FAILING_DETAILS);
   for (let i = 0; i < 10; i++) TAPDisplayTestResult(counter, SKIPPED_DETAILS);
@@ -72,7 +72,7 @@ Deno.bench("tap: display final result summary", {
   group: "tap",
 }, () => {
   TAPDisplayFinalResult(
-    { testCount: 100, passCount: 80, skipCount: 10, failCount: 10, errorCount: 10 },
+    { testCount: 100, passCount: 80, skipCount: 5, todoCount: 5, failCount: 10, errorCount: 10 },
     1234,
   );
 });

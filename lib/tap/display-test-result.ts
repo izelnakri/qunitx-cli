@@ -31,7 +31,8 @@ export function TAPDisplayTestResult(COUNTER: Counter, details: TestDetails): vo
     COUNTER.skipCount++;
     process.stdout.write(`ok ${COUNTER.testCount} ${details.fullName.join(' | ')} # skip\n`);
   } else if (details.status === 'todo') {
-    process.stdout.write(`not ok ${COUNTER.testCount} ${details.fullName.join(' | ')} # skip\n`);
+    COUNTER.todoCount = (COUNTER.todoCount ?? 0) + 1;
+    process.stdout.write(`not ok ${COUNTER.testCount} ${details.fullName.join(' | ')} # TODO\n`);
   } else if (details.status === 'failed') {
     COUNTER.failCount++;
     process.stdout.write(

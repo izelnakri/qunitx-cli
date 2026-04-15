@@ -35,7 +35,7 @@ module('--after script tests for browser mode', { concurrency: true }, (_hooks, 
     assert.includes(
       result,
       JSON.stringify(
-        { testCount: 3, failCount: 0, skipCount: 0, passCount: 3, errorCount: 0 },
+        { testCount: 3, failCount: 0, skipCount: 0, todoCount: 0, passCount: 3, errorCount: 0 },
         null,
         2,
       ),

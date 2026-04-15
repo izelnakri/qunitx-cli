@@ -98,7 +98,14 @@ export async function runTestsInBrowser(
 
   // In group mode the COUNTER is shared across all groups and managed by run.js.
   if (!config._groupMode) {
-    config.COUNTER = { testCount: 0, failCount: 0, skipCount: 0, passCount: 0, errorCount: 0 };
+    config.COUNTER = {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    };
   }
   config.lastRanTestFiles = targetTestFilesToFilter || allTestFilePaths;
 
