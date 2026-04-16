@@ -34,7 +34,13 @@ export async function run(config: Config): Promise<void> {
     // runTestsInBrowser. The promise is stored on cachedContent so runTestsInBrowser can
     // await it inside its own try/catch — errors surface as BundleErrors there, keeping
     // the watcher alive exactly as they would for a normal watch-mode build failure.
-    cachedContent._preBuildPromise = buildTestBundle(config, cachedContent);
+    // Suppress unhandled rejection: esbuild can fail (syntax error, missing file) before
+    // setupBrowser completes. Without .catch(), Node.js detects the rejection during the
+    // Promise.all window and crashes the process. runTestsInBrowser awaits this promise inside
+    // its own try/catch, so the rejection is handled — but only after setupBrowser resolves.
+    const preBuildPromise = buildTestBundle(config, cachedContent);
+    preBuildPromise.catch(() => {});
+    cachedContent._preBuildPromise = preBuildPromise;
 
     const [connections] = await Promise.all([
       setupBrowser(config, cachedContent),
@@ -43,9 +49,14 @@ export async function run(config: Config): Promise<void> {
     config.expressApp = connections.server;
     setupKeyboardEvents(config, cachedContent, connections);
 
-    // Open immediately once server is bound and port is known.
-    // Subsequent reruns are handled by the WebSocket 'refresh' → window.location.reload().
-    if (config.open) {
+    // In headed watch mode (bare --open + --watch), chrome-prelaunch.ts launches Chrome
+    // without --headless=new so the Playwright-controlled window IS the visible browser.
+    // Calling openOutputInBrowser here would open a SECOND Chrome window (a third if the
+    // user already has Chrome running and Chrome sends the URL to each open instance).
+    // For --open=<browser> (a string) Playwright stays headless, so the named binary is
+    // the only visible browser and openOutputInBrowser must still be called.
+    const isHeadedWatchMode = config.open === true && config.watch;
+    if (config.open && !isHeadedWatchMode) {
       void openOutputInBrowser(config);
     }
 
@@ -61,6 +72,16 @@ export async function run(config: Config): Promise<void> {
         connections.browser && connections.browser.close(),
       ]);
       throw error;
+    }
+
+    // In headed watch mode, navigate the Playwright page to the error HTML when the
+    // initial build failed. On a successful run, runTestInsideHTMLFile already navigated
+    // the page; this only fires for the build-error path where page.goto was never called
+    // and the page is still at about:blank.
+    if (isHeadedWatchMode && cachedContent._buildError) {
+      await connections.page
+        .goto(`http://localhost:${config.port}/`, { waitUntil: 'commit', timeout: 5000 })
+        .catch(() => {});
     }
 
     if (config.watch) {
@@ -94,13 +115,10 @@ export async function run(config: Config): Promise<void> {
         },
         async (_path, _event) => {
           connections.server.publish('refresh');
-          // When --open is used, Playwright pre-launches Chrome in headed mode so the user
-          // is watching the Playwright-controlled page. That page has IS_PLAYWRIGHT=true
-          // and ignores the WebSocket 'refresh' message. After a build error,
-          // runTestsInBrowser returned without navigating (build failed before page.goto),
-          // so the headed browser is stuck on the previous test results. Navigate it directly
-          // to http://localhost:PORT/ which now serves the error HTML (_buildError is set).
-          if (config.open && cachedContent._buildError) {
+          // In headed watch mode the Playwright page IS the visible browser (IS_PLAYWRIGHT=true
+          // means it ignores the WS 'refresh' message). Navigate it directly after a build error
+          // so it shows the error HTML rather than stale test results.
+          if (isHeadedWatchMode && cachedContent._buildError) {
             await connections.page
               .goto(`http://localhost:${config.port}/`, { waitUntil: 'commit', timeout: 5000 })
               .catch(() => {});

@@ -240,7 +240,6 @@ export async function runTestsInBrowser(
     }
   } catch (error) {
     config.lastFailedTestFiles = config.lastRanTestFiles;
-    console.log(error);
     const exception = new BundleError(error);
 
     // buildTestBundle's own catch sets _buildError for full-bundle failures before rethrowing.

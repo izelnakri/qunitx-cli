@@ -574,6 +574,36 @@ module('--watch re-run tests', { concurrency: true }, () => {
     }
   });
 
+  test('watch mode starts without crashing when the initial file has a build error', async (assert) => {
+    const { dir, testFile, testContent } = await makeWatchProject();
+
+    // Break the file BEFORE launching qunitx so the first build attempt always fails.
+    await fs.writeFile(testFile, 'this is not valid typescript !!@#$%^&*');
+    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+
+    try {
+      // The process must NOT crash — it should stay alive, print the bundle error, then
+      // set up the watcher and print "Watching files...". Wait for the latter so both
+      // assertions are guaranteed to be present in stdout at assertion time.
+      await session.waitFor(
+        (buf) => buf.includes('Watching files'),
+        'process to stay alive and reach watch-ready state after initial build error',
+      );
+      assert.includes(session.stdout, 'esbuild Bundle Error:');
+      assert.includes(session.stdout, 'Watching files');
+
+      // Fix the file — the watcher must pick it up and run successfully.
+      await fs.writeFile(testFile, testContent);
+      await waitForRunComplete(session, 1, 're-run after initial error fixed');
+
+      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      assert.includes(rerunOutput, '# pass');
+      assert.includes(rerunOutput, '# fail 0');
+    } finally {
+      await session.kill();
+    }
+  });
+
   test('a build error in watch mode prints the error without exiting', async (assert) => {
     const { dir, id, testFile, testContent } = await makeWatchProject();
     const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
