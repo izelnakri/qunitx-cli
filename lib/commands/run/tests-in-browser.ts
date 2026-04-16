@@ -5,6 +5,7 @@ import esbuild from 'esbuild';
 import { timeCounter } from '../../utils/time-counter.ts';
 import { runUserModule } from '../../utils/run-user-module.ts';
 import { TAPDisplayFinalResult } from '../../tap/display-final-result.ts';
+import { buildErrorHTML } from '../../setup/web-server.ts';
 import type { Config, CachedContent, Connections } from '../../types.ts';
 import type { HTTPServer } from '../../servers/http.ts';
 
@@ -14,6 +15,58 @@ class BundleError extends Error {
     this.name = 'BundleError';
     this.message = `esbuild Bundle Error: ${message}`.split('\n').join('\n# ');
   }
+}
+
+// esbuild BuildFailure carries a structured errors array; mirror the shape we actually read.
+interface EsbuildMessage {
+  text: string;
+  location: { file: string; line: number; column: number; length: number; lineText: string } | null;
+  notes: Array<{ text: string }>;
+}
+
+/**
+ * Derives a human-readable error category from an esbuild BuildFailure or a generic Error.
+ * Inspects the first structured esbuild message when available; falls back to string heuristics.
+ */
+export function deriveBuildErrorType(error: unknown): string {
+  const msgs: EsbuildMessage[] = (error as { errors?: EsbuildMessage[] })?.errors ?? [];
+  const text = msgs[0]?.text ?? (error instanceof Error ? error.message : String(error));
+  if (/could not resolve|cannot find module|no such file/i.test(text))
+    return 'Module Resolution Error';
+  if (/unexpected token|expected .* but found|unterminated/i.test(text)) return 'Syntax Error';
+  if (/is not (defined|a function)|cannot read prop/i.test(text)) return 'Reference Error';
+  return 'Build Error';
+}
+
+/**
+ * Formats esbuild BuildFailure messages into clean human-readable text (no ANSI codes).
+ * When given a structured BuildFailure, each error is formatted with its file location and
+ * a caret line. Falls back to stripping ANSI codes from the error's string representation.
+ */
+export function formatBuildErrors(error: unknown): string {
+  const msgs: EsbuildMessage[] = (error as { errors?: EsbuildMessage[] })?.errors ?? [];
+  if (msgs.length > 0) {
+    return msgs
+      .map((msg, i) => {
+        const loc = msg.location;
+        const lineNum = loc ? String(loc.line) : '';
+        const pad = loc ? ' '.repeat(lineNum.length) : '';
+        const locationLines = loc
+          ? [
+              `    ${loc.file}:${loc.line}:${loc.column}`,
+              `  ${lineNum} │ ${loc.lineText}`,
+              `  ${pad} │ ${' '.repeat(loc.column)}${'~'.repeat(Math.max(1, loc.length))}`,
+            ]
+          : [];
+        const noteLines = msg.notes.filter((n) => n.text).map((n) => `    Note: ${n.text}`);
+        return [`[${i + 1}] ${msg.text}`].concat(locationLines, noteLines).join('\n');
+      })
+      .join('\n\n');
+  }
+  // Fallback for non-esbuild errors: strip ANSI escape codes.
+  const raw = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  // deno-lint-ignore no-control-regex
+  return raw.replace(/\x1b\[[0-9;]*[mGKH]/g, '').replace(/\r\n/g, '\n');
 }
 
 /**
@@ -64,22 +117,40 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
     footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
   };
 
-  const [allTestCode] = await Promise.all([
-    config.watch
-      ? buildIncrementally(buildOptions, allTestFilePaths.join('\0'), cachedContent, needsDisk)
-      : buildWithOverlayfsRetry(buildOptions, needsDisk),
-    Promise.all(
-      cachedContent.htmlPathsToRunTests.map(async (htmlPath) => {
-        const targetPath = `${config.projectRoot}/${config.output}${htmlPath}`;
-        if (htmlPath !== '/') {
-          await fs.rm(targetPath, { force: true, recursive: true });
-          await fs.mkdir(targetPath.split('/').slice(0, -1).join('/'), { recursive: true });
-        }
-      }),
-    ),
-  ]);
+  cachedContent._buildError = null;
 
-  cachedContent.allTestCode = allTestCode;
+  try {
+    const [allTestCode] = await Promise.all([
+      config.watch
+        ? buildIncrementally(buildOptions, allTestFilePaths.join('\0'), cachedContent, needsDisk)
+        : buildWithOverlayfsRetry(buildOptions, needsDisk),
+      Promise.all(
+        cachedContent.htmlPathsToRunTests.map(async (htmlPath) => {
+          const targetPath = `${config.projectRoot}/${config.output}${htmlPath}`;
+          if (htmlPath !== '/') {
+            await fs.rm(targetPath, { force: true, recursive: true });
+            await fs.mkdir(targetPath.split('/').slice(0, -1).join('/'), { recursive: true });
+          }
+        }),
+      ),
+    ]);
+    cachedContent.allTestCode = allTestCode;
+  } catch (error) {
+    cachedContent._buildError = {
+      type: deriveBuildErrorType(error),
+      formatted: formatBuildErrors(error),
+    };
+    // Always write index.html immediately: in non-watch mode the server route for '/' is only
+    // reached on success (build errors in the group setup bypass runTestsInBrowser entirely),
+    // and in watch mode the Playwright page is headless so it never navigates to trigger the
+    // route — the --open user browser reloads via WebSocket 'refresh' and does it instead,
+    // but that's async and user-dependent. Writing here guarantees the file is always current.
+    await fs.writeFile(
+      `${projectRoot}/${output}/index.html`,
+      buildErrorHTML(cachedContent._buildError),
+    );
+    throw error;
+  }
 }
 
 /**
@@ -171,6 +242,22 @@ export async function runTestsInBrowser(
     config.lastFailedTestFiles = config.lastRanTestFiles;
     console.log(error);
     const exception = new BundleError(error);
+
+    // buildTestBundle's own catch sets _buildError for full-bundle failures before rethrowing.
+    // Set it here as a fallback for buildFilteredTests failures, which arrive after
+    // buildTestBundle already cleared _buildError on success. Only apply for esbuild errors
+    // (those carry .errors[]) — navigation/timeout errors from runTestInsideHTMLFile should
+    // not be classified as build errors.
+    if (!cachedContent._buildError && (error as { errors?: unknown[] }).errors?.length) {
+      cachedContent._buildError = {
+        type: deriveBuildErrorType(error),
+        formatted: formatBuildErrors(error),
+      };
+      fs.writeFile(
+        `${projectRoot}/${output}/qunitx.html`,
+        buildErrorHTML(cachedContent._buildError),
+      ).catch(() => {});
+    }
 
     if (config.watch) {
       console.log(`# ${exception}`);

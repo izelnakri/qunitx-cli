@@ -92,7 +92,20 @@ export async function run(config: Config): Promise<void> {
           }
           await runTestsInBrowser(config, cachedContent, connections, [file]);
         },
-        (_path, _event) => connections.server.publish('refresh'),
+        async (_path, _event) => {
+          connections.server.publish('refresh');
+          // When --open is used, Playwright pre-launches Chrome in headed mode so the user
+          // is watching the Playwright-controlled page. That page has IS_PLAYWRIGHT=true
+          // and ignores the WebSocket 'refresh' message. After a build error,
+          // runTestsInBrowser returned without navigating (build failed before page.goto),
+          // so the headed browser is stuck on the previous test results. Navigate it directly
+          // to http://localhost:PORT/ which now serves the error HTML (_buildError is set).
+          if (config.open && cachedContent._buildError) {
+            await connections.page
+              .goto(`http://localhost:${config.port}/`, { waitUntil: 'commit', timeout: 5000 })
+              .catch(() => {});
+          }
+        },
       );
       await watcherReady;
     }

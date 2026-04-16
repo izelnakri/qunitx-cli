@@ -64,7 +64,10 @@ export function setupFileWatchers(
     // Child watcher: tracks file-level events within watchPath.
     const childWatcher = fs.watch(watchPath, { recursive: true }, async (eventType, filename) => {
       if (!ready || !filename) return;
-      const fullPath = path.join(watchPath, filename);
+      // When watchPath is a file, fs.watch fires with filename = the file's own basename,
+      // making path.join(watchPath, filename) produce the nonsense doubled path "foo.ts/foo.ts".
+      const fullPath =
+        filename === path.basename(watchPath) ? watchPath : path.join(watchPath, filename);
 
       if (eventType === 'change') {
         if (!config._building) {

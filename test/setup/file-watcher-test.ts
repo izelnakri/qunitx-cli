@@ -1,20 +1,42 @@
 import { module, test } from 'qunitx';
-import { mutateFSTree, handleWatchEvent } from '../../lib/setup/file-watcher.ts';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { setupFileWatchers, mutateFSTree, handleWatchEvent } from '../../lib/setup/file-watcher.ts';
+import type { Config } from '../../lib/types.ts';
+
+// Calls handleWatchEvent synchronously and returns the collected (event, path) pairs.
+function trackCalls(config: object, event: string, filePath: string, ext = ['js', 'ts']) {
+  const calls: Array<{ event: string; path: string }> = [];
+  handleWatchEvent(
+    config as Config,
+    ext,
+    event,
+    filePath,
+    (ev, p) => calls.push({ event: ev, path: p }),
+    null,
+  );
+  return calls;
+}
+
+// ---------------------------------------------------------------------------
+// mutateFSTree
+// ---------------------------------------------------------------------------
 
 module('Setup | mutateFSTree', { concurrency: true }, () => {
-  test('add event inserts path into fsTree', (assert) => {
+  test('add inserts path', (assert) => {
     const fsTree = {};
     mutateFSTree(fsTree, 'add', '/project/test/foo.js');
     assert.deepEqual(fsTree, { '/project/test/foo.js': null });
   });
 
-  test('unlink event removes path from fsTree', (assert) => {
+  test('unlink removes path', (assert) => {
     const fsTree = { '/project/test/foo.js': null };
     mutateFSTree(fsTree, 'unlink', '/project/test/foo.js');
     assert.deepEqual(fsTree, {});
   });
 
-  test('unlinkDir removes all entries under the deleted directory', (assert) => {
+  test('unlinkDir removes all entries under the directory', (assert) => {
     const fsTree = {
       '/project/test/foo.js': null,
       '/project/test/bar.js': null,
@@ -24,10 +46,9 @@ module('Setup | mutateFSTree', { concurrency: true }, () => {
     assert.deepEqual(fsTree, { '/project/other/baz.js': null });
   });
 
-  test('unlinkDir does not remove files in sibling directories that share a name prefix', (assert) => {
-    // Regression: startsWith('/project/test') also matches '/project/test2/...' and
-    // '/project/testcases/...' because it is a string prefix, not a path prefix.
-    // The fix appends '/' so only entries strictly inside the removed directory are deleted.
+  test('unlinkDir does not remove sibling directories that share a name prefix', (assert) => {
+    // Regression: startsWith('/project/test') also matched '/project/test2/...' etc.
+    // The fix appends '/' so only entries strictly inside the directory are deleted.
     const fsTree = {
       '/project/test/foo.js': null,
       '/project/test2/bar.js': null,
@@ -43,39 +64,32 @@ module('Setup | mutateFSTree', { concurrency: true }, () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// handleWatchEvent
+// ---------------------------------------------------------------------------
+
 module('Setup | handleWatchEvent', { concurrency: true }, () => {
-  test('js file change triggers onEventFunc and updates fsTree', (assert) => {
+  test('change event triggers onEventFunc', (assert) => {
     const config = { fsTree: { '/project/test/foo.js': null }, projectRoot: '/project' };
-    const calls = [];
-    handleWatchEvent(config, ['js', 'ts'], 'change', '/project/test/foo.js', (event, path) => {
-      calls.push({ event, path });
-    });
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].event, 'change');
-    assert.equal(calls[0].path, '/project/test/foo.js');
+    assert.deepEqual(trackCalls(config, 'change', '/project/test/foo.js'), [
+      { event: 'change', path: '/project/test/foo.js' },
+    ]);
   });
 
-  test('ts file add updates fsTree and triggers onEventFunc', (assert) => {
+  test('add event updates fsTree and triggers onEventFunc', (assert) => {
     const config = { fsTree: {}, projectRoot: '/project' };
-    const calls = [];
-    handleWatchEvent(config, ['js', 'ts'], 'add', '/project/test/new.ts', (event, path) => {
-      calls.push({ event, path });
-    });
+    trackCalls(config, 'add', '/project/test/new.ts');
     assert.deepEqual(config.fsTree, { '/project/test/new.ts': null });
-    assert.equal(calls.length, 1);
   });
 
-  test('unlink removes file from fsTree and triggers onEventFunc', (assert) => {
+  test('unlink removes file from fsTree', (assert) => {
     const config = { fsTree: { '/project/test/gone.js': null }, projectRoot: '/project' };
-    const calls = [];
-    handleWatchEvent(config, ['js', 'ts'], 'unlink', '/project/test/gone.js', (event, path) => {
-      calls.push({ event, path });
-    });
+    const calls = trackCalls(config, 'unlink', '/project/test/gone.js');
     assert.deepEqual(config.fsTree, {});
     assert.equal(calls.length, 1);
   });
 
-  test('unlinkDir bypasses extension filter and removes all files under the directory from fsTree', (assert) => {
+  test('unlinkDir bypasses extension filter and removes all files under the directory', (assert) => {
     const config = {
       fsTree: {
         '/project/test/unit/foo.js': null,
@@ -84,18 +98,13 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
       },
       projectRoot: '/project',
     };
-    const calls = [];
-    handleWatchEvent(config, ['js', 'ts'], 'unlinkDir', '/project/test/unit', (event, path) => {
-      calls.push({ event, path });
-    });
+    const calls = trackCalls(config, 'unlinkDir', '/project/test/unit');
     assert.deepEqual(config.fsTree, { '/project/test/integration/baz.js': null });
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].event, 'unlinkDir');
-    assert.equal(calls[0].path, '/project/test/unit');
+    assert.deepEqual(calls, [{ event: 'unlinkDir', path: '/project/test/unit' }]);
   });
 
-  test('unlinkDir on a nested subdirectory removes its entire subtree and leaves sibling paths untouched', (assert) => {
-    // Verifies both the mutateFSTree prefix fix and that handleWatchEvent correctly coalesces
+  test('unlinkDir on a nested subdirectory removes its subtree and leaves siblings untouched', (assert) => {
+    // Verifies both the mutateFSTree prefix fix and that handleWatchEvent coalesces
     // a nested directory removal into a single onEventFunc call.
     const config = {
       fsTree: {
@@ -107,204 +116,144 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
       },
       projectRoot: '/project',
     };
-    const calls = [];
-    handleWatchEvent(config, ['js', 'ts'], 'unlinkDir', '/project/tests/subdir', (event, path) => {
-      calls.push({ event, path });
-    });
+    const calls = trackCalls(config, 'unlinkDir', '/project/tests/subdir');
     assert.deepEqual(config.fsTree, {
       '/project/tests/root.ts': null,
       '/project/tests2/extra.ts': null,
     });
-    assert.equal(calls.length, 1, 'onEventFunc called exactly once');
-    assert.equal(calls[0].event, 'unlinkDir');
-    assert.equal(calls[0].path, '/project/tests/subdir');
+    assert.deepEqual(calls, [{ event: 'unlinkDir', path: '/project/tests/subdir' }]);
   });
 
-  test('unlinkDir with no matching files is a no-op on fsTree but still calls onEventFunc', (assert) => {
+  test('unlinkDir with no matching files leaves fsTree unchanged but still calls onEventFunc', (assert) => {
     const config = { fsTree: { '/project/other/baz.js': null }, projectRoot: '/project' };
-    const calls = [];
-    handleWatchEvent(config, ['js', 'ts'], 'unlinkDir', '/project/test', (event, path) => {
-      calls.push({ event, path });
-    });
+    assert.equal(trackCalls(config, 'unlinkDir', '/project/test').length, 1);
     assert.deepEqual(config.fsTree, { '/project/other/baz.js': null });
-    assert.equal(calls.length, 1);
   });
 
-  test('non-matching file extension (e.g. .css) is ignored entirely', (assert) => {
+  test('non-matching file extension is ignored', (assert) => {
     const config = { fsTree: {}, projectRoot: '/project' };
-    const calls = [];
-    handleWatchEvent(config, ['js', 'ts'], 'change', '/project/styles/app.css', (event, path) => {
-      calls.push({ event, path });
-    });
-    assert.deepEqual(config.fsTree, {});
-    assert.equal(calls.length, 0);
+    assert.equal(trackCalls(config, 'change', '/project/styles/app.css').length, 0);
   });
 
-  test('debounce: second event while _building is active does not trigger onEventFunc', (assert) => {
+  test('event while _building is active queues a pending trigger instead of calling onEventFunc', (assert) => {
     const config = {
       fsTree: { '/project/test/foo.js': null },
       projectRoot: '/project',
       _building: true,
     };
-    const calls = [];
-    handleWatchEvent(config, ['js', 'ts'], 'change', '/project/test/foo.js', (event, path) => {
-      calls.push({ event, path });
-    });
-    assert.equal(calls.length, 0);
+    assert.equal(trackCalls(config, 'change', '/project/test/foo.js').length, 0);
   });
 
-  test('spurious change for just-added file is ignored while building (no pending trigger queued)', (assert) => {
-    // Simulates the post-add inotify flush: rename (→ add) fires first, then change fires
-    // after the file content is written to disk. The add's filtered run is still in progress
-    // (_building = true), so the change must not queue a full re-run as a pending trigger.
+  test('spurious change for a just-added file is ignored while building', (assert) => {
+    // Post-add inotify flush: rename (→ add) fires first, then change fires after the file
+    // content hits disk. The add's build is still running, so the change must not queue a
+    // full re-run as a pending trigger.
     const config = {
       fsTree: { '/project/test/new.ts': null },
       projectRoot: '/project',
       _building: true,
       _justAddedFiles: new Set(['/project/test/new.ts']),
     };
-    const calls = [];
-    handleWatchEvent(config, ['js', 'ts'], 'change', '/project/test/new.ts', (event, path) => {
-      calls.push({ event, path });
-    });
-    assert.equal(calls.length, 0, 'onEventFunc not called for spurious change');
-    assert.notOk(config._pendingBuildTrigger, 'no pending trigger queued for spurious change');
+    assert.equal(trackCalls(config, 'change', '/project/test/new.ts').length, 0);
+    assert.notOk(config._pendingBuildTrigger, 'no pending trigger queued');
   });
 
-  test('second add while building adds to _justAddedFiles so its spurious change is also filtered', (assert) => {
-    // When two files are added in rapid succession, the second add goes through the pending
-    // trigger path. Its file must also be tracked in _justAddedFiles so the spurious post-add
-    // change for it does not overwrite the pending add trigger with a full re-run.
+  test('second add while building tracks the file so its spurious change is filtered', (assert) => {
+    // Two files added rapidly: the second goes through the pending-trigger path. It must also
+    // be in _justAddedFiles so its post-add change does not overwrite the pending trigger.
     const config = {
       fsTree: { '/project/test/first.ts': null },
       projectRoot: '/project',
       _building: true,
       _justAddedFiles: new Set(['/project/test/first.ts']),
     };
-    const calls = [];
 
-    // Second add queues a pending trigger and should add the file to _justAddedFiles.
-    handleWatchEvent(config, ['js', 'ts'], 'add', '/project/test/second.ts', (event, path) => {
-      calls.push({ event, path });
-    });
-    assert.ok(
-      config._justAddedFiles?.has('/project/test/second.ts'),
-      'second file tracked in _justAddedFiles',
-    );
-    assert.ok(config._pendingBuildTrigger, 'pending trigger set for the second add');
+    trackCalls(config, 'add', '/project/test/second.ts');
+    assert.ok(config._justAddedFiles?.has('/project/test/second.ts'), 'tracked in _justAddedFiles');
+    assert.ok(config._pendingBuildTrigger, 'pending trigger set');
 
-    // Spurious change for second file must be filtered (no overwrite of pending trigger).
-    const pendingBeforeChange = config._pendingBuildTrigger;
-    handleWatchEvent(config, ['js', 'ts'], 'change', '/project/test/second.ts', (event, path) => {
-      calls.push({ event, path });
-    });
-    assert.equal(
-      config._pendingBuildTrigger,
-      pendingBeforeChange,
-      'pending trigger not overwritten by spurious change',
-    );
-    assert.equal(calls.length, 0, 'onEventFunc not called');
+    const pendingTrigger = config._pendingBuildTrigger;
+    trackCalls(config, 'change', '/project/test/second.ts');
+    assert.equal(config._pendingBuildTrigger, pendingTrigger, 'pending trigger not overwritten');
   });
 
-  test('custom extensions: .mjs file triggers onEventFunc when extensions includes mjs', (assert) => {
+  test('custom extension .mjs triggers onEventFunc', (assert) => {
     const config = { fsTree: {}, projectRoot: '/project' };
-    const calls = [];
-    handleWatchEvent(config, ['mjs'], 'add', '/project/test/new.mjs', (event, path) => {
-      calls.push({ event, path });
-    });
+    trackCalls(config, 'add', '/project/test/new.mjs', ['mjs']);
     assert.deepEqual(config.fsTree, { '/project/test/new.mjs': null });
-    assert.equal(calls.length, 1);
   });
 
-  test('custom extensions: .js file is ignored when extensions only includes mjs', (assert) => {
+  test('custom extension: .js ignored when extensions only includes mjs', (assert) => {
     const config = { fsTree: {}, projectRoot: '/project' };
-    const calls = [];
-    handleWatchEvent(config, ['mjs'], 'add', '/project/test/new.js', (event, path) => {
-      calls.push({ event, path });
-    });
-    assert.deepEqual(config.fsTree, {});
-    assert.equal(calls.length, 0);
+    assert.equal(trackCalls(config, 'add', '/project/test/new.js', ['mjs']).length, 0);
   });
 
-  test('_lastBuildEndMs is set after an async build completes successfully', async (assert) => {
+  test('_lastBuildEndMs is set after an async build completes', async (assert) => {
     const config = { fsTree: { '/project/test/foo.js': null }, projectRoot: '/project' };
     const done = handleWatchEvent(
-      config,
+      config as Config,
       ['js', 'ts'],
       'change',
       '/project/test/foo.js',
       () => new Promise<void>((resolve) => setTimeout(resolve, 10)),
       null,
     );
-
-    assert.notOk(config._lastBuildEndMs, '_lastBuildEndMs not set while build is in progress');
-    assert.equal(config._building, true, '_building is true during async build');
-
+    assert.notOk(config._lastBuildEndMs, 'not set while in progress');
+    assert.equal(config._building, true);
     await done;
-
-    assert.equal(config._building, false, '_building reset after build');
-    assert.ok(config._lastBuildEndMs, '_lastBuildEndMs set after successful build');
-    assert.ok(config._lastBuildEndMs <= Date.now(), '_lastBuildEndMs is a valid timestamp');
+    assert.equal(config._building, false);
+    assert.ok(config._lastBuildEndMs <= Date.now(), 'set to a valid timestamp');
   });
 
-  test('_lastBuildEndMs is set even when the async build fails (catch path)', async (assert) => {
+  test('_lastBuildEndMs is set even when the build throws', async (assert) => {
     const config = { fsTree: { '/project/test/foo.js': null }, projectRoot: '/project' };
     await handleWatchEvent(
-      config,
+      config as Config,
       ['js', 'ts'],
       'change',
       '/project/test/foo.js',
-      () => Promise.reject(new Error('simulated build failure')),
+      () => Promise.reject(new Error('simulated failure')),
       null,
     );
-
-    assert.equal(config._building, false, '_building reset after failed build');
-    assert.ok(config._lastBuildEndMs, '_lastBuildEndMs set even after a failed build');
+    assert.equal(config._building, false);
+    assert.ok(config._lastBuildEndMs);
   });
 
-  test('_lastBuildEndMs is NOT set when onEventFunc returns synchronously (no async build)', async (assert) => {
+  test('_lastBuildEndMs is NOT set when onEventFunc returns synchronously', async (assert) => {
     const config = { fsTree: { '/project/test/foo.js': null }, projectRoot: '/project' };
     await handleWatchEvent(
-      config,
+      config as Config,
       ['js', 'ts'],
       'change',
       '/project/test/foo.js',
       () => undefined,
       null,
     );
-    assert.notOk(
-      config._lastBuildEndMs,
-      '_lastBuildEndMs not set for sync (non-build) onEventFunc',
-    );
-    assert.equal(config._building, false, '_building reset synchronously');
+    assert.notOk(config._lastBuildEndMs);
+    assert.equal(config._building, false);
   });
 
   test('onFinishFunc receives (filePath, event) — path first, event second', async (assert) => {
-    // Regression: the call was onFinishFunc(event, filePath) — args in the wrong order.
-    // The type signature is (path: string, event: string), so filePath must be arg[0].
+    // Regression: the call was onFinishFunc(event, filePath) — args were swapped.
     const config = { fsTree: { '/project/test/foo.js': null }, projectRoot: '/project' };
     const calls: Array<[string, string]> = [];
-
     await handleWatchEvent(
-      config,
+      config as Config,
       ['js', 'ts'],
       'change',
       '/project/test/foo.js',
       () => Promise.resolve(),
-      (path, event) => calls.push([path, event]),
+      (p, ev) => calls.push([p, ev]),
     );
-
-    assert.equal(calls.length, 1, 'onFinishFunc called once');
-    assert.equal(calls[0][0], '/project/test/foo.js', 'first arg is the file path');
-    assert.equal(calls[0][1], 'change', 'second arg is the event name');
+    assert.deepEqual(calls, [['/project/test/foo.js', 'change']]);
   });
 
-  test('_lastBuildEndMs is updated on each successive build completion', async (assert) => {
+  test('_lastBuildEndMs advances on each successive build', async (assert) => {
     const config = { fsTree: { '/project/test/foo.js': null }, projectRoot: '/project' };
     const asyncBuild = () => new Promise<void>((resolve) => setTimeout(resolve, 10));
 
     await handleWatchEvent(
-      config,
+      config as Config,
       ['js', 'ts'],
       'change',
       '/project/test/foo.js',
@@ -312,20 +261,73 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
       null,
     );
     const firstEndMs = config._lastBuildEndMs;
-    assert.ok(firstEndMs, 'first build sets _lastBuildEndMs');
+    assert.ok(firstEndMs);
 
-    // Allow a small gap so the timestamp is guaranteed to advance.
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
-
     await handleWatchEvent(
-      config,
+      config as Config,
       ['js', 'ts'],
       'change',
       '/project/test/foo.js',
       asyncBuild,
       null,
     );
+    assert.ok(config._lastBuildEndMs > firstEndMs);
+  });
+});
 
-    assert.ok(config._lastBuildEndMs > firstEndMs, '_lastBuildEndMs advances with each build');
+// ---------------------------------------------------------------------------
+// setupFileWatchers
+// ---------------------------------------------------------------------------
+
+module('Setup | setupFileWatchers', { concurrency: true }, () => {
+  test('change on a directly-watched file passes the correct path to onEventFunc, not a doubled path', async (assert) => {
+    // Regression: when watchPath is a file (not a directory), fs.watch fires events with
+    // filename = the file's own basename. path.join(watchPath, filename) produced the
+    // nonsense doubled path "test/foo.ts/foo.ts" which is never in fsTree, so the guard
+    // "if (event === 'change' && !(file in fsTree)) return" silently swallowed every
+    // change event and no rebuild ever fired.
+    const tmpFile = path.join(process.cwd(), `tmp/watch-direct-file-${randomUUID()}.ts`);
+    await fs.mkdir(path.join(process.cwd(), 'tmp'), { recursive: true });
+    await fs.writeFile(tmpFile, 'export const a = 1;');
+
+    const config = { fsTree: { [tmpFile]: null }, projectRoot: process.cwd(), extensions: ['ts'] };
+    const seen: Array<{ event: string; file: string }> = [];
+    let resolve!: () => void;
+    const settled = new Promise<void>((r) => (resolve = r));
+
+    const { killFileWatchers, ready } = setupFileWatchers(
+      [tmpFile], // file path, not a directory — the case that triggered the bug
+      config as unknown as Config,
+      (event, file) => {
+        seen.push({ event, file });
+        resolve();
+      },
+      null,
+    );
+
+    try {
+      await ready;
+      await fs.writeFile(tmpFile, 'export const a = 2;');
+
+      // Without the fix, settled never resolves — the change event is swallowed.
+      await Promise.race([
+        settled,
+        new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error('no change event within 2s')), 2000),
+        ),
+      ]);
+
+      assert.equal(seen[0].event, 'change');
+      assert.equal(seen[0].file, tmpFile, 'correct path, not doubled');
+      assert.notEqual(
+        seen[0].file,
+        path.join(tmpFile, path.basename(tmpFile)),
+        'doubled path absent',
+      );
+    } finally {
+      killFileWatchers();
+      await fs.rm(tmpFile, { force: true });
+    }
   });
 });

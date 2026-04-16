@@ -766,4 +766,124 @@ module('--watch re-run tests', { concurrency: true }, () => {
       await session.kill();
     }
   });
+
+  test('build error in watch mode serves error HTML at / until the file is fixed', async (assert) => {
+    const { dir, testFile, testContent } = await makeWatchProject();
+    let port: number | null = null;
+    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+
+    try {
+      await session.waitFor((buf) => {
+        const match = buf.match(/http:\/\/localhost:(\d+)/);
+        if (match && port === null) port = Number(match[1]);
+        return buf.includes('Press "qq"');
+      }, 'initial run to complete');
+
+      // Trigger a build error
+      await fs.writeFile(testFile, 'this is not valid typescript !!@#$%^&*');
+      await session.waitFor(
+        (buf) => buf.includes('esbuild Bundle Error:'),
+        'build error to appear',
+      );
+
+      // / must now serve the error HTML
+      const errorBody = await fetch(`http://localhost:${port}/`).then((r) => r.text());
+      assert.includes(errorBody, 'Build Error:', 'error HTML served at / after build error');
+      assert.includes(errorBody, '<html', 'response is HTML, not a TAP stream');
+
+      // Fix the file — error clears, normal page returns
+      await fs.writeFile(testFile, testContent);
+      await waitForRunComplete(session, 2, 're-run after fix');
+
+      const okBody = await fetch(`http://localhost:${port}/`).then((r) => r.text());
+      assert.notIncludes(okBody, 'Build Error:', 'error HTML cleared at / after fix');
+    } finally {
+      await session.kill();
+    }
+  });
+
+  test('build error in watch mode sends a WebSocket refresh message to connected clients', async (assert) => {
+    const { dir, testFile, testContent } = await makeWatchProject();
+    let port: number | null = null;
+    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+
+    try {
+      await session.waitFor((buf) => {
+        const match = buf.match(/http:\/\/localhost:(\d+)/);
+        if (match && port === null) port = Number(match[1]);
+        return buf.includes('Press "qq"');
+      }, 'initial run to complete');
+
+      const messages: string[] = [];
+      // Callbacks waiting for the next 'refresh' message. Drained and called on each arrival.
+      const refreshWaiters: Array<() => void> = [];
+
+      const ws = new WebSocket(`ws://localhost:${port}`);
+      await new Promise<void>((resolve, reject) => {
+        ws.onopen = () => resolve();
+        ws.onerror = () => reject(new Error('WS connect failed'));
+      });
+      ws.onmessage = (e) => {
+        const data = typeof e.data === 'string' ? e.data : String(e.data);
+        messages.push(data);
+        if (data === 'refresh') {
+          const waiting = refreshWaiters.splice(0);
+          for (const cb of waiting) cb();
+        }
+      };
+
+      // Resolves as soon as messages contains at least n 'refresh' entries, or rejects after 5 s.
+      // Checks immediately so it never sleeps when the message has already arrived.
+      function waitForNRefreshes(n: number): Promise<void> {
+        const count = () => messages.filter((m) => m === 'refresh').length;
+        if (count() >= n) return Promise.resolve();
+        return new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error(`timed out waiting for ${n} refresh message(s)`)),
+            5000,
+          );
+          const check = () => {
+            if (count() >= n) {
+              clearTimeout(timer);
+              resolve();
+            } else {
+              refreshWaiters.push(check);
+            }
+          };
+          refreshWaiters.push(check);
+        });
+      }
+
+      try {
+        // Trigger the error and wait reactively for the first refresh — no fixed sleep.
+        // A single fs.writeFile can produce two inotify events; the second queues as a
+        // pending trigger. waitForNRefreshes(1) resolves on the first, and
+        // refreshCountAfterError captures however many actually fired.
+        await fs.writeFile(testFile, 'this is not valid typescript !!@#$%^&*');
+        await session.waitFor(
+          (buf) => buf.includes('esbuild Bundle Error:'),
+          'build error to appear',
+        );
+        await waitForNRefreshes(1);
+
+        const refreshCountAfterError = messages.filter((m) => m === 'refresh').length;
+        assert.ok(refreshCountAfterError >= 1, 'refresh sent to WS client on build error');
+
+        // Fix the file. onFinishFunc fires after runTestsInBrowser returns (after '# duration'
+        // appears). Wait reactively for one more refresh rather than sleeping.
+        await fs.writeFile(testFile, testContent);
+        await waitForRunComplete(session, 2, 're-run after fix');
+        await waitForNRefreshes(refreshCountAfterError + 1);
+
+        assert.ok(
+          messages.filter((m) => m === 'refresh').length > refreshCountAfterError,
+          'additional refresh sent to WS client after successful rebuild',
+        );
+      } finally {
+        ws.close();
+      }
+    } finally {
+      await session.kill();
+    }
+  });
 });

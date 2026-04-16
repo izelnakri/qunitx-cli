@@ -58,6 +58,12 @@ export interface CachedContent {
    * by the first `runTestsInBrowser()` call; subsequent watch-mode reruns build normally.
    */
   _preBuildPromise?: Promise<void> | null;
+  /**
+   * Set when the last esbuild run failed (watch mode only). The web server's `/` route serves
+   * an error page instead of the normal test HTML, and the Playwright page is navigated there.
+   * Cleared at the start of every new build attempt.
+   */
+  _buildError?: { type: string; formatted: string } | null;
 }
 
 /**
