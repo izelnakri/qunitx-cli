@@ -92,7 +92,15 @@ export async function setupBrowser(
   const browser = resolvedExistingBrowser || (await launchBrowser(config));
 
   const pageStart = Date.now();
-  const [page] = await Promise.all([browser.newPage(), bindServerToPort(server, config)]);
+  // In headed watch mode (bare --open + --watch), Chrome is pre-launched without --headless=new
+  // so it already has a blank default tab. Reuse that page instead of opening a new one —
+  // otherwise the user sees the blank startup tab AND the new Playwright tab simultaneously.
+  // For all other modes (headless, --open=<binary>, or non-watch), always create a fresh page.
+  const isHeadedWatchMode = config.open === true && config.watch;
+  const getPage = isHeadedWatchMode
+    ? () => browser.contexts()[0]?.pages()[0] ?? browser.newPage()
+    : () => browser.newPage();
+  const [page] = await Promise.all([getPage(), bindServerToPort(server, config)]);
   perfLog(`browser.js: newPage + bindServerToPort took ${Date.now() - pageStart}ms`);
 
   await page.addInitScript(() => {
