@@ -559,8 +559,10 @@ async function failOnNonWatchMode(
  * import packages installed anywhere up the tree (e.g. qunitx in the project root).
  */
 const ancestorNodeModules = (dir: string): string[] =>
-  dir.split(path.sep).map((_, i, parts) =>
-    path.join(parts.slice(0, parts.length - i).join(path.sep) || path.sep, 'node_modules'),
-  );
+  dir
+    .split(path.sep)
+    .map((_, i, parts) =>
+      path.join(parts.slice(0, parts.length - i).join(path.sep) || path.sep, 'node_modules'),
+    );
 
 export { runTestsInBrowser as default };
