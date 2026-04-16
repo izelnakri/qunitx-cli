@@ -315,18 +315,19 @@ async function runWithOverlayfsRetry(
   const EMPTY_BUNDLE_THRESHOLD = 500;
 
   let { result, js } = await getContents();
+  const initialSize = js.length;
 
   for (let retry = 1; retry <= MAX_RETRIES; retry++) {
     if (js.length >= EMPTY_BUNDLE_THRESHOLD) break;
-
-    console.log(
-      `# [buildWithOverlayfsRetry] bundle is ${js.length} bytes (< ${EMPTY_BUNDLE_THRESHOLD}) on attempt ${retry}/${MAX_RETRIES} — overlayfs flush race, retrying in ${RETRY_DELAY_MS}ms`,
-    );
     await new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
     ({ result, js } = await getContents());
   }
 
-  if (js.length < EMPTY_BUNDLE_THRESHOLD) {
+  // Only warn when the bundle stayed below the threshold after all retries AND grew at
+  // least once — a genuine overlayfs flush race that resolved partially but not fully.
+  // If the size never moved from the initial value, the file is just legitimately small
+  // (no QUnit imports, tree-shaken to the footer only) and no warning is needed.
+  if (js.length < EMPTY_BUNDLE_THRESHOLD && js.length !== initialSize) {
     console.log(
       `# [buildWithOverlayfsRetry] bundle is ${js.length} bytes after ${MAX_RETRIES} retries — proceeding`,
     );
