@@ -234,6 +234,7 @@ module('Setup | buildErrorHTML', { concurrency: true }, () => {
 module('Commands | buildTestBundle | _buildError lifecycle', { concurrency: true }, () => {
   test('sets _buildError with type and formatted string when esbuild fails', async (assert) => {
     const tmpFile = `${CWD}/tmp/syntax-error-${randomUUID()}.ts`;
+    await fs.mkdir(`${CWD}/tmp`, { recursive: true });
     await fs.writeFile(tmpFile, 'const x = {{{INVALID}}};');
     const config = makeConfig([tmpFile]);
     const cached = makeCachedContent();
@@ -267,6 +268,7 @@ module('Commands | buildTestBundle | _buildError lifecycle', { concurrency: true
 
   test('writes index.html with QUnit-styled error content on build failure (non-watch)', async (assert) => {
     const tmpFile = `${CWD}/tmp/syntax-error-${randomUUID()}.ts`;
+    await fs.mkdir(`${CWD}/tmp`, { recursive: true });
     await fs.writeFile(tmpFile, 'this is } invalid { syntax !!!');
     const config = makeConfig([tmpFile]); // watch = false
     const cached = makeCachedContent();
@@ -285,6 +287,7 @@ module('Commands | buildTestBundle | _buildError lifecycle', { concurrency: true
 
   test('writes index.html on build failure in watch mode too', async (assert) => {
     const tmpFile = `${CWD}/tmp/syntax-error-${randomUUID()}.ts`;
+    await fs.mkdir(`${CWD}/tmp`, { recursive: true });
     await fs.writeFile(tmpFile, 'this is } invalid { syntax !!!');
     const config = makeConfig([tmpFile], true); // watch = true
     const cached = makeCachedContent();
