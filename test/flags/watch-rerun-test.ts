@@ -178,6 +178,27 @@ async function waitForRunComplete(
   await session.waitFor((buf) => buf.includes('# duration', buf.lastIndexOf('QUnitX running:')));
 }
 
+// Polls `fn` every `interval` ms until `predicate(result)` is true, then returns the result.
+// Rejects with a descriptive error if `timeout` ms elapse without the predicate being satisfied.
+async function pollUntil<T>(
+  fn: () => Promise<T>,
+  predicate: (result: T) => boolean,
+  {
+    interval = 50,
+    timeout = 5000,
+    label = 'condition',
+  }: { interval?: number; timeout?: number; label?: string } = {},
+): Promise<T> {
+  const deadline = Date.now() + timeout;
+  while (true) {
+    const result = await fn();
+    if (predicate(result)) return result;
+    if (Date.now() >= deadline)
+      throw new Error(`pollUntil: ${label} not satisfied within ${timeout}ms`);
+    await new Promise<void>((resolve) => setTimeout(resolve, interval));
+  }
+}
+
 // Creates a project with an extra symlink .ts file inside tests/.
 // The symlink points to a real file OUTSIDE the watched directory so that
 // deleting the symlink does not also destroy the content.
@@ -786,8 +807,16 @@ module('--watch re-run tests', { concurrency: true }, () => {
         'build error to appear',
       );
 
-      // / must now serve the error HTML
-      const errorBody = await fetch(`http://localhost:${port}/`).then((r) => r.text());
+      // Poll until / serves the error HTML.
+      // Race: a single fs.writeFile can produce two inotify events. The second queues as a
+      // pending-trigger rebuild that clears _buildError = null at its start before re-setting
+      // it after the second failure. A single fetch right after 'esbuild Bundle Error:'
+      // appears in stdout can land in that brief null window and receive normal HTML.
+      const errorBody = await pollUntil(
+        () => fetch(`http://localhost:${port}/`).then((r) => r.text()),
+        (body) => body.includes('Build Error:'),
+        { interval: 50, timeout: 5000, label: 'error HTML at /' },
+      );
       assert.includes(errorBody, 'Build Error:', 'error HTML served at / after build error');
       assert.includes(errorBody, '<html', 'response is HTML, not a TAP stream');
 
