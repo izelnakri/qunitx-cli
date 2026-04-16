@@ -13,6 +13,23 @@ function withArgv(args, fn) {
   }
 }
 
+module('Setup | parseCliFlags | inputs', { concurrency: true }, () => {
+  test('relative input is resolved against cwd', (assert) => {
+    const flags = withArgv(['tests/foo.ts'], () => parseCliFlags(PROJECT_ROOT));
+    assert.deepEqual(flags.inputs, [`${process.cwd()}/tests/foo.ts`]);
+  });
+
+  test('absolute input inside project root is kept as-is', (assert) => {
+    const flags = withArgv([`${PROJECT_ROOT}/tests/foo.ts`], () => parseCliFlags(PROJECT_ROOT));
+    assert.deepEqual(flags.inputs, [`${PROJECT_ROOT}/tests/foo.ts`]);
+  });
+
+  test('absolute input outside project root is kept as-is (not prefixed with cwd)', (assert) => {
+    const flags = withArgv(['/tmp/demo.ts'], () => parseCliFlags(PROJECT_ROOT));
+    assert.deepEqual(flags.inputs, ['/tmp/demo.ts']);
+  });
+});
+
 module('Setup | parseCliFlags | --extensions', { concurrency: true }, () => {
   test('--extensions parses a single extension', (assert) => {
     const flags = withArgv(['--extensions=mjs'], () => parseCliFlags(PROJECT_ROOT));

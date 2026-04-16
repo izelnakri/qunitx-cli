@@ -77,7 +77,9 @@ export function parseCliFlags(projectRoot: string): ParsedFlags {
         console.warn(`# Warning: Unknown flag "${arg}" — ignored`);
         return result;
       }
-      result.inputs.add(arg.startsWith(projectRoot) ? arg : `${process.cwd()}/${arg}`);
+      result.inputs.add(
+        arg.startsWith(projectRoot) || arg.startsWith('/') ? arg : `${process.cwd()}/${arg}`,
+      );
 
       return result;
     },
