@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { blue } from '../../utils/color.ts';
 import { shutdownPrelaunch } from '../../utils/chrome-prelaunch.ts';
 import esbuild from 'esbuild';
@@ -103,6 +104,10 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
       contents: allTestFilePaths.map((filePath) => `import "${filePath}";`).join(''),
       resolveDir: process.cwd(),
     },
+    // Allow test files outside the project root (e.g. /tmp/my-test.ts) to import
+    // packages from any node_modules on the ancestor chain of cwd — the same lookup
+    // order Node itself uses when resolving require() from process.cwd().
+    nodePaths: ancestorNodeModules(process.cwd()),
     bundle: true,
     logLevel: 'silent',
     outfile,
@@ -285,6 +290,7 @@ function buildFilteredTests(
         contents: filteredTests.map((filePath) => `import "${filePath}";`).join(''),
         resolveDir: process.cwd(),
       },
+      nodePaths: ancestorNodeModules(process.cwd()),
       bundle: true,
       logLevel: 'silent',
       outfile: outputPath,
@@ -545,5 +551,16 @@ async function failOnNonWatchMode(
     process.exit(1);
   }
 }
+
+/**
+ * Returns all node_modules directories on the ancestor chain of `dir`,
+ * nearest-first — matching Node's own require() resolution algorithm.
+ * Used as esbuild's `nodePaths` so test files outside the project root can still
+ * import packages installed anywhere up the tree (e.g. qunitx in the project root).
+ */
+const ancestorNodeModules = (dir: string): string[] =>
+  dir.split(path.sep).map((_, i, parts) =>
+    path.join(parts.slice(0, parts.length - i).join(path.sep) || path.sep, 'node_modules'),
+  );
 
 export { runTestsInBrowser as default };

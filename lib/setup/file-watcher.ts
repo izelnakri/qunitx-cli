@@ -227,7 +227,10 @@ export function handleWatchEvent(
     '#',
     magenta().bold('=================================================================='),
   );
-  console.log('#', colorEvent(event), filePath.split(config.projectRoot)[1]);
+  const displayPath = filePath.startsWith(config.projectRoot)
+    ? filePath.slice(config.projectRoot.length)
+    : filePath;
+  console.log('#', colorEvent(event), displayPath);
   console.log(
     '#',
     magenta().bold('=================================================================='),
