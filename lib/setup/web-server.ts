@@ -132,6 +132,14 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
       );
     }
 
+    if (cachedContent._noTestsWarning) {
+      const htmlContent = buildNoTestsHTML(cachedContent._noTestsWarning);
+      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
+      res.write(htmlContent);
+      res.end();
+      return;
+    }
+
     const TEST_RUNTIME_TO_INJECT = testRuntimeToInject(config.port, config);
     const htmlContent = escapeAndInjectTestsToHTML(
       mainHTMLWithReplacedAssets,
@@ -159,6 +167,14 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         `${config.projectRoot}/${config.output}/qunitx.html`,
         htmlContent,
       );
+    }
+
+    if (cachedContent._noTestsWarning) {
+      const htmlContent = buildNoTestsHTML(cachedContent._noTestsWarning);
+      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
+      res.write(htmlContent);
+      res.end();
+      return;
     }
 
     const TEST_RUNTIME_TO_INJECT = testRuntimeToInject(config.port, config);
@@ -339,7 +355,15 @@ function testRuntimeToInject(port: number, config: Config): string {
 
       if (!window.QUnit) {
         console.log('QUnit not found after WebSocket connected');
-        window.testTimeout = ${config.timeout};
+        if (window.IS_PLAYWRIGHT) {
+          // Signal the Playwright runner that the run is complete with 0 tests rather than
+          // waiting for the inactivity timeout. The runner treats totalTests === 0 as a
+          // "no tests registered" warning (not a failure), so this gives a fast, clean result.
+          window.QUNIT_RESULT = { totalTests: 0, finishedTests: 0, failedTests: 0, currentTest: null };
+          window.socket.send(JSON.stringify({ event: 'done', details: { passed: 0, failed: 0, runtime: 0 } }));
+        } else {
+          window.testTimeout = ${config.timeout};
+        }
         return;
       }
 
@@ -398,6 +422,118 @@ function escapeAndInjectTestsToHTML(
   // No need to escape </script> here: testRuntimeCode's closing tag is the legitimate script
   // closer, and user test code in tests.js is external (not inlined) so it can't break HTML.
   return injectScript(html, `${testRuntimeCode}\n<script src="${testBundleUrl}" async></script>`);
+}
+
+/**
+ * Generates a self-contained HTML warning page shown when a test run completes with 0 registered
+ * QUnit tests. Styled to match the QUnit HTML reporter, with an amber banner instead of red.
+ * Includes the same WebSocket reconnect script as buildErrorHTML so the page reloads on the
+ * next successful build.
+ */
+export function buildNoTestsHTML(files: string[]): string {
+  const escaped = files
+    .map((f) => f.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'))
+    .join('\n');
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width">
+  <title>No Tests Registered \u2014 qunitx</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    #qunit-header, #qunit-banner, #qunit-userAgent, #qunit-testresult, #qunit-tests, #qunit-tests li {
+      font-family: "Helvetica Neue Light", "HelveticaNeue-Light", "Helvetica Neue", Calibri, Helvetica, Arial, sans-serif;
+    }
+    #qunit-header {
+      padding: 0.5em 0 0.5em 1em;
+      color: #C2CCD1;
+      background-color: #0D3349;
+      font-size: 1.5em;
+      line-height: 1em;
+      font-weight: 400;
+      border-radius: 5px 5px 0 0;
+    }
+    #qunit-banner { height: 5px; background-color: #F0AD4E; }
+    #qunit-userAgent {
+      padding: 0.5em 1em;
+      color: #fff;
+      background-color: #EC971F;
+      text-shadow: rgba(0,0,0,.3) 2px 2px 1px;
+      font-size: small;
+    }
+    #qunit-tests { list-style: none; font-size: smaller; }
+    #qunit-tests li.warn {
+      display: list-item;
+      padding: 0.4em 1em;
+      border-bottom: 1px solid #fff;
+      color: #000;
+      background-color: #FCF8E3;
+      border-left: 5px solid #F0AD4E;
+    }
+    #qunit-tests li.warn:last-child { border-radius: 0 0 5px 5px; }
+    .qunit-assert-list { margin-top: 0.5em; padding: 0.5em; background-color: #fff; border-radius: 5px; list-style: none; }
+    .qunit-assert-list > li {
+      padding: 5px;
+      background-color: #FFF8DC;
+      border-left: 10px solid #F0AD4E;
+      color: #8A6D3B;
+    }
+    .qunit-assert-list pre {
+      font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #8A6D3B;
+      margin: 0;
+    }
+    #qunit-testresult {
+      padding: 0.5em 1em;
+      color: #366097;
+      background-color: #E2F0F7;
+      border-bottom: 1px solid #fff;
+      font-size: small;
+    }
+    .dots span { display: inline-block; animation: pulse 1.4s ease-in-out infinite; }
+    .dots span:nth-child(2) { animation-delay: .2s; }
+    .dots span:nth-child(3) { animation-delay: .4s; }
+    @keyframes pulse { 0%,100% { opacity: .2; } 50% { opacity: 1; } }
+  </style>
+</head>
+<body>
+  <div id="qunit">
+    <h1 id="qunit-header">qunitx</h1>
+    <h2 id="qunit-banner"></h2>
+    <div id="qunit-userAgent">Warning: No Tests Registered</div>
+    <ol id="qunit-tests">
+      <li class="warn">
+        <strong>0 QUnit tests were registered in the bundled file(s)</strong>
+        <ol class="qunit-assert-list">
+          <li><pre>${escaped}</pre></li>
+        </ol>
+      </li>
+    </ol>
+    <div id="qunit-testresult">
+      Watching for changes&nbsp;<span class="dots"><span>&#9679;</span><span>&#9679;</span><span>&#9679;</span></span>
+    </div>
+  </div>
+  <script>
+    if (location.port) {
+      (function () {
+        var retries = 0;
+        function connect() {
+          var ws = new WebSocket('ws://' + location.hostname + ':' + location.port);
+          ws.addEventListener('message', function (e) { if (e.data === 'refresh') location.reload(true); });
+          ws.addEventListener('close', function () { if (retries++ < 120) setTimeout(connect, 1000); });
+          ws.addEventListener('error', function () { ws.close(); });
+        }
+        connect();
+      })();
+    }
+  </script>
+</body>
+</html>`;
 }
 
 /**

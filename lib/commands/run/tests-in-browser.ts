@@ -6,7 +6,7 @@ import esbuild from 'esbuild';
 import { timeCounter } from '../../utils/time-counter.ts';
 import { runUserModule } from '../../utils/run-user-module.ts';
 import { TAPDisplayFinalResult } from '../../tap/display-final-result.ts';
-import { buildErrorHTML } from '../../setup/web-server.ts';
+import { buildErrorHTML, buildNoTestsHTML } from '../../setup/web-server.ts';
 import type { Config, CachedContent, Connections } from '../../types.ts';
 import type { HTTPServer } from '../../servers/http.ts';
 
@@ -123,6 +123,7 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
   };
 
   cachedContent._buildError = null;
+  cachedContent._noTestsWarning = null;
 
   try {
     const [allTestCode] = await Promise.all([
@@ -228,6 +229,20 @@ export async function runTestsInBrowser(
 
     // In group mode the parent orchestrator handles the final summary, after hook, and exit.
     if (!config._groupMode) {
+      if (config.COUNTER.testCount === 0 && !cachedContent._buildError) {
+        const displayFiles = allTestFilePaths.map((f) =>
+          f.startsWith(`${projectRoot}/`) ? f.slice(projectRoot.length + 1) : f,
+        );
+        cachedContent._noTestsWarning = displayFiles;
+        const fileWord = allTestFilePaths.length === 1 ? 'file' : 'files';
+        console.log(
+          `# Warning: 0 tests registered — no QUnit test cases found in ${allTestFilePaths.length} ${fileWord}`,
+        );
+        fs.writeFile(`${projectRoot}/${output}/index.html`, buildNoTestsHTML(displayFiles)).catch(
+          () => {},
+        );
+      }
+
       TAPDisplayFinalResult(config.COUNTER, TIME_TAKEN);
 
       if (config.after) {
@@ -509,7 +524,7 @@ async function runTestInsideHTMLFile(
     config._testRunDone = null;
   }
 
-  if (!QUNIT_RESULT || QUNIT_RESULT.totalTests === 0) {
+  if (!QUNIT_RESULT) {
     if (targetError) console.log(targetError);
     const wsReason = !wsConnected
       ? 'WebSocket connection never received — Chrome may be CPU-starved or the page failed to load'
@@ -518,6 +533,10 @@ async function runTestInsideHTMLFile(
     console.log('BROWSER: runtime error thrown during executing tests');
     console.error('BROWSER: runtime error thrown during executing tests');
     await failOnNonWatchMode(config.watch, { server, browser }, config._groupMode);
+  } else if (QUNIT_RESULT.totalTests === 0) {
+    // QUnit ran but no tests were registered (or QUnit was not present in the bundle).
+    // This is not a failure — handled at the runTestsInBrowser level as a warning.
+    return;
   } else if (QUNIT_RESULT.totalTests > QUNIT_RESULT.finishedTests) {
     if (targetError) console.log(targetError);
     console.log(

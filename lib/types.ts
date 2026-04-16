@@ -64,6 +64,12 @@ export interface CachedContent {
    * Cleared at the start of every new build attempt.
    */
   _buildError?: { type: string; formatted: string } | null;
+  /**
+   * Set when all test runs completed with 0 registered QUnit tests. Contains the display paths
+   * of the test files (relative to projectRoot when possible). The web server's `/` route serves
+   * a warning page. Cleared at the start of every new build attempt.
+   */
+  _noTestsWarning?: string[] | null;
 }
 
 /**

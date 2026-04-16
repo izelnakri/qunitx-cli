@@ -208,4 +208,30 @@ module(
   },
 );
 
+module('Commands | buildTestBundle | nodePaths resolution', { concurrency: true }, () => {
+  test('resolves qunitx imports from a file outside the project root via ancestor nodePaths', async (assert) => {
+    // Files outside the project root (e.g. /tmp/somefile.ts) are resolved relative to /tmp/,
+    // which has no node_modules. The ancestorNodeModules nodePaths walk ensures qunitx can
+    // still be resolved from any node_modules on the ancestor chain of process.cwd().
+    // Note: an unused import is tree-shaken by esbuild, so we check _buildError (no resolution
+    // error) rather than bundle size.
+    const tmpFile = `/tmp/qunitx-nodepaths-${randomUUID()}.ts`;
+    await fs.writeFile(tmpFile, `import { module, test } from 'qunitx';\n`);
+    const config = makeConfig([tmpFile]);
+    const cached = makeCachedContent();
+    try {
+      await buildTestBundle(config, cached);
+      assert.ok(cached.allTestCode !== null, 'allTestCode is populated');
+      assert.strictEqual(
+        cached._buildError,
+        null,
+        'no build error — qunitx resolved via nodePaths',
+      );
+    } finally {
+      await fs.rm(tmpFile, { force: true });
+      await fs.rm(`${CWD}/${config.output}`, { force: true, recursive: true });
+    }
+  });
+});
+
 // tmp/ output dirs are cleaned up by test/runner.ts at the start of each full suite run.

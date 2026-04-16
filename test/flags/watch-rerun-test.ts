@@ -818,6 +818,44 @@ module('--watch re-run tests', { concurrency: true }, () => {
     }
   });
 
+  test('no-tests warning in watch mode serves warning HTML at / until tests are added', async (assert) => {
+    const { dir, testFile, testContent } = await makeWatchProject();
+    let port: number | null = null;
+
+    // Start with a no-tests file so the initial run produces a 0-tests warning.
+    await fs.writeFile(testFile, 'export const x = 1;');
+    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+
+    try {
+      await session.waitFor((buf) => {
+        const match = buf.match(/http:\/\/localhost:(\d+)/);
+        if (match && port === null) port = Number(match[1]);
+        return buf.includes('Press "qq"');
+      }, 'initial no-tests run to complete');
+
+      assert.includes(session.stdout, '# Warning: 0 tests registered');
+
+      // Poll until / serves the amber warning HTML (not the normal QUnit page).
+      const warnBody = await pollUntil(
+        () => fetch(`http://localhost:${port}/`).then((r) => r.text()),
+        (body) => body.includes('Warning: No Tests Registered'),
+        { interval: 50, timeout: 5000, label: 'warning HTML at /' },
+      );
+      assert.includes(warnBody, 'Warning: No Tests Registered');
+      assert.includes(warnBody, '<html');
+      assert.notIncludes(warnBody, 'Build Error:');
+
+      // Fix the file — add real tests. Warning must clear and normal page return.
+      await fs.writeFile(testFile, testContent);
+      await waitForRunComplete(session, 2, 're-run after tests added');
+
+      const okBody = await fetch(`http://localhost:${port}/`).then((r) => r.text());
+      assert.notIncludes(okBody, 'Warning: No Tests Registered');
+    } finally {
+      await session.kill();
+    }
+  });
+
   test('build error in watch mode serves error HTML at / until the file is fixed', async (assert) => {
     const { dir, testFile, testContent } = await makeWatchProject();
     let port: number | null = null;

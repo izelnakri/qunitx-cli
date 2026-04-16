@@ -74,11 +74,14 @@ export async function run(config: Config): Promise<void> {
       throw error;
     }
 
-    // In headed watch mode, navigate the Playwright page to the error HTML when the
-    // initial build failed. On a successful run, runTestInsideHTMLFile already navigated
-    // the page; this only fires for the build-error path where page.goto was never called
-    // and the page is still at about:blank.
-    if (isHeadedWatchMode && cachedContent._buildError) {
+    // In headed watch mode, navigate the Playwright page to the special-state HTML when the
+    // initial run produced a build error or a 0-tests warning.
+    // - Build error: page.goto was never called (runTestInsideHTMLFile bailed before navigation),
+    //   so the page is still at about:blank.
+    // - No-tests warning: page.goto WAS called (the page loaded normal QUnit HTML with 0 tests),
+    //   but _noTestsWarning is set only AFTER runTestInsideHTMLFile returns, so we must
+    //   re-navigate so the route handler can now serve the warning page.
+    if (isHeadedWatchMode && (cachedContent._buildError || cachedContent._noTestsWarning)) {
       await connections.page
         .goto(`http://localhost:${config.port}/`, { waitUntil: 'commit', timeout: 5000 })
         .catch(() => {});
@@ -117,8 +120,8 @@ export async function run(config: Config): Promise<void> {
           connections.server.publish('refresh');
           // In headed watch mode the Playwright page IS the visible browser (IS_PLAYWRIGHT=true
           // means it ignores the WS 'refresh' message). Navigate it directly after a build error
-          // so it shows the error HTML rather than stale test results.
-          if (isHeadedWatchMode && cachedContent._buildError) {
+          // or a 0-tests warning so it shows the correct HTML rather than stale test results.
+          if (isHeadedWatchMode && (cachedContent._buildError || cachedContent._noTestsWarning)) {
             await connections.page
               .goto(`http://localhost:${config.port}/`, { waitUntil: 'commit', timeout: 5000 })
               .catch(() => {});
@@ -256,6 +259,13 @@ export async function run(config: Config): Promise<void> {
     );
 
     process.exitCode = exitCode;
+
+    if (config.COUNTER.testCount === 0 && exitCode === 0) {
+      const fileWord = allFiles.length === 1 ? 'file' : 'files';
+      console.log(
+        `# Warning: 0 tests registered — no QUnit test cases found in ${allFiles.length} ${fileWord}`,
+      );
+    }
 
     TAPDisplayFinalResult(config.COUNTER, TIME_COUNTER.stop());
 
