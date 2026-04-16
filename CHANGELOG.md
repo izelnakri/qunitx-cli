@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.19.0] - 2026-04-16
+[`v0.18.0...v0.19.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.18.0...v0.19.0)
+
+### Bug Fixes
+- Auto-navigate Playwright page to error HTML on build error; fix doubled-path in file watcher — 2026-04-16 by [@izelnakri](https://github.com/izelnakri) ([`9da9ed0`](https://github.com/izelnakri/qunitx-cli/commit/9da9ed036b90bb7f63f3665a307adc61714a83a1))
+- Poll HTTP endpoint for error HTML to avoid _buildError null-window race — 2026-04-16 by [@izelnakri](https://github.com/izelnakri) ([`fec3506`](https://github.com/izelnakri/qunitx-cli/commit/fec3506ff4feceffeb8956170e7d0a32006cdda8))
+- Preserve absolute paths that are outside the project root — 2026-04-16 by [@izelnakri](https://github.com/izelnakri) ([`a26d8e8`](https://github.com/izelnakri/qunitx-cli/commit/a26d8e818f65e8da409347568591d456687a28a1))
+- Suppress esbuild error output to stdout; ensure tmp/ exists before writing syntax-error fixtures — 2026-04-16 by [@izelnakri](https://github.com/izelnakri) ([`9bbc882`](https://github.com/izelnakri/qunitx-cli/commit/9bbc882c5487597f63f755437e7e1eddd30823b0))
+- Prevent crash on initial build error; skip second browser open in headed watch mode — 2026-04-16 by [@izelnakri](https://github.com/izelnakri) ([`1ca15f7`](https://github.com/izelnakri/qunitx-cli/commit/1ca15f7108ad591a7e55255c667441bcb9e503e4))
+- Reuse existing tab in headed watch mode to avoid duplicate blank tab — 2026-04-16 by [@izelnakri](https://github.com/izelnakri) ([`7ff9763`](https://github.com/izelnakri/qunitx-cli/commit/7ff976398ffb76eff621f885dba557945f5c4879))
+- Suppress false-positive overlayfs warning for legitimately small bundles — 2026-04-16 by [@izelnakri](https://github.com/izelnakri) ([`64ed621`](https://github.com/izelnakri/qunitx-cli/commit/64ed621cda5ead6a71dc7c9cb6bbc0155667f126))
+- Resolve packages for out-of-root test files — 2026-04-16 by [@izelnakri](https://github.com/izelnakri) ([`a5573e3`](https://github.com/izelnakri/qunitx-cli/commit/a5573e34c407e2e6a6aff2a81615ac71a02853ef))
+- Guard against undefined display path for out-of-root files; reformat ancestorNodeModules — 2026-04-16 by [@izelnakri](https://github.com/izelnakri) ([`95a332c`](https://github.com/izelnakri/qunitx-cli/commit/95a332cef644cd7d6d6d6591eb2fb155d2868b46))
+
+### Features
+- Add # todo: x to TAPDisplayFinalResult() — 2026-04-15 by [@izelnakri](https://github.com/izelnakri) ([`755511e`](https://github.com/izelnakri/qunitx-cli/commit/755511edb26b5e46c7af2e9b2f69a2d14f158d5b))
+- Warn on 0 registered QUnit tests instead of timing out — 2026-04-16 by [@izelnakri](https://github.com/izelnakri) ([`53cd3f1`](https://github.com/izelnakri/qunitx-cli/commit/53cd3f1c3aed6039809aa8d7e8fe1e3b276fa0bb))
+
 ## [0.18.0] - 2026-04-14
 [`v0.17.8...v0.18.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.17.8...v0.18.0)
 
