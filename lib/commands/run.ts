@@ -368,6 +368,7 @@ async function addCachedContentMainHTML(
   return cachedContent;
 }
 
+/** Reads `tmp/test-timings.json` from projectRoot; returns `{}` on any error or invalid content. */
 async function readTimingCache(projectRoot: string): Promise<Record<string, number>> {
   try {
     const parsed = JSON.parse(await fs.readFile(`${projectRoot}/tmp/test-timings.json`, 'utf8'));
@@ -377,6 +378,7 @@ async function readTimingCache(projectRoot: string): Promise<Record<string, numb
   }
 }
 
+/** Distributes each group's wall-clock ms to its files proportionally by LPT weight. */
 function computeFileTimes(
   groups: string[][],
   weights: Map<string, number>,

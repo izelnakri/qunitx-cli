@@ -9,6 +9,7 @@ import type { Config, CachedContent } from '../types.ts';
 
 const fsPromise = fs.promises;
 
+/** Static 404 page served for HTML-accepting requests to missing static assets. */
 const NOT_FOUND_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
