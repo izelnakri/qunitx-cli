@@ -687,4 +687,4 @@ export function buildErrorHTML(buildError: { type: string; formatted: string }):
 </html>`;
 }
 
-export { setupWebServer as default };
+export { NOT_FOUND_HTML, setupWebServer as default };

@@ -371,7 +371,7 @@ async function addCachedContentMainHTML(
 async function readTimingCache(projectRoot: string): Promise<Record<string, number>> {
   try {
     const parsed = JSON.parse(await fs.readFile(`${projectRoot}/tmp/test-timings.json`, 'utf8'));
-    return typeof parsed === 'object' && parsed !== null ? parsed : {};
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
   }
@@ -471,4 +471,5 @@ function normalizeInternalAssetPathFromHTML(
     : normalize(`${currentDirectory}/${assetPath}`);
 }
 
+export { readTimingCache, computeFileTimes };
 export { run as default };
