@@ -35,6 +35,7 @@ interface Route {
   paramNames: string[];
   isWildcard: boolean;
   paramValues?: string[];
+  compiledRegex: RegExp | null;
 }
 
 /** Map of file extensions to their corresponding MIME type strings. */
@@ -198,11 +199,14 @@ export class HTTPServer {
       this.routes[method] = {};
     }
 
+    const paramNames = this.#extractParamNames(path);
     this.routes[method][path] = {
       path,
       handler,
-      paramNames: this.#extractParamNames(path),
+      paramNames,
       isWildcard: path === '/*',
+      compiledRegex:
+        paramNames.length > 0 ? new RegExp(`^${this.#buildRegexPattern(path, paramNames)}$`) : null,
     };
   }
 
@@ -258,10 +262,8 @@ export class HTTPServer {
         }
 
         if (isWildcard || this.#matchPathSegments(path, url)) {
-          if (route.paramNames.length > 0) {
-            const regexPattern = this.#buildRegexPattern(path, route.paramNames);
-            const regex = new RegExp(`^${regexPattern}$`);
-            const regexMatches = regex.exec(url);
+          if (route.compiledRegex) {
+            const regexMatches = route.compiledRegex.exec(url);
             if (regexMatches) {
               route.paramValues = regexMatches.slice(1);
             }
