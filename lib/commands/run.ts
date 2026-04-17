@@ -143,7 +143,8 @@ export async function run(config: Config): Promise<void> {
     // HTTP server and Playwright page inside one shared browser instance.
     const allFiles = Object.keys(config.fsTree);
     const groupCount = Math.min(allFiles.length, availableParallelism());
-    const groups = await splitIntoGroups(allFiles, groupCount);
+    const timings = await readTimingCache(config.projectRoot);
+    const { groups, weights } = await splitIntoGroups(allFiles, groupCount, timings);
 
     // Shared COUNTER so TAP test numbers are globally sequential across all groups.
     config.COUNTER = {
@@ -189,6 +190,7 @@ export async function run(config: Config): Promise<void> {
       void openOutputInBrowser(config);
     }
     const TIME_COUNTER = timeCounter();
+    const wallTimes = new Map<number, number>();
 
     // 3-minute per-group deadline. Firefox/WebKit can hang indefinitely in any Playwright
     // operation (browser.newPage, page.evaluate, page.close) when overwhelmed by concurrent
@@ -220,37 +222,38 @@ export async function run(config: Config): Promise<void> {
           timeoutId.unref();
         });
 
-        return Promise.race([
-          (async () => {
-            groupConfig._phase = 'connecting';
-            const connections = await setupBrowser(groupConfig, groupCachedContents[i], browser);
-            groupConfig.expressApp = connections.server;
+        const startMs = Date.now();
+        const work = (async () => {
+          groupConfig._phase = 'connecting';
+          const connections = await setupBrowser(groupConfig, groupCachedContents[i], browser);
+          groupConfig.expressApp = connections.server;
 
-            if (config.before) {
-              await runUserModule(`${process.cwd()}/${config.before}`, groupConfig, 'before');
-            }
+          if (config.before) {
+            await runUserModule(`${process.cwd()}/${config.before}`, groupConfig, 'before');
+          }
 
-            try {
-              await runTestsInBrowser(groupConfig, groupCachedContents[i], connections);
-            } finally {
-              await flushConsoleHandlers(groupConfig._pendingConsoleHandlers);
-              await Promise.all([
-                connections.server && connections.server.close(),
-                connections.page &&
-                  // Unref'd: the keepAlive interval above holds the event loop open, so this
-                  // timer still fires if page.close() hangs, without preventing process exit later.
-                  Promise.race([
-                    connections.page.close(),
-                    new Promise((resolve) => {
-                      const pageCloseTimeoutId = setTimeout(resolve, 10000);
-                      pageCloseTimeoutId.unref();
-                    }),
-                  ]).catch(() => {}),
-              ]);
-            }
-          })(),
-          groupTimeout,
-        ]);
+          try {
+            await runTestsInBrowser(groupConfig, groupCachedContents[i], connections);
+          } finally {
+            await flushConsoleHandlers(groupConfig._pendingConsoleHandlers);
+            await Promise.all([
+              connections.server && connections.server.close(),
+              connections.page &&
+                // Unref'd: the keepAlive interval above holds the event loop open, so this
+                // timer still fires if page.close() hangs, without preventing process exit later.
+                Promise.race([
+                  connections.page.close(),
+                  new Promise((resolve) => {
+                    const pageCloseTimeoutId = setTimeout(resolve, 10000);
+                    pageCloseTimeoutId.unref();
+                  }),
+                ]).catch(() => {}),
+            ]);
+          }
+        })();
+        const record = () => wallTimes.set(i, Date.now() - startMs);
+        work.then(record, record);
+        return Promise.race([work, groupTimeout]);
       }),
     );
 
@@ -273,6 +276,10 @@ export async function run(config: Config): Promise<void> {
     }
 
     TAPDisplayFinalResult(config.COUNTER, TIME_COUNTER.stop());
+
+    const fileTimes = computeFileTimes(groups, weights, wallTimes);
+    persistTimings(fileTimes, config.projectRoot).catch(() => {});
+    printFileTimings(fileTimes, config.projectRoot);
 
     if (config.after) {
       await runUserModule(`${process.cwd()}/${config.after}`, config.COUNTER, 'after');
@@ -361,35 +368,82 @@ async function addCachedContentMainHTML(
   return cachedContent;
 }
 
-// LPT (Longest Processing Time first) bin-packing: sort files by size descending,
-// then assign each to the group with the smallest current total. Produces near-optimal
-// load balance when test files vary in size (size is a proxy for test count).
-// Round-robin would give identical results when all files are the same size, so this
-// is strictly better — it never makes balance worse than round-robin.
-async function splitIntoGroups(files: string[], groupCount: number): Promise<string[][]> {
-  const withSizes = await Promise.all(
+async function readTimingCache(projectRoot: string): Promise<Record<string, number>> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(`${projectRoot}/tmp/test-timings.json`, 'utf8'));
+    return typeof parsed === 'object' && parsed !== null ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function computeFileTimes(
+  groups: string[][],
+  weights: Map<string, number>,
+  wallTimes: Map<number, number>,
+): Map<string, number> {
+  const result = new Map<string, number>();
+  groups.forEach((group, i) => {
+    const wallMs = wallTimes.get(i);
+    if (wallMs === undefined) return;
+    const total = group.reduce((sum, f) => sum + (weights.get(f) ?? 0), 0);
+    group.forEach((f) =>
+      result.set(f, total > 0 ? wallMs * ((weights.get(f) ?? 0) / total) : wallMs / group.length),
+    );
+  });
+  return result;
+}
+
+async function persistTimings(fileTimes: Map<string, number>, projectRoot: string): Promise<void> {
+  await fs.writeFile(
+    `${projectRoot}/tmp/test-timings.json`,
+    JSON.stringify(Object.fromEntries(fileTimes), null, 2),
+  );
+}
+
+function printFileTimings(fileTimes: Map<string, number>, projectRoot: string): void {
+  if (fileTimes.size === 0) return;
+  const lines = [...fileTimes.entries()]
+    .sort(([, a], [, b]) => b - a)
+    .map(([f, ms]) => `#   ${ms.toFixed(0)}ms  ${f.replace(`${projectRoot}/`, '')}`);
+  process.stdout.write(`# File execution times:\n${lines.join('\n')}\n`);
+}
+
+// LPT (Longest Processing Time first) bin-packing: sort files by estimated time descending,
+// then assign each to the group with the smallest current total. Uses cached per-file timings
+// when available; falls back to file size scaled by msPerByte for unknown files.
+async function splitIntoGroups(
+  files: string[],
+  groupCount: number,
+  timings: Record<string, number>,
+): Promise<{ groups: string[][]; weights: Map<string, number> }> {
+  const sizes = await Promise.all(
     files.map((f) =>
       fs
         .stat(f)
-        .then(({ size }) => ({ f, size }))
-        .catch(() => ({ f, size: 0 })),
+        .then((s) => s.size)
+        .catch(() => 0),
     ),
   );
-  return withSizes
-    .sort((a, b) => b.size - a.size)
-    .reduce(
-      (groups, { f, size }) => {
-        const { idx } = groups.reduce(
-          (min, { total }, i) => (total < min.total ? { idx: i, total } : min),
-          { idx: 0, total: groups[0].total },
-        );
-        groups[idx].files.push(f);
-        groups[idx].total += size;
-        return groups;
-      },
-      Array.from({ length: groupCount }, () => ({ files: [] as string[], total: 0 })),
-    )
-    .flatMap((g) => (g.files.length > 0 ? [g.files] : []));
+  const knownRates = files
+    .map((f, i) => ({ ms: timings[f], size: sizes[i] }))
+    .filter(({ ms, size }) => ms > 0 && size > 0);
+  const msPerByte =
+    knownRates.length > 0
+      ? knownRates.reduce((sum, { ms, size }) => sum + ms / size, 0) / knownRates.length
+      : 1;
+  const weights = new Map(
+    files.map((f, i) => [f, timings[f] > 0 ? timings[f] : sizes[i] * msPerByte]),
+  );
+  const buckets = Array.from({ length: groupCount }, () => ({ files: [] as string[], total: 0 }));
+  [...files]
+    .sort((a, b) => (weights.get(b) ?? 0) - (weights.get(a) ?? 0))
+    .forEach((f) => {
+      const min = buckets.reduce((m, _, i) => (buckets[i].total < buckets[m].total ? i : m), 0);
+      buckets[min].files.push(f);
+      buckets[min].total += weights.get(f) ?? 0;
+    });
+  return { groups: buckets.filter((b) => b.files.length > 0).map((b) => b.files), weights };
 }
 
 function logWatcherAndKeyboardShortcutInfo(config: Config, _server: unknown): void {
