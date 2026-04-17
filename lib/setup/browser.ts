@@ -107,27 +107,36 @@ export async function setupBrowser(
     window.IS_PLAYWRIGHT = true;
   });
 
-  page.on('console', async (msg) => {
+  config._pendingConsoleHandlers = new Set();
+  page.on('console', (msg) => {
     const type = msg.type();
     // Always surface warnings and errors so CI logs capture browser-side failures
     // without requiring --debug. Other log levels are debug-only to avoid noise.
     const alwaysShow = type === 'warning' || type === 'error';
     if (!alwaysShow && !config.debug) return;
-    try {
-      const values = await Promise.all(
-        msg.args().map((arg) =>
-          arg
-            .jsonValue()
-            // jsonValue() can fail for complex types (e.g. Date) in Firefox BiDi.
-            // Evaluate JSON.stringify in the browser — the result is a plain string
-            // that BiDi always serialises correctly — then round-trip via JSON.parse.
-            .catch(() => arg.evaluate((v) => JSON.stringify(v)).then(JSON.parse)),
-        ),
-      );
-      console.log(...values);
-    } catch {
-      console.log(msg.text());
-    }
+    // Track each handler promise so callers can await all pending BiDi round-trips
+    // before closing the browser/page. Without this, Firefox BiDi delivers console
+    // events asynchronously after QUnit done, and arg.evaluate() round-trips fail
+    // when the browser closes mid-flight, falling back to the useless "JSHandle@object".
+    const handler = (async () => {
+      try {
+        const values = await Promise.all(
+          msg.args().map((arg) =>
+            arg
+              .jsonValue()
+              // jsonValue() can fail for complex types (e.g. Date) in Firefox BiDi.
+              // Evaluate JSON.stringify in the browser — the result is a plain string
+              // that BiDi always serialises correctly — then round-trip via JSON.parse.
+              .catch(() => arg.evaluate((v) => JSON.stringify(v)).then(JSON.parse)),
+          ),
+        );
+        console.log(...values);
+      } catch {
+        console.log(msg.text());
+      }
+    })();
+    config._pendingConsoleHandlers!.add(handler);
+    handler.finally(() => config._pendingConsoleHandlers?.delete(handler));
   });
   page.on('pageerror', (error) => {
     console.error(error.toString());

@@ -250,6 +250,7 @@ export async function runTestsInBrowser(
       }
 
       if (!config.watch) {
+        await Promise.allSettled([...(config._pendingConsoleHandlers ?? [])]);
         await Promise.all([
           connections.server && connections.server.close(),
           connections.browser && connections.browser.close(),
@@ -536,7 +537,12 @@ async function runTestInsideHTMLFile(
     console.log(`# TIMEOUT: ${wsReason}`);
     console.log('BROWSER: runtime error thrown during executing tests');
     console.error('BROWSER: runtime error thrown during executing tests');
-    await failOnNonWatchMode(config.watch, { server, browser }, config._groupMode);
+    await failOnNonWatchMode(
+      config.watch,
+      { server, browser },
+      config._groupMode,
+      config._pendingConsoleHandlers,
+    );
   } else if (QUNIT_RESULT.totalTests === 0) {
     // QUnit ran but no tests were registered (or QUnit was not present in the bundle).
     // This is not a failure — handled at the runTestsInBrowser level as a warning.
@@ -548,7 +554,12 @@ async function runTestInsideHTMLFile(
     );
     console.log(`BROWSER: TEST TIMED OUT: ${QUNIT_RESULT.currentTest}`);
     console.error(`BROWSER: TEST TIMED OUT: ${QUNIT_RESULT.currentTest}`);
-    await failOnNonWatchMode(config.watch, { server, browser }, config._groupMode);
+    await failOnNonWatchMode(
+      config.watch,
+      { server, browser },
+      config._groupMode,
+      config._pendingConsoleHandlers,
+    );
   } else if (QUNIT_RESULT.failedTests > config.COUNTER.failCount) {
     // Safety net: browser tracked failures that WebSocket events never delivered to Node.js
     // (e.g. WS connection dropped mid-run). Reconcile so the exit code is always correct.
@@ -560,12 +571,14 @@ async function failOnNonWatchMode(
   watchMode: boolean = false,
   connections: { server?: HTTPServer; browser?: { close(): Promise<void> } } = {},
   groupMode: boolean = false,
+  pendingHandlers?: Set<Promise<void>> | null,
 ): Promise<void> {
   if (!watchMode) {
     if (groupMode) {
       // Parent orchestrator handles cleanup and exit; signal failure via throw.
       throw new Error('Browser test run failed');
     }
+    await Promise.allSettled([...(pendingHandlers ?? [])]);
     await Promise.all([
       connections.server && connections.server.close(),
       connections.browser && connections.browser.close(),

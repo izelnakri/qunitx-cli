@@ -2,10 +2,6 @@ Given the existing benchmarks, is there any other important benchmark I should a
 opportunities to optimize/refactor the binary runtime or runtime of my tests with this binary(qunitx)/project for the end user when
 they run their suite of tests or a test?
 
---watch tests are slow because I've a suspicious node still prefers single thread over fs calls. It does distribute them
-across cores but that thread pool doesnt get utilized or doesnt utilize all my cores and machine resources effectively.
-Am I correct with my assumption?
-
 --refactor the `test/helpers/before-script-async.ts` while keeping a similar behavior(or at least similar use when the file is used in tests it should be a backend async service I suspect that we verify in tests it gets loaded correctly) so I can remove express and cors devDependencies from my project. Also rewrite expressApp name to something correct now in my runtime, since I dont use express anymore, should it be `webServer` instead?
 
 https://www.youtube.com/watch?v=SaZEdiV3A3M
@@ -34,6 +30,8 @@ the worst by having:
   Every qunitx invocation today: Node startup → load 40+ files → connect to Chrome → esbuild → navigate → run → exit. A qunitx serve daemon would keep Chrome alive and hold the
   esbuild incremental context warm. qunitx run test/file.ts sends the file list over a Unix socket and streams TAP back. Subsequent runs: ~200–300ms (just esbuild rebuild +
   navigate). This is the single biggest UX improvement possible for developers running tests frequently in a non-watch workflow.
+  CLAUDE SESSION: claude --resume b0edfd88-98cb-4111-8322-f103e6d41515
+
 
 qunitx-cli JS API should be very usable from outside by JS/TS only, by users of this library. Do them, document it well
 in the codebase and also on the README.md(if needed). claude --resume 5d51cdce-b6b3-4580-8bb9-94649a17da2c

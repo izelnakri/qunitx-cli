@@ -145,6 +145,8 @@ export interface Config {
   _justAddedFiles?: Set<string>;
   /** Timestamp (ms) of the most recently completed build, used for debounce logic. */
   _lastBuildEndMs?: number;
+  /** In-flight console handler promises; awaited before browser/page close so Firefox BiDi round-trips complete. */
+  _pendingConsoleHandlers?: Set<Promise<void>> | null;
   /** Express app instance injected during integration tests. */
   expressApp?: unknown;
 }

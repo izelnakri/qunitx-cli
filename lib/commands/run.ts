@@ -229,6 +229,7 @@ export async function run(config: Config): Promise<void> {
             try {
               await runTestsInBrowser(groupConfig, groupCachedContents[i], connections);
             } finally {
+              await Promise.allSettled([...(groupConfig._pendingConsoleHandlers ?? [])]);
               await Promise.all([
                 connections.server && connections.server.close(),
                 connections.page &&
