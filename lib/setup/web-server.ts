@@ -372,11 +372,6 @@ function testRuntimeToInject(port: number, config: Config): string {
           window.socket.send(JSON.stringify({ event: 'connection' }));
         }
       });
-      window.QUnit.moduleStart((details) => { // NOTE: might be useful in future for hanged module tracking
-        if (window.IS_PLAYWRIGHT) {
-          window.socket.send(JSON.stringify({ event: 'moduleStart', details: details }, getCircularReplacer()));
-        }
-      });
       window.QUnit.on('testStart', (details) => {
         window.QUNIT_RESULT.totalTests++;
         window.QUNIT_RESULT.currentTest = details.fullName.join(' | ');
