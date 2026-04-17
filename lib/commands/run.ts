@@ -139,7 +139,7 @@ export async function run(config: Config): Promise<void> {
     // HTTP server and Playwright page inside one shared browser instance.
     const allFiles = Object.keys(config.fsTree);
     const groupCount = Math.min(allFiles.length, availableParallelism());
-    const groups = splitIntoGroups(allFiles, groupCount);
+    const groups = await splitIntoGroups(allFiles, groupCount);
 
     // Shared COUNTER so TAP test numbers are globally sequential across all groups.
     config.COUNTER = {
@@ -356,10 +356,35 @@ async function addCachedContentMainHTML(
   return cachedContent;
 }
 
-function splitIntoGroups(files: string[], groupCount: number): string[][] {
-  const groups = Array.from({ length: groupCount }, () => []);
-  files.forEach((file, i) => groups[i % groupCount].push(file));
-  return groups.filter((group) => group.length > 0);
+// LPT (Longest Processing Time first) bin-packing: sort files by size descending,
+// then assign each to the group with the smallest current total. Produces near-optimal
+// load balance when test files vary in size (size is a proxy for test count).
+// Round-robin would give identical results when all files are the same size, so this
+// is strictly better — it never makes balance worse than round-robin.
+async function splitIntoGroups(files: string[], groupCount: number): Promise<string[][]> {
+  const withSizes = await Promise.all(
+    files.map((f) =>
+      fs
+        .stat(f)
+        .then(({ size }) => ({ f, size }))
+        .catch(() => ({ f, size: 0 })),
+    ),
+  );
+  return withSizes
+    .sort((a, b) => b.size - a.size)
+    .reduce(
+      (groups, { f, size }) => {
+        const { idx } = groups.reduce(
+          (min, { total }, i) => (total < min.total ? { idx: i, total } : min),
+          { idx: 0, total: groups[0].total },
+        );
+        groups[idx].files.push(f);
+        groups[idx].total += size;
+        return groups;
+      },
+      Array.from({ length: groupCount }, () => ({ files: [] as string[], total: 0 })),
+    )
+    .flatMap((g) => (g.files.length > 0 ? [g.files] : []));
 }
 
 function logWatcherAndKeyboardShortcutInfo(config: Config, _server: unknown): void {
