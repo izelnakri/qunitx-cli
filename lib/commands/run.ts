@@ -5,7 +5,11 @@ import fs from 'node:fs/promises';
 import { normalize } from 'node:path';
 import { availableParallelism } from 'node:os';
 import { blue, yellow } from '../utils/color.ts';
-import { runTestsInBrowser, buildTestBundle } from './run/tests-in-browser.ts';
+import {
+  runTestsInBrowser,
+  buildTestBundle,
+  flushConsoleHandlers,
+} from './run/tests-in-browser.ts';
 import { setupFileWatchers } from '../setup/file-watcher.ts';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
 import { runUserModule } from '../utils/run-user-module.ts';
@@ -229,7 +233,7 @@ export async function run(config: Config): Promise<void> {
             try {
               await runTestsInBrowser(groupConfig, groupCachedContents[i], connections);
             } finally {
-              await Promise.allSettled([...(groupConfig._pendingConsoleHandlers ?? [])]);
+              await flushConsoleHandlers(groupConfig._pendingConsoleHandlers);
               await Promise.all([
                 connections.server && connections.server.close(),
                 connections.page &&

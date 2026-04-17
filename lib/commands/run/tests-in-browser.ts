@@ -250,7 +250,7 @@ export async function runTestsInBrowser(
       }
 
       if (!config.watch) {
-        await Promise.allSettled([...(config._pendingConsoleHandlers ?? [])]);
+        await flushConsoleHandlers(config._pendingConsoleHandlers);
         await Promise.all([
           connections.server && connections.server.close(),
           connections.browser && connections.browser.close(),
@@ -578,7 +578,7 @@ async function failOnNonWatchMode(
       // Parent orchestrator handles cleanup and exit; signal failure via throw.
       throw new Error('Browser test run failed');
     }
-    await Promise.allSettled([...(pendingHandlers ?? [])]);
+    await flushConsoleHandlers(pendingHandlers);
     await Promise.all([
       connections.server && connections.server.close(),
       connections.browser && connections.browser.close(),
@@ -586,6 +586,21 @@ async function failOnNonWatchMode(
     await shutdownPrelaunch();
     process.exit(1);
   }
+}
+
+/**
+ * Awaits all in-flight console handler promises until the Set is stably empty,
+ * recursing to catch handlers added by Firefox BiDi events that arrive during each
+ * await. The deadline (default 2 s) guards against infinite recursion.
+ * @returns {Promise<void>}
+ */
+export async function flushConsoleHandlers(
+  handlers?: Set<Promise<void>> | null,
+  deadline = Date.now() + 2000,
+): Promise<void> {
+  if (!handlers || handlers.size === 0 || Date.now() >= deadline) return;
+  await Promise.allSettled([...handlers]);
+  return flushConsoleHandlers(handlers, deadline);
 }
 
 /**
