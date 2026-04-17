@@ -1,3 +1,6 @@
+
+❯ Is there any opportunities to optimize/refactor the binary runtime or runtime of my tests with this binary(qunitx)/project for the end user when
+  they run their suite of tests or a test?
 Given the existing benchmarks, is there any other important benchmark I should add and then more importantly is there any
 opportunities to optimize/refactor the binary runtime or runtime of my tests with this binary(qunitx)/project for the end user when
 they run their suite of tests or a test?

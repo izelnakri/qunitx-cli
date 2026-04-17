@@ -107,6 +107,28 @@ export async function setupBrowser(
     window.IS_PLAYWRIGHT = true;
   });
 
+  // Firefox BiDi sends all object console args by handle (no inline value), so
+  // arg.jsonValue() always fails for objects — even plain ones with no special types.
+  // Pre-serialize objects to JSON strings in the browser before BiDi sees them:
+  // strings are always sent inline, making arg.jsonValue() succeed.
+  // Only applied to Firefox — Chrome CDP serialises objects natively.
+  if (config.browser === 'firefox') {
+    await page.addInitScript(() => {
+      const preSerialize = (arg: unknown): unknown => {
+        if (arg === null || typeof arg !== 'object') return arg;
+        try {
+          return JSON.stringify(arg, (_key, v) => (v instanceof Date ? v.toISOString() : v));
+        } catch {
+          return String(arg);
+        }
+      };
+      (['log', 'warn', 'error', 'info', 'debug'] as const).forEach((method) => {
+        const orig = console[method].bind(console);
+        console[method] = (...args: unknown[]) => orig(...args.map(preSerialize));
+      });
+    });
+  }
+
   config._pendingConsoleHandlers = new Set();
   page.on('console', (msg) => {
     const type = msg.type();
@@ -120,16 +142,7 @@ export async function setupBrowser(
     // when the browser closes mid-flight, falling back to the useless "JSHandle@object".
     const handler = (async () => {
       try {
-        const values = await Promise.all(
-          msg.args().map((arg) =>
-            arg
-              .jsonValue()
-              // jsonValue() can fail for complex types (e.g. Date) in Firefox BiDi.
-              // Evaluate JSON.stringify in the browser — the result is a plain string
-              // that BiDi always serialises correctly — then round-trip via JSON.parse.
-              .catch(() => arg.evaluate((v) => JSON.stringify(v)).then(JSON.parse)),
-          ),
-        );
+        const values = await Promise.all(msg.args().map((arg) => arg.jsonValue()));
         console.log(...values);
       } catch {
         console.log(msg.text());
