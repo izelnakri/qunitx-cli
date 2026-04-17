@@ -84,9 +84,10 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
   // bundle compilation time and eliminating the "WS never connected" timeout on CI.
   server.get('/tests.js', (_req, res) => {
     const bytes = cachedContent.allTestCode?.length ?? null;
-    process.stdout.write(
-      `# [HTTPServer] GET /tests.js → ${bytes !== null ? `${bytes} bytes` : 'NOT READY (allTestCode is null)'}\n`,
-    );
+    config.debug &&
+      process.stdout.write(
+        `# [HTTPServer] GET /tests.js → ${bytes !== null ? `${bytes} bytes` : 'NOT READY (allTestCode is null)'}\n`,
+      );
     if (bytes === null) {
       // allTestCode not yet built — serve a JS error so Chrome logs a visible message
       // instead of silently executing an empty script. This should never happen in
@@ -111,9 +112,10 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
 
   server.get('/filtered-tests.js', (_req, res) => {
     const bytes = cachedContent.filteredTestCode?.length ?? null;
-    process.stdout.write(
-      `# [HTTPServer] GET /filtered-tests.js → ${bytes !== null ? `${bytes} bytes` : 'NOT READY (filteredTestCode is null)'}\n`,
-    );
+    config.debug &&
+      process.stdout.write(
+        `# [HTTPServer] GET /filtered-tests.js → ${bytes !== null ? `${bytes} bytes` : 'NOT READY (filteredTestCode is null)'}\n`,
+      );
     if (bytes === null) {
       res.writeHead(503, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
       res.end(
@@ -223,7 +225,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
     }
 
     const url = req.url;
-    const requestStartedAt = new Date();
+    const requestStartedAt = Date.now();
     const filePath = (
       url.endsWith('/') ? [STATIC_FILES_PATH, url, 'index.html'] : [STATIC_FILES_PATH, url]
     ).join('');
@@ -241,9 +243,10 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
       fs.createReadStream(filePath).pipe(res);
     }
 
-    process.stdout.write(
-      `# [HTTPServer] GET ${url} ${statusCode} - ${new Date() - requestStartedAt}ms\n`,
-    );
+    config.debug &&
+      process.stdout.write(
+        `# [HTTPServer] GET ${url} ${statusCode} - ${Date.now() - requestStartedAt}ms\n`,
+      );
   });
 
   return server;
