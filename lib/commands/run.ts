@@ -421,10 +421,12 @@ async function splitIntoGroups(
 ): Promise<{ groups: string[][]; weights: Map<string, number> }> {
   const sizes = await Promise.all(
     files.map((f) =>
-      fs
-        .stat(f)
-        .then((s) => s.size)
-        .catch(() => 0),
+      timings[f] > 0
+        ? Promise.resolve(0)
+        : fs
+            .stat(f)
+            .then((s) => s.size)
+            .catch(() => 0),
     ),
   );
   const knownRates = files
