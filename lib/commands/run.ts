@@ -204,7 +204,7 @@ export async function run(config: Config): Promise<void> {
     // all active handles close and the event loop would drain — exiting silently before
     // allSettled resolves or results are printed. This interval holds the loop open so that
     // unref'd group/page-close timers can still fire normally.
-    const keepAlive = setInterval(() => {}, 1000);
+    const keepAlive = setInterval(() => {}, 10_000);
 
     const groupResults = await Promise.allSettled(
       groupConfigs.map((groupConfig, i) => {
