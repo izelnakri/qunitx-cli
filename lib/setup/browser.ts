@@ -103,10 +103,6 @@ export async function setupBrowser(
   const [page] = await Promise.all([getPage(), bindServerToPort(server, config)]);
   perfLog(`browser.js: newPage + bindServerToPort took ${Date.now() - pageStart}ms`);
 
-  await page.addInitScript(() => {
-    window.IS_PLAYWRIGHT = true;
-  });
-
   // Firefox BiDi sends all object console args by handle (no inline value), so
   // arg.jsonValue() always fails for objects — even plain ones with no special types.
   // Pre-serialize objects to JSON strings in the browser before BiDi sees them:

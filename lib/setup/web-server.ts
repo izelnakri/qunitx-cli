@@ -313,7 +313,7 @@ function testRuntimeToInject(port: number, config: Config): string {
           // Notify Node.js that the WS socket is open. This fires immediately (< 1 s) because
           // this runtime script is tiny — tests.js background compilation hasn't finished yet.
           // Node.js uses this to distinguish "WS never connected" from "WS connected but bundle slow".
-          if (window.IS_PLAYWRIGHT) {
+          if (navigator.webdriver) {
             window.socket.send(JSON.stringify({ event: 'wsOpen' }));
           }
           maybeStart();
@@ -322,9 +322,9 @@ function testRuntimeToInject(port: number, config: Config): string {
           retryOrFail();
         });
         window.socket.addEventListener('message', function(messageEvent) {
-          if (!window.IS_PLAYWRIGHT && messageEvent.data === 'refresh') {
+          if (!navigator.webdriver && messageEvent.data === 'refresh') {
             window.location.reload(true);
-          } else if (window.IS_PLAYWRIGHT && messageEvent.data === 'abort') {
+          } else if (navigator.webdriver && messageEvent.data === 'abort') {
             window.abortQUnit = true;
             window.QUnit.config.queue.length = 0;
             window.socket.send(JSON.stringify({ event: 'abort' }));
@@ -367,7 +367,7 @@ function testRuntimeToInject(port: number, config: Config): string {
 
       if (!window.QUnit) {
         console.log('QUnit not found after WebSocket connected');
-        if (window.IS_PLAYWRIGHT) {
+        if (navigator.webdriver) {
           // Signal the Playwright runner that the run is complete with 0 tests rather than
           // waiting for the inactivity timeout. The runner treats totalTests === 0 as a
           // "no tests registered" warning (not a failure), so this gives a fast, clean result.
@@ -380,7 +380,7 @@ function testRuntimeToInject(port: number, config: Config): string {
       }
 
       window.QUnit.begin(() => { // NOTE: might be useful in future for hanged module tracking
-        if (window.IS_PLAYWRIGHT) {
+        if (navigator.webdriver) {
           window.socket.send(JSON.stringify({ event: 'connection' }));
         }
       });
@@ -393,7 +393,7 @@ function testRuntimeToInject(port: number, config: Config): string {
         window.QUNIT_RESULT.finishedTests++;
         if (details.status === 'failed') window.QUNIT_RESULT.failedTests++;
         window.QUNIT_RESULT.currentTest = null;
-        if (window.IS_PLAYWRIGHT) {
+        if (navigator.webdriver) {
           window.socket.send(JSON.stringify({ event: 'testEnd', details: details, abort: window.abortQUnit }, getCircularReplacer()));
 
           if (${config.failFast} && details.status === 'failed') {
@@ -402,7 +402,7 @@ function testRuntimeToInject(port: number, config: Config): string {
         }
       });
       window.QUnit.done((details) => {
-        if (window.IS_PLAYWRIGHT) {
+        if (navigator.webdriver) {
           window.socket.send(JSON.stringify({ event: 'done', details: details, qunitResult: window.QUNIT_RESULT, abort: window.abortQUnit }, getCircularReplacer()));
           // Do NOT set testTimeout here. The WS 'done' event (testsDone promise) is the
           // canonical completion signal for Playwright runs. waitForFunction is reserved

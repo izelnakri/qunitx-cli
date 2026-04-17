@@ -122,7 +122,7 @@ export async function run(config: Config): Promise<void> {
         },
         async (_path, _event) => {
           connections.server.publish('refresh');
-          // In headed watch mode the Playwright page IS the visible browser (IS_PLAYWRIGHT=true
+          // In headed watch mode the Playwright page IS the visible browser (navigator.webdriver=true
           // means it ignores the WS 'refresh' message). Navigate it directly after a build error
           // or a 0-tests warning so it shows the correct HTML rather than stale test results.
           if (isHeadedWatchMode && (cachedContent._buildError || cachedContent._noTestsWarning)) {
