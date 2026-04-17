@@ -18,11 +18,17 @@ module('resource leak tests', () => {
 
       await shell('node cli.ts test/fixtures/passing-tests.ts');
 
-      const entries = await fs.readdir(os.tmpdir());
-      // Only dirs that appeared during our run (not pre-existing from concurrent tests).
-      const chromeDirs = entries.filter(
-        (e) => e.startsWith('qunitx-chrome-') && !dirsBefore.has(e),
-      );
+      // Poll until all new Chrome dirs disappear, up to 2 s. This tolerates the race
+      // where a concurrent test's async rm() is in-flight between "Chrome killed" and
+      // "dir removed" — the dir briefly exists with no process holding it as cwd.
+      const chromeDirs = await (async function poll(deadline: number): Promise<string[]> {
+        const dirs = (await fs.readdir(os.tmpdir())).filter(
+          (e) => e.startsWith('qunitx-chrome-') && !dirsBefore.has(e),
+        );
+        if (dirs.length === 0 || Date.now() >= deadline) return dirs;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return poll(deadline);
+      })(Date.now() + 2000);
       if (chromeDirs.length === 0) {
         assert.ok(true, 'no Chrome dirs in tmpdir');
         return;

@@ -56,8 +56,8 @@ export async function cleanupBrowserDir(dirPath: string): Promise<void> {
     }
   }
 
-  // Phase 2: retry rm() until success or 1s deadline.
-  const deadline = Date.now() + 1000;
+  // Phase 2: retry rm() until success or 5s deadline.
+  const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     const removed = await fs
       .rm(dirPath, { recursive: true, force: true })
