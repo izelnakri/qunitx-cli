@@ -5,7 +5,7 @@ import { green, magenta, red, yellow } from '../utils/color.ts';
 import type { FSWatcher } from 'node:fs';
 import type { Config, FSTree } from '../types.ts';
 
-const CHANGE_DEDUPE_MS = 30;
+const CHANGE_DEDUPE_MS = 10;
 
 /**
  * Starts `fs.watch` watchers for each lookup path and calls `onEventFunc` on JS/TS file changes,
@@ -57,8 +57,10 @@ export function setupFileWatchers(
   for (const watchPath of testFileLookupPaths) {
     let ready = false;
     // Per-file timestamps of the last processed 'change' event.
-    // inotify/FSEvents often fire 2–3 change events per writeFile; a 30ms dedup window coalesces
-    // them without adding noticeable lag. See _lastBuildEndMs bypass in the child watcher below.
+    // inotify/FSEvents often fire 2–3 change events per writeFile; a 10ms dedup window coalesces
+    // them. inotify multi-fires (IN_MODIFY + IN_CLOSE_WRITE) arrive within 1–2ms of each other,
+    // so 10ms is safely above the noise floor without adding perceptible lag to watch rebuilds.
+    // See _lastBuildEndMs bypass in the child watcher below.
     const lastChangeMs: Record<string, number> = {};
 
     // Child watcher: tracks file-level events within watchPath.
