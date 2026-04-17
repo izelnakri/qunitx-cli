@@ -22,6 +22,10 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
     cachedContent.mainHTML.filePath,
     config.projectRoot,
   );
+  // Cache the runtime script — it never changes for this server's lifetime (port, timeout,
+  // failFast are fixed after setup). Avoids regenerating the ~2KB template string on every
+  // HTML request; the remaining injectScript call is a single string .replace() (negligible).
+  const runtimeScript = testRuntimeToInject(config.port, config);
   server.wss.on('connection', function connection(socket) {
     socket.on('message', function message(data) {
       const { event, details, qunitResult, abort } = JSON.parse(data);
@@ -154,10 +158,9 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
 
     const htmlContent = escapeAndInjectTestsToHTML(
       mainHTMLWithReplacedAssets,
-      testRuntimeToInject(config.port, config),
+      runtimeScript,
       './tests.js',
     );
-
     res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
     res.write(htmlContent);
     res.end();
@@ -190,10 +193,9 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
 
     const htmlContent = escapeAndInjectTestsToHTML(
       mainHTMLWithReplacedAssets,
-      testRuntimeToInject(config.port, config),
+      runtimeScript,
       './filtered-tests.js',
     );
-
     res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
     res.write(htmlContent);
     res.end();
@@ -210,7 +212,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
     if (possibleDynamicHTML) {
       const htmlContent = escapeAndInjectTestsToHTML(
         possibleDynamicHTML,
-        testRuntimeToInject(config.port, config),
+        runtimeScript,
         '/tests.js',
       );
 
