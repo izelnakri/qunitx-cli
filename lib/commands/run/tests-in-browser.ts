@@ -107,7 +107,7 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
     // Allow test files outside the project root (e.g. /tmp/my-test.ts) to import
     // packages from any node_modules on the ancestor chain of cwd — the same lookup
     // order Node itself uses when resolving require() from process.cwd().
-    nodePaths: ancestorNodeModules(process.cwd()),
+    nodePaths: ANCESTOR_NODE_MODULES,
     bundle: true,
     logLevel: 'silent',
     outfile,
@@ -305,7 +305,7 @@ function buildFilteredTests(
         contents: filteredTests.map((filePath) => `import "${filePath}";`).join(''),
         resolveDir: process.cwd(),
       },
-      nodePaths: ancestorNodeModules(process.cwd()),
+      nodePaths: ANCESTOR_NODE_MODULES,
       bundle: true,
       logLevel: 'silent',
       outfile: outputPath,
@@ -587,5 +587,10 @@ const ancestorNodeModules = (dir: string): string[] =>
     .map((_, i, parts) =>
       path.join(parts.slice(0, parts.length - i).join(path.sep) || path.sep, 'node_modules'),
     );
+
+// process.cwd() is fixed for the lifetime of the process — compute once and reuse
+// across every buildTestBundle / buildFilteredTests call rather than reallocating
+// the array of ancestor paths on every esbuild invocation.
+const ANCESTOR_NODE_MODULES = ancestorNodeModules(process.cwd());
 
 export { runTestsInBrowser as default };
