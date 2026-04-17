@@ -101,7 +101,11 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
     // Signal Node.js that Chrome has fetched the bundle. Resets the idle timer so Chrome
     // gets a fresh budget to compile and execute tests.js — decoupled from WS open time.
     config._onTestsJsServed?.();
-    res.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
+    res.writeHead(200, {
+      'Content-Type': 'application/javascript',
+      'Cache-Control': 'no-store',
+      'Content-Length': bytes,
+    });
     res.end(cachedContent.allTestCode);
   });
 
@@ -118,7 +122,11 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
       return;
     }
     config._onTestsJsServed?.();
-    res.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
+    res.writeHead(200, {
+      'Content-Type': 'application/javascript',
+      'Cache-Control': 'no-store',
+      'Content-Length': bytes,
+    });
     res.end(cachedContent.filteredTestCode);
   });
 
