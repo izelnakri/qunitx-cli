@@ -511,7 +511,10 @@ async function runTestInsideHTMLFile(
 
     await testRaceResult;
 
-    QUNIT_RESULT = await page.evaluate(() => window.QUNIT_RESULT);
+    // Prefer the QUNIT_RESULT piggy-backed on the WS 'done' message — zero extra latency.
+    // Fall back to page.evaluate() only when the run timed out without a WS 'done' arriving
+    // (config._lastQUnitResult is null), so we still get partial results for diagnostics.
+    QUNIT_RESULT = config._lastQUnitResult ?? (await page.evaluate(() => window.QUNIT_RESULT));
   } catch (error) {
     targetError = error;
     console.log(error);
@@ -522,6 +525,7 @@ async function runTestInsideHTMLFile(
     config._onTestsJsServed = null;
     config._resetTestTimeout = null;
     config._testRunDone = null;
+    config._lastQUnitResult = null;
   }
 
   if (!QUNIT_RESULT) {

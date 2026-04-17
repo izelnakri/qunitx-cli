@@ -130,6 +130,8 @@ export interface Config {
   _groupMode?: boolean;
   /** Current lifecycle phase of the test run. */
   _phase?: 'bundling' | 'connecting' | 'loading' | 'running' | 'done';
+  /** QUNIT_RESULT delivered via the WS 'done' message; avoids a page.evaluate() CDP round-trip. */
+  _lastQUnitResult?: { totalTests: number; finishedTests: number; failedTests: number; currentTest: string | null } | null;
   /** `true` while esbuild is actively compiling. */
   _building?: boolean;
   /** Queued build-trigger callback; fires once the in-progress build completes. */

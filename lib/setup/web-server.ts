@@ -25,7 +25,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
 
   server.wss.on('connection', function connection(socket) {
     socket.on('message', function message(data) {
-      const { event, details, abort } = JSON.parse(data);
+      const { event, details, qunitResult, abort } = JSON.parse(data);
 
       if (event === 'wsOpen') {
         // WebSocket socket opened — test bundle is still compiling in the background.
@@ -63,6 +63,9 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         // Signal test completion. TCP ordering guarantees all testEnd messages
         // preceding this on the same connection are already processed by Node.js.
         config._phase = 'done';
+        // Store the browser-side QUNIT_RESULT so runTestInsideHTMLFile can read it
+        // without a page.evaluate() CDP round-trip after testRaceResult resolves.
+        config._lastQUnitResult = qunitResult ?? null;
         if (config.debug && config._groupMode) {
           process.stdout.write(
             `# group done: ${details.passed} passed, ${details.failed} failed (${details.runtime}ms)\n`,
@@ -391,7 +394,7 @@ function testRuntimeToInject(port: number, config: Config): string {
       });
       window.QUnit.done((details) => {
         if (window.IS_PLAYWRIGHT) {
-          window.socket.send(JSON.stringify({ event: 'done', details: details, abort: window.abortQUnit }, getCircularReplacer()));
+          window.socket.send(JSON.stringify({ event: 'done', details: details, qunitResult: window.QUNIT_RESULT, abort: window.abortQUnit }, getCircularReplacer()));
           // Do NOT set testTimeout here. The WS 'done' event (testsDone promise) is the
           // canonical completion signal for Playwright runs. waitForFunction is reserved
           // for true timeouts (test hangs) where testTimeout increments naturally via setInterval.
