@@ -394,7 +394,9 @@ function testRuntimeToInject(port: number, config: Config): string {
         if (details.status === 'failed') window.QUNIT_RESULT.failedTests++;
         window.QUNIT_RESULT.currentTest = null;
         if (navigator.webdriver) {
-          window.socket.send(JSON.stringify({ event: 'testEnd', details: details, abort: window.abortQUnit }, getCircularReplacer()));
+          const isFailed = details.status === 'failed';
+          const payload = isFailed ? details : { status: details.status, fullName: details.fullName, runtime: details.runtime };
+          window.socket.send(JSON.stringify({ event: 'testEnd', details: payload, abort: window.abortQUnit }, isFailed ? getCircularReplacer() : undefined));
 
           if (${config.failFast} && details.status === 'failed') {
             window.QUnit.config.queue.length = 0;
