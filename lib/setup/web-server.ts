@@ -22,7 +22,6 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
     cachedContent.mainHTML.filePath,
     config.projectRoot,
   );
-
   server.wss.on('connection', function connection(socket) {
     socket.on('message', function message(data) {
       const { event, details, qunitResult, abort } = JSON.parse(data);
@@ -143,10 +142,9 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
       return;
     }
 
-    const TEST_RUNTIME_TO_INJECT = testRuntimeToInject(config.port, config);
     const htmlContent = escapeAndInjectTestsToHTML(
       mainHTMLWithReplacedAssets,
-      TEST_RUNTIME_TO_INJECT,
+      testRuntimeToInject(config.port, config),
       './tests.js',
     );
 
@@ -180,10 +178,9 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
       return;
     }
 
-    const TEST_RUNTIME_TO_INJECT = testRuntimeToInject(config.port, config);
     const htmlContent = escapeAndInjectTestsToHTML(
       mainHTMLWithReplacedAssets,
-      TEST_RUNTIME_TO_INJECT,
+      testRuntimeToInject(config.port, config),
       './filtered-tests.js',
     );
 
@@ -201,10 +198,9 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
     const possibleDynamicHTML =
       cachedContent.dynamicContentHTMLs[`${config.projectRoot}${req.path}`];
     if (possibleDynamicHTML) {
-      const TEST_RUNTIME_TO_INJECT = testRuntimeToInject(config.port, config);
       const htmlContent = escapeAndInjectTestsToHTML(
         possibleDynamicHTML,
-        TEST_RUNTIME_TO_INJECT,
+        testRuntimeToInject(config.port, config),
         '/tests.js',
       );
 
