@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.19.2] - 2026-04-17
+[`v0.19.1...v0.19.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.19.1...v0.19.2)
+
+### Bug Fixes
+- Pre-serialize console args in browser to bypass BiDi handle limitation — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`2891399`](https://github.com/izelnakri/qunitx-cli/commit/2891399381e233f1b3d550681ef74b51af225c69))
+- Use location.port in WS URL so runtimeScript cache is safe — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`be21519`](https://github.com/izelnakri/qunitx-cli/commit/be215193f5eb2c20230f5b8f1706de9b02fbc1ff))
+- Add JSDoc to exported readTimingCache, computeFileTimes, NOT_FOUND_HTML — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`5aea265`](https://github.com/izelnakri/qunitx-cli/commit/5aea26533bf295bd295bd5628904e890d5b60109))
+
+### Performance
+- Gate HTTP fetch logs behind --debug to clean up TAP stdout — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`bf4a424`](https://github.com/izelnakri/qunitx-cli/commit/bf4a424da6803d019bd566b15eab01e3e7096672))
+- Cache testRuntimeToInject result per server instance — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`61231f8`](https://github.com/izelnakri/qunitx-cli/commit/61231f8c6eb68e0949e57b1ec55322ce164d601d))
+- Replace IS_PLAYWRIGHT flag with navigator.webdriver — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`ed0a03d`](https://github.com/izelnakri/qunitx-cli/commit/ed0a03dddf4b5df58caed81b527921c4ebf560f2))
+- Strip assertions array from non-failing testEnd WS messages — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`6ae7a7d`](https://github.com/izelnakri/qunitx-cli/commit/6ae7a7d10b20821d233cfa4b08391c8c0de1d318))
+- LPT bin-packing with historical timing cache + per-file TAP timings — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`26bdbe4`](https://github.com/izelnakri/qunitx-cli/commit/26bdbe41b5b8df19a340a505756c243c1352db14))
+
 ## [0.19.1] - 2026-04-17
 [`v0.19.0...v0.19.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.19.0...v0.19.1)
 
