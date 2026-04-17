@@ -114,7 +114,16 @@ export async function setupBrowser(
     const alwaysShow = type === 'warning' || type === 'error';
     if (!alwaysShow && !config.debug) return;
     try {
-      const values = await Promise.all(msg.args().map((arg) => arg.jsonValue()));
+      const values = await Promise.all(
+        msg.args().map((arg) =>
+          arg
+            .jsonValue()
+            // jsonValue() can fail for complex types (e.g. Date) in Firefox BiDi.
+            // Evaluate JSON.stringify in the browser — the result is a plain string
+            // that BiDi always serialises correctly — then round-trip via JSON.parse.
+            .catch(() => arg.evaluate((v) => JSON.stringify(v)).then(JSON.parse)),
+        ),
+      );
       console.log(...values);
     } catch {
       console.log(msg.text());
