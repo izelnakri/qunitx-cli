@@ -4,11 +4,38 @@ import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-h
 import { injectScript } from '../utils/html.ts';
 import { TAPDisplayTestResult } from '../tap/display-test-result.ts';
 import { blue } from '../utils/color.ts';
-import { pathExists } from '../utils/path-exists.ts';
 import { HTTPServer, MIME_TYPES } from '../servers/http.ts';
 import type { Config, CachedContent } from '../types.ts';
 
 const fsPromise = fs.promises;
+
+const NOT_FOUND_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width">
+  <title>404 Not Found \u2014 qunitx</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:"Helvetica Neue Light","HelveticaNeue-Light","Helvetica Neue",Calibri,Helvetica,Arial,sans-serif}
+    #qunit-header{padding:.5em 0 .5em 1em;color:#C2CCD1;background-color:#0D3349;font-size:1.5em;line-height:1em;font-weight:400;border-radius:5px 5px 0 0}
+    #qunit-banner{height:5px;background-color:#EE5757}
+    #qunit-userAgent{padding:.5em 1em;color:#fff;background-color:#2B81AF;text-shadow:rgba(0,0,0,.5) 2px 2px 1px;font-size:small}
+    #qunit-tests{list-style:none;font-size:smaller}
+    #qunit-tests li{display:list-item;padding:.4em 1em;color:#000;background-color:#EE5757;border-radius:0 0 5px 5px}
+  </style>
+</head>
+<body>
+  <div id="qunit">
+    <h1 id="qunit-header"><a href="/" style="color:inherit;text-decoration:none">qunitx</a></h1>
+    <h2 id="qunit-banner"></h2>
+    <div id="qunit-userAgent">404 Not Found</div>
+    <ol id="qunit-tests">
+      <li id="qunit-testresult"><script>document.getElementById('qunit-testresult').prepend(location.pathname)</script> was not found on this server.</li>
+    </ol>
+  </div>
+</body>
+</html>`;
 
 /**
  * Creates and returns an HTTPServer with routes for the test HTML, filtered test page, and static assets, plus a WebSocket handler that streams TAP events.
@@ -25,7 +52,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
   // Cache the runtime script — it never changes for this server's lifetime (port, timeout,
   // failFast are fixed after setup). Avoids regenerating the ~2KB template string on every
   // HTML request; the remaining injectScript call is a single string .replace() (negligible).
-  const runtimeScript = testRuntimeToInject(config.port, config);
+  const runtimeScript = testRuntimeToInject(config);
   server.wss.on('connection', function connection(socket) {
     socket.on('message', function message(data) {
       const { event, details, qunitResult, abort } = JSON.parse(data);
@@ -231,24 +258,26 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
     const filePath = (
       url.endsWith('/') ? [STATIC_FILES_PATH, url, 'index.html'] : [STATIC_FILES_PATH, url]
     ).join('');
-    const statusCode = (await pathExists(filePath)) ? 200 : 404;
-
-    res.writeHead(statusCode, {
-      'Content-Type': req.headers.accept?.includes('text/html')
-        ? MIME_TYPES.html
-        : MIME_TYPES[path.extname(filePath).substring(1).toLowerCase()] || MIME_TYPES.html,
+    const contentType = req.headers.accept?.includes('text/html')
+      ? MIME_TYPES.html
+      : MIME_TYPES[path.extname(filePath).substring(1).toLowerCase()] || MIME_TYPES.html;
+    const stream = fs.createReadStream(filePath);
+    stream.on('open', () => {
+      res.writeHead(200, { 'Content-Type': contentType });
+      stream.pipe(res);
+      config.debug &&
+        process.stdout.write(
+          `# [HTTPServer] GET ${url} 200 - ${Date.now() - requestStartedAt}ms\n`,
+        );
     });
-
-    if (statusCode === 404) {
-      res.end();
-    } else {
-      fs.createReadStream(filePath).pipe(res);
-    }
-
-    config.debug &&
-      process.stdout.write(
-        `# [HTTPServer] GET ${url} ${statusCode} - ${Date.now() - requestStartedAt}ms\n`,
-      );
+    stream.on('error', () => {
+      res.writeHead(404, { 'Content-Type': contentType });
+      res.end(contentType === MIME_TYPES.html ? NOT_FOUND_HTML : undefined);
+      config.debug &&
+        process.stdout.write(
+          `# [HTTPServer] GET ${url} 404 - ${Date.now() - requestStartedAt}ms\n`,
+        );
+    });
   });
 
   return server;
@@ -265,7 +294,7 @@ function replaceAssetPaths(html: string, htmlPath: string, projectRoot: string):
   }, html);
 }
 
-function testRuntimeToInject(port: number, config: Config): string {
+function testRuntimeToInject(config: Config): string {
   return `<script>
     window.testTimeout = 0;
     setInterval(() => {
@@ -301,7 +330,7 @@ function testRuntimeToInject(port: number, config: Config): string {
 
       function setupWebSocket() {
         try {
-          window.socket = new WebSocket('ws://localhost:${port}');
+          window.socket = new WebSocket(\`ws://localhost:\${location.port}\`);
         } catch (error) {
           console.log(error);
           retryOrFail();
@@ -512,7 +541,7 @@ export function buildNoTestsHTML(files: string[]): string {
 </head>
 <body>
   <div id="qunit">
-    <h1 id="qunit-header">qunitx</h1>
+    <h1 id="qunit-header"><a href="/" style="color:inherit;text-decoration:none">qunitx</a></h1>
     <h2 id="qunit-banner"></h2>
     <div id="qunit-userAgent">Warning: No Tests Registered</div>
     <ol id="qunit-tests">
@@ -532,7 +561,7 @@ export function buildNoTestsHTML(files: string[]): string {
       (function () {
         var retries = 0;
         function connect() {
-          var ws = new WebSocket('ws://' + location.hostname + ':' + location.port);
+          var ws = new WebSocket(\`ws://\${location.hostname}:\${location.port}\`);
           ws.addEventListener('message', function (e) { if (e.data === 'refresh') location.reload(true); });
           ws.addEventListener('close', function () { if (retries++ < 120) setTimeout(connect, 1000); });
           ws.addEventListener('error', function () { ws.close(); });
@@ -625,7 +654,7 @@ export function buildErrorHTML(buildError: { type: string; formatted: string }):
 </head>
 <body>
   <div id="qunit">
-    <h1 id="qunit-header">qunitx</h1>
+    <h1 id="qunit-header"><a href="/" style="color:inherit;text-decoration:none">qunitx</a></h1>
     <h2 id="qunit-banner"></h2>
     <div id="qunit-userAgent">Build Error: ${buildError.type}</div>
     <ol id="qunit-tests">
@@ -645,7 +674,7 @@ export function buildErrorHTML(buildError: { type: string; formatted: string }):
       (function () {
         var retries = 0;
         function connect() {
-          var ws = new WebSocket('ws://' + location.hostname + ':' + location.port);
+          var ws = new WebSocket(\`ws://\${location.hostname}:\${location.port}\`);
           ws.addEventListener('message', function (e) { if (e.data === 'refresh') location.reload(true); });
           ws.addEventListener('close', function () { if (retries++ < 120) setTimeout(connect, 1000); });
           ws.addEventListener('error', function () { ws.close(); });
