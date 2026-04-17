@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.19.1] - 2026-04-17
+[`v0.19.0...v0.19.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.19.0...v0.19.1)
+
+### Bug Fixes
+- Fall back to JSON.stringify for console args that jsonValue() can't serialize — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`f9d8cf9`](https://github.com/izelnakri/qunitx-cli/commit/f9d8cf937d74ab2b13b161c099a0827bff460de9))
+- Flush pending console BiDi round-trips before browser/page close — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`a4516fb`](https://github.com/izelnakri/qunitx-cli/commit/a4516fb7543a5bfbae7e1eefccbd47334fd48cb7))
+- Eliminate resource-leak test flakiness on loaded CI — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`30149ab`](https://github.com/izelnakri/qunitx-cli/commit/30149ab56a9d37c34c2df1ed5925809467d1a4fa))
+- Replace one-shot allSettled flush with recursive stable-empty check — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`14fc1c0`](https://github.com/izelnakri/qunitx-cli/commit/14fc1c05e7c69945f4158711138d0f0353207d71))
+
+### Performance
+- --watch faster refresh optimization shrink dedupe_ms by 20ms — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`b23bdc0`](https://github.com/izelnakri/qunitx-cli/commit/b23bdc09f978c51e194b951c2a70e66db490ab5a))
+- Remove unused moduleStart WS send — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`3e5aa9e`](https://github.com/izelnakri/qunitx-cli/commit/3e5aa9e3455472592021447590962ef3a5121ccf))
+- Eliminate page.evaluate() CDP round-trip via WS done message — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`485ab23`](https://github.com/izelnakri/qunitx-cli/commit/485ab230fc29cfdc6b07fa4572011f17ea06033b))
+- Add Content-Length to /tests.js and /filtered-tests.js responses — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`2142808`](https://github.com/izelnakri/qunitx-cli/commit/2142808c5ca913d23293b194da8d37016d312942))
+- Cache ancestorNodeModules(process.cwd()) at module level — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`f028ea2`](https://github.com/izelnakri/qunitx-cli/commit/f028ea21fe49c22a18be67323d1f9ce682f98d21))
+- LPT bin-packing for concurrent group formation — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`8ab4bd3`](https://github.com/izelnakri/qunitx-cli/commit/8ab4bd3a38d979b5fe58d3c2b6699c5540d57a2a))
+
 ## [0.19.0] - 2026-04-16
 [`v0.18.0...v0.19.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.18.0...v0.19.0)
 
