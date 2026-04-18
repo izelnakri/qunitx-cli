@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import process from 'node:process';
-import './lib/utils/chrome-prelaunch.ts';
+import { shutdownPrelaunch } from './lib/utils/chrome-prelaunch.ts';
 import { displayHelpOutput } from './lib/commands/help.ts';
 import { initializeProject } from './lib/commands/init.ts';
 import { generateTestFiles } from './lib/commands/generate.ts';
@@ -34,6 +34,7 @@ process.title = 'qunitx';
     // Flush stdout before exit so any queued console.log writes (e.g. from WS testEnd
     // handlers that fired before the exception) are not lost when process.exit() runs.
     process.exitCode = 1;
+    await shutdownPrelaunch();
     process.stdout.write('\n', () => process.exit(1));
   }
 })();

@@ -98,7 +98,6 @@ async function sweepOrphanedChrome(): Promise<void> {
     );
     if (chromeDirs.length === 0) return;
 
-    const killedPids = new Set<number>();
     if (process.platform === 'linux') {
       await Promise.all(
         (await fs.readdir('/proc')).map(async (entry) => {
@@ -119,7 +118,6 @@ async function sweepOrphanedChrome(): Promise<void> {
                 process.kill(pid, 'SIGKILL');
               } catch {}
             }
-            killedPids.add(pid);
           } catch {}
         }),
       );
@@ -135,39 +133,10 @@ async function sweepOrphanedChrome(): Promise<void> {
       );
     }
 
-    // Remove dirs left behind when Chrome was killed before its async rm() ran.
-    // After the sweep's own kills are confirmed dead (Phase 1), delegate to
-    // cleanupChromeDir which kills any surviving helpers and retries rm().
-    await Promise.all(
-      chromeDirs.map(async (dir) => {
-        const dirPath = path.join(tmpDir, dir);
-        await fs.rm(dirPath, { recursive: true, force: true }).catch(async () => {
-          const warnTimer = setTimeout(
-            () =>
-              process.stderr.write(
-                `# [qunitx] warning: Chrome dir ${dir} still occupied 500ms after SIGKILL, waiting...\n`,
-              ),
-            500,
-          );
-          warnTimer.unref();
-          // Wait for the Chrome main PIDs the sweep killed to fully exit.
-          while (
-            [...killedPids].some((pid) => {
-              try {
-                process.kill(pid, 0);
-                return true;
-              } catch {
-                return false;
-              }
-            })
-          ) {
-            await new Promise((resolve) => setTimeout(resolve, 20));
-          }
-          clearTimeout(warnTimer);
-          await cleanupBrowserDir(dirPath);
-        });
-      }),
-    );
+    // cleanupBrowserDir kills any surviving FD-holders and retries rm() for up to 5s,
+    // using rm() as the synchronisation point — correct even when zombie processes are
+    // present (kill(pid, 0) succeeds for zombies but rm() does not).
+    await Promise.all(chromeDirs.map((dir) => cleanupBrowserDir(path.join(tmpDir, dir))));
   } catch {
     /* best effort — never block suite exit */
   }

@@ -32,9 +32,9 @@ export async function preLaunchChrome(
     { stdio: ['ignore', 'ignore', 'pipe'], detached: true },
   );
 
-  // rm() runs exactly once: here when Chrome never connected (shutdown() won't be called),
-  // or in shutdown() when it did. Two concurrent rm() calls on the same dir can race, so
-  // the cdpConnected flag ensures only one path ever executes it.
+  // Cleanup runs exactly one path: rm() here when Chrome never connected (shutdown() won't
+  // be called), or cleanupBrowserDir() in shutdown() when it did. The cdpConnected flag
+  // ensures only one path ever touches userDataDir.
   let cdpConnected = false;
 
   proc.on('close', () => {
@@ -74,45 +74,19 @@ export async function preLaunchChrome(
   // the process cannot catch or ignore it, so `close` always fires. JS's single-threaded
   // event loop makes the exitCode check and once('close') registration atomic — no event
   // can fire between them.
+  //
+  // We skip any intermediate rm() attempt and go straight to cleanupBrowserDir, which uses
+  // rm() itself as the synchronisation point (retry until success, not until process-table
+  // cleanup). A PGID poll loop would stall indefinitely on zombie early Chrome children
+  // (same PGID as Chrome main, awaiting init reaping): kill(-pgid, 0) succeeds for zombies
+  // even though their FDs are already released, so the loop never exits.
   async function shutdown(): Promise<void> {
     proc.ref(); // re-ref so the close event fires while the event loop is still running
-    const closed = new Promise<void>((resolve) => {
-      if (proc.exitCode !== null) {
-        resolve();
-        return;
-      } // already dead
-      proc.once('close', resolve);
-    });
-    if (proc.exitCode === null) killProcessGroup(proc.pid!);
-    await closed;
-    // `closed` fires when the main Chrome process exits, but renderer/GPU/utility
-    // subprocesses have separate PGIDs (setpgrp for sandboxing) and may still hold
-    // the user-data dir as cwd. On the fast path rm() succeeds immediately.
-    // On failure, wait for Chrome main's group to fully exit, then delegate to
-    // cleanupChromeDir which kills surviving helpers and retries rm().
-    await rm(userDataDir, { recursive: true, force: true }).catch(async () => {
-      const pgid = proc.pid!;
-      const warnTimer = setTimeout(
-        () =>
-          process.stderr.write(
-            `# [qunitx] warning: Chrome process group ${pgid} still alive 500ms after SIGKILL, waiting...\n`,
-          ),
-        500,
-      );
-      warnTimer.unref();
-      // Wait for Chrome main's process group to fully exit. No timeout:
-      // SIGKILL is a POSIX guarantee, so the group always terminates.
-      while (true) {
-        try {
-          process.kill(-pgid, 0);
-        } catch {
-          break;
-        } // ESRCH → group gone
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-      clearTimeout(warnTimer);
-      await cleanupBrowserDir(userDataDir);
-    });
+    if (proc.exitCode === null) {
+      killProcessGroup(proc.pid!);
+      await new Promise<void>((resolve) => proc.once('close', resolve));
+    }
+    await cleanupBrowserDir(userDataDir);
   }
 }
 

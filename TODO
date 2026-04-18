@@ -1,10 +1,3 @@
-
-❯ Is there any opportunities to optimize/refactor the binary runtime or runtime of my tests with this binary(qunitx)/project for the end user when
-  they run their suite of tests or a test?
-Given the existing benchmarks, is there any other important benchmark I should add and then more importantly is there any
-opportunities to optimize/refactor the binary runtime or runtime of my tests with this binary(qunitx)/project for the end user when
-they run their suite of tests or a test?
-
 --refactor the `test/helpers/before-script-async.ts` while keeping a similar behavior(or at least similar use when the file is used in tests it should be a backend async service I suspect that we verify in tests it gets loaded correctly) so I can remove express and cors devDependencies from my project. Also rewrite expressApp name to something correct now in my runtime, since I dont use express anymore, should it be `webServer` instead?
 
 https://www.youtube.com/watch?v=SaZEdiV3A3M
@@ -40,3 +33,5 @@ qunitx-cli JS API should be very usable from outside by JS/TS only, by users of 
 in the codebase and also on the README.md(if needed). claude --resume 5d51cdce-b6b3-4580-8bb9-94649a17da2c
 
 - rename 'testFileLookupPaths' and check other config interface keys that start with _
+
+❯ Given this conversation: https://chatgpt.com/share/69e26e08-4dbc-83eb-8d7d-01bba54c8198 I want to create a general-purpose error handling system for JS/TS. What would be the best way to achieve this for the best general-purpose, very useful, readable, performant and flexible abstraction. Show me in code, in-depth with clear tutorial at the end mention all the corner cases, everything, I suspect it is a good idea, I'm still evaluating but would love a general-purpose solution for better error-handling
