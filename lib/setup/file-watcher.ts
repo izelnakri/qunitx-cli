@@ -72,20 +72,17 @@ export function setupFileWatchers(
         filename === path.basename(watchPath) ? watchPath : path.join(watchPath, filename);
 
       if (eventType === 'change') {
-        if (!config._building) {
-          const now = Date.now();
-          const last = lastChangeMs[fullPath] ?? 0;
-          if (now - last < CHANGE_DEDUPE_MS) {
-            // Let the event through if a build completed after the last recorded change: the
-            // current write is new (e.g. "fix" after a fast-failing build), not a duplicate
-            // inotify event for the same write. Without this bypass, watch mode gets stuck.
-            if (!config._lastBuildEndMs || config._lastBuildEndMs <= last) return;
-          }
-        }
-        // Always update — tracks when we last *saw* a change for this file, not just when we
-        // triggered a build. Delayed inotify events (IN_CLOSE_WRITE arriving after IN_MODIFY)
-        // then fall within CHANGE_DEDUPE_MS of each other and get correctly suppressed.
-        lastChangeMs[fullPath] = Date.now();
+        const now = Date.now();
+        const last = lastChangeMs[fullPath] ?? 0;
+        lastChangeMs[fullPath] = now;
+        // Suppress duplicate inotify events (IN_MODIFY + IN_CLOSE_WRITE per write, ~2ms apart).
+        // Exception: idle + build-ended-after-last-change means a genuine new write after a fast
+        // build, not an echo — let it through so watch mode doesn't get stuck.
+        if (
+          now - last < CHANGE_DEDUPE_MS &&
+          (config._building || !config._lastBuildEndMs || config._lastBuildEndMs <= last)
+        )
+          return;
         return handleWatchEvent(config, extensions, 'change', fullPath, onEventFunc, onFinishFunc);
       }
 
