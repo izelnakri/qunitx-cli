@@ -14,8 +14,6 @@ module('--timeout flag tests for browser mode', { concurrency: true }, (_hooks, 
   });
 
   test('--timeout kills a test that hangs indefinitely and exits with code 1', async (assert, testMetadata) => {
-    // The window.testTimeout counter increments by 1000 every second and resets after each test.
-    // With --timeout=500, it triggers after ~1 second, before slow-tests.js can finish.
     const cmd = await shellFails('node cli.ts test/helpers/slow-tests.ts --timeout=500', {
       ...moduleMetadata,
       ...testMetadata,
@@ -30,7 +28,7 @@ module('--timeout flag tests for browser mode', { concurrency: true }, (_hooks, 
   });
 
   // assert.timeout(ms) tests — per-test deadline set inside the test body (QUnit native).
-  // Unlike --timeout (which polls window.testTimeout and kills the whole run), assert.timeout()
+  // Unlike --timeout (which kills the whole run when a test hangs), assert.timeout()
   // fails only the individual test and lets the suite finish normally.
 
   test('assert.timeout() passes when test finishes before its deadline', async (assert, testMetadata) => {

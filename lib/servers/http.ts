@@ -273,7 +273,6 @@ export class HTTPServer {
 
         return false;
       }) ||
-      routes['/*'] ||
       null
     );
   }

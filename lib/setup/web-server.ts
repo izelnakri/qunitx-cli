@@ -303,11 +303,6 @@ function replaceAssetPaths(html: string, htmlPath: string, projectRoot: string):
 function testRuntimeToInject(config: Config, groupId?: number): string {
   const groupIdPart = groupId !== undefined ? `, groupId: ${groupId}` : '';
   return `<script>
-    window.testTimeout = 0;
-    setInterval(() => {
-      window.testTimeout = window.testTimeout + 1000;
-    }, 1000);
-
     (function() {
       // wsOpenStatus: true once the WebSocket 'open' event fires (or immediately for static files).
       // testsLoaded: true once tests.js has executed and dispatched 'qunitx:tests-ready'.
@@ -372,7 +367,6 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
         wsRetryCount++;
         if (wsRetryCount > WS_MAX_RETRIES) {
           console.log('WebSocket connection failed after ' + WS_MAX_RETRIES + ' retries');
-          window.testTimeout = ${config.timeout};
           return;
         }
         window.setTimeout(setupWebSocket, 10);
@@ -409,8 +403,6 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
           // "no tests registered" warning (not a failure), so this gives a fast, clean result.
           window.QUNIT_RESULT = { totalTests: 0, finishedTests: 0, failedTests: 0, currentTest: null };
           window.socket.send(JSON.stringify({ event: 'done', details: { passed: 0, failed: 0, runtime: 0 } }));
-        } else {
-          window.testTimeout = ${config.timeout};
         }
         return;
       }
@@ -425,7 +417,6 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
         window.QUNIT_RESULT.currentTest = details.fullName.join(' | ');
       });
       window.QUnit.on('testEnd', (details) => { // NOTE: https://github.com/qunitjs/qunit/blob/master/src/html-reporter/diff.js
-        window.testTimeout = 0;
         window.QUNIT_RESULT.finishedTests++;
         if (details.status === 'failed') window.QUNIT_RESULT.failedTests++;
         window.QUNIT_RESULT.currentTest = null;
@@ -442,13 +433,6 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
       window.QUnit.done((details) => {
         if (navigator.webdriver) {
           window.socket.send(JSON.stringify({ event: 'done', details: details, qunitResult: window.QUNIT_RESULT, abort: window.abortQUnit }, getCircularReplacer()));
-          // Do NOT set testTimeout here. The WS 'done' event (testsDone promise) is the
-          // canonical completion signal for Playwright runs. waitForFunction is reserved
-          // for true timeouts (test hangs) where testTimeout increments naturally via setInterval.
-          // Setting testTimeout after done caused a race: under CI load, waitForFunction could
-          // win before Node.js processed the WS done message, dropping all testEnd events.
-        } else {
-          window.testTimeout = ${config.timeout};
         }
       });
 
