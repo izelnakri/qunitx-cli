@@ -15,6 +15,7 @@ import { blue, yellow } from '../utils/color.ts';
 import {
   runTestsInBrowser,
   buildTestBundle,
+  buildAllGroupBundles,
   flushConsoleHandlers,
 } from './run/tests-in-browser.ts';
 import { setupFileWatchers } from '../setup/file-watcher.ts';
@@ -206,14 +207,14 @@ export async function run(config: Config): Promise<void> {
             }),
           )
         : Promise.resolve(),
-      Promise.all(
-        groupConfigs.map((groupConfig, i) =>
-          Promise.all([
-            buildTestBundle(groupConfig, groupCachedContents[i]),
-            writeOutputStaticFiles(groupConfig, groupCachedContents[i]),
-          ]),
+      Promise.all([
+        groupCount > 1
+          ? buildAllGroupBundles(groupConfigs, groupCachedContents)
+          : buildTestBundle(groupConfigs[0], groupCachedContents[0]),
+        Promise.all(
+          groupConfigs.map((gc, i) => writeOutputStaticFiles(gc, groupCachedContents[i])),
         ),
-      ),
+      ]),
     ]);
 
     // Open immediately after static files are ready — no need to wait for tests to finish.
