@@ -27,48 +27,34 @@ async function processReferencesDir(
   }
 }
 
-async function killAndAwait(pids: Set<number>): Promise<void> {
-  while (pids.size > 0) {
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    for (const pid of pids) {
-      try {
-        process.kill(pid, 0);
-      } catch {
-        pids.delete(pid);
-      }
-    }
-  }
-}
-
-// Scans /proc, kills every process referencing dirPath, returns the killed pid set.
-async function killAllReferencingProcesses(dirPath: string, dirName: string): Promise<Set<number>> {
-  const killedPids = new Set<number>();
+// Scans /proc and SIGKILLs every process that references dirPath via cwd, cmdline, or open FDs.
+async function killAllReferencingProcesses(dirPath: string, dirName: string): Promise<void> {
   const procEntries = await fs.readdir('/proc').catch(() => [] as string[]);
   await Promise.all(
     procEntries.map(async (entry) => {
       if (!/^\d+$/.test(entry)) return;
-      const pid = parseInt(entry);
       if (!(await processReferencesDir(entry, dirPath, dirName))) return;
       try {
-        process.kill(pid, 'SIGKILL');
-        killedPids.add(pid);
+        process.kill(parseInt(entry), 'SIGKILL');
       } catch {
         /* ESRCH: already dead */
       }
     }),
   );
-  return killedPids;
 }
 
 /**
  * Kills all surviving processes that reference `dirPath` (checked via cwd, cmdline,
- * and open file descriptors), waits for them to exit, then retries fs.rm() until it
- * succeeds or a 5-second deadline expires. Re-scans /proc on each failed rm() attempt
- * to catch processes that appear after the initial scan (e.g. late-forked Chrome helpers).
+ * and open file descriptors), then retries fs.rm() until it succeeds or a 5-second
+ * deadline expires. Re-scans /proc on each failed rm() attempt to catch processes
+ * that appear after the initial scan (e.g. late-forked Chrome helpers).
  *
- * Call this after the caller's own phase-1 wait (browser main group / killedPids)
- * to handle renderer/GPU/utility subprocesses that have separate PGIDs and may
- * not die via PR_SET_PDEATHSIG reliably on loaded CI machines.
+ * Deliberately does NOT wait for killed processes to fully leave the process table
+ * (no killAndAwait). kill(pid, 0) succeeds for zombie processes (FDs already released)
+ * and for D-state processes (SIGKILL queued but not yet delivered), so polling it can
+ * stall indefinitely on a loaded CI machine while rm() could already succeed. Instead,
+ * rm() itself is the authoritative check: it fails while FDs are held and succeeds
+ * once they are released, regardless of how far the process-table cleanup has progressed.
  *
  * Linux-only: falls back to a single best-effort rm() on other platforms.
  */
@@ -80,21 +66,23 @@ export async function cleanupBrowserDir(dirPath: string): Promise<void> {
 
   const dirName = dirPath.split('/').pop()!;
 
-  // Phase 1: find and kill every process referencing the dir (cwd, cmdline, or open FD).
-  await killAndAwait(await killAllReferencingProcesses(dirPath, dirName));
+  // Phase 1: initial kill sweep — send SIGKILL to every process referencing the dir.
+  await killAllReferencingProcesses(dirPath, dirName);
 
   // Phase 2: retry rm() until success or 5s deadline.
   // Re-scan /proc on each failure — new Chrome helper processes may appear after the
   // initial kill pass (late-forked GPU helpers, zygote children, etc.).
+  // Each loop body is bounded (rm + /proc scan + 50ms sleep), so the deadline is
+  // always respected and we never stall waiting for process-table cleanup.
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     const removed = await fs
       .rm(dirPath, { recursive: true, force: true })
       .then(() => true)
       .catch(() => false);
-    if (removed) break;
-    await killAndAwait(await killAllReferencingProcesses(dirPath, dirName));
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    if (removed) return;
+    await killAllReferencingProcesses(dirPath, dirName);
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
   }
 
   // Diagnostic: if still not removed, log any process still holding the dir.
