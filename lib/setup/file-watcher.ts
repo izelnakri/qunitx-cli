@@ -81,8 +81,11 @@ export function setupFileWatchers(
             // inotify event for the same write. Without this bypass, watch mode gets stuck.
             if (!config._lastBuildEndMs || config._lastBuildEndMs <= last) return;
           }
-          lastChangeMs[fullPath] = now;
         }
+        // Always update — tracks when we last *saw* a change for this file, not just when we
+        // triggered a build. Delayed inotify events (IN_CLOSE_WRITE arriving after IN_MODIFY)
+        // then fall within CHANGE_DEDUPE_MS of each other and get correctly suppressed.
+        lastChangeMs[fullPath] = Date.now();
         return handleWatchEvent(config, extensions, 'change', fullPath, onEventFunc, onFinishFunc);
       }
 
