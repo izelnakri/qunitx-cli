@@ -196,7 +196,11 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
     res.end(cachedContent.filteredTestCode);
   });
 
-  server.get('/', (_req, res) => {
+  server.get('/', async (_req, res) => {
+    // buildTestBundle clears _buildError only after its first await (fs.mkdir), so a stale
+    // error from the previous run can persist into the next run's navigation window.
+    // Awaiting _activeRebuild here ensures we act on the settled build state, not stale state.
+    await cachedContent._activeRebuild?.catch(() => {});
     if (cachedContent._buildError) {
       const htmlContent = buildErrorHTML(cachedContent._buildError);
       res.writeHead(200, HTML_HEADERS);
