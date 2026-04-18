@@ -163,8 +163,8 @@ release:
 	@eval $$(ssh-agent -s); trap "ssh-agent -k > /dev/null" EXIT; ssh-add
 	@npm whoami > /dev/null 2>&1 || npm login
 	@echo "npm user: $$(npm whoami) | $$(date '+%Y-%m-%d %H:%M:%S %Z')"
-	$(MAKE) check
 	$(MAKE) bench-check
+	$(MAKE) check
 	npm run test:release
 	npm version $(LEVEL) --no-git-tag-version
 	@for d in npm/*/; do node scripts/set-pkg-version.js "$$d/package.json" "$$(node -p 'require("./package.json").version')"; done
