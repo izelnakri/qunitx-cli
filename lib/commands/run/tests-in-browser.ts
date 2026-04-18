@@ -332,10 +332,6 @@ async function runWithOverlayfsRetry(
   getContents: () => Promise<{ result: esbuild.BuildResult; js: Buffer }>,
   needsDisk: boolean,
 ): Promise<Buffer> {
-  const RETRY_DELAY_MS = 100;
-  const MAX_RETRIES = 3;
-  const EMPTY_BUNDLE_THRESHOLD = 500;
-
   let { result, js } = await getContents();
   const initialSize = js.length;
 
@@ -620,5 +616,159 @@ const ancestorNodeModules = (dir: string): string[] =>
 // across every buildTestBundle / buildFilteredTests call rather than reallocating
 // the array of ancestor paths on every esbuild invocation.
 const ANCESTOR_NODE_MODULES = ancestorNodeModules(process.cwd());
+
+const RETRY_DELAY_MS = 100;
+const MAX_RETRIES = 3;
+const EMPTY_BUNDLE_THRESHOLD = 500;
+
+// Regex compiled once; matches the group index and optional .map suffix in esbuild output paths.
+const GROUP_OUTPUT_REGEX = /group-(\d+)\.js(\.map)?$/;
+
+/**
+ * Builds all concurrent group bundles with a single esbuild invocation.
+ *
+ * The key win over N separate buildTestBundle() calls: esbuild constructs the module
+ * graph once for all entry points. Shared dependencies — qunitx (~270 KB),
+ * node_modules packages, common test utilities — are parsed, resolved, and
+ * tree-shaken exactly once regardless of group count, rather than N times in parallel.
+ *
+ * Each group gets a virtual entry point via an esbuild plugin. Outputs land in memory
+ * (write:false), then are written to each group's output directory in parallel.
+ */
+export async function buildAllGroupBundles(
+  groupConfigs: Config[],
+  groupCachedContents: CachedContent[],
+): Promise<void> {
+  groupCachedContents.forEach((cachedContent) => {
+    cachedContent._buildError = null;
+    cachedContent._noTestsWarning = null;
+  });
+
+  const { projectRoot, debug, watch, browser } = groupConfigs[0];
+
+  // Build each group's descriptor in one pass, skipping empty groups (overlayfs race).
+  // Their cachedContent.allTestCode stays null so runTestsInBrowser's early-return handles them.
+  const activeGroups = groupConfigs.reduce(
+    (acc, groupConfig, groupIndex) => {
+      const files = Object.keys(groupConfig.fsTree);
+      if (files.length > 0)
+        acc.push({
+          groupIndex,
+          config: groupConfig,
+          cachedContent: groupCachedContents[groupIndex],
+          files,
+        });
+      return acc;
+    },
+    [] as Array<{
+      groupIndex: number;
+      config: Config;
+      cachedContent: CachedContent;
+      files: string[];
+    }>,
+  );
+
+  if (activeGroups.length === 0)
+    return console.log(
+      '# [buildAllGroupBundles] all groups empty — skipping build (no test files found)',
+    );
+
+  await Promise.all(
+    activeGroups.map((group) =>
+      fs.mkdir(`${group.config.projectRoot}/${group.config.output}`, { recursive: true }),
+    ),
+  );
+
+  const sourcemap: esbuild.BuildOptions['sourcemap'] = debug ? 'inline' : watch ? 'linked' : false;
+
+  // Plugin: resolve `group-entry-N` paths from the entry-point list into virtual modules
+  // whose content is the import-per-file stitching for that group.
+  const groupEntryPlugin: esbuild.Plugin = {
+    name: 'group-entry-loader',
+    setup(build) {
+      build.onResolve({ filter: /^group-entry-\d+$/ }, (args) => ({
+        path: args.path,
+        namespace: 'group-entry',
+      }));
+      build.onLoad({ filter: /.*/, namespace: 'group-entry' }, (args) => {
+        const slotIndex = parseInt(args.path.replace('group-entry-', ''));
+        return {
+          contents: activeGroups[slotIndex].files
+            .map((filePath) => `import "${filePath}";`)
+            .join(''),
+          resolveDir: process.cwd(),
+        };
+      });
+    },
+  };
+
+  const buildOptions: esbuild.BuildOptions = {
+    entryPoints: activeGroups.map((_, slotIndex) => ({
+      in: `group-entry-${slotIndex}`,
+      out: `group-${slotIndex}`,
+    })),
+    plugins: [groupEntryPlugin],
+    nodePaths: ANCESTOR_NODE_MODULES,
+    bundle: true,
+    logLevel: 'silent',
+    // outdir only labels the paths in outputFiles[].path — nothing is written to disk
+    // (write:false). Use projectRoot/tmp as a stable sentinel; mkdir is not required.
+    outdir: path.join(projectRoot, 'tmp'),
+    keepNames: true,
+    legalComments: 'none',
+    target: esbuildTarget(browser),
+    sourcemap,
+    write: false,
+    footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
+  };
+
+  // Overlayfs retry: a newly written test file may have 0 bytes when esbuild reads it on
+  // CI (overlayfs copy-on-write flush race). Any output below 500 bytes means at least
+  // one group caught an empty file — retry the whole build up to MAX_RETRIES times.
+  const hasSmallOutput = (result: esbuild.BuildResult) =>
+    (result.outputFiles ?? []).some(
+      (outputFile) =>
+        GROUP_OUTPUT_REGEX.test(outputFile.path) &&
+        !outputFile.path.endsWith('.map') &&
+        outputFile.contents.length < EMPTY_BUNDLE_THRESHOLD,
+    );
+
+  const buildWithRetry = async (retriesLeft: number): Promise<esbuild.BuildResult> => {
+    const result = await esbuild.build(buildOptions);
+    if (!hasSmallOutput(result) || retriesLeft === 0) return result;
+    await new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+    return buildWithRetry(retriesLeft - 1);
+  };
+
+  try {
+    const result = await buildWithRetry(MAX_RETRIES);
+
+    // Write each output to its group's destination directory in parallel.
+    await Promise.all(
+      (result.outputFiles ?? []).map((outputFile) => {
+        const match = GROUP_OUTPUT_REGEX.exec(outputFile.path);
+        if (!match) return Promise.resolve();
+        const slotIndex = parseInt(match[1]);
+        const isMap = Boolean(match[2]);
+        const { config, cachedContent } = activeGroups[slotIndex];
+        const destPath = `${config.projectRoot}/${config.output}/tests.js${isMap ? '.map' : ''}`;
+        if (!isMap) cachedContent.allTestCode = Buffer.from(outputFile.contents);
+        return fs.writeFile(destPath, outputFile.contents);
+      }),
+    );
+  } catch (error) {
+    const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
+    const errorHtml = buildErrorHTML(buildError);
+    await Promise.all(
+      activeGroups.map((group) => {
+        group.cachedContent._buildError = buildError;
+        return fs
+          .writeFile(`${group.config.projectRoot}/${group.config.output}/index.html`, errorHtml)
+          .catch(() => {});
+      }),
+    );
+    throw error;
+  }
+}
 
 export { runTestsInBrowser as default };
