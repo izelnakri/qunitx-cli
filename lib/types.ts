@@ -128,6 +128,8 @@ export interface Config {
   _onTestsJsServed: (() => void) | null;
   /** `true` while running a grouped (multi-file) test invocation. */
   _groupMode?: boolean;
+  /** Index within the concurrent group array; set when a shared HTTP server is used. */
+  _groupId?: number;
   /** Current lifecycle phase of the test run. */
   _phase?: 'bundling' | 'connecting' | 'loading' | 'running' | 'done';
   /** QUNIT_RESULT delivered via the WS 'done' message; avoids a page.evaluate() CDP round-trip. */

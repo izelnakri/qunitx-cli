@@ -1,5 +1,12 @@
 import { setupBrowser, launchBrowser } from '../setup/browser.ts';
 import { shutdownPrelaunch } from '../utils/chrome-prelaunch.ts';
+import { HTTPServer } from '../servers/http.ts';
+import { bindServerToPort } from '../setup/bind-server-to-port.ts';
+import {
+  registerGroupRoutes,
+  setupGroupWSHandler,
+  registerSharedStaticHandler,
+} from '../setup/web-server.ts';
 import { openOutputInBrowser } from '../utils/open-output-in-browser.ts';
 import fs from 'node:fs/promises';
 import { normalize } from 'node:path';
@@ -167,14 +174,38 @@ export async function run(config: Config): Promise<void> {
     }));
     const groupCachedContents = groups.map(() => ({ ...cachedContent }));
 
+    // One shared HTTPServer for all groups (routed by /group-{i}/ prefix) when using the
+    // default '/' HTML path. Falls back to per-group servers for custom HTML templates.
+    const sharedServer =
+      groupCount > 1 &&
+      cachedContent.htmlPathsToRunTests[0] === '/' &&
+      cachedContent.htmlPathsToRunTests.length === 1
+        ? (() => {
+            const s = new HTTPServer();
+            setupGroupWSHandler(s, groupConfigs);
+            groupConfigs.forEach((gc, i) => registerGroupRoutes(s, gc, groupCachedContents[i], i));
+            registerSharedStaticHandler(s, groupConfigs);
+            return s;
+          })()
+        : null;
+
     process.stdout.write('TAP version 13\n');
     process.stdout.write(
       `# Running ${allFiles.length} test file${allFiles.length === 1 ? '' : 's'} across ${groupCount} group${groupCount === 1 ? '' : 's'}\n`,
     );
 
     // Build all group bundles and write static files while the browser is starting up.
+    // Bind the shared server's port in the same parallel window when active.
     const [browser] = await Promise.all([
       launchBrowser(config),
+      sharedServer
+        ? bindServerToPort(sharedServer, config).then(() =>
+            groupConfigs.forEach((gc, i) => {
+              gc.port = config.port;
+              groupCachedContents[i].htmlPathsToRunTests = [`/group-${i}/`];
+            }),
+          )
+        : Promise.resolve(),
       Promise.all(
         groupConfigs.map((groupConfig, i) =>
           Promise.all([
@@ -225,7 +256,12 @@ export async function run(config: Config): Promise<void> {
         const startMs = Date.now();
         const work = (async () => {
           groupConfig._phase = 'connecting';
-          const connections = await setupBrowser(groupConfig, groupCachedContents[i], browser);
+          const connections = await setupBrowser(
+            groupConfig,
+            groupCachedContents[i],
+            browser,
+            sharedServer,
+          );
           groupConfig.expressApp = connections.server;
 
           if (config.before) {
@@ -237,7 +273,7 @@ export async function run(config: Config): Promise<void> {
           } finally {
             await flushConsoleHandlers(groupConfig._pendingConsoleHandlers);
             await Promise.all([
-              connections.server && connections.server.close(),
+              !sharedServer && connections.server?.close(),
               connections.page &&
                 // Unref'd: the keepAlive interval above holds the event loop open, so this
                 // timer still fires if page.close() hangs, without preventing process exit later.
@@ -295,6 +331,7 @@ export async function run(config: Config): Promise<void> {
     process.stdout.write('\n', async () => {
       clearTimeout(exitTimer);
       clearInterval(keepAlive);
+      if (sharedServer) await sharedServer.close().catch(() => {});
       await browser.close().catch(() => {});
       await shutdownPrelaunch();
       process.exit(exitCode);

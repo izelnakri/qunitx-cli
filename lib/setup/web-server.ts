@@ -295,7 +295,8 @@ function replaceAssetPaths(html: string, htmlPath: string, projectRoot: string):
   }, html);
 }
 
-function testRuntimeToInject(config: Config): string {
+function testRuntimeToInject(config: Config, groupId?: number): string {
+  const groupIdPart = groupId !== undefined ? `, groupId: ${groupId}` : '';
   return `<script>
     window.testTimeout = 0;
     setInterval(() => {
@@ -344,7 +345,7 @@ function testRuntimeToInject(config: Config): string {
           // this runtime script is tiny — tests.js background compilation hasn't finished yet.
           // Node.js uses this to distinguish "WS never connected" from "WS connected but bundle slow".
           if (navigator.webdriver) {
-            window.socket.send(JSON.stringify({ event: 'wsOpen' }));
+            window.socket.send(JSON.stringify({ event: 'wsOpen'${groupIdPart} }));
           }
           maybeStart();
         });
@@ -686,6 +687,180 @@ export function buildErrorHTML(buildError: { type: string; formatted: string }):
   </script>
 </body>
 </html>`;
+}
+
+/**
+ * Registers HTML and JS bundle routes for one concurrent group on a shared HTTPServer.
+ * Routes: `GET /group-${groupId}/` and `GET /group-${groupId}/tests.js`.
+ */
+export function registerGroupRoutes(
+  server: HTTPServer,
+  groupConfig: Config,
+  groupCachedContent: CachedContent,
+  groupId: number,
+): void {
+  const mainHTMLWithReplacedAssets = replaceAssetPaths(
+    groupCachedContent.mainHTML.html!,
+    groupCachedContent.mainHTML.filePath!,
+    groupConfig.projectRoot,
+  );
+  const runtimeScript = testRuntimeToInject(groupConfig, groupId);
+
+  server.get(`/group-${groupId}/`, (_req, res) => {
+    if (groupCachedContent._buildError) {
+      const htmlContent = buildErrorHTML(groupCachedContent._buildError);
+      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
+      res.write(htmlContent);
+      res.end();
+      return;
+    }
+    if (groupCachedContent._noTestsWarning) {
+      const htmlContent = buildNoTestsHTML(groupCachedContent._noTestsWarning);
+      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
+      res.write(htmlContent);
+      res.end();
+      return;
+    }
+    const htmlContent = escapeAndInjectTestsToHTML(
+      mainHTMLWithReplacedAssets,
+      runtimeScript,
+      './tests.js',
+    );
+    res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
+    res.write(htmlContent);
+    res.end();
+    fsPromise
+      .writeFile(`${groupConfig.projectRoot}/${groupConfig.output}/index.html`, htmlContent)
+      .catch(() => {});
+  });
+
+  server.get(`/group-${groupId}/tests.js`, (_req, res) => {
+    const bytes = groupCachedContent.allTestCode?.length ?? null;
+    if (bytes === null) {
+      res.writeHead(503, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
+      res.end(
+        'console.error("[qunitx] /tests.js requested before bundle was built — allTestCode is null");',
+      );
+      return;
+    }
+    groupConfig._onTestsJsServed?.();
+    res.writeHead(200, {
+      'Content-Type': 'application/javascript',
+      'Cache-Control': 'no-store',
+      'Content-Length': bytes,
+    });
+    res.end(groupCachedContent.allTestCode);
+  });
+}
+
+/**
+ * Attaches the shared WebSocket event dispatcher to `server.wss`.
+ * Routes each socket's messages to the correct group's `Config` using the `groupId`
+ * baked into the browser-side `wsOpen` message by `testRuntimeToInject`.
+ */
+export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]): void {
+  const socketToGroupId = new WeakMap<object, number>();
+
+  server.wss.on('connection', function connection(socket) {
+    socket.on('message', function message(data) {
+      const { event, groupId, details, qunitResult, abort } = JSON.parse(data);
+
+      let resolvedGroupId = socketToGroupId.get(socket);
+      if (event === 'wsOpen' && typeof groupId === 'number') {
+        resolvedGroupId = groupId;
+        socketToGroupId.set(socket, groupId);
+      }
+      if (resolvedGroupId === undefined) return;
+      const config = groupConfigs[resolvedGroupId];
+      if (!config) return;
+
+      if (event === 'wsOpen') {
+        config._phase = 'loading';
+        config._onWsOpen?.();
+      } else if (event === 'connection') {
+        config._phase = 'running';
+        if (config.debug) {
+          const allFiles = Object.keys(config.fsTree);
+          const relFiles = allFiles.map((filePath) =>
+            filePath.replace(`${config.projectRoot}/`, ''),
+          );
+          const shown = relFiles.slice(0, 2);
+          const rest = relFiles.length - shown.length;
+          const fileList = rest > 0 ? `${shown.join('  ')}  +${rest} more` : shown.join('  ');
+          process.stdout.write(`# ${blue(`── ${fileList} ──`)}\n`);
+        }
+        config._resetTestTimeout?.();
+      } else if (event === 'testEnd' && !abort) {
+        if (details.status === 'failed') {
+          config.lastFailedTestFiles = config.lastRanTestFiles;
+        }
+        if (config.debug && details.runtime > config.timeout * 0.8) {
+          process.stdout.write(
+            `# SLOW (${details.runtime.toFixed(0)}ms / ${config.timeout}ms timeout): ${details.fullName.join(' | ')}\n`,
+          );
+        }
+        config._resetTestTimeout?.();
+        TAPDisplayTestResult(config.COUNTER, details);
+      } else if (event === 'done') {
+        config._phase = 'done';
+        config._lastQUnitResult = qunitResult ?? null;
+        if (config.debug) {
+          process.stdout.write(
+            `# group done: ${details.passed} passed, ${details.failed} failed (${details.runtime}ms)\n`,
+          );
+        }
+        if (typeof config._testRunDone === 'function') {
+          config._testRunDone();
+          config._testRunDone = null;
+        }
+      }
+    });
+  });
+}
+
+/**
+ * Registers a `GET /*` wildcard handler on a shared HTTPServer that serves static assets
+ * from each group's output directory, routing by `/group-{id}/` URL prefix.
+ */
+export function registerSharedStaticHandler(server: HTTPServer, groupConfigs: Config[]): void {
+  const groupUrlRegex = /^\/group-(\d+)(\/.*)?$/;
+
+  server.get('/*', (req, res) => {
+    const match = groupUrlRegex.exec(req.path);
+    if (!match) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not found');
+      return;
+    }
+
+    const groupId = parseInt(match[1], 10);
+    const groupConfig = groupConfigs[groupId];
+    if (!groupConfig) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not found');
+      return;
+    }
+
+    const STATIC_FILES_PATH = path.join(groupConfig.projectRoot, groupConfig.output);
+    const subPath = match[2] || '/';
+    const filePath = (
+      subPath.endsWith('/')
+        ? [STATIC_FILES_PATH, subPath, 'index.html']
+        : [STATIC_FILES_PATH, subPath]
+    ).join('');
+    const contentType = req.headers.accept?.includes('text/html')
+      ? MIME_TYPES.html
+      : MIME_TYPES[path.extname(filePath).substring(1).toLowerCase()] || MIME_TYPES.html;
+    const stream = fs.createReadStream(filePath);
+    stream.on('open', () => {
+      res.writeHead(200, { 'Content-Type': contentType });
+      stream.pipe(res);
+    });
+    stream.on('error', () => {
+      res.writeHead(404, { 'Content-Type': contentType });
+      res.end(contentType === MIME_TYPES.html ? NOT_FOUND_HTML : undefined);
+    });
+  });
 }
 
 export { NOT_FOUND_HTML, setupWebServer as default };

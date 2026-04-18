@@ -5,6 +5,7 @@ import { CHROMIUM_ARGS } from '../utils/chromium-args.ts';
 import { prelaunchPromise } from '../utils/chrome-prelaunch.ts';
 import { perfLog } from '../utils/perf-logger.ts';
 import type { Browser } from 'playwright-core';
+import type { HTTPServer } from '../servers/http.ts';
 import type { Config, CachedContent, Connections } from '../types.ts';
 
 // Playwright-core starts loading the moment run.js imports this module.
@@ -81,27 +82,38 @@ export async function setupBrowser(
   config: Config,
   cachedContent: CachedContent,
   existingBrowser: Browser | null = null,
+  sharedServer: HTTPServer | null = null,
 ): Promise<Connections> {
   const setupStart = Date.now();
-  const [server, resolvedExistingBrowser] = await Promise.all([
-    setupWebServer(config, cachedContent),
-    Promise.resolve(existingBrowser),
-  ]);
-  perfLog(`browser.js: setupWebServer took ${Date.now() - setupStart}ms`);
 
-  const browser = resolvedExistingBrowser || (await launchBrowser(config));
+  const [server, browser, page] = await (async () => {
+    if (sharedServer) {
+      // Concurrent mode with shared server: skip per-group server setup and port binding.
+      const newPage = await existingBrowser!.newPage();
+      perfLog(`browser.js: newPage (shared server) took ${Date.now() - setupStart}ms`);
+      return [sharedServer, existingBrowser!, newPage] as const;
+    }
 
-  const pageStart = Date.now();
-  // In headed watch mode (bare --open + --watch), Chrome is pre-launched without --headless=new
-  // so it already has a blank default tab. Reuse that page instead of opening a new one —
-  // otherwise the user sees the blank startup tab AND the new Playwright tab simultaneously.
-  // For all other modes (headless, --open=<binary>, or non-watch), always create a fresh page.
-  const isHeadedWatchMode = config.open === true && config.watch;
-  const getPage = isHeadedWatchMode
-    ? () => browser.contexts()[0]?.pages()[0] ?? browser.newPage()
-    : () => browser.newPage();
-  const [page] = await Promise.all([getPage(), bindServerToPort(server, config)]);
-  perfLog(`browser.js: newPage + bindServerToPort took ${Date.now() - pageStart}ms`);
+    const [newServer, resolvedBrowser] = await Promise.all([
+      setupWebServer(config, cachedContent),
+      Promise.resolve(existingBrowser),
+    ]);
+    perfLog(`browser.js: setupWebServer took ${Date.now() - setupStart}ms`);
+
+    const activeBrowser = resolvedBrowser ?? (await launchBrowser(config));
+    const pageStart = Date.now();
+    // In headed watch mode (bare --open + --watch), Chrome is pre-launched without --headless=new
+    // so it already has a blank default tab. Reuse that page instead of opening a new one —
+    // otherwise the user sees the blank startup tab AND the new Playwright tab simultaneously.
+    // For all other modes (headless, --open=<binary>, or non-watch), always create a fresh page.
+    const isHeadedWatchMode = config.open === true && config.watch;
+    const getPage = isHeadedWatchMode
+      ? () => activeBrowser.contexts()[0]?.pages()[0] ?? activeBrowser.newPage()
+      : () => activeBrowser.newPage();
+    const [newPage] = await Promise.all([getPage(), bindServerToPort(newServer, config)]);
+    perfLog(`browser.js: newPage + bindServerToPort took ${Date.now() - pageStart}ms`);
+    return [newServer, activeBrowser, newPage] as const;
+  })();
 
   // Firefox BiDi sends all object console args by handle (no inline value), so
   // arg.jsonValue() always fails for objects — even plain ones with no special types.
