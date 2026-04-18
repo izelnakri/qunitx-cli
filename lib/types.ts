@@ -53,11 +53,17 @@ export interface CachedContent {
   /** Cache key for `_esbuildContext`: `allTestFilePaths.join('\0')`. Invalidated when files change. */
   _esbuildContextKey?: string;
   /**
-   * In-flight build promise started by `run.ts` before Chrome setup completes, so esbuild
-   * races `setupBrowser()` rather than running sequentially after it. Consumed and cleared
-   * by the first `runTestsInBrowser()` call; subsequent watch-mode reruns build normally.
+   * In-flight build promise started by `run.ts` before Chrome setup completes (initial run)
+   * or before `runTestsInBrowser` is called (reruns), so esbuild races navigation.
+   * Consumed and cleared by the first `runTestsInBrowser()` call.
    */
   _preBuildPromise?: Promise<void> | null;
+  /**
+   * Set when a parallel rebuild is in-flight during a watch-mode rerun. The `/tests.js`
+   * route awaits this before serving, so Chrome can navigate concurrently while esbuild
+   * finishes. Cleared by `runTestsInBrowser` after the build settles.
+   */
+  _activeRebuild?: Promise<void> | null;
   /**
    * Set when the last esbuild run failed (watch mode only). The web server's `/` route serves
    * an error page instead of the normal test HTML, and the Playwright page is navigated there.

@@ -195,12 +195,18 @@ export async function runTestsInBrowser(
     const preBuildPromise = cachedContent._preBuildPromise;
     cachedContent._preBuildPromise = null;
     if (!cachedContent.allTestCode) {
-      await (preBuildPromise ?? buildTestBundle(config, cachedContent));
+      if (preBuildPromise) {
+        // Build was kicked off before navigation — let it race Chrome. The /tests.js route
+        // awaits _activeRebuild before serving, so Chrome gets the bundle when ready.
+        cachedContent._activeRebuild = preBuildPromise;
+      } else {
+        await buildTestBundle(config, cachedContent);
+      }
     }
 
     // buildTestBundle bails early when fsTree is empty (spurious unlink race on overlayfs).
     // Don't navigate the browser — the pending-trigger mechanism will fire a correct rebuild.
-    if (!cachedContent.allTestCode) {
+    if (!cachedContent.allTestCode && !cachedContent._activeRebuild) {
       return connections;
     }
 
@@ -223,6 +229,12 @@ export async function runTestsInBrowser(
           runTestInsideHTMLFile(htmlPath, connections, config),
         ),
       );
+    }
+
+    if (cachedContent._activeRebuild) {
+      await cachedContent._activeRebuild.catch(() => {});
+      cachedContent._activeRebuild = null;
+      if (!cachedContent.allTestCode) return connections;
     }
 
     const TIME_TAKEN = TIME_COUNTER.stop();
@@ -260,6 +272,7 @@ export async function runTestsInBrowser(
       }
     }
   } catch (error) {
+    cachedContent._activeRebuild = null;
     config.lastFailedTestFiles = config.lastRanTestFiles;
     const exception = new BundleError(error);
 

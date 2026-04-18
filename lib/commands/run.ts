@@ -34,6 +34,8 @@ import type { Config, CachedContent } from '../types.ts';
  * @returns {Promise<void>}
  */
 export async function run(config: Config): Promise<void> {
+  // Start timing cache read before buildCachedContent so they overlap (~5-10ms saved).
+  const timingsPromise = config.watch ? null : readTimingCache(config.projectRoot);
   const cachedContent = await buildCachedContent(config, config.htmlPaths);
 
   if (config.watch) {
@@ -119,6 +121,12 @@ export async function run(config: Config): Promise<void> {
                 `# Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
               );
             }
+            // Kick off rebuild immediately so it races Chrome navigation (same pattern as the
+            // initial watch-mode build). runTestsInBrowser picks up the promise from
+            // _preBuildPromise and sets _activeRebuild so /tests.js can await it.
+            const rebuildPromise = buildTestBundle(config, cachedContent);
+            rebuildPromise.catch(() => {});
+            cachedContent._preBuildPromise = rebuildPromise;
             return await runTestsInBrowser(config, cachedContent, connections);
           }
           if (config.debug) {
@@ -151,7 +159,10 @@ export async function run(config: Config): Promise<void> {
     // HTTP server and Playwright page inside one shared browser instance.
     const allFiles = Object.keys(config.fsTree);
     const groupCount = Math.min(allFiles.length, availableParallelism());
-    const timings = await readTimingCache(config.projectRoot);
+    // Start browser connect before splitIntoGroups (which does stat calls) so CDP connect
+    // (~30-50ms) races the file-size lookups instead of waiting behind them.
+    const browserPromise = launchBrowser(config);
+    const timings = await (timingsPromise ?? Promise.resolve({}));
     const { groups, weights } = await splitIntoGroups(allFiles, groupCount, timings);
 
     // Shared COUNTER so TAP test numbers are globally sequential across all groups.
@@ -198,7 +209,7 @@ export async function run(config: Config): Promise<void> {
     // Build all group bundles and write static files while the browser is starting up.
     // Bind the shared server's port in the same parallel window when active.
     const [browser] = await Promise.all([
-      launchBrowser(config),
+      browserPromise,
       sharedServer
         ? bindServerToPort(sharedServer, config).then(() =>
             groupConfigs.forEach((gc, i) => {

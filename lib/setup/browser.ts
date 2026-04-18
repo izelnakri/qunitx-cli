@@ -94,13 +94,10 @@ export async function setupBrowser(
       return [sharedServer, existingBrowser!, newPage] as const;
     }
 
-    const [newServer, resolvedBrowser] = await Promise.all([
-      setupWebServer(config, cachedContent),
-      Promise.resolve(existingBrowser),
-    ]);
+    const newServer = setupWebServer(config, cachedContent);
     perfLog(`browser.js: setupWebServer took ${Date.now() - setupStart}ms`);
 
-    const activeBrowser = resolvedBrowser ?? (await launchBrowser(config));
+    const activeBrowser = existingBrowser ?? (await launchBrowser(config));
     const pageStart = Date.now();
     // In headed watch mode (bare --open + --watch), Chrome is pre-launched without --headless=new
     // so it already has a blank default tab. Reuse that page instead of opening a new one —

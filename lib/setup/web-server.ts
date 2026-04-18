@@ -124,7 +124,24 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
   // JS files. This lets Chrome compile them in background threads while the main thread
   // is free to process the WebSocket 'open' event, decoupling WS connection time from
   // bundle compilation time and eliminating the "WS never connected" timeout on CI.
-  server.get('/tests.js', (_req, res) => {
+  server.get('/tests.js', async (_req, res) => {
+    // In watch-mode reruns, build and navigation race in parallel. Hold the response until
+    // esbuild settles. On build failure, send a WS done signal with 0 tests so the test
+    // race resolves immediately rather than waiting for the startup timeout.
+    if (!cachedContent.allTestCode && cachedContent._activeRebuild) {
+      const ok = await cachedContent._activeRebuild.then(() => true).catch(() => false);
+      if (!ok || !cachedContent.allTestCode) {
+        res.writeHead(200, {
+          'Content-Type': 'application/javascript',
+          'Cache-Control': 'no-store',
+        });
+        return void res.end(
+          'if(window.socket&&window.socket.readyState===1)' +
+            'window.socket.send(JSON.stringify({event:"done",details:{passed:0,failed:0,runtime:0},' +
+            'qunitResult:{totalTests:0,finishedTests:0,failedTests:0,currentTest:null}}));',
+        );
+      }
+    }
     const bytes = cachedContent.allTestCode?.length ?? null;
     config.debug &&
       process.stdout.write(
@@ -136,10 +153,9 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
       // normal operation (buildTestBundle is always awaited before navigation), but
       // guards against unexpected race conditions.
       res.writeHead(503, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
-      res.end(
+      return void res.end(
         'console.error("[qunitx] /tests.js requested before bundle was built — allTestCode is null");',
       );
-      return;
     }
     // Signal Node.js that Chrome has fetched the bundle. Resets the idle timer so Chrome
     // gets a fresh budget to compile and execute tests.js — decoupled from WS open time.
@@ -160,10 +176,9 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
       );
     if (bytes === null) {
       res.writeHead(503, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
-      res.end(
+      return res.end(
         'console.error("[qunitx] /filtered-tests.js requested before bundle was built — filteredTestCode is null");',
       );
-      return;
     }
     config._onTestsJsServed?.();
     res.writeHead(200, {
@@ -179,13 +194,11 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
       const htmlContent = buildErrorHTML(cachedContent._buildError);
       res.writeHead(200, HTML_HEADERS);
       res.end(htmlContent);
-      saveHTML(`${config.projectRoot}/${config.output}/index.html`, htmlContent);
-      return;
+      return saveHTML(`${config.projectRoot}/${config.output}/index.html`, htmlContent);
     }
     if (cachedContent._noTestsWarning) {
       res.writeHead(200, HTML_HEADERS);
-      res.end(buildNoTestsHTML(cachedContent._noTestsWarning));
-      return;
+      return res.end(buildNoTestsHTML(cachedContent._noTestsWarning));
     }
     res.writeHead(200, HTML_HEADERS);
     res.end(mainIndexHTML);
@@ -197,13 +210,11 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
       const htmlContent = buildErrorHTML(cachedContent._buildError);
       res.writeHead(200, HTML_HEADERS);
       res.end(htmlContent);
-      saveHTML(`${config.projectRoot}/${config.output}/qunitx.html`, htmlContent);
-      return;
+      return saveHTML(`${config.projectRoot}/${config.output}/qunitx.html`, htmlContent);
     }
     if (cachedContent._noTestsWarning) {
       res.writeHead(200, HTML_HEADERS);
-      res.end(buildNoTestsHTML(cachedContent._noTestsWarning));
-      return;
+      return res.end(buildNoTestsHTML(cachedContent._noTestsWarning));
     }
     res.writeHead(200, HTML_HEADERS);
     res.end(mainQunitxHTML);
@@ -693,13 +704,11 @@ export function registerGroupRoutes(
   server.get(`/group-${groupId}/`, (_req, res) => {
     if (groupCachedContent._buildError) {
       res.writeHead(200, HTML_HEADERS);
-      res.end(buildErrorHTML(groupCachedContent._buildError));
-      return;
+      return res.end(buildErrorHTML(groupCachedContent._buildError));
     }
     if (groupCachedContent._noTestsWarning) {
       res.writeHead(200, HTML_HEADERS);
-      res.end(buildNoTestsHTML(groupCachedContent._noTestsWarning));
-      return;
+      return res.end(buildNoTestsHTML(groupCachedContent._noTestsWarning));
     }
     res.writeHead(200, HTML_HEADERS);
     res.end(mainGroupHTML);
@@ -710,10 +719,9 @@ export function registerGroupRoutes(
     const bytes = groupCachedContent.allTestCode?.length ?? null;
     if (bytes === null) {
       res.writeHead(503, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
-      res.end(
+      return res.end(
         'console.error("[qunitx] /tests.js requested before bundle was built — allTestCode is null");',
       );
-      return;
     }
     groupConfig._onTestsJsServed?.();
     res.writeHead(200, {
