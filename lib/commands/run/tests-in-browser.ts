@@ -234,7 +234,16 @@ export async function runTestsInBrowser(
     if (cachedContent._activeRebuild) {
       await cachedContent._activeRebuild.catch(() => {});
       cachedContent._activeRebuild = null;
-      if (!cachedContent.allTestCode) return connections;
+      if (!cachedContent.allTestCode) {
+        config.watch &&
+          cachedContent._buildError &&
+          console.log(
+            `# esbuild Bundle Error: ${cachedContent._buildError.formatted}`
+              .split('\n')
+              .join('\n# '),
+          );
+        return connections;
+      }
     }
 
     const TIME_TAKEN = TIME_COUNTER.stop();

@@ -128,18 +128,25 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
     // In watch-mode reruns, build and navigation race in parallel. Hold the response until
     // esbuild settles. On build failure, send a WS done signal with 0 tests so the test
     // race resolves immediately rather than waiting for the startup timeout.
-    if (!cachedContent.allTestCode && cachedContent._activeRebuild) {
-      const ok = await cachedContent._activeRebuild.then(() => true).catch(() => false);
-      if (!ok || !cachedContent.allTestCode) {
+    if (cachedContent._activeRebuild) {
+      await cachedContent._activeRebuild.catch(() => {});
+      if (!cachedContent.allTestCode) {
+        // Resolve testRaceResult from Node.js directly — the WS may not be open yet
+        // when this script executes on CI (Chrome can fetch tests.js before the WS
+        // handshake completes), making the browser-side readyState guard unreliable.
+        config._lastQUnitResult = {
+          totalTests: 0,
+          finishedTests: 0,
+          failedTests: 0,
+          currentTest: null,
+        };
+        config._testRunDone?.();
+        config._testRunDone = null;
         res.writeHead(200, {
           'Content-Type': 'application/javascript',
           'Cache-Control': 'no-store',
         });
-        return void res.end(
-          'if(window.socket&&window.socket.readyState===1)' +
-            'window.socket.send(JSON.stringify({event:"done",details:{passed:0,failed:0,runtime:0},' +
-            'qunitResult:{totalTests:0,finishedTests:0,failedTests:0,currentTest:null}}));',
-        );
+        return void res.end();
       }
     }
     const bytes = cachedContent.allTestCode?.length ?? null;
@@ -194,6 +201,18 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
       const htmlContent = buildErrorHTML(cachedContent._buildError);
       res.writeHead(200, HTML_HEADERS);
       res.end(htmlContent);
+      // Build error HTML has no tests.js script tag, so the /tests.js route never fires.
+      // Resolve testRaceResult from Node.js directly when a parallel build was in-flight.
+      if (cachedContent._activeRebuild) {
+        config._lastQUnitResult = {
+          totalTests: 0,
+          finishedTests: 0,
+          failedTests: 0,
+          currentTest: null,
+        };
+        config._testRunDone?.();
+        config._testRunDone = null;
+      }
       return saveHTML(`${config.projectRoot}/${config.output}/index.html`, htmlContent);
     }
     if (cachedContent._noTestsWarning) {
