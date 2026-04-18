@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.19.3] - 2026-04-18
+[`v0.19.2...v0.19.3`](https://github.com/izelnakri/qunitx-cli/compare/v0.19.2...v0.19.3)
+
+### Bug Fixes
+- Scan /proc/$pid/fd to catch Chrome sandbox processes in cleanup — 2026-04-18 by [@izelnakri](https://github.com/izelnakri) ([`ca863de`](https://github.com/izelnakri/qunitx-cli/commit/ca863dea285f0fe6a682a5a41d30297b3e10bf85))
+- Replace killAndAwait with rm()-driven retry in cleanupBrowserDir — 2026-04-18 by [@izelnakri](https://github.com/izelnakri) ([`6d2a16c`](https://github.com/izelnakri/qunitx-cli/commit/6d2a16c21b612eb6a9542eabb57b8638c951d4ee))
+- Remove zombie-poll loop from sweepOrphanedChrome, shutdownPrelaunch on error — 2026-04-18 by [@izelnakri](https://github.com/izelnakri) ([`39d40ef`](https://github.com/izelnakri/qunitx-cli/commit/39d40efeb421797951ee6cdcb4962c95e287e750))
+- Run bench-check before test suite for cold-system accuracy — 2026-04-18 by [@izelnakri](https://github.com/izelnakri) ([`196f951`](https://github.com/izelnakri/qunitx-cli/commit/196f9510e040949dfb67c09e91ceea0fb1ff1eb9))
+
+### Performance
+- Reduce keepAlive event-loop wake-ups by 10× in concurrent mode — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`8efe2f2`](https://github.com/izelnakri/qunitx-cli/commit/8efe2f2a9135f5615e446d4aa8905521dfd07377))
+- Skip fs.stat for files with a warm timing cache in splitIntoGroups — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`2833968`](https://github.com/izelnakri/qunitx-cli/commit/28339682fce27d68abea8abe64fed4f5ad1282c6))
+- Pre-compile parameterized route regexes in HTTPServer at registration time — 2026-04-17 by [@izelnakri](https://github.com/izelnakri) ([`ac43f4a`](https://github.com/izelnakri/qunitx-cli/commit/ac43f4aafd3d857e92a18de9345c0c5555b926fc))
+- Use a single shared HTTPServer for all concurrent groups — 2026-04-18 by [@izelnakri](https://github.com/izelnakri) ([`8ae0ffb`](https://github.com/izelnakri/qunitx-cli/commit/8ae0ffb9286e7f1ced9df71999232bd78bf4348b))
+- Single esbuild invocation for all concurrent group bundles — 2026-04-18 by [@izelnakri](https://github.com/izelnakri) ([`0719798`](https://github.com/izelnakri/qunitx-cli/commit/07197984d0f96938d40d469821acfa18960d7642))
+- Wire buildAllGroupBundles into run.ts to activate single-esbuild optimization — 2026-04-18 by [@izelnakri](https://github.com/izelnakri) ([`f8fae94`](https://github.com/izelnakri/qunitx-cli/commit/f8fae942b329fab2aa44916fd8ad98129304f039))
+
+### Refactoring
+- Pre-cache HTML, parallel close, debug logging on swallowed errors — 2026-04-18 by [@izelnakri](https://github.com/izelnakri) ([`531b1af`](https://github.com/izelnakri/qunitx-cli/commit/531b1af4b8e7975777e24823678bd878b45c78c9))
+
 ## [0.19.2] - 2026-04-17
 [`v0.19.1...v0.19.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.19.1...v0.19.2)
 
