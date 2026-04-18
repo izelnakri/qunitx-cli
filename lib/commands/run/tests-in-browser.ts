@@ -276,7 +276,11 @@ export async function runTestsInBrowser(
       fs.writeFile(
         `${projectRoot}/${output}/qunitx.html`,
         buildErrorHTML(cachedContent._buildError),
-      ).catch(() => {});
+      ).catch(
+        (err: Error) =>
+          config.debug &&
+          process.stderr.write(`# [qunitx] writeFile qunitx.html: ${err.message}\n`),
+      );
     }
 
     if (config.watch) {
@@ -764,7 +768,10 @@ export async function buildAllGroupBundles(
         group.cachedContent._buildError = buildError;
         return fs
           .writeFile(`${group.config.projectRoot}/${group.config.output}/index.html`, errorHtml)
-          .catch(() => {});
+          .catch(
+            (err: Error) =>
+              debug && process.stderr.write(`# [qunitx] writeFile index.html: ${err.message}\n`),
+          );
       }),
     );
     throw error;

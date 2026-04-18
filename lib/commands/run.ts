@@ -315,7 +315,10 @@ export async function run(config: Config): Promise<void> {
     TAPDisplayFinalResult(config.COUNTER, TIME_COUNTER.stop());
 
     const fileTimes = computeFileTimes(groups, weights, wallTimes);
-    persistTimings(fileTimes, config.projectRoot).catch(() => {});
+    persistTimings(fileTimes, config.projectRoot).catch(
+      (err: Error) =>
+        config.debug && process.stderr.write(`# [qunitx] persistTimings: ${err.message}\n`),
+    );
     printFileTimings(fileTimes, config.projectRoot);
 
     if (config.after) {
@@ -332,8 +335,20 @@ export async function run(config: Config): Promise<void> {
     process.stdout.write('\n', async () => {
       clearTimeout(exitTimer);
       clearInterval(keepAlive);
-      if (sharedServer) await sharedServer.close().catch(() => {});
-      await browser.close().catch(() => {});
+      await Promise.all([
+        sharedServer
+          ?.close()
+          .catch(
+            (err: Error) =>
+              config.debug && process.stderr.write(`# [qunitx] server.close: ${err.message}\n`),
+          ),
+        browser
+          .close()
+          .catch(
+            (err: Error) =>
+              config.debug && process.stderr.write(`# [qunitx] browser.close: ${err.message}\n`),
+          ),
+      ]);
       await shutdownPrelaunch();
       process.exit(exitCode);
     });

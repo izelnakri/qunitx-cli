@@ -9,6 +9,8 @@ import type { Config, CachedContent } from '../types.ts';
 
 const fsPromise = fs.promises;
 
+const HTML_HEADERS = { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' } as const;
+
 /** Static 404 page served for HTML-accepting requests to missing static assets. */
 const NOT_FOUND_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -50,10 +52,27 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
     cachedContent.mainHTML.filePath,
     config.projectRoot,
   );
-  // Cache the runtime script — it never changes for this server's lifetime (port, timeout,
-  // failFast are fixed after setup). Avoids regenerating the ~2KB template string on every
-  // HTML request; the remaining injectScript call is a single string .replace() (negligible).
+  // Cache the runtime script and both normal HTML responses — stable for this server's lifetime.
   const runtimeScript = testRuntimeToInject(config);
+  const mainIndexHTML = escapeAndInjectTestsToHTML(
+    mainHTMLWithReplacedAssets,
+    runtimeScript,
+    './tests.js',
+  );
+  const mainQunitxHTML = escapeAndInjectTestsToHTML(
+    mainHTMLWithReplacedAssets,
+    runtimeScript,
+    './filtered-tests.js',
+  );
+  const saveHTML = (filePath: string, html: string) =>
+    fsPromise
+      .writeFile(filePath, html)
+      .catch(
+        (err: Error) =>
+          config.debug &&
+          process.stderr.write(`# [qunitx] writeFile ${filePath}: ${err.message}\n`),
+      );
+
   server.wss.on('connection', function connection(socket) {
     socket.on('message', function message(data) {
       const { event, details, qunitResult, abort } = JSON.parse(data);
@@ -67,16 +86,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
       } else if (event === 'connection') {
         config._phase = 'running';
         if (!config._groupMode) process.stdout.write('TAP version 13\n');
-        if (config.debug && config._groupMode) {
-          const allFiles = Object.keys(config.fsTree);
-          const relFiles = allFiles.map((filePath) =>
-            filePath.replace(`${config.projectRoot}/`, ''),
-          );
-          const shown = relFiles.slice(0, 2);
-          const rest = relFiles.length - shown.length;
-          const fileList = rest > 0 ? `${shown.join('  ')}  +${rest} more` : shown.join('  ');
-          process.stdout.write(`# ${blue(`── ${fileList} ──`)}\n`);
-        }
+        if (config.debug && config._groupMode) debugGroupHeader(config);
         config._resetTestTimeout?.();
       } else if (event === 'testEnd' && !abort) {
         if (details.status === 'failed') {
@@ -164,77 +174,43 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
     res.end(cachedContent.filteredTestCode);
   });
 
-  server.get('/', async (_req, res) => {
+  server.get('/', (_req, res) => {
     if (cachedContent._buildError) {
       const htmlContent = buildErrorHTML(cachedContent._buildError);
-      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
-      res.write(htmlContent);
-      res.end();
-      return await fsPromise.writeFile(
-        `${config.projectRoot}/${config.output}/index.html`,
-        htmlContent,
-      );
-    }
-
-    if (cachedContent._noTestsWarning) {
-      const htmlContent = buildNoTestsHTML(cachedContent._noTestsWarning);
-      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
-      res.write(htmlContent);
-      res.end();
+      res.writeHead(200, HTML_HEADERS);
+      res.end(htmlContent);
+      saveHTML(`${config.projectRoot}/${config.output}/index.html`, htmlContent);
       return;
     }
-
-    const htmlContent = escapeAndInjectTestsToHTML(
-      mainHTMLWithReplacedAssets,
-      runtimeScript,
-      './tests.js',
-    );
-    res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
-    res.write(htmlContent);
-    res.end();
-
-    return await fsPromise.writeFile(
-      `${config.projectRoot}/${config.output}/index.html`,
-      htmlContent,
-    );
+    if (cachedContent._noTestsWarning) {
+      res.writeHead(200, HTML_HEADERS);
+      res.end(buildNoTestsHTML(cachedContent._noTestsWarning));
+      return;
+    }
+    res.writeHead(200, HTML_HEADERS);
+    res.end(mainIndexHTML);
+    saveHTML(`${config.projectRoot}/${config.output}/index.html`, mainIndexHTML);
   });
 
-  server.get('/qunitx.html', async (_req, res) => {
+  server.get('/qunitx.html', (_req, res) => {
     if (cachedContent._buildError) {
       const htmlContent = buildErrorHTML(cachedContent._buildError);
-      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
-      res.write(htmlContent);
-      res.end();
-      return await fsPromise.writeFile(
-        `${config.projectRoot}/${config.output}/qunitx.html`,
-        htmlContent,
-      );
-    }
-
-    if (cachedContent._noTestsWarning) {
-      const htmlContent = buildNoTestsHTML(cachedContent._noTestsWarning);
-      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
-      res.write(htmlContent);
-      res.end();
+      res.writeHead(200, HTML_HEADERS);
+      res.end(htmlContent);
+      saveHTML(`${config.projectRoot}/${config.output}/qunitx.html`, htmlContent);
       return;
     }
-
-    const htmlContent = escapeAndInjectTestsToHTML(
-      mainHTMLWithReplacedAssets,
-      runtimeScript,
-      './filtered-tests.js',
-    );
-    res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
-    res.write(htmlContent);
-    res.end();
-
-    return await fsPromise.writeFile(
-      `${config.projectRoot}/${config.output}/qunitx.html`,
-      htmlContent,
-    );
+    if (cachedContent._noTestsWarning) {
+      res.writeHead(200, HTML_HEADERS);
+      res.end(buildNoTestsHTML(cachedContent._noTestsWarning));
+      return;
+    }
+    res.writeHead(200, HTML_HEADERS);
+    res.end(mainQunitxHTML);
+    saveHTML(`${config.projectRoot}/${config.output}/qunitx.html`, mainQunitxHTML);
   });
 
-  server.get('/*', async (req, res) => {
+  server.get('/*', (req, res) => {
     const possibleDynamicHTML =
       cachedContent.dynamicContentHTMLs[`${config.projectRoot}${req.path}`];
     if (possibleDynamicHTML) {
@@ -243,15 +219,10 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         runtimeScript,
         '/tests.js',
       );
-
-      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
-      res.write(htmlContent);
-      res.end();
-
-      return await fsPromise.writeFile(
-        `${config.projectRoot}/${config.output}${req.path}`,
-        htmlContent,
-      );
+      res.writeHead(200, HTML_HEADERS);
+      res.end(htmlContent);
+      saveHTML(`${config.projectRoot}/${config.output}${req.path}`, htmlContent);
+      return;
     }
 
     const url = req.url;
@@ -705,33 +676,34 @@ export function registerGroupRoutes(
     groupConfig.projectRoot,
   );
   const runtimeScript = testRuntimeToInject(groupConfig, groupId);
+  const mainGroupHTML = escapeAndInjectTestsToHTML(
+    mainHTMLWithReplacedAssets,
+    runtimeScript,
+    './tests.js',
+  );
+  const saveHTML = (filePath: string, html: string) =>
+    fsPromise
+      .writeFile(filePath, html)
+      .catch(
+        (err: Error) =>
+          groupConfig.debug &&
+          process.stderr.write(`# [qunitx] writeFile ${filePath}: ${err.message}\n`),
+      );
 
   server.get(`/group-${groupId}/`, (_req, res) => {
     if (groupCachedContent._buildError) {
-      const htmlContent = buildErrorHTML(groupCachedContent._buildError);
-      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
-      res.write(htmlContent);
-      res.end();
+      res.writeHead(200, HTML_HEADERS);
+      res.end(buildErrorHTML(groupCachedContent._buildError));
       return;
     }
     if (groupCachedContent._noTestsWarning) {
-      const htmlContent = buildNoTestsHTML(groupCachedContent._noTestsWarning);
-      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
-      res.write(htmlContent);
-      res.end();
+      res.writeHead(200, HTML_HEADERS);
+      res.end(buildNoTestsHTML(groupCachedContent._noTestsWarning));
       return;
     }
-    const htmlContent = escapeAndInjectTestsToHTML(
-      mainHTMLWithReplacedAssets,
-      runtimeScript,
-      './tests.js',
-    );
-    res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
-    res.write(htmlContent);
-    res.end();
-    fsPromise
-      .writeFile(`${groupConfig.projectRoot}/${groupConfig.output}/index.html`, htmlContent)
-      .catch(() => {});
+    res.writeHead(200, HTML_HEADERS);
+    res.end(mainGroupHTML);
+    saveHTML(`${groupConfig.projectRoot}/${groupConfig.output}/index.html`, mainGroupHTML);
   });
 
   server.get(`/group-${groupId}/tests.js`, (_req, res) => {
@@ -751,6 +723,16 @@ export function registerGroupRoutes(
     });
     res.end(groupCachedContent.allTestCode);
   });
+}
+
+function debugGroupHeader(config: Config): void {
+  const files = Object.keys(config.fsTree);
+  const rel = files.map((f) => f.replace(`${config.projectRoot}/`, ''));
+  const shown = rel.slice(0, 2);
+  const rest = rel.length - shown.length;
+  process.stdout.write(
+    `# ${blue(`── ${shown.join('  ')}${rest > 0 ? `  +${rest} more` : ''} ──`)}\n`,
+  );
 }
 
 /**
@@ -779,16 +761,7 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
         config._onWsOpen?.();
       } else if (event === 'connection') {
         config._phase = 'running';
-        if (config.debug) {
-          const allFiles = Object.keys(config.fsTree);
-          const relFiles = allFiles.map((filePath) =>
-            filePath.replace(`${config.projectRoot}/`, ''),
-          );
-          const shown = relFiles.slice(0, 2);
-          const rest = relFiles.length - shown.length;
-          const fileList = rest > 0 ? `${shown.join('  ')}  +${rest} more` : shown.join('  ');
-          process.stdout.write(`# ${blue(`── ${fileList} ──`)}\n`);
-        }
+        if (config.debug) debugGroupHeader(config);
         config._resetTestTimeout?.();
       } else if (event === 'testEnd' && !abort) {
         if (details.status === 'failed') {
