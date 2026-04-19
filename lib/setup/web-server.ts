@@ -436,6 +436,7 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
         }
       });
 
+      window.QUnit.config.testTimeout = ${config.timeout};
       window.QUnit.start();
     }
   </script>`;

@@ -13,23 +13,26 @@ module('--timeout flag tests for browser mode', { concurrency: true }, (_hooks, 
     assert.tapResult(result, { testCount: 3 });
   });
 
-  test('--timeout kills a test that hangs indefinitely and exits with code 1', async (assert, testMetadata) => {
+  test('--timeout marks a hanging test as failed and exits with code 1', async (assert, testMetadata) => {
     const cmd = await shellFails('node cli.ts test/helpers/slow-tests.ts --timeout=500', {
       ...moduleMetadata,
       ...testMetadata,
     });
     assert.exitCode(cmd, 1, 'expected a non-zero exit code for a hanging test');
-    assert.includes(cmd, 'TAP version 13', 'TAP header is still printed');
-    assert.includes(
-      cmd,
-      'BROWSER: TEST TIMED OUT',
-      'timeout is reported with the name of the hanging test',
-    );
+    assert.outputContains(cmd, {
+      contains: [
+        'TAP version 13',
+        /not ok \d+ .*this test hangs forever/,
+        /Test took longer than \d+ms; test timed out\./,
+      ],
+      notContains: ['BROWSER: TEST TIMED OUT'],
+    });
+    assert.tapResult(cmd, { testCount: 1, failCount: 1 });
   });
 
   // assert.timeout(ms) tests — per-test deadline set inside the test body (QUnit native).
-  // Unlike --timeout (which kills the whole run when a test hangs), assert.timeout()
-  // fails only the individual test and lets the suite finish normally.
+  // --timeout sets QUnit.config.testTimeout globally for the run; assert.timeout() overrides
+  // it per-test. Both mark only the timed-out test as failed and let the suite continue.
 
   test('assert.timeout() passes when test finishes before its deadline', async (assert, testMetadata) => {
     const result = await shell('node cli.ts test/fixtures/assert-timeout-tests.ts', {
@@ -62,7 +65,6 @@ module('--timeout flag tests for browser mode', { concurrency: true }, (_hooks, 
         // The test itself is marked not-ok in TAP
         /not ok \d+ .* assert\.timeout fails when test exceeds deadline/,
       ],
-      // assert.timeout() must NOT trigger the CLI-level watchdog message
       notContains: ['BROWSER: TEST TIMED OUT'],
     });
     assert.tapResult(cmd, { testCount: 1, failCount: 1 });
