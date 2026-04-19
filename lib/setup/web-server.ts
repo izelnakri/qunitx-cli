@@ -554,7 +554,7 @@ export function buildNoTestsHTML(files: string[]): string {
         var retries = 0;
         function connect() {
           var ws = new WebSocket(\`ws://\${location.hostname}:\${location.port}\`);
-          ws.addEventListener('message', function (e) { if (e.data === 'refresh') location.reload(true); });
+          ws.addEventListener('message', function (e) { if (e.data === 'refresh' && !navigator.webdriver) location.reload(true); });
           ws.addEventListener('close', function () { if (retries++ < 120) setTimeout(connect, 1000); });
           ws.addEventListener('error', function () { ws.close(); });
         }
@@ -667,7 +667,7 @@ export function buildErrorHTML(buildError: { type: string; formatted: string }):
         var retries = 0;
         function connect() {
           var ws = new WebSocket(\`ws://\${location.hostname}:\${location.port}\`);
-          ws.addEventListener('message', function (e) { if (e.data === 'refresh') location.reload(true); });
+          ws.addEventListener('message', function (e) { if (e.data === 'refresh' && !navigator.webdriver) location.reload(true); });
           ws.addEventListener('close', function () { if (retries++ < 120) setTimeout(connect, 1000); });
           ws.addEventListener('error', function () { ws.close(); });
         }
