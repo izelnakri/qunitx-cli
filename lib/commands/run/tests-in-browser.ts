@@ -467,6 +467,9 @@ async function runTestInsideHTMLFile(
     // never expire before navigation can complete — they are floored at navMs so that small
     // per-test timeouts (e.g. --timeout=500 for testing the timeout feature) don't starve
     // Chrome's launch sequence, which is a platform characteristic unrelated to test duration.
+    // Once QUnit.begin fires, _resetTestTimeout switches to the per-test budget
+    // (config.timeout + TEST_STALL_BUFFER_MS): QUnit handles the timeout itself at config.timeout
+    // ms; the extra buffer is a server-side safety net for completely frozen browsers.
     const navMs = config.timeout + 10_000;
     const startupMs = Math.max(config.timeout * 3, navMs);
     const testsJsMs = Math.max(config.timeout * 4, navMs);
@@ -500,7 +503,17 @@ async function runTestInsideHTMLFile(
     config._resetTestTimeout = () => {
       wsConnected = true;
       clearTimeout(timeoutHandle);
-      timeoutHandle = setTimeout(resolveTestRace, config.timeout);
+      // Use config.timeout + TEST_STALL_BUFFER_MS rather than config.timeout alone.
+      // QUnit's own testTimeout fires at exactly config.timeout ms and then sends a WS 'done'
+      // message that resolves testRaceResult. Without the buffer, this Node.js timer fires at
+      // the same instant as QUnit's timer, creating a race: on chromium (fast JS) the browser
+      // wins; on webkit (slow JS) Node fires first, triggering the BROWSER: TEST TIMED OUT
+      // fallback before QUnit can produce the correct 'not ok' TAP line.
+      // TEST_STALL_BUFFER_MS gives the browser a guaranteed window to process QUnit's timeout
+      // callback, fire QUnit.done, and deliver the WS 'done' message. This timer is only a
+      // safety net for browsers that have completely frozen — normal timeout handling is always
+      // done by QUnit itself within config.timeout ms.
+      timeoutHandle = setTimeout(resolveTestRace, config.timeout + TEST_STALL_BUFFER_MS);
     };
 
     const targetUrl = `http://localhost:${config.port}${filePath}`;
@@ -646,6 +659,11 @@ const ANCESTOR_NODE_MODULES = ancestorNodeModules(process.cwd());
 const RETRY_DELAY_MS = 100;
 const MAX_RETRIES = 3;
 const EMPTY_BUNDLE_THRESHOLD = 500;
+// Extra window given to the browser after QUnit's testTimeout fires so it can process the
+// timeout callback, mark the test failed, fire QUnit.done, and deliver the WS 'done' message
+// before the server-side safety net resolves testRaceResult. Without this buffer the node-side
+// timer and QUnit's timer fire simultaneously, and webkit (slower JS) can lose the race.
+const TEST_STALL_BUFFER_MS = 5_000;
 
 // Regex compiled once; matches the group index and optional .map suffix in esbuild output paths.
 const GROUP_OUTPUT_REGEX = /group-(\d+)\.js(\.map)?$/;
