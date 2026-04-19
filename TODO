@@ -1,3 +1,5 @@
+Put file execution times under --debug
+
 Stack trace `at:` reference is always wrong on stdout when assertions fail. So stack traces are useless now. Instead they should should the actual file + assertion line number(if possible). Make it work for concurrent grouped test mode, normal mode/watch mode, on all modes. Make the stack trace most useful basically
 
 refactor the `test/helpers/before-script-async.ts` while keeping a similar behavior(or at least similar use when the file is used in tests it should be a backend async service I suspect that we verify in tests it gets loaded correctly) so I can remove express and cors devDependencies from my project. Also rewrite expressApp name to something correct now in my runtime, since I dont use express anymore, should it be `webServer` instead?

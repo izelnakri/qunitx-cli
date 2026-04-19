@@ -83,6 +83,7 @@ export function dumpYaml({
   expected,
   message,
   stack,
+  source,
   at,
 }: {
   name: string;
@@ -90,16 +91,18 @@ export function dumpYaml({
   expected: unknown;
   message: string | null;
   stack: string | null;
+  source: string | null;
   at: string | null;
 }): string {
   // actual and expected are always emitted — they are the core comparison data.
-  // message, stack, and at are supplementary context: omit when null to reduce noise.
+  // message, stack, source, and at are supplementary context: omit when null to reduce noise.
   return (
     `name: ${dumpString(name, '')}\n` +
     yamlLine('actual', actual) +
     yamlLine('expected', expected) +
     (message !== null ? yamlLine('message', message) : '') +
     (stack !== null ? yamlLine('stack', stack) : '') +
+    (source !== null ? yamlLine('source', source) : '') +
     (at !== null ? yamlLine('at', at) : '')
   );
 }

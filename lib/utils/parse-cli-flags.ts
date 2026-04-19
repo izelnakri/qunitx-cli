@@ -1,3 +1,6 @@
+// Fallback when --timeout is passed with an unparseable or zero value.
+const FALLBACK_TIMEOUT_MS = 10_000;
+
 // { inputs: [], debug: true, watch: true, open: true, failFast: true, htmlPaths: [], output }
 interface ParsedFlags {
   inputs: string[];
@@ -35,7 +38,7 @@ export function parseCliFlags(projectRoot: string): ParsedFlags {
       } else if (arg.startsWith('--failfast') || arg.startsWith('--failFast')) {
         return Object.assign(result, { failFast: parseBoolean(arg.split('=')[1]) });
       } else if (arg.startsWith('--timeout')) {
-        return Object.assign(result, { timeout: Number(arg.split('=')[1]) || 10000 });
+        return Object.assign(result, { timeout: Number(arg.split('=')[1]) || FALLBACK_TIMEOUT_MS });
       } else if (arg.startsWith('--output')) {
         return Object.assign(result, { output: arg.split('=')[1] });
       } else if (arg.endsWith('.html')) {

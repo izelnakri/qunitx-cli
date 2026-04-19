@@ -1,5 +1,6 @@
 import { dumpYaml } from './dump-yaml.ts';
 import { indentString } from '../utils/indent-string.ts';
+import { resolveStack, type SourceMapDecoder } from '../utils/source-map-decoder.ts';
 import type { Counter } from '../types.ts';
 
 interface TestAssertion {
@@ -23,7 +24,12 @@ interface TestDetails {
  * Formats and prints a single QUnit testEnd event as a TAP `ok`/`not ok` line with optional YAML failure block.
  * @returns {void}
  */
-export function TAPDisplayTestResult(COUNTER: Counter, details: TestDetails): void {
+export function TAPDisplayTestResult(
+  COUNTER: Counter,
+  details: TestDetails,
+  decoder?: SourceMapDecoder | null,
+  projectRoot?: string,
+): void {
   // NOTE: https://github.com/qunitjs/qunit/blob/master/src/html-reporter/diff.js
   COUNTER.testCount++;
 
@@ -43,6 +49,21 @@ export function TAPDisplayTestResult(COUNTER: Counter, details: TestDetails): vo
         COUNTER.errorCount = (COUNTER.errorCount ?? 0) + 1;
 
         process.stdout.write('  ---\n');
+        let stackStr: string | null = assertion.stack?.trim() || null;
+        let atStr: string | null = extractStackAt(assertion.stack);
+        let sourceText: string | null = null;
+        if (decoder && projectRoot && assertion.stack) {
+          const { resolvedStack, firstUserFrame, firstUserSourceText } = resolveStack(
+            assertion.stack,
+            decoder,
+            projectRoot,
+          );
+          stackStr = resolvedStack.trim() || null;
+          // When decoder is available, prefer firstUserFrame (original source path) for at:.
+          // If all frames are node_modules or unresolvable, null is cleaner than a bundle URL.
+          atStr = firstUserFrame;
+          sourceText = firstUserSourceText;
+        }
         process.stdout.write(
           indentString(
             dumpYaml({
@@ -56,10 +77,9 @@ export function TAPDisplayTestResult(COUNTER: Counter, details: TestDetails): vo
                   ? JSON.parse(JSON.stringify(assertion.expected, getCircularReplacer()))
                   : assertion.expected,
               message: assertion.message || null,
-              // Trim leading/trailing whitespace: Chrome stacks start with "    at ..."
-              // (4 spaces per frame) which would otherwise render as "stack:     at ..." in YAML.
-              stack: assertion.stack?.trim() || null,
-              at: extractStackAt(assertion.stack),
+              stack: stackStr,
+              source: sourceText,
+              at: atStr,
             }),
             4,
           ),

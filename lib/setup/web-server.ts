@@ -11,6 +11,12 @@ const fsPromise = fs.promises;
 
 const HTML_HEADERS = { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' } as const;
 
+// Browser-side WebSocket reconnect parameters injected into watch-mode HTML pages.
+const WATCH_WS_RECONNECT_INTERVAL_MS = 1_000;
+const WATCH_WS_RECONNECT_MAX_RETRIES = 120;
+// Retry interval for the QUnit page's WebSocket setup attempts (ms).
+const WS_RETRY_INTERVAL_MS = 10;
+
 /** Static 404 page served for HTML-accepting requests to missing static assets. */
 const NOT_FOUND_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -99,7 +105,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
           );
         }
         config._resetTestTimeout?.();
-        TAPDisplayTestResult(config.COUNTER, details);
+        TAPDisplayTestResult(config.COUNTER, details, config._sourceMapDecoder, config.projectRoot);
       } else if (event === 'done') {
         // Signal test completion. TCP ordering guarantees all testEnd messages
         // preceding this on the same connection are already processed by Node.js.
@@ -328,7 +334,7 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
       if (window.location.protocol === 'file:') return;
 
       let wsRetryCount = 0;
-      const WS_MAX_RETRIES = Math.ceil(${config.timeout} / 10); // retry for the full test timeout window
+      const WS_MAX_RETRIES = Math.ceil(${config.timeout} / ${WS_RETRY_INTERVAL_MS}); // retry for the full test timeout window
 
       function setupWebSocket() {
         try {
@@ -369,7 +375,7 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
           console.log('WebSocket connection failed after ' + WS_MAX_RETRIES + ' retries');
           return;
         }
-        window.setTimeout(setupWebSocket, 10);
+        window.setTimeout(setupWebSocket, ${WS_RETRY_INTERVAL_MS});
       }
 
       setupWebSocket();
@@ -555,7 +561,7 @@ export function buildNoTestsHTML(files: string[]): string {
         function connect() {
           var ws = new WebSocket(\`ws://\${location.hostname}:\${location.port}\`);
           ws.addEventListener('message', function (e) { if (e.data === 'refresh' && !navigator.webdriver) location.reload(true); });
-          ws.addEventListener('close', function () { if (retries++ < 120) setTimeout(connect, 1000); });
+          ws.addEventListener('close', function () { if (retries++ < ${WATCH_WS_RECONNECT_MAX_RETRIES}) setTimeout(connect, ${WATCH_WS_RECONNECT_INTERVAL_MS}); });
           ws.addEventListener('error', function () { ws.close(); });
         }
         connect();
@@ -668,7 +674,7 @@ export function buildErrorHTML(buildError: { type: string; formatted: string }):
         function connect() {
           var ws = new WebSocket(\`ws://\${location.hostname}:\${location.port}\`);
           ws.addEventListener('message', function (e) { if (e.data === 'refresh' && !navigator.webdriver) location.reload(true); });
-          ws.addEventListener('close', function () { if (retries++ < 120) setTimeout(connect, 1000); });
+          ws.addEventListener('close', function () { if (retries++ < ${WATCH_WS_RECONNECT_MAX_RETRIES}) setTimeout(connect, ${WATCH_WS_RECONNECT_INTERVAL_MS}); });
           ws.addEventListener('error', function () { ws.close(); });
         }
         connect();
@@ -789,7 +795,7 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
           );
         }
         config._resetTestTimeout?.();
-        TAPDisplayTestResult(config.COUNTER, details);
+        TAPDisplayTestResult(config.COUNTER, details, config._sourceMapDecoder, config.projectRoot);
       } else if (event === 'done') {
         config._phase = 'done';
         config._lastQUnitResult = qunitResult ?? null;

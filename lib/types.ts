@@ -3,6 +3,7 @@ import type { Browser, Page } from 'playwright-core';
 import type { ChildProcess } from 'node:child_process';
 import type { Buffer } from 'node:buffer';
 import type { BuildContext } from 'esbuild';
+import type { SourceMapDecoder } from './utils/source-map-decoder.ts';
 
 /**
  * Running totals of test outcomes for a single test run.
@@ -157,6 +158,8 @@ export interface Config {
   _pendingConsoleHandlers?: Set<Promise<void>> | null;
   /** Web server instance injected during integration tests. */
   webServer?: unknown;
+  /** Decoded inline source map for the active test bundle; used to resolve stack frames to original sources. */
+  _sourceMapDecoder?: SourceMapDecoder | null;
 }
 
 /**

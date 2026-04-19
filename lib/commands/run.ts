@@ -29,6 +29,15 @@ import { readTemplate } from '../utils/read-template.ts';
 import { isCustomTemplate } from '../utils/html.ts';
 import type { Config, CachedContent } from '../types.ts';
 
+// Playwright navigation timeout for headed watch-mode reloads (not test execution).
+const WATCH_NAV_TIMEOUT_MS = 5_000;
+// Maximum ms to wait for page.close() before giving up and moving on (group mode).
+const PAGE_CLOSE_GRACE_MS = 10_000;
+// Maximum ms to wait for stdout to flush before forcing process.exit().
+const STDOUT_FLUSH_GRACE_MS = 5_000;
+// setInterval period that keeps the event loop alive while Promise.allSettled runs.
+const KEEP_ALIVE_INTERVAL_MS = 10_000;
+
 /**
  * Runs qunitx tests in headless Chrome, either in watch mode or concurrent batch mode.
  * @returns {Promise<void>}
@@ -106,7 +115,10 @@ export async function run(config: Config): Promise<void> {
     //   re-navigate so the route handler can now serve the warning page.
     if (isHeadedWatchMode && (cachedContent._buildError || cachedContent._noTestsWarning)) {
       await connections.page
-        .goto(`http://localhost:${config.port}/`, { waitUntil: 'commit', timeout: 5000 })
+        .goto(`http://localhost:${config.port}/`, {
+          waitUntil: 'commit',
+          timeout: WATCH_NAV_TIMEOUT_MS,
+        })
         .catch(() => {});
     }
 
@@ -152,7 +164,10 @@ export async function run(config: Config): Promise<void> {
           // or a 0-tests warning so it shows the correct HTML rather than stale test results.
           if (isHeadedWatchMode && (cachedContent._buildError || cachedContent._noTestsWarning)) {
             await connections.page
-              .goto(`http://localhost:${config.port}/`, { waitUntil: 'commit', timeout: 5000 })
+              .goto(`http://localhost:${config.port}/`, {
+                waitUntil: 'commit',
+                timeout: WATCH_NAV_TIMEOUT_MS,
+              })
               .catch(() => {});
           }
         },
@@ -252,7 +267,7 @@ export async function run(config: Config): Promise<void> {
     // all active handles close and the event loop would drain — exiting silently before
     // allSettled resolves or results are printed. This interval holds the loop open so that
     // unref'd group/page-close timers can still fire normally.
-    const keepAlive = setInterval(() => {}, 10_000);
+    const keepAlive = setInterval(() => {}, KEEP_ALIVE_INTERVAL_MS);
 
     const groupResults = await Promise.allSettled(
       groupConfigs.map((groupConfig, i) => {
@@ -297,7 +312,7 @@ export async function run(config: Config): Promise<void> {
                 Promise.race([
                   connections.page.close(),
                   new Promise((resolve) => {
-                    const pageCloseTimeoutId = setTimeout(resolve, 10000);
+                    const pageCloseTimeoutId = setTimeout(resolve, PAGE_CLOSE_GRACE_MS);
                     pageCloseTimeoutId.unref();
                   }),
                 ]).catch(() => {}),
@@ -345,7 +360,7 @@ export async function run(config: Config): Promise<void> {
     // keepAlive holds the event loop open until this callback fires, at which point
     // process.exit() takes over — so clearInterval happens here, not earlier.
     // If the write callback never fires (theoretical), the unref'd exitTimer is the fallback.
-    const exitTimer = setTimeout(() => process.exit(exitCode), 5000);
+    const exitTimer = setTimeout(() => process.exit(exitCode), STDOUT_FLUSH_GRACE_MS);
     exitTimer.unref();
 
     process.stdout.write('\n', async () => {

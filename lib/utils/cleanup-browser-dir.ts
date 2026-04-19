@@ -1,5 +1,8 @@
 import fs from 'node:fs/promises';
 
+const CLEANUP_DEADLINE_MS = 5_000;
+const CLEANUP_RETRY_MS = 50;
+
 // Returns true if the process at /proc/$entry references dirPath via cwd, cmdline, or open FDs.
 // Chrome's sandboxed renderer/GPU processes run in separate process groups with cwd='/' and
 // no dir name in cmdline, but they inherit file descriptors to the user-data-dir from the
@@ -74,7 +77,7 @@ export async function cleanupBrowserDir(dirPath: string): Promise<void> {
   // initial kill pass (late-forked GPU helpers, zygote children, etc.).
   // Each loop body is bounded (rm + /proc scan + 50ms sleep), so the deadline is
   // always respected and we never stall waiting for process-table cleanup.
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + CLEANUP_DEADLINE_MS;
   while (Date.now() < deadline) {
     const removed = await fs
       .rm(dirPath, { recursive: true, force: true })
@@ -82,7 +85,7 @@ export async function cleanupBrowserDir(dirPath: string): Promise<void> {
       .catch(() => false);
     if (removed) return;
     await killAllReferencingProcesses(dirPath, dirName);
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    await new Promise<void>((resolve) => setTimeout(resolve, CLEANUP_RETRY_MS));
   }
 
   // Diagnostic: if still not removed, log any process still holding the dir.

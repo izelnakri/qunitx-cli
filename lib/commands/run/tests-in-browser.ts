@@ -7,6 +7,7 @@ import { timeCounter } from '../../utils/time-counter.ts';
 import { runUserModule } from '../../utils/run-user-module.ts';
 import { TAPDisplayFinalResult } from '../../tap/display-final-result.ts';
 import { buildErrorHTML, buildNoTestsHTML } from '../../setup/web-server.ts';
+import { extractInlineSourceMap } from '../../utils/source-map-decoder.ts';
 import type { Config, CachedContent, Connections } from '../../types.ts';
 import type { HTTPServer } from '../../servers/http.ts';
 
@@ -89,14 +90,11 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
 
   const outfile = `${projectRoot}/${output}/tests.js`;
   await fs.mkdir(`${projectRoot}/${output}`, { recursive: true });
-  const sourcemap: esbuild.BuildOptions['sourcemap'] = config.debug
-    ? 'inline'
-    : config.watch
-      ? 'linked'
-      : false;
-  // tests.js is always written to disk: it is a useful build artifact, --open serves it
-  // as a static file, and linked sourcemaps require a companion .js.map on disk.
-  // The bundle is captured in memory from write:false so we never need a redundant readFile.
+  // Inline source maps are always embedded so the server can resolve bundle stack frames back to
+  // original source files. The overhead is acceptable for a test runner.
+  const sourcemap: esbuild.BuildOptions['sourcemap'] = 'inline';
+  // tests.js is always written to disk: it is a useful build artifact and --open serves it
+  // as a static file.
   const needsDisk = true;
 
   const buildOptions: esbuild.BuildOptions = {
@@ -141,6 +139,7 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
       ),
     ]);
     cachedContent.allTestCode = allTestCode;
+    config._sourceMapDecoder = extractInlineSourceMap(allTestCode, `${projectRoot}/${output}`);
   } catch (error) {
     cachedContent._buildError = {
       type: deriveBuildErrorType(error),
@@ -216,6 +215,10 @@ export async function runTestsInBrowser(
         targetTestFilesToFilter,
         outputPath,
         config,
+      );
+      config._sourceMapDecoder = extractInlineSourceMap(
+        cachedContent.filteredTestCode,
+        `${projectRoot}/${output}`,
       );
     }
 
@@ -320,12 +323,8 @@ function buildFilteredTests(
   outputPath: string,
   config: Config,
 ): Promise<Buffer> {
-  const sourcemap: esbuild.BuildOptions['sourcemap'] = config.debug
-    ? 'inline'
-    : config.watch
-      ? 'linked'
-      : false;
-  const needsDisk = sourcemap === 'linked' || Boolean(config.open);
+  const sourcemap: esbuild.BuildOptions['sourcemap'] = 'inline';
+  const needsDisk = Boolean(config.open);
   return buildWithOverlayfsRetry(
     {
       stdin: {
@@ -470,9 +469,9 @@ async function runTestInsideHTMLFile(
     // Once QUnit.begin fires, _resetTestTimeout switches to the per-test budget
     // (config.timeout + TEST_STALL_BUFFER_MS): QUnit handles the timeout itself at config.timeout
     // ms; the extra buffer is a server-side safety net for completely frozen browsers.
-    const navMs = config.timeout + 10_000;
-    const startupMs = Math.max(config.timeout * 3, navMs);
-    const testsJsMs = Math.max(config.timeout * 4, navMs);
+    const navMs = config.timeout + NAV_GRACE_MS;
+    const startupMs = Math.max(config.timeout * STARTUP_TIMEOUT_FACTOR, navMs);
+    const testsJsMs = Math.max(config.timeout * TESTS_JS_TIMEOUT_FACTOR, navMs);
 
     let resolveTestRace!: () => void;
     const testRaceResult = new Promise<void>((resolve) => {
@@ -631,7 +630,7 @@ async function failOnNonWatchMode(
  */
 export async function flushConsoleHandlers(
   handlers?: Set<Promise<void>> | null,
-  deadline = Date.now() + 2000,
+  deadline = Date.now() + CONSOLE_FLUSH_TIMEOUT_MS,
 ): Promise<void> {
   if (!handlers || handlers.size === 0 || Date.now() >= deadline) return;
   await Promise.allSettled([...handlers]);
@@ -659,6 +658,15 @@ const ANCESTOR_NODE_MODULES = ancestorNodeModules(process.cwd());
 const RETRY_DELAY_MS = 100;
 const MAX_RETRIES = 3;
 const EMPTY_BUNDLE_THRESHOLD = 500;
+// Extra ms added on top of config.timeout to give Playwright time to commit the navigation
+// before the test-race timers even start. Floors startupMs/testsJsMs for tiny --timeout values.
+const NAV_GRACE_MS = 10_000;
+// Startup safety-net: Chrome WS 'open' must arrive within 3× config.timeout.
+const STARTUP_TIMEOUT_FACTOR = 3;
+// tests.js compile safety-net: V8 compilation must finish within 4× config.timeout from serve.
+const TESTS_JS_TIMEOUT_FACTOR = 4;
+// Maximum ms to wait for in-flight browser console handlers to drain before closing the page.
+const CONSOLE_FLUSH_TIMEOUT_MS = 2_000;
 // Extra window given to the browser after QUnit's testTimeout fires so it can process the
 // timeout callback, mark the test failed, fire QUnit.done, and deliver the WS 'done' message
 // before the server-side safety net resolves testRaceResult. Without this buffer the node-side
@@ -688,7 +696,7 @@ export async function buildAllGroupBundles(
     cachedContent._noTestsWarning = null;
   });
 
-  const { projectRoot, debug, watch, browser } = groupConfigs[0];
+  const { projectRoot, debug, browser } = groupConfigs[0];
 
   // Build each group's descriptor in one pass, skipping empty groups (overlayfs race).
   // Their cachedContent.allTestCode stays null so runTestsInBrowser's early-return handles them.
@@ -723,7 +731,7 @@ export async function buildAllGroupBundles(
     ),
   );
 
-  const sourcemap: esbuild.BuildOptions['sourcemap'] = debug ? 'inline' : watch ? 'linked' : false;
+  const sourcemap: esbuild.BuildOptions['sourcemap'] = 'inline';
 
   // Plugin: resolve `group-entry-N` paths from the entry-point list into virtual modules
   // whose content is the import-per-file stitching for that group.
@@ -746,6 +754,9 @@ export async function buildAllGroupBundles(
     },
   };
 
+  // Source map paths are relative to this outdir — used as the decoder's outDir too.
+  const esbuildOutdir = path.join(projectRoot, 'tmp');
+
   const buildOptions: esbuild.BuildOptions = {
     entryPoints: activeGroups.map((_, slotIndex) => ({
       in: `group-entry-${slotIndex}`,
@@ -757,7 +768,7 @@ export async function buildAllGroupBundles(
     logLevel: 'silent',
     // outdir only labels the paths in outputFiles[].path — nothing is written to disk
     // (write:false). Use projectRoot/tmp as a stable sentinel; mkdir is not required.
-    outdir: path.join(projectRoot, 'tmp'),
+    outdir: esbuildOutdir,
     keepNames: true,
     legalComments: 'none',
     target: esbuildTarget(browser),
@@ -796,7 +807,13 @@ export async function buildAllGroupBundles(
         const isMap = Boolean(match[2]);
         const { config, cachedContent } = activeGroups[slotIndex];
         const destPath = `${config.projectRoot}/${config.output}/tests.js${isMap ? '.map' : ''}`;
-        if (!isMap) cachedContent.allTestCode = Buffer.from(outputFile.contents);
+        if (!isMap) {
+          cachedContent.allTestCode = Buffer.from(outputFile.contents);
+          config._sourceMapDecoder = extractInlineSourceMap(
+            cachedContent.allTestCode,
+            esbuildOutdir,
+          );
+        }
         return fs.writeFile(destPath, outputFile.contents);
       }),
     );

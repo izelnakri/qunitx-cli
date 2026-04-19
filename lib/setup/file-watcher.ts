@@ -6,6 +6,8 @@ import type { FSWatcher } from 'node:fs';
 import type { Config, FSTree } from '../types.ts';
 
 const CHANGE_DEDUPE_MS = 10;
+const SYMLINK_POLL_INTERVAL_MS = 500;
+const OVERLAYFS_RENAME_RETRY_MS = 50;
 
 /**
  * Starts `fs.watch` watchers for each lookup path and calls `onEventFunc` on JS/TS file changes,
@@ -45,7 +47,7 @@ export function setupFileWatchers(
         }
       }
     };
-    fs.watchFile(filePath, { interval: 500, persistent: false }, handler);
+    fs.watchFile(filePath, { interval: SYMLINK_POLL_INTERVAL_MS, persistent: false }, handler);
     symlinkPollers.set(filePath, () => fs.unwatchFile(filePath, handler));
   }
 
@@ -84,12 +86,15 @@ export function setupFileWatchers(
         )
           return;
         // Suppress late inotify echoes (overlayfs IN_CLOSE_WRITE arriving 100ms–1s after
-        // IN_MODIFY): if the file's mtime predates the last completed build, that content was
-        // already processed and this event is a filesystem echo — not a new write.
+        // IN_MODIFY): if the file's mtime is from a strictly earlier second than the last
+        // completed build, that content was already processed and this is a filesystem echo.
+        // Second-aligned comparison because overlayfs mtime has 1-second resolution on Docker
+        // CI — using `<=` would suppress genuine writes that happen in the same second as the
+        // build end (e.g. writing a fix immediately after a build error, or right after a run).
         if (config._lastBuildEndMs) {
           try {
             const { mtimeMs } = await stat(fullPath);
-            if (mtimeMs <= config._lastBuildEndMs) return;
+            if (mtimeMs < Math.floor(config._lastBuildEndMs / 1000) * 1000) return;
           } catch {
             // File inaccessible — proceed.
           }
@@ -191,7 +196,7 @@ async function classifyRenameEvent(
   fullPath: string,
   fsTree: FSTree | undefined,
 ): Promise<string | null> {
-  for (const delay of [0, 50]) {
+  for (const delay of [0, OVERLAYFS_RENAME_RETRY_MS]) {
     if (delay) await new Promise<void>((resolve) => setTimeout(resolve, delay));
     try {
       const statResult = await stat(fullPath);
