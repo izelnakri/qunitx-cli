@@ -155,8 +155,8 @@ export interface Config {
   _lastBuildEndMs?: number;
   /** In-flight console handler promises; awaited before browser/page close so Firefox BiDi round-trips complete. */
   _pendingConsoleHandlers?: Set<Promise<void>> | null;
-  /** Express app instance injected during integration tests. */
-  expressApp?: unknown;
+  /** Web server instance injected during integration tests. */
+  webServer?: unknown;
 }
 
 /**

@@ -69,7 +69,7 @@ export async function run(config: Config): Promise<void> {
       setupBrowser(config, cachedContent),
       writeOutputStaticFiles(config, cachedContent),
     ]);
-    config.expressApp = connections.server;
+    config.webServer = connections.server;
     setupKeyboardEvents(config, cachedContent, connections);
 
     // In headed watch mode (bare --open + --watch), chrome-prelaunch.ts launches Chrome
@@ -279,7 +279,7 @@ export async function run(config: Config): Promise<void> {
             browser,
             sharedServer,
           );
-          groupConfig.expressApp = connections.server;
+          groupConfig.webServer = connections.server;
 
           if (config.before) {
             await runUserModule(`${process.cwd()}/${config.before}`, groupConfig, 'before');

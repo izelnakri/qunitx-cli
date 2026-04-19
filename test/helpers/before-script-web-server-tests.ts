@@ -4,11 +4,9 @@ module('{{moduleName}} Before script web server tests', function (hooks) {
   test('assert true works', async function (assert) {
     let json;
     try {
-      let port = window.QUnit.config.port || location.port;
-
       await wait(250);
 
-      let res = await fetch(`http://127.0.0.1:${port}/films`);
+      let res = await fetch('/films');
       json = await res.json();
     } catch (err) {
       console.log('FETCH ERR', err);

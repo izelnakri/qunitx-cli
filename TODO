@@ -1,13 +1,11 @@
---refactor the `test/helpers/before-script-async.ts` while keeping a similar behavior(or at least similar use when the file is used in tests it should be a backend async service I suspect that we verify in tests it gets loaded correctly) so I can remove express and cors devDependencies from my project. Also rewrite expressApp name to something correct now in my runtime, since I dont use express anymore, should it be `webServer` instead?
+- Stack trace `at:` reference is always wrong on stdout when assertions fail. Instead they should should the actual file + assertion line number(if possible). Make it work for concurrent grouped test mode, normal mode/watch mode, on all modes.
+
+refactor the `test/helpers/before-script-async.ts` while keeping a similar behavior(or at least similar use when the file is used in tests it should be a backend async service I suspect that we verify in tests it gets loaded correctly) so I can remove express and cors devDependencies from my project. Also rewrite expressApp name to something correct now in my runtime, since I dont use express anymore, should it be `webServer` instead?
 
 https://www.youtube.com/watch?v=SaZEdiV3A3M
 
-- file-watcher.js: Make an index.html that displays build errors in browser (watch mode); requires deriving error type from the caught error
-
 pass timezone: https://stackoverflow.com/questions/16448754/how-to-use-a-custom-time-in-browser-to-test-for-client-vs-server-time-difference/39533934#39533934
 = qunitx --timezone="US/Pacific"
-
-- Think about error handling in JS. Maybe find a better solution than shellFails. check lua's error handling for JavaScript on all my JS code, if this is a better way to do error handling.
 
 - investigate take screenshot feature & visual diffing
 
@@ -34,4 +32,6 @@ in the codebase and also on the README.md(if needed). claude --resume 5d51cdce-b
 
 - rename 'testFileLookupPaths' and check other config interface keys that start with _
 
+
+- Think about error handling in JS. Maybe find a better solution than shellFails. check lua's error handling for JavaScript on all my JS code, if this is a better way to do error handling:
 ❯ Given this conversation: https://chatgpt.com/share/69e26e08-4dbc-83eb-8d7d-01bba54c8198 I want to create a general-purpose error handling system for JS/TS. What would be the best way to achieve this for the best general-purpose, very useful, readable, performant and flexible abstraction. Show me in code, in-depth with clear tutorial at the end mention all the corner cases, everything, I suspect it is a good idea, I'm still evaluating but would love a general-purpose solution for better error-handling
