@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.20.0] - 2026-04-19
+[`v0.19.3...v0.20.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.19.3...v0.20.0)
+
+### Bug Fixes
+- Resolve testRaceResult from Node.js when WS signal is unreliable — 2026-04-18 by [@izelnakri](https://github.com/izelnakri) ([`a7202e0`](https://github.com/izelnakri/qunitx-cli/commit/a7202e0043434fe316d4ec0524aa0b7bf1640ec4))
+- Await active rebuild before serving / to avoid stale _buildError on webkit — 2026-04-18 by [@izelnakri](https://github.com/izelnakri) ([`6fddd5b`](https://github.com/izelnakri/qunitx-cli/commit/6fddd5b23fc56fcca649d0c94e347997b8ebba74))
+- Always update lastChangeMs so delayed inotify events are deduped — 2026-04-18 by [@izelnakri](https://github.com/izelnakri) ([`1d97a3f`](https://github.com/izelnakri/qunitx-cli/commit/1d97a3f835e3b7a7ade2216d00ae4d219bcb8127))
+- Also dedup inotify change events while a build is running — 2026-04-18 by [@izelnakri](https://github.com/izelnakri) ([`51e7c6b`](https://github.com/izelnakri/qunitx-cli/commit/51e7c6bb86db378e28c5c3a443880b51fa63d0e2))
+- Add TEST_STALL_BUFFER_MS so QUnit always wins the per-test timeout race — 2026-04-19 by [@izelnakri](https://github.com/izelnakri) ([`cca4071`](https://github.com/izelnakri/qunitx-cli/commit/cca4071384ff81d8f141ff71705278d40fb5df65))
+- Guard error/no-tests HTML 'refresh' reload with !navigator.webdriver — 2026-04-19 by [@izelnakri](https://github.com/izelnakri) ([`a18f667`](https://github.com/izelnakri/qunitx-cli/commit/a18f667b8d7ebf1df0173f778d6caade2e5053a0))
+- Suppress overlayfs IN_CLOSE_WRITE echoes via mtime vs last build end — 2026-04-19 by [@izelnakri](https://github.com/izelnakri) ([`610ba23`](https://github.com/izelnakri/qunitx-cli/commit/610ba23c6e353b29e0e5aba1a6eff8a4f3f64430))
+- Harden Chrome dir cleanup against overlayfs lag and concurrent-test races — 2026-04-19 by [@izelnakri](https://github.com/izelnakri) ([`b24e500`](https://github.com/izelnakri/qunitx-cli/commit/b24e500bfc11d493c0e2b874616f9cb91341a773))
+
+### Features
+- Set QUnit.config.testTimeout so --timeout applies in the browser UI too — 2026-04-19 by [@izelnakri](https://github.com/izelnakri) ([`f18f57c`](https://github.com/izelnakri/qunitx-cli/commit/f18f57c0293ac830dd6862cbf9f379c5460411a2))
+- Resolve bundle stack frames to original sources via inline source-map — 2026-04-19 by [@izelnakri](https://github.com/izelnakri) ([`8d8a083`](https://github.com/izelnakri/qunitx-cli/commit/8d8a0834d167d3d4590213dc0aed2eb288acc40f))
+
+### Performance
+- Parallel timings/browser start, watch-mode parallel build+navigation — 2026-04-18 by [@izelnakri](https://github.com/izelnakri) ([`6e8b132`](https://github.com/izelnakri/qunitx-cli/commit/6e8b132359ac41d8d0abb00bf5830492cbb2c9d8))
+- Start browser connect at top of run() to race buildCachedContent — 2026-04-19 by [@izelnakri](https://github.com/izelnakri) ([`7e5b5aa`](https://github.com/izelnakri/qunitx-cli/commit/7e5b5aa9b56dcb73a5f4ff80e99093fb2c719a2f))
+
+### Refactoring
+- Remove dead browser-side testTimeout polling and unreachable route fallback — 2026-04-18 by [@izelnakri](https://github.com/izelnakri) ([`f6e7aa3`](https://github.com/izelnakri/qunitx-cli/commit/f6e7aa3962fba8eb3aea0cba98453c538d1281ef))
+- Drop express/cors devDeps, rename expressApp to webServer — 2026-04-19 by [@izelnakri](https://github.com/izelnakri) ([`f5b20e9`](https://github.com/izelnakri/qunitx-cli/commit/f5b20e9dd98e1ca8286d8a3b73a7cd4591ea9ec6))
+
 ## [0.19.3] - 2026-04-18
 [`v0.19.2...v0.19.3`](https://github.com/izelnakri/qunitx-cli/compare/v0.19.2...v0.19.3)
 
