@@ -169,13 +169,17 @@ async function makeWatchProject(): Promise<{
 
 // Waits for the nth "QUnitX running:" header to appear, then waits for "# duration"
 // to appear after it (i.e. the run has fully completed).
+// Returns a frozen snapshot of stdout at the moment the Nth run completes.
+// The condition in the second waitFor guarantees the snapshot ends with a
+// completed run: it only fires when '# duration' follows the last 'QUnitX
+// running:', so no subsequent run-start banner can appear in the snapshot.
 async function waitForRunComplete(
   session: WatchSession,
   minRunCount: number,
   label?: string,
-): Promise<void> {
+): Promise<string> {
   await session.waitFor((buf) => countOccurrences(buf, 'QUnitX running:') >= minRunCount, label);
-  await session.waitFor((buf) => buf.includes('# duration', buf.lastIndexOf('QUnitX running:')));
+  return session.waitFor((buf) => buf.includes('# duration', buf.lastIndexOf('QUnitX running:')));
 }
 
 // Polls `fn` every `interval` ms until `predicate(result)` is true, then returns the result.
@@ -234,10 +238,10 @@ module('--watch re-run tests', { concurrency: true }, () => {
       // Modify the file (append a harmless comment to trigger a 'change' event).
       await fs.writeFile(testFile, testContent + '\n// re-run trigger');
 
-      await waitForRunComplete(session, 2, 're-run to start');
+      const rerunBuf = await waitForRunComplete(session, 2, 're-run to start');
 
       assert.includes(session.stdout, 'CHANGED:');
-      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
       assert.includes(rerunOutput, '# pass 3');
       assert.includes(rerunOutput, '# fail 0');
     } finally {
@@ -258,9 +262,9 @@ module('--watch re-run tests', { concurrency: true }, () => {
       const newContent = testContent.replace(id, newId);
       await fs.writeFile(`${testsDir}/extra-tests.ts`, newContent);
 
-      await waitForRunComplete(session, 2, 're-run to start');
+      const rerunBuf = await waitForRunComplete(session, 2, 're-run to start');
 
-      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
       // Filtered run only executes the newly added file (3 tests).
       assert.includes(rerunOutput, '# pass 3');
       assert.includes(rerunOutput, '# fail 0');
@@ -289,10 +293,10 @@ module('--watch re-run tests', { concurrency: true }, () => {
       // Delete the first test file.
       await fs.unlink(`${testsDir}/passing-tests.ts`);
 
-      await waitForRunComplete(session, 2, 're-run to start');
+      const rerunBuf = await waitForRunComplete(session, 2, 're-run to start');
 
       assert.includes(session.stdout, 'REMOVED:');
-      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
       // Only the second file's 3 tests run because the cache was cleared and rebuilt.
       assert.includes(rerunOutput, '# pass 3');
       assert.includes(rerunOutput, '# fail 0');
@@ -328,10 +332,10 @@ module('--watch re-run tests', { concurrency: true }, () => {
 
       // Pending trigger: the add's filtered run fires after the unlink's full re-run completes.
       // Wait for both runs to complete (initial + at least 2 more: unlink full-run + add filtered-run).
-      await waitForRunComplete(session, 3, 'unlink full-run + add filtered-run');
+      const rerunBuf = await waitForRunComplete(session, 3, 'unlink full-run + add filtered-run');
 
       // Final run is the filtered run of the renamed file — same content (id), passes.
-      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
       assert.includes(rerunOutput, '# fail 0');
       assert.includes(rerunOutput, id);
     } finally {
@@ -362,9 +366,9 @@ module('--watch re-run tests', { concurrency: true }, () => {
         (buf) => buf.includes('REMOVED:'),
         'REMOVED event for renamed directory',
       );
-      await waitForRunComplete(session, 2, 're-run to start');
+      const rerunBuf = await waitForRunComplete(session, 2, 're-run to start');
 
-      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
       // Only the other-tests file runs — renamed directory's files are no longer tracked.
       assert.includes(rerunOutput, id2);
       assert.false(rerunOutput.includes(id), 'renamed-away directory files absent from re-run');
@@ -391,12 +395,16 @@ module('--watch re-run tests', { concurrency: true }, () => {
       // Wait until finalId has actually appeared in a completed run.
       // Using count >= 2 is not enough: the first re-run may show an intermediate state while
       // the pending trigger's build (which reads finalId) hasn't finished yet.
-      await session.waitFor((buf) => {
+      // waitFor returns a frozen snapshot of stdout at the exact moment the condition fired.
+      // Anchoring lastIndexOf before finalId's position guards against the edge case where a
+      // new run's 'QUnitX running:' banner arrived in the same data chunk as '# duration'.
+      const rerunBuf = await session.waitFor((buf) => {
         const idx = buf.indexOf(finalId);
         return idx !== -1 && buf.includes('# duration', idx);
       }, 'final coalesced re-run with finalId to complete');
 
-      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      const finalIdIdx = rerunBuf.indexOf(finalId);
+      const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:', finalIdIdx));
       // The final state (finalId) ran — no crash, no broken intermediate state.
       assert.includes(rerunOutput, '# fail 0');
       assert.includes(rerunOutput, finalId);
