@@ -79,9 +79,18 @@ export async function cleanupBrowserDir(dirPath: string): Promise<void> {
   // always respected and we never stall waiting for process-table cleanup.
   const deadline = Date.now() + CLEANUP_DEADLINE_MS;
   while (Date.now() < deadline) {
+    // Verify with fs.access after rm: on overlayfs (Docker CI) the VFS cache can report
+    // the directory as gone to rm() while still returning it in readdir() to other processes.
+    // Treating rm-success + access-still-exists as a soft failure keeps the retry loop alive
+    // until the cache flushes or all FD holders are fully gone.
     const removed = await fs
       .rm(dirPath, { recursive: true, force: true })
-      .then(() => true)
+      .then(() =>
+        fs.access(dirPath).then(
+          () => false,
+          () => true,
+        ),
+      )
       .catch(() => false);
     if (removed) return;
     await killAllReferencingProcesses(dirPath, dirName);

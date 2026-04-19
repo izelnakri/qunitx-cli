@@ -365,7 +365,9 @@ export async function run(config: Config): Promise<void> {
 
     process.stdout.write('\n', async () => {
       clearTimeout(exitTimer);
-      clearInterval(keepAlive);
+      // keepAlive is cleared AFTER shutdownPrelaunch() so the interval holds the event
+      // loop open throughout Chrome cleanup, preventing premature drain if browser.close()
+      // resolves instantly (e.g. Chrome already dead) before proc.ref() takes effect.
       await Promise.all([
         sharedServer
           ?.close()
@@ -381,6 +383,7 @@ export async function run(config: Config): Promise<void> {
           ),
       ]);
       await shutdownPrelaunch();
+      clearInterval(keepAlive);
       process.exit(exitCode);
     });
   }

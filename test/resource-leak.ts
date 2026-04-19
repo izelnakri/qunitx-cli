@@ -3,6 +3,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import shell from './helpers/shell.ts';
 
+// Must exceed CLEANUP_DEADLINE_MS (5 s) so concurrent tests' in-flight cleanups finish.
+const CHROME_DIR_POLL_TIMEOUT_MS = 10_000;
+
 // Resource leak tests check global state (/tmp dirs, /proc, inotify counts).
 // Tests within this module run sequentially; other test files may run concurrently.
 module('resource leak tests', () => {
@@ -18,9 +21,11 @@ module('resource leak tests', () => {
 
       await shell('node cli.ts test/fixtures/passing-tests.ts');
 
-      // Poll until all new Chrome dirs disappear, up to 2 s. This tolerates the race
-      // where a concurrent test's async rm() is in-flight between "Chrome killed" and
-      // "dir removed" — the dir briefly exists with no process holding it as cwd.
+      // Poll until all new Chrome dirs disappear, up to 10 s. The window must exceed
+      // CLEANUP_DEADLINE_MS (5 s) so that a concurrent test whose cleanup is still in
+      // progress when our CLI exits has time to finish. Our own dir is always cleaned up
+      // before process.exit() fires (shutdownPrelaunch() is awaited); any dirs that linger
+      // longer than 10 s are genuine leaks.
       const chromeDirs = await (async function poll(deadline: number): Promise<string[]> {
         const dirs = (await fs.readdir(os.tmpdir())).filter(
           (e) => e.startsWith('qunitx-chrome-') && !dirsBefore.has(e),
@@ -28,7 +33,7 @@ module('resource leak tests', () => {
         if (dirs.length === 0 || Date.now() >= deadline) return dirs;
         await new Promise((resolve) => setTimeout(resolve, 50));
         return poll(deadline);
-      })(Date.now() + 2000);
+      })(Date.now() + CHROME_DIR_POLL_TIMEOUT_MS);
       if (chromeDirs.length === 0) {
         assert.ok(true, 'no Chrome dirs in tmpdir');
         return;
