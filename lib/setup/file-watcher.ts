@@ -58,8 +58,8 @@ export function setupFileWatchers(
     let ready = false;
     // Per-file timestamps of the last processed 'change' event.
     // inotify/FSEvents often fire 2–3 change events per writeFile; a 10ms dedup window coalesces
-    // them. inotify multi-fires (IN_MODIFY + IN_CLOSE_WRITE) arrive within 1–2ms of each other,
-    // so 10ms is safely above the noise floor without adding perceptible lag to watch rebuilds.
+    // same-burst duplicates. On overlayfs (Docker CI) IN_CLOSE_WRITE can arrive 100ms–1s after
+    // IN_MODIFY, well outside the 10ms window — the mtime check below handles that case.
     // See _lastBuildEndMs bypass in the child watcher below.
     const lastChangeMs: Record<string, number> = {};
 
@@ -75,7 +75,7 @@ export function setupFileWatchers(
         const now = Date.now();
         const last = lastChangeMs[fullPath] ?? 0;
         lastChangeMs[fullPath] = now;
-        // Suppress duplicate inotify events (IN_MODIFY + IN_CLOSE_WRITE per write, ~2ms apart).
+        // Suppress duplicate inotify events within the burst window (IN_MODIFY + fast echo).
         // Exception: idle + build-ended-after-last-change means a genuine new write after a fast
         // build, not an echo — let it through so watch mode doesn't get stuck.
         if (
@@ -83,6 +83,17 @@ export function setupFileWatchers(
           (config._building || !config._lastBuildEndMs || config._lastBuildEndMs <= last)
         )
           return;
+        // Suppress late inotify echoes (overlayfs IN_CLOSE_WRITE arriving 100ms–1s after
+        // IN_MODIFY): if the file's mtime predates the last completed build, that content was
+        // already processed and this event is a filesystem echo — not a new write.
+        if (config._lastBuildEndMs) {
+          try {
+            const { mtimeMs } = await stat(fullPath);
+            if (mtimeMs <= config._lastBuildEndMs) return;
+          } catch {
+            // File inaccessible — proceed.
+          }
+        }
         return handleWatchEvent(config, extensions, 'change', fullPath, onEventFunc, onFinishFunc);
       }
 
