@@ -7,3 +7,4 @@ import './timeout-test.ts';
 import './watch-test.ts';
 import './watch-rerun-test.ts';
 import './open-test.ts';
+import './timezone-test.ts';

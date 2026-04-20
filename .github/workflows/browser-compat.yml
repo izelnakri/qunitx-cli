@@ -21,13 +21,18 @@ permissions:
 
 jobs:
   browser-compat:
-    name: ${{ matrix.browser }}
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} / ${{ matrix.browser }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
-      fail-fast: false # Firefox failure should not cancel WebKit and vice versa
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest]
         browser: [firefox, webkit]
+      include:
+        # WebKit is not officially supported on Windows by Playwright; Firefox is.
+        - os: windows-latest
+          browser: firefox
 
     steps:
       - uses: actions/checkout@v6
@@ -48,7 +53,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ matrix.browser }}-${{ steps.pw-version.outputs.version }}
+          key: playwright-${{ matrix.browser }}-${{ matrix.os }}-${{ steps.pw-version.outputs.version }}
 
       - name: Install Playwright browser (${{ matrix.browser }})
         if: steps.playwright-cache.outputs.cache-hit != 'true'

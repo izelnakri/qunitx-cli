@@ -33,9 +33,16 @@ jobs:
   # Runs in parallel with lint. Test files run concurrently — safe because each
   # CLI invocation gets a unique --output dir and the port binder starts from
   # 1234 and auto-increments on EADDRINUSE to avoid collisions.
+  # Matrix covers all three platforms so Chromium behaviour is verified on each OS.
+  # macOS/Windows get extra time: Chrome startup and I/O are slower off Linux.
   test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 15 || 25 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
