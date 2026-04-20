@@ -99,7 +99,9 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
 
   const buildOptions: esbuild.BuildOptions = {
     stdin: {
-      contents: allTestFilePaths.map((filePath) => `import "${filePath}";`).join(''),
+      contents: allTestFilePaths
+        .map((filePath) => `import "${filePath.replace(/\\/g, '/')}";`)
+        .join(''),
       resolveDir: process.cwd(),
     },
     // Allow test files outside the project root (e.g. /tmp/my-test.ts) to import
@@ -328,7 +330,9 @@ function buildFilteredTests(
   return buildWithOverlayfsRetry(
     {
       stdin: {
-        contents: filteredTests.map((filePath) => `import "${filePath}";`).join(''),
+        contents: filteredTests
+          .map((filePath) => `import "${filePath.replace(/\\/g, '/')}";`)
+          .join(''),
         resolveDir: process.cwd(),
       },
       nodePaths: ANCESTOR_NODE_MODULES,
@@ -746,7 +750,7 @@ export async function buildAllGroupBundles(
         const slotIndex = parseInt(args.path.replace('group-entry-', ''));
         return {
           contents: activeGroups[slotIndex].files
-            .map((filePath) => `import "${filePath}";`)
+            .map((filePath) => `import "${filePath.replace(/\\/g, '/')}";`)
             .join(''),
           resolveDir: process.cwd(),
         };
