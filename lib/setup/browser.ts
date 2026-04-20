@@ -2,7 +2,7 @@ import { setupWebServer } from './web-server.ts';
 import { bindServerToPort } from './bind-server-to-port.ts';
 import { findChrome } from '../utils/find-chrome.ts';
 import { CHROMIUM_ARGS } from '../utils/chromium-args.ts';
-import { prelaunchPromise } from '../utils/chrome-prelaunch.ts';
+import { prelaunchPromise, shutdownPrelaunch } from '../utils/chrome-prelaunch.ts';
 import { perfLog } from '../utils/perf-logger.ts';
 import type { Browser } from 'playwright-core';
 import type { HTTPServer } from '../servers/http.ts';
@@ -40,14 +40,24 @@ export async function launchBrowser(config: Config): Promise<Browser> {
 
     if (prelaunch) {
       const connectStart = Date.now();
-      const browser = await playwrightCore.chromium.connectOverCDP({
-        endpointURL: prelaunch.cdpEndpoint,
-      });
-      perfLog(`browser.js: connectOverCDP took ${Date.now() - connectStart}ms`);
-      return browser;
+      try {
+        const browser = await playwrightCore.chromium.connectOverCDP({
+          endpointURL: prelaunch.cdpEndpoint,
+          // Short timeout: if Chrome isn't CDP-ready within 5s (e.g. resource contention on
+          // slow CI runners with many concurrent pre-launches), fall back to chromium.launch().
+          timeout: 5000,
+        });
+        perfLog(`browser.js: connectOverCDP took ${Date.now() - connectStart}ms`);
+        return browser;
+      } catch {
+        perfLog(
+          `browser.js: connectOverCDP failed after ${Date.now() - connectStart}ms — falling back to chromium.launch()`,
+        );
+        await shutdownPrelaunch();
+      }
     }
 
-    // Pre-launch failed (Chrome not found, wrong version, etc.) — fall back to normal launch.
+    // Pre-launch failed (Chrome not found, wrong version, resource contention, etc.) — fall back to normal launch.
     const executablePath = await findChrome();
     const launchOptions: Parameters<typeof playwrightCore.chromium.launch>[0] = {
       args: CHROMIUM_ARGS,
