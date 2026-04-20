@@ -350,7 +350,7 @@ export async function run(config: Config): Promise<void> {
       (err: Error) =>
         config.debug && process.stderr.write(`# [qunitx] persistTimings: ${err.message}\n`),
     );
-    printFileTimings(fileTimes, config.projectRoot);
+    if (config.debug) printFileTimings(fileTimes, config.projectRoot);
 
     if (config.after) {
       await runUserModule(`${process.cwd()}/${config.after}`, config.COUNTER, 'after');
