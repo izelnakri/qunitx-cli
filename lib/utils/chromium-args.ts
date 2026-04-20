@@ -12,6 +12,7 @@ export const CHROMIUM_ARGS: string[] = [
   // ── Sandbox / rendering ──────────────────────────────────────────────────────
   '--no-sandbox', // required in most CI/container environments
   '--disable-gpu', // no GPU in headless; avoids GPU process startup
+  '--in-process-gpu', // run GPU thread in-process; prevents browser blocking on GPU subprocess IPC (macOS CI)
 
   // ── Window / UI ──────────────────────────────────────────────────────────────
   '--window-size=1440,900',
