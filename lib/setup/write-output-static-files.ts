@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import type { CachedContent } from '../types.ts';
 
 /**
@@ -12,24 +13,25 @@ export async function writeOutputStaticFiles(
   const staticHTMLPromises = Object.keys(cachedContent.staticHTMLs).map(async (staticHTMLKey) => {
     const htmlRelativePath = staticHTMLKey.replace(`${projectRoot}/`, '');
 
-    await ensureFolderExists(`${projectRoot}/${output}/${htmlRelativePath}`);
+    const outDir = path.resolve(projectRoot, output);
+    await ensureFolderExists(path.join(outDir, htmlRelativePath));
     await fs.writeFile(
-      `${projectRoot}/${output}/${htmlRelativePath}`,
+      path.join(outDir, htmlRelativePath),
       cachedContent.staticHTMLs[staticHTMLKey],
     );
   });
   const assetPromises = Array.from(cachedContent.assets).map(async (assetAbsolutePath) => {
     const assetRelativePath = assetAbsolutePath.replace(`${projectRoot}/`, '');
-
-    await ensureFolderExists(`${projectRoot}/${output}/${assetRelativePath}`);
-    await fs.copyFile(assetAbsolutePath, `${projectRoot}/${output}/${assetRelativePath}`);
+    const outDir = path.resolve(projectRoot, output);
+    await ensureFolderExists(path.join(outDir, assetRelativePath));
+    await fs.copyFile(assetAbsolutePath, path.join(outDir, assetRelativePath));
   });
 
   await Promise.all(staticHTMLPromises.concat(assetPromises));
 }
 
 async function ensureFolderExists(assetPath: string): Promise<void> {
-  await fs.mkdir(assetPath.split('/').slice(0, -1).join('/'), { recursive: true });
+  await fs.mkdir(path.dirname(assetPath), { recursive: true });
 }
 
 export { writeOutputStaticFiles as default };

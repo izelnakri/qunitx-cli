@@ -39,7 +39,7 @@ async function writeTestsHTML(
         const targetDirectory = path.dirname(targetPath);
         const _targetOutputPath = path.relative(
           targetDirectory,
-          `${projectRoot}/${config.output}/tests.js`,
+          path.join(path.resolve(projectRoot, config.output), 'tests.js'),
         );
         const testHTMLTemplate = testHTMLTemplateBuffer.replace(
           '{{applicationName}}',

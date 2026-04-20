@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { findChrome } from './find-chrome.ts';
 import type { Config } from '../types.ts';
 
@@ -12,7 +14,8 @@ export async function openOutputInBrowser(config: Config): Promise<void> {
   try {
     const outputFile = config.watch
       ? `http://localhost:${config.port}`
-      : `file://${config.projectRoot}/${config.output}/index.html`;
+      : pathToFileURL(path.join(path.resolve(config.projectRoot, config.output), 'index.html'))
+          .href;
 
     if (typeof config.open === 'string') {
       spawnDetached(config.open, [outputFile]);

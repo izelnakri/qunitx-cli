@@ -51,7 +51,7 @@ const NOT_FOUND_HTML = `<!DOCTYPE html>
  * @returns {object}
  */
 export function setupWebServer(config: Config, cachedContent: CachedContent): HTTPServer {
-  const STATIC_FILES_PATH = path.join(config.projectRoot, config.output);
+  const STATIC_FILES_PATH = path.resolve(config.projectRoot, config.output);
   const server = new HTTPServer();
   const mainHTMLWithReplacedAssets = replaceAssetPaths(
     cachedContent.mainHTML.html,
@@ -223,7 +223,10 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         config._testRunDone?.();
         config._testRunDone = null;
       }
-      return saveHTML(`${config.projectRoot}/${config.output}/index.html`, htmlContent);
+      return saveHTML(
+        path.join(path.resolve(config.projectRoot, config.output), 'index.html'),
+        htmlContent,
+      );
     }
     if (cachedContent._noTestsWarning) {
       res.writeHead(200, HTML_HEADERS);
@@ -231,7 +234,10 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
     }
     res.writeHead(200, HTML_HEADERS);
     res.end(mainIndexHTML);
-    saveHTML(`${config.projectRoot}/${config.output}/index.html`, mainIndexHTML);
+    saveHTML(
+      path.join(path.resolve(config.projectRoot, config.output), 'index.html'),
+      mainIndexHTML,
+    );
   });
 
   server.get('/qunitx.html', (_req, res) => {
@@ -239,7 +245,10 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
       const htmlContent = buildErrorHTML(cachedContent._buildError);
       res.writeHead(200, HTML_HEADERS);
       res.end(htmlContent);
-      return saveHTML(`${config.projectRoot}/${config.output}/qunitx.html`, htmlContent);
+      return saveHTML(
+        path.join(path.resolve(config.projectRoot, config.output), 'qunitx.html'),
+        htmlContent,
+      );
     }
     if (cachedContent._noTestsWarning) {
       res.writeHead(200, HTML_HEADERS);
@@ -247,7 +256,10 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
     }
     res.writeHead(200, HTML_HEADERS);
     res.end(mainQunitxHTML);
-    saveHTML(`${config.projectRoot}/${config.output}/qunitx.html`, mainQunitxHTML);
+    saveHTML(
+      path.join(path.resolve(config.projectRoot, config.output), 'qunitx.html'),
+      mainQunitxHTML,
+    );
   });
 
   server.get('/*', (req, res) => {
@@ -261,7 +273,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
       );
       res.writeHead(200, HTML_HEADERS);
       res.end(htmlContent);
-      saveHTML(`${config.projectRoot}/${config.output}${req.path}`, htmlContent);
+      saveHTML(path.join(path.resolve(config.projectRoot, config.output), req.path), htmlContent);
       return;
     }
 
@@ -726,7 +738,10 @@ export function registerGroupRoutes(
     }
     res.writeHead(200, HTML_HEADERS);
     res.end(mainGroupHTML);
-    saveHTML(`${groupConfig.projectRoot}/${groupConfig.output}/index.html`, mainGroupHTML);
+    saveHTML(
+      path.join(path.resolve(groupConfig.projectRoot, groupConfig.output), 'index.html'),
+      mainGroupHTML,
+    );
   });
 
   server.get(`/group-${groupId}/tests.js`, (_req, res) => {
@@ -836,7 +851,7 @@ export function registerSharedStaticHandler(server: HTTPServer, groupConfigs: Co
       return;
     }
 
-    const STATIC_FILES_PATH = path.join(groupConfig.projectRoot, groupConfig.output);
+    const STATIC_FILES_PATH = path.resolve(groupConfig.projectRoot, groupConfig.output);
     const subPath = match[2] || '/';
     const filePath = (
       subPath.endsWith('/')

@@ -187,6 +187,6 @@ function findFreePort(): Promise<{ number: number; release: () => Promise<void> 
       const number = (server.address() as net.AddressInfo).port;
       resolve({ number, release: () => new Promise((res) => server.close(res)) });
     });
-    server.listen(0, '127.0.0.1');
+    server.listen(0);
   });
 }

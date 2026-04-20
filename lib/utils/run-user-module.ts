@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'node:url';
 import { red } from './color.ts';
 
 /**
@@ -10,7 +11,7 @@ export async function runUserModule(
   scriptPosition: string,
 ): Promise<void> {
   try {
-    const func = await import(modulePath);
+    const func = await import(pathToFileURL(modulePath).href);
     if (func) {
       func.default
         ? await func.default(params)

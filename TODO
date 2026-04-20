@@ -4,6 +4,8 @@ timezone shouldnt skip macos and windows
 
 Document timezone passing on README.md
 
+Also make sure cli/binary can be built in deno and would work on macos and windows but first probably daemon mode
+
 https://www.youtube.com/watch?v=SaZEdiV3A3M
 
 pass timezone: https://stackoverflow.com/questions/16448754/how-to-use-a-custom-time-in-browser-to-test-for-client-vs-server-time-difference/39533934#39533934

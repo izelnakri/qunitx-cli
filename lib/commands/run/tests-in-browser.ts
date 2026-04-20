@@ -11,6 +11,16 @@ import { extractInlineSourceMap } from '../../utils/source-map-decoder.ts';
 import type { Config, CachedContent, Connections } from '../../types.ts';
 import type { HTTPServer } from '../../servers/http.ts';
 
+// Converts an absolute file path to a relative import path esbuild can resolve from
+// process.cwd(). On Windows, absolute paths like "D:/..." are treated as bare module
+// specifiers in stdin content, so we must use relative paths instead.
+function toEsbuildImportPath(filePath: string): string {
+  const rel = path.relative(process.cwd(), filePath);
+  const normalized = rel.replace(/\\/g, '/');
+  if (path.isAbsolute(rel)) return filePath.replace(/\\/g, '/');
+  return normalized.startsWith('.') ? normalized : './' + normalized;
+}
+
 class BundleError extends Error {
   constructor(message: unknown) {
     super(message);
@@ -88,8 +98,9 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
     return;
   }
 
-  const outfile = `${projectRoot}/${output}/tests.js`;
-  await fs.mkdir(`${projectRoot}/${output}`, { recursive: true });
+  const outDir = path.resolve(projectRoot, output);
+  const outfile = path.join(outDir, 'tests.js');
+  await fs.mkdir(outDir, { recursive: true });
   // Inline source maps are always embedded so the server can resolve bundle stack frames back to
   // original source files. The overhead is acceptable for a test runner.
   const sourcemap: esbuild.BuildOptions['sourcemap'] = 'inline';
@@ -100,7 +111,7 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
   const buildOptions: esbuild.BuildOptions = {
     stdin: {
       contents: allTestFilePaths
-        .map((filePath) => `import "${filePath.replace(/\\/g, '/')}";`)
+        .map((filePath) => `import "${toEsbuildImportPath(filePath)}";`)
         .join(''),
       resolveDir: process.cwd(),
     },
@@ -132,16 +143,16 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
         : buildWithOverlayfsRetry(buildOptions, needsDisk),
       Promise.all(
         cachedContent.htmlPathsToRunTests.map(async (htmlPath) => {
-          const targetPath = `${config.projectRoot}/${config.output}${htmlPath}`;
+          const targetPath = path.join(outDir, htmlPath);
           if (htmlPath !== '/') {
             await fs.rm(targetPath, { force: true, recursive: true });
-            await fs.mkdir(targetPath.split('/').slice(0, -1).join('/'), { recursive: true });
+            await fs.mkdir(path.dirname(targetPath), { recursive: true });
           }
         }),
       ),
     ]);
     cachedContent.allTestCode = allTestCode;
-    config._sourceMapDecoder = extractInlineSourceMap(allTestCode, `${projectRoot}/${output}`);
+    config._sourceMapDecoder = extractInlineSourceMap(allTestCode, outDir);
   } catch (error) {
     cachedContent._buildError = {
       type: deriveBuildErrorType(error),
@@ -152,10 +163,7 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
     // and in watch mode the Playwright page is headless so it never navigates to trigger the
     // route — the --open user browser reloads via WebSocket 'refresh' and does it instead,
     // but that's async and user-dependent. Writing here guarantees the file is always current.
-    await fs.writeFile(
-      `${projectRoot}/${output}/index.html`,
-      buildErrorHTML(cachedContent._buildError),
-    );
+    await fs.writeFile(path.join(outDir, 'index.html'), buildErrorHTML(cachedContent._buildError));
     throw error;
   }
 }
@@ -171,6 +179,7 @@ export async function runTestsInBrowser(
   targetTestFilesToFilter?: string[],
 ): Promise<Connections | undefined> {
   const { projectRoot, output } = config;
+  const outDir = path.resolve(projectRoot, output);
   const allTestFilePaths = Object.keys(config.fsTree);
   const runHasFilter = !!targetTestFilesToFilter;
 
@@ -212,16 +221,13 @@ export async function runTestsInBrowser(
     }
 
     if (runHasFilter) {
-      const outputPath = `${projectRoot}/${output}/filtered-tests.js`;
+      const outputPath = path.join(outDir, 'filtered-tests.js');
       cachedContent.filteredTestCode = await buildFilteredTests(
         targetTestFilesToFilter,
         outputPath,
         config,
       );
-      config._sourceMapDecoder = extractInlineSourceMap(
-        cachedContent.filteredTestCode,
-        `${projectRoot}/${output}`,
-      );
+      config._sourceMapDecoder = extractInlineSourceMap(cachedContent.filteredTestCode, outDir);
     }
 
     const TIME_COUNTER = timeCounter();
@@ -264,7 +270,7 @@ export async function runTestsInBrowser(
         console.log(
           `# Warning: 0 tests registered — no QUnit test cases found in ${allTestFilePaths.length} ${fileWord}`,
         );
-        fs.writeFile(`${projectRoot}/${output}/index.html`, buildNoTestsHTML(displayFiles)).catch(
+        fs.writeFile(path.join(outDir, 'index.html'), buildNoTestsHTML(displayFiles)).catch(
           () => {},
         );
       }
@@ -301,7 +307,7 @@ export async function runTestsInBrowser(
         formatted: formatBuildErrors(error),
       };
       fs.writeFile(
-        `${projectRoot}/${output}/qunitx.html`,
+        path.join(outDir, 'qunitx.html'),
         buildErrorHTML(cachedContent._buildError),
       ).catch(
         (err: Error) =>
@@ -731,7 +737,7 @@ export async function buildAllGroupBundles(
 
   await Promise.all(
     activeGroups.map((group) =>
-      fs.mkdir(`${group.config.projectRoot}/${group.config.output}`, { recursive: true }),
+      fs.mkdir(path.resolve(group.config.projectRoot, group.config.output), { recursive: true }),
     ),
   );
 
@@ -750,7 +756,7 @@ export async function buildAllGroupBundles(
         const slotIndex = parseInt(args.path.replace('group-entry-', ''));
         return {
           contents: activeGroups[slotIndex].files
-            .map((filePath) => `import "${filePath.replace(/\\/g, '/')}";`)
+            .map((filePath) => `import "${toEsbuildImportPath(filePath)}";`)
             .join(''),
           resolveDir: process.cwd(),
         };
@@ -810,7 +816,10 @@ export async function buildAllGroupBundles(
         const slotIndex = parseInt(match[1]);
         const isMap = Boolean(match[2]);
         const { config, cachedContent } = activeGroups[slotIndex];
-        const destPath = `${config.projectRoot}/${config.output}/tests.js${isMap ? '.map' : ''}`;
+        const destPath = path.join(
+          path.resolve(config.projectRoot, config.output),
+          'tests.js' + (isMap ? '.map' : ''),
+        );
         if (!isMap) {
           cachedContent.allTestCode = Buffer.from(outputFile.contents);
           config._sourceMapDecoder = extractInlineSourceMap(
@@ -828,7 +837,10 @@ export async function buildAllGroupBundles(
       activeGroups.map((group) => {
         group.cachedContent._buildError = buildError;
         return fs
-          .writeFile(`${group.config.projectRoot}/${group.config.output}/index.html`, errorHtml)
+          .writeFile(
+            path.join(path.resolve(group.config.projectRoot, group.config.output), 'index.html'),
+            errorHtml,
+          )
           .catch(
             (err: Error) =>
               debug && process.stderr.write(`# [qunitx] writeFile index.html: ${err.message}\n`),
