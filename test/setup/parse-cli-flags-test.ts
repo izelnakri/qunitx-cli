@@ -1,4 +1,5 @@
 import { module, test } from 'qunitx';
+import path from 'node:path';
 import parseCliFlags from '../../lib/utils/parse-cli-flags.ts';
 
 const PROJECT_ROOT = '/some/project';
@@ -16,7 +17,7 @@ function withArgv(args, fn) {
 module('Setup | parseCliFlags | inputs', { concurrency: true }, () => {
   test('relative input is resolved against cwd', (assert) => {
     const flags = withArgv(['tests/foo.ts'], () => parseCliFlags(PROJECT_ROOT));
-    assert.deepEqual(flags.inputs, [`${process.cwd()}/tests/foo.ts`]);
+    assert.deepEqual(flags.inputs, [path.join(process.cwd(), 'tests/foo.ts')]);
   });
 
   test('absolute input inside project root is kept as-is', (assert) => {
