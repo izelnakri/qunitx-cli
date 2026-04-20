@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 // Fallback when --timeout is passed with an unparseable or zero value.
 const FALLBACK_TIMEOUT_MS = 10_000;
 
@@ -81,7 +83,7 @@ export function parseCliFlags(projectRoot: string): ParsedFlags {
         return result;
       }
       result.inputs.add(
-        arg.startsWith(projectRoot) || arg.startsWith('/') ? arg : `${process.cwd()}/${arg}`,
+        arg.startsWith(projectRoot) || arg.startsWith('/') ? arg : path.join(process.cwd(), arg),
       );
 
       return result;

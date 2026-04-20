@@ -38,12 +38,20 @@ export function setupFileWatchers(
 
   function trackSymlink(filePath: string) {
     if (symlinkPollers.has(filePath)) return;
-    const handler = (curr: fs.Stats) => {
+    const handler = (curr: fs.Stats, prev: fs.Stats) => {
       if (curr.nlink === 0) {
         fs.unwatchFile(filePath, handler);
         symlinkPollers.delete(filePath);
         if (filePath in config.fsTree) {
           handleWatchEvent(config, extensions, 'unlink', filePath, onEventFunc, onFinishFunc);
+        }
+      } else if (process.platform === 'win32' && curr.mtimeMs !== prev.mtimeMs) {
+        // Windows ReadDirectoryChangesW does not fire change events when writing through a
+        // symlink — only the target's directory gets the event, not the symlink's directory.
+        // fs.watchFile stat-polls the symlink path (stat follows symlinks), so when the
+        // target's mtime changes, we synthesize a change event for the symlink path here.
+        if (filePath in config.fsTree) {
+          handleWatchEvent(config, extensions, 'change', filePath, onEventFunc, onFinishFunc);
         }
       }
     };

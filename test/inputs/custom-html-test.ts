@@ -115,6 +115,17 @@ async function runWatch(dir: string): Promise<string> {
     child.stdin.destroy();
     child.stdout.destroy();
     child.stderr.destroy();
+    // Wait for the child to fully exit before releasing the permit. On Windows,
+    // fs.watch holds directory handles; if the process hasn't exited when the
+    // test's finally-block runs fs.rm(), rmdir fails with EBUSY.
+    await new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, 5000);
+      (t as NodeJS.Timeout).unref();
+      child.once('exit', () => {
+        clearTimeout(t);
+        resolve();
+      });
+    });
     child.unref();
     permit.release();
   }
