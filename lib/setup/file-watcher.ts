@@ -212,8 +212,10 @@ async function classifyRenameEvent(
   // Check whether it was a directory that still has tracked children. fs.watch fires one 'rename'
   // event for the directory itself (not per-child), so we coalesce all child removals into one
   // unlinkDir rather than silently ignoring the event.
-  const dirPrefix = fullPath + path.sep;
-  return Object.keys(fsTree).some((trackedPath) => trackedPath.startsWith(dirPrefix))
+  return Object.keys(fsTree).some(
+    (trackedPath) =>
+      trackedPath.startsWith(fullPath + '/') || trackedPath.startsWith(fullPath + '\\'),
+  )
     ? 'unlinkDir'
     : null;
 }
@@ -296,11 +298,11 @@ export function mutateFSTree(fsTree: FSTree, event: string, filePath: string): v
   } else if (event === 'unlink') {
     delete fsTree[filePath];
   } else if (event === 'unlinkDir') {
-    // Append the path separator so sibling directories sharing a name prefix are not incorrectly
-    // matched. e.g. removing 'tests/' must not delete 'tests2/foo.ts' entries.
-    const dirPrefix = filePath.endsWith(path.sep) ? filePath : filePath + path.sep;
+    // Check both '/' and '\\' so POSIX-style paths (used in unit tests and Linux/macOS) and
+    // Windows native paths (backslash) are both matched correctly regardless of platform.
     for (const treePath of Object.keys(fsTree)) {
-      if (treePath.startsWith(dirPrefix)) delete fsTree[treePath];
+      if (treePath.startsWith(filePath + '/') || treePath.startsWith(filePath + '\\'))
+        delete fsTree[treePath];
     }
   }
 }
