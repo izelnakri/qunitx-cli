@@ -63,14 +63,7 @@ export const prelaunchPromise =
     ? findChrome()
         .then((chromePath) => {
           perfLog('chrome-prelaunch.ts: findChrome resolved', chromePath);
-          // --disable-gpu + --headless=new crashes Chrome immediately on macOS CI: Chrome prints
-          // the CDP URL then exits before any connection can be made. Filter it on darwin only;
-          // on Linux it is needed and safe for headless containers.
-          const launchArgs =
-            process.platform === 'darwin'
-              ? CHROMIUM_ARGS.filter((a) => a !== '--disable-gpu')
-              : CHROMIUM_ARGS;
-          return preLaunchChrome(chromePath, launchArgs, !openWatchMode);
+          return preLaunchChrome(chromePath, CHROMIUM_ARGS, !openWatchMode);
         })
         .then((info) => {
           perfLog('chrome-prelaunch.ts: Chrome CDP ready', info?.cdpEndpoint ?? null);

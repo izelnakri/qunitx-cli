@@ -11,7 +11,7 @@
 export const CHROMIUM_ARGS: string[] = [
   // ── Sandbox / rendering ──────────────────────────────────────────────────────
   '--no-sandbox', // required in most CI/container environments
-  '--disable-gpu', // no GPU in headless; avoids GPU process startup
+  '--enable-unsafe-swiftshader', // software WebGL fallback; Playwright uses this instead of --disable-gpu
 
   // ── Window / UI ──────────────────────────────────────────────────────────────
   '--window-size=1440,900',

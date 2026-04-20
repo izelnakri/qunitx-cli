@@ -58,15 +58,9 @@ export async function launchBrowser(config: Config): Promise<Browser> {
     }
 
     // Pre-launch failed (Chrome not found, wrong version, resource contention, etc.) — fall back to normal launch.
-    // Exclude --disable-gpu on macOS: combined with Playwright's --headless=new it causes Chrome
-    // to exit immediately with no output. On Linux it is safe and needed for headless CI containers.
     const executablePath = await findChrome();
-    const fallbackArgs =
-      process.platform === 'darwin'
-        ? CHROMIUM_ARGS.filter((a) => a !== '--disable-gpu')
-        : CHROMIUM_ARGS;
     const launchOptions: Parameters<typeof playwrightCore.chromium.launch>[0] = {
-      args: fallbackArgs,
+      args: CHROMIUM_ARGS,
       headless: true,
       // Disable Playwright's async SIGTERM/SIGHUP handlers. When the CLI is killed by an
       // external signal (e.g. exec() timeout in tests), those handlers start an async browser

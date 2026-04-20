@@ -21,7 +21,7 @@ export async function preLaunchChrome(
   if (!chromePath) return null;
 
   const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'qunitx-chrome-'));
-  const headlessArgs = headless ? ['--headless=new'] : [];
+  const headlessArgs = headless ? ['--headless'] : [];
   const proc = spawn(
     chromePath,
     ['--remote-debugging-port=0', `--user-data-dir=${userDataDir}`, ...headlessArgs, ...args],
