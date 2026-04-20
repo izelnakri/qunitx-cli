@@ -212,7 +212,7 @@ async function classifyRenameEvent(
   // Check whether it was a directory that still has tracked children. fs.watch fires one 'rename'
   // event for the directory itself (not per-child), so we coalesce all child removals into one
   // unlinkDir rather than silently ignoring the event.
-  const dirPrefix = fullPath + '/';
+  const dirPrefix = fullPath + path.sep;
   return Object.keys(fsTree).some((trackedPath) => trackedPath.startsWith(dirPrefix))
     ? 'unlinkDir'
     : null;
@@ -290,15 +290,15 @@ export function handleWatchEvent(
 /**
  * Mutates `fsTree` in place based on a file-system event.
  */
-export function mutateFSTree(fsTree: FSTree, event: string, path: string): void {
+export function mutateFSTree(fsTree: FSTree, event: string, filePath: string): void {
   if (event === 'add') {
-    fsTree[path] = null;
+    fsTree[filePath] = null;
   } else if (event === 'unlink') {
-    delete fsTree[path];
+    delete fsTree[filePath];
   } else if (event === 'unlinkDir') {
     // Append the path separator so sibling directories sharing a name prefix are not incorrectly
     // matched. e.g. removing 'tests/' must not delete 'tests2/foo.ts' entries.
-    const dirPrefix = path.endsWith('/') ? path : path + '/';
+    const dirPrefix = filePath.endsWith(path.sep) ? filePath : filePath + path.sep;
     for (const treePath of Object.keys(fsTree)) {
       if (treePath.startsWith(dirPrefix)) delete fsTree[treePath];
     }

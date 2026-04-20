@@ -11,7 +11,7 @@ export async function writeOutputStaticFiles(
   cachedContent: CachedContent,
 ): Promise<void> {
   const staticHTMLPromises = Object.keys(cachedContent.staticHTMLs).map(async (staticHTMLKey) => {
-    const htmlRelativePath = staticHTMLKey.replace(`${projectRoot}/`, '');
+    const htmlRelativePath = path.relative(projectRoot, staticHTMLKey);
 
     const outDir = path.resolve(projectRoot, output);
     await ensureFolderExists(path.join(outDir, htmlRelativePath));
@@ -21,7 +21,7 @@ export async function writeOutputStaticFiles(
     );
   });
   const assetPromises = Array.from(cachedContent.assets).map(async (assetAbsolutePath) => {
-    const assetRelativePath = assetAbsolutePath.replace(`${projectRoot}/`, '');
+    const assetRelativePath = path.relative(projectRoot, assetAbsolutePath);
     const outDir = path.resolve(projectRoot, output);
     await ensureFolderExists(path.join(outDir, assetRelativePath));
     await fs.copyFile(assetAbsolutePath, path.join(outDir, assetRelativePath));
