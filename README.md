@@ -227,6 +227,117 @@ Options:
   --browser=<name>    Browser engine: chromium (default), firefox, or webkit
 ```
 
+## Timezone
+
+The browser inherits the **OS system timezone** automatically — no Playwright `timezoneId` option is involved. The browser's `Intl.DateTimeFormat().resolvedOptions().timeZone` will match the timezone that Node.js itself reads from the OS.
+
+### Setting a timezone for tests
+
+| Platform | How Chrome resolves the timezone | Override |
+|----------|----------------------------------|---------|
+| **Linux** | glibc reads `TZ` env var first, then `/etc/localtime` | `TZ=America/New_York npx qunitx …` works |
+| **macOS** | CoreFoundation reads the system timezone (ignores `TZ`) | Must set the system timezone: `sudo systemsetup -settimezone America/New_York` |
+| **Windows** | Reads the registry timezone (ignores `TZ`) | Must set the system timezone: `tzutil /s "Eastern Standard Time"` |
+
+On Linux, the `TZ` env var is the simplest way to run tests in a specific timezone:
+
+```sh
+TZ=UTC npx qunitx test/**/*.ts
+TZ=America/Los_Angeles npx qunitx test/**/*.ts
+TZ=Europe/Berlin npx qunitx test/**/*.ts
+```
+
+### CI pitfalls
+
+GitHub Actions (and most CI providers) run with **UTC** by default on all platforms. This is usually what you want for reproducible test results. If your tests assert on specific local times or date formatting, be aware:
+
+**Linux CI** — override with `TZ` in your workflow step:
+
+```yaml
+- run: npx qunitx test/**/*.ts
+  env:
+    TZ: America/New_York
+```
+
+**macOS CI** — `TZ` does not affect Chrome. Set the system timezone before running tests:
+
+```yaml
+- run: sudo systemsetup -settimezone America/New_York
+- run: npx qunitx test/**/*.ts
+```
+
+**Windows CI** — same constraint, use `tzutil`:
+
+```yaml
+- run: tzutil /s "Eastern Standard Time"
+- run: npx qunitx test/**/*.ts
+```
+
+If your test suite does not assert on local times or timezone-sensitive date formatting, none of this matters — the default UTC CI timezone is fine.
+
+### Mocking dates and times in tests
+
+For most cases you do not need to touch system settings or env vars at all. `Date`, `Intl`, and timers are plain browser globals — mock them in a qunitx `before` / `beforeEach` hook just like any other value:
+
+```js
+// test/some-test.ts
+import { module, test } from 'qunitx';
+
+module('Invoice formatting', (hooks) => {
+  let realDate;
+
+  hooks.before(() => {
+    realDate = globalThis.Date;
+    // Pin "now" to a fixed instant for the whole module
+    const FIXED = new realDate('2024-06-01T12:00:00Z');
+    globalThis.Date = class extends realDate {
+      constructor(...args) { super(args.length ? args : [FIXED]); }
+      static now() { return FIXED.getTime(); }
+    };
+  });
+
+  hooks.after(() => { globalThis.Date = realDate; });
+
+  test('formats the current date correctly', (assert) => {
+    assert.equal(new Date().toISOString().slice(0, 10), '2024-06-01');
+  });
+});
+```
+
+For richer control over timers (`setTimeout`, `setInterval`, `requestAnimationFrame`, …) use a fake-timer library such as [Sinon.JS](https://sinonjs.org/releases/latest/fake-timers/):
+
+```js
+import sinon from 'sinon';
+
+module('Debounce logic', (hooks) => {
+  let clock;
+
+  hooks.before(() => { clock = sinon.useFakeTimers({ now: new Date('2024-06-01T00:00:00Z') }); });
+  hooks.after(() => { clock.restore(); });
+
+  test('fires after 300 ms', (assert) => {
+    // clock.tick(300) advances fake time without waiting in real time
+    clock.tick(300);
+    assert.ok(/* your assertion */);
+  });
+});
+```
+
+If you need the mock active across the entire test run rather than inside a single module, put it in a `--before` script:
+
+```js
+// scripts/mock-date.js  (passed as: qunitx … --before=scripts/mock-date.js)
+const realDate = globalThis.Date;
+const FIXED    = new realDate('2024-06-01T12:00:00Z');
+
+globalThis.Date = class extends realDate {
+  constructor(...args) { super(args.length ? args : [FIXED]); }
+  static now() { return FIXED.getTime(); }
+};
+```
+
+This runs in the browser context before any test module loads, so every test in the run sees the mocked `Date` with no changes to the OS, no env vars, and no qunitx-cli configuration.
+
 ## Development
 
 ```sh
