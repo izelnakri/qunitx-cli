@@ -79,10 +79,21 @@ module('Input | custom html', { concurrency: true }, () => {
       assert.tapResult(stdout, { testCount: 3 });
       assert.includes(stdout, 'Watching files...');
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmRetry(dir);
     }
   });
 });
+
+// On Windows, fs.watch holds directory handles briefly after process exit — retry on EBUSY.
+async function rmRetry(dir: string, attemptsLeft = 5, delayMs = 300): Promise<void> {
+  try {
+    await fs.rm(dir, { recursive: true, force: true });
+  } catch (error: any) {
+    if (error.code !== 'EBUSY' || attemptsLeft <= 1) throw error;
+    await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    await rmRetry(dir, attemptsLeft - 1, delayMs + 300);
+  }
+}
 
 async function runWatch(dir: string): Promise<string> {
   const outputDir = path.resolve(`tmp/run-${randomUUID()}`);
