@@ -11,7 +11,11 @@
 export const CHROMIUM_ARGS: string[] = [
   // ── Sandbox / rendering ──────────────────────────────────────────────────────
   '--no-sandbox', // required in most CI/container environments
-  '--enable-unsafe-swiftshader', // software WebGL fallback; Playwright uses this instead of --disable-gpu
+  // SwiftShader software WebGL: needed on Linux CI (containerised, no GPU).
+  // Omit on macOS — Chrome uses Metal natively; SwiftShader crashes the renderer
+  // process on macOS arm64, causing "Target page, context or browser has been closed".
+  // Omit on Windows — ANGLE/D3D11 is available and SwiftShader is not needed.
+  ...(process.platform === 'linux' ? ['--enable-unsafe-swiftshader'] : []),
 
   // ── Window / UI ──────────────────────────────────────────────────────────────
   '--window-size=1440,900',
