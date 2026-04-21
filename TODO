@@ -1,8 +1,7 @@
 refactor lib/utils/source-map-decoder.ts
 
-timezone shouldnt skip macos and windows
-
-Document timezone passing on README.md
+Document timezone passing on README.md and maybe platform specific runtime/CI setup if it is necessary, if there are 
+any pitfalls
 
 Also make sure cli/binary can be built in deno and would work on macos and windows but first probably daemon mode
 
