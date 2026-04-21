@@ -69,12 +69,10 @@ export function setupFileWatchers(
 
   for (const watchPath of testFileLookupPaths) {
     let ready = false;
-    // Per-file timestamps of the last processed 'change' event.
-    // inotify/FSEvents often fire 2–3 change events per writeFile; a 10ms dedup window coalesces
-    // same-burst duplicates. On overlayfs (Docker CI) IN_CLOSE_WRITE can arrive 100ms–1s after
-    // IN_MODIFY, well outside the 10ms window — the mtime check below handles that case.
-    // See _lastBuildEndMs bypass in the child watcher below.
-    const lastChangeMs: Record<string, number> = {};
+    // lastEventMs: wall-clock time the last event arrived (guards the 10ms burst window).
+    // seenMtimeMs: file mtime recorded at the last event (detects echoes vs genuine new writes).
+    const lastEventMs: Record<string, number> = {};
+    const seenMtimeMs: Record<string, number> = {};
 
     // Child watcher: tracks file-level events within watchPath.
     const childWatcher = fs.watch(watchPath, { recursive: true }, async (eventType, filename) => {
@@ -86,29 +84,24 @@ export function setupFileWatchers(
 
       if (eventType === 'change') {
         const now = Date.now();
-        const last = lastChangeMs[fullPath] ?? 0;
-        lastChangeMs[fullPath] = now;
-        // Suppress duplicate inotify events within the burst window (IN_MODIFY + fast echo).
-        // Exception: idle + build-ended-after-last-change means a genuine new write after a fast
-        // build, not an echo — let it through so watch mode doesn't get stuck.
-        if (
-          now - last < CHANGE_DEDUPE_MS &&
-          (config._building || !config._lastBuildEndMs || config._lastBuildEndMs <= last)
-        )
-          return;
-        // Suppress late inotify echoes (overlayfs IN_CLOSE_WRITE arriving 100ms–1s after
-        // IN_MODIFY): if the file's mtime is from a strictly earlier second than the last
-        // completed build, that content was already processed and this is a filesystem echo.
-        // Second-aligned comparison because overlayfs mtime has 1-second resolution on Docker
-        // CI — using `<=` would suppress genuine writes that happen in the same second as the
-        // build end (e.g. writing a fix immediately after a build error, or right after a run).
-        if (config._lastBuildEndMs) {
-          try {
-            const { mtimeMs } = await stat(fullPath);
-            if (mtimeMs < Math.floor(config._lastBuildEndMs / 1000) * 1000) return;
-          } catch {
-            // File inaccessible — proceed.
-          }
+        const last = lastEventMs[fullPath] ?? 0;
+        lastEventMs[fullPath] = now;
+        try {
+          const { mtimeMs } = await stat(fullPath);
+          const prevMtime = seenMtimeMs[fullPath] ?? 0;
+          seenMtimeMs[fullPath] = mtimeMs;
+          // Suppress inotify/FSEvents kernel duplicates: same mtime within the burst window.
+          // Genuine new writes have a strictly newer mtime and are always let through — even
+          // during a running build — so the pending-trigger mechanism sees the latest content.
+          if (now - last < CHANGE_DEDUPE_MS && mtimeMs > 0 && mtimeMs === prevMtime) return;
+          // Suppress overlayfs late IN_CLOSE_WRITE echoes (arrive 100ms–1s after IN_MODIFY):
+          // if the file's mtime predates the last build (second-aligned, 1s overlayfs resolution),
+          // that content was already processed. Using `<` (not `<=`) lets writes in the same
+          // second as the build end through (e.g. an immediate fix after a build error).
+          if (config._lastBuildEndMs && mtimeMs < Math.floor(config._lastBuildEndMs / 1000) * 1000)
+            return;
+        } catch {
+          // File inaccessible — proceed.
         }
         return handleWatchEvent(config, extensions, 'change', fullPath, onEventFunc, onFinishFunc);
       }
