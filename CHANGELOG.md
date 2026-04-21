@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.2] - 2026-04-21
+[`v0.21.1...v0.21.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.21.1...v0.21.2)
+
+### Bug Fixes
+- Use .js entry point for QUNITX_BIN on Windows where spawn cannot execute shell wrapper scripts — 2026-04-21 by [@izelnakri](https://github.com/izelnakri) ([`4c55bdf`](https://github.com/izelnakri/qunitx-cli/commit/4c55bdf2b6a29229084af264a226baed1e9544ab))
+- Remove qunitx-bin-test that required dist/ to exist — 2026-04-21 by [@izelnakri](https://github.com/izelnakri) ([`d583b73`](https://github.com/izelnakri/qunitx-cli/commit/d583b732500c0bd908c4b7b9052e32e4341c6216))
+- Rescan directory on macOS null-filename FSEvents rename events — 2026-04-21 by [@izelnakri](https://github.com/izelnakri) ([`f43ae7c`](https://github.com/izelnakri/qunitx-cli/commit/f43ae7c4572f9497aee60ed09a6696fbf522f1d8))
+
 ## [0.21.1] - 2026-04-21
 [`v0.21.0...v0.21.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.21.0...v0.21.1)
 
