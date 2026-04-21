@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.21.0] - 2026-04-21
+[`v0.20.0...v0.21.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.20.0...v0.21.0)
+
+### Bug Fixes
+- Make watch-rerun assertions robust to overlayfs-triggered extra runs — 2026-04-19 by [@izelnakri](https://github.com/izelnakri) ([`c5546cc`](https://github.com/izelnakri/qunitx-cli/commit/c5546cc94fa0ca07b82b3782526b5c9304bcd4bb))
+- Add --in-process-gpu to prevent Chrome hanging on connectOverCDP in CI — 2026-04-20 by [@izelnakri](https://github.com/izelnakri) ([`3144aac`](https://github.com/izelnakri/qunitx-cli/commit/3144aac4156b07d9caccab4897131000390bdd38))
+- Normalize backslash paths before embedding in esbuild stdin — 2026-04-20 by [@izelnakri](https://github.com/izelnakri) ([`8e4ed51`](https://github.com/izelnakri/qunitx-cli/commit/8e4ed51beb1f9073e8b598c386a997e4dee802ed))
+- Use path.resolve + pathToFileURL for cross-platform path handling — 2026-04-20 by [@izelnakri](https://github.com/izelnakri) ([`db96ad7`](https://github.com/izelnakri/qunitx-cli/commit/db96ad71998e6fe4ccf0820ddc0ea3050be10cb9))
+- Fall back to chromium.launch() when connectOverCDP times out — 2026-04-20 by [@izelnakri](https://github.com/izelnakri) ([`eaf2d06`](https://github.com/izelnakri/qunitx-cli/commit/eaf2d06cce51d9a58cb1fbd48f06e75d649f4ff6))
+- Use path.sep and path.relative for cross-platform path ops — 2026-04-20 by [@izelnakri](https://github.com/izelnakri) ([`d11c13f`](https://github.com/izelnakri/qunitx-cli/commit/d11c13f948d60217840ba3d6eed61ecfc1e5bf52))
+- Filter --disable-gpu on macOS fallback launch; fix mutateFSTree cross-platform separator — 2026-04-20 by [@izelnakri](https://github.com/izelnakri) ([`0d13686`](https://github.com/izelnakri/qunitx-cli/commit/0d136864d5f2c77f7764772959d1359c48f17557))
+- Filter --disable-gpu from macOS pre-launch; fix Windows path separator and symlink write-through — 2026-04-20 by [@izelnakri](https://github.com/izelnakri) ([`200b720`](https://github.com/izelnakri/qunitx-cli/commit/200b7209339a29a1cbb164a2065be41306bd37c7))
+- Update parseCliFlags unit test to expect path.join-normalized output — 2026-04-20 by [@izelnakri](https://github.com/izelnakri) ([`00e9241`](https://github.com/izelnakri/qunitx-cli/commit/00e9241d9bb4e67102d27d76a60a4bab33711b32))
+- Replace --disable-gpu with --enable-unsafe-swiftshader; use --headless (old mode) — 2026-04-20 by [@izelnakri](https://github.com/izelnakri) ([`7b94beb`](https://github.com/izelnakri/qunitx-cli/commit/7b94beb9d601bdc0965457fa683cf2a086b73c94))
+- Scope SwiftShader to Linux; kill Chrome process trees on Windows — 2026-04-21 by [@izelnakri](https://github.com/izelnakri) ([`079f5d3`](https://github.com/izelnakri/qunitx-cli/commit/079f5d3e45a6be5bb8fb05601677ab36851dd73d))
+- Restore --headless=new in Chrome pre-launch for macOS — 2026-04-21 by [@izelnakri](https://github.com/izelnakri) ([`10900b8`](https://github.com/izelnakri/qunitx-cli/commit/10900b86d5239a288d39c70c1b57a034a67dcc19))
+- Use playwright-core chromium-headless-shell on macOS instead of CHROME_BIN — 2026-04-21 by [@izelnakri](https://github.com/izelnakri) ([`3fb4bc9`](https://github.com/izelnakri/qunitx-cli/commit/3fb4bc963c56ccc16061253edd2ea929d8ccb9cd))
+- Synthesize symlink write-through events on macOS via mtime polling — 2026-04-21 by [@izelnakri](https://github.com/izelnakri) ([`82e8226`](https://github.com/izelnakri/qunitx-cli/commit/82e82262965229daa0a075a3a057c1b45b9a2eee))
+- Treat rename-for-write as change when file is already tracked — 2026-04-21 by [@izelnakri](https://github.com/izelnakri) ([`6d1f949`](https://github.com/izelnakri/qunitx-cli/commit/6d1f9497b71a9c1802cd3aa999a78cc94ef69d28))
+- Retry fs.rm on EBUSY in custom-html watch test on Windows — 2026-04-21 by [@izelnakri](https://github.com/izelnakri) ([`980178c`](https://github.com/izelnakri/qunitx-cli/commit/980178c02396ab48e6e7239434a5f0586393d9ad))
+- Replace time+_building dedup with mtime-based echo detection — 2026-04-21 by [@izelnakri](https://github.com/izelnakri) ([`d02f302`](https://github.com/izelnakri/qunitx-cli/commit/d02f302cf6323a11b8ccb104a6dcccb4d16cac4c))
+- Replace maybeStart flags with Promise.all for QUnit init — 2026-04-21 by [@izelnakri](https://github.com/izelnakri) ([`fc822d4`](https://github.com/izelnakri/qunitx-cli/commit/fc822d4e1bbe1acf081a79b632a2f6caa2c33ca5))
+
+### Documentation
+- Document browser timezones & datetime mocking — 2026-04-21 by [@izelnakri](https://github.com/izelnakri) ([`f06986b`](https://github.com/izelnakri/qunitx-cli/commit/f06986b2a70ff21b7278c445affab9c3ae47abeb))
+
+### Features
+- Show file execution timings only on --debug — 2026-04-20 by [@izelnakri](https://github.com/izelnakri) ([`cc90783`](https://github.com/izelnakri/qunitx-cli/commit/cc907839096d9873550290070fa15a4d8ed95dbd))
+- Initial macos+windows CI setup + timezone tests — 2026-04-20 by [@izelnakri](https://github.com/izelnakri) ([`00469b7`](https://github.com/izelnakri/qunitx-cli/commit/00469b762f5809fb6b820748a0319d3e4bebaed0))
+- Respect QUNITX_BROWSER env var as browser fallback — 2026-04-21 by [@izelnakri](https://github.com/izelnakri) ([`58c2369`](https://github.com/izelnakri/qunitx-cli/commit/58c23699740b6cc238f96f93ce2e3feffac85d1b))
+
 ## [0.20.0] - 2026-04-19
 [`v0.19.3...v0.20.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.19.3...v0.20.0)
 
