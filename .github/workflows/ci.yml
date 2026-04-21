@@ -255,3 +255,275 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ── Release consumer test (tags only) ─────────────────────────────────────────
+  # Packs the built artefact, installs it into a throwaway consumer directory,
+  # and runs the test suite with QUNITX_BIN pointing at the installed binary —
+  # catching packaging bugs that source tests cannot see.
+  # Mirrors browser-compat.yml: chromium runs the full suite, firefox/webkit
+  # run only the browser-specific subset (test:browser) at concurrency=1.
+  release-consumer-test:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [lint, test]
+    name: Release consumer test · ${{ matrix.os }} / ${{ matrix.browser }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            browser: chromium
+            test_script: test
+          - os: ubuntu-latest
+            browser: firefox
+            test_script: test:browser
+          - os: ubuntu-latest
+            browser: webkit
+            test_script: test:browser
+          - os: macos-latest
+            browser: firefox
+            test_script: test:browser
+          - os: macos-latest
+            browser: webkit
+            test_script: test:browser
+          - os: windows-latest
+            browser: firefox
+            test_script: test:browser
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: browser-actions/setup-chrome@v2
+        if: matrix.browser == 'chromium'
+        id: setup-chrome
+
+      - run: npm ci
+
+      - name: Get Playwright version
+        if: matrix.browser != 'chromium'
+        id: pw-version
+        run: echo "version=$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browser (${{ matrix.browser }})
+        if: matrix.browser != 'chromium'
+        id: playwright-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ matrix.browser }}-${{ matrix.os }}-${{ steps.pw-version.outputs.version }}
+
+      - name: Install Playwright browser (${{ matrix.browser }})
+        if: matrix.browser != 'chromium' && steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright@${{ steps.pw-version.outputs.version }} install --with-deps ${{ matrix.browser }}
+
+      - name: Install Playwright system deps (${{ matrix.browser }})
+        if: matrix.browser != 'chromium' && steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright@${{ steps.pw-version.outputs.version }} install-deps ${{ matrix.browser }}
+
+      - run: bash scripts/test-release.sh
+        shell: bash
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          QUNITX_BROWSER: ${{ matrix.browser }}
+          TEST_SCRIPT: ${{ matrix.test_script }}
+          FORCE_COLOR: 0
+
+  # ── Node.js SEA binaries (tags only) ──────────────────────────────────────────
+  # Builds a standalone native binary per platform using Node.js Single
+  # Executable Applications (node --experimental-sea-config, Node ≥ 22).
+  #
+  # How it works:
+  #   1. esbuild bundles cli.ts + all deps into one CJS file (esbuild strips types natively).
+  #      A small preamble is prepended: at startup it sets ESBUILD_BINARY_PATH
+  #      to the `esbuild` binary sitting next to the SEA executable, so the
+  #      bundled esbuild JS can find and spawn its native helper.
+  #   2. Node injects that bundle as a blob into a copy of itself.
+  #   3. The tarball ships: `qunitx` (SEA) + `esbuild` (native binary).
+  #      Users put both in the same directory and add it to PATH.
+  #
+  # Chrome is not bundled — users supply it via CHROME_BIN (same as today).
+  build-binaries:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [lint, test]
+    name: Build binary · ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            esbuild_bin: node_modules/@esbuild/linux-x64/bin/esbuild
+          - os: macos-latest
+            target: macos-arm64
+            esbuild_bin: node_modules/@esbuild/darwin-arm64/bin/esbuild
+          - os: windows-latest
+            target: windows-x64
+            esbuild_bin: node_modules/@esbuild/win32-x64/esbuild.exe
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      # Bundle the entire CLI (including esbuild's JS) into a single CJS file.
+      # fsevents is the only optional native addon — mark it external so esbuild
+      # skips it cleanly (chokidar falls back to polling without it).
+      # The banner preamble runs first and sets ESBUILD_BINARY_PATH so the
+      # bundled esbuild JS finds the native binary next to the executable.
+      - name: Bundle CLI to CJS
+        shell: bash
+        run: |
+          PREAMBLE=';(function(){if(!process.env.ESBUILD_BINARY_PATH){var path=require("path"),fs=require("fs");["esbuild","esbuild.exe"].forEach(function(n){var p=path.join(path.dirname(process.execPath),n);try{fs.accessSync(p,fs.constants.X_OK);process.env.ESBUILD_BINARY_PATH=p;}catch(_){}});}})();'
+          npx esbuild cli.ts \
+            --bundle \
+            --platform=node \
+            --format=cjs \
+            --banner:js="$PREAMBLE" \
+            --outfile=sea-entry.cjs \
+            --external:fsevents \
+            --external:typescript \
+            --external:chromium-bidi \
+            --external:playwright-core \
+            --log-level=warning \
+            --log-override:empty-import-meta=silent \
+            --log-override:require-resolve-not-external=silent
+
+      - name: Create SEA blob
+        shell: bash
+        run: |
+          node --input-type=commonjs -e "
+          require('fs').writeFileSync('sea-config.json', JSON.stringify({
+            main: 'sea-entry.cjs',
+            output: 'sea.blob',
+            disableExperimentalSEAWarning: true,
+            useCodeCache: true,
+            assets: {
+              'setup/tests.hbs': 'templates/setup/tests.hbs',
+              'setup/tsconfig.json': 'templates/setup/tsconfig.json',
+              'test.js': 'templates/test.js'
+            }
+          }, null, 2));"
+          node --experimental-sea-config sea-config.json
+
+      - name: Inject blob into Node binary (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cp "$(node --input-type=commonjs -e 'process.stdout.write(process.execPath)')" qunitx
+          codesign --remove-signature qunitx 2>/dev/null || true
+          if [ "$(uname)" = "Darwin" ]; then
+            npx --yes postject qunitx NODE_SEA_BLOB sea.blob \
+              --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2 \
+              --macho-segment-name NODE_SEA
+          else
+            npx --yes postject qunitx NODE_SEA_BLOB sea.blob \
+              --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+          fi
+          codesign --sign - qunitx 2>/dev/null || true
+          chmod +x qunitx
+
+      - name: Inject blob into Node binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $nodePath = node --input-type=commonjs -e "process.stdout.write(process.execPath)"
+          Copy-Item $nodePath qunitx.exe
+          npx --yes postject qunitx.exe NODE_SEA_BLOB sea.blob `
+            --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist/qunitx-${{ matrix.target }}
+          cp qunitx dist/qunitx-${{ matrix.target }}/qunitx
+          cp ${{ matrix.esbuild_bin }} dist/qunitx-${{ matrix.target }}/esbuild
+          chmod +x dist/qunitx-${{ matrix.target }}/esbuild
+          tar czf qunitx-${{ matrix.target }}.tar.gz -C dist qunitx-${{ matrix.target }}
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist/qunitx-${{ matrix.target }}
+          Copy-Item qunitx.exe dist/qunitx-${{ matrix.target }}/qunitx.exe
+          Copy-Item ${{ matrix.esbuild_bin }} dist/qunitx-${{ matrix.target }}/esbuild.exe
+          Compress-Archive -Path "dist/qunitx-${{ matrix.target }}" `
+            -DestinationPath "qunitx-${{ matrix.target }}.zip"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qunitx-${{ matrix.target }}
+          path: qunitx-${{ matrix.target }}.*
+
+  # ── GitHub release (tags only) ────────────────────────────────────────────────
+  # make release creates the release entry locally with proper changelog notes.
+  # This job uploads all platform binaries (with checksums) to that release.
+  # The create fallback handles the rare case where CI wins the race.
+  github-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-binaries, release-consumer-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: qunitx-*
+          merge-multiple: true
+          path: artifacts
+      - name: Generate SHA-256 checksums
+        run: cd artifacts && sha256sum * > checksums.txt
+      - name: Upload artifacts to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes 2>/dev/null || true
+          gh release upload "${{ github.ref_name }}" --clobber artifacts/*
+
+  # ── Docker versioned image (tags only) ────────────────────────────────────────
+  publish-docker:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
