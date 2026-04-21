@@ -5,12 +5,12 @@ name: Browser Compatibility
 # and are already covered by the main CI test job on Chromium — no need to repeat them.
 #
 # Triggers:
-#   - Every push/merge to main (catches regressions before a release)
+#   - Every push and PR (same as ci.yml) so regressions are caught immediately
 #   - Weekly on Monday to detect upstream Playwright browser changes
-#   - Not on PRs — keeps PR feedback fast; Chromium coverage is sufficient for review
 
 on:
   push:
+  pull_request:
     branches: [main]
   schedule:
     - cron: '0 6 * * 1' # Every Monday at 06:00 UTC
@@ -27,12 +27,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         browser: [firefox, webkit]
-      include:
-        # WebKit is not officially supported on Windows by Playwright; Firefox is.
-        - os: windows-latest
-          browser: firefox
+        exclude:
+          # WebKit/Safari does not exist on Windows for end-users — skip it.
+          - os: windows-latest
+            browser: webkit
 
     steps:
       - uses: actions/checkout@v6
