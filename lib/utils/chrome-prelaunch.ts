@@ -19,7 +19,13 @@ const { browserFromArgv, openFromArgv, watchFromArgv } = process.argv.reduce(
     else if (arg === '--watch' || arg === '-w') flags.watchFromArgv = true;
     return flags;
   },
-  { browserFromArgv: 'chromium', openFromArgv: false, watchFromArgv: false },
+  // QUNITX_BROWSER env var seeds the default so prelaunch is skipped for firefox/webkit
+  // even when --browser is not passed on the command line (e.g. browser-compat CI).
+  {
+    browserFromArgv: process.env.QUNITX_BROWSER || 'chromium',
+    openFromArgv: false,
+    watchFromArgv: false,
+  },
 );
 // With --open --watch, Chrome is left alive after qunitx exits so the visible browser window persists.
 // With --open alone, qunitx exits after tests complete; the detached browser is opened separately.

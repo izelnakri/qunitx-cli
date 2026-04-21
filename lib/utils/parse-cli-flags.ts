@@ -91,6 +91,20 @@ export function parseCliFlags(projectRoot: string): ParsedFlags {
     { inputs: new Set<string>([]) } as ParsedFlags & { inputs: Set<string> },
   );
 
+  // QUNITX_BROWSER env var is a lower-priority fallback: --browser flag wins if present.
+  // Setting it in the environment lets all spawned child processes inherit the browser
+  // without needing to pass --browser on every CLI invocation.
+  if (!providedFlags.browser && process.env.QUNITX_BROWSER) {
+    const envBrowser = process.env.QUNITX_BROWSER;
+    if (!['chromium', 'firefox', 'webkit'].includes(envBrowser)) {
+      console.error(
+        `Invalid QUNITX_BROWSER value: "${envBrowser}". Must be one of: chromium, firefox, webkit`,
+      );
+      process.exit(1);
+    }
+    providedFlags.browser = envBrowser as 'chromium' | 'firefox' | 'webkit';
+  }
+
   return { ...providedFlags, inputs: Array.from(providedFlags.inputs) };
 }
 
