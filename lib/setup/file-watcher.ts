@@ -199,7 +199,9 @@ export function setupFileWatchers(
 }
 
 /**
- * Resolves the event type for an inotify 'rename' event by stat-ing the path.
+ * Resolves the event type for a 'rename' kernel event by stat-ing the path.
+ * On macOS (FSEvents) plain file writes frequently arrive as 'rename' instead of 'change';
+ * if the path is already tracked in fsTree we return 'change' (modification) rather than 'add'.
  * Retries once after 50ms for overlayfs (Docker CI) copy-on-write transient unavailability.
  * Returns null when the path is unknown and has no tracked children (safe to ignore).
  */
@@ -211,7 +213,12 @@ async function classifyRenameEvent(
     if (delay) await new Promise<void>((resolve) => setTimeout(resolve, delay));
     try {
       const statResult = await stat(fullPath);
-      return statResult.isDirectory() ? 'addDir' : 'add';
+      if (statResult.isDirectory()) return 'addDir';
+      // On macOS (FSEvents) a plain file write often fires a 'rename' kernel event instead
+      // of 'change'. If the path is already tracked in fsTree the rename is a modification —
+      // return 'change' so the rebuild path clears the bundle cache and logs 'CHANGED:'
+      // rather than 'ADDED:'. Genuine new files are not yet in fsTree, so they still get 'add'.
+      return fsTree && fullPath in fsTree ? 'change' : 'add';
     } catch {
       // File/dir not yet available — retry or fall through to unlink classification.
     }
