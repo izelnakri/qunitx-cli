@@ -58,7 +58,13 @@ export async function launchBrowser(config: Config): Promise<Browser> {
     }
 
     // Pre-launch failed (Chrome not found, wrong version, resource contention, etc.) — fall back to normal launch.
-    const executablePath = await findChrome();
+    //
+    // macOS: executablePath is left null so playwright-core uses its own chromium-headless-shell
+    // (installed in CI via `playwright-core install chromium-headless-shell`). CHROME_BIN
+    // (Google Chrome for Testing) is not used here because playwright-core unconditionally adds
+    // --enable-unsafe-swiftshader, which crashes the ARM64 Chrome renderer on macOS CI VMs.
+    // chromium-headless-shell is purpose-built for this and does not have that issue.
+    const executablePath = process.platform !== 'darwin' ? await findChrome() : null;
     const launchOptions: Parameters<typeof playwrightCore.chromium.launch>[0] = {
       args: CHROMIUM_ARGS,
       headless: true,

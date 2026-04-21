@@ -52,6 +52,12 @@ jobs:
       - uses: browser-actions/setup-chrome@v2
         id: setup-chrome
       - run: npm ci
+      # macOS: install playwright-core's chromium-headless-shell instead of using CHROME_BIN.
+      # Google Chrome for Testing (ARM64) crashes immediately with playwright-core's mandatory
+      # --enable-unsafe-swiftshader flag. chromium-headless-shell is purpose-built for headless
+      # testing and handles this correctly. Pre-launch is skipped on macOS (chrome-prelaunch.ts).
+      - run: node_modules/.bin/playwright-core install chromium-headless-shell
+        if: runner.os == 'macOS'
       - run: npm test
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}

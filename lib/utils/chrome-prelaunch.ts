@@ -56,10 +56,15 @@ export async function shutdownPrelaunch(): Promise<void> {
 
 /**
  * Resolves to `{ proc, cdpEndpoint, shutdown }` when Chrome is pre-launched and ready,
- * or `null` if pre-launch was skipped (non-run command or non-chromium browser).
+ * or `null` if pre-launch was skipped (non-run command, non-chromium browser, or macOS).
+ *
+ * macOS: pre-launch is skipped because the CI runner installs playwright-core's
+ * chromium-headless-shell (not Google Chrome for Testing) and its path is not
+ * known at module-evaluation time. playwright-core's chromium.launch() resolves
+ * the binary correctly and is used directly in browser.ts.
  */
 export const prelaunchPromise =
-  isRunCommand && browserFromArgv === 'chromium'
+  isRunCommand && browserFromArgv === 'chromium' && process.platform !== 'darwin'
     ? findChrome()
         .then((chromePath) => {
           perfLog('chrome-prelaunch.ts: findChrome resolved', chromePath);
