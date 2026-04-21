@@ -36,18 +36,30 @@ jobs:
   # run only the browser-specific subset (test:browser) at concurrency=1.
   release-consumer-test:
     needs: [test]
-    name: Release consumer test · ${{ matrix.browser }}
-    runs-on: ubuntu-latest
+    name: Release consumer test · ${{ matrix.os }} / ${{ matrix.browser }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         include:
-          - browser: chromium
+          - os: ubuntu-latest
+            browser: chromium
             test_script: test
-          - browser: firefox
+          - os: ubuntu-latest
+            browser: firefox
             test_script: test:browser
-          - browser: webkit
+          - os: ubuntu-latest
+            browser: webkit
+            test_script: test:browser
+          - os: macos-latest
+            browser: firefox
+            test_script: test:browser
+          - os: macos-latest
+            browser: webkit
+            test_script: test:browser
+          - os: windows-latest
+            browser: firefox
             test_script: test:browser
     steps:
       - uses: actions/checkout@v6
@@ -74,7 +86,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ matrix.browser }}-${{ steps.pw-version.outputs.version }}
+          key: playwright-${{ matrix.browser }}-${{ matrix.os }}-${{ steps.pw-version.outputs.version }}
 
       - name: Install Playwright browser (${{ matrix.browser }})
         if: matrix.browser != 'chromium' && steps.playwright-cache.outputs.cache-hit != 'true'
@@ -85,6 +97,7 @@ jobs:
         run: npx playwright@${{ steps.pw-version.outputs.version }} install-deps ${{ matrix.browser }}
 
       - run: bash scripts/test-release.sh
+        shell: bash
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           QUNITX_BROWSER: ${{ matrix.browser }}

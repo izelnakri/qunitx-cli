@@ -1,5 +1,4 @@
-Also, do we know sure that release-consumer-tests work on all platforms(macos, linux, windows) and these workflows 
-will pass?
+Release consumer tests should run on macos and windows as well
 
 refactor lib/utils/source-map-decoder.ts
 
@@ -7,7 +6,7 @@ Also make sure cli/binary can be built in deno and would work on macos and windo
 
 https://www.youtube.com/watch?v=SaZEdiV3A3M
 
-- investigate take screenshot feature & visual diffing
+- investigate take screenshot feature & visual diffing(implement it percy-like)
 
 - Standardize function naming of onCustomFunction, all functions should follow a naming standard, currently it seems 
 the worst by having:
