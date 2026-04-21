@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.1] - 2026-04-21
+[`v0.21.0...v0.21.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.21.0...v0.21.1)
+
+### Bug Fixes
+- Close HTTP server on SIGTERM to eliminate macOS port reclamation race — 2026-04-21 by [@izelnakri](https://github.com/izelnakri) ([`7d475dd`](https://github.com/izelnakri/qunitx-cli/commit/7d475ddfc8196dcccbecaf231a3a6e54e0cf4f09))
+- Isolate port-free check from concurrent watch test — 2026-04-21 by [@izelnakri](https://github.com/izelnakri) ([`f2d1abb`](https://github.com/izelnakri/qunitx-cli/commit/f2d1abbb8b45cc78fab50c87aa8a7b839e3585bb))
+
 ## [0.21.0] - 2026-04-21
 [`v0.20.0...v0.21.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.20.0...v0.21.0)
 
