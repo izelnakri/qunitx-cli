@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { stat, lstat } from 'node:fs/promises';
+import { readdir, stat, lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { green, magenta, red, yellow } from '../utils/color.ts';
 import type { FSWatcher } from 'node:fs';
@@ -76,7 +76,22 @@ export function setupFileWatchers(
 
     // Child watcher: tracks file-level events within watchPath.
     const childWatcher = fs.watch(watchPath, { recursive: true }, async (eventType, filename) => {
-      if (!ready || !filename) return;
+      if (!ready) return;
+      // macOS FSEvents can coalesce events and deliver rename with filename=null under load.
+      // Rescan the directory to find any new files that the null event may be reporting.
+      if (!filename) {
+        if (process.platform === 'darwin') {
+          await rescanDirectoryForDelta(
+            watchPath,
+            config,
+            extensions,
+            onEventFunc,
+            onFinishFunc,
+            trackSymlink,
+          );
+        }
+        return;
+      }
       // When watchPath is a file, fs.watch fires with filename = the file's own basename,
       // making path.join(watchPath, filename) produce the nonsense doubled path "foo.ts/foo.ts".
       const fullPath =
@@ -298,6 +313,43 @@ export function handleWatchEvent(
         trigger();
       }
     });
+}
+
+/**
+ * Scans `watchPath` recursively and fires 'add'/'unlink' events for any delta between the
+ * directory contents and `config.fsTree`. Called when macOS FSEvents delivers a rename event
+ * with filename=null (event coalescing under load) — both file creations and deletions can
+ * arrive this way, so both directions are checked in a single pass.
+ */
+export async function rescanDirectoryForDelta(
+  watchPath: string,
+  config: Config,
+  extensions: string[],
+  onEventFunc: (event: string, file: string) => unknown,
+  onFinishFunc: ((path: string, event: string) => void) | null | undefined,
+  trackSymlinkFn?: (filePath: string) => void,
+): Promise<void> {
+  try {
+    const entries = await readdir(watchPath, { withFileTypes: true, recursive: true });
+    const presentPaths = new Set<string>();
+    for (const entry of entries) {
+      if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+      const entryPath = path.join(entry.parentPath, entry.name);
+      if (!extensions.some((ext) => entryPath.endsWith(`.${ext}`))) continue;
+      presentPaths.add(entryPath);
+      if (!(entryPath in config.fsTree)) {
+        if (entry.isSymbolicLink()) trackSymlinkFn?.(entryPath);
+        handleWatchEvent(config, extensions, 'add', entryPath, onEventFunc, onFinishFunc);
+      }
+    }
+    const watchPrefix = watchPath + path.sep;
+    for (const trackedPath of Object.keys(config.fsTree)) {
+      if (trackedPath.startsWith(watchPrefix) && !presentPaths.has(trackedPath))
+        handleWatchEvent(config, extensions, 'unlink', trackedPath, onEventFunc, onFinishFunc);
+    }
+  } catch {
+    /* watchPath may no longer exist */
+  }
 }
 
 /**

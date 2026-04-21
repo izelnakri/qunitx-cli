@@ -2,9 +2,14 @@ import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { setupFileWatchers, mutateFSTree, handleWatchEvent } from '../../lib/setup/file-watcher.ts';
+import {
+  setupFileWatchers,
+  mutateFSTree,
+  handleWatchEvent,
+  rescanDirectoryForDelta,
+} from '../../lib/setup/file-watcher.ts';
 import '../helpers/custom-asserts.ts';
-import type { Config } from '../../lib/types.ts';
+import type { Config, FSTree } from '../../lib/types.ts';
 
 // Calls handleWatchEvent synchronously and returns the collected (event, path) pairs.
 function trackCalls(config: object, event: string, filePath: string, ext = ['js', 'ts']) {
@@ -348,5 +353,238 @@ module('Setup | setupFileWatchers', { concurrency: true }, () => {
       killFileWatchers();
       await fs.rm(tmpFile, { force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rescanDirectoryForDelta
+// ---------------------------------------------------------------------------
+
+module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
+  test('fires add for a new regular file not yet in fsTree', async (assert) => {
+    const dir = path.join(process.cwd(), `tmp/rescan-add-${randomUUID()}`);
+    await fs.mkdir(dir, { recursive: true });
+    const newFile = path.join(dir, 'new-test.ts');
+    await fs.writeFile(newFile, 'export default {}');
+
+    const config: Partial<Config> & { fsTree: FSTree } = { fsTree: {}, projectRoot: dir };
+    const events: Array<{ event: string; file: string }> = [];
+
+    await rescanDirectoryForDelta(
+      dir,
+      config as Config,
+      ['ts', 'js'],
+      (ev, f) => events.push({ event: ev, file: f }),
+      null,
+    );
+
+    try {
+      assert.equal(events.length, 1);
+      assert.equal(events[0].event, 'add');
+      assert.equal(events[0].file, newFile);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('fires add for a new symlink not yet in fsTree', async (assert) => {
+    // The specific macOS failure: a symlink was created but fs.watch fired null filename.
+    const dir = path.join(process.cwd(), `tmp/rescan-symlink-${randomUUID()}`);
+    await fs.mkdir(dir, { recursive: true });
+    const target = path.join(dir, 'target.ts');
+    const symlink = path.join(dir, 'link.ts');
+    await fs.writeFile(target, 'export default {}');
+    await fs.symlink(target, symlink);
+
+    const config: Partial<Config> & { fsTree: FSTree } = { fsTree: {}, projectRoot: dir };
+    const events: Array<{ event: string; file: string }> = [];
+
+    await rescanDirectoryForDelta(
+      dir,
+      config as Config,
+      ['ts', 'js'],
+      (ev, f) => events.push({ event: ev, file: f }),
+      null,
+    );
+
+    try {
+      assert.ok(
+        events.some((e) => e.event === 'add' && e.file === symlink),
+        'symlink detected as add event',
+      );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('does not re-add files already present in fsTree', async (assert) => {
+    const dir = path.join(process.cwd(), `tmp/rescan-nodup-${randomUUID()}`);
+    await fs.mkdir(dir, { recursive: true });
+    const existing = path.join(dir, 'existing.ts');
+    const newFile = path.join(dir, 'new.ts');
+    await Promise.all([fs.writeFile(existing, ''), fs.writeFile(newFile, '')]);
+
+    const config: Partial<Config> & { fsTree: FSTree } = {
+      fsTree: { [existing]: null },
+      projectRoot: dir,
+    };
+    const events: Array<{ event: string; file: string }> = [];
+
+    await rescanDirectoryForDelta(
+      dir,
+      config as Config,
+      ['ts', 'js'],
+      (ev, f) => events.push({ event: ev, file: f }),
+      null,
+    );
+
+    try {
+      assert.equal(events.length, 1, 'only the new file fires an event');
+      assert.equal(events[0].file, newFile);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('ignores files with non-matching extensions', async (assert) => {
+    const dir = path.join(process.cwd(), `tmp/rescan-ext-${randomUUID()}`);
+    await fs.mkdir(dir, { recursive: true });
+    await Promise.all([
+      fs.writeFile(path.join(dir, 'style.css'), ''),
+      fs.writeFile(path.join(dir, 'test.ts'), ''),
+    ]);
+
+    const config: Partial<Config> & { fsTree: FSTree } = { fsTree: {}, projectRoot: dir };
+    const events: Array<{ event: string; file: string }> = [];
+
+    await rescanDirectoryForDelta(
+      dir,
+      config as Config,
+      ['ts'],
+      (ev, f) => events.push({ event: ev, file: f }),
+      null,
+    );
+
+    try {
+      assert.equal(events.length, 1, 'only .ts file fires event');
+      assert.ok(events[0].file.endsWith('.ts'));
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('detects new files in nested subdirectories', async (assert) => {
+    const dir = path.join(process.cwd(), `tmp/rescan-nested-${randomUUID()}`);
+    const nested = path.join(dir, 'sub', 'deep');
+    await fs.mkdir(nested, { recursive: true });
+    const deepFile = path.join(nested, 'deep-test.ts');
+    await fs.writeFile(deepFile, '');
+
+    const config: Partial<Config> & { fsTree: FSTree } = { fsTree: {}, projectRoot: dir };
+    const events: Array<{ event: string; file: string }> = [];
+
+    await rescanDirectoryForDelta(
+      dir,
+      config as Config,
+      ['ts'],
+      (ev, f) => events.push({ event: ev, file: f }),
+      null,
+    );
+
+    try {
+      assert.equal(events.length, 1);
+      assert.equal(events[0].file, deepFile);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('fires unlink for a tracked file that no longer exists on disk', async (assert) => {
+    // The macOS null-filename deletion case: FSEvents fires rename with filename=null because
+    // a file was deleted. rescanDirectoryForDelta must detect the missing file and fire unlink
+    // so the stale fsTree entry is removed and the next build doesn't fail with "file not found".
+    const dir = path.join(process.cwd(), `tmp/rescan-unlink-${randomUUID()}`);
+    await fs.mkdir(dir, { recursive: true });
+    const deleted = path.join(dir, 'deleted.ts');
+    const remaining = path.join(dir, 'remaining.ts');
+    await Promise.all([fs.writeFile(deleted, ''), fs.writeFile(remaining, '')]);
+    await fs.rm(deleted);
+
+    const config: Partial<Config> & { fsTree: FSTree } = {
+      fsTree: { [deleted]: null, [remaining]: null },
+      projectRoot: dir,
+    };
+    const events: Array<{ event: string; file: string }> = [];
+
+    await rescanDirectoryForDelta(
+      dir,
+      config as Config,
+      ['ts', 'js'],
+      (ev, f) => events.push({ event: ev, file: f }),
+      null,
+    );
+
+    try {
+      assert.equal(events.length, 1, 'exactly one unlink event fired');
+      assert.equal(events[0].event, 'unlink');
+      assert.equal(events[0].file, deleted);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('fires both add and unlink when a swap occurs in a single null-filename event', async (assert) => {
+    // Models the scenario where two changes happen simultaneously (one file deleted, one added)
+    // and FSEvents coalesces them into a single null-filename event.
+    const dir = path.join(process.cwd(), `tmp/rescan-swap-${randomUUID()}`);
+    await fs.mkdir(dir, { recursive: true });
+    const deleted = path.join(dir, 'old.ts');
+    const added = path.join(dir, 'new.ts');
+    await fs.writeFile(deleted, '');
+    // At time of rescan: old.ts gone from disk, new.ts present on disk
+    await fs.rm(deleted);
+    await fs.writeFile(added, '');
+
+    const config: Partial<Config> & { fsTree: FSTree } = {
+      fsTree: { [deleted]: null },
+      projectRoot: dir,
+    };
+    const events: Array<{ event: string; file: string }> = [];
+
+    await rescanDirectoryForDelta(
+      dir,
+      config as Config,
+      ['ts'],
+      (ev, f) => events.push({ event: ev, file: f }),
+      null,
+    );
+
+    try {
+      assert.ok(
+        events.some((e) => e.event === 'unlink' && e.file === deleted),
+        'deleted file fires unlink',
+      );
+      assert.ok(
+        events.some((e) => e.event === 'add' && e.file === added),
+        'new file fires add',
+      );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('silently succeeds when watchPath does not exist', async (assert) => {
+    const config: Partial<Config> & { fsTree: FSTree } = { fsTree: {}, projectRoot: '/tmp' };
+    const events: Array<{ event: string; file: string }> = [];
+
+    await rescanDirectoryForDelta(
+      '/tmp/nonexistent-dir-that-does-not-exist-qunitx',
+      config as Config,
+      ['ts'],
+      (ev, f) => events.push({ event: ev, file: f }),
+      null,
+    );
+
+    assert.equal(events.length, 0, 'no events fired for missing directory');
   });
 });
