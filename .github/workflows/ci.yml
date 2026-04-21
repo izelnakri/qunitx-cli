@@ -59,11 +59,35 @@ jobs:
       # testing and handles this correctly. Pre-launch is skipped on macOS (chrome-prelaunch.ts).
       - run: node_modules/.bin/playwright-core install chromium-headless-shell
         if: runner.os == 'macOS'
-      - run: npm test
+      # Ubuntu only: wrap the test run with c8 to collect V8 coverage from all child
+      # node processes (the CLI subprocesses spawned by tests). c8 sets NODE_V8_COVERAGE
+      # so every `node cli.ts` invocation writes coverage data; c8 merges them and emits
+      # coverage/lcov.info for Codecov. Running coverage here (instead of a separate job)
+      # avoids re-running the full test suite a second time on a dedicated runner.
+      - run: npx c8 --reporter=lcov --reporter=text --reporter=html npm test
+        if: matrix.os == 'ubuntu-latest'
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
           QUNITX_VERBOSE: 1
+      - run: npm test
+        if: matrix.os != 'ubuntu-latest'
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          FORCE_COLOR: 0
+          QUNITX_VERBOSE: 1
+      - uses: codecov/codecov-action@v5
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          files: coverage/lcov.info
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - uses: actions/upload-artifact@v7
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 1
 
   # ── Bench ─────────────────────────────────────────────────────────────────────
   # Runs fast microbenchmarks (esbuild bundling, HTTP server, TAP display) on
@@ -85,41 +109,6 @@ jobs:
       - run: npm ci
       - run: deno bench --allow-all benches/esbuild.bench.ts benches/server.bench.ts benches/tap.bench.ts
 
-  # ── Coverage ──────────────────────────────────────────────────────────────────
-  # Runs in parallel with test. c8 is the Node.js equivalent of `deno coverage`:
-  # both use V8's built-in coverage mechanism. c8 is required here because
-  # qunitx-cli tests launch headless Chrome via playwright — the code runs inside
-  # child `node cli.ts` processes that can't execute under Deno.
-  # c8 sets NODE_V8_COVERAGE so all child processes write coverage data;
-  # it merges them and emits coverage/lcov.info for Codecov.
-  coverage:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-      - uses: browser-actions/setup-chrome@v2
-        id: setup-chrome
-      - run: npm ci
-      - run: npx c8 --reporter=lcov --reporter=text --reporter=html npm test
-        env:
-          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
-          FORCE_COLOR: 0
-          QUNITX_VERBOSE: 1
-      - uses: codecov/codecov-action@v5
-        with:
-          files: coverage/lcov.info
-          fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
-      - uses: actions/upload-artifact@v7
-        with:
-          name: coverage-report
-          path: coverage/
-          retention-days: 1
-
   # ── Pages (main only) ─────────────────────────────────────────────────────────
   # Runs the CLI against the demo test file to capture live TAP output, copies
   # the composite demo GIF, generates API docs (deno doc --html), embeds the
@@ -127,7 +116,7 @@ jobs:
   # Concurrency guard cancels any stale in-flight deployment.
   pages:
     if: github.ref == 'refs/heads/main'
-    needs: [lint, test, coverage]
+    needs: [lint, test]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
