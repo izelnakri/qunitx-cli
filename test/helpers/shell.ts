@@ -9,7 +9,11 @@ const shell = promisify(exec);
 const QUNITX_BROWSER = process.env.QUNITX_BROWSER;
 // When QUNITX_BIN is set, `node cli.ts` is replaced with the installed binary.
 // Used by scripts/test-release.sh to verify the published package end-to-end.
+// On Windows, shell wrapper scripts in node_modules/.bin/ cannot be spawned directly
+// (spawn requires an actual executable). test-release.sh sets QUNITX_BIN to the .js
+// entry point on Windows; we detect this by the .js extension and invoke via node.
 const QUNITX_BIN = process.env.QUNITX_BIN;
+const QUNITX_BIN_IS_SCRIPT = QUNITX_BIN?.endsWith('.js') || QUNITX_BIN?.endsWith('.ts');
 // When QUNITX_DEBUG is set, --debug is appended to all browser CLI invocations.
 // Used by `npm run test:debug` / `make test-debug` to surface debug TAP comments.
 const QUNITX_DEBUG = process.env.QUNITX_DEBUG;
@@ -43,16 +47,16 @@ export async function shellWatch(
       ? `${withBrowser} --debug`
       : withBrowser;
 
+  const cmdArgs = command
+    .replace(/\bnode\s+cli\.ts\b/, '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
   const [bin, spawnArgs] =
     QUNITX_BIN && IS_CLI.test(commandString)
-      ? [
-          QUNITX_BIN,
-          command
-            .replace(/\bnode\s+cli\.ts\b/, '')
-            .trim()
-            .split(/\s+/)
-            .filter(Boolean),
-        ]
+      ? QUNITX_BIN_IS_SCRIPT
+        ? [process.execPath, [QUNITX_BIN, ...cmdArgs]]
+        : [QUNITX_BIN, cmdArgs]
       : [process.execPath, command.split(/\s+/).slice(1)];
 
   const permit = await acquireBrowser();
@@ -169,7 +173,12 @@ export default async function execute(
 
   const command =
     QUNITX_BIN && IS_CLI.test(commandString)
-      ? withDebug.replace(/\bnode\s+cli\.ts\b/, QUNITX_BIN)
+      ? withDebug.replace(
+          /\bnode\s+cli\.ts\b/,
+          // On Windows QUNITX_BIN is the .js entry point; exec() needs explicit node invocation.
+          // Quote both paths so spaces in the node or package install directory don't break parsing.
+          QUNITX_BIN_IS_SCRIPT ? `"${process.execPath}" "${QUNITX_BIN}"` : QUNITX_BIN,
+        )
       : withDebug;
 
   const permit = needsBrowser ? await acquireBrowser() : { release: () => {} };

@@ -27,7 +27,17 @@ cd "$CONSUMER"
 printf '{"type":"module"}' > package.json
 npm install --no-save --quiet "$TARBALL"
 
-QUNITX_BIN="$CONSUMER/node_modules/.bin/qunitx"
+# On Unix the .bin/ shell wrapper is a real executable; spawn() works fine.
+# On Windows (Git Bash / MSYS2) spawn() cannot execute shell wrapper scripts —
+# shell.ts detects the .js extension and invokes it as `node QUNITX_BIN`.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    QUNITX_BIN="$CONSUMER/node_modules/qunitx-cli/bin/qunitx.js"
+    ;;
+  *)
+    QUNITX_BIN="$CONSUMER/node_modules/.bin/qunitx"
+    ;;
+esac
 echo "test-release: running full test suite with QUNITX_BIN=$QUNITX_BIN"
 
 # Run the test suite from the source root so test fixtures are reachable,
