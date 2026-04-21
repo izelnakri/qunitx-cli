@@ -37,6 +37,8 @@ const PAGE_CLOSE_GRACE_MS = 10_000;
 const STDOUT_FLUSH_GRACE_MS = 5_000;
 // setInterval period that keeps the event loop alive while Promise.allSettled runs.
 const KEEP_ALIVE_INTERVAL_MS = 10_000;
+// Conventional exit code for a process terminated by SIGTERM (128 + signal number 15).
+const EXIT_CODE_SIGTERM = 128 + 15;
 
 /**
  * Runs qunitx tests in headless Chrome, either in watch mode or concurrent batch mode.
@@ -80,6 +82,18 @@ export async function run(config: Config): Promise<void> {
     ]);
     config.webServer = connections.server;
     setupKeyboardEvents(config, cachedContent, connections);
+
+    // Explicitly close the HTTP server on SIGTERM before the process exits. This ensures
+    // the port is reclaimed by application code (not as a side effect of OS process cleanup),
+    // guaranteeing the port is free from the moment waitpid() returns in the parent process.
+    // Without this, macOS can lag a few ms between waitpid() and socket reclamation, making
+    // the port appear in-use immediately after the child exits.
+    // Note: on Windows child.kill('SIGTERM') calls TerminateProcess() so this handler never
+    // runs there — but TerminateProcess() is fully synchronous so the race doesn't exist on
+    // Windows anyway. Exit with 143 (128 + SIGTERM) to preserve the conventional exit code.
+    process.once('SIGTERM', () => {
+      connections.server.close().finally(() => process.exit(EXIT_CODE_SIGTERM));
+    });
 
     // In headed watch mode (bare --open + --watch), chrome-prelaunch.ts launches Chrome
     // without --headless=new so the Playwright-controlled window IS the visible browser.

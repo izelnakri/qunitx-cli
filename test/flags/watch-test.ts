@@ -40,22 +40,31 @@ module('--watch flag tests', { concurrency: true }, () => {
 
     assert.ok(cliPort !== null, 'server URL appeared in shellWatch output');
 
-    // Immediately after shellWatch returns the HTTP server port must be free.
-    // The CLI's HTTP server is only released when the child process exits, so a
-    // successful bind here proves the child has already exited.
-    const portFree = await new Promise<boolean>((resolve) => {
-      const probe = net.createServer();
-      probe.once('error', () => resolve(false));
-      probe.once('listening', () => {
-        probe.close();
-        resolve(true);
+    // After shellWatch returns the HTTP server port must be free — the CLI's HTTP server is
+    // only released when the child process exits, so a successful bind proves the child has
+    // already exited. We retry briefly (≤500ms) because on macOS the kernel can take a few ms
+    // to reclaim a listening socket after waitpid() returns; the regression this test guards
+    // (permit released before the child exits at all) takes several seconds, so 500ms is
+    // still a tight enough bound.
+    function portFreeWithRetry(port: number, attemptsLeft = 25): Promise<boolean> {
+      return new Promise<boolean>((resolve) => {
+        const probe = net.createServer();
+        probe.once('error', () =>
+          attemptsLeft > 1
+            ? setTimeout(() => portFreeWithRetry(port, attemptsLeft - 1).then(resolve), 20)
+            : resolve(false),
+        );
+        probe.once('listening', () => {
+          probe.close();
+          resolve(true);
+        });
+        probe.listen(port);
       });
-      probe.listen(cliPort!);
-    });
+    }
 
     assert.true(
-      portFree,
-      'HTTP server port is free immediately after shellWatch returns — child has fully exited before permit release',
+      await portFreeWithRetry(cliPort!),
+      'HTTP server port is free shortly after shellWatch returns — child has fully exited before permit release',
     );
   });
 });
