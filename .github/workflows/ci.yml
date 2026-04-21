@@ -76,7 +76,7 @@ jobs:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
           QUNITX_VERBOSE: 1
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v6
         if: matrix.os == 'ubuntu-latest'
         with:
           files: coverage/lcov.info
