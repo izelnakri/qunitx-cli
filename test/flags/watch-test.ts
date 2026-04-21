@@ -3,6 +3,18 @@ import net from 'node:net';
 import '../helpers/custom-asserts.ts';
 import { shellWatch } from '../helpers/shell.ts';
 
+function findFreePort(): Promise<{ number: number; release: () => Promise<void> }> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.once('listening', () => {
+      const number = (server.address() as net.AddressInfo).port;
+      resolve({ number, release: () => new Promise((res) => server.close(res)) });
+    });
+    server.listen(0, '::');
+  });
+}
+
 module('--watch flag tests', { concurrency: true }, () => {
   test('--watch runs tests, starts the server, and prints watching info', async (assert) => {
     const stdout = await shellWatch('node cli.ts test/helpers/passing-tests.ts --watch', {
@@ -28,9 +40,13 @@ module('--watch flag tests', { concurrency: true }, () => {
   // this by binding to the port the CLI server used: if the child is still alive it still holds
   // the port, so the bind fails.
   test('shellWatch releases the semaphore permit only after the child process has fully exited', async (assert) => {
+    // Use a dedicated free port so a concurrently-running watch test cannot rebind the
+    // same default port (1234) before portFreeWithRetry finishes checking.
+    const { number: port, release } = await findFreePort();
+    await release();
     let cliPort: number | null = null;
 
-    await shellWatch('node cli.ts test/helpers/passing-tests.ts --watch', {
+    await shellWatch(`node cli.ts test/helpers/passing-tests.ts --watch --port=${port}`, {
       until: (buf) => {
         const match = buf.match(/http:\/\/localhost:(\d+)/);
         if (match && cliPort === null) cliPort = Number(match[1]);
