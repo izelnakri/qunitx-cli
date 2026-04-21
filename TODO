@@ -1,14 +1,11 @@
-refactor lib/utils/source-map-decoder.ts
+Also, do we know sure that release-consumer-tests work on all platforms(macos, linux, windows) and these workflows 
+will pass?
 
-Document timezone passing on README.md and maybe platform specific runtime/CI setup if it is necessary, if there are 
-any pitfalls
+refactor lib/utils/source-map-decoder.ts
 
 Also make sure cli/binary can be built in deno and would work on macos and windows but first probably daemon mode
 
 https://www.youtube.com/watch?v=SaZEdiV3A3M
-
-pass timezone: https://stackoverflow.com/questions/16448754/how-to-use-a-custom-time-in-browser-to-test-for-client-vs-server-time-difference/39533934#39533934
-= qunitx --timezone="US/Pacific"
 
 - investigate take screenshot feature & visual diffing
 

@@ -1,22 +1,15 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@std/fmt@*": "1.0.9",
-    "npm:@types/ws@*": "8.18.1",
     "npm:esbuild@*": "0.28.0",
     "npm:esbuild@0.28": "0.28.0",
     "npm:js-yaml@^4.1.1": "4.1.1",
     "npm:playwright-core@^1.59.1": "1.59.1",
-    "npm:prettier@^3.8.2": "3.8.2",
-    "npm:qunitx@^1.2.7": "1.2.7",
-    "npm:typescript@^6.0.2": "6.0.2",
+    "npm:prettier@^3.8.3": "3.8.3",
+    "npm:qunitx@^1.2.8": "1.2.8",
+    "npm:typescript@^6.0.3": "6.0.3",
     "npm:ws@*": "8.20.0",
     "npm:ws@^8.20.0": "8.20.0"
-  },
-  "jsr": {
-    "@std/fmt@1.0.9": {
-      "integrity": "2487343e8899fb2be5d0e3d35013e54477ada198854e52dd05ed0422eddcabe0"
-    }
   },
   "npm": {
     "@esbuild/aix-ppc64@0.28.0": {
@@ -149,18 +142,6 @@
       "os": ["win32"],
       "cpu": ["x64"]
     },
-    "@types/node@25.6.0": {
-      "integrity": "sha512-+qIYRKdNYJwY3vRCZMdJbPLJAtGjQBudzZzdzwQYkEPQd+PJGixUL5QfvCLDaULoLv+RhT3LDkwEfKaAkgSmNQ==",
-      "dependencies": [
-        "undici-types"
-      ]
-    },
-    "@types/ws@8.18.1": {
-      "integrity": "sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==",
-      "dependencies": [
-        "@types/node"
-      ]
-    },
     "argparse@2.0.1": {
       "integrity": "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q=="
     },
@@ -208,19 +189,16 @@
       "integrity": "sha512-HBV/RJg81z5BiiZ9yPzIiClYV/QMsDCKUyogwH9p3MCP6IYjUFu/MActgYAvK0oWyV9NlwM3GLBjADyWgydVyg==",
       "bin": true
     },
-    "prettier@3.8.2": {
-      "integrity": "sha512-8c3mgTe0ASwWAJK+78dpviD+A8EqhndQPUBpNUIPt6+xWlIigCwfN01lWr9MAede4uqXGTEKeQWTvzb3vjia0Q==",
+    "prettier@3.8.3": {
+      "integrity": "sha512-7igPTM53cGHMW8xWuVTydi2KO233VFiTNyF5hLJqpilHfmn8C8gPf+PS7dUT64YcXFbiMGZxS9pCSxL/Dxm/Jw==",
       "bin": true
     },
-    "qunitx@1.2.7": {
-      "integrity": "sha512-1doZj3cbqlqUslog+p8+KB37U5zvNroUDWLjw2GfCayXa8E/GZpY71g4HLVrwNFUhluv2/s1xAZ+z37ZVD+iTw=="
+    "qunitx@1.2.8": {
+      "integrity": "sha512-iUuoP8EqeqEGTxdkRaFO1PjtdleOFDjkFKmsUpZB6dDGKb0NNhdT7HZrhx0XwyVpg6pYMIgmCxuHJJOhTjKB2w=="
     },
-    "typescript@6.0.2": {
-      "integrity": "sha512-bGdAIrZ0wiGDo5l8c++HWtbaNCWTS4UTv7RaTH/ThVIgjkveJt83m74bBHMJkuCbslY8ixgLBVZJIOiQlQTjfQ==",
+    "typescript@6.0.3": {
+      "integrity": "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==",
       "bin": true
-    },
-    "undici-types@7.19.2": {
-      "integrity": "sha512-qYVnV5OEm2AW8cJMCpdV20CDyaN3g0AjDlOGf1OW4iaDEx8MwdtChUp4zu4H0VP3nDRF/8RKWH+IPp9uW0YGZg=="
     },
     "ws@8.20.0": {
       "integrity": "sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA=="
@@ -236,9 +214,9 @@
         "npm:esbuild@0.28",
         "npm:js-yaml@^4.1.1",
         "npm:playwright-core@^1.59.1",
-        "npm:prettier@^3.8.2",
-        "npm:qunitx@^1.2.7",
-        "npm:typescript@^6.0.2",
+        "npm:prettier@^3.8.3",
+        "npm:qunitx@^1.2.8",
+        "npm:typescript@^6.0.3",
         "npm:ws@^8.20.0"
       ]
     }
