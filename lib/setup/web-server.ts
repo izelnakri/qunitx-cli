@@ -322,27 +322,23 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
   const groupIdPart = groupId !== undefined ? `, groupId: ${groupId}` : '';
   return `<script>
     (function() {
-      // wsOpenStatus: true once the WebSocket 'open' event fires (or immediately for static files).
-      // testsLoaded: true once tests.js has executed and dispatched 'qunitx:tests-ready'.
-      // Both must be true before setupQUnit() is called, ensuring QUnit.start() only runs
-      // after all test modules are registered.
-      let wsOpenStatus = window.location.protocol === 'file:';
-      let testsLoaded = false;
+      // setupQUnit runs exactly once, after both the WebSocket is open and tests.js has loaded.
+      // Promise.all is naturally idempotent — resolving a Promise a second time is a no-op,
+      // so WebKit firing WS error after open (causing a retry that re-opens) cannot double-start.
+      let resolveWsReady = () => {};
+      const wsReadyPromise = window.location.protocol === 'file:'
+        ? Promise.resolve()
+        : new Promise(resolve => { resolveWsReady = resolve; });
 
-      function maybeStart() {
-        if (wsOpenStatus && testsLoaded) setupQUnit();
-      }
-
-      // tests.js (loaded as an async external script) dispatches this event after registering
-      // all test modules. Decoupled from WS so Chrome can compile tests.js in a background
-      // thread while the main thread handles the WebSocket handshake.
-      window.addEventListener('qunitx:tests-ready', function() {
-        testsLoaded = true;
-        maybeStart();
+      // { once: true } auto-removes the listener after the first fire.
+      const testsReadyPromise = new Promise(resolve => {
+        window.addEventListener('qunitx:tests-ready', resolve, { once: true });
       });
 
-      // For static files (file:// protocol) there is no WebSocket server.
-      // wsOpenStatus is already true above; setupQUnit fires when tests load.
+      Promise.all([wsReadyPromise, testsReadyPromise]).then(setupQUnit);
+
+      // For static files (file:// protocol) there is no WebSocket server; wsReadyPromise
+      // is already resolved above, so setupQUnit fires as soon as tests load.
       if (window.location.protocol === 'file:') return;
 
       let wsRetryCount = 0;
@@ -358,14 +354,13 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
         }
 
         window.socket.addEventListener('open', function() {
-          wsOpenStatus = true;
+          resolveWsReady();
           // Notify Node.js that the WS socket is open. This fires immediately (< 1 s) because
           // this runtime script is tiny — tests.js background compilation hasn't finished yet.
           // Node.js uses this to distinguish "WS never connected" from "WS connected but bundle slow".
           if (navigator.webdriver) {
             window.socket.send(JSON.stringify({ event: 'wsOpen'${groupIdPart} }));
           }
-          maybeStart();
         });
         window.socket.addEventListener('error', function() {
           retryOrFail();
