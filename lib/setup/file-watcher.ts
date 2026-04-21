@@ -45,11 +45,14 @@ export function setupFileWatchers(
         if (filePath in config.fsTree) {
           handleWatchEvent(config, extensions, 'unlink', filePath, onEventFunc, onFinishFunc);
         }
-      } else if (process.platform === 'win32' && curr.mtimeMs !== prev.mtimeMs) {
-        // Windows ReadDirectoryChangesW does not fire change events when writing through a
-        // symlink — only the target's directory gets the event, not the symlink's directory.
-        // fs.watchFile stat-polls the symlink path (stat follows symlinks), so when the
-        // target's mtime changes, we synthesize a change event for the symlink path here.
+      } else if (
+        (process.platform === 'win32' || process.platform === 'darwin') &&
+        curr.mtimeMs !== prev.mtimeMs
+      ) {
+        // Windows (ReadDirectoryChangesW) and macOS (FSEvents) do not fire change events in the
+        // symlink's directory when writing through a symlink — only the target's directory gets
+        // the event. fs.watchFile stat-polls the symlink path (stat follows symlinks), so when
+        // the target's mtime changes, we synthesize a change event for the symlink path here.
         if (filePath in config.fsTree) {
           handleWatchEvent(config, extensions, 'change', filePath, onEventFunc, onFinishFunc);
         }
