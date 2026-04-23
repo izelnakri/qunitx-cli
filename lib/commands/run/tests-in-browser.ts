@@ -9,32 +9,46 @@ import { TAPDisplayFinalResult } from '../../tap/display-final-result.ts';
 import { buildErrorHTML, buildNoTestsHTML } from '../../setup/web-server.ts';
 import { extractInlineSourceMap } from '../../utils/source-map-decoder.ts';
 import type { Config, CachedContent, Connections } from '../../types.ts';
-import type { HTTPServer } from '../../servers/http.ts';
+import type { HTTPServer } from '../../servers/web.ts';
 
-// Converts an absolute file path to a relative import path esbuild can resolve from
-// process.cwd(). On Windows, absolute paths like "D:/..." are treated as bare module
-// specifiers in stdin content, so we must use relative paths instead.
-function toEsbuildImportPath(filePath: string): string {
-  const rel = path.relative(process.cwd(), filePath);
-  const normalized = rel.replace(/\\/g, '/');
-  if (path.isAbsolute(rel)) return filePath.replace(/\\/g, '/');
-  return normalized.startsWith('.') ? normalized : './' + normalized;
-}
+/**
+ * Returns all node_modules directories on the ancestor chain of `dir`,
+ * nearest-first — matching Node's own require() resolution algorithm.
+ * Used as esbuild's `nodePaths` so test files outside the project root can still
+ * import packages installed anywhere up the tree (e.g. qunitx in the project root).
+ */
+const ancestorNodeModules = (dir: string): string[] =>
+  dir
+    .split(path.sep)
+    .map((_, i, parts) =>
+      path.join(parts.slice(0, parts.length - i).join(path.sep) || path.sep, 'node_modules'),
+    );
 
-class BundleError extends Error {
-  constructor(message: unknown) {
-    super(message);
-    this.name = 'BundleError';
-    this.message = `esbuild Bundle Error: ${message}`.split('\n').join('\n# ');
-  }
-}
+// process.cwd() is fixed for the lifetime of the process — compute once and reuse
+// across every buildTestBundle / buildFilteredTests call rather than reallocating
+// the array of ancestor paths on every esbuild invocation.
+const ANCESTOR_NODE_MODULES = ancestorNodeModules(process.cwd());
 
-// esbuild BuildFailure carries a structured errors array; mirror the shape we actually read.
-interface EsbuildMessage {
-  text: string;
-  location: { file: string; line: number; column: number; length: number; lineText: string } | null;
-  notes: Array<{ text: string }>;
-}
+const RETRY_DELAY_MS = 100;
+const MAX_RETRIES = 3;
+const EMPTY_BUNDLE_THRESHOLD = 500;
+// Extra ms added on top of config.timeout to give Playwright time to commit the navigation
+// before the test-race timers even start. Floors startupMs/testsJsMs for tiny --timeout values.
+const NAV_GRACE_MS = 10_000;
+// Startup safety-net: Chrome WS 'open' must arrive within 3× config.timeout.
+const STARTUP_TIMEOUT_FACTOR = 3;
+// tests.js compile safety-net: V8 compilation must finish within 4× config.timeout from serve.
+const TESTS_JS_TIMEOUT_FACTOR = 4;
+// Maximum ms to wait for in-flight browser console handlers to drain before closing the page.
+const CONSOLE_FLUSH_TIMEOUT_MS = 2_000;
+// Extra window given to the browser after QUnit's testTimeout fires so it can process the
+// timeout callback, mark the test failed, fire QUnit.done, and deliver the WS 'done' message
+// before the server-side safety net resolves testRaceResult. Without this buffer the node-side
+// timer and QUnit's timer fire simultaneously, and webkit (slower JS) can lose the race.
+const TEST_STALL_BUFFER_MS = 5_000;
+
+// Regex compiled once; matches the group index and optional .map suffix in esbuild output paths.
+const GROUP_OUTPUT_REGEX = /group-(\d+)\.js(\.map)?$/;
 
 /**
  * Derives a human-readable error category from an esbuild BuildFailure or a generic Error.
@@ -325,6 +339,193 @@ export async function runTestsInBrowser(
 
   return connections;
 }
+
+/**
+ * Awaits all in-flight console handler promises until the Set is stably empty,
+ * recursing to catch handlers added by Firefox BiDi events that arrive during each
+ * await. The deadline (default 2 s) guards against infinite recursion.
+ * @returns {Promise<void>}
+ */
+export async function flushConsoleHandlers(
+  handlers?: Set<Promise<void>> | null,
+  deadline = Date.now() + CONSOLE_FLUSH_TIMEOUT_MS,
+): Promise<void> {
+  if (!handlers || Date.now() >= deadline) return;
+  // Yield one event-loop cycle so any in-flight CDP console events (which arrive on
+  // a separate TCP connection from the WebSocket 'done' event) can be processed by
+  // the I/O poll phase and register their handlers before we check the Set size.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  if (handlers.size === 0) return;
+  await Promise.allSettled([...handlers]);
+  return flushConsoleHandlers(handlers, deadline);
+}
+
+/**
+ * Builds all concurrent group bundles with a single esbuild invocation.
+ *
+ * The key win over N separate buildTestBundle() calls: esbuild constructs the module
+ * graph once for all entry points. Shared dependencies — qunitx (~270 KB),
+ * node_modules packages, common test utilities — are parsed, resolved, and
+ * tree-shaken exactly once regardless of group count, rather than N times in parallel.
+ *
+ * Each group gets a virtual entry point via an esbuild plugin. Outputs land in memory
+ * (write:false), then are written to each group's output directory in parallel.
+ */
+export async function buildAllGroupBundles(
+  groupConfigs: Config[],
+  groupCachedContents: CachedContent[],
+): Promise<void> {
+  groupCachedContents.forEach((cachedContent) => {
+    cachedContent._buildError = null;
+    cachedContent._noTestsWarning = null;
+  });
+
+  const { projectRoot, debug, browser } = groupConfigs[0];
+
+  // Build each group's descriptor in one pass, skipping empty groups (overlayfs race).
+  // Their cachedContent.allTestCode stays null so runTestsInBrowser's early-return handles them.
+  const activeGroups = groupConfigs.reduce(
+    (acc, groupConfig, groupIndex) => {
+      const files = Object.keys(groupConfig.fsTree);
+      if (files.length > 0)
+        acc.push({
+          groupIndex,
+          config: groupConfig,
+          cachedContent: groupCachedContents[groupIndex],
+          files,
+        });
+      return acc;
+    },
+    [] as Array<{
+      groupIndex: number;
+      config: Config;
+      cachedContent: CachedContent;
+      files: string[];
+    }>,
+  );
+
+  if (activeGroups.length === 0)
+    return console.log(
+      '# [buildAllGroupBundles] all groups empty — skipping build (no test files found)',
+    );
+
+  await Promise.all(
+    activeGroups.map((group) =>
+      fs.mkdir(path.resolve(group.config.projectRoot, group.config.output), { recursive: true }),
+    ),
+  );
+
+  const sourcemap: esbuild.BuildOptions['sourcemap'] = 'inline';
+
+  // Plugin: resolve `group-entry-N` paths from the entry-point list into virtual modules
+  // whose content is the import-per-file stitching for that group.
+  const groupEntryPlugin: esbuild.Plugin = {
+    name: 'group-entry-loader',
+    setup(build) {
+      build.onResolve({ filter: /^group-entry-\d+$/ }, (args) => ({
+        path: args.path,
+        namespace: 'group-entry',
+      }));
+      build.onLoad({ filter: /.*/, namespace: 'group-entry' }, (args) => {
+        const slotIndex = parseInt(args.path.replace('group-entry-', ''));
+        return {
+          contents: activeGroups[slotIndex].files
+            .map((filePath) => `import "${toEsbuildImportPath(filePath)}";`)
+            .join(''),
+          resolveDir: process.cwd(),
+        };
+      });
+    },
+  };
+
+  // Source map paths are relative to this outdir — used as the decoder's outDir too.
+  const esbuildOutdir = path.join(projectRoot, 'tmp');
+
+  const buildOptions: esbuild.BuildOptions = {
+    entryPoints: activeGroups.map((_, slotIndex) => ({
+      in: `group-entry-${slotIndex}`,
+      out: `group-${slotIndex}`,
+    })),
+    plugins: [groupEntryPlugin],
+    nodePaths: ANCESTOR_NODE_MODULES,
+    bundle: true,
+    logLevel: 'silent',
+    // outdir only labels the paths in outputFiles[].path — nothing is written to disk
+    // (write:false). Use projectRoot/tmp as a stable sentinel; mkdir is not required.
+    outdir: esbuildOutdir,
+    keepNames: true,
+    legalComments: 'none',
+    target: esbuildTarget(browser),
+    sourcemap,
+    write: false,
+    footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
+  };
+
+  // Overlayfs retry: a newly written test file may have 0 bytes when esbuild reads it on
+  // CI (overlayfs copy-on-write flush race). Any output below 500 bytes means at least
+  // one group caught an empty file — retry the whole build up to MAX_RETRIES times.
+  const hasSmallOutput = (result: esbuild.BuildResult) =>
+    (result.outputFiles ?? []).some(
+      (outputFile) =>
+        GROUP_OUTPUT_REGEX.test(outputFile.path) &&
+        !outputFile.path.endsWith('.map') &&
+        outputFile.contents.length < EMPTY_BUNDLE_THRESHOLD,
+    );
+
+  const buildWithRetry = async (retriesLeft: number): Promise<esbuild.BuildResult> => {
+    const result = await esbuild.build(buildOptions);
+    if (!hasSmallOutput(result) || retriesLeft === 0) return result;
+    await new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+    return buildWithRetry(retriesLeft - 1);
+  };
+
+  try {
+    const result = await buildWithRetry(MAX_RETRIES);
+
+    // Write each output to its group's destination directory in parallel.
+    await Promise.all(
+      (result.outputFiles ?? []).map((outputFile) => {
+        const match = GROUP_OUTPUT_REGEX.exec(outputFile.path);
+        if (!match) return Promise.resolve();
+        const slotIndex = parseInt(match[1]);
+        const isMap = Boolean(match[2]);
+        const { config, cachedContent } = activeGroups[slotIndex];
+        const destPath = path.join(
+          path.resolve(config.projectRoot, config.output),
+          'tests.js' + (isMap ? '.map' : ''),
+        );
+        if (!isMap) {
+          cachedContent.allTestCode = Buffer.from(outputFile.contents);
+          config._sourceMapDecoder = extractInlineSourceMap(
+            cachedContent.allTestCode,
+            esbuildOutdir,
+          );
+        }
+        return fs.writeFile(destPath, outputFile.contents);
+      }),
+    );
+  } catch (error) {
+    const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
+    const errorHtml = buildErrorHTML(buildError);
+    await Promise.all(
+      activeGroups.map((group) => {
+        group.cachedContent._buildError = buildError;
+        return fs
+          .writeFile(
+            path.join(path.resolve(group.config.projectRoot, group.config.output), 'index.html'),
+            errorHtml,
+          )
+          .catch(
+            (err: Error) =>
+              debug && process.stderr.write(`# [qunitx] writeFile index.html: ${err.message}\n`),
+          );
+      }),
+    );
+    throw error;
+  }
+}
+
+export { runTestsInBrowser as default };
 
 function buildFilteredTests(
   filteredTests: string[],
@@ -632,223 +833,27 @@ async function failOnNonWatchMode(
   }
 }
 
-/**
- * Awaits all in-flight console handler promises until the Set is stably empty,
- * recursing to catch handlers added by Firefox BiDi events that arrive during each
- * await. The deadline (default 2 s) guards against infinite recursion.
- * @returns {Promise<void>}
- */
-export async function flushConsoleHandlers(
-  handlers?: Set<Promise<void>> | null,
-  deadline = Date.now() + CONSOLE_FLUSH_TIMEOUT_MS,
-): Promise<void> {
-  if (!handlers || handlers.size === 0 || Date.now() >= deadline) return;
-  await Promise.allSettled([...handlers]);
-  return flushConsoleHandlers(handlers, deadline);
+// Converts an absolute file path to a relative import path esbuild can resolve from
+// process.cwd(). On Windows, absolute paths like "D:/..." are treated as bare module
+// specifiers in stdin content, so we must use relative paths instead.
+function toEsbuildImportPath(filePath: string): string {
+  const rel = path.relative(process.cwd(), filePath);
+  const normalized = rel.replace(/\\/g, '/');
+  if (path.isAbsolute(rel)) return filePath.replace(/\\/g, '/');
+  return normalized.startsWith('.') ? normalized : './' + normalized;
 }
 
-/**
- * Returns all node_modules directories on the ancestor chain of `dir`,
- * nearest-first — matching Node's own require() resolution algorithm.
- * Used as esbuild's `nodePaths` so test files outside the project root can still
- * import packages installed anywhere up the tree (e.g. qunitx in the project root).
- */
-const ancestorNodeModules = (dir: string): string[] =>
-  dir
-    .split(path.sep)
-    .map((_, i, parts) =>
-      path.join(parts.slice(0, parts.length - i).join(path.sep) || path.sep, 'node_modules'),
-    );
-
-// process.cwd() is fixed for the lifetime of the process — compute once and reuse
-// across every buildTestBundle / buildFilteredTests call rather than reallocating
-// the array of ancestor paths on every esbuild invocation.
-const ANCESTOR_NODE_MODULES = ancestorNodeModules(process.cwd());
-
-const RETRY_DELAY_MS = 100;
-const MAX_RETRIES = 3;
-const EMPTY_BUNDLE_THRESHOLD = 500;
-// Extra ms added on top of config.timeout to give Playwright time to commit the navigation
-// before the test-race timers even start. Floors startupMs/testsJsMs for tiny --timeout values.
-const NAV_GRACE_MS = 10_000;
-// Startup safety-net: Chrome WS 'open' must arrive within 3× config.timeout.
-const STARTUP_TIMEOUT_FACTOR = 3;
-// tests.js compile safety-net: V8 compilation must finish within 4× config.timeout from serve.
-const TESTS_JS_TIMEOUT_FACTOR = 4;
-// Maximum ms to wait for in-flight browser console handlers to drain before closing the page.
-const CONSOLE_FLUSH_TIMEOUT_MS = 2_000;
-// Extra window given to the browser after QUnit's testTimeout fires so it can process the
-// timeout callback, mark the test failed, fire QUnit.done, and deliver the WS 'done' message
-// before the server-side safety net resolves testRaceResult. Without this buffer the node-side
-// timer and QUnit's timer fire simultaneously, and webkit (slower JS) can lose the race.
-const TEST_STALL_BUFFER_MS = 5_000;
-
-// Regex compiled once; matches the group index and optional .map suffix in esbuild output paths.
-const GROUP_OUTPUT_REGEX = /group-(\d+)\.js(\.map)?$/;
-
-/**
- * Builds all concurrent group bundles with a single esbuild invocation.
- *
- * The key win over N separate buildTestBundle() calls: esbuild constructs the module
- * graph once for all entry points. Shared dependencies — qunitx (~270 KB),
- * node_modules packages, common test utilities — are parsed, resolved, and
- * tree-shaken exactly once regardless of group count, rather than N times in parallel.
- *
- * Each group gets a virtual entry point via an esbuild plugin. Outputs land in memory
- * (write:false), then are written to each group's output directory in parallel.
- */
-export async function buildAllGroupBundles(
-  groupConfigs: Config[],
-  groupCachedContents: CachedContent[],
-): Promise<void> {
-  groupCachedContents.forEach((cachedContent) => {
-    cachedContent._buildError = null;
-    cachedContent._noTestsWarning = null;
-  });
-
-  const { projectRoot, debug, browser } = groupConfigs[0];
-
-  // Build each group's descriptor in one pass, skipping empty groups (overlayfs race).
-  // Their cachedContent.allTestCode stays null so runTestsInBrowser's early-return handles them.
-  const activeGroups = groupConfigs.reduce(
-    (acc, groupConfig, groupIndex) => {
-      const files = Object.keys(groupConfig.fsTree);
-      if (files.length > 0)
-        acc.push({
-          groupIndex,
-          config: groupConfig,
-          cachedContent: groupCachedContents[groupIndex],
-          files,
-        });
-      return acc;
-    },
-    [] as Array<{
-      groupIndex: number;
-      config: Config;
-      cachedContent: CachedContent;
-      files: string[];
-    }>,
-  );
-
-  if (activeGroups.length === 0)
-    return console.log(
-      '# [buildAllGroupBundles] all groups empty — skipping build (no test files found)',
-    );
-
-  await Promise.all(
-    activeGroups.map((group) =>
-      fs.mkdir(path.resolve(group.config.projectRoot, group.config.output), { recursive: true }),
-    ),
-  );
-
-  const sourcemap: esbuild.BuildOptions['sourcemap'] = 'inline';
-
-  // Plugin: resolve `group-entry-N` paths from the entry-point list into virtual modules
-  // whose content is the import-per-file stitching for that group.
-  const groupEntryPlugin: esbuild.Plugin = {
-    name: 'group-entry-loader',
-    setup(build) {
-      build.onResolve({ filter: /^group-entry-\d+$/ }, (args) => ({
-        path: args.path,
-        namespace: 'group-entry',
-      }));
-      build.onLoad({ filter: /.*/, namespace: 'group-entry' }, (args) => {
-        const slotIndex = parseInt(args.path.replace('group-entry-', ''));
-        return {
-          contents: activeGroups[slotIndex].files
-            .map((filePath) => `import "${toEsbuildImportPath(filePath)}";`)
-            .join(''),
-          resolveDir: process.cwd(),
-        };
-      });
-    },
-  };
-
-  // Source map paths are relative to this outdir — used as the decoder's outDir too.
-  const esbuildOutdir = path.join(projectRoot, 'tmp');
-
-  const buildOptions: esbuild.BuildOptions = {
-    entryPoints: activeGroups.map((_, slotIndex) => ({
-      in: `group-entry-${slotIndex}`,
-      out: `group-${slotIndex}`,
-    })),
-    plugins: [groupEntryPlugin],
-    nodePaths: ANCESTOR_NODE_MODULES,
-    bundle: true,
-    logLevel: 'silent',
-    // outdir only labels the paths in outputFiles[].path — nothing is written to disk
-    // (write:false). Use projectRoot/tmp as a stable sentinel; mkdir is not required.
-    outdir: esbuildOutdir,
-    keepNames: true,
-    legalComments: 'none',
-    target: esbuildTarget(browser),
-    sourcemap,
-    write: false,
-    footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
-  };
-
-  // Overlayfs retry: a newly written test file may have 0 bytes when esbuild reads it on
-  // CI (overlayfs copy-on-write flush race). Any output below 500 bytes means at least
-  // one group caught an empty file — retry the whole build up to MAX_RETRIES times.
-  const hasSmallOutput = (result: esbuild.BuildResult) =>
-    (result.outputFiles ?? []).some(
-      (outputFile) =>
-        GROUP_OUTPUT_REGEX.test(outputFile.path) &&
-        !outputFile.path.endsWith('.map') &&
-        outputFile.contents.length < EMPTY_BUNDLE_THRESHOLD,
-    );
-
-  const buildWithRetry = async (retriesLeft: number): Promise<esbuild.BuildResult> => {
-    const result = await esbuild.build(buildOptions);
-    if (!hasSmallOutput(result) || retriesLeft === 0) return result;
-    await new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-    return buildWithRetry(retriesLeft - 1);
-  };
-
-  try {
-    const result = await buildWithRetry(MAX_RETRIES);
-
-    // Write each output to its group's destination directory in parallel.
-    await Promise.all(
-      (result.outputFiles ?? []).map((outputFile) => {
-        const match = GROUP_OUTPUT_REGEX.exec(outputFile.path);
-        if (!match) return Promise.resolve();
-        const slotIndex = parseInt(match[1]);
-        const isMap = Boolean(match[2]);
-        const { config, cachedContent } = activeGroups[slotIndex];
-        const destPath = path.join(
-          path.resolve(config.projectRoot, config.output),
-          'tests.js' + (isMap ? '.map' : ''),
-        );
-        if (!isMap) {
-          cachedContent.allTestCode = Buffer.from(outputFile.contents);
-          config._sourceMapDecoder = extractInlineSourceMap(
-            cachedContent.allTestCode,
-            esbuildOutdir,
-          );
-        }
-        return fs.writeFile(destPath, outputFile.contents);
-      }),
-    );
-  } catch (error) {
-    const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
-    const errorHtml = buildErrorHTML(buildError);
-    await Promise.all(
-      activeGroups.map((group) => {
-        group.cachedContent._buildError = buildError;
-        return fs
-          .writeFile(
-            path.join(path.resolve(group.config.projectRoot, group.config.output), 'index.html'),
-            errorHtml,
-          )
-          .catch(
-            (err: Error) =>
-              debug && process.stderr.write(`# [qunitx] writeFile index.html: ${err.message}\n`),
-          );
-      }),
-    );
-    throw error;
+class BundleError extends Error {
+  constructor(message: unknown) {
+    super(message);
+    this.name = 'BundleError';
+    this.message = `esbuild Bundle Error: ${message}`.split('\n').join('\n# ');
   }
 }
 
-export { runTestsInBrowser as default };
+// esbuild BuildFailure carries a structured errors array; mirror the shape we actually read.
+interface EsbuildMessage {
+  text: string;
+  location: { file: string; line: number; column: number; length: number; lineText: string } | null;
+  notes: Array<{ text: string }>;
+}
