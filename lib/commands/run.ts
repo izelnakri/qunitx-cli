@@ -1,6 +1,6 @@
 import { setupBrowser, launchBrowser } from '../setup/browser.ts';
 import { shutdownPrelaunch } from '../utils/chrome-prelaunch.ts';
-import { HTTPServer } from '../servers/http.ts';
+import { HTTPServer } from '../servers/web.ts';
 import { bindServerToPort } from '../setup/bind-server-to-port.ts';
 import {
   registerGroupRoutes,

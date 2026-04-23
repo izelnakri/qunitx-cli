@@ -4,16 +4,6 @@ import parseCliFlags from '../../lib/utils/parse-cli-flags.ts';
 
 const PROJECT_ROOT = '/some/project';
 
-function withArgv(args, fn) {
-  const original = process.argv;
-  process.argv = ['node', 'cli.ts', ...args];
-  try {
-    return fn();
-  } finally {
-    process.argv = original;
-  }
-}
-
 module('Setup | parseCliFlags | inputs', { concurrency: true }, () => {
   test('relative input is resolved against cwd', (assert) => {
     const flags = withArgv(['tests/foo.ts'], () => parseCliFlags(PROJECT_ROOT));
@@ -124,3 +114,13 @@ module('Setup | parseCliFlags | --timeout', { concurrency: true }, () => {
     assert.strictEqual(flags.timeout, undefined, 'timeout is undefined when flag is not passed');
   });
 });
+
+function withArgv(args, fn) {
+  const original = process.argv;
+  process.argv = ['node', 'cli.ts', ...args];
+  try {
+    return fn();
+  } finally {
+    process.argv = original;
+  }
+}

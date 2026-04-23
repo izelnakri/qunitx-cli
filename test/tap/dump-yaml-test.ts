@@ -3,19 +3,6 @@ import { load } from 'js-yaml';
 import dumpYaml from '../../lib/tap/dump-yaml.ts';
 import '../helpers/custom-asserts.ts';
 
-// Roundtrip helper: our output must parse back to the same value via js-yaml
-function roundtrip(value) {
-  const out = dumpYaml({
-    name: 'x',
-    actual: value,
-    expected: null,
-    message: null,
-    stack: null,
-    at: null,
-  });
-  return load(out).actual;
-}
-
 module('TAP | dumpYaml | primitives', { concurrency: true }, () => {
   test('null round-trips', (assert) => {
     assert.strictEqual(roundtrip(null), null);
@@ -304,3 +291,16 @@ module('TAP | dumpYaml | full output structure', { concurrency: true }, () => {
     assert.false(out.endsWith('\n\n'), 'output does not end with double newline');
   });
 });
+
+// Roundtrip helper: our output must parse back to the same value via js-yaml
+function roundtrip(value) {
+  const out = dumpYaml({
+    name: 'x',
+    actual: value,
+    expected: null,
+    message: null,
+    stack: null,
+    at: null,
+  });
+  return load(out).actual;
+}

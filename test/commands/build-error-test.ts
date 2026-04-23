@@ -12,48 +12,6 @@ import type { Config, CachedContent } from '../../lib/types.ts';
 
 const CWD = process.cwd();
 
-function makeConfig(testFiles: string[], watch = false): Config {
-  return {
-    output: `tmp/build-error-test-${randomUUID()}`,
-    timeout: 30000,
-    failFast: false,
-    port: 1234,
-    extensions: ['ts', 'js'],
-    browser: 'chromium',
-    projectRoot: CWD,
-    inputs: [],
-    htmlPaths: [],
-    testFileLookupPaths: [],
-    fsTree: Object.fromEntries(testFiles.map((f) => [f, null])),
-    watch,
-    COUNTER: {
-      testCount: 0,
-      failCount: 0,
-      skipCount: 0,
-      todoCount: 0,
-      passCount: 0,
-      errorCount: 0,
-    },
-    lastFailedTestFiles: null,
-    lastRanTestFiles: null,
-    _testRunDone: null,
-    _resetTestTimeout: null,
-    _onWsOpen: null,
-    _onTestsJsServed: null,
-  } as unknown as Config;
-}
-
-function makeCachedContent(): CachedContent {
-  return {
-    allTestCode: null,
-    assets: new Set(),
-    htmlPathsToRunTests: ['/'],
-    mainHTML: { filePath: null, html: null },
-    staticHTMLs: {},
-    dynamicContentHTMLs: {},
-  };
-}
-
 // ---------------------------------------------------------------------------
 // deriveBuildErrorType
 // ---------------------------------------------------------------------------
@@ -349,3 +307,45 @@ module('Commands | buildTestBundle | _buildError lifecycle', { concurrency: true
     }
   });
 });
+
+function makeConfig(testFiles: string[], watch = false): Config {
+  return {
+    output: `tmp/build-error-test-${randomUUID()}`,
+    timeout: 30000,
+    failFast: false,
+    port: 1234,
+    extensions: ['ts', 'js'],
+    browser: 'chromium',
+    projectRoot: CWD,
+    inputs: [],
+    htmlPaths: [],
+    testFileLookupPaths: [],
+    fsTree: Object.fromEntries(testFiles.map((f) => [f, null])),
+    watch,
+    COUNTER: {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    },
+    lastFailedTestFiles: null,
+    lastRanTestFiles: null,
+    _testRunDone: null,
+    _resetTestTimeout: null,
+    _onWsOpen: null,
+    _onTestsJsServed: null,
+  } as unknown as Config;
+}
+
+function makeCachedContent(): CachedContent {
+  return {
+    allTestCode: null,
+    assets: new Set(),
+    htmlPathsToRunTests: ['/'],
+    mainHTML: { filePath: null, html: null },
+    staticHTMLs: {},
+    dynamicContentHTMLs: {},
+  };
+}

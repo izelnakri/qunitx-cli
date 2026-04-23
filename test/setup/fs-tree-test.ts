@@ -4,33 +4,6 @@ import crypto from 'node:crypto';
 import { module, test } from 'qunitx';
 import buildFSTree from '../../lib/setup/fs-tree.ts';
 
-async function makeTempDir(files: string[]): Promise<string> {
-  const dir = path.join(process.cwd(), 'tmp', crypto.randomUUID());
-  await Promise.all(
-    files.map(async (filename) => {
-      const filePath = path.join(dir, filename);
-      await fs.mkdir(path.dirname(filePath), { recursive: true });
-      await fs.writeFile(filePath, '');
-    }),
-  );
-  return dir;
-}
-
-// Creates a temp dir with real files plus optional symlinks.
-// `symlinks` is a map of { linkName: targetName } where both are relative to the dir.
-async function makeTempDirWithSymlinks(
-  files: string[],
-  symlinks: Record<string, string> = {},
-): Promise<string> {
-  const dir = await makeTempDir(files);
-  await Promise.all(
-    Object.entries(symlinks).map(([linkName, targetName]) =>
-      fs.symlink(path.join(dir, targetName), path.join(dir, linkName)),
-    ),
-  );
-  return dir;
-}
-
 module('Setup | buildFSTree | extensions', { concurrency: true }, () => {
   test('includes .js and .ts files by default (no config.extensions)', async (assert) => {
     const dir = await makeTempDir(['a.js', 'b.ts', 'c.css', 'd.mjs']);
@@ -162,3 +135,30 @@ module('Setup | buildFSTree | glob input', { concurrency: true }, () => {
     assert.false(names.includes('c.css'));
   });
 });
+
+async function makeTempDir(files: string[]): Promise<string> {
+  const dir = path.join(process.cwd(), 'tmp', crypto.randomUUID());
+  await Promise.all(
+    files.map(async (filename) => {
+      const filePath = path.join(dir, filename);
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, '');
+    }),
+  );
+  return dir;
+}
+
+// Creates a temp dir with real files plus optional symlinks.
+// `symlinks` is a map of { linkName: targetName } where both are relative to the dir.
+async function makeTempDirWithSymlinks(
+  files: string[],
+  symlinks: Record<string, string> = {},
+): Promise<string> {
+  const dir = await makeTempDir(files);
+  await Promise.all(
+    Object.entries(symlinks).map(([linkName, targetName]) =>
+      fs.symlink(path.join(dir, targetName), path.join(dir, linkName)),
+    ),
+  );
+  return dir;
+}

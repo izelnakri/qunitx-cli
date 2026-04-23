@@ -1,4 +1,4 @@
-import HTTPServer from '../../lib/servers/http.ts';
+import HTTPServer from '../../lib/servers/web.ts';
 import { bindServerToPort } from '../../lib/setup/bind-server-to-port.ts';
 import './before-script-basic.ts';
 import QUnit from 'qunitx';

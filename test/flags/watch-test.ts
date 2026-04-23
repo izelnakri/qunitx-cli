@@ -3,18 +3,6 @@ import net from 'node:net';
 import '../helpers/custom-asserts.ts';
 import { shellWatch } from '../helpers/shell.ts';
 
-function findFreePort(): Promise<{ number: number; release: () => Promise<void> }> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once('error', reject);
-    server.once('listening', () => {
-      const number = (server.address() as net.AddressInfo).port;
-      resolve({ number, release: () => new Promise((res) => server.close(res)) });
-    });
-    server.listen(0, '::');
-  });
-}
-
 module('--watch flag tests', { concurrency: true }, () => {
   test('--watch runs tests, starts the server, and prints watching info', async (assert) => {
     const stdout = await shellWatch('node cli.ts test/helpers/passing-tests.ts --watch', {
@@ -84,3 +72,15 @@ module('--watch flag tests', { concurrency: true }, () => {
     );
   });
 });
+
+function findFreePort(): Promise<{ number: number; release: () => Promise<void> }> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.once('listening', () => {
+      const number = (server.address() as net.AddressInfo).port;
+      resolve({ number, release: () => new Promise((res) => server.close(res)) });
+    });
+    server.listen(0, '::');
+  });
+}

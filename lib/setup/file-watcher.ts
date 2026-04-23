@@ -207,46 +207,6 @@ export function setupFileWatchers(
 }
 
 /**
- * Resolves the event type for a 'rename' kernel event by stat-ing the path.
- * On macOS (FSEvents) plain file writes frequently arrive as 'rename' instead of 'change';
- * if the path is already tracked in fsTree we return 'change' (modification) rather than 'add'.
- * Retries once after 50ms for overlayfs (Docker CI) copy-on-write transient unavailability.
- * Returns null when the path is unknown and has no tracked children (safe to ignore).
- */
-async function classifyRenameEvent(
-  fullPath: string,
-  fsTree: FSTree | undefined,
-): Promise<string | null> {
-  for (const delay of [0, OVERLAYFS_RENAME_RETRY_MS]) {
-    if (delay) await new Promise<void>((resolve) => setTimeout(resolve, delay));
-    try {
-      const statResult = await stat(fullPath);
-      if (statResult.isDirectory()) return 'addDir';
-      // On macOS (FSEvents) a plain file write often fires a 'rename' kernel event instead
-      // of 'change'. If the path is already tracked in fsTree the rename is a modification —
-      // return 'change' so the rebuild path clears the bundle cache and logs 'CHANGED:'
-      // rather than 'ADDED:'. Genuine new files are not yet in fsTree, so they still get 'add'.
-      return fsTree && fullPath in fsTree ? 'change' : 'add';
-    } catch {
-      // File/dir not yet available — retry or fall through to unlink classification.
-    }
-  }
-
-  // stat failed on both attempts — file/dir is genuinely gone.
-  if (!fsTree) return null;
-  if (fullPath in fsTree) return 'unlink';
-  // Check whether it was a directory that still has tracked children. fs.watch fires one 'rename'
-  // event for the directory itself (not per-child), so we coalesce all child removals into one
-  // unlinkDir rather than silently ignoring the event.
-  return Object.keys(fsTree).some(
-    (trackedPath) =>
-      trackedPath.startsWith(fullPath + '/') || trackedPath.startsWith(fullPath + '\\'),
-  )
-    ? 'unlinkDir'
-    : null;
-}
-
-/**
  * Routes a file-system event to fsTree mutation and optional rebuild trigger.
  * `unlinkDir` bypasses the extension filter so deleted directories always clean up fsTree.
  * When a build is already in progress, queues the event as a pending trigger (last-write-wins).
@@ -370,10 +330,46 @@ export function mutateFSTree(fsTree: FSTree, event: string, filePath: string): v
   }
 }
 
+export { setupFileWatchers as default };
+
+/**
+ * Resolves the event type for a 'rename' kernel event by stat-ing the path.
+ * On macOS (FSEvents) plain file writes frequently arrive as 'rename' instead of 'change';
+ * if the path is already tracked in fsTree we return 'change' (modification) rather than 'add'.
+ * Retries once after 50ms for overlayfs (Docker CI) copy-on-write transient unavailability.
+ * Returns null when the path is unknown and has no tracked children (safe to ignore).
+ */
+async function classifyRenameEvent(
+  fullPath: string,
+  fsTree: FSTree | undefined,
+): Promise<string | null> {
+  for (const delay of [0, OVERLAYFS_RENAME_RETRY_MS]) {
+    if (delay) await new Promise<void>((resolve) => setTimeout(resolve, delay));
+    try {
+      const statResult = await stat(fullPath);
+      if (statResult.isDirectory()) return 'addDir';
+      return fsTree && fullPath in fsTree ? 'change' : 'add';
+    } catch {
+      // File/dir not yet available — retry or fall through to unlink classification.
+    }
+  }
+
+  // stat failed on both attempts — file/dir is genuinely gone.
+  if (!fsTree) return null;
+  if (fullPath in fsTree) return 'unlink';
+  // Check whether it was a directory that still has tracked children. fs.watch fires one 'rename'
+  // event for the directory itself (not per-child), so we coalesce all child removals into one
+  // unlinkDir rather than silently ignoring the event.
+  return Object.keys(fsTree).some(
+    (trackedPath) =>
+      trackedPath.startsWith(fullPath + '/') || trackedPath.startsWith(fullPath + '\\'),
+  )
+    ? 'unlinkDir'
+    : null;
+}
+
 function colorEvent(event: string): unknown {
   if (event === 'change') return yellow('CHANGED:');
   if (event === 'add' || event === 'addDir') return green('ADDED:');
   return red('REMOVED:');
 }
-
-export { setupFileWatchers as default };

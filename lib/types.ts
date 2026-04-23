@@ -1,4 +1,4 @@
-import type { HTTPServer } from './servers/http.ts';
+import type { HTTPServer } from './servers/web.ts';
 import type { Browser, Page } from 'playwright-core';
 import type { ChildProcess } from 'node:child_process';
 import type { Buffer } from 'node:buffer';

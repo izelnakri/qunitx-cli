@@ -108,6 +108,8 @@ export function parseCliFlags(projectRoot: string): ParsedFlags {
   return { ...providedFlags, inputs: Array.from(providedFlags.inputs) };
 }
 
+export { parseCliFlags as default };
+
 function parseBoolean(result: string, defaultValue = true): boolean {
   if (result === 'true') {
     return true;
@@ -125,5 +127,3 @@ function parseModule(value: string): string | false {
 
   return value;
 }
-
-export { parseCliFlags as default };

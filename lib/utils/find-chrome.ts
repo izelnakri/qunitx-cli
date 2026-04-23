@@ -5,6 +5,17 @@ const CANDIDATES = ['google-chrome-stable', 'google-chrome', 'chromium', 'chromi
 const PATH_DIRS = (process.env.PATH || '').split(':').filter(Boolean);
 
 /**
+ * Resolves the Chrome/Chromium executable path. Returns a Promise for API compatibility
+ * with callers, but the resolution is synchronous.
+ * @returns {Promise<string|null>}
+ */
+export function findChrome(): Promise<string | null> {
+  return Promise.resolve(findChromeSync());
+}
+
+export { findChrome as default };
+
+/**
  * Synchronously resolves the Chrome/Chromium executable path from `CHROME_BIN` or by probing
  * common binary names in PATH directories using accessSync.
  * Synchronous to avoid I/O saturation during the module-loading phase, which would cause async
@@ -27,14 +38,3 @@ function findChromeSync(): string | null {
   }
   return null;
 }
-
-/**
- * Resolves the Chrome/Chromium executable path. Returns a Promise for API compatibility
- * with callers, but the resolution is synchronous.
- * @returns {Promise<string|null>}
- */
-export function findChrome(): Promise<string | null> {
-  return Promise.resolve(findChromeSync());
-}
-
-export { findChrome as default };

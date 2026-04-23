@@ -44,6 +44,8 @@ export async function setupConfig(): Promise<Config> {
   return config as Config;
 }
 
+export { setupConfig as default };
+
 async function readConfigFromPackageJSON(projectRoot: string) {
   const packageJSON = await fs.readFile(`${projectRoot}/package.json`);
 
@@ -62,5 +64,3 @@ function readInputsFromPackageJSON(packageJSON: {
 
   return qunitx && qunitx.inputs ? qunitx.inputs : [];
 }
-
-export { setupConfig as default };

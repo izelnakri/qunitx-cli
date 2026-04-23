@@ -137,12 +137,6 @@ export function parseSourceMap(json: string, outDir: string): SourceMapDecoder {
 // Shared decoder instance — TextDecoder is stateless; one instance is safe to reuse.
 const UTF8 = new TextDecoder();
 
-// Browser-compatible base64 → UTF-8 decode (atob + TextDecoder are global in browsers and Node 16+).
-function base64DecodeUtf8(b64: string): string {
-  const binary = atob(b64);
-  return UTF8.decode(Uint8Array.from(binary, (c) => c.charCodeAt(0)));
-}
-
 /**
  * Extracts and decodes the inline source map that esbuild appends to a bundle as
  * `//# sourceMappingURL=data:application/json;base64,…`.
@@ -164,33 +158,6 @@ export function extractInlineSourceMap(
   } catch {
     return null;
   }
-}
-
-// ── Position lookup ───────────────────────────────────────────────────────────
-
-// Resolve `..` and `.` components in a POSIX path string.
-function normalizePosix(p: string): string {
-  const abs = p.startsWith('/');
-  const parts = p.split('/');
-  const out: string[] = [];
-  for (const part of parts) {
-    if (part === '..') out.pop();
-    else if (part !== '' && part !== '.') out.push(part);
-  }
-  return (abs ? '/' : '') + out.join('/');
-}
-
-// path.resolve(base, relative) — base must be absolute.
-function posixResolve(base: string, relative: string): string {
-  if (relative.startsWith('/')) return normalizePosix(relative);
-  return normalizePosix(base + '/' + relative);
-}
-
-function toAbsolutePath(raw: string, outDir: string, sourceRoot: string): string {
-  if (raw.startsWith('file://')) return raw.slice(7);
-  if (raw.startsWith('/')) return raw; // already absolute
-  const base = sourceRoot ? normalizePosix(outDir + '/' + sourceRoot) : outDir;
-  return posixResolve(base, raw);
 }
 
 /**
@@ -263,33 +230,6 @@ export function parseFrameLocation(s: string): { url: string; line: number; col:
 export function isBundleUrl(url: string): boolean {
   const normalized = url.startsWith('async ') ? url.slice(6) : url;
   return /^https?:\/\//.test(normalized) && /\/(tests|filtered-tests)\.js$/.test(normalized);
-}
-
-function isNodeModulesPath(absolutePath: string): boolean {
-  return absolutePath.includes('/node_modules/') || absolutePath.includes('\\node_modules\\');
-}
-
-function makeDisplayPath(absolutePath: string, projectRoot: string): string {
-  const prefix = projectRoot + '/';
-  return absolutePath.startsWith(prefix) ? absolutePath.slice(prefix.length) : absolutePath;
-}
-
-/** Resolves a `URL:LINE:COL` string to a display path + userPath + sourceText, or null on miss. */
-function tryResolve(
-  urlLineCol: string,
-  decoder: SourceMapDecoder,
-  projectRoot: string,
-): { display: string; userPath: string | null; sourceText: string | null } | null {
-  const loc = parseFrameLocation(urlLineCol);
-  if (!loc || !isBundleUrl(loc.url)) return null;
-  const orig = lookupPosition(decoder, loc.line, loc.col);
-  if (!orig) return null;
-  const display = `${makeDisplayPath(orig.absolutePath, projectRoot)}:${orig.line}:${orig.col}`;
-  return {
-    display,
-    userPath: isNodeModulesPath(orig.absolutePath) ? null : display,
-    sourceText: orig.sourceText,
-  };
 }
 
 /**
@@ -367,4 +307,64 @@ export function resolveStack(
   });
 
   return { resolvedStack: resolvedLines.join('\n'), firstUserFrame, firstUserSourceText };
+}
+
+// Browser-compatible base64 → UTF-8 decode (atob + TextDecoder are global in browsers and Node 16+).
+function base64DecodeUtf8(b64: string): string {
+  const binary = atob(b64);
+  return UTF8.decode(Uint8Array.from(binary, (c) => c.charCodeAt(0)));
+}
+
+// ── Position lookup ───────────────────────────────────────────────────────────
+
+// Resolve `..` and `.` components in a POSIX path string.
+function normalizePosix(p: string): string {
+  const abs = p.startsWith('/');
+  const parts = p.split('/');
+  const out: string[] = [];
+  for (const part of parts) {
+    if (part === '..') out.pop();
+    else if (part !== '' && part !== '.') out.push(part);
+  }
+  return (abs ? '/' : '') + out.join('/');
+}
+
+// path.resolve(base, relative) — base must be absolute.
+function posixResolve(base: string, relative: string): string {
+  if (relative.startsWith('/')) return normalizePosix(relative);
+  return normalizePosix(base + '/' + relative);
+}
+
+function toAbsolutePath(raw: string, outDir: string, sourceRoot: string): string {
+  if (raw.startsWith('file://')) return raw.slice(7);
+  if (raw.startsWith('/')) return raw; // already absolute
+  const base = sourceRoot ? normalizePosix(outDir + '/' + sourceRoot) : outDir;
+  return posixResolve(base, raw);
+}
+
+function isNodeModulesPath(absolutePath: string): boolean {
+  return absolutePath.includes('/node_modules/') || absolutePath.includes('\\node_modules\\');
+}
+
+function makeDisplayPath(absolutePath: string, projectRoot: string): string {
+  const prefix = projectRoot + '/';
+  return absolutePath.startsWith(prefix) ? absolutePath.slice(prefix.length) : absolutePath;
+}
+
+/** Resolves a `URL:LINE:COL` string to a display path + userPath + sourceText, or null on miss. */
+function tryResolve(
+  urlLineCol: string,
+  decoder: SourceMapDecoder,
+  projectRoot: string,
+): { display: string; userPath: string | null; sourceText: string | null } | null {
+  const loc = parseFrameLocation(urlLineCol);
+  if (!loc || !isBundleUrl(loc.url)) return null;
+  const orig = lookupPosition(decoder, loc.line, loc.col);
+  if (!orig) return null;
+  const display = `${makeDisplayPath(orig.absolutePath, projectRoot)}:${orig.line}:${orig.col}`;
+  return {
+    display,
+    userPath: isNodeModulesPath(orig.absolutePath) ? null : display,
+    sourceText: orig.sourceText,
+  };
 }

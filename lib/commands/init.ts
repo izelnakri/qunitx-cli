@@ -23,6 +23,8 @@ export async function initializeProject() {
   ]);
 }
 
+export { initializeProject as default };
+
 async function writeTestsHTML(
   projectRoot: string,
   config: { htmlPaths: string[]; output: string },
@@ -75,5 +77,3 @@ async function writeTSConfigIfNeeded(projectRoot: string): Promise<void> {
     console.log(`${targetPath} written`);
   }
 }
-
-export { initializeProject as default };

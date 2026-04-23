@@ -6,7 +6,7 @@
  * it is affected by OS TCP TIME_WAIT state accumulated by the test suite that runs
  * before bench-check in `make release`, making it unreliable as a regression gate.
  */
-import HTTPServer from "../lib/servers/http.ts";
+import HTTPServer from "../lib/servers/web.ts";
 
 Deno.bench("server: create HTTPServer instance", {
   group: "server",

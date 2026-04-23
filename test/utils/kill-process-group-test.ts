@@ -2,27 +2,6 @@ import { module, test } from 'qunitx';
 import { spawn } from 'node:child_process';
 import { killProcessGroup } from '../../lib/utils/kill-process-group.ts';
 
-// Polls `check()` every 20 ms until it returns true or `deadlineMs` elapses.
-// Used to wait for OS process-table cleanup after SIGKILL — the kernel delivers
-// SIGKILL immediately but the entry lingers until the parent calls wait().
-async function pollUntil(check: () => boolean, deadlineMs = 1000): Promise<boolean> {
-  const deadline = Date.now() + deadlineMs;
-  while (Date.now() < deadline) {
-    if (check()) return true;
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  return check();
-}
-
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0); // signal 0 = existence check; throws ESRCH if gone
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 module('Utils | killProcessGroup', { concurrency: true }, () => {
   test(
     'kills the spawned process when it has no children',
@@ -101,3 +80,24 @@ module('Utils | killProcessGroup', { concurrency: true }, () => {
     },
   );
 });
+
+// Polls `check()` every 20 ms until it returns true or `deadlineMs` elapses.
+// Used to wait for OS process-table cleanup after SIGKILL — the kernel delivers
+// SIGKILL immediately but the entry lingers until the parent calls wait().
+async function pollUntil(check: () => boolean, deadlineMs = 1000): Promise<boolean> {
+  const deadline = Date.now() + deadlineMs;
+  while (Date.now() < deadline) {
+    if (check()) return true;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  return check();
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0); // signal 0 = existence check; throws ESRCH if gone
+    return true;
+  } catch {
+    return false;
+  }
+}

@@ -5,7 +5,7 @@ import { CHROMIUM_ARGS } from '../utils/chromium-args.ts';
 import { prelaunchPromise, shutdownPrelaunch } from '../utils/chrome-prelaunch.ts';
 import { perfLog } from '../utils/perf-logger.ts';
 import type { Browser } from 'playwright-core';
-import type { HTTPServer } from '../servers/http.ts';
+import type { HTTPServer } from '../servers/web.ts';
 import type { Config, CachedContent, Connections } from '../types.ts';
 
 // Playwright-core starts loading the moment run.js imports this module.

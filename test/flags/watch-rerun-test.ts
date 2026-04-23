@@ -11,220 +11,6 @@ const CLI = `${process.cwd()}/cli.ts`;
 const CHILD_EXIT_GRACE_MS = 5000;
 const QUNITX_BROWSER = process.env.QUNITX_BROWSER;
 
-// Count non-overlapping occurrences of `needle` in `str`.
-function countOccurrences(str: string, needle: string): number {
-  let count = 0;
-  let pos = 0;
-  while ((pos = str.indexOf(needle, pos)) !== -1) {
-    count++;
-    pos += needle.length;
-  }
-  return count;
-}
-
-interface WatchSession {
-  /** Resolves once `condition(accumulatedStdout)` returns true, or rejects after 90s. */
-  waitFor(condition: (buf: string) => boolean, description?: string): Promise<string>;
-  /** Sends SIGTERM and resolves once the child process has fully exited. */
-  kill(): Promise<void>;
-  readonly stdout: string;
-}
-
-// Spawns a long-running watch-mode process. Returns a session object that lets tests
-// wait for incremental stdout output and kill the child when done.
-async function spawnWatch(
-  args: string[],
-  { cwd = process.cwd(), timeout = 120000 }: { cwd?: string; timeout?: number } = {},
-): Promise<WatchSession> {
-  const outputDir = `${process.cwd()}/tmp/run-${randomUUID()}`;
-  const allArgs = [CLI, ...args, `--output=${outputDir}`];
-  if (QUNITX_BROWSER && !args.some((arg) => arg.startsWith('--browser'))) {
-    allArgs.push(`--browser=${QUNITX_BROWSER}`);
-  }
-
-  const permit = await acquireBrowser();
-  const child = spawn(process.execPath, allArgs, { cwd });
-  let buf = '';
-  const listeners: Array<(buf: string) => void> = [];
-
-  child.stdout.on('data', (chunk: Buffer) => {
-    buf += chunk.toString();
-    for (const l of [...listeners]) l(buf);
-  });
-  child.stderr.resume();
-
-  // Track unexpected exits so waitFor can reject immediately instead of hanging.
-  let exitCode: number | null = null;
-  let exitReject: ((err: Error) => void) | null = null;
-  child.once('exit', (code) => {
-    exitCode = code ?? 0;
-    exitReject?.(
-      new Error(
-        `Watch process exited unexpectedly (code=${exitCode}). Last 500 chars:\n${buf.slice(-500)}`,
-      ),
-    );
-    exitReject = null;
-  });
-
-  return {
-    waitFor(condition, description) {
-      if (condition(buf)) return Promise.resolve(buf);
-      const what = description ? `waiting for '${description}'` : 'waiting for condition';
-      if (exitCode !== null) {
-        return Promise.reject(
-          new Error(
-            `Watch process already exited (code=${exitCode}) while ${what}. Last 500 chars:\n${buf.slice(-500)}`,
-          ),
-        );
-      }
-      return new Promise((resolve, reject) => {
-        exitReject = reject;
-        const timer = setTimeout(() => {
-          // Remove the stale listener so it cannot fire exitReject = null on a future
-          // waitFor call's reject function, silently breaking crash-detection.
-          listeners.splice(listeners.indexOf(listener), 1);
-          if (exitReject === reject) exitReject = null;
-          reject(
-            new Error(
-              `spawnWatch timed out after ${timeout}ms while ${what}. Last 500 chars:\n${buf.slice(-500)}`,
-            ),
-          );
-        }, timeout);
-        const listener = (newBuf: string) => {
-          if (condition(newBuf)) {
-            clearTimeout(timer);
-            exitReject = null;
-            listeners.splice(listeners.indexOf(listener), 1);
-            resolve(newBuf);
-          }
-        };
-        listeners.push(listener);
-      });
-    },
-    kill() {
-      return new Promise<void>((resolve) => {
-        // Safety valve: if the process hasn't exited in CHILD_EXIT_GRACE_MS, stop waiting.
-        // Crucially: remove the 'exit' listener and unref() the child so the
-        // ChildProcess handle no longer keeps the Node.js event loop alive.
-        // Without this, a stuck child (rare but observed on CI) causes the
-        // test runner to hang indefinitely after the test function resolves.
-        const timer = setTimeout(() => {
-          child.removeListener('exit', done);
-          child.unref();
-          permit.release();
-          resolve();
-        }, CHILD_EXIT_GRACE_MS);
-        timer.unref();
-
-        // Resolve after exit so the next test doesn't start until Chrome and the
-        // HTTP server from this run are fully released (prevents resource contention
-        // on CI where consecutive Chrome instances can starve the new one).
-        const done = () => {
-          clearTimeout(timer);
-          permit.release();
-          resolve();
-        };
-        child.once('exit', done);
-        child.kill('SIGTERM');
-        child.stdin.destroy();
-        child.stdout.destroy();
-        child.stderr.destroy();
-      });
-    },
-    get stdout() {
-      return buf;
-    },
-  };
-}
-
-// Creates a temp project whose tests live under a `tests/` subdirectory so the
-// file watcher watches a directory (not a file). This is required because
-// `fs.watch` on a directory correctly resolves `path.join(watchPath, filename)`
-// whereas watching an individual file produces an incorrect joined path.
-async function makeWatchProject(): Promise<{
-  dir: string;
-  id: string;
-  testsDir: string;
-  testFile: string;
-  testContent: string;
-}> {
-  const id = randomUUID();
-  const dir = `${process.cwd()}/tmp/${id}`;
-  const testsDir = `${dir}/tests`;
-  await fs.mkdir(testsDir, { recursive: true });
-  const [template] = await Promise.all([
-    fs.readFile(`${process.cwd()}/test/helpers/passing-tests.ts`),
-    fs.symlink(`${process.cwd()}/node_modules`, `${dir}/node_modules`),
-    fs.writeFile(
-      `${dir}/package.json`,
-      JSON.stringify({ name: id, version: '0.0.1', type: 'module' }),
-    ),
-  ]);
-  const testContent = template.toString().replace('{{moduleName}}', id);
-  const testFile = `${testsDir}/passing-tests.ts`;
-  await fs.writeFile(testFile, testContent);
-
-  return { dir, id, testsDir, testFile, testContent };
-}
-
-// Waits for the nth "QUnitX running:" header to appear, then waits for "# duration"
-// to appear after it (i.e. the run has fully completed).
-// Returns a frozen snapshot of stdout at the moment the Nth run completes.
-// The condition in the second waitFor guarantees the snapshot ends with a
-// completed run: it only fires when '# duration' follows the last 'QUnitX
-// running:', so no subsequent run-start banner can appear in the snapshot.
-async function waitForRunComplete(
-  session: WatchSession,
-  minRunCount: number,
-  label?: string,
-): Promise<string> {
-  await session.waitFor((buf) => countOccurrences(buf, 'QUnitX running:') >= minRunCount, label);
-  return session.waitFor((buf) => buf.includes('# duration', buf.lastIndexOf('QUnitX running:')));
-}
-
-// Polls `fn` every `interval` ms until `predicate(result)` is true, then returns the result.
-// Rejects with a descriptive error if `timeout` ms elapse without the predicate being satisfied.
-async function pollUntil<T>(
-  fn: () => Promise<T>,
-  predicate: (result: T) => boolean,
-  {
-    interval = 50,
-    timeout = 5000,
-    label = 'condition',
-  }: { interval?: number; timeout?: number; label?: string } = {},
-): Promise<T> {
-  const deadline = Date.now() + timeout;
-  while (true) {
-    const result = await fn();
-    if (predicate(result)) return result;
-    if (Date.now() >= deadline)
-      throw new Error(`pollUntil: ${label} not satisfied within ${timeout}ms`);
-    await new Promise<void>((resolve) => setTimeout(resolve, interval));
-  }
-}
-
-// Creates a project with an extra symlink .ts file inside tests/.
-// The symlink points to a real file OUTSIDE the watched directory so that
-// deleting the symlink does not also destroy the content.
-async function makeWatchProjectWithSymlink(): Promise<{
-  dir: string;
-  id: string;
-  testsDir: string;
-  testFile: string;
-  testContent: string;
-  target: string;
-  symlink: string;
-  symlinkId: string;
-}> {
-  const project = await makeWatchProject();
-  const symlinkId = randomUUID();
-  const target = `${project.dir}/symlink-target.ts`; // outside tests/
-  const symlink = `${project.testsDir}/symlink.ts`; // inside tests/ (watched)
-  await fs.writeFile(target, project.testContent.replace(project.id, symlinkId));
-  await fs.symlink(target, symlink);
-  return { ...project, target, symlink, symlinkId };
-}
-
 module('--watch re-run tests', { concurrency: true }, () => {
   test('changing a file in watched directory triggers a re-run', async (assert) => {
     const { dir, id, testFile, testContent } = await makeWatchProject();
@@ -992,3 +778,217 @@ module('--watch re-run tests', { concurrency: true }, () => {
     }
   });
 });
+
+// Count non-overlapping occurrences of `needle` in `str`.
+function countOccurrences(str: string, needle: string): number {
+  let count = 0;
+  let pos = 0;
+  while ((pos = str.indexOf(needle, pos)) !== -1) {
+    count++;
+    pos += needle.length;
+  }
+  return count;
+}
+
+interface WatchSession {
+  /** Resolves once `condition(accumulatedStdout)` returns true, or rejects after 90s. */
+  waitFor(condition: (buf: string) => boolean, description?: string): Promise<string>;
+  /** Sends SIGTERM and resolves once the child process has fully exited. */
+  kill(): Promise<void>;
+  readonly stdout: string;
+}
+
+// Spawns a long-running watch-mode process. Returns a session object that lets tests
+// wait for incremental stdout output and kill the child when done.
+async function spawnWatch(
+  args: string[],
+  { cwd = process.cwd(), timeout = 120000 }: { cwd?: string; timeout?: number } = {},
+): Promise<WatchSession> {
+  const outputDir = `${process.cwd()}/tmp/run-${randomUUID()}`;
+  const allArgs = [CLI, ...args, `--output=${outputDir}`];
+  if (QUNITX_BROWSER && !args.some((arg) => arg.startsWith('--browser'))) {
+    allArgs.push(`--browser=${QUNITX_BROWSER}`);
+  }
+
+  const permit = await acquireBrowser();
+  const child = spawn(process.execPath, allArgs, { cwd });
+  let buf = '';
+  const listeners: Array<(buf: string) => void> = [];
+
+  child.stdout.on('data', (chunk: Buffer) => {
+    buf += chunk.toString();
+    for (const l of [...listeners]) l(buf);
+  });
+  child.stderr.resume();
+
+  // Track unexpected exits so waitFor can reject immediately instead of hanging.
+  let exitCode: number | null = null;
+  let exitReject: ((err: Error) => void) | null = null;
+  child.once('exit', (code) => {
+    exitCode = code ?? 0;
+    exitReject?.(
+      new Error(
+        `Watch process exited unexpectedly (code=${exitCode}). Last 500 chars:\n${buf.slice(-500)}`,
+      ),
+    );
+    exitReject = null;
+  });
+
+  return {
+    waitFor(condition, description) {
+      if (condition(buf)) return Promise.resolve(buf);
+      const what = description ? `waiting for '${description}'` : 'waiting for condition';
+      if (exitCode !== null) {
+        return Promise.reject(
+          new Error(
+            `Watch process already exited (code=${exitCode}) while ${what}. Last 500 chars:\n${buf.slice(-500)}`,
+          ),
+        );
+      }
+      return new Promise((resolve, reject) => {
+        exitReject = reject;
+        const timer = setTimeout(() => {
+          // Remove the stale listener so it cannot fire exitReject = null on a future
+          // waitFor call's reject function, silently breaking crash-detection.
+          listeners.splice(listeners.indexOf(listener), 1);
+          if (exitReject === reject) exitReject = null;
+          reject(
+            new Error(
+              `spawnWatch timed out after ${timeout}ms while ${what}. Last 500 chars:\n${buf.slice(-500)}`,
+            ),
+          );
+        }, timeout);
+        const listener = (newBuf: string) => {
+          if (condition(newBuf)) {
+            clearTimeout(timer);
+            exitReject = null;
+            listeners.splice(listeners.indexOf(listener), 1);
+            resolve(newBuf);
+          }
+        };
+        listeners.push(listener);
+      });
+    },
+    kill() {
+      return new Promise<void>((resolve) => {
+        // Safety valve: if the process hasn't exited in CHILD_EXIT_GRACE_MS, stop waiting.
+        // Crucially: remove the 'exit' listener and unref() the child so the
+        // ChildProcess handle no longer keeps the Node.js event loop alive.
+        // Without this, a stuck child (rare but observed on CI) causes the
+        // test runner to hang indefinitely after the test function resolves.
+        const timer = setTimeout(() => {
+          child.removeListener('exit', done);
+          child.unref();
+          permit.release();
+          resolve();
+        }, CHILD_EXIT_GRACE_MS);
+        timer.unref();
+
+        // Resolve after exit so the next test doesn't start until Chrome and the
+        // HTTP server from this run are fully released (prevents resource contention
+        // on CI where consecutive Chrome instances can starve the new one).
+        const done = () => {
+          clearTimeout(timer);
+          permit.release();
+          resolve();
+        };
+        child.once('exit', done);
+        child.kill('SIGTERM');
+        child.stdin.destroy();
+        child.stdout.destroy();
+        child.stderr.destroy();
+      });
+    },
+    get stdout() {
+      return buf;
+    },
+  };
+}
+
+// Creates a temp project whose tests live under a `tests/` subdirectory so the
+// file watcher watches a directory (not a file). This is required because
+// `fs.watch` on a directory correctly resolves `path.join(watchPath, filename)`
+// whereas watching an individual file produces an incorrect joined path.
+async function makeWatchProject(): Promise<{
+  dir: string;
+  id: string;
+  testsDir: string;
+  testFile: string;
+  testContent: string;
+}> {
+  const id = randomUUID();
+  const dir = `${process.cwd()}/tmp/${id}`;
+  const testsDir = `${dir}/tests`;
+  await fs.mkdir(testsDir, { recursive: true });
+  const [template] = await Promise.all([
+    fs.readFile(`${process.cwd()}/test/helpers/passing-tests.ts`),
+    fs.symlink(`${process.cwd()}/node_modules`, `${dir}/node_modules`),
+    fs.writeFile(
+      `${dir}/package.json`,
+      JSON.stringify({ name: id, version: '0.0.1', type: 'module' }),
+    ),
+  ]);
+  const testContent = template.toString().replace('{{moduleName}}', id);
+  const testFile = `${testsDir}/passing-tests.ts`;
+  await fs.writeFile(testFile, testContent);
+
+  return { dir, id, testsDir, testFile, testContent };
+}
+
+// Waits for the nth "QUnitX running:" header to appear, then waits for "# duration"
+// to appear after it (i.e. the run has fully completed).
+// Returns a frozen snapshot of stdout at the moment the Nth run completes.
+// The condition in the second waitFor guarantees the snapshot ends with a
+// completed run: it only fires when '# duration' follows the last 'QUnitX
+// running:', so no subsequent run-start banner can appear in the snapshot.
+async function waitForRunComplete(
+  session: WatchSession,
+  minRunCount: number,
+  label?: string,
+): Promise<string> {
+  await session.waitFor((buf) => countOccurrences(buf, 'QUnitX running:') >= minRunCount, label);
+  return session.waitFor((buf) => buf.includes('# duration', buf.lastIndexOf('QUnitX running:')));
+}
+
+// Polls `fn` every `interval` ms until `predicate(result)` is true, then returns the result.
+// Rejects with a descriptive error if `timeout` ms elapse without the predicate being satisfied.
+async function pollUntil<T>(
+  fn: () => Promise<T>,
+  predicate: (result: T) => boolean,
+  {
+    interval = 50,
+    timeout = 5000,
+    label = 'condition',
+  }: { interval?: number; timeout?: number; label?: string } = {},
+): Promise<T> {
+  const deadline = Date.now() + timeout;
+  while (true) {
+    const result = await fn();
+    if (predicate(result)) return result;
+    if (Date.now() >= deadline)
+      throw new Error(`pollUntil: ${label} not satisfied within ${timeout}ms`);
+    await new Promise<void>((resolve) => setTimeout(resolve, interval));
+  }
+}
+
+// Creates a project with an extra symlink .ts file inside tests/.
+// The symlink points to a real file OUTSIDE the watched directory so that
+// deleting the symlink does not also destroy the content.
+async function makeWatchProjectWithSymlink(): Promise<{
+  dir: string;
+  id: string;
+  testsDir: string;
+  testFile: string;
+  testContent: string;
+  target: string;
+  symlink: string;
+  symlinkId: string;
+}> {
+  const project = await makeWatchProject();
+  const symlinkId = randomUUID();
+  const target = `${project.dir}/symlink-target.ts`; // outside tests/
+  const symlink = `${project.testsDir}/symlink.ts`; // inside tests/ (watched)
+  await fs.writeFile(target, project.testContent.replace(project.id, symlinkId));
+  await fs.symlink(target, symlink);
+  return { ...project, target, symlink, symlinkId };
+}

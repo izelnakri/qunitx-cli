@@ -1,9 +1,5 @@
 import { matchesGlob } from 'node:path';
 
-function isGlob(str: string): boolean {
-  return /[*?{[]/.test(str);
-}
-
 interface PathMeta {
   input: string;
   isFile: boolean;
@@ -53,6 +49,8 @@ export function setupTestFilePaths(_projectRoot: string, inputs: string[]): stri
   return result.map((metaItem) => metaItem.input);
 }
 
+export { setupTestFilePaths as default };
+
 function pathIsFile(path: string): boolean {
   const inputs = path.split('/');
 
@@ -73,4 +71,6 @@ function buildGlobFormat(path: PathMeta): string {
   return path.isFile ? path.input : `${path.input}/**`;
 }
 
-export { setupTestFilePaths as default };
+function isGlob(str: string): boolean {
+  return /[*?{[]/.test(str);
+}

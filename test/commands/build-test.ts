@@ -12,57 +12,6 @@ const CWD = process.cwd();
 const FILE_A = `${CWD}/test/helpers/passing-tests.ts`;
 const FILE_B = `${CWD}/test/helpers/failing-tests.ts`;
 
-function makeConfig(testFiles: string[], watch = false): Config {
-  return {
-    output: `tmp/build-test-${randomUUID()}`,
-    timeout: 30000,
-    failFast: false,
-    port: 1234,
-    extensions: ['ts', 'js'],
-    browser: 'chromium',
-    projectRoot: CWD,
-    inputs: [],
-    htmlPaths: [],
-    testFileLookupPaths: [],
-    fsTree: Object.fromEntries(testFiles.map((f) => [f, null])),
-    watch,
-    COUNTER: {
-      testCount: 0,
-      failCount: 0,
-      skipCount: 0,
-      todoCount: 0,
-      passCount: 0,
-      errorCount: 0,
-    },
-    lastFailedTestFiles: null,
-    lastRanTestFiles: null,
-    _testRunDone: null,
-    _resetTestTimeout: null,
-    _onWsOpen: null,
-    _onTestsJsServed: null,
-  } as unknown as Config;
-}
-
-function makeCachedContent(): CachedContent {
-  return {
-    allTestCode: null,
-    assets: new Set(),
-    // '/' path skips the inner rm/mkdir in buildTestBundle — keeps tests self-contained.
-    htmlPathsToRunTests: ['/'],
-    mainHTML: { filePath: null, html: null },
-    staticHTMLs: {},
-    dynamicContentHTMLs: {},
-  };
-}
-
-// Dispose any live esbuild context so the service can be cleaned up after each test.
-async function disposeCached(cached: CachedContent): Promise<void> {
-  if (cached._esbuildContext) {
-    await cached._esbuildContext.dispose().catch(() => {});
-    cached._esbuildContext = null;
-  }
-}
-
 module('Commands | buildTestBundle | non-watch mode', { concurrency: true }, () => {
   test('produces a non-empty bundle', async (assert) => {
     const config = makeConfig([FILE_A]);
@@ -235,3 +184,54 @@ module('Commands | buildTestBundle | nodePaths resolution', { concurrency: true 
 });
 
 // tmp/ output dirs are cleaned up by test/runner.ts at the start of each full suite run.
+
+function makeConfig(testFiles: string[], watch = false): Config {
+  return {
+    output: `tmp/build-test-${randomUUID()}`,
+    timeout: 30000,
+    failFast: false,
+    port: 1234,
+    extensions: ['ts', 'js'],
+    browser: 'chromium',
+    projectRoot: CWD,
+    inputs: [],
+    htmlPaths: [],
+    testFileLookupPaths: [],
+    fsTree: Object.fromEntries(testFiles.map((f) => [f, null])),
+    watch,
+    COUNTER: {
+      testCount: 0,
+      failCount: 0,
+      skipCount: 0,
+      todoCount: 0,
+      passCount: 0,
+      errorCount: 0,
+    },
+    lastFailedTestFiles: null,
+    lastRanTestFiles: null,
+    _testRunDone: null,
+    _resetTestTimeout: null,
+    _onWsOpen: null,
+    _onTestsJsServed: null,
+  } as unknown as Config;
+}
+
+function makeCachedContent(): CachedContent {
+  return {
+    allTestCode: null,
+    assets: new Set(),
+    // '/' path skips the inner rm/mkdir in buildTestBundle — keeps tests self-contained.
+    htmlPathsToRunTests: ['/'],
+    mainHTML: { filePath: null, html: null },
+    staticHTMLs: {},
+    dynamicContentHTMLs: {},
+  };
+}
+
+// Dispose any live esbuild context so the service can be cleaned up after each test.
+async function disposeCached(cached: CachedContent): Promise<void> {
+  if (cached._esbuildContext) {
+    await cached._esbuildContext.dispose().catch(() => {});
+    cached._esbuildContext = null;
+  }
+}

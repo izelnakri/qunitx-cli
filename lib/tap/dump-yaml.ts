@@ -18,6 +18,43 @@
 const NEEDS_QUOTING =
   /^$|^\s|^(null|true|false|~|yes|no|on|off|y|n)$|^[{[!|>'"#%@`]|^[-?:](\s|$)|^---|^[-+]?(\d|\.\d)|^\d{4}-\d{2}-\d{2}|: |#/i;
 
+/**
+ * Serializes the fixed TAP assertion object to a YAML string.
+ * Uses a template literal (no Object.entries overhead) for the known top-level keys.
+ * @returns {string}
+ */
+export function dumpYaml({
+  name,
+  actual,
+  expected,
+  message,
+  stack,
+  source,
+  at,
+}: {
+  name: string;
+  actual: unknown;
+  expected: unknown;
+  message: string | null;
+  stack: string | null;
+  source: string | null;
+  at: string | null;
+}): string {
+  // actual and expected are always emitted — they are the core comparison data.
+  // message, stack, source, and at are supplementary context: omit when null to reduce noise.
+  return (
+    `name: ${dumpString(name, '')}\n` +
+    yamlLine('actual', actual) +
+    yamlLine('expected', expected) +
+    (message !== null ? yamlLine('message', message) : '') +
+    (stack !== null ? yamlLine('stack', stack) : '') +
+    (source !== null ? yamlLine('source', source) : '') +
+    (at !== null ? yamlLine('at', at) : '')
+  );
+}
+
+export { dumpYaml as default };
+
 function needsQuoting(str: string): boolean {
   return NEEDS_QUOTING.test(str);
 }
@@ -71,40 +108,3 @@ function yamlLine(key: string, value: unknown): string {
   const serialized = dumpValue(value, '');
   return serialized[0] === '\n' ? `${key}:${serialized}\n` : `${key}: ${serialized}\n`;
 }
-
-/**
- * Serializes the fixed TAP assertion object to a YAML string.
- * Uses a template literal (no Object.entries overhead) for the known top-level keys.
- * @returns {string}
- */
-export function dumpYaml({
-  name,
-  actual,
-  expected,
-  message,
-  stack,
-  source,
-  at,
-}: {
-  name: string;
-  actual: unknown;
-  expected: unknown;
-  message: string | null;
-  stack: string | null;
-  source: string | null;
-  at: string | null;
-}): string {
-  // actual and expected are always emitted — they are the core comparison data.
-  // message, stack, source, and at are supplementary context: omit when null to reduce noise.
-  return (
-    `name: ${dumpString(name, '')}\n` +
-    yamlLine('actual', actual) +
-    yamlLine('expected', expected) +
-    (message !== null ? yamlLine('message', message) : '') +
-    (stack !== null ? yamlLine('stack', stack) : '') +
-    (source !== null ? yamlLine('source', source) : '') +
-    (at !== null ? yamlLine('at', at) : '')
-  );
-}
-
-export { dumpYaml as default };

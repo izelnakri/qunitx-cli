@@ -11,20 +11,6 @@ import {
 import '../helpers/custom-asserts.ts';
 import type { Config, FSTree } from '../../lib/types.ts';
 
-// Calls handleWatchEvent synchronously and returns the collected (event, path) pairs.
-function trackCalls(config: object, event: string, filePath: string, ext = ['js', 'ts']) {
-  const calls: Array<{ event: string; path: string }> = [];
-  handleWatchEvent(
-    config as Config,
-    ext,
-    event,
-    filePath,
-    (ev, p) => calls.push({ event: ev, path: p }),
-    null,
-  );
-  return calls;
-}
-
 // ---------------------------------------------------------------------------
 // mutateFSTree
 // ---------------------------------------------------------------------------
@@ -588,3 +574,17 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
     assert.equal(events.length, 0, 'no events fired for missing directory');
   });
 });
+
+// Calls handleWatchEvent synchronously and returns the collected (event, path) pairs.
+function trackCalls(config: object, event: string, filePath: string, ext = ['js', 'ts']) {
+  const calls: Array<{ event: string; path: string }> = [];
+  handleWatchEvent(
+    config as Config,
+    ext,
+    event,
+    filePath,
+    (ev, p) => calls.push({ event: ev, path: p }),
+    null,
+  );
+  return calls;
+}

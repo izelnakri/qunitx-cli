@@ -4,7 +4,7 @@ import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-h
 import { injectScript } from '../utils/html.ts';
 import { TAPDisplayTestResult } from '../tap/display-test-result.ts';
 import { blue } from '../utils/color.ts';
-import { HTTPServer, MIME_TYPES } from '../servers/http.ts';
+import { HTTPServer, MIME_TYPES } from '../servers/web.ts';
 import type { Config, CachedContent } from '../types.ts';
 
 const fsPromise = fs.promises;
@@ -307,166 +307,6 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
   return server;
 }
 
-function replaceAssetPaths(html: string, htmlPath: string, projectRoot: string): string {
-  const assetPaths = findInternalAssetsFromHTML(html);
-  const htmlDirectory = htmlPath.split('/').slice(0, -1).join('/');
-
-  return assetPaths.reduce((result, assetPath) => {
-    const normalizedFullAbsolutePath = path.normalize(`${htmlDirectory}/${assetPath}`);
-
-    return result.replace(assetPath, normalizedFullAbsolutePath.replace(projectRoot, '.'));
-  }, html);
-}
-
-function testRuntimeToInject(config: Config, groupId?: number): string {
-  const groupIdPart = groupId !== undefined ? `, groupId: ${groupId}` : '';
-  return `<script>
-    (function() {
-      // setupQUnit runs exactly once, after both the WebSocket is open and tests.js has loaded.
-      // Promise.all is naturally idempotent — resolving a Promise a second time is a no-op,
-      // so WebKit firing WS error after open (causing a retry that re-opens) cannot double-start.
-      let resolveWsReady = () => {};
-      const wsReadyPromise = window.location.protocol === 'file:'
-        ? Promise.resolve()
-        : new Promise(resolve => { resolveWsReady = resolve; });
-
-      // { once: true } auto-removes the listener after the first fire.
-      const testsReadyPromise = new Promise(resolve => {
-        window.addEventListener('qunitx:tests-ready', resolve, { once: true });
-      });
-
-      Promise.all([wsReadyPromise, testsReadyPromise]).then(setupQUnit);
-
-      // For static files (file:// protocol) there is no WebSocket server; wsReadyPromise
-      // is already resolved above, so setupQUnit fires as soon as tests load.
-      if (window.location.protocol === 'file:') return;
-
-      let wsRetryCount = 0;
-      const WS_MAX_RETRIES = Math.ceil(${config.timeout} / ${WS_RETRY_INTERVAL_MS}); // retry for the full test timeout window
-
-      function setupWebSocket() {
-        try {
-          window.socket = new WebSocket(\`ws://localhost:\${location.port}\`);
-        } catch (error) {
-          console.log(error);
-          retryOrFail();
-          return;
-        }
-
-        window.socket.addEventListener('open', function() {
-          resolveWsReady();
-          // Notify Node.js that the WS socket is open. This fires immediately (< 1 s) because
-          // this runtime script is tiny — tests.js background compilation hasn't finished yet.
-          // Node.js uses this to distinguish "WS never connected" from "WS connected but bundle slow".
-          if (navigator.webdriver) {
-            window.socket.send(JSON.stringify({ event: 'wsOpen'${groupIdPart} }));
-          }
-        });
-        window.socket.addEventListener('error', function() {
-          retryOrFail();
-        });
-        window.socket.addEventListener('message', function(messageEvent) {
-          if (!navigator.webdriver && messageEvent.data === 'refresh') {
-            window.location.reload(true);
-          } else if (navigator.webdriver && messageEvent.data === 'abort') {
-            window.abortQUnit = true;
-            window.QUnit.config.queue.length = 0;
-            window.socket.send(JSON.stringify({ event: 'abort' }));
-          }
-        });
-      }
-
-      function retryOrFail() {
-        wsRetryCount++;
-        if (wsRetryCount > WS_MAX_RETRIES) {
-          console.log('WebSocket connection failed after ' + WS_MAX_RETRIES + ' retries');
-          return;
-        }
-        window.setTimeout(setupWebSocket, ${WS_RETRY_INTERVAL_MS});
-      }
-
-      setupWebSocket();
-    })();
-
-    function getCircularReplacer() {
-      const ancestors = [];
-      return function (key, value) {
-        if (typeof value !== "object" || value === null) {
-          return value;
-        }
-        while (ancestors.length > 0 && ancestors.at(-1) !== this) {
-          ancestors.pop();
-        }
-        if (ancestors.includes(value)) {
-          return "[Circular]";
-        }
-        ancestors.push(value);
-        return value;
-      };
-    }
-
-    function setupQUnit() {
-      window.QUNIT_RESULT = { totalTests: 0, finishedTests: 0, failedTests: 0, currentTest: '' };
-
-      if (!window.QUnit) {
-        console.log('QUnit not found after WebSocket connected');
-        if (navigator.webdriver) {
-          // Signal the Playwright runner that the run is complete with 0 tests rather than
-          // waiting for the inactivity timeout. The runner treats totalTests === 0 as a
-          // "no tests registered" warning (not a failure), so this gives a fast, clean result.
-          window.QUNIT_RESULT = { totalTests: 0, finishedTests: 0, failedTests: 0, currentTest: null };
-          window.socket.send(JSON.stringify({ event: 'done', details: { passed: 0, failed: 0, runtime: 0 } }));
-        }
-        return;
-      }
-
-      window.QUnit.begin(() => { // NOTE: might be useful in future for hanged module tracking
-        if (navigator.webdriver) {
-          window.socket.send(JSON.stringify({ event: 'connection' }));
-        }
-      });
-      window.QUnit.on('testStart', (details) => {
-        window.QUNIT_RESULT.totalTests++;
-        window.QUNIT_RESULT.currentTest = details.fullName.join(' | ');
-      });
-      window.QUnit.on('testEnd', (details) => { // NOTE: https://github.com/qunitjs/qunit/blob/master/src/html-reporter/diff.js
-        window.QUNIT_RESULT.finishedTests++;
-        if (details.status === 'failed') window.QUNIT_RESULT.failedTests++;
-        window.QUNIT_RESULT.currentTest = null;
-        if (navigator.webdriver) {
-          const isFailed = details.status === 'failed';
-          const payload = isFailed ? details : { status: details.status, fullName: details.fullName, runtime: details.runtime };
-          window.socket.send(JSON.stringify({ event: 'testEnd', details: payload, abort: window.abortQUnit }, isFailed ? getCircularReplacer() : undefined));
-
-          if (${config.failFast} && details.status === 'failed') {
-            window.QUnit.config.queue.length = 0;
-          }
-        }
-      });
-      window.QUnit.done((details) => {
-        if (navigator.webdriver) {
-          window.socket.send(JSON.stringify({ event: 'done', details: details, qunitResult: window.QUNIT_RESULT, abort: window.abortQUnit }, getCircularReplacer()));
-        }
-      });
-
-      window.QUnit.config.testTimeout = ${config.timeout};
-      window.QUnit.start();
-    }
-  </script>`;
-}
-
-function escapeAndInjectTestsToHTML(
-  html: string,
-  testRuntimeCode: string,
-  testBundleUrl: string,
-): string {
-  // The test bundle is an external async script — Chrome compiles it in a background thread
-  // so the WS 'open' event (fired by the tiny runtime above) is not blocked by compilation.
-  // No need to escape </script> here: testRuntimeCode's closing tag is the legitimate script
-  // closer, and user test code in tests.js is external (not inlined) so it can't break HTML.
-  return injectScript(html, `${testRuntimeCode}\n<script src="${testBundleUrl}" async></script>`);
-}
-
 /**
  * Generates a self-contained HTML warning page shown when a test run completes with 0 registered
  * QUnit tests. Styled to match the QUnit HTML reporter, with an amber banner instead of red.
@@ -757,16 +597,6 @@ export function registerGroupRoutes(
   });
 }
 
-function debugGroupHeader(config: Config): void {
-  const files = Object.keys(config.fsTree);
-  const rel = files.map((f) => f.replace(`${config.projectRoot}/`, ''));
-  const shown = rel.slice(0, 2);
-  const rest = rel.length - shown.length;
-  process.stdout.write(
-    `# ${blue(`── ${shown.join('  ')}${rest > 0 ? `  +${rest} more` : ''} ──`)}\n`,
-  );
-}
-
 /**
  * Attaches the shared WebSocket event dispatcher to `server.wss`.
  * Routes each socket's messages to the correct group's `Config` using the `groupId`
@@ -869,3 +699,173 @@ export function registerSharedStaticHandler(server: HTTPServer, groupConfigs: Co
 }
 
 export { NOT_FOUND_HTML, setupWebServer as default };
+
+function replaceAssetPaths(html: string, htmlPath: string, projectRoot: string): string {
+  const assetPaths = findInternalAssetsFromHTML(html);
+  const htmlDirectory = htmlPath.split('/').slice(0, -1).join('/');
+
+  return assetPaths.reduce((result, assetPath) => {
+    const normalizedFullAbsolutePath = path.normalize(`${htmlDirectory}/${assetPath}`);
+
+    return result.replace(assetPath, normalizedFullAbsolutePath.replace(projectRoot, '.'));
+  }, html);
+}
+
+function testRuntimeToInject(config: Config, groupId?: number): string {
+  const groupIdPart = groupId !== undefined ? `, groupId: ${groupId}` : '';
+  return `<script>
+    (function() {
+      // setupQUnit runs exactly once, after both the WebSocket is open and tests.js has loaded.
+      // Promise.all is naturally idempotent — resolving a Promise a second time is a no-op,
+      // so WebKit firing WS error after open (causing a retry that re-opens) cannot double-start.
+      let resolveWsReady = () => {};
+      const wsReadyPromise = window.location.protocol === 'file:'
+        ? Promise.resolve()
+        : new Promise(resolve => { resolveWsReady = resolve; });
+
+      // { once: true } auto-removes the listener after the first fire.
+      const testsReadyPromise = new Promise(resolve => {
+        window.addEventListener('qunitx:tests-ready', resolve, { once: true });
+      });
+
+      Promise.all([wsReadyPromise, testsReadyPromise]).then(setupQUnit);
+
+      // For static files (file:// protocol) there is no WebSocket server; wsReadyPromise
+      // is already resolved above, so setupQUnit fires as soon as tests load.
+      if (window.location.protocol === 'file:') return;
+
+      let wsRetryCount = 0;
+      const WS_MAX_RETRIES = Math.ceil(${config.timeout} / ${WS_RETRY_INTERVAL_MS}); // retry for the full test timeout window
+
+      function setupWebSocket() {
+        try {
+          window.socket = new WebSocket(\`ws://localhost:\${location.port}\`);
+        } catch (error) {
+          console.log(error);
+          retryOrFail();
+          return;
+        }
+
+        window.socket.addEventListener('open', function() {
+          resolveWsReady();
+          // Notify Node.js that the WS socket is open. This fires immediately (< 1 s) because
+          // this runtime script is tiny — tests.js background compilation hasn't finished yet.
+          // Node.js uses this to distinguish "WS never connected" from "WS connected but bundle slow".
+          if (navigator.webdriver) {
+            window.socket.send(JSON.stringify({ event: 'wsOpen'${groupIdPart} }));
+          }
+        });
+        window.socket.addEventListener('error', function() {
+          retryOrFail();
+        });
+        window.socket.addEventListener('message', function(messageEvent) {
+          if (!navigator.webdriver && messageEvent.data === 'refresh') {
+            window.location.reload(true);
+          } else if (navigator.webdriver && messageEvent.data === 'abort') {
+            window.abortQUnit = true;
+            window.QUnit.config.queue.length = 0;
+            window.socket.send(JSON.stringify({ event: 'abort' }));
+          }
+        });
+      }
+
+      function retryOrFail() {
+        wsRetryCount++;
+        if (wsRetryCount > WS_MAX_RETRIES) {
+          console.log('WebSocket connection failed after ' + WS_MAX_RETRIES + ' retries');
+          return;
+        }
+        window.setTimeout(setupWebSocket, ${WS_RETRY_INTERVAL_MS});
+      }
+
+      setupWebSocket();
+    })();
+
+    function getCircularReplacer() {
+      const ancestors = [];
+      return function (key, value) {
+        if (typeof value !== "object" || value === null) {
+          return value;
+        }
+        while (ancestors.length > 0 && ancestors.at(-1) !== this) {
+          ancestors.pop();
+        }
+        if (ancestors.includes(value)) {
+          return "[Circular]";
+        }
+        ancestors.push(value);
+        return value;
+      };
+    }
+
+    function setupQUnit() {
+      window.QUNIT_RESULT = { totalTests: 0, finishedTests: 0, failedTests: 0, currentTest: '' };
+
+      if (!window.QUnit) {
+        console.log('QUnit not found after WebSocket connected');
+        if (navigator.webdriver) {
+          // Signal the Playwright runner that the run is complete with 0 tests rather than
+          // waiting for the inactivity timeout. The runner treats totalTests === 0 as a
+          // "no tests registered" warning (not a failure), so this gives a fast, clean result.
+          window.QUNIT_RESULT = { totalTests: 0, finishedTests: 0, failedTests: 0, currentTest: null };
+          window.socket.send(JSON.stringify({ event: 'done', details: { passed: 0, failed: 0, runtime: 0 } }));
+        }
+        return;
+      }
+
+      window.QUnit.begin(() => { // NOTE: might be useful in future for hanged module tracking
+        if (navigator.webdriver) {
+          window.socket.send(JSON.stringify({ event: 'connection' }));
+        }
+      });
+      window.QUnit.on('testStart', (details) => {
+        window.QUNIT_RESULT.totalTests++;
+        window.QUNIT_RESULT.currentTest = details.fullName.join(' | ');
+      });
+      window.QUnit.on('testEnd', (details) => { // NOTE: https://github.com/qunitjs/qunit/blob/master/src/html-reporter/diff.js
+        window.QUNIT_RESULT.finishedTests++;
+        if (details.status === 'failed') window.QUNIT_RESULT.failedTests++;
+        window.QUNIT_RESULT.currentTest = null;
+        if (navigator.webdriver) {
+          const isFailed = details.status === 'failed';
+          const payload = isFailed ? details : { status: details.status, fullName: details.fullName, runtime: details.runtime };
+          window.socket.send(JSON.stringify({ event: 'testEnd', details: payload, abort: window.abortQUnit }, isFailed ? getCircularReplacer() : undefined));
+
+          if (${config.failFast} && details.status === 'failed') {
+            window.QUnit.config.queue.length = 0;
+          }
+        }
+      });
+      window.QUnit.done((details) => {
+        if (navigator.webdriver) {
+          window.socket.send(JSON.stringify({ event: 'done', details: details, qunitResult: window.QUNIT_RESULT, abort: window.abortQUnit }, getCircularReplacer()));
+        }
+      });
+
+      window.QUnit.config.testTimeout = ${config.timeout};
+      window.QUnit.start();
+    }
+  </script>`;
+}
+
+function escapeAndInjectTestsToHTML(
+  html: string,
+  testRuntimeCode: string,
+  testBundleUrl: string,
+): string {
+  // The test bundle is an external async script — Chrome compiles it in a background thread
+  // so the WS 'open' event (fired by the tiny runtime above) is not blocked by compilation.
+  // No need to escape </script> here: testRuntimeCode's closing tag is the legitimate script
+  // closer, and user test code in tests.js is external (not inlined) so it can't break HTML.
+  return injectScript(html, `${testRuntimeCode}\n<script src="${testBundleUrl}" async></script>`);
+}
+
+function debugGroupHeader(config: Config): void {
+  const files = Object.keys(config.fsTree);
+  const rel = files.map((f) => f.replace(`${config.projectRoot}/`, ''));
+  const shown = rel.slice(0, 2);
+  const rest = rel.length - shown.length;
+  process.stdout.write(
+    `# ${blue(`── ${shown.join('  ')}${rest > 0 ? `  +${rest} more` : ''} ──`)}\n`,
+  );
+}

@@ -3,49 +3,6 @@ import fs from 'node:fs/promises';
 const CLEANUP_DEADLINE_MS = 5_000;
 const CLEANUP_RETRY_MS = 50;
 
-// Returns true if the process at /proc/$entry references dirPath via cwd, cmdline, or open FDs.
-// Chrome's sandboxed renderer/GPU processes run in separate process groups with cwd='/' and
-// no dir name in cmdline, but they inherit file descriptors to the user-data-dir from the
-// browser main process. Without the FD check, those processes are missed and rm() fails
-// with EBUSY even though no process has the dir as its working directory.
-async function processReferencesDir(
-  entry: string,
-  dirPath: string,
-  dirName: string,
-): Promise<boolean> {
-  try {
-    const [cwd, cmdline] = await Promise.all([
-      fs.readlink(`/proc/${entry}/cwd`).catch(() => ''),
-      fs.readFile(`/proc/${entry}/cmdline`, 'utf8').catch(() => ''),
-    ]);
-    if (cwd.startsWith(dirPath) || cmdline.includes(dirName)) return true;
-
-    const fds = await fs.readdir(`/proc/${entry}/fd`).catch(() => [] as string[]);
-    const fdTargets = await Promise.all(
-      fds.map((fd) => fs.readlink(`/proc/${entry}/fd/${fd}`).catch(() => '')),
-    );
-    return fdTargets.some((target) => target.startsWith(dirPath));
-  } catch {
-    return false;
-  }
-}
-
-// Scans /proc and SIGKILLs every process that references dirPath via cwd, cmdline, or open FDs.
-async function killAllReferencingProcesses(dirPath: string, dirName: string): Promise<void> {
-  const procEntries = await fs.readdir('/proc').catch(() => [] as string[]);
-  await Promise.all(
-    procEntries.map(async (entry) => {
-      if (!/^\d+$/.test(entry)) return;
-      if (!(await processReferencesDir(entry, dirPath, dirName))) return;
-      try {
-        process.kill(parseInt(entry), 'SIGKILL');
-      } catch {
-        /* ESRCH: already dead */
-      }
-    }),
-  );
-}
-
 /**
  * Kills all surviving processes that reference `dirPath` (checked via cwd, cmdline,
  * and open file descriptors), then retries fs.rm() until it succeeds or a 5-second
@@ -118,6 +75,49 @@ export async function cleanupBrowserDir(dirPath: string): Promise<void> {
         );
       } catch {
         /* vanished */
+      }
+    }),
+  );
+}
+
+// Returns true if the process at /proc/$entry references dirPath via cwd, cmdline, or open FDs.
+// Chrome's sandboxed renderer/GPU processes run in separate process groups with cwd='/' and
+// no dir name in cmdline, but they inherit file descriptors to the user-data-dir from the
+// browser main process. Without the FD check, those processes are missed and rm() fails
+// with EBUSY even though no process has the dir as its working directory.
+async function processReferencesDir(
+  entry: string,
+  dirPath: string,
+  dirName: string,
+): Promise<boolean> {
+  try {
+    const [cwd, cmdline] = await Promise.all([
+      fs.readlink(`/proc/${entry}/cwd`).catch(() => ''),
+      fs.readFile(`/proc/${entry}/cmdline`, 'utf8').catch(() => ''),
+    ]);
+    if (cwd.startsWith(dirPath) || cmdline.includes(dirName)) return true;
+
+    const fds = await fs.readdir(`/proc/${entry}/fd`).catch(() => [] as string[]);
+    const fdTargets = await Promise.all(
+      fds.map((fd) => fs.readlink(`/proc/${entry}/fd/${fd}`).catch(() => '')),
+    );
+    return fdTargets.some((target) => target.startsWith(dirPath));
+  } catch {
+    return false;
+  }
+}
+
+// Scans /proc and SIGKILLs every process that references dirPath via cwd, cmdline, or open FDs.
+async function killAllReferencingProcesses(dirPath: string, dirName: string): Promise<void> {
+  const procEntries = await fs.readdir('/proc').catch(() => [] as string[]);
+  await Promise.all(
+    procEntries.map(async (entry) => {
+      if (!/^\d+$/.test(entry)) return;
+      if (!(await processReferencesDir(entry, dirPath, dirName))) return;
+      try {
+        process.kill(parseInt(entry), 'SIGKILL');
+      } catch {
+        /* ESRCH: already dead */
       }
     }),
   );

@@ -1,19 +1,5 @@
 import Assert from 'qunitx/assert';
 
-// Extracts stdout string and optional stderr from either a plain string or a
-// result/error object ({ stdout, stderr }). This lets every assertion helper
-// accept both forms transparently while surfacing stderr in failure diagnostics.
-function extractOutput(result) {
-  if (typeof result === 'string' || result == null) {
-    return { stdout: result ?? '', stderr: null };
-  }
-  return { stdout: result.stdout ?? '', stderr: result.stderr || null };
-}
-
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 /**
  * assert.includes(result, needle, message?)
  * result may be a plain string (stdout) or a { stdout, stderr } object.
@@ -286,3 +272,17 @@ Assert.prototype.tapResult = function (output, options = { testCount: 0, failCou
     message: `TAP summary should show pass=${testCount} skip=${skipCount} todo=${todoCount} fail=0`,
   });
 };
+
+// Extracts stdout string and optional stderr from either a plain string or a
+// result/error object ({ stdout, stderr }). This lets every assertion helper
+// accept both forms transparently while surfacing stderr in failure diagnostics.
+function extractOutput(result) {
+  if (typeof result === 'string' || result == null) {
+    return { stdout: result ?? '', stderr: null };
+  }
+  return { stdout: result.stdout ?? '', stderr: result.stderr || null };
+}
+
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}

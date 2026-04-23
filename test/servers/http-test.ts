@@ -3,34 +3,8 @@ import http from 'node:http';
 import net from 'node:net';
 // @deno-types="npm:@types/ws"
 import WebSocket from 'ws';
-import HTTPServer from '../../lib/servers/http.ts';
+import HTTPServer from '../../lib/servers/web.ts';
 import bindServerToPort from '../../lib/setup/bind-server-to-port.ts';
-
-function request(port, path) {
-  return new Promise((resolve, reject) => {
-    const req = http.get(`http://127.0.0.1:${port}${path}`, (res) => {
-      let body = '';
-      res.on('data', (chunk) => (body += chunk));
-      res.on('end', () => resolve({ statusCode: res.statusCode, body }));
-    });
-    req.on('error', reject);
-  });
-}
-
-async function withServer(fn) {
-  const server = new HTTPServer();
-  server.get('/', (req, res) => {
-    res.setHeader('Content-Type', 'text/html');
-    res.end(`query:${JSON.stringify(req.query)}`);
-  });
-  await server.listen(0);
-  const port = server._server.address().port;
-  try {
-    await fn(port);
-  } finally {
-    await new Promise((resolve) => server._server.close(resolve));
-  }
-}
 
 module('Servers | bindServerToPort | port selection', { concurrency: true }, () => {
   test('binds to the requested port when it is free', async (assert) => {
@@ -189,4 +163,30 @@ function findFreePort(): Promise<{ number: number; release: () => Promise<void> 
     });
     server.listen(0);
   });
+}
+
+function request(port, path) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(`http://127.0.0.1:${port}${path}`, (res) => {
+      let body = '';
+      res.on('data', (chunk) => (body += chunk));
+      res.on('end', () => resolve({ statusCode: res.statusCode, body }));
+    });
+    req.on('error', reject);
+  });
+}
+
+async function withServer(fn) {
+  const server = new HTTPServer();
+  server.get('/', (req, res) => {
+    res.setHeader('Content-Type', 'text/html');
+    res.end(`query:${JSON.stringify(req.query)}`);
+  });
+  await server.listen(0);
+  const port = server._server.address().port;
+  try {
+    await fn(port);
+  } finally {
+    await new Promise((resolve) => server._server.close(resolve));
+  }
 }

@@ -2,33 +2,6 @@ import fs, { glob as fsGlob } from 'node:fs/promises';
 import path from 'node:path';
 import type { FSTree } from '../types.ts';
 
-function isGlob(str: string): boolean {
-  return /[*?{[]/.test(str);
-}
-
-async function readDirRecursive(dir: string, filter: (name: string) => boolean): Promise<string[]> {
-  const entries = await fs.readdir(dir, { recursive: true, withFileTypes: true });
-  const candidates = entries.filter(
-    (dirent) => (dirent.isFile() || dirent.isSymbolicLink()) && filter(dirent.name),
-  );
-
-  const resolvedPaths = await Promise.all(
-    candidates.map(async (dirent) => {
-      const fullPath = path.join(dirent.parentPath, dirent.name);
-      if (dirent.isFile()) return fullPath;
-      // Symlink — follow it and verify it resolves to a file, not a directory or a broken target.
-      try {
-        const statResult = await fs.stat(fullPath);
-        return statResult.isFile() ? fullPath : null;
-      } catch {
-        return null; // dangling symlink — skip
-      }
-    }),
-  );
-
-  return resolvedPaths.filter((resolvedPath): resolvedPath is string => resolvedPath !== null);
-}
-
 /**
  * Resolves an array of file paths, directories, or glob patterns into a flat `{ absolutePath: null }` map.
  * @returns {Promise<object>}
@@ -76,3 +49,30 @@ export async function buildFSTree(
 }
 
 export { buildFSTree as default };
+
+function isGlob(str: string): boolean {
+  return /[*?{[]/.test(str);
+}
+
+async function readDirRecursive(dir: string, filter: (name: string) => boolean): Promise<string[]> {
+  const entries = await fs.readdir(dir, { recursive: true, withFileTypes: true });
+  const candidates = entries.filter(
+    (dirent) => (dirent.isFile() || dirent.isSymbolicLink()) && filter(dirent.name),
+  );
+
+  const resolvedPaths = await Promise.all(
+    candidates.map(async (dirent) => {
+      const fullPath = path.join(dirent.parentPath, dirent.name);
+      if (dirent.isFile()) return fullPath;
+      // Symlink — follow it and verify it resolves to a file, not a directory or a broken target.
+      try {
+        const statResult = await fs.stat(fullPath);
+        return statResult.isFile() ? fullPath : null;
+      } catch {
+        return null; // dangling symlink — skip
+      }
+    }),
+  );
+
+  return resolvedPaths.filter((resolvedPath): resolvedPath is string => resolvedPath !== null);
+}

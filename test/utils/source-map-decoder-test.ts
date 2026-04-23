@@ -13,28 +13,6 @@ import {
   type SourceMapDecoder,
 } from '../../lib/utils/source-map-decoder.ts';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Build a minimal SourceMapDecoder directly from a segments table (no JSON/VLQ needed). */
-function makeDecoder(
-  segmentsByLine: Segment[][],
-  sources: string[],
-  outDir = '/project/tmp',
-  sourceRoot = '',
-  sourcesContent: (string | null)[] = [],
-): SourceMapDecoder {
-  return { segmentsByLine, sources, sourceRoot, outDir, sourcesContent };
-}
-
-/**
- * Encode a source map JSON as a base64 inline data URL and wrap it in a fake bundle string.
- * Used to test `extractInlineSourceMap` end-to-end.
- */
-function bundleWithInlineMap(mapJson: object): string {
-  const b64 = btoa(JSON.stringify(mapJson));
-  return `console.log("bundle");\n//# sourceMappingURL=data:application/json;base64,${b64}`;
-}
-
 // ── readVLQ ───────────────────────────────────────────────────────────────────
 
 module('Utils | source-map-decoder | readVLQ', { concurrency: true }, () => {
@@ -884,3 +862,25 @@ module('Utils | source-map-decoder | resolveStack', { concurrency: true }, () =>
     assert.strictEqual(firstUserSourceText, 'assert.strictEqual(result, 42);');
   });
 });
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Build a minimal SourceMapDecoder directly from a segments table (no JSON/VLQ needed). */
+function makeDecoder(
+  segmentsByLine: Segment[][],
+  sources: string[],
+  outDir = '/project/tmp',
+  sourceRoot = '',
+  sourcesContent: (string | null)[] = [],
+): SourceMapDecoder {
+  return { segmentsByLine, sources, sourceRoot, outDir, sourcesContent };
+}
+
+/**
+ * Encode a source map JSON as a base64 inline data URL and wrap it in a fake bundle string.
+ * Used to test `extractInlineSourceMap` end-to-end.
+ */
+function bundleWithInlineMap(mapJson: object): string {
+  const b64 = btoa(JSON.stringify(mapJson));
+  return `console.log("bundle");\n//# sourceMappingURL=data:application/json;base64,${b64}`;
+}

@@ -5,14 +5,6 @@ import { pathExists } from '../utils/path-exists.ts';
 import { readTemplate } from '../utils/read-template.ts';
 import { convertToPascalCase } from '../utils/convert-to-pascal-case.ts';
 
-function pathToModuleName(filePath: string): string {
-  const withoutExt = filePath.replace(/\.(js|ts)$/, '');
-  const segments = withoutExt.split('/');
-  const targetNames =
-    segments[0] === 'test' || segments[0] === 'tests' ? segments.slice(1) : segments;
-  return targetNames.map(convertToPascalCase).join(' | ');
-}
-
 /**
  * Generates a new test file from the boilerplate template.
  * @returns {Promise<void>}
@@ -42,3 +34,11 @@ export async function generateTestFiles() {
 }
 
 export { generateTestFiles as default };
+
+function pathToModuleName(filePath: string): string {
+  const withoutExt = filePath.replace(/\.(js|ts)$/, '');
+  const segments = withoutExt.split('/');
+  const targetNames =
+    segments[0] === 'test' || segments[0] === 'tests' ? segments.slice(1) : segments;
+  return targetNames.map(convertToPascalCase).join(' | ');
+}

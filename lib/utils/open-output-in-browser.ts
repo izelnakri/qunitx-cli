@@ -41,10 +41,10 @@ export async function openOutputInBrowser(config: Config): Promise<void> {
   }
 }
 
+export { openOutputInBrowser as default };
+
 function spawnDetached(cmd: string, args: string[]): void {
   const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
   child.on('error', () => {}); // suppress ENOENT / sandbox errors — viewer Chrome is best-effort
   child.unref();
 }
-
-export { openOutputInBrowser as default };

@@ -111,23 +111,6 @@ export function extractStackAt(stack: string | null | undefined): string | null 
   return null;
 }
 
-function getCircularReplacer(): (_key: string, value: unknown) => unknown {
-  const ancestors: object[] = [];
-  return function (this: object, _key: string, value: unknown) {
-    if (typeof value !== 'object' || value === null) {
-      return value;
-    }
-    while (ancestors.length > 0 && ancestors.at(-1) !== this) {
-      ancestors.pop();
-    }
-    if (ancestors.includes(value)) {
-      return '[Circular]';
-    }
-    ancestors.push(value);
-    return value;
-  };
-}
-
 // not ok 10 test exited without ending: deepEqual true works
 //   ---
 //     operator: fail
@@ -145,3 +128,20 @@ function getCircularReplacer(): (_key: string, value: unknown) => unknown {
 //   ...
 
 export { TAPDisplayTestResult as default };
+
+function getCircularReplacer(): (_key: string, value: unknown) => unknown {
+  const ancestors: object[] = [];
+  return function (this: object, _key: string, value: unknown) {
+    if (typeof value !== 'object' || value === null) {
+      return value;
+    }
+    while (ancestors.length > 0 && ancestors.at(-1) !== this) {
+      ancestors.pop();
+    }
+    if (ancestors.includes(value)) {
+      return '[Circular]';
+    }
+    ancestors.push(value);
+    return value;
+  };
+}

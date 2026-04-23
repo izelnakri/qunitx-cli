@@ -30,8 +30,8 @@ export async function writeOutputStaticFiles(
   await Promise.all(staticHTMLPromises.concat(assetPromises));
 }
 
+export { writeOutputStaticFiles as default };
+
 async function ensureFolderExists(assetPath: string): Promise<void> {
   await fs.mkdir(path.dirname(assetPath), { recursive: true });
 }
-
-export { writeOutputStaticFiles as default };
