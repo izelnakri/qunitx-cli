@@ -35,6 +35,10 @@ const EMPTY_BUNDLE_THRESHOLD = 500;
 // Extra ms added on top of config.timeout to give Playwright time to commit the navigation
 // before the test-race timers even start. Floors startupMs/testsJsMs for tiny --timeout values.
 const NAV_GRACE_MS = 10_000;
+// Hard floor for the page.goto timeout, regardless of config.timeout. Without this, small
+// --timeout values (e.g. --timeout=500 used in timeout-feature tests) produce a navMs of only
+// 10.5s, which is not enough for Firefox on Windows CI to navigate a localhost page under load.
+const MIN_NAV_MS = 30_000;
 // Startup safety-net: Chrome WS 'open' must arrive within 3× config.timeout.
 const STARTUP_TIMEOUT_FACTOR = 3;
 // tests.js compile safety-net: V8 compilation must finish within 4× config.timeout from serve.
@@ -680,7 +684,7 @@ async function runTestInsideHTMLFile(
     // Once QUnit.begin fires, _resetTestTimeout switches to the per-test budget
     // (config.timeout + TEST_STALL_BUFFER_MS): QUnit handles the timeout itself at config.timeout
     // ms; the extra buffer is a server-side safety net for completely frozen browsers.
-    const navMs = config.timeout + NAV_GRACE_MS;
+    const navMs = Math.max(config.timeout + NAV_GRACE_MS, MIN_NAV_MS);
     const startupMs = Math.max(config.timeout * STARTUP_TIMEOUT_FACTOR, navMs);
     const testsJsMs = Math.max(config.timeout * TESTS_JS_TIMEOUT_FACTOR, navMs);
 
