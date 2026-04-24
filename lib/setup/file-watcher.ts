@@ -8,6 +8,7 @@ import type { Config, FSTree } from '../types.ts';
 const CHANGE_DEDUPE_MS = 10;
 const SYMLINK_POLL_INTERVAL_MS = 500;
 const OVERLAYFS_RENAME_RETRY_MS = 50;
+const RESCAN_INTERVAL_MS = 1_000;
 
 /**
  * Starts `fs.watch` watchers for each lookup path and calls `onEventFunc` on JS/TS file changes,
@@ -28,6 +29,7 @@ export function setupFileWatchers(
   const extensions = config.extensions || ['js', 'ts'];
   const readyPromises: Promise<void>[] = [];
   const parentWatchers: FSWatcher[] = [];
+  const rescanTimers: ReturnType<typeof setInterval>[] = [];
   const fileWatchers: Record<string, FSWatcher> = {};
   // Cancellers for fs.watchFile polls on symlink files.
   // On Linux, fs.unlink on a symlink fires NO fs.watch rename event, so the child watcher
@@ -69,6 +71,7 @@ export function setupFileWatchers(
 
   for (const watchPath of testFileLookupPaths) {
     let ready = false;
+    let rescanInProgress = false;
     // lastEventMs: wall-clock time the last event arrived (guards the 10ms burst window).
     // seenMtimeMs: file mtime recorded at the last event (detects echoes vs genuine new writes).
     const lastEventMs: Record<string, number> = {};
@@ -78,17 +81,20 @@ export function setupFileWatchers(
     const childWatcher = fs.watch(watchPath, { recursive: true }, async (eventType, filename) => {
       if (!ready) return;
       // macOS FSEvents can coalesce events and deliver rename with filename=null under load.
-      // Rescan the directory to find any new files that the null event may be reporting.
+      // Rescan the directory to find any new/removed files that the null event may be reporting.
       if (!filename) {
-        if (process.platform === 'darwin') {
-          await rescanDirectoryForDelta(
+        if (process.platform === 'darwin' && !rescanInProgress) {
+          rescanInProgress = true;
+          rescanDirectoryForDelta(
             watchPath,
             config,
             extensions,
             onEventFunc,
             onFinishFunc,
             trackSymlink,
-          );
+          ).finally(() => {
+            rescanInProgress = false;
+          });
         }
         return;
       }
@@ -175,6 +181,27 @@ export function setupFileWatchers(
         }),
       ),
     );
+
+    // Safety-net for macOS: FSEvents can drop all events for a directory rename under load
+    // (e.g. Firefox running concurrently). Periodic rescan catches missed removals/additions.
+    if (process.platform === 'darwin') {
+      rescanTimers.push(
+        setInterval(() => {
+          if (!ready || rescanInProgress) return;
+          rescanInProgress = true;
+          rescanDirectoryForDelta(
+            watchPath,
+            config,
+            extensions,
+            onEventFunc,
+            onFinishFunc,
+            trackSymlink,
+          ).finally(() => {
+            rescanInProgress = false;
+          });
+        }, RESCAN_INTERVAL_MS).unref(),
+      );
+    }
   }
 
   // Scan the initial fsTree for symlinks and set up deletion polling for each.
@@ -199,6 +226,7 @@ export function setupFileWatchers(
     killFileWatchers() {
       Object.keys(fileWatchers).forEach((key) => fileWatchers[key].close());
       parentWatchers.forEach((pw) => pw.close());
+      rescanTimers.forEach((t) => clearInterval(t));
       symlinkPollers.forEach((cancel) => cancel());
       symlinkPollers.clear();
       return fileWatchers;
@@ -292,9 +320,18 @@ export async function rescanDirectoryForDelta(
   try {
     const entries = await readdir(watchPath, { withFileTypes: true, recursive: true });
     const presentPaths = new Set<string>();
+    // presentDirs tracks every directory confirmed present on disk — used below to detect which
+    // ancestor directory was removed without issuing additional stat() calls.
+    const presentDirs = new Set<string>();
+    presentDirs.add(watchPath);
     for (const entry of entries) {
+      if (entry.isDirectory()) {
+        presentDirs.add(path.join(entry.parentPath, entry.name));
+        continue;
+      }
       if (!entry.isFile() && !entry.isSymbolicLink()) continue;
       const entryPath = path.join(entry.parentPath, entry.name);
+      presentDirs.add(entry.parentPath);
       if (!extensions.some((ext) => entryPath.endsWith(`.${ext}`))) continue;
       presentPaths.add(entryPath);
       if (!(entryPath in config.fsTree)) {
@@ -303,9 +340,25 @@ export async function rescanDirectoryForDelta(
       }
     }
     const watchPrefix = watchPath + path.sep;
+    // For each missing tracked path, walk up toward watchPath using presentDirs (O(1) Set
+    // lookups, no extra I/O) to find the highest gone ancestor. Fire one unlinkDir for the
+    // whole subtree rather than N individual unlinks (each of which emits a REMOVED: line).
+    const firedDirPrefixes: string[] = [];
     for (const trackedPath of Object.keys(config.fsTree)) {
-      if (trackedPath.startsWith(watchPrefix) && !presentPaths.has(trackedPath))
+      if (!trackedPath.startsWith(watchPrefix) || presentPaths.has(trackedPath)) continue;
+      if (firedDirPrefixes.some((p) => trackedPath.startsWith(p + path.sep))) continue;
+      const parts = trackedPath.slice(watchPrefix.length).split(path.sep);
+      const goneDirPath =
+        parts
+          .slice(0, -1)
+          .map((_, i) => watchPrefix + parts.slice(0, i + 1).join(path.sep))
+          .find((p) => !presentDirs.has(p)) ?? null;
+      if (goneDirPath !== null) {
+        firedDirPrefixes.push(goneDirPath);
+        handleWatchEvent(config, extensions, 'unlinkDir', goneDirPath, onEventFunc, onFinishFunc);
+      } else {
         handleWatchEvent(config, extensions, 'unlink', trackedPath, onEventFunc, onFinishFunc);
+      }
     }
   } catch {
     /* watchPath may no longer exist */

@@ -559,6 +559,54 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
     }
   });
 
+  test('fires unlinkDir (not individual unlinks) when a tracked subdirectory has been renamed away', async (assert) => {
+    // Regression: rescanDirectoryForDelta fired one 'unlink' per tracked file inside the
+    // renamed subdir, producing N REMOVED: log lines. The fix walks up the directory tree to
+    // find the highest missing ancestor within watchPath and fires a single unlinkDir instead.
+    const dir = path.join(process.cwd(), `tmp/rescan-unlinkdir-${randomUUID()}`);
+    const subdir = path.join(dir, 'subdir');
+    const deeper = path.join(subdir, 'deeper');
+    await fs.mkdir(deeper, { recursive: true });
+    const file1 = path.join(subdir, 'nested1.ts');
+    const file2 = path.join(subdir, 'nested2.ts');
+    const file3 = path.join(deeper, 'deep.ts');
+    const remaining = path.join(dir, 'root.ts');
+    await Promise.all([
+      fs.writeFile(file1, ''),
+      fs.writeFile(file2, ''),
+      fs.writeFile(file3, ''),
+      fs.writeFile(remaining, ''),
+    ]);
+    await fs.rename(subdir, path.join(dir, 'old-subdir'));
+
+    const config: Partial<Config> & { fsTree: FSTree } = {
+      fsTree: { [file1]: null, [file2]: null, [file3]: null, [remaining]: null },
+      projectRoot: dir,
+    };
+    const events: Array<{ event: string; file: string }> = [];
+
+    await rescanDirectoryForDelta(
+      dir,
+      config as Config,
+      ['ts', 'js'],
+      (ev, f) => events.push({ event: ev, file: f }),
+      null,
+    );
+
+    try {
+      const removalEvents = events.filter((e) => e.event === 'unlink' || e.event === 'unlinkDir');
+      assert.equal(removalEvents.length, 1, 'exactly one removal event');
+      assert.equal(
+        removalEvents[0].event,
+        'unlinkDir',
+        'removal is unlinkDir, not individual unlinks',
+      );
+      assert.equal(removalEvents[0].file, subdir, 'unlinkDir targets the renamed directory');
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test('silently succeeds when watchPath does not exist', async (assert) => {
     const config: Partial<Config> & { fsTree: FSTree } = { fsTree: {}, projectRoot: '/tmp' };
     const events: Array<{ event: string; file: string }> = [];
