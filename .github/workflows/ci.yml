@@ -471,9 +471,9 @@ jobs:
           path: qunitx-${{ matrix.target }}.*
 
   # ── GitHub release (tags only) ────────────────────────────────────────────────
-  # make release creates the release entry locally with proper changelog notes.
-  # This job uploads all platform binaries (with checksums) to that release.
-  # The create fallback handles the rare case where CI wins the race.
+  # Creates the release entry from the matching CHANGELOG.md section (so the
+  # body matches the rich changelog `make release` already committed) and
+  # uploads all platform binaries with SHA-256 checksums.
   github-release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build-binaries, release-consumer-test]
@@ -489,14 +489,20 @@ jobs:
           path: artifacts
       - name: Generate SHA-256 checksums
         run: cd artifacts && sha256sum * > checksums.txt
-      - name: Upload artifacts to release
+      - name: Create GitHub release from CHANGELOG.md
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "${{ github.ref_name }}" \
-            --generate-notes 2>/dev/null || true
-          gh release upload "${{ github.ref_name }}" --clobber artifacts/*
+          VERSION="${{ github.ref_name }}"
+          VERSION_NO_V="${VERSION#v}"
+          # Escape dots so awk treats them as literals, not regex wildcards (e.g. 1.2.8 ≠ 1X2Y8)
+          VERSION_ESC="${VERSION_NO_V//./\\.}"
+          NOTES_FILE=$(mktemp)
+          awk "/^## \[${VERSION_ESC}\]/{found=1; next} found && /^## \[/{exit} found{print}" CHANGELOG.md > "$NOTES_FILE"
+          gh release create "$VERSION" --title "$VERSION" --notes-file "$NOTES_FILE" 2>/dev/null || \
+          gh release edit "$VERSION" --title "$VERSION" --notes-file "$NOTES_FILE"
+          rm "$NOTES_FILE"
+          gh release upload "$VERSION" --clobber artifacts/*
 
   # ── Docker versioned image (tags only) ────────────────────────────────────────
   publish-docker:
