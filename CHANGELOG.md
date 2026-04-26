@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.21.3] - 2026-04-26
+[`v0.21.2...v0.21.3`](https://github.com/izelnakri/qunitx-cli/compare/v0.21.2...v0.21.3)
+
+### Bug Fixes
+- Yield event loop in flushConsoleHandlers to avoid CDP/WS race — 2026-04-23 by [@izelnakri](https://github.com/izelnakri) ([`fbf590a`](https://github.com/izelnakri/qunitx-cli/commit/fbf590a56d7a8e154f86c21c0fa50ce90fc85b3f))
+- Floor page.goto timeout at 30s to prevent nav failure on slow browsers — 2026-04-24 by [@izelnakri](https://github.com/izelnakri) ([`daa8749`](https://github.com/izelnakri/qunitx-cli/commit/daa874989ab19955c5efa6e2940213a9ae9a13c5))
+- Fire unlinkDir for renamed subdirs on macOS FSEvents drop — 2026-04-24 by [@izelnakri](https://github.com/izelnakri) ([`8e01f0c`](https://github.com/izelnakri/qunitx-cli/commit/8e01f0c980a48acfdca47fa751810f9722f3fe46))
+- Unblock Windows tests and Deno bench type-check — 2026-04-26 by [@izelnakri](https://github.com/izelnakri) ([`788f6b9`](https://github.com/izelnakri/qunitx-cli/commit/788f6b9274687bf683ff0fcbca7b747a206c4db4))
+- Publish GitHub release notes from CHANGELOG.md — 2026-04-26 by [@izelnakri](https://github.com/izelnakri) ([`f668c53`](https://github.com/izelnakri/qunitx-cli/commit/f668c534929f896833257fb4134627ab84099222))
+
+### Features
+- Adaptive retry + SKIP_BENCHMARK escape hatch — 2026-04-26 by [@izelnakri](https://github.com/izelnakri) ([`6eb62ad`](https://github.com/izelnakri/qunitx-cli/commit/6eb62ad78865dcee80e23ccb9114e60ea1033cfd))
+
+### Refactoring
+- Merge release workflow into ci.yml for real test gate on tag push — 2026-04-21 by [@izelnakri](https://github.com/izelnakri) ([`399060e`](https://github.com/izelnakri/qunitx-cli/commit/399060e6d5cea1317c3ff439e766e99ffec0020f))
+- Rename http.ts to web.ts — 2026-04-23 by [@izelnakri](https://github.com/izelnakri) ([`0b51d83`](https://github.com/izelnakri/qunitx-cli/commit/0b51d835fde52d37397f8d42094ee8015c0cc6fd))
+- Move private helper functions to bottom of all lib/ files — 2026-04-23 by [@izelnakri](https://github.com/izelnakri) ([`11a3ed9`](https://github.com/izelnakri/qunitx-cli/commit/11a3ed981168485a0691875d768c316baa2899eb))
+- Cache globFormat, drop projectRoot in test-file-paths — 2026-04-26 by [@izelnakri](https://github.com/izelnakri) ([`581c33e`](https://github.com/izelnakri/qunitx-cli/commit/581c33e73d27e9eb81d5c55f96c75beadc176599))
+- Major change to lib/utils/source-map-decoder.ts — 2026-04-26 by [@izelnakri](https://github.com/izelnakri) ([`c2f19b1`](https://github.com/izelnakri/qunitx-cli/commit/c2f19b18d81ff30b0bc6895f3da221a016ce4679))
+
 ## [0.21.2] - 2026-04-21
 [`v0.21.1...v0.21.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.21.1...v0.21.2)
 
