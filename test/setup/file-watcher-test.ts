@@ -291,6 +291,51 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
 // ---------------------------------------------------------------------------
 
 module('Setup | setupFileWatchers', { concurrency: true }, () => {
+  test('seeds config._lastBuildEndMs at startup so the rescan has a baseline', async (assert) => {
+    // The initial build runs from run.ts directly (not through handleWatchEvent), so without
+    // this seed _lastBuildEndMs would stay undefined after a failed initial build — and the
+    // macOS rescan could not distinguish stale from genuinely-modified files. Locking the
+    // seed in here protects against future refactors that move the assignment elsewhere.
+    const config = {
+      fsTree: {},
+      projectRoot: process.cwd(),
+      extensions: ['ts'],
+    } as unknown as Config;
+    const before = Date.now();
+    const { killFileWatchers, ready } = setupFileWatchers(
+      [], // empty lookup paths — no actual fs.watch handles created
+      config,
+      () => {},
+      null,
+    );
+    try {
+      await ready;
+      assert.ok(typeof config._lastBuildEndMs === 'number', 'set to a number');
+      assert.ok(config._lastBuildEndMs! >= before, '>= the moment setupFileWatchers was called');
+      assert.ok(config._lastBuildEndMs! <= Date.now(), '<= the moment we observed it');
+    } finally {
+      killFileWatchers();
+    }
+  });
+
+  test('preserves an already-set config._lastBuildEndMs', async (assert) => {
+    // Defensive: if a caller has already seeded the timestamp (e.g. a rebuild happened
+    // before the watcher was reinitialized), setupFileWatchers must not clobber it.
+    const config = {
+      fsTree: {},
+      projectRoot: process.cwd(),
+      extensions: ['ts'],
+      _lastBuildEndMs: 12345,
+    } as unknown as Config;
+    const { killFileWatchers, ready } = setupFileWatchers([], config, () => {}, null);
+    try {
+      await ready;
+      assert.equal(config._lastBuildEndMs, 12345, 'pre-existing value preserved');
+    } finally {
+      killFileWatchers();
+    }
+  });
+
   test('change on a directly-watched file passes the correct path to onEventFunc, not a doubled path', async (assert) => {
     // Regression: when watchPath is a file (not a directory), fs.watch fires events with
     // filename = the file's own basename. path.join(watchPath, filename) produced the
@@ -398,6 +443,83 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
         events.some((e) => e.event === 'add' && e.file === symlink),
         'symlink detected as add event',
       );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('fires change for a tracked file whose mtime moved past the last build', async (assert) => {
+    // Reproduces a flake hit on macOS Firefox CI: when FSEvents drops a 'change' event under
+    // load, the periodic rescan must catch the missed modification — otherwise the watcher
+    // sits forever on stale content, which manifests as a 120-second test timeout the next
+    // time anyone fixes a file after a build error. Without this safety net, only adds and
+    // unlinks are recovered; modifications to files already in fsTree are silently lost.
+    const dir = path.join(process.cwd(), `tmp/rescan-change-${randomUUID()}`);
+    await fs.mkdir(dir, { recursive: true });
+    const tracked = path.join(dir, 'tracked.ts');
+    await fs.writeFile(tracked, 'before');
+
+    // Pin the build-end timestamp before the modification so the rescan can tell that the
+    // post-modification mtime is genuinely newer than what the build last consumed.
+    const lastBuildEndMs = Date.now();
+    // Filesystem mtime resolution is 1 ms on most platforms but only 1 s on FAT/HFS+; sleep
+    // past the 1 s boundary so the post-write mtime is unambiguously newer.
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await fs.writeFile(tracked, 'after');
+
+    const config: Partial<Config> & { fsTree: FSTree } = {
+      fsTree: { [tracked]: null },
+      projectRoot: dir,
+      _lastBuildEndMs: lastBuildEndMs,
+    };
+    const events: Array<{ event: string; file: string }> = [];
+
+    await rescanDirectoryForDelta(
+      dir,
+      config as Config,
+      ['ts', 'js'],
+      (ev, f) => events.push({ event: ev, file: f }),
+      null,
+    );
+
+    try {
+      assert.equal(events.length, 1, 'exactly one event fires');
+      assert.equal(events[0].event, 'change', 'event is a change, not add or unlink');
+      assert.equal(events[0].file, tracked);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('does not fire change when the tracked file is older than the last build', async (assert) => {
+    // Defensive cousin of the test above: at startup the rescan must not fire spurious change
+    // events for pre-existing untouched files. The seeded _lastBuildEndMs is the gate.
+    const dir = path.join(process.cwd(), `tmp/rescan-nochange-${randomUUID()}`);
+    await fs.mkdir(dir, { recursive: true });
+    const tracked = path.join(dir, 'untouched.ts');
+    await fs.writeFile(tracked, 'content');
+    // Sleep past the 1 s mtime resolution boundary so the seeded lastBuildEndMs is strictly
+    // greater than the file's mtime, confirming the rescan suppresses the event.
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const lastBuildEndMs = Date.now();
+
+    const config: Partial<Config> & { fsTree: FSTree } = {
+      fsTree: { [tracked]: null },
+      projectRoot: dir,
+      _lastBuildEndMs: lastBuildEndMs,
+    };
+    const events: Array<{ event: string; file: string }> = [];
+
+    await rescanDirectoryForDelta(
+      dir,
+      config as Config,
+      ['ts', 'js'],
+      (ev, f) => events.push({ event: ev, file: f }),
+      null,
+    );
+
+    try {
+      assert.equal(events.length, 0, 'no event fires for an unchanged file');
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }

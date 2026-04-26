@@ -28,6 +28,11 @@ export function setupFileWatchers(
   ready: Promise<void>;
 } {
   const extensions = config.extensions || defaultProjectConfigValues.extensions;
+  // Seed the build-end timestamp so the macOS rescan has a baseline for detecting modifies
+  // fs.watch may have dropped. The initial build does not flow through handleWatchEvent (it
+  // runs directly from run.ts), so on a failed initial build _lastBuildEndMs would otherwise
+  // stay undefined and the rescan could not distinguish stale files from genuine modifications.
+  config._lastBuildEndMs ??= Date.now();
   const readyPromises: Promise<void>[] = [];
   const parentWatchers: FSWatcher[] = [];
   const rescanTimers: ReturnType<typeof setInterval>[] = [];
@@ -305,10 +310,12 @@ export function handleWatchEvent(
 }
 
 /**
- * Scans `watchPath` recursively and fires 'add'/'unlink' events for any delta between the
- * directory contents and `config.fsTree`. Called when macOS FSEvents delivers a rename event
- * with filename=null (event coalescing under load) — both file creations and deletions can
- * arrive this way, so both directions are checked in a single pass.
+ * Scans `watchPath` recursively and fires `add` / `change` / `unlink` events for any delta
+ * between the directory contents and `config.fsTree`. Used as a 1 s safety-net poll on macOS
+ * where FSEvents can drop events under load — additions and removals are recovered from the
+ * directory listing, and modifications are recovered by re-stat'ing every tracked file and
+ * firing `change` whenever its mtime is newer than `config._lastBuildEndMs` (the moment the
+ * last build saw the file). The seed for that baseline is set in {@link setupFileWatchers}.
  */
 export async function rescanDirectoryForDelta(
   watchPath: string,
@@ -325,6 +332,7 @@ export async function rescanDirectoryForDelta(
     // ancestor directory was removed without issuing additional stat() calls.
     const presentDirs = new Set<string>();
     presentDirs.add(watchPath);
+    const trackedToRecheck: string[] = [];
     for (const entry of entries) {
       if (entry.isDirectory()) {
         presentDirs.add(path.join(entry.parentPath, entry.name));
@@ -338,8 +346,27 @@ export async function rescanDirectoryForDelta(
       if (!(entryPath in config.fsTree)) {
         if (entry.isSymbolicLink()) trackSymlinkFn?.(entryPath);
         handleWatchEvent(config, extensions, 'add', entryPath, onEventFunc, onFinishFunc);
+      } else if (config._lastBuildEndMs) {
+        trackedToRecheck.push(entryPath);
       }
     }
+    // Detect modifies fs.watch may have dropped: stat every tracked file in parallel and
+    // fire 'change' when its mtime is strictly newer than the last build's end. setupFileWatchers
+    // seeds _lastBuildEndMs at startup, so on the first rescan tick this only fires for files
+    // genuinely modified after the watcher came up — never for pre-existing untouched files.
+    const buildEndMs = config._lastBuildEndMs ?? 0;
+    await Promise.all(
+      trackedToRecheck.map(async (filePath) => {
+        try {
+          const { mtimeMs } = await stat(filePath);
+          if (mtimeMs > buildEndMs) {
+            handleWatchEvent(config, extensions, 'change', filePath, onEventFunc, onFinishFunc);
+          }
+        } catch {
+          /* file disappeared between readdir and stat — handled by the unlink pass below */
+        }
+      }),
+    );
     const watchPrefix = watchPath + path.sep;
     // For each missing tracked path, walk up toward watchPath using presentDirs (O(1) Set
     // lookups, no extra I/O) to find the highest gone ancestor. Fire one unlinkDir for the
