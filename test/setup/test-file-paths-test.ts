@@ -3,10 +3,10 @@ import setupTestFilePaths from '../../lib/setup/test-file-paths.ts';
 
 module('Setup | glob(*) input tests | test-file-paths tests', { concurrency: true }, () => {
   test('setupTestFilePaths() works correctly on different inputs', (assert) => {
-    let projectRoot = '/home/izelnakri/Github/qunitx';
+    const projectRoot = '/home/izelnakri/Github/qunitx';
 
     assert.deepEqual(
-      setupTestFilePaths(projectRoot, [
+      setupTestFilePaths([
         `${projectRoot}/tmp`,
         `${projectRoot}/tmp/vendor`,
         `${projectRoot}/another/first/*`,

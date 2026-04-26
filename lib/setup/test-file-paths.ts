@@ -1,76 +1,59 @@
 import { matchesGlob } from 'node:path';
 
+const GLOB_CHARS = /[*?{[]/;
+
 interface PathMeta {
   input: string;
-  isFile: boolean;
-  isGlob: boolean;
+  globFormat: string;
 }
 
 /**
  * Deduplicates a list of file, folder, and glob inputs so that more-specific paths covered by broader ones are removed.
  * @returns {string[]}
  */
-export function setupTestFilePaths(_projectRoot: string, inputs: string[]): string[] {
-  // NOTE: very complex algorithm, order is very important
-  const [folders, filesWithGlob, filesWithoutGlob] = inputs.reduce(
-    (result, input) => {
-      const glob = isGlob(input);
+export function setupTestFilePaths(inputs: string[]): string[] {
+  const folders: PathMeta[] = [];
+  const filesWithGlob: PathMeta[] = [];
+  const filesWithoutGlob: PathMeta[] = [];
 
-      if (!pathIsFile(input)) {
-        result[0].push({ input, isFile: false, isGlob: glob });
-      } else {
-        result[glob ? 1 : 2].push({ input, isFile: true, isGlob: glob });
-      }
-
-      return result;
-    },
-    [[], [], []],
-  );
-
-  const result = folders.reduce((folderResult, folder) => {
-    if (!pathIsIncludedInPaths(folders, folder)) {
-      folderResult.push(folder);
+  inputs.forEach((input) => {
+    if (!pathIsFile(input)) {
+      folders.push({ input, globFormat: `${input}/**` });
+    } else if (isGlob(input)) {
+      filesWithGlob.push({ input, globFormat: input });
+    } else {
+      filesWithoutGlob.push({ input, globFormat: input });
     }
+  });
 
-    return folderResult;
+  const dedupedFolders = folders.filter((folder) => !isIncludedIn(folders, folder));
+  const dedupedGlobFiles = filesWithGlob.filter(
+    (file) => !isIncludedIn(dedupedFolders, file) && !isIncludedIn(filesWithGlob, file),
+  );
+  const dedupedPlainFiles = filesWithoutGlob.reduce<PathMeta[]>((acc, file) => {
+    if (
+      !isIncludedIn(dedupedFolders, file) &&
+      !isIncludedIn(dedupedGlobFiles, file) &&
+      !isIncludedIn(acc, file)
+    ) {
+      acc.push(file);
+    }
+    return acc;
   }, []);
 
-  filesWithGlob.forEach((file) => {
-    if (!pathIsIncludedInPaths(result, file) && !pathIsIncludedInPaths(filesWithGlob, file)) {
-      result.push(file);
-    }
-  });
-  filesWithoutGlob.forEach((file) => {
-    if (!pathIsIncludedInPaths(result, file)) {
-      result.push(file);
-    }
-  });
-
-  return result.map((metaItem) => metaItem.input);
+  return dedupedFolders.concat(dedupedGlobFiles, dedupedPlainFiles).map((meta) => meta.input);
 }
 
 export { setupTestFilePaths as default };
 
 function pathIsFile(path: string): boolean {
-  const inputs = path.split('/');
-
-  return inputs[inputs.length - 1].includes('.');
+  return path.includes('.', path.lastIndexOf('/') + 1);
 }
 
-function pathIsIncludedInPaths(paths: PathMeta[], targetPath: PathMeta): boolean {
-  return paths.some((path) => {
-    if (path === targetPath) {
-      return false;
-    }
-
-    return matchesGlob(targetPath.input, buildGlobFormat(path));
-  });
-}
-
-function buildGlobFormat(path: PathMeta): string {
-  return path.isFile ? path.input : `${path.input}/**`;
+function isIncludedIn(paths: PathMeta[], target: PathMeta): boolean {
+  return paths.some((path) => path !== target && matchesGlob(target.input, path.globFormat));
 }
 
 function isGlob(str: string): boolean {
-  return /[*?{[]/.test(str);
+  return GLOB_CHARS.test(str);
 }

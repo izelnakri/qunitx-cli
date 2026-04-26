@@ -1,5 +1,3 @@
-- refactor setup/test-file-paths.ts
-
 refactor lib/utils/source-map-decoder.ts
 
 - add jsx/tsx support, from conversation(claude --resume 80202453-1a12-424a-a785-d13f8914ec72)
@@ -43,3 +41,5 @@ Maybe move BundleError to ./errors directory
 
 - check if there are any variables we can remove and/or rename on lib/types.ts
 
+
+GitHub Release is buggy compared to the CHANGELOG.md: https://github.com/izelnakri/qunitx/releases/tag/v1.2.8 Fix this issue

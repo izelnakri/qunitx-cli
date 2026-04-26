@@ -22,7 +22,7 @@ export async function setupConfig(): Promise<Config> {
     ...cliConfigFlags,
     projectRoot,
     inputs,
-    testFileLookupPaths: setupTestFilePaths(projectRoot, inputs),
+    testFileLookupPaths: setupTestFilePaths(inputs),
     lastFailedTestFiles: null as string[] | null,
     lastRanTestFiles: null as string[] | null,
     COUNTER: {
