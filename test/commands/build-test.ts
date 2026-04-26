@@ -1,5 +1,7 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { buildTestBundle } from '../../lib/commands/run/tests-in-browser.ts';
 import type { Config, CachedContent } from '../../lib/types.ts';
@@ -159,12 +161,14 @@ module(
 
 module('Commands | buildTestBundle | nodePaths resolution', { concurrency: true }, () => {
   test('resolves qunitx imports from a file outside the project root via ancestor nodePaths', async (assert) => {
-    // Files outside the project root (e.g. /tmp/somefile.ts) are resolved relative to /tmp/,
-    // which has no node_modules. The ancestorNodeModules nodePaths walk ensures qunitx can
-    // still be resolved from any node_modules on the ancestor chain of process.cwd().
+    // Files outside the project root (e.g. os.tmpdir() + '/foo.ts') are resolved relative to
+    // their containing directory, which has no node_modules. The ancestorNodeModules nodePaths
+    // walk ensures qunitx can still be resolved from any node_modules on the ancestor chain
+    // of process.cwd(). os.tmpdir() is used (not hardcoded /tmp) so the test is portable to
+    // Windows, where /tmp resolves to a non-existent D:\tmp.
     // Note: an unused import is tree-shaken by esbuild, so we check _buildError (no resolution
     // error) rather than bundle size.
-    const tmpFile = `/tmp/qunitx-nodepaths-${randomUUID()}.ts`;
+    const tmpFile = path.join(os.tmpdir(), `qunitx-nodepaths-${randomUUID()}.ts`);
     await fs.writeFile(tmpFile, `import { module, test } from 'qunitx';\n`);
     const config = makeConfig([tmpFile]);
     const cached = makeCachedContent();

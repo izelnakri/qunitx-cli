@@ -16,6 +16,11 @@
  * at module load and fall back to atob/TextDecoder when Buffer is absent.
  */
 
+// Type-only import — erased at compile time, so no runtime dependency on node:buffer
+// (preserves browser compatibility).  Provides the Buffer type even when @types/node
+// isn't in scope (matters for `deno bench`, which type-checks without Node types).
+import type { Buffer as NodeBuffer } from 'node:buffer';
+
 // ── Constants & lookup tables ────────────────────────────────────────────────
 
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -66,8 +71,9 @@ const FRAME_FORMATS: ReadonlyArray<{
 
 // Node.js fast paths.  When Buffer is absent (browser bundle) we fall through to
 // atob + TextDecoder; both are slower but functionally equivalent.
-const HAS_BUFFER = typeof Buffer !== 'undefined';
-const SOURCE_MAP_MARKER_BYTES = HAS_BUFFER ? Buffer.from(SOURCE_MAP_MARKER, 'utf8') : null;
+// Capture via globalThis so this file doesn't depend on @types/node being in scope.
+const Buffer: typeof NodeBuffer | undefined = (globalThis as { Buffer?: typeof NodeBuffer }).Buffer;
+const SOURCE_MAP_MARKER_BYTES = Buffer ? Buffer.from(SOURCE_MAP_MARKER, 'utf8') : null;
 
 const UTF8_DECODER = new TextDecoder();
 
@@ -337,20 +343,22 @@ function atFieldStart(text: string, position: number): boolean {
 
 /** Decode a base64 ASCII string to UTF-8.  Uses Node's Buffer when available. */
 function decodeBase64Utf8(base64: string): string {
-  if (HAS_BUFFER) return Buffer.from(base64, 'base64').toString('utf8');
+  if (Buffer) return Buffer.from(base64, 'base64').toString('utf8');
   return UTF8_DECODER.decode(Uint8Array.from(atob(base64), (char) => char.charCodeAt(0)));
 }
 
 /** Find the inline source-map marker in any supported bundle shape; return its base64 payload. */
 function readMarkerPayload(bundle: ArrayBufferView | string): string | null {
   if (typeof bundle === 'string') return sliceMarkerFromString(bundle);
-  if (HAS_BUFFER) return sliceMarkerFromBuffer(asBuffer(bundle));
+  if (Buffer) return sliceMarkerFromBuffer(asBuffer(bundle, Buffer));
   return sliceMarkerFromString(UTF8_DECODER.decode(bundle));
 }
 
 /** Wrap an arbitrary ArrayBufferView as a Buffer view (zero-copy in Node). */
-function asBuffer(view: ArrayBufferView): Buffer {
-  return Buffer.isBuffer(view) ? view : Buffer.from(view.buffer, view.byteOffset, view.byteLength);
+function asBuffer(view: ArrayBufferView, BufferCtor: typeof NodeBuffer): NodeBuffer {
+  return BufferCtor.isBuffer(view)
+    ? view
+    : BufferCtor.from(view.buffer, view.byteOffset, view.byteLength);
 }
 
 /** Tail-search a string for the inline source-map marker; returns the base64 payload or null. */
@@ -363,7 +371,7 @@ function sliceMarkerFromString(text: string): string | null {
 }
 
 /** Tail-search a Node Buffer for the marker bytes; returns the base64 payload or null. */
-function sliceMarkerFromBuffer(buffer: Buffer): string | null {
+function sliceMarkerFromBuffer(buffer: NodeBuffer): string | null {
   const markerBytes = SOURCE_MAP_MARKER_BYTES!;
   const markerStart = buffer.lastIndexOf(markerBytes);
   if (markerStart < 0) return null;

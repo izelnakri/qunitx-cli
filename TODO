@@ -28,7 +28,6 @@ Maybe use bun instead of esbuild?
 
 - Standardize function naming of onCustomFunction, all functions should follow a naming standard, currently it seems 
 the worst by having:
-
 order imports according to some intutive logic to make them more readable
 make all .catch(() => {}) print something to debug
 move helper functions to below

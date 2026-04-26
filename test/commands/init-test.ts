@@ -2,6 +2,7 @@ import { module, test } from 'qunitx';
 import { exec as execCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import '../helpers/custom-asserts.ts';
@@ -40,7 +41,9 @@ module('Commands | init tests', { concurrency: true }, (_hooks, moduleMetadata) 
   });
 
   test('$ qunitx init -> exits with code 1 and prints an error when no package.json is found', async (assert) => {
-    const dir = `/tmp/qunitx-init-${randomUUID()}`;
+    // os.tmpdir() (not hardcoded /tmp) so the path resolves correctly on Windows where
+    // /tmp would point at a non-existent D:\tmp.
+    const dir = path.join(os.tmpdir(), `qunitx-init-${randomUUID()}`);
     await fs.mkdir(dir, { recursive: true });
 
     try {

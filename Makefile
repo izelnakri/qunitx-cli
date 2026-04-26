@@ -14,7 +14,8 @@ help:
 	@echo "  fix             Auto-fix formatting"
 	@echo "  format          Check formatting (prettier)"
 	@echo "  lint            Check code quality (deno lint)"
-	@echo "  check           Format + lint + tests"
+	@echo "  bench-typecheck Type-check benchmark files (catches Node-globals leaks under Deno)"
+	@echo "  check           Format + lint + bench-typecheck + tests"
 	@echo "  test            Run full test suite (chromium)"
 	@echo "  test-debug      Run full test suite with --debug on all qunitx invocations"
 	@echo "  dev             Watch all tests with --debug (for development)"
@@ -48,10 +49,16 @@ lint:
 lint-docs:
 	npm run lint:docs
 
+# Type-check the benchmark files (and their lib/ imports) under Deno.
+# Catches Node-globals leaking into shared code (e.g. raw `Buffer` references
+# without a node:buffer import) which would otherwise only surface in CI bench.
+bench-typecheck:
+	deno check 'benches/**/*.ts'
+
 docs:
 	npm run docs
 
-check: format lint lint-docs test
+check: format lint lint-docs bench-typecheck test
 
 test:
 	npm test

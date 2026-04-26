@@ -29,6 +29,10 @@ jobs:
       - run: npm run format
       - run: npm run lint
       - run: npm run lint:docs
+      # Type-check bench files under Deno so Node-globals leaking into shared lib/
+      # code (e.g. raw `Buffer` references without a node:buffer import) fails fast
+      # in lint instead of only surfacing in the bench job.
+      - run: deno check 'benches/**/*.ts'
 
   # ── Test ──────────────────────────────────────────────────────────────────────
   # Runs in parallel with lint. Test files run concurrently — safe because each
