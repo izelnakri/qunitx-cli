@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0] - 2026-04-26
+[`v0.21.3...v0.22.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.21.3...v0.22.0)
+
+### Features
+- Zero-config .jsx/.tsx support via esbuild automatic runtime — 2026-04-26 by [@izelnakri](https://github.com/izelnakri) ([`e36c545`](https://github.com/izelnakri/qunitx-cli/commit/e36c545daee9d5f4587c448ecdcf250630cab88c))
+- Esbuild plugin loading via package.json#qunitx.plugins — 2026-04-26 by [@izelnakri](https://github.com/izelnakri) ([`10a5641`](https://github.com/izelnakri/qunitx-cli/commit/10a5641f62b3bfd0cc47b6289cf40a637be32219))
+
 ## [0.21.3] - 2026-04-26
 [`v0.21.2...v0.21.3`](https://github.com/izelnakri/qunitx-cli/compare/v0.21.2...v0.21.3)
 
