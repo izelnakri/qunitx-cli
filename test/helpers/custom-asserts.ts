@@ -2,14 +2,17 @@ import Assert from 'qunitx/assert';
 
 /**
  * assert.includes(result, needle, message?)
- * result may be a plain string (stdout) or a { stdout, stderr } object.
- * On failure: actual shows stdout (and stderr if present) so you see the full context.
+ * result may be a plain string (stdout) or a CapturedResult/CapturedError object.
+ * On failure: actual shows stdout, stderr, exit code, signal, child runtime, and the
+ * arrival timestamp of the last stdout/stderr chunks — enough context to diagnose Windows
+ * stdout-truncation flakes from the failure message alone.
  */
 Assert.prototype.includes = function (result, needle, message) {
-  const { stdout, stderr } = extractOutput(result);
+  const ctx = normalize(result);
+  const passed = ctx.stdout.includes(needle);
   this.pushResult({
-    result: stdout.includes(needle),
-    actual: stderr ? { stdout, stderr } : stdout,
+    result: passed,
+    actual: passed ? ctx.stdout : ctx,
     expected: needle,
     message: message || `should contain: ${needle}`,
   });
@@ -17,14 +20,15 @@ Assert.prototype.includes = function (result, needle, message) {
 
 /**
  * assert.notIncludes(result, needle, message?)
- * result may be a plain string (stdout) or a { stdout, stderr } object.
- * On failure: actual shows stdout (and stderr if present) so you see the full context.
+ * result may be a plain string (stdout) or a CapturedResult/CapturedError object.
+ * On failure: actual carries the same diagnostic surface as `assert.includes`.
  */
 Assert.prototype.notIncludes = function (result, needle, message) {
-  const { stdout, stderr } = extractOutput(result);
+  const ctx = normalize(result);
+  const passed = !ctx.stdout.includes(needle);
   this.pushResult({
-    result: !stdout.includes(needle),
-    actual: stderr ? { stdout, stderr } : stdout,
+    result: passed,
+    actual: passed ? ctx.stdout : ctx,
     expected: `should NOT contain: ${needle}`,
     message: message || `should not contain: ${needle}`,
   });
@@ -41,9 +45,9 @@ Assert.prototype.outputContains = function (
   { contains = [], notContains = [] } = {},
   message,
 ) {
-  const { stdout, stderr } = extractOutput(result);
+  const ctx = normalize(result);
   const matches = (pattern) =>
-    pattern instanceof RegExp ? pattern.test(stdout) : stdout.includes(pattern);
+    pattern instanceof RegExp ? pattern.test(ctx.stdout) : ctx.stdout.includes(pattern);
   const missing = contains.filter((pattern) => !matches(pattern));
   const unexpectedlyFound = notContains.filter((pattern) => matches(pattern));
   const passed = missing.length === 0 && unexpectedlyFound.length === 0;
@@ -52,12 +56,7 @@ Assert.prototype.outputContains = function (
     result: passed,
     actual: passed
       ? { missing: [], unexpectedlyFound: [] }
-      : {
-          missing: missing.map(String),
-          unexpectedlyFound: unexpectedlyFound.map(String),
-          stdout,
-          ...(stderr ? { stderr } : {}),
-        },
+      : { ...ctx, missing: missing.map(String), unexpectedlyFound: unexpectedlyFound.map(String) },
     expected: { missing: [], unexpectedlyFound: [] },
     message: message || 'stdout content check',
   });
@@ -68,10 +67,11 @@ Assert.prototype.outputContains = function (
  * Asserts that stdout contains the "# QUnitX running: http://localhost:<port>" debug line.
  */
 Assert.prototype.hasDebugURL = function (result, message) {
-  const { stdout, stderr } = extractOutput(result);
+  const ctx = normalize(result);
+  const passed = /# QUnitX running: http:\/\/localhost:\d+/.test(ctx.stdout);
   this.pushResult({
-    result: /# QUnitX running: http:\/\/localhost:\d+/.test(stdout),
-    actual: stderr ? { stdout, stderr } : stdout,
+    result: passed,
+    actual: passed ? ctx.stdout : ctx,
     expected: '# QUnitX running: http://localhost:<port>',
     message: message || '--debug mode should print QUnitX running URL',
   });
@@ -80,13 +80,15 @@ Assert.prototype.hasDebugURL = function (result, message) {
 /**
  * assert.regex(result, pattern, message)
  * Asserts that stdout matches a regex pattern.
- * On failure: actual shows stdout (and stderr if present).
+ * On failure: actual carries the diagnostic surface (stdout, stderr, exit code, signal,
+ * runtime, last-chunk timestamps).
  */
 Assert.prototype.regex = function (result, pattern, message) {
-  const { stdout, stderr } = extractOutput(result);
+  const ctx = normalize(result);
+  const passed = pattern.test(ctx.stdout);
   this.pushResult({
-    result: pattern.test(stdout),
-    actual: stderr ? { stdout, stderr } : stdout,
+    result: passed,
+    actual: passed ? ctx.stdout : ctx,
     expected: String(pattern),
     message,
   });
@@ -101,12 +103,10 @@ Assert.prototype.regex = function (result, pattern, message) {
  */
 Assert.prototype.exitCode = function (cmd, expectedCode, message) {
   const passed = cmd?.code === expectedCode;
-  const { stdout, stderr } = extractOutput(cmd);
+  const ctx = normalize(cmd);
   this.pushResult({
     result: passed,
-    actual: passed
-      ? { code: cmd?.code }
-      : { code: cmd?.code, stdout: stdout.slice(-1000), ...(stderr ? { stderr } : {}) },
+    actual: passed ? { code: cmd?.code } : { ...ctx, stdout: ctx.stdout.slice(-1000) },
     expected: { code: expectedCode },
     message: message || `expected exit code ${expectedCode}`,
   });
@@ -246,16 +246,17 @@ Assert.prototype.failingTestCasesFor = function (output, arrayOfOptions) {
  */
 Assert.prototype.tapResult = function (output, options = { testCount: 0, failCount: 0 }) {
   const { testCount, failCount = 0, skipCount = 0, todoCount = 0 } = options;
-  const { stdout, stderr } = extractOutput(output);
+  const ctx = normalize(output);
   const expectedPass = testCount - failCount;
-  const tail = stdout.slice(-300);
-  const actual = stderr ? { stdout: tail, stderr } : tail;
+  // Tail rather than full stdout: TAP summaries are large and test output tails are where
+  // the # pass/# fail/# duration lines live; everything earlier is noise for this assert.
+  const actual = { ...ctx, stdout: ctx.stdout.slice(-300) };
 
   if (failCount) {
     this.pushResult({
       result: new RegExp(
         `# pass ${expectedPass}\n# skip ${skipCount}\n# todo ${todoCount}\n# fail (${failCount}|${failCount + 1})`,
-      ).test(stdout),
+      ).test(ctx.stdout),
       actual,
       expected: `# pass ${expectedPass}\n# skip ${skipCount}\n# todo ${todoCount}\n# fail ${failCount}`,
       message: `TAP summary should show pass=${expectedPass} skip=${skipCount} todo=${todoCount} fail=${failCount}`,
@@ -266,21 +267,34 @@ Assert.prototype.tapResult = function (output, options = { testCount: 0, failCou
   this.pushResult({
     result: new RegExp(
       `# pass ${testCount}\n# skip ${skipCount}\n# todo ${todoCount}\n# fail 0`,
-    ).test(stdout),
+    ).test(ctx.stdout),
     actual,
     expected: `# pass ${testCount}\n# skip ${skipCount}\n# todo ${todoCount}\n# fail 0`,
     message: `TAP summary should show pass=${testCount} skip=${skipCount} todo=${todoCount} fail=0`,
   });
 };
 
-// Extracts stdout string and optional stderr from either a plain string or a
-// result/error object ({ stdout, stderr }). This lets every assertion helper
-// accept both forms transparently while surfacing stderr in failure diagnostics.
-function extractOutput(result) {
+// Extracts the diagnostic surface from either a plain stdout string or a CapturedResult /
+// CapturedError object: stdout, stderr, exit code, terminating signal, child runtime, and the
+// arrival timestamp + size of the last stdout/stderr chunks. The chunk timestamps in
+// particular turn an opaque "exit 0 with truncated stdout" Windows flake into a self-explaining
+// failure: a last-stdout-chunk at 50 ms followed by exit at 9 000 ms means "child wrote then
+// hung silently for 8.95 s," which is impossible to spot from stdout alone.
+function normalize(result) {
   if (typeof result === 'string' || result == null) {
-    return { stdout: result ?? '', stderr: null };
+    return { stdout: result ?? '' };
   }
-  return { stdout: result.stdout ?? '', stderr: result.stderr || null };
+  const lastStdout = result.stdoutChunks?.at?.(-1);
+  const lastStderr = result.stderrChunks?.at?.(-1);
+  return {
+    stdout: result.stdout ?? '',
+    stderr: result.stderr || undefined,
+    code: result.code,
+    signal: result.signal || undefined,
+    durationMs: typeof result.duration === 'number' ? Math.round(result.duration) : undefined,
+    lastStdoutAtMs: lastStdout ? Math.round(lastStdout.time) : undefined,
+    lastStderrAtMs: lastStderr ? Math.round(lastStderr.time) : undefined,
+  };
 }
 
 function escapeRegex(str) {
