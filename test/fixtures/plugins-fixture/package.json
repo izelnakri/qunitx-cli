@@ -1,0 +1,10 @@
+{
+  "name": "qunitx-plugins-fixture",
+  "private": true,
+  "type": "module",
+  "qunitx": {
+    "plugins": [
+      ["./virtual-greeting-plugin.js", { "greeting": "hello from package.json" }]
+    ]
+  }
+}

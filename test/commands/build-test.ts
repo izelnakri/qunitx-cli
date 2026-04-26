@@ -252,6 +252,49 @@ module('Commands | buildTestBundle | jsx automatic runtime', { concurrency: true
   });
 });
 
+module('Commands | buildTestBundle | esbuild plugins', { concurrency: true }, () => {
+  test('user plugins are invoked during the build and can resolve virtual modules', async (assert) => {
+    const tmpFile = path.join(os.tmpdir(), `qunitx-plugin-${randomUUID()}.ts`);
+    await fs.writeFile(
+      tmpFile,
+      `import { module, test } from 'qunitx';\n` +
+        `import { GREETING } from 'virtual:greeting';\n` +
+        `module('plugin', () => { test('greets', (a) => { a.equal(GREETING, 'hi'); }); });\n`,
+    );
+    let setupCalls = 0;
+    const virtualGreetingPlugin = {
+      name: 'virtual-greeting',
+      setup(build: import('esbuild').PluginBuild) {
+        setupCalls++;
+        build.onResolve({ filter: /^virtual:greeting$/ }, (args) => ({
+          path: args.path,
+          namespace: 'virtual-greeting',
+        }));
+        build.onLoad({ filter: /.*/, namespace: 'virtual-greeting' }, () => ({
+          contents: `export const GREETING = 'hi';`,
+          loader: 'ts',
+        }));
+      },
+    };
+    const config = makeConfig([tmpFile]);
+    config.plugins = [virtualGreetingPlugin];
+    const cached = makeCachedContent();
+    try {
+      await buildTestBundle(config, cached);
+      const bundle = (cached.allTestCode as Buffer).toString('utf8');
+      assert.strictEqual(cached._buildError, null, 'no build error');
+      assert.equal(setupCalls, 1, 'plugin setup() invoked exactly once');
+      assert.ok(
+        bundle.includes(`'hi'`) || bundle.includes(`"hi"`),
+        'virtual module contents are inlined into the bundle',
+      );
+    } finally {
+      await fs.rm(tmpFile, { force: true });
+      await fs.rm(`${CWD}/${config.output}`, { force: true, recursive: true });
+    }
+  });
+});
+
 module('Commands | buildTestBundle | nodePaths resolution', { concurrency: true }, () => {
   test('resolves qunitx imports from a file outside the project root via ancestor nodePaths', async (assert) => {
     // Files outside the project root (e.g. os.tmpdir() + '/foo.ts') are resolved relative to

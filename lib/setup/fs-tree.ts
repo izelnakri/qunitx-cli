@@ -1,5 +1,6 @@
 import fs, { glob as fsGlob } from 'node:fs/promises';
 import path from 'node:path';
+import { defaultProjectConfigValues } from './default-project-config-values.ts';
 import type { FSTree } from '../types.ts';
 
 /**
@@ -10,7 +11,7 @@ export async function buildFSTree(
   fileAbsolutePaths: string[],
   config: { extensions?: string[] } = {},
 ): Promise<FSTree> {
-  const targetExtensions = config.extensions || ['js', 'ts'];
+  const targetExtensions = config.extensions || defaultProjectConfigValues.extensions;
   const fsTree = {};
 
   await Promise.all(

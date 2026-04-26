@@ -14,8 +14,9 @@ output to the terminal.
 
 ## Features
 
-- Runs `.js` and `.ts` test files in headless Chrome, Firefox, or WebKit (Playwright + esbuild)
-- TypeScript works with zero configuration — esbuild handles transpilation
+- Runs `.js`, `.ts`, `.jsx`, and `.tsx` test files in headless Chrome, Firefox, or WebKit (Playwright + esbuild)
+- TypeScript and JSX work with zero configuration — esbuild handles transpilation, including the React 17+ automatic JSX runtime
+- Bring your own esbuild plugins through `package.json` for `.vue`, `.svelte`, and other custom loaders
 - Inline source maps for accurate stack traces pointing to original source files
 - Streams TAP-formatted output to the terminal in real time
 - Concurrent mode (default) splits test files across all CPU cores for fast parallel runs
@@ -165,28 +166,92 @@ All CLI flags can also be set in `package.json` under the `qunitx` key, so you d
   "qunitx": {
     "inputs": ["test/**/*-test.js", "test/**/*-test.ts"],
     "htmlPaths": ["test/tests.html"],
-    "extensions": ["js", "ts"],
+    "extensions": ["js", "ts", "jsx", "tsx"],
     "output": "tmp",
     "timeout": 20000,
     "failFast": false,
     "port": 1234,
-    "browser": "chromium"
+    "browser": "chromium",
+    "plugins": []
   }
 }
 ```
 
-| Key          | Default        | Description                                                                                                                                                             |
-| ------------ | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `inputs`     | `[]`           | Glob patterns, file paths, or directories to use as test entry points. Merged with any paths given on the CLI.                                                          |
-| `htmlPaths`  | `[]`           | Optional HTML templates to run tests inside. Any listed `.html` file that contains `{{qunitxScript}}` or other handlebars-style tokens is treated as a test runner template. |
-| `extensions` | `["js", "ts"]` | File extensions tracked for test discovery (directory scans) and watch-mode rebuild triggers. Add `"mjs"`, `"cjs"`, or any other extension your project uses.           |
-| `output`     | `"tmp"`        | Directory where compiled test bundles are written.                                                                                                                      |
-| `timeout`    | `20000`        | Maximum milliseconds to wait for the full test suite before timing out.                                                                                                 |
-| `failFast`   | `false`        | Stop the run after the first failing test.                                                                                                                              |
-| `port`       | `1234`         | Preferred HTTP server port. qunitx auto-selects a free port if this one is taken.                                                                                       |
-| `browser`    | `"chromium"`   | Browser engine to use: `"chromium"`, `"firefox"`, or `"webkit"`. Overridden by `--browser` on the CLI.                                                                  |
+| Key          | Default                       | Description                                                                                                                                                                 |
+| ------------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `inputs`     | `[]`                          | Glob patterns, file paths, or directories to use as test entry points. Merged with any paths given on the CLI.                                                              |
+| `htmlPaths`  | `[]`                          | Optional HTML templates to run tests inside. Any listed `.html` file that contains `{{qunitxScript}}` or other handlebars-style tokens is treated as a test runner template. |
+| `extensions` | `["js", "ts", "jsx", "tsx"]`  | File extensions tracked for test discovery (directory scans) and watch-mode rebuild triggers. Add `"mjs"`, `"cjs"`, or any other extension your project uses.               |
+| `output`     | `"tmp"`                       | Directory where compiled test bundles are written.                                                                                                                          |
+| `timeout`    | `20000`                       | Maximum milliseconds to wait for the full test suite before timing out.                                                                                                     |
+| `failFast`   | `false`                       | Stop the run after the first failing test.                                                                                                                                  |
+| `port`       | `1234`                        | Preferred HTTP server port. qunitx auto-selects a free port if this one is taken.                                                                                           |
+| `browser`    | `"chromium"`                  | Browser engine to use: `"chromium"`, `"firefox"`, or `"webkit"`. Overridden by `--browser` on the CLI.                                                                      |
+| `plugins`    | `[]`                          | esbuild plugin specifiers loaded from your `node_modules` and applied to the test bundle. See [esbuild plugins](#esbuild-plugins).                                          |
 
 CLI flags always override `package.json` values when both are present.
+
+## JSX / TSX
+
+`.jsx` and `.tsx` files are picked up automatically — no configuration needed. The bundle uses esbuild's automatic JSX runtime so React 17+ "no `import React`" code just works:
+
+```tsx
+// test/button-test.tsx
+import { module, test } from 'qunitx';
+import { flushSync } from 'react-dom';
+import { createRoot } from 'react-dom/client';
+import { Button } from '../src/button.tsx';
+
+module('Button', (hooks) => {
+  let container;
+  hooks.beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+  });
+  hooks.afterEach(() => container.remove());
+
+  test('renders the label', (assert) => {
+    flushSync(() => createRoot(container).render(<Button label="Save" />));
+    assert.equal(container.querySelector('button').textContent, 'Save');
+  });
+});
+```
+
+Vue, Preact, Solid, and other JSX dialects work via a one-line override at the top of each file:
+
+```tsx
+/** @jsxImportSource vue */
+import { createApp } from 'vue';
+// ...JSX uses vue/jsx-runtime instead of react/jsx-runtime
+```
+
+You can also set `compilerOptions.jsxImportSource` in your `tsconfig.json` to apply the override across a directory.
+
+## esbuild plugins
+
+For file formats esbuild does not handle natively (e.g. `.vue` SFCs, `.svelte`), declare plugin specifiers in `package.json#qunitx.plugins`. qunitx dynamic-imports each one from your project's `node_modules` and passes it to the build:
+
+```json
+{
+  "qunitx": {
+    "extensions": ["js", "ts", "jsx", "tsx", "vue"],
+    "plugins": [
+      "esbuild-plugin-vue-next",
+      ["esbuild-svelte", { "compilerOptions": { "css": "injected" } }]
+    ]
+  }
+}
+```
+
+Each entry is one of:
+
+| Form                          | Behavior                                                                                                                                                  |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"<package-name>"`             | Imports the package. If the default export is a function, it's called with no arguments to produce the plugin; otherwise the export is used as the plugin. |
+| `["<package-name>", <options>]` | Same, but the factory is called with `<options>` as its only argument. Use this form to pass plugin-specific configuration.                                |
+| `"./relative/plugin.js"`       | Loads a plugin you wrote yourself. Resolved against the project root (where your `package.json` lives).                                                   |
+
+Don't forget to add the plugin's file extension(s) to `qunitx.extensions` so directory scans and watch-mode rebuilds pick them up.
 
 ### Environment variables
 
@@ -218,7 +283,7 @@ Options:
   --debug             Print the server URL; pipe browser console to stdout
   --timeout=<ms>      Max ms to wait for the suite to finish  [default: 20000]
   --output=<dir>      Directory for compiled test assets     [default: ./tmp]
-  --extensions=<...>  Comma-separated file extensions to track  [default: js,ts]
+  --extensions=<...>  Comma-separated file extensions to track  [default: js,ts,jsx,tsx]
   --before=<file>     Script to run (and optionally await) before tests start
   --after=<file>      Script to run (and optionally await) after tests finish
   --open, -o          Open output in the test browser as soon as the bundle is ready

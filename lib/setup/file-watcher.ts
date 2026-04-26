@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { readdir, stat, lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { green, magenta, red, yellow } from '../utils/color.ts';
+import { defaultProjectConfigValues } from './default-project-config-values.ts';
 import type { FSWatcher } from 'node:fs';
 import type { Config, FSTree } from '../types.ts';
 
@@ -26,7 +27,7 @@ export function setupFileWatchers(
   killFileWatchers: () => Record<string, FSWatcher>;
   ready: Promise<void>;
 } {
-  const extensions = config.extensions || ['js', 'ts'];
+  const extensions = config.extensions || defaultProjectConfigValues.extensions;
   const readyPromises: Promise<void>[] = [];
   const parentWatchers: FSWatcher[] = [];
   const rescanTimers: ReturnType<typeof setInterval>[] = [];

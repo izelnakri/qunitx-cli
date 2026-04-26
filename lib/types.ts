@@ -2,7 +2,7 @@ import type { HTTPServer } from './servers/web.ts';
 import type { Browser, Page } from 'playwright-core';
 import type { ChildProcess } from 'node:child_process';
 import type { Buffer } from 'node:buffer';
-import type { BuildContext } from 'esbuild';
+import type { BuildContext, Plugin as EsbuildPlugin } from 'esbuild';
 import type { SourceMapDecoder } from './utils/source-map-decoder.ts';
 
 /**
@@ -113,6 +113,13 @@ export interface Config {
   before?: string | false;
   /** Path to a script run after each test run; `false` disables the after-hook. */
   after?: string | false;
+  /**
+   * Custom esbuild plugins applied during the test bundle build. Loaded from
+   * `qunitx.config.{ts,js,mjs}` in the project root. Common use cases: SFC formats
+   * like `.vue` (`esbuild-plugin-vue-next`), Svelte (`esbuild-svelte`), or any
+   * project-specific resolvers/loaders.
+   */
+  plugins?: EsbuildPlugin[];
   /** Enable file-watch mode: re-run affected tests on every save. */
   watch?: boolean;
   /** Open the test output in a browser window; a string value specifies the browser binary. */

@@ -148,6 +148,7 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
     // `import { jsx } from 'react/jsx-runtime'` for .tsx/.jsx files. Per-file overrides via
     // tsconfig's `jsxImportSource` or a `@jsxImportSource <pkg>` pragma cover Vue/Preact/Solid.
     jsx: 'automatic',
+    plugins: config.plugins,
     // Signal the runtime that all test modules are registered. The runtime's maybeStart()
     // waits for both this event and the WebSocket 'open' event before calling QUnit.start().
     // Dispatching from the bundle (rather than from a script onload attr) is reliable across
@@ -454,7 +455,10 @@ export async function buildAllGroupBundles(
       in: `group-entry-${slotIndex}`,
       out: `group-${slotIndex}`,
     })),
-    plugins: [groupEntryPlugin],
+    // groupEntryPlugin must run first — it owns the virtual entry-point modules every other
+    // plugin sees. User plugins follow and apply to the resolved test files just like in
+    // single-group mode (`buildTestBundle`).
+    plugins: [groupEntryPlugin, ...(groupConfigs[0].plugins ?? [])],
     nodePaths: ANCESTOR_NODE_MODULES,
     bundle: true,
     logLevel: 'silent',
@@ -559,6 +563,7 @@ function buildFilteredTests(
       target: esbuildTarget(config.browser),
       sourcemap,
       jsx: 'automatic',
+      plugins: config.plugins,
       footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
     },
     needsDisk,
