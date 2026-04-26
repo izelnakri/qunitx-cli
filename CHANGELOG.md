@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.22.2] - 2026-04-26
+[`v0.22.1...v0.22.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.22.1...v0.22.2)
+
+### Bug Fixes
+- Handle shell-style VAR=value env prefix in spawnCapture — 2026-04-26 by [@izelnakri](https://github.com/izelnakri) ([`b9cb73b`](https://github.com/izelnakri/qunitx-cli/commit/b9cb73b042ba7a8248ca619c26a210069ef3c813))
+
 ## [0.22.1] - 2026-04-26
 [`v0.22.0...v0.22.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.22.0...v0.22.1)
 

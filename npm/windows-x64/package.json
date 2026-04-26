@@ -1,6 +1,6 @@
 {
   "name": "qunitx-cli-windows-x64",
-  "version": "0.22.1",
+  "version": "0.22.2",
   "description": "Windows x64 SEA binary for qunitx-cli",
   "os": [
     "win32"
