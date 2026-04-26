@@ -55,27 +55,51 @@ export interface CapturedResult {
 /** Error thrown by spawnCapture when the child exits non-zero or via a signal. */
 export type CapturedError = Error & CapturedResult & { expectFailure?: boolean };
 
+// Matches a single shell-style env assignment, e.g. `TZ=UTC` or `MY_VAR=foo/bar`.
+const ENV_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
 /**
- * Splits a free-form command string into a `[bin, args[]]` pair suitable for `spawn()`.
+ * Parses a free-form command string into `{ bin, args, env }`. spawn() runs no shell, so it
+ * does not interpret leading `VAR=value` assignments the way `TZ=UTC node …` requires —
+ * exec() got that for free via cmd.exe / sh -c. This helper hand-rolls the only piece of
+ * shell behaviour we actually rely on.
  *
- * The literal token `node` is replaced with `process.execPath` so callers can write
- * `node cli.ts ...` cross-platform — `process.execPath` on Windows is
- * `C:\\Program Files\\nodejs\\node.exe` (a path with spaces) which the naive whitespace
- * split would otherwise fragment, and using the running binary instead of PATH-resolved
- * `node` also avoids version-drift surprises in release-tarball matrix jobs.
+ * The literal token `node` becomes `process.execPath` so callers can write `node cli.ts …`
+ * cross-platform: process.execPath on Windows is `C:\\Program Files\\nodejs\\node.exe`,
+ * a space-bearing path the naive whitespace split would fragment if it ever entered the
+ * command string. Using the running binary also pins us to the same Node the test runner is
+ * using — no PATH-drift surprises in the release-tarball matrix.
  *
- * Also handles the QUNITX_BIN replacement so release-package tests can swap `node cli.ts`
- * for the installed binary without re-parsing the rest of the command.
+ * Also handles the QUNITX_BIN swap so release-package tests can replace `node cli.ts` with
+ * the installed entry point without re-parsing the rest of the command.
  */
-function parseCommand(command: string): [string, string[]] {
+function parseCommand(command: string): {
+  bin: string;
+  args: string[];
+  env: Record<string, string>;
+} {
   const tokens = command.split(/\s+/).filter(Boolean);
-  const cliIdx = tokens.findIndex((t) => /\bcli\.ts$/.test(t));
+  // Boundary between leading env assignments and the bin+args tail. -1 from findIndex means
+  // every token was an assignment — let `rest` be empty so the spawn surfaces ENOENT itself.
+  const splitAt = tokens.findIndex((t) => !ENV_ASSIGNMENT_RE.test(t));
+  const envEnd = splitAt === -1 ? tokens.length : splitAt;
+  const env = Object.fromEntries(
+    tokens.slice(0, envEnd).map((t) => {
+      const eq = t.indexOf('=');
+      return [t.slice(0, eq), t.slice(eq + 1)];
+    }),
+  );
+  const rest = tokens.slice(envEnd);
+
+  const cliIdx = rest.findIndex((t) => /\bcli\.ts$/.test(t));
   if (QUNITX_BIN && cliIdx >= 0) {
-    const args = tokens.slice(cliIdx + 1);
-    return QUNITX_BIN_IS_SCRIPT ? [process.execPath, [QUNITX_BIN, ...args]] : [QUNITX_BIN, args];
+    const args = rest.slice(cliIdx + 1);
+    return QUNITX_BIN_IS_SCRIPT
+      ? { bin: process.execPath, args: [QUNITX_BIN, ...args], env }
+      : { bin: QUNITX_BIN, args, env };
   }
-  if (tokens[0] === 'node') return [process.execPath, tokens.slice(1)];
-  return [tokens[0], tokens.slice(1)];
+  if (rest[0] === 'node') return { bin: process.execPath, args: rest.slice(1), env };
+  return { bin: rest[0], args: rest.slice(1), env };
 }
 
 /**
@@ -92,10 +116,10 @@ export async function spawnCapture(
   command: string,
   { timeout = DEFAULT_EXEC_TIMEOUT_MS, env }: { timeout?: number; env?: NodeJS.ProcessEnv } = {},
 ): Promise<CapturedResult> {
-  const [bin, args] = parseCommand(command);
+  const { bin, args, env: prefixEnv } = parseCommand(command);
   return await new Promise<CapturedResult>((resolve, reject) => {
     const startTime = performance.now();
-    const child = spawn(bin, args, { env });
+    const child = spawn(bin, args, { env: { ...env, ...prefixEnv } });
     const stdoutChunks: Array<{ time: number; data: string }> = [];
     const stderrChunks: Array<{ time: number; data: string }> = [];
     let stdout = '';
@@ -151,10 +175,12 @@ export async function shellWatch(
   }: { until?: (buf: string) => boolean; timeout?: number } = {},
 ): Promise<string> {
   const command = applyImplicitFlags(commandString);
-  const [bin, spawnArgs] = parseCommand(command);
+  const { bin, args, env: prefixEnv } = parseCommand(command);
 
   const permit = await acquireBrowser();
-  const child = spawn(bin, spawnArgs, { env: { ...process.env, FORCE_COLOR: '0' } });
+  const child = spawn(bin, args, {
+    env: { ...process.env, FORCE_COLOR: '0', ...prefixEnv },
+  });
 
   try {
     return await new Promise((resolve, reject) => {

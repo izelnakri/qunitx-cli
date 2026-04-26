@@ -39,6 +39,26 @@ module('Helpers | spawnCapture | success path', { concurrency: true }, () => {
   });
 });
 
+module('Helpers | spawnCapture | shell-style env prefix', { concurrency: true }, () => {
+  test('forwards leading VAR=value tokens as child env (TZ=UTC node …)', async (assert) => {
+    // Regression: spawn() runs no shell, so the literal `TZ=UTC node ...` form that
+    // exec()/sh -c handled transparently was being interpreted as the binary name and
+    // failing with `spawn TZ=UTC ENOENT`. parseCommand now peels these off and the spawn
+    // call merges them into env — verified here against a fixture that echoes the var.
+    const result = await spawnCapture(`MY_TEST_VAR=hello node ${FIXTURE} echo-env`);
+    assert.equal(result.stdout, 'MY_TEST_VAR=hello');
+    assert.strictEqual(result.code, 0);
+  });
+
+  test('supports multiple consecutive VAR=value prefixes', async (assert) => {
+    // `A=1 B=2 cmd` shell semantics — every leading assignment must end up in env, not in
+    // argv. The fixture echoes only MY_TEST_VAR; the FORCE_NOOP=1 prefix proves the parser
+    // doesn't mis-route extra assignments into args.
+    const result = await spawnCapture(`FORCE_NOOP=1 MY_TEST_VAR=world node ${FIXTURE} echo-env`);
+    assert.equal(result.stdout, 'MY_TEST_VAR=world');
+  });
+});
+
 module('Helpers | spawnCapture | failure paths', { concurrency: true }, () => {
   test('rejects with a CapturedError carrying the full diagnostic surface on non-zero exit', async (assert) => {
     await assert.rejects(
