@@ -34,6 +34,11 @@ import type { Config, CachedContent } from '../types.ts';
 const WATCH_NAV_TIMEOUT_MS = 5_000;
 // Maximum ms to wait for page.close() before giving up and moving on (group mode).
 const PAGE_CLOSE_GRACE_MS = 10_000;
+// Maximum ms to wait for the final-cleanup race (server.close + browser.close +
+// shutdownPrelaunch) before exiting anyway. Playwright's browser.close() regularly
+// deadlocks on Firefox + Windows during shutdown — without this race the CLI sits
+// silent until the test runner's exec timeout SIGTERMs it ~60 s later.
+const CLEANUP_GRACE_MS = 10_000;
 // Maximum ms to wait for stdout to flush before forcing process.exit().
 const STDOUT_FLUSH_GRACE_MS = 5_000;
 // setInterval period that keeps the event loop alive while Promise.allSettled runs.
@@ -380,24 +385,36 @@ export async function run(config: Config): Promise<void> {
 
     process.stdout.write('\n', async () => {
       clearTimeout(exitTimer);
-      // keepAlive is cleared AFTER shutdownPrelaunch() so the interval holds the event
-      // loop open throughout Chrome cleanup, preventing premature drain if browser.close()
-      // resolves instantly (e.g. Chrome already dead) before proc.ref() takes effect.
-      await Promise.all([
-        sharedServer
-          ?.close()
-          .catch(
-            (err: Error) =>
-              config.debug && process.stderr.write(`# [qunitx] server.close: ${err.message}\n`),
-          ),
-        browser
-          .close()
-          .catch(
-            (err: Error) =>
-              config.debug && process.stderr.write(`# [qunitx] browser.close: ${err.message}\n`),
-          ),
-      ]);
-      await shutdownPrelaunch();
+      // keepAlive is cleared AFTER cleanup so the interval holds the event loop open
+      // throughout, preventing premature drain if every close resolves instantly (e.g.
+      // Chrome already dead) before proc.ref() takes effect inside shutdownPrelaunch.
+      //
+      // closeWithGrace bounds the cleanup at CLEANUP_GRACE_MS: Playwright's browser.close()
+      // can deadlock on Firefox + Windows, leaving the CLI alive but silent until the test
+      // runner SIGTERMs it ~60 s later. Best-effort cleanup, exit anyway.
+      await closeWithGrace(
+        [
+          ...(sharedServer
+            ? [
+                sharedServer
+                  .close()
+                  .catch(
+                    (err: Error) =>
+                      config.debug &&
+                      process.stderr.write(`# [qunitx] server.close: ${err.message}\n`),
+                  ),
+              ]
+            : []),
+          browser
+            .close()
+            .catch(
+              (err: Error) =>
+                config.debug && process.stderr.write(`# [qunitx] browser.close: ${err.message}\n`),
+            ),
+          shutdownPrelaunch(),
+        ],
+        CLEANUP_GRACE_MS,
+      );
       clearInterval(keepAlive);
       process.exit(exitCode);
     });
@@ -591,6 +608,27 @@ function resolveQunitxRoot(projectRoot: string): string {
   const match = /^(.*[\\/]qunitx)[\\/]/.exec(mainEntry);
   if (!match) throw new Error(`Could not derive qunitx root from ${mainEntry}`);
   return match[1];
+}
+
+/**
+ * Awaits every cleanup promise in `closes`, but never longer than `graceMs`. Resolves whichever
+ * happens first: every close settles (resolve or reject — `Promise.allSettled` swallows
+ * failures so one stuck close cannot wedge the others) or the grace timer fires. Pending closes
+ * keep running in the background after a timeout — the caller is expected to `process.exit()`
+ * shortly after, which terminates them anyway. The timer is cleared once the race ends so a
+ * fast cleanup never leaves a stale handle holding the event loop open.
+ */
+export function closeWithGrace(
+  closes: ReadonlyArray<Promise<unknown>>,
+  graceMs: number,
+): Promise<void> {
+  let timer: NodeJS.Timeout;
+  const graceTimer = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, graceMs);
+  });
+  return Promise.race([Promise.allSettled(closes).then(() => {}), graceTimer]).finally(() =>
+    clearTimeout(timer),
+  );
 }
 
 export { readTimingCache, computeFileTimes };
