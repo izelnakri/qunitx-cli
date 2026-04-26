@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.22.1] - 2026-04-26
+[`v0.22.0...v0.22.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.22.0...v0.22.1)
+
+### Bug Fixes
+- MacOS rescan recovers FSEvents-dropped change events — 2026-04-26 by [@izelnakri](https://github.com/izelnakri) ([`0f813e1`](https://github.com/izelnakri/qunitx-cli/commit/0f813e115ea74a1903c4e17eed9294208d6d8bc1))
+
 ## [0.22.0] - 2026-04-26
 [`v0.21.3...v0.22.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.21.3...v0.22.0)
 
