@@ -4,6 +4,6 @@ export const defaultProjectConfigValues = {
   timeout: 20000,
   failFast: false,
   port: 1234,
-  extensions: ['js', 'ts'],
+  extensions: ['js', 'ts', 'jsx', 'tsx'],
   browser: 'chromium',
 };

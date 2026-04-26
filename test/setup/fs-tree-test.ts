@@ -5,12 +5,14 @@ import { module, test } from 'qunitx';
 import buildFSTree from '../../lib/setup/fs-tree.ts';
 
 module('Setup | buildFSTree | extensions', { concurrency: true }, () => {
-  test('includes .js and .ts files by default (no config.extensions)', async (assert) => {
-    const dir = await makeTempDir(['a.js', 'b.ts', 'c.css', 'd.mjs']);
+  test('includes .js, .ts, .jsx, .tsx files by default (no config.extensions)', async (assert) => {
+    const dir = await makeTempDir(['a.js', 'b.ts', 'c.css', 'd.mjs', 'e.jsx', 'f.tsx']);
     const fsTree = await buildFSTree([dir]);
     const names = Object.keys(fsTree).map((filePath) => path.basename(filePath));
     assert.true(names.includes('a.js'));
     assert.true(names.includes('b.ts'));
+    assert.true(names.includes('e.jsx'));
+    assert.true(names.includes('f.tsx'));
     assert.false(names.includes('c.css'));
     assert.false(names.includes('d.mjs'));
   });

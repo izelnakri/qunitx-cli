@@ -159,6 +159,99 @@ module(
   },
 );
 
+module('Commands | buildTestBundle | jsx automatic runtime', { concurrency: true }, () => {
+  test('compiles a .tsx file using react/jsx-runtime by default', async (assert) => {
+    const tmpFile = path.join(os.tmpdir(), `qunitx-jsx-react-${randomUUID()}.tsx`);
+    await fs.writeFile(
+      tmpFile,
+      `import { module, test } from 'qunitx';\n` +
+        `module('jsx', () => { test('renders', (a) => { const el = <div>x</div>; a.ok(el); }); });\n`,
+    );
+    const config = makeConfig([tmpFile]);
+    const cached = makeCachedContent();
+    try {
+      await buildTestBundle(config, cached);
+      const bundle = (cached.allTestCode as Buffer).toString('utf8');
+      assert.strictEqual(cached._buildError, null, 'no build error');
+      assert.ok(bundle.includes('react/jsx-runtime'), 'bundle pulls in react/jsx-runtime');
+    } finally {
+      await fs.rm(tmpFile, { force: true });
+      await fs.rm(`${CWD}/${config.output}`, { force: true, recursive: true });
+    }
+  });
+
+  test('honors @jsxImportSource pragma to switch the runtime to vue', async (assert) => {
+    const tmpFile = path.join(os.tmpdir(), `qunitx-jsx-vue-${randomUUID()}.tsx`);
+    await fs.writeFile(
+      tmpFile,
+      `/** @jsxImportSource vue */\n` +
+        `import { module, test } from 'qunitx';\n` +
+        `module('jsx', () => { test('renders', (a) => { const el = <div>x</div>; a.ok(el); }); });\n`,
+    );
+    const config = makeConfig([tmpFile]);
+    const cached = makeCachedContent();
+    try {
+      await buildTestBundle(config, cached);
+      const bundle = (cached.allTestCode as Buffer).toString('utf8');
+      assert.strictEqual(cached._buildError, null, 'no build error');
+      assert.ok(bundle.includes('vue/jsx-runtime'), 'bundle pulls in vue/jsx-runtime');
+      assert.notOk(
+        bundle.includes('react/jsx-runtime'),
+        'react/jsx-runtime not included when pragma overrides the import source',
+      );
+    } finally {
+      await fs.rm(tmpFile, { force: true });
+      await fs.rm(`${CWD}/${config.output}`, { force: true, recursive: true });
+    }
+  });
+
+  test('compiles a .jsx file using react/jsx-runtime by default', async (assert) => {
+    const tmpFile = path.join(os.tmpdir(), `qunitx-jsx-ext-${randomUUID()}.jsx`);
+    await fs.writeFile(
+      tmpFile,
+      `import { module, test } from 'qunitx';\n` +
+        `module('jsx', () => { test('renders', (a) => { const el = <span>y</span>; a.ok(el); }); });\n`,
+    );
+    const config = makeConfig([tmpFile]);
+    const cached = makeCachedContent();
+    try {
+      await buildTestBundle(config, cached);
+      const bundle = (cached.allTestCode as Buffer).toString('utf8');
+      assert.strictEqual(cached._buildError, null, 'no build error');
+      assert.ok(bundle.includes('react/jsx-runtime'), '.jsx is parsed and JSX is transformed');
+    } finally {
+      await fs.rm(tmpFile, { force: true });
+      await fs.rm(`${CWD}/${config.output}`, { force: true, recursive: true });
+    }
+  });
+
+  test('does not transform JSX-like syntax inside a .ts file', async (assert) => {
+    // .ts files (no x) are extension-gated by esbuild — no JSX transform applied. This guards
+    // against accidental transforms from a future config change that would break TS-only codebases
+    // using legitimate type-assertion or generic syntax that resembles JSX (e.g. `<T>(x: T)`).
+    const tmpFile = path.join(os.tmpdir(), `qunitx-jsx-ts-${randomUUID()}.ts`);
+    await fs.writeFile(
+      tmpFile,
+      `import { module, test } from 'qunitx';\n` +
+        `module('plain ts', () => { test('runs', (a) => { a.ok(true); }); });\n`,
+    );
+    const config = makeConfig([tmpFile]);
+    const cached = makeCachedContent();
+    try {
+      await buildTestBundle(config, cached);
+      const bundle = (cached.allTestCode as Buffer).toString('utf8');
+      assert.strictEqual(cached._buildError, null, 'no build error');
+      assert.notOk(
+        bundle.includes('jsx-runtime'),
+        'no jsx-runtime import injected for plain TS files',
+      );
+    } finally {
+      await fs.rm(tmpFile, { force: true });
+      await fs.rm(`${CWD}/${config.output}`, { force: true, recursive: true });
+    }
+  });
+});
+
 module('Commands | buildTestBundle | nodePaths resolution', { concurrency: true }, () => {
   test('resolves qunitx imports from a file outside the project root via ancestor nodePaths', async (assert) => {
     // Files outside the project root (e.g. os.tmpdir() + '/foo.ts') are resolved relative to

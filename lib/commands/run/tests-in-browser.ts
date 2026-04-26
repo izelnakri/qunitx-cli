@@ -144,6 +144,10 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
     legalComments: 'none',
     target: esbuildTarget(config.browser),
     sourcemap,
+    // jsx: 'automatic' is a no-op for .ts/.js files (extension-gated by esbuild) and emits
+    // `import { jsx } from 'react/jsx-runtime'` for .tsx/.jsx files. Per-file overrides via
+    // tsconfig's `jsxImportSource` or a `@jsxImportSource <pkg>` pragma cover Vue/Preact/Solid.
+    jsx: 'automatic',
     // Signal the runtime that all test modules are registered. The runtime's maybeStart()
     // waits for both this event and the WebSocket 'open' event before calling QUnit.start().
     // Dispatching from the bundle (rather than from a script onload attr) is reliable across
@@ -462,6 +466,7 @@ export async function buildAllGroupBundles(
     target: esbuildTarget(browser),
     sourcemap,
     write: false,
+    jsx: 'automatic',
     footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
   };
 
@@ -553,6 +558,7 @@ function buildFilteredTests(
       legalComments: 'none',
       target: esbuildTarget(config.browser),
       sourcemap,
+      jsx: 'automatic',
       footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
     },
     needsDisk,
