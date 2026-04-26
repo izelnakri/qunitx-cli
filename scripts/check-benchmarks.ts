@@ -25,6 +25,14 @@
  * ---------------------
  *   REGRESSION_THRESHOLD  percent threshold (default 26)
  *   MIN_ABS_DELTA_NS      absolute delta floor in nanoseconds (default 1000 = 1µs)
+ *   SKIP_BENCHMARK        comma-separated bench-file basenames to skip (without
+ *                         `.bench.ts`).  Special values `true|1|all` short-circuit
+ *                         the whole gate.  Useful when laptop load makes spawn-
+ *                         based benches falsely regress; CI keeps the strict gate.
+ *                         Examples:
+ *                           SKIP_BENCHMARK=true         # skip everything
+ *                           SKIP_BENCHMARK=e2e          # skip benches/e2e.bench.ts
+ *                           SKIP_BENCHMARK=e2e,tap      # skip multiple files
  *
  * Usage
  * -----
@@ -83,25 +91,89 @@ async function runBenchFile(file: string): Promise<BenchResult[]> {
 }
 
 /**
- * Collects results from one or more bench files, each in its own isolated process.
- * Each file is run twice and the per-benchmark minimum avg is kept so that a
- * single-run GC/JIT spike cannot inflate either the baseline or the check value.
+ * Merges two result sets by per-benchmark min — system noise only ever inflates
+ * timings, so the minimum across runs is the most deterministic measurement of
+ * intrinsic cost.  Names present in only one side are kept as-is.
  */
-async function collectIsolated(files: string[]): Promise<BenchResult[]> {
+function mergeMin(a: BenchResult[], b: BenchResult[]): BenchResult[] {
+  const byName = new Map(a.map((r) => [r.name, r.avg]));
+  for (const { name, avg } of b) {
+    const prev = byName.get(name);
+    byName.set(name, prev !== undefined ? Math.min(prev, avg) : avg);
+  }
+  return Array.from(byName, ([name, avg]) => ({ name, avg }));
+}
+
+/**
+ * Best-of-2 across files. Used when establishing a baseline (--save) or when no
+ * baseline exists yet, so the saved numbers are not biased by a single spike.
+ */
+async function collectBestOf2(files: string[]): Promise<BenchResult[]> {
   const all: BenchResult[] = [];
   for (const file of files) {
     const runA = await runBenchFile(file);
     const runB = await runBenchFile(file);
-    const byName = new Map(runA.map((r) => [r.name, r.avg]));
-    for (const { name, avg } of runB) {
-      const prev = byName.get(name);
-      byName.set(name, prev !== undefined ? Math.min(prev, avg) : avg);
-    }
-    for (const [name, avg] of byName) {
-      all.push({ name, avg });
-    }
+    all.push(...mergeMin(runA, runB));
   }
   return all;
+}
+
+/**
+ * Adaptive collection for --check: each file runs once, and only files whose
+ * benchmarks would regress against the baseline are retried (up to MAX_ATTEMPTS
+ * total runs, taking the per-benchmark min).  In the happy case this is ~half
+ * the wall-clock of best-of-2; in the noisy case it self-stabilises by gathering
+ * more samples for exactly the benches that need them.
+ */
+async function collectAdaptive(
+  files: string[],
+  baseline: Baseline,
+  thresholdPct: number,
+  minAbsDeltaNs: number,
+): Promise<BenchResult[]> {
+  const MAX_ATTEMPTS = 3;
+  const threshold = thresholdPct / 100;
+  const all: BenchResult[] = [];
+  for (const file of files) {
+    let results = await runBenchFile(file);
+    for (let attempt = 1; attempt < MAX_ATTEMPTS; attempt++) {
+      const stillRegressing = results.some(({ name, avg }) => {
+        const saved = baseline.results[name];
+        return saved !== undefined && isRegression(avg, saved, threshold, minAbsDeltaNs);
+      });
+      if (!stillRegressing) break;
+      results = mergeMin(results, await runBenchFile(file));
+    }
+    all.push(...results);
+  }
+  return all;
+}
+
+/**
+ * Resolve and apply SKIP_BENCHMARK.  Returns the file list to run; exits 0 if
+ * the user asked to skip everything.  File matching is by basename minus the
+ * `.bench.ts` suffix, so SKIP_BENCHMARK=e2e picks `benches/e2e.bench.ts`.
+ */
+function applySkipBenchmark(files: string[]): string[] {
+  const raw = (Deno.env.get("SKIP_BENCHMARK") ?? "").trim();
+  if (!raw) return files;
+
+  if (["true", "1", "all"].includes(raw.toLowerCase())) {
+    console.log(yellow(`SKIP_BENCHMARK=${raw} → skipping all benchmark checks`));
+    Deno.exit(0);
+  }
+
+  const skipNames = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  const remaining = files.filter((f) => {
+    const base = f.replace(/^.*\//, "").replace(/\.bench\.ts$/, "");
+    return !skipNames.includes(base);
+  });
+  const skipped = files.filter((f) => !remaining.includes(f));
+  if (skipped.length > 0) {
+    const names = skipped.map((f) => f.replace(/^.*\//, "")).join(", ");
+    console.log(dim(`Skipping bench files via SKIP_BENCHMARK: ${names}`));
+  }
+  return remaining;
 }
 
 // ─── Parsing ─────────────────────────────────────────────────────────────────
@@ -136,6 +208,9 @@ function parseResults(raw: string): BenchResult[] {
 //   100ms–500ms 2.5× process-spawn (cli startup): OS fork/exec jitter reaches ~58%
 //   ≥ 500ms     1×  e2e: stable with best-of-2, < 14% variance — flat threshold applies
 // Sub-µs benchmarks are additionally guarded by the MIN_ABS_DELTA_NS absolute floor.
+// Sustained background load (e.g. running on a busy laptop) can push transient noise
+// well above these thresholds; collectAdaptive retries up to 3× on regression to
+// resample, and SKIP_BENCHMARK is the escape hatch for sustained noise.
 const SUB_MS_NS   =   1_000_000;  //   1 ms
 const SPAWN_LO_NS = 100_000_000;  // 100 ms
 const SPAWN_HI_NS = 500_000_000;  // 500 ms
@@ -200,12 +275,19 @@ function printTable(
 
 // ─── Save / Check ─────────────────────────────────────────────────────────────
 
-async function save(results: BenchResult[], minAbsDeltaNs: number): Promise<void> {
-  let existing: Baseline | null = null;
+async function loadBaseline(): Promise<Baseline | null> {
   try {
-    existing = JSON.parse(await Deno.readTextFile(BASELINE_FILE));
-  } catch { /* no prior baseline */ }
+    return JSON.parse(await Deno.readTextFile(BASELINE_FILE));
+  } catch {
+    return null;
+  }
+}
 
+async function save(
+  results: BenchResult[],
+  existing: Baseline | null,
+  minAbsDeltaNs: number,
+): Promise<void> {
   printTable(results, existing, 0.26, minAbsDeltaNs);
 
   const baseline: Baseline = {
@@ -216,12 +298,14 @@ async function save(results: BenchResult[], minAbsDeltaNs: number): Promise<void
   console.log(green(`Baseline saved: ${results.length} benchmark(s) → benches/results.json`));
 }
 
-async function check(results: BenchResult[], thresholdPct: number, minAbsDeltaNs: number): Promise<boolean> {
+async function check(
+  results: BenchResult[],
+  baseline: Baseline | null,
+  thresholdPct: number,
+  minAbsDeltaNs: number,
+): Promise<boolean> {
   const threshold = thresholdPct / 100;
-  let baseline: Baseline | null = null;
-  try {
-    baseline = JSON.parse(await Deno.readTextFile(BASELINE_FILE));
-  } catch {
+  if (!baseline) {
     console.log(yellow("No baseline found in benches/results.json."));
     console.log(dim("Run 'make bench' once to establish one, then re-run."));
     printTable(results, null, threshold, minAbsDeltaNs);
@@ -232,7 +316,7 @@ async function check(results: BenchResult[], thresholdPct: number, minAbsDeltaNs
   printTable(results, baseline, threshold, minAbsDeltaNs);
 
   const failures = results.filter(({ name, avg }) => {
-    const saved = baseline!.results[name];
+    const saved = baseline.results[name];
     if (saved === undefined) return false;
     return isRegression(avg, saved, threshold, minAbsDeltaNs);
   });
@@ -243,6 +327,13 @@ async function check(results: BenchResult[], thresholdPct: number, minAbsDeltaNs
       const saved = baseline.results[name];
       console.error(red(`  FAIL  ${name}: ${fmtNs(saved)} → ${fmtNs(avg)}`));
     }
+    console.error(
+      dim(
+        `\nIf this is laptop-load noise (e.g. different benches fail across runs), retry on an idle\n` +
+          `machine, refresh the baseline with 'make bench-update', or set SKIP_BENCHMARK=true|<file>\n` +
+          `to bypass the gate for this run.`,
+      ),
+    );
     return false;
   }
 
@@ -255,19 +346,29 @@ async function check(results: BenchResult[], thresholdPct: number, minAbsDeltaNs
 const isSave = Deno.args.includes("--save");
 const filesIdx = Deno.args.indexOf("--files");
 const minAbsDeltaNs = Number(Deno.env.get("MIN_ABS_DELTA_NS") ?? "1000");
+const thresholdPct = parseFloat(Deno.env.get("REGRESSION_THRESHOLD") ?? "26");
+const baseline = await loadBaseline();
 
 let results: BenchResult[];
 if (filesIdx !== -1) {
-  const files = Deno.args.slice(filesIdx + 1).filter((a) => !a.startsWith("--"));
-  results = await collectIsolated(files);
+  const allFiles = Deno.args.slice(filesIdx + 1).filter((a) => !a.startsWith("--"));
+  const files = applySkipBenchmark(allFiles);
+  if (files.length === 0) {
+    console.log(yellow("All bench files skipped via SKIP_BENCHMARK; nothing to do."));
+    Deno.exit(0);
+  }
+  // --check with a baseline → adaptive (1 run, retry only on regression).
+  // --save or no baseline → best-of-2 so the saved numbers aren't biased by a single spike.
+  results = !isSave && baseline
+    ? await collectAdaptive(files, baseline, thresholdPct, minAbsDeltaNs)
+    : await collectBestOf2(files);
 } else {
   results = parseResults(await readStdin());
 }
 
 if (isSave) {
-  await save(results, minAbsDeltaNs);
+  await save(results, baseline, minAbsDeltaNs);
 } else {
-  const threshold = parseFloat(Deno.env.get("REGRESSION_THRESHOLD") ?? "26");
-  const ok = await check(results, threshold, minAbsDeltaNs);
+  const ok = await check(results, baseline, thresholdPct, minAbsDeltaNs);
   if (!ok) Deno.exit(1);
 }

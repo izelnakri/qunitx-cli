@@ -33,6 +33,10 @@ help:
 	@echo "  bench-check     Run benchmarks and fail if regression > REGRESSION_THRESHOLD%"
 	@echo "  build-sea       Build SEA binary for the local platform and publish its npm package"
 	@echo "  release         Bump version, update changelog, tag, push, publish to npm"
+	@echo ""
+	@echo "Env-var escape hatches:"
+	@echo "  SKIP_BENCHMARK=true                       skip bench-check entirely (e.g. SKIP_BENCHMARK=true make release)"
+	@echo "  SKIP_BENCHMARK=<file>[,<file>...]         skip specific bench files by basename, e.g. SKIP_BENCHMARK=e2e,tap"
 
 fix:
 	npm run format:fix
@@ -107,9 +111,19 @@ bench-update: bench
 # Runs all benchmarks and compares results against benches/results.json.
 # Exits non-zero if any benchmark regresses more than REGRESSION_THRESHOLD% (default: 26).
 # Run 'make bench-update' once first to establish the baseline.
+#
+# Set SKIP_BENCHMARK=true to skip the gate entirely (useful when laptop load
+# makes spawn-based benches falsely regress).  SKIP_BENCHMARK=<file>[,<file>...]
+# skips individual bench files by basename — e.g. SKIP_BENCHMARK=e2e,tap.
+# The check-benchmarks.ts script also handles partial-skip values; this short-
+# circuits the full-skip case so we don't even pay deno startup time.
 bench-check:
-	@echo "Running benchmark regression check (silent until done, ~30s)..."
-	REGRESSION_THRESHOLD=$(REGRESSION_THRESHOLD) deno task bench:check
+	@if echo "$(SKIP_BENCHMARK)" | grep -qiE '^(true|1|all)$$'; then \
+		echo "SKIP_BENCHMARK=$(SKIP_BENCHMARK) → skipping bench-check"; \
+	else \
+		echo "Running benchmark regression check (silent until done, ~30s)..."; \
+		REGRESSION_THRESHOLD=$(REGRESSION_THRESHOLD) SKIP_BENCHMARK="$(SKIP_BENCHMARK)" deno task bench:check; \
+	fi
 
 
 # Builds a Node.js SEA binary for the current platform, places it in the

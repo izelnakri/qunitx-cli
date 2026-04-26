@@ -1,5 +1,3 @@
-GitHub Release is buggy compared to the CHANGELOG.md: https://github.com/izelnakri/qunitx/releases/tag/v1.2.8 Fix this issue
-
 - add jsx/tsx support, from conversation(claude --resume 80202453-1a12-424a-a785-d13f8914ec72)
 
 - Allow the test runner to accept esbuild plugins in the config file, like "esbuild-plugin-vue-next"
