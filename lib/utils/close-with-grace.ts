@@ -13,6 +13,11 @@ export const CLEANUP_GRACE_MS = 10_000;
  * closes keep running in the background after a timeout — the caller is expected to
  * `process.exit()` shortly after, which terminates them anyway.
  *
+ * On timeout, writes one line to stderr so the user sees that shutdown was cut short.
+ * This is an exceptional condition — not verbose output — so it fires regardless of
+ * `--debug`: every user who hits the deadlock deserves to know browser/server cleanup
+ * may have left orphans. Goes to stderr so it never lands in the TAP stream.
+ *
  * `null` / `undefined` entries are accepted as-is so optional-chained closes such as
  * `connections.server?.close()` flow in without per-call filtering.
  */
@@ -21,7 +26,10 @@ export function closeWithGrace(
   graceMs: number = CLEANUP_GRACE_MS,
 ): Promise<void> {
   return new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, graceMs);
+    const timer = setTimeout(() => {
+      process.stderr.write(`# qunitx: cleanup timed out after ${graceMs} ms — exiting anyway\n`);
+      resolve();
+    }, graceMs);
     Promise.allSettled(closes).then(() => {
       clearTimeout(timer);
       resolve();

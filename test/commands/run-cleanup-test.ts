@@ -73,4 +73,49 @@ module('Commands | run | closeWithGrace', { concurrency: true }, () => {
 
     assert.ok(elapsed < 50, `empty fast path: ${elapsed} ms`);
   });
+
+  test('writes a single diagnostic line to stderr when the grace timer fires', async (assert) => {
+    // Exceptional-condition logging: the user deserves to know shutdown was cut short.
+    // Goes to stderr so it never lands in the TAP stream. Pinned here so refactors can't
+    // silently regress the visibility of the deadlock.
+    const captured: string[] = [];
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    (process.stderr.write as unknown) = (chunk: string | Uint8Array) => {
+      captured.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return true;
+    };
+    try {
+      await closeWithGrace([new Promise<void>(() => {})], HANG_GRACE_MS);
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+
+    const output = captured.join('');
+    assert.ok(
+      output.includes('cleanup timed out'),
+      `stderr should mention the timeout: ${JSON.stringify(output)}`,
+    );
+    assert.ok(
+      output.includes(`${HANG_GRACE_MS} ms`),
+      `stderr should include the grace value: ${JSON.stringify(output)}`,
+    );
+  });
+
+  test('does not write to stderr on the fast path', async (assert) => {
+    // Mirror of the previous test: when nothing hangs, stderr stays untouched. This
+    // guards against the silent-noise failure mode where every clean run emits the line.
+    const captured: string[] = [];
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    (process.stderr.write as unknown) = (chunk: string | Uint8Array) => {
+      captured.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return true;
+    };
+    try {
+      await closeWithGrace([Promise.resolve(), Promise.resolve()], 5_000);
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+
+    assert.equal(captured.join(''), '', 'stderr untouched on the fast path');
+  });
 });
