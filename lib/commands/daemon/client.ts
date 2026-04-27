@@ -19,12 +19,15 @@ export function daemonSocketExists(cwd: string = process.cwd()): boolean {
 }
 
 /**
- * True if the run could meaningfully use a daemon: not in CI, not opted out, and
- * not a watch/open mode (those need their own browser lifecycle locally). Both
- * `shouldUseDaemon` and `shouldAutoSpawnDaemon` build on this.
+ * True if the run could meaningfully use a daemon: not opted out, not a watch/open
+ * mode (those need their own browser lifecycle locally). CI is bypassed by default
+ * (single-invocation CI jobs lose to daemon's spawn cost) but `QUNITX_DAEMON=1`
+ * overrides — multi-invocation CI flows (monorepos running qunitx per package) can
+ * opt in. Explicit user intent always beats environment-driven default.
  */
 function isDaemonEligible(): boolean {
-  if (process.env.CI || process.env.QUNITX_NO_DAEMON) return false;
+  if (process.env.QUNITX_NO_DAEMON) return false;
+  if (process.env.CI && !process.env.QUNITX_DAEMON) return false;
   for (const arg of process.argv) {
     if (arg === '--no-daemon') return false;
     if (arg === '--watch' || arg === '-w') return false;
