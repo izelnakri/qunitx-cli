@@ -36,10 +36,15 @@ const EMPTY_BUNDLE_THRESHOLD = 500;
 // Extra ms added on top of config.timeout to give Playwright time to commit the navigation
 // before the test-race timers even start. Floors startupMs/testsJsMs for tiny --timeout values.
 const NAV_GRACE_MS = 10_000;
-// Hard floor for the page.goto timeout, regardless of config.timeout. Without this, small
-// --timeout values (e.g. --timeout=500 used in timeout-feature tests) produce a navMs of only
-// 10.5s, which is not enough for Firefox on Windows CI to navigate a localhost page under load.
-const MIN_NAV_MS = 30_000;
+// Max tolerated slowdown over NAV_GRACE_MS before declaring the navigation broken.
+// 6× covers the Firefox/Windows CI tail under 3-way concurrent-group load; the prior
+// 3× floor (30_000) had zero headroom over default config.timeout + NAV_GRACE_MS
+// (20s + 10s = 30s). Chromium never approaches 5s for the same op so this is no-op.
+const MAX_NAV_SLOWDOWN_FACTOR = 6;
+// Floor for page.goto, derived from NAV_GRACE_MS not config.timeout: navigation is
+// environment-bound (browser launch + OS scheduling + port setup) and must not shrink
+// when the user passes a small --timeout.
+const MIN_NAV_MS = NAV_GRACE_MS * MAX_NAV_SLOWDOWN_FACTOR;
 // Startup safety-net: Chrome WS 'open' must arrive within 3× config.timeout.
 const STARTUP_TIMEOUT_FACTOR = 3;
 // tests.js compile safety-net: V8 compilation must finish within 4× config.timeout from serve.
