@@ -26,12 +26,18 @@ process.title = 'qunitx';
     process.exit(await runDaemonCommand());
   }
 
-  // Daemon-routed run: when a live daemon exists for this cwd and the invocation is
-  // eligible (no --watch/--open, not CI, not opted out), dispatch the work over the
-  // Unix socket and stream TAP back. Saves ~800ms by reusing the daemon's persistent
-  // Chrome and warm esbuild context. Falls through on connect failure.
-  const { shouldUseDaemon, runViaDaemon } = await import('./lib/commands/daemon/client.ts');
-  if (shouldUseDaemon()) {
+  // Daemon-routed run: when a live daemon exists for this cwd (or QUNITX_DAEMON=1
+  // opted into auto-spawn), dispatch the work over the Unix socket and stream TAP
+  // back. Saves ~800ms by reusing the daemon's persistent Chrome and warm esbuild
+  // context. Falls through on connect failure.
+  const { shouldUseDaemon, shouldAutoSpawnDaemon, runViaDaemon } =
+    await import('./lib/commands/daemon/client.ts');
+  let useDaemon = shouldUseDaemon();
+  if (!useDaemon && shouldAutoSpawnDaemon()) {
+    const { ensureDaemonRunning } = await import('./lib/commands/daemon/index.ts');
+    useDaemon = await ensureDaemonRunning();
+  }
+  if (useDaemon) {
     try {
       const exitCode = await runViaDaemon(process.argv.slice(2));
       process.stdout.write('', () => process.exit(exitCode));

@@ -13,19 +13,35 @@ export function daemonSocketExists(cwd: string = process.cwd()): boolean {
 }
 
 /**
- * Decides whether the current invocation is a candidate for daemon dispatch.
- * Daemon is opt-in: only used when a live socket exists AND the run does not
- * require local browser/server lifecycle (watch / open / CI).
+ * True if the run could meaningfully use a daemon: not in CI, not opted out, and
+ * not a watch/open mode (those need their own browser lifecycle locally). Both
+ * `shouldUseDaemon` and `shouldAutoSpawnDaemon` build on this.
  */
-export function shouldUseDaemon(): boolean {
+function isDaemonEligible(): boolean {
   if (process.env.CI || process.env.QUNITX_NO_DAEMON) return false;
-  const argv = process.argv;
-  for (const arg of argv) {
+  for (const arg of process.argv) {
     if (arg === '--no-daemon') return false;
     if (arg === '--watch' || arg === '-w') return false;
     if (arg === '--open' || arg === '-o' || arg.startsWith('--open=')) return false;
   }
-  return daemonSocketExists();
+  return true;
+}
+
+/**
+ * True iff a live daemon socket exists and the invocation can use it. The cli's
+ * primary dispatch check.
+ */
+export function shouldUseDaemon(): boolean {
+  return isDaemonEligible() && daemonSocketExists();
+}
+
+/**
+ * True iff the user opted in to auto-spawn (`QUNITX_DAEMON=1`), the invocation
+ * is daemon-eligible, and no daemon is running yet — meaning cli should spawn
+ * one before dispatching the run.
+ */
+export function shouldAutoSpawnDaemon(): boolean {
+  return Boolean(process.env.QUNITX_DAEMON) && isDaemonEligible() && !daemonSocketExists();
 }
 
 /**

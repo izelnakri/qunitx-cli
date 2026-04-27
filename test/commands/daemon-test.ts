@@ -322,6 +322,79 @@ module('Commands | Daemon | bypass', { concurrency: false }, () => {
   });
 });
 
+module('Commands | Daemon | auto-spawn', { concurrency: false }, () => {
+  test('QUNITX_DAEMON=1 with no daemon -> auto-spawns and routes', async (assert) => {
+    await ensureDaemonStopped();
+    try {
+      const result = await cli(FIXTURE_PASS, {
+        env: { ...CLI_ENV, QUNITX_DAEMON: '1' },
+      });
+
+      assert.exitCode(result, 0);
+      assert.includes(result, '# pass 3');
+      assert.includes(result, '(daemon)');
+
+      // Daemon must still be running for subsequent invocations to reuse.
+      const status = await cli('daemon status');
+      assert.exitCode(status, 0);
+      assert.includes(status, 'Daemon running');
+    } finally {
+      await ensureDaemonStopped();
+    }
+  });
+
+  test('without QUNITX_DAEMON, no daemon is spawned and run is local', async (assert) => {
+    await ensureDaemonStopped();
+    const result = await cli(FIXTURE_PASS);
+
+    assert.exitCode(result, 0);
+    assert.includes(result, '# pass 3');
+    assert.notIncludes(result, '(daemon)');
+
+    const status = await cli('daemon status', { failOk: true });
+    assert.exitCode(status, 1);
+    assert.includes(status, 'No daemon running');
+  });
+
+  test('QUNITX_DAEMON=1 with daemon already running -> reuses it', async (assert) => {
+    await ensureDaemonStopped();
+    await cli('daemon start');
+    try {
+      const startupPid = await readDaemonPid();
+
+      const result = await cli(FIXTURE_PASS, {
+        env: { ...CLI_ENV, QUNITX_DAEMON: '1' },
+      });
+      assert.exitCode(result, 0);
+      assert.includes(result, '(daemon)');
+
+      // Same daemon instance — no double-spawn.
+      const samePid = await readDaemonPid();
+      assert.strictEqual(samePid, startupPid, 'daemon process unchanged');
+    } finally {
+      await ensureDaemonStopped();
+    }
+  });
+
+  test('QUNITX_DAEMON=1 + --no-daemon -> bypass wins, runs locally', async (assert) => {
+    await ensureDaemonStopped();
+    try {
+      const result = await cli(`--no-daemon ${FIXTURE_PASS}`, {
+        env: { ...CLI_ENV, QUNITX_DAEMON: '1' },
+      });
+      assert.exitCode(result, 0);
+      assert.includes(result, '# pass 3');
+      assert.notIncludes(result, '(daemon)');
+
+      // No daemon spawned because --no-daemon vetoes auto-spawn.
+      const status = await cli('daemon status', { failOk: true });
+      assert.exitCode(status, 1);
+    } finally {
+      await ensureDaemonStopped();
+    }
+  });
+});
+
 module('Commands | Daemon | crash recovery', { concurrency: false }, () => {
   // Linux-only: relies on /proc/<pid>/task/<pid>/children to find the daemon's Chrome.
   // macOS/Windows lack a portable equivalent; the recovery code path itself is the same.
