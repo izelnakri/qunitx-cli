@@ -155,6 +155,15 @@ export interface Config {
    * passes its own browser here so concurrent group runs share one warm Chrome.
    */
   _daemonBrowser?: import('playwright-core').Browser;
+  /**
+   * The daemon's persistent esbuild incremental-context slot. Single source of truth
+   * for the warm module graph across daemon runs; replaced (dispose+recreate) when
+   * `bundleCacheKey()` changes — same correctness behavior as the cache-less path.
+   */
+  _daemonEsbuildCache?: {
+    _esbuildContext?: import('esbuild').BuildContext | null;
+    _esbuildContextKey?: string;
+  };
   /** Index within the concurrent group array; set when a shared HTTP server is used. */
   _groupId?: number;
   /** Current lifecycle phase of the test run. */

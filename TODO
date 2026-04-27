@@ -1,3 +1,14 @@
+  │                          │          │ Mostly yes. Most CI jobs invoke qunitx once per job. Spawning a daemon (~1.5s) + routing (~0.7s) = 2.2s — slower than the local 2.0s  │
+  │ CI=1                     │ yes      │ for one invocation. Daemon only wins on multi-invocation CI flows. The current default is correct. Possible refinement: have explicit │
+  │                          │          │  QUNITX_DAEMON=1 override CI=1 so multi-invocation CI users can opt in. Easy follow-up if anyone asks.                                │
+
+
+  - Cross-cwd daemon sharing. Currently each cwd gets its own daemon (sha256(cwd) keyed). This is right — different projects have different package.json / extensions / plugins.
+  Sharing a daemon across them would require config validation per-request and isn't worth the complexity.
+
+
+
+
 Why CI=true exists? Is there a good reason?
 
 Is the successful(and errorful) test output ideal today?
