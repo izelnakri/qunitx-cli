@@ -1,3 +1,7 @@
+Why CI=true exists? Is there a good reason?
+
+Is the successful(and errorful) test output ideal today?
+
   Out of scope for v1 (mentioned in the design discussion):
   - Browser-crash recovery (daemon shuts down on any unhandled rejection; user restarts)
   - Concurrent multi-group runs through the daemon (always single-group)
