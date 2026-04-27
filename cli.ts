@@ -1,26 +1,32 @@
 #!/usr/bin/env node
 import process from 'node:process';
 import { shutdownPrelaunch } from './lib/utils/chrome-prelaunch.ts';
-import { displayHelpOutput } from './lib/commands/help.ts';
-import { initializeProject } from './lib/commands/init.ts';
-import { generateTestFiles } from './lib/commands/generate.ts';
-import { setupConfig } from './lib/setup/config.ts';
 import pkg from './package.json' with { type: 'json' };
 
 process.title = 'qunitx';
 
+// Command-module imports are dynamic so the daemon-routed-run path doesn't
+// load `help.ts`, `init.ts`, `generate.ts`, or `setup/config.ts` (and its
+// transitive `fs-tree` / `find-project-root` / `parse-cli-flags` chain) just
+// to discard them. Saves ~50-80ms of unused module evaluation on every
+// daemon-routed cli invocation. The cost on the rare commands (help, init,
+// generate) is one extra ~5ms dynamic-import resolution — below human
+// perception and not on any hot path. chrome-prelaunch.ts stays static
+// because its module-eval kicks off Chrome pre-launch and must run before
+// playwright-core starts loading on local-run paths.
+
 (async () => {
   const cmd = process.argv[2];
   if (!cmd) {
-    return await displayHelpOutput();
+    return await (await import('./lib/commands/help.ts')).displayHelpOutput();
   } else if (['--version', '-v', 'version'].includes(cmd)) {
     return process.stdout.write(pkg.version + '\n');
   } else if (['help', 'h', 'p', 'print'].includes(cmd)) {
-    return await displayHelpOutput();
+    return await (await import('./lib/commands/help.ts')).displayHelpOutput();
   } else if (['new', 'n', 'g', 'generate'].includes(cmd)) {
-    return await generateTestFiles();
+    return await (await import('./lib/commands/generate.ts')).generateTestFiles();
   } else if (cmd === 'init') {
-    return await initializeProject();
+    return await (await import('./lib/commands/init.ts')).initializeProject();
   } else if (cmd === 'daemon') {
     const { runDaemonCommand } = await import('./lib/commands/daemon/index.ts');
     process.exit(await runDaemonCommand());
@@ -47,10 +53,14 @@ process.title = 'qunitx';
     }
   }
 
-  // Lazy import: run.js (and its static imports like esbuild and playwright-core) are
-  // only loaded when actually running tests. Importing in parallel with setupConfig()
-  // lets playwright-core start loading while config is being assembled.
-  const [config, { run }] = await Promise.all([setupConfig(), import('./lib/commands/run.ts')]);
+  // Local-run path: lazy-import setupConfig + run.ts (and their transitive
+  // chains: esbuild, playwright-core, fs-tree, etc.). Loading in parallel lets
+  // playwright-core's heavy module evaluation overlap with config assembly.
+  const [{ setupConfig }, { run }] = await Promise.all([
+    import('./lib/setup/config.ts'),
+    import('./lib/commands/run.ts'),
+  ]);
+  const config = await setupConfig();
 
   try {
     return await run(config);
