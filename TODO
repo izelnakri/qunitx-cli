@@ -1,28 +1,24 @@
-  │                          │          │ Mostly yes. Most CI jobs invoke qunitx once per job. Spawning a daemon (~1.5s) + routing (~0.7s) = 2.2s — slower than the local 2.0s  │
-  │ CI=1                     │ yes      │ for one invocation. Daemon only wins on multi-invocation CI flows. The current default is correct. Possible refinement: have explicit │
-  │                          │          │  QUNITX_DAEMON=1 override CI=1 so multi-invocation CI users can opt in. Easy follow-up if anyone asks.                                │
-
-
-  - Cross-cwd daemon sharing. Currently each cwd gets its own daemon (sha256(cwd) keyed). This is right — different projects have different package.json / extensions / plugins.
-  Sharing a daemon across them would require config validation per-request and isn't worth the complexity.
-
-
-
-
-Why CI=true exists? Is there a good reason?
-
-Is the successful(and errorful) test output ideal today?
-
-  Out of scope for v1 (mentioned in the design discussion):
-  - Browser-crash recovery (daemon shuts down on any unhandled rejection; user restarts)
-  - Concurrent multi-group runs through the daemon (always single-group)
-  - Auto-spawn (user explicitly runs qunitx daemon start)
-
 Should I add benchmarks for this daemon feature(s)? Is there anyway we can optimize the overall performance of the 
 runtime further? What about test suite?
 
 Did I document daemon feature well on README.md, document it well for first or subsequent viewers/developers.
 Document `daemon` related important things on `$ qunitx` and `$ qunitx help`
+
+=======
+Review daemon PR/ask for changes
+=======
+
+Is the successful(and errorful) test output ideal today?
+
+These should be in another releases each one:
+  - fsTree caching (~30-80ms) — has cache-invalidation risk across runs (file additions/deletions during daemon lifetime would need fs.watch with the same correctness contract
+  complexity as the esbuild context cache).
+  - cachedContent caching (~20-50ms) — needs a type-split refactor of CachedContent (mixing stable + run-specific fields), and HTML-file mtime invalidation.
+  - HTTPServer instance reuse (~50ms) — the STATIC_FILES_PATH constraint at server creation captures config.output once, so reuse requires either fixing output paths daemon-wide
+  (behavior change) or refactoring web-server.ts route handlers to read current cachedContent per request (instability across runs while requests are in flight).
+
+  Each of those three is a real optimization, but each requires non-trivial cache-invalidation contracts that — based on this PR's track record of cache-invalidation bugs surfacing
+   only on Windows or under load — I'd want to land in a follow-up PR with their own focused test coverage rather than smuggle into this one.
 
 
 Also make sure cli/binary can be built in deno and would work on macos and windows but first probably daemon mode

@@ -160,6 +160,24 @@ module('Commands | Daemon | lifecycle', { concurrency: false }, () => {
     }
   });
 
+  test('rapid stop+start cycles do not race the daemon resource teardown', async (assert) => {
+    // Regression test: the dispatch handler used to ack 'done' to the client BEFORE
+    // the daemon's async cleanup (server.close, browser.close, process.exit) ran.
+    // A fast follow-up `daemon start` could race the dying daemon's socket/named-
+    // pipe handle and hit EADDRINUSE — the new daemon exited, the parent timed out
+    // polling for the info file, and the cli reported "Daemon did not start within
+    // 10s". Especially reliable on Windows where named-pipe handle release lags
+    // process exit. Three cycles back-to-back makes the race detectable on any
+    // platform if the wait-for-pid-exit fix in client.ts ever regresses.
+    await ensureDaemonStopped();
+    for (let i = 0; i < 3; i++) {
+      const start = await cli('daemon start');
+      assert.exitCode(start, 0, `iteration ${i}: start succeeded`);
+      const stop = await cli('daemon stop');
+      assert.exitCode(stop, 0, `iteration ${i}: stop succeeded`);
+    }
+  });
+
   test('concurrent daemon start invocations converge on a single live daemon', async (assert) => {
     // Two simultaneous starts exercise THREE invariants in one test:
     //
