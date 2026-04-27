@@ -1,4 +1,5 @@
 import net from 'node:net';
+import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { daemonSocketPath, daemonInfoPath } from '../../utils/daemon-socket-path.ts';
 import { attachLineParser, probeSocket } from './socket-utils.ts';
@@ -6,6 +7,13 @@ import type { Request, ResponseChunk } from './protocol.ts';
 
 const CONNECT_TIMEOUT_MS = 1_000;
 const SIGINT_EXIT_CODE = 130;
+// Maximum time to wait for the daemon process to fully exit after `daemon stop`
+// returns 'done'. The async cleanup (server.close + browser.close + exit) is
+// usually well under a second; 5s is generous headroom for a busy CI runner.
+const SHUTDOWN_PID_WAIT_MS = 5_000;
+// Poll interval while waiting for the daemon's pid to disappear. 50ms keeps the
+// follow-up `daemon start` snappy without burning CPU.
+const SHUTDOWN_PID_POLL_MS = 50;
 
 /**
  * True if a daemon appears to be present for the given cwd. Checks the sidecar JSON
@@ -90,14 +98,65 @@ export async function pingDaemon(): Promise<ResponseChunk | null> {
   return result;
 }
 
-/** Sends `shutdown`. Returns `true` if a daemon was reached and asked to stop, `false` otherwise. */
+/**
+ * Sends `shutdown` and waits until the daemon has actually fully exited — not just
+ * until the socket closes. The daemon's dispatch handler acks 'done' before its
+ * async cleanup (server.close / browser.close / process.exit) runs, so a naive
+ * "stop returned" signal leaves the daemon's socket / named-pipe handle still
+ * held. A fast follow-up `daemon start` would then race the dying daemon and hit
+ * EADDRINUSE — observed reliably on Windows where named-pipe handle release lags
+ * process exit by tens of milliseconds.
+ *
+ * Reads the pid upfront (before sending shutdown — the daemon sync-unlinks the
+ * info file in its dispatch handler, so we can't read it after) and polls
+ * `process.kill(pid, 0)` until ESRCH. Bounded by `SHUTDOWN_PID_WAIT_MS`.
+ *
+ * Returns `true` if a daemon was reached and asked to stop, `false` if no daemon
+ * was running.
+ */
 export async function shutdownDaemon(): Promise<boolean> {
+  const pid = await readDaemonPid();
+
   const socket = await tryConnect();
   if (!socket) return false;
   attachLineParser<ResponseChunk>(socket, () => {});
   send(socket, { type: 'shutdown' });
   await awaitClose(socket);
+
+  if (pid !== null) await waitForPidExit(pid, SHUTDOWN_PID_WAIT_MS);
   return true;
+}
+
+async function readDaemonPid(): Promise<number | null> {
+  try {
+    const info = JSON.parse(await fs.readFile(daemonInfoPath(), 'utf8')) as { pid?: unknown };
+    return typeof info.pid === 'number' ? info.pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function waitForPidExit(pid: number, timeoutMs: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const deadline = Date.now() + timeoutMs;
+    const poll = (): void => {
+      if (!pidIsAlive(pid) || Date.now() >= deadline) return resolve();
+      setTimeout(poll, SHUTDOWN_PID_POLL_MS);
+    };
+    poll();
+  });
+}
+
+function pidIsAlive(pid: number): boolean {
+  // process.kill(pid, 0) is the portable "does this pid exist?" check. Throws
+  // ESRCH when gone, EPERM when alive but not signalable. Daemon is our own
+  // child so EPERM is unexpected — treat as alive defensively.
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
 }
 
 /**
