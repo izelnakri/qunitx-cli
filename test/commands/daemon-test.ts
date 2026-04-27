@@ -160,6 +160,51 @@ module('Commands | Daemon | lifecycle', { concurrency: false }, () => {
     }
   });
 
+  test('concurrent daemon start invocations converge on a single live daemon', async (assert) => {
+    // Two simultaneous starts exercise THREE invariants in one test:
+    //
+    // 1. Atomic claim: listen() is the only at-most-one operation; whichever
+    //    process binds first wins. The loser hits EADDRINUSE.
+    // 2. Listen-failure cleanup correctness: the loser's shutdown must NOT unlink
+    //    the winner's socket/info files. Without the `listenSucceeded` gate this
+    //    silently corrupts the winner — info file vanishes, POSIX socket dirent
+    //    is removed, the running daemon becomes unreachable to new clients while
+    //    its own fds keep working. Catastrophic and silent.
+    // 3. Convergent client view: both clients' polls — which require BOTH info
+    //    file presence AND a live ping — must report the SAME surviving daemon's
+    //    pid. A pid mismatch would mean one client returned during a brief
+    //    inconsistent window.
+    //
+    // The single-iteration "info file exists at start return" lifecycle test
+    // covers the basic startup contract. This test is the strictly stronger
+    // regression — it would catch every race the lifecycle test catches, plus
+    // listen-failure corruption that single-process tests can't reach.
+    await ensureDaemonStopped();
+    const [r1, r2] = await Promise.all([cli('daemon start'), cli('daemon start')]);
+    try {
+      assert.exitCode(r1, 0, 'first start exited 0');
+      assert.exitCode(r2, 0, 'second start exited 0');
+
+      // Both "Daemon started (pid N)" and "Daemon already running (pid N)" carry
+      // the surviving pid; either match shape is acceptable.
+      const pid1 = Number(/pid (\d+)/.exec(r1.stdout)?.[1]);
+      const pid2 = Number(/pid (\d+)/.exec(r2.stdout)?.[1]);
+      assert.ok(Number.isInteger(pid1) && pid1 > 0, `client 1 reported pid (got ${pid1})`);
+      assert.ok(Number.isInteger(pid2) && pid2 > 0, `client 2 reported pid (got ${pid2})`);
+      assert.equal(pid1, pid2, 'both clients converge on the same surviving daemon pid');
+
+      // Loser's listen-failure path must NOT have unlinked the winner's files.
+      assert.ok(existsSync(INFO_PATH), 'winner info file intact after concurrent race');
+
+      const status = await cli('daemon status');
+      assert.exitCode(status, 0);
+      const statusPid = Number(/pid:\s+(\d+)/.exec(status.stdout)?.[1]);
+      assert.equal(statusPid, pid1, 'status reports the surviving daemon pid');
+    } finally {
+      await ensureDaemonStopped();
+    }
+  });
+
   test('start cleans up a stale socket file from a crashed daemon', async (assert) => {
     // POSIX-only: simulating a stale socket requires writing a regular file at the
     // socket path. Windows sockets are named pipes (\\.\pipe\...) — fs.writeFile to

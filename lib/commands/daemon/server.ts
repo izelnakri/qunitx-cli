@@ -43,6 +43,14 @@ interface DaemonState {
   infoPath: string;
   /** Reset to 0 after any run that left the browser connected. */
   consecutiveCrashes: number;
+  /**
+   * Set to `true` immediately after `listen()` resolves. Gates file cleanup in
+   * `shutdownDaemon`: a process whose `listen()` failed (EADDRINUSE in a concurrent
+   * spawn race) does not own the socket or info file and must NOT unlink them — the
+   * winner does. Writes happen sync-after-await so no signal can interleave between
+   * `listen()` returning and the flag being set.
+   */
+  listenSucceeded: boolean;
 }
 
 /**
@@ -96,6 +104,7 @@ export async function runDaemonServer(): Promise<void> {
     socketPath,
     infoPath,
     consecutiveCrashes: 0,
+    listenSucceeded: false,
   };
 
   const shutdown = (reason: string) => shutdownDaemon(state, reason);
@@ -113,7 +122,19 @@ export async function runDaemonServer(): Promise<void> {
     void shutdown('server error');
   });
 
+  // listen() is the atomic at-most-one-daemon claim — only one process can bind to
+  // the socket path. Once it returns, we know we own the daemon role and can publish
+  // the info file with our identity. Writing the info file BEFORE listen would let
+  // a losing concurrent-spawn process overwrite the winner's info with its own pid,
+  // then unlink it on its own EADDRINUSE — leaving the winner with corrupted or
+  // missing presence state. The client's spawn-poll waits for both info file
+  // existence AND a successful ping, so the brief gap between listen() returning
+  // and writeFile resolving is bridged on the client side, not the server.
   await listen(state.socketServer, socketPath);
+  // Set the ownership flag in the same microtask as listen()'s resolution. Signals
+  // are delivered as macrotasks; they cannot interleave between two synchronous
+  // statements, so this flag is observed atomically with bind success.
+  state.listenSucceeded = true;
   // chmod after listen — listen creates the socket file with the default umask, which
   // can leave it world-readable. Skipped on Windows: named pipe paths don't accept
   // POSIX modes and chmod returns EPERM/EINVAL for them.
@@ -163,9 +184,13 @@ async function shutdownDaemon(state: DaemonState, reason: string): Promise<void>
   }
 
   await new Promise<void>((resolve) => state.socketServer.close(() => resolve()));
+  // Only unlink files if THIS process actually owns them. A daemon whose listen()
+  // failed (concurrent-spawn race: lost to EADDRINUSE) reaches this path via the
+  // unhandledRejection handler, but the winner owns the socket + info file —
+  // unlinking would corrupt the winner's reachability state.
   await Promise.all([
-    unlink(state.socketPath).catch(() => {}),
-    unlink(state.infoPath).catch(() => {}),
+    state.listenSucceeded ? unlink(state.socketPath).catch(() => {}) : null,
+    state.listenSucceeded ? unlink(state.infoPath).catch(() => {}) : null,
     state.browser.close().catch(() => {}),
   ]);
   process.exit(0);

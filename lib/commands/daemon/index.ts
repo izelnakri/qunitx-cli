@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
+import fs, { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { daemonSocketPath } from '../../utils/daemon-socket-path.ts';
-import { pingDaemon, shutdownDaemon, tryConnect } from './client.ts';
+import { daemonInfoPath, daemonSocketPath } from '../../utils/daemon-socket-path.ts';
+import { pingDaemon, shutdownDaemon } from './client.ts';
 
-const SPAWN_POLL_INTERVAL_MS = 100;
 const SPAWN_TIMEOUT_MS = 10_000;
 
 const __filename = fileURLToPath(import.meta.url);
@@ -38,9 +38,53 @@ async function runServeMode(): Promise<number> {
 }
 
 /**
- * Spawns a detached daemon process and polls until it answers a ping.
- * Returns the running daemon's pid on success, `null` on timeout. Used by both
- * the explicit `daemon start` and the auto-spawn path from cli.ts.
+ * Event-driven wait for `filePath` to appear, bounded by `timeoutMs`. Subscribes via
+ * `fs.watch` on the parent directory — kernel notifications (inotify / FSEvents /
+ * ReadDirectoryChangesW) deliver events sub-ms after file creation, so detection
+ * latency is OS-bound, not poll-interval-bound, and zero CPU is burned between events.
+ *
+ * Two `existsSync` calls bracket the watcher attachment to close the TOCTOU gap:
+ * the file may appear between the entry-point check and `fs.watch` actually being
+ * subscribed in the kernel.
+ */
+function waitForFile(filePath: string, timeoutMs: number): Promise<boolean> {
+  if (existsSync(filePath)) return Promise.resolve(true);
+  return new Promise<boolean>((resolve) => {
+    const dir = path.dirname(filePath);
+    const fileName = path.basename(filePath);
+    let settled = false;
+    const settle = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      watcher.close();
+      resolve(ok);
+    };
+    const timer = setTimeout(() => settle(false), timeoutMs);
+    const watcher = fs.watch(dir, (_event, name) => {
+      // Reconfirm with existsSync — fs.watch fires for both create and unlink.
+      if (name === fileName && existsSync(filePath)) settle(true);
+    });
+    watcher.on('error', () => settle(false));
+    // Re-check now that the kernel watch is live (TOCTOU close).
+    if (existsSync(filePath)) settle(true);
+  });
+}
+
+/**
+ * Spawns a detached daemon process and waits for it to be *fully* ready.
+ *
+ * Two signals must both be true before we return success:
+ *
+ * 1. The info file exists at `daemonInfoPath()`. The daemon writes this *after*
+ *    `listen()` resolves, so its presence is the first observable signal that
+ *    startup is complete. We wait for it via `fs.watch` — event-driven, no polling.
+ * 2. `pingDaemon()` returns a `pong`. Confirms the daemon is actually accepting
+ *    connections (rules out a stale info file from a crashed previous daemon).
+ *
+ * Either signal alone is insufficient: pong-only races the post-listen writeFile
+ * (sub-ms on Linux, tens of ms on Windows NTFS); file-only would falsely accept
+ * stale presence sentinels. Both must hold.
  */
 async function spawnAndWaitForDaemon(): Promise<{ pid: number } | null> {
   // Detached so the daemon outlives the current shell. stdio: 'ignore' detaches all
@@ -51,16 +95,9 @@ async function spawnAndWaitForDaemon(): Promise<{ pid: number } | null> {
     env: { ...process.env, QUNITX_DAEMON_CWD: process.cwd() },
   }).unref();
 
-  const deadline = Date.now() + SPAWN_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, SPAWN_POLL_INTERVAL_MS));
-    const sock = await tryConnect();
-    if (!sock) continue;
-    sock.destroy();
-    const pong = await pingDaemon();
-    if (pong && pong.type === 'pong') return { pid: pong.pid };
-  }
-  return null;
+  if (!(await waitForFile(daemonInfoPath(), SPAWN_TIMEOUT_MS))) return null;
+  const pong = await pingDaemon();
+  return pong?.type === 'pong' ? { pid: pong.pid } : null;
 }
 
 /**
@@ -69,14 +106,13 @@ async function spawnAndWaitForDaemon(): Promise<{ pid: number } | null> {
  * intended for the cli.ts auto-spawn path where the spawn is incidental to the run.
  */
 export async function ensureDaemonRunning(): Promise<boolean> {
-  const existing = await pingDaemon();
-  if (existing && existing.type === 'pong') return true;
+  if ((await pingDaemon())?.type === 'pong') return true;
   return Boolean(await spawnAndWaitForDaemon());
 }
 
 async function startDaemon(): Promise<number> {
   const existing = await pingDaemon();
-  if (existing && existing.type === 'pong') {
+  if (existing?.type === 'pong') {
     process.stdout.write(`Daemon already running (pid ${existing.pid})\n`);
     return 0;
   }
@@ -97,7 +133,7 @@ async function stopDaemon(): Promise<number> {
 
 async function statusDaemon(): Promise<number> {
   const pong = await pingDaemon();
-  if (!pong || pong.type !== 'pong') {
+  if (pong?.type !== 'pong') {
     process.stdout.write('No daemon running for this project\n');
     return 1;
   }
