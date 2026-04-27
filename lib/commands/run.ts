@@ -28,17 +28,11 @@ import { timeCounter } from '../utils/time-counter.ts';
 import { TAPDisplayFinalResult } from '../tap/display-final-result.ts';
 import { readTemplate } from '../utils/read-template.ts';
 import { isCustomTemplate } from '../utils/html.ts';
+import { closeWithGrace } from '../utils/close-with-grace.ts';
 import type { Config, CachedContent } from '../types.ts';
 
 // Playwright navigation timeout for headed watch-mode reloads (not test execution).
 const WATCH_NAV_TIMEOUT_MS = 5_000;
-// Maximum ms to wait for page.close() before giving up and moving on (group mode).
-const PAGE_CLOSE_GRACE_MS = 10_000;
-// Maximum ms to wait for the final-cleanup race (server.close + browser.close +
-// shutdownPrelaunch) before exiting anyway. Playwright's browser.close() regularly
-// deadlocks on Firefox + Windows during shutdown — without this race the CLI sits
-// silent until the test runner's exec timeout SIGTERMs it ~60 s later.
-const CLEANUP_GRACE_MS = 10_000;
 // Maximum ms to wait for stdout to flush before forcing process.exit().
 const STDOUT_FLUSH_GRACE_MS = 5_000;
 // setInterval period that keeps the event loop alive while Promise.allSettled runs.
@@ -98,7 +92,7 @@ export async function run(config: Config): Promise<void> {
     // runs there — but TerminateProcess() is fully synchronous so the race doesn't exist on
     // Windows anyway. Exit with 143 (128 + SIGTERM) to preserve the conventional exit code.
     process.once('SIGTERM', () => {
-      connections.server.close().finally(() => process.exit(EXIT_CODE_SIGTERM));
+      closeWithGrace([connections.server.close()]).finally(() => process.exit(EXIT_CODE_SIGTERM));
     });
 
     // In headed watch mode (bare --open + --watch), chrome-prelaunch.ts launches Chrome
@@ -119,10 +113,7 @@ export async function run(config: Config): Promise<void> {
     try {
       await runTestsInBrowser(config, cachedContent, connections);
     } catch (error) {
-      await Promise.all([
-        connections.server && connections.server.close(),
-        connections.browser && connections.browser.close(),
-      ]);
+      await closeWithGrace([connections.server?.close(), connections.browser?.close()]);
       throw error;
     }
 
@@ -324,18 +315,12 @@ export async function run(config: Config): Promise<void> {
             await runTestsInBrowser(groupConfig, groupCachedContents[i], connections);
           } finally {
             await flushConsoleHandlers(groupConfig._pendingConsoleHandlers);
-            await Promise.all([
-              !sharedServer && connections.server?.close(),
-              connections.page &&
-                // Unref'd: the keepAlive interval above holds the event loop open, so this
-                // timer still fires if page.close() hangs, without preventing process exit later.
-                Promise.race([
-                  connections.page.close(),
-                  new Promise((resolve) => {
-                    const pageCloseTimeoutId = setTimeout(resolve, PAGE_CLOSE_GRACE_MS);
-                    pageCloseTimeoutId.unref();
-                  }),
-                ]).catch(() => {}),
+            // Per-group cleanup, bounded so a deadlocked page.close (Firefox/WebKit under
+            // load) cannot wedge Promise.allSettled forever. The shared server is closed
+            // in the final cleanup pass below, not here.
+            await closeWithGrace([
+              sharedServer ? undefined : connections.server?.close(),
+              connections.page?.close(),
             ]);
           }
         })();
@@ -389,32 +374,24 @@ export async function run(config: Config): Promise<void> {
       // throughout, preventing premature drain if every close resolves instantly (e.g.
       // Chrome already dead) before proc.ref() takes effect inside shutdownPrelaunch.
       //
-      // closeWithGrace bounds the cleanup at CLEANUP_GRACE_MS: Playwright's browser.close()
-      // can deadlock on Firefox + Windows, leaving the CLI alive but silent until the test
-      // runner SIGTERMs it ~60 s later. Best-effort cleanup, exit anyway.
-      await closeWithGrace(
-        [
-          ...(sharedServer
-            ? [
-                sharedServer
-                  .close()
-                  .catch(
-                    (err: Error) =>
-                      config.debug &&
-                      process.stderr.write(`# [qunitx] server.close: ${err.message}\n`),
-                  ),
-              ]
-            : []),
-          browser
-            .close()
-            .catch(
-              (err: Error) =>
-                config.debug && process.stderr.write(`# [qunitx] browser.close: ${err.message}\n`),
-            ),
-          shutdownPrelaunch(),
-        ],
-        CLEANUP_GRACE_MS,
-      );
+      // closeWithGrace bounds this race: Playwright's browser.close() can deadlock on
+      // Firefox + Windows, leaving the CLI alive but silent until the test runner
+      // SIGTERMs it ~60 s later. Best-effort cleanup, exit anyway.
+      await closeWithGrace([
+        sharedServer
+          ?.close()
+          .catch(
+            (err: Error) =>
+              config.debug && process.stderr.write(`# [qunitx] server.close: ${err.message}\n`),
+          ),
+        browser
+          .close()
+          .catch(
+            (err: Error) =>
+              config.debug && process.stderr.write(`# [qunitx] browser.close: ${err.message}\n`),
+          ),
+        shutdownPrelaunch(),
+      ]);
       clearInterval(keepAlive);
       process.exit(exitCode);
     });
@@ -608,27 +585,6 @@ function resolveQunitxRoot(projectRoot: string): string {
   const match = /^(.*[\\/]qunitx)[\\/]/.exec(mainEntry);
   if (!match) throw new Error(`Could not derive qunitx root from ${mainEntry}`);
   return match[1];
-}
-
-/**
- * Awaits every cleanup promise in `closes`, but never longer than `graceMs`. Resolves whichever
- * happens first: every close settles (resolve or reject — `Promise.allSettled` swallows
- * failures so one stuck close cannot wedge the others) or the grace timer fires. Pending closes
- * keep running in the background after a timeout — the caller is expected to `process.exit()`
- * shortly after, which terminates them anyway. The timer is cleared once the race ends so a
- * fast cleanup never leaves a stale handle holding the event loop open.
- */
-export function closeWithGrace(
-  closes: ReadonlyArray<Promise<unknown>>,
-  graceMs: number,
-): Promise<void> {
-  let timer: NodeJS.Timeout;
-  const graceTimer = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, graceMs);
-  });
-  return Promise.race([Promise.allSettled(closes).then(() => {}), graceTimer]).finally(() =>
-    clearTimeout(timer),
-  );
 }
 
 export { readTimingCache, computeFileTimes };

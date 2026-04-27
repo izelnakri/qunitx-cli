@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { closeWithGrace } from '../../lib/commands/run.ts';
+import { closeWithGrace } from '../../lib/utils/close-with-grace.ts';
 
 // These tests pin the behavior that prevents a hanging Playwright `browser.close()` from
 // wedging the CLI shutdown indefinitely on Firefox + Windows. The previous inline

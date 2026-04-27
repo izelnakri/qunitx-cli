@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { blue } from '../../utils/color.ts';
 import { shutdownPrelaunch } from '../../utils/chrome-prelaunch.ts';
+import { closeWithGrace } from '../../utils/close-with-grace.ts';
 import esbuild from 'esbuild';
 import { timeCounter } from '../../utils/time-counter.ts';
 import { runUserModule } from '../../utils/run-user-module.ts';
@@ -306,11 +307,11 @@ export async function runTestsInBrowser(
 
       if (!config.watch) {
         await flushConsoleHandlers(config._pendingConsoleHandlers);
-        await Promise.all([
-          connections.server && connections.server.close(),
-          connections.browser && connections.browser.close(),
+        await closeWithGrace([
+          connections.server?.close(),
+          connections.browser?.close(),
+          shutdownPrelaunch(),
         ]);
-        await shutdownPrelaunch();
         return process.exit(config.COUNTER.failCount > 0 ? 1 : 0);
       }
     }
@@ -839,11 +840,11 @@ async function failOnNonWatchMode(
       throw new Error('Browser test run failed');
     }
     await flushConsoleHandlers(pendingHandlers);
-    await Promise.all([
-      connections.server && connections.server.close(),
-      connections.browser && connections.browser.close(),
+    await closeWithGrace([
+      connections.server?.close(),
+      connections.browser?.close(),
+      shutdownPrelaunch(),
     ]);
-    await shutdownPrelaunch();
     process.exit(1);
   }
 }
