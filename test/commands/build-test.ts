@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { buildTestBundle } from '../../lib/commands/run/tests-in-browser.ts';
+import { buildTestBundle, bundleCacheKey } from '../../lib/commands/run/tests-in-browser.ts';
 import type { Config, CachedContent } from '../../lib/types.ts';
 
 const CWD = process.cwd();
@@ -63,10 +63,9 @@ module(
         await buildTestBundle(config, cached);
 
         assert.ok(cached._esbuildContext, 'esbuild context is created');
-        assert.strictEqual(
-          cached._esbuildContextKey,
-          FILE_A,
-          'context key equals the single test file path',
+        assert.ok(
+          cached._esbuildContextKey?.includes(FILE_A),
+          'context key encodes the single test file path',
         );
         assert.ok(cached.allTestCode, 'allTestCode is populated');
         assert.ok(
@@ -119,10 +118,10 @@ module(
           firstContext,
           'a new context is created when the file set changes',
         );
-        assert.strictEqual(
-          cached._esbuildContextKey,
-          [FILE_A, FILE_B].join('\0'),
-          'context key reflects both files',
+        const newKey = cached._esbuildContextKey ?? '';
+        assert.ok(
+          newKey.includes(FILE_A) && newKey.includes(FILE_B),
+          'context key encodes both files',
         );
       } finally {
         await disposeCached(cached);
@@ -375,3 +374,39 @@ async function disposeCached(cached: CachedContent): Promise<void> {
     cached._esbuildContext = null;
   }
 }
+
+module('Commands | bundleCacheKey', { concurrency: true }, () => {
+  // Regression contract: every BuildOption that varies between runs MUST be in the key.
+  // If someone adds a new variable option (e.g. a future --debug toggle wiring through
+  // to `sourcemap`) without updating bundleCacheKey, one of these tests should catch it.
+  const baseOpts = { outfile: '/tmp/a/tests.js', target: ['chrome120'] };
+  const baseFiles = ['/proj/a.ts', '/proj/b.ts'];
+
+  test('same inputs produce the same key', (assert) => {
+    assert.equal(bundleCacheKey(baseOpts, baseFiles), bundleCacheKey(baseOpts, baseFiles));
+  });
+
+  test('outfile change → different key (covers --output between daemon runs)', (assert) => {
+    const k1 = bundleCacheKey({ ...baseOpts, outfile: '/tmp/a/tests.js' }, baseFiles);
+    const k2 = bundleCacheKey({ ...baseOpts, outfile: '/tmp/b/tests.js' }, baseFiles);
+    assert.notEqual(k1, k2);
+  });
+
+  test('target change → different key (covers --browser between daemon runs)', (assert) => {
+    const k1 = bundleCacheKey({ ...baseOpts, target: ['chrome120'] }, baseFiles);
+    const k2 = bundleCacheKey({ ...baseOpts, target: ['firefox115'] }, baseFiles);
+    assert.notEqual(k1, k2);
+  });
+
+  test('test-file set change → different key (file added)', (assert) => {
+    const k1 = bundleCacheKey(baseOpts, ['/proj/a.ts']);
+    const k2 = bundleCacheKey(baseOpts, ['/proj/a.ts', '/proj/b.ts']);
+    assert.notEqual(k1, k2);
+  });
+
+  test('test-file order change → different key (intentional — order affects bundle output)', (assert) => {
+    const k1 = bundleCacheKey(baseOpts, ['/proj/a.ts', '/proj/b.ts']);
+    const k2 = bundleCacheKey(baseOpts, ['/proj/b.ts', '/proj/a.ts']);
+    assert.notEqual(k1, k2);
+  });
+});

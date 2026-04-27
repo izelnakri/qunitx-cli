@@ -44,13 +44,16 @@ interface DaemonState {
   /** Reset to 0 after any run that left the browser connected. */
   consecutiveCrashes: number;
   /**
-   * Set to `true` immediately after `listen()` resolves. Gates file cleanup in
-   * `shutdownDaemon`: a process whose `listen()` failed (EADDRINUSE in a concurrent
-   * spawn race) does not own the socket or info file and must NOT unlink them — the
-   * winner does. Writes happen sync-after-await so no signal can interleave between
-   * `listen()` returning and the flag being set.
+   * `true` after `listen()` resolves. Gates file cleanup in `shutdownDaemon`: a
+   * process whose `listen()` failed (concurrent-spawn EADDRINUSE) does not own the
+   * socket or info file, so the loser must not unlink them — only the winner does.
    */
   listenSucceeded: boolean;
+  /**
+   * Single-source esbuild incremental-context cache, persisted across daemon runs.
+   * Mutated by reference inside `buildIncrementally`; disposed on daemon shutdown.
+   */
+  esbuildCache: NonNullable<Config['_daemonEsbuildCache']>;
 }
 
 /**
@@ -105,6 +108,7 @@ export async function runDaemonServer(): Promise<void> {
     infoPath,
     consecutiveCrashes: 0,
     listenSucceeded: false,
+    esbuildCache: { _esbuildContext: null },
   };
 
   const shutdown = (reason: string) => shutdownDaemon(state, reason);
@@ -184,14 +188,14 @@ async function shutdownDaemon(state: DaemonState, reason: string): Promise<void>
   }
 
   await new Promise<void>((resolve) => state.socketServer.close(() => resolve()));
-  // Only unlink files if THIS process actually owns them. A daemon whose listen()
-  // failed (concurrent-spawn race: lost to EADDRINUSE) reaches this path via the
-  // unhandledRejection handler, but the winner owns the socket + info file —
-  // unlinking would corrupt the winner's reachability state.
+  // Only unlink files this process actually owns. A daemon whose listen() failed
+  // (concurrent-spawn race: lost to EADDRINUSE) reaches this path via unhandled-
+  // Rejection but doesn't own the socket/info — unlinking corrupts the winner.
   await Promise.all([
     state.listenSucceeded ? unlink(state.socketPath).catch(() => {}) : null,
     state.listenSucceeded ? unlink(state.infoPath).catch(() => {}) : null,
     state.browser.close().catch(() => {}),
+    state.esbuildCache._esbuildContext?.dispose().catch(() => {}),
   ]);
   process.exit(0);
 }
@@ -395,10 +399,13 @@ async function runOnce(
   }
 
   // _daemonBrowser tells run() to reuse the persistent browser; _daemonMode tells
-  // it to throw DaemonRunError instead of calling process.exit at the end. watch/open
-  // are forced off — those modes don't make sense inside a daemon run.
+  // it to throw DaemonRunError instead of calling process.exit at the end;
+  // _daemonEsbuildCache hands buildTestBundle the persistent incremental-context
+  // slot so the warm module graph survives across runs. watch/open are forced off
+  // — those modes don't make sense inside a daemon run.
   config._daemonMode = true;
   config._daemonBrowser = state.browser;
+  config._daemonEsbuildCache = state.esbuildCache;
   config.watch = false;
   config.open = false;
 

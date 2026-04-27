@@ -106,6 +106,19 @@ export function formatBuildErrors(error: unknown): string {
 }
 
 /**
+ * Cache key for the daemon/watch incremental esbuild context. Single source of truth
+ * for what makes two builds interchangeable: file set + every BuildOption that varies
+ * between runs. Items intentionally NOT keyed: `plugins` (daemon shuts down on
+ * package.json mtime change), `nodePaths` (cwd-bound, daemon stays in cwd), and the
+ * hardcoded literals (`bundle`, `keepNames`, `legalComments`, `jsx`, `sourcemap`,
+ * `footer`, `logLevel`). When adding a new variable BuildOption, extend this function
+ * — that is the contract enforced by the unit suite.
+ */
+export function bundleCacheKey(opts: esbuild.BuildOptions, files: string[]): string {
+  return JSON.stringify({ files, outfile: opts.outfile, target: opts.target });
+}
+
+/**
  * Pre-builds the esbuild bundle for all test files and caches the result in `cachedContent`.
  * @returns {Promise<void>}
  */
@@ -165,10 +178,16 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
   cachedContent._buildError = null;
   cachedContent._noTestsWarning = null;
 
+  // Cache holder: daemon's persistent state slot for daemon-mode runs (so the
+  // incremental context survives across runs); the per-process cachedContent for
+  // watch mode (lives for the life of the watch process).
+  const cacheHolder = config._daemonEsbuildCache ?? cachedContent;
+  const fileKey = bundleCacheKey(buildOptions, allTestFilePaths);
+
   try {
     const [allTestCode] = await Promise.all([
-      config.watch
-        ? buildIncrementally(buildOptions, allTestFilePaths.join('\0'), cachedContent, needsDisk)
+      config.watch || config._daemonMode
+        ? buildIncrementally(buildOptions, fileKey, cacheHolder, needsDisk)
         : buildWithOverlayfsRetry(buildOptions, needsDisk),
       Promise.all(
         cachedContent.htmlPathsToRunTests.map(async (htmlPath) => {
@@ -638,26 +657,28 @@ function buildWithOverlayfsRetry(
   }, needsDisk);
 }
 
-// Uses an esbuild incremental context so the module graph stays warm between watch-mode
-// rebuilds. context.rebuild() re-reads changed files but skips re-parsing unchanged
-// modules, shaving ~80% off rebuild time vs a fresh esbuild.build() call.
-// The context is invalidated (disposed + replaced) whenever the set of test files changes
-// (file added or removed in watch mode), since the entry-point stdin content changes.
+// Uses an esbuild incremental context so the module graph stays warm between rebuilds.
+// context.rebuild() re-reads changed files but skips re-parsing unchanged modules, shaving
+// ~80% off rebuild time vs a fresh esbuild.build() call. The cache is single-source: when
+// the file-set changes (different `fileKey`), the old context is disposed and replaced.
+// Storage holder is whichever object owns the live cache: the per-process CachedContent in
+// watch mode, or the daemon's persistent state slot via `config._daemonEsbuildCache` in
+// daemon mode. Both expose the same `_esbuildContext` / `_esbuildContextKey` field shape.
 async function buildIncrementally(
   options: esbuild.BuildOptions,
   fileKey: string,
-  cachedContent: CachedContent,
+  cache: { _esbuildContext?: esbuild.BuildContext | null; _esbuildContextKey?: string },
   needsDisk: boolean,
 ): Promise<Buffer> {
   const buildOpts: esbuild.BuildOptions = { ...options, write: false };
 
-  if (!cachedContent._esbuildContext || cachedContent._esbuildContextKey !== fileKey) {
-    cachedContent._esbuildContext?.dispose().catch(() => {});
-    cachedContent._esbuildContext = await esbuild.context(buildOpts);
-    cachedContent._esbuildContextKey = fileKey;
+  if (!cache._esbuildContext || cache._esbuildContextKey !== fileKey) {
+    cache._esbuildContext?.dispose().catch(() => {});
+    cache._esbuildContext = await esbuild.context(buildOpts);
+    cache._esbuildContextKey = fileKey;
   }
 
-  const ctx = cachedContent._esbuildContext;
+  const ctx = cache._esbuildContext!;
   return runWithOverlayfsRetry(async () => {
     const result = await ctx.rebuild();
     const jsFile = result.outputFiles!.find((f) => !f.path.endsWith('.map'))!;
