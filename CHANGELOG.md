@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.22.3] - 2026-04-27
+[`v0.22.2...v0.22.3`](https://github.com/izelnakri/qunitx-cli/compare/v0.22.2...v0.22.3)
+
+### Bug Fixes
+- Bound shutdown cleanup so a hanging browser.close cannot wedge exit — 2026-04-26 by [@izelnakri](https://github.com/izelnakri) ([`69bedc1`](https://github.com/izelnakri/qunitx-cli/commit/69bedc1e90e98f3c40819a38a3265f1fefa334ff))
+
+### Features
+- Emit stderr line when shutdown grace period elapses — 2026-04-27 by [@izelnakri](https://github.com/izelnakri) ([`1220c3c`](https://github.com/izelnakri/qunitx-cli/commit/1220c3c85b4d31f41574c86de7cbdc47f7e8d8f0))
+
+### Refactoring
+- Unify all cleanup-then-exit paths under closeWithGrace — 2026-04-27 by [@izelnakri](https://github.com/izelnakri) ([`c9a7b1f`](https://github.com/izelnakri/qunitx-cli/commit/c9a7b1fb9be22e8c3846e941a1c92b9f857752b7))
+
 ## [0.22.2] - 2026-04-26
 [`v0.22.1...v0.22.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.22.1...v0.22.2)
 
