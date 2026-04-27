@@ -5,20 +5,12 @@ import path from 'node:path';
 import { daemonSocketPath, daemonInfoPath } from '../../utils/daemon-socket-path.ts';
 import { attachLineParser, probeSocket } from './socket-utils.ts';
 import { setupConfig } from '../../setup/config.ts';
-import { setupBrowser, launchBrowser } from '../../setup/browser.ts';
-import {
-  buildTestBundle,
-  runTestsInBrowser,
-  DaemonRunError,
-  flushConsoleHandlers,
-} from '../run/tests-in-browser.ts';
-import { writeOutputStaticFiles } from '../../setup/write-output-static-files.ts';
-import { runUserModule } from '../../utils/run-user-module.ts';
-import { closeWithGrace } from '../../utils/close-with-grace.ts';
-import { buildCachedContent } from '../run.ts';
+import { launchBrowser } from '../../setup/browser.ts';
+import { DaemonRunError } from '../run/tests-in-browser.ts';
+import { run } from '../run.ts';
 import type { Request, ResponseChunk, RunRequest, DaemonInfo } from './protocol.ts';
 import type { Browser } from 'playwright-core';
-import type { Config, Connections } from '../../types.ts';
+import type { Config } from '../../types.ts';
 
 // Daemon idle window: 30 minutes after the last run finishes, the daemon shuts itself
 // down. Long enough for typical bursts, short enough that a forgotten daemon reclaims
@@ -336,9 +328,11 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
 }
 
 /**
- * Performs one test run inside the daemon: re-parses argv via setupConfig, builds the
- * test bundle, opens a fresh page in the daemon's persistent browser, runs tests, and
- * closes per-run resources. The browser stays alive for the next run.
+ * Performs one test run inside the daemon by delegating to `run()` — the same code
+ * path local non-watch invocations use, but with `_daemonMode` set so it reuses the
+ * daemon's persistent browser and throws `DaemonRunError` instead of `process.exit`.
+ * Concurrent group orchestration, timing-cache persistence, and after-hook all come
+ * for free from the shared run pipeline.
  */
 async function runOnce(
   argv: string[],
@@ -361,57 +355,29 @@ async function runOnce(
     process.argv = argvSnapshot;
   }
 
-  // Daemon never runs watch / open / concurrent multi-group flows.
+  // _daemonBrowser tells run() to reuse the persistent browser; _daemonMode tells
+  // it to throw DaemonRunError instead of calling process.exit at the end. watch/open
+  // are forced off — those modes don't make sense inside a daemon run.
   config._daemonMode = true;
+  config._daemonBrowser = state.browser;
   config.watch = false;
   config.open = false;
 
-  const cachedContent = await buildCachedContent(config, config.htmlPaths);
-
-  let connections: Connections | null = null;
-  let exitCode = 0;
-  const fileCount = Object.keys(config.fsTree).length;
-
   try {
-    await buildTestBundle(config, cachedContent);
-    connections = await setupBrowser(config, cachedContent, state.browser);
-    config.webServer = connections.server;
-    await writeOutputStaticFiles(config, cachedContent);
-
-    if (config.before) await runUserModule(`${process.cwd()}/${config.before}`, config, 'before');
-
-    // One TAP version 13 header per daemon run; web-server.ts suppresses its
-    // per-WS-connection emission when _daemonMode is set.
-    process.stdout.write('TAP version 13\n');
-    process.stdout.write(
-      `# Running ${fileCount} test file${fileCount === 1 ? '' : 's'} (daemon)\n`,
-    );
-
-    // runTestsInBrowser handles 0-tests warning, TAPDisplayFinalResult, and the after
-    // hook itself in !_groupMode; on the success path it throws DaemonRunError instead
-    // of process.exit when _daemonMode is set.
-    try {
-      await runTestsInBrowser(config, cachedContent, connections);
-      // Defensive fallback if runTestsInBrowser ever returns without throwing in daemon mode.
-      exitCode = config.COUNTER.failCount > 0 ? 1 : 0;
-    } catch (err) {
-      if (err instanceof DaemonRunError) exitCode = err.exitCode;
-      else throw err;
-    }
+    await run(config);
+    // run() throws DaemonRunError on success in daemon mode; reaching here means it
+    // returned without exiting — fall back on the counter.
+    return config.COUNTER.failCount > 0 ? 1 : 0;
+  } catch (err) {
+    if (err instanceof DaemonRunError) return err.exitCode;
+    throw err;
   } finally {
-    await flushConsoleHandlers(config._pendingConsoleHandlers).catch(() => {});
-    if (connections) {
-      // Per-run cleanup — never close the daemon's persistent browser.
-      await closeWithGrace([connections.page?.close(), connections.server?.close()]);
-    }
     // Restore env: drop keys added during the run, restore changed values.
     for (const key of Object.keys(process.env)) {
       if (!(key in envSnapshot)) delete process.env[key];
     }
     Object.assign(process.env, envSnapshot);
   }
-
-  return exitCode;
 }
 
 async function isLiveSocket(socketPath: string): Promise<boolean> {

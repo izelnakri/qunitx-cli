@@ -149,6 +149,12 @@ export interface Config {
    * from being closed at the end of a run.
    */
   _daemonMode?: boolean;
+  /**
+   * The daemon's persistent Browser instance. When set, `run()` reuses it instead of
+   * calling `launchBrowser()`, and skips closing it at the end of the run. The daemon
+   * passes its own browser here so concurrent group runs share one warm Chrome.
+   */
+  _daemonBrowser?: import('playwright-core').Browser;
   /** Index within the concurrent group array; set when a shared HTTP server is used. */
   _groupId?: number;
   /** Current lifecycle phase of the test run. */
