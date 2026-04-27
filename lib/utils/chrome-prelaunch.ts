@@ -35,15 +35,16 @@ const { browserFromArgv, openFromArgv, watchFromArgv } = process.argv.reduce(
 );
 // If the run will go through the daemon (existing socket OR QUNITX_DAEMON=1
 // auto-spawn) and the invocation is daemon-eligible, no local Chrome is needed —
-// skipping the prelaunch saves the ~150ms spawn cost.
+// skipping the prelaunch saves the ~150ms spawn cost. CI is bypassed by default
+// but QUNITX_DAEMON=1 overrides (mirrors the precedence in client.ts).
 const isDaemonClientRun =
   isRunCommand &&
   cmd !== 'daemon' &&
   !watchFromArgv &&
   !openFromArgv &&
-  !process.env.CI &&
   !process.env.QUNITX_NO_DAEMON &&
   !process.argv.includes('--no-daemon') &&
+  (!process.env.CI || Boolean(process.env.QUNITX_DAEMON)) &&
   // Check the info file rather than the socket path: on Windows the socket is a named
   // pipe (\\.\pipe\...), which existsSync cannot see. The info file is always a regular
   // file in os.tmpdir() and is created/removed in lockstep with the daemon's lifetime.

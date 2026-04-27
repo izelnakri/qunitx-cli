@@ -378,6 +378,26 @@ module('Commands | Daemon | bypass', { concurrency: false }, () => {
       await ensureDaemonStopped();
     }
   });
+
+  test('QUNITX_DAEMON=1 overrides CI=1 (multi-invocation CI opt-in)', async (assert) => {
+    // Default: CI=1 bypasses the daemon for single-invocation jobs (most CI). When
+    // both CI=1 and QUNITX_DAEMON=1 are set, the explicit opt-in wins — multi-
+    // invocation CI flows (monorepos, pre-commit hooks doing N qunitx calls) need
+    // to be able to share the warm daemon across calls.
+    await ensureDaemonStopped();
+    await cli('daemon start');
+    try {
+      const result = await cli(FIXTURE_PASS, {
+        env: { ...CLI_ENV, CI: '1', QUNITX_DAEMON: '1' },
+      });
+
+      assert.exitCode(result, 0);
+      assert.includes(result, '# pass 3');
+      assert.includes(result, '(daemon)');
+    } finally {
+      await ensureDaemonStopped();
+    }
+  });
 });
 
 module('Commands | Daemon | auto-spawn', { concurrency: false }, () => {
