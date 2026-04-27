@@ -1,5 +1,4 @@
 import net from 'node:net';
-import { existsSync } from 'node:fs';
 
 /**
  * Reads NDJSON from `socket`, dispatching each parsed object via `onLine`.
@@ -25,14 +24,14 @@ export function attachLineParser<T>(socket: net.Socket, onLine: (line: T) => voi
 }
 
 /**
- * Attempts a Unix-socket connection. Resolves the connected socket on success,
- * `null` on any failure (no socket file, ECONNREFUSED, timeout, etc.). Used as
- * a primitive by both the client (to send requests) and the server (to probe
- * whether a stale-looking socket is actually live).
+ * Attempts a connection to the given path (POSIX socket or Windows named pipe).
+ * Resolves the connected socket on success, `null` on any failure (peer absent,
+ * ECONNREFUSED, ENOENT, timeout). Lets `net.createConnection` produce the error
+ * directly — a pre-emptive `existsSync` check would not work for Windows named
+ * pipes (they live in `\\.\pipe\...`, not on the regular filesystem).
  */
 export function probeSocket(socketPath: string, timeoutMs: number): Promise<net.Socket | null> {
   return new Promise((resolve) => {
-    if (!existsSync(socketPath)) return resolve(null);
     const sock = net.createConnection(socketPath);
     const timer = setTimeout(() => {
       sock.destroy();

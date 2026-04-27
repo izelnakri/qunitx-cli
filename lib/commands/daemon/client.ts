@@ -1,15 +1,21 @@
 import net from 'node:net';
 import { existsSync } from 'node:fs';
-import { daemonSocketPath } from '../../utils/daemon-socket-path.ts';
+import { daemonSocketPath, daemonInfoPath } from '../../utils/daemon-socket-path.ts';
 import { attachLineParser, probeSocket } from './socket-utils.ts';
 import type { Request, ResponseChunk } from './protocol.ts';
 
 const CONNECT_TIMEOUT_MS = 1_000;
 const SIGINT_EXIT_CODE = 130;
 
-/** True if the daemon socket file exists on disk for the given cwd (cheap presence check). */
+/**
+ * True if a daemon appears to be present for the given cwd. Checks the sidecar JSON
+ * file rather than the socket path because Windows named pipes are not visible on the
+ * regular filesystem (existsSync on `\\.\pipe\...` always returns false). The info
+ * file is created at startup and unlinked at shutdown — a reliable cross-platform
+ * sentinel. Stale info files are caught downstream by tryConnect failing fast.
+ */
 export function daemonSocketExists(cwd: string = process.cwd()): boolean {
-  return existsSync(daemonSocketPath(cwd));
+  return existsSync(daemonInfoPath(cwd));
 }
 
 /**

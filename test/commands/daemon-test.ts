@@ -97,7 +97,7 @@ module('Commands | Daemon | lifecycle', { concurrency: false }, () => {
     assert.includes(result, 'No daemon was running');
   });
 
-  test('start -> exit 0, "Daemon started", socket + info files exist', async (assert) => {
+  test('start -> exit 0, "Daemon started", info file exists', async (assert) => {
     await ensureDaemonStopped();
     try {
       const result = await cli('daemon start');
@@ -105,7 +105,8 @@ module('Commands | Daemon | lifecycle', { concurrency: false }, () => {
       assert.exitCode(result, 0);
       assert.includes(result, 'Daemon started');
       assert.regex(result, /pid \d+/);
-      assert.ok(existsSync(SOCKET_PATH), 'socket file exists');
+      // Info file is the cross-platform presence sentinel — on Windows the socket is
+      // a named pipe and existsSync(SOCKET_PATH) cannot see it.
       assert.ok(existsSync(INFO_PATH), 'info file exists');
     } finally {
       await ensureDaemonStopped();
@@ -143,20 +144,28 @@ module('Commands | Daemon | lifecycle', { concurrency: false }, () => {
     }
   });
 
-  test('stop while running -> exit 0, removes socket + info files', async (assert) => {
+  test('stop while running -> exit 0, removes info file', async (assert) => {
     await ensureDaemonStopped();
     await cli('daemon start');
-    assert.ok(existsSync(SOCKET_PATH), 'socket exists pre-stop');
+    assert.ok(existsSync(INFO_PATH), 'info file exists pre-stop');
 
     const result = await cli('daemon stop');
 
     assert.exitCode(result, 0);
     assert.includes(result, 'Daemon stopped');
-    assert.notOk(existsSync(SOCKET_PATH), 'socket file removed');
     assert.notOk(existsSync(INFO_PATH), 'info file removed');
+    // Socket is a named pipe on Windows (no fs entry) — only assert on POSIX.
+    if (process.platform !== 'win32') {
+      assert.notOk(existsSync(SOCKET_PATH), 'socket file removed');
+    }
   });
 
   test('start cleans up a stale socket file from a crashed daemon', async (assert) => {
+    // POSIX-only: simulating a stale socket requires writing a regular file at the
+    // socket path. Windows sockets are named pipes (\\.\pipe\...) — fs.writeFile to
+    // that path is not a valid operation, and stale named pipes auto-recycle anyway.
+    if (process.platform === 'win32') return assert.ok(true, 'skipped on win32');
+
     await ensureDaemonStopped();
     // Simulate a stale socket from a crashed daemon — file exists but no listener.
     // The daemon's `isLiveSocket` probe returns false; it `unlink`s and re-listens.
