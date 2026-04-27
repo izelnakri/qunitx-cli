@@ -10,13 +10,17 @@ import '../helpers/custom-asserts.ts';
 const CWD = process.cwd();
 const shellExec = promisify(exec);
 
-// Each daemon test removes QUNITX_NO_DAEMON from the env so its own `node cli.ts <test>`
-// invocations actually route through the daemon. The runner sets QUNITX_NO_DAEMON=1
-// globally so other test files don't accidentally route through this test's daemon
-// while it's alive (the socket path is per-cwd and there is one project cwd in the suite).
+// Strip every env var that would cause `shouldUseDaemon` or `shouldAutoSpawnDaemon`
+// to short-circuit, so this file's `node cli.ts <test>` invocations actually route
+// through the daemon. The runner sets QUNITX_NO_DAEMON=1 globally; GitHub Actions sets
+// CI=true. Both short-circuit the daemon dispatch and would silently turn every daemon
+// test into a local run, dropping the "(daemon)" marker that several assertions rely on.
+// Bypass tests below explicitly re-add CI / QUNITX_NO_DAEMON / --no-daemon to verify
+// they win over the daemon path.
 const CLI_ENV = (() => {
   const env = { ...process.env, FORCE_COLOR: '0' };
   delete env.QUNITX_NO_DAEMON;
+  delete env.CI;
   return env;
 })();
 
