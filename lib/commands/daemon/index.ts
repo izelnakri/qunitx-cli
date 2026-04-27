@@ -37,13 +37,12 @@ async function runServeMode(): Promise<number> {
   return 0;
 }
 
-async function startDaemon(): Promise<number> {
-  const existing = await pingDaemon();
-  if (existing && existing.type === 'pong') {
-    process.stdout.write(`Daemon already running (pid ${existing.pid})\n`);
-    return 0;
-  }
-
+/**
+ * Spawns a detached daemon process and polls until it answers a ping.
+ * Returns the running daemon's pid on success, `null` on timeout. Used by both
+ * the explicit `daemon start` and the auto-spawn path from cli.ts.
+ */
+async function spawnAndWaitForDaemon(): Promise<{ pid: number } | null> {
   // Detached so the daemon outlives the current shell. stdio: 'ignore' detaches all
   // pipes; daemon writes its own startup line to its stderr (now /dev/null analogue).
   spawn(process.execPath, [CLI_ENTRY, 'daemon', '_serve'], {
@@ -59,12 +58,33 @@ async function startDaemon(): Promise<number> {
     if (!sock) continue;
     sock.destroy();
     const pong = await pingDaemon();
-    if (pong && pong.type === 'pong') {
-      process.stdout.write(`Daemon started (pid ${pong.pid})\n`);
-      return 0;
-    }
+    if (pong && pong.type === 'pong') return { pid: pong.pid };
   }
+  return null;
+}
 
+/**
+ * Ensures a daemon is reachable for the current cwd. Returns true if one was
+ * already running or was successfully spawned; false on spawn timeout. Silent —
+ * intended for the cli.ts auto-spawn path where the spawn is incidental to the run.
+ */
+export async function ensureDaemonRunning(): Promise<boolean> {
+  const existing = await pingDaemon();
+  if (existing && existing.type === 'pong') return true;
+  return Boolean(await spawnAndWaitForDaemon());
+}
+
+async function startDaemon(): Promise<number> {
+  const existing = await pingDaemon();
+  if (existing && existing.type === 'pong') {
+    process.stdout.write(`Daemon already running (pid ${existing.pid})\n`);
+    return 0;
+  }
+  const result = await spawnAndWaitForDaemon();
+  if (result) {
+    process.stdout.write(`Daemon started (pid ${result.pid})\n`);
+    return 0;
+  }
   process.stderr.write('Daemon did not start within 10s\n');
   return 1;
 }

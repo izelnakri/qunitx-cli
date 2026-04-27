@@ -33,9 +33,9 @@ const { browserFromArgv, openFromArgv, watchFromArgv } = process.argv.reduce(
     watchFromArgv: false,
   },
 );
-// If the daemon is reachable for this cwd and the run is daemon-eligible (not watch,
-// not open, not CI, not opted out), the run will be dispatched over the socket and
-// no local Chrome is needed. Skipping the prelaunch saves the ~150ms spawn cost.
+// If the run will go through the daemon (existing socket OR QUNITX_DAEMON=1
+// auto-spawn) and the invocation is daemon-eligible, no local Chrome is needed —
+// skipping the prelaunch saves the ~150ms spawn cost.
 const isDaemonClientRun =
   isRunCommand &&
   cmd !== 'daemon' &&
@@ -44,7 +44,7 @@ const isDaemonClientRun =
   !process.env.CI &&
   !process.env.QUNITX_NO_DAEMON &&
   !process.argv.includes('--no-daemon') &&
-  existsSync(daemonSocketPath());
+  (Boolean(process.env.QUNITX_DAEMON) || existsSync(daemonSocketPath()));
 // With --open --watch, Chrome is left alive after qunitx exits so the visible browser window persists.
 // With --open alone, qunitx exits after tests complete; the detached browser is opened separately.
 const openWatchMode = openFromArgv && watchFromArgv;
