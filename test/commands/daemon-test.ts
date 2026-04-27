@@ -51,6 +51,7 @@ async function ensureDaemonStopped(): Promise<void> {
 }
 
 const FIXTURE_PASS = 'test/fixtures/passing-tests.ts';
+const FIXTURE_PASS_JS = 'test/fixtures/passing-tests.js';
 const FIXTURE_FAIL = 'test/fixtures/failing-tests.ts';
 
 // Daemon tests must run serially: they share a single per-cwd socket path. Concurrent
@@ -232,6 +233,43 @@ module('Commands | Daemon | run routing', { concurrency: false }, () => {
         1,
         `expected exactly one TAP version header, got ${matches.length}`,
       );
+    } finally {
+      await ensureDaemonStopped();
+    }
+  });
+
+  test('multi-file run uses concurrent groups inside the daemon', async (assert) => {
+    await ensureDaemonStopped();
+    await cli('daemon start');
+    try {
+      const result = await cli(`${FIXTURE_PASS} ${FIXTURE_PASS_JS}`);
+
+      assert.exitCode(result, 0);
+      // 2 files × 3 passing tests each = 6 total
+      assert.includes(result, '# pass 6');
+      assert.includes(result, '# fail 0');
+      // The "(daemon)" tag rides on the same `# Running ...` line as group count.
+      assert.regex(result, /# Running 2 test files across \d+ groups? \(daemon\)/);
+      // Exactly one TAP header even though each group's web-server fires its own
+      // 'connection' event — the suppress-in-daemon-mode check must hold.
+      const headers = result.stdout.match(/^TAP version 13\b/gm) || [];
+      assert.strictEqual(headers.length, 1, 'one TAP version header for the whole run');
+    } finally {
+      await ensureDaemonStopped();
+    }
+  });
+
+  test('multi-file run with one failing file -> exit 1, fails counted', async (assert) => {
+    await ensureDaemonStopped();
+    await cli('daemon start');
+    try {
+      const result = await cli(`${FIXTURE_PASS} ${FIXTURE_FAIL}`, { failOk: true });
+
+      assert.exitCode(result, 1);
+      // Passing fixture contributes 3 passes, failing fixture has at least one fail.
+      assert.regex(result, /# pass [3-9]/);
+      assert.regex(result, /# fail [1-9]/);
+      assert.includes(result, '(daemon)');
     } finally {
       await ensureDaemonStopped();
     }

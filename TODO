@@ -3,7 +3,8 @@
   - Concurrent multi-group runs through the daemon (always single-group)
   - Auto-spawn (user explicitly runs qunitx daemon start)
 
-Should I add benchmarks for this daemon feature(s)?
+Should I add benchmarks for this daemon feature(s)? Is there anyway we can optimize the overall performance of the 
+runtime further? What about test suite?
 
 Did I document daemon feature well on README.md, document it well for first or subsequent viewers/developers.
 Document `daemon` related important things on `$ qunitx` and `$ qunitx help`

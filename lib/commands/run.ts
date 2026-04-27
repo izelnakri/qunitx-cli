@@ -18,6 +18,7 @@ import {
   buildTestBundle,
   buildAllGroupBundles,
   flushConsoleHandlers,
+  DaemonRunError,
 } from './run/tests-in-browser.ts';
 import { setupFileWatchers } from '../setup/file-watcher.ts';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
@@ -50,7 +51,13 @@ export async function run(config: Config): Promise<void> {
   //   readTimingCache: reads tmp/test-timings.json (~2ms)
   //   buildCachedContent: reads HTML template from disk (~5-10ms)
   // Chrome is typically fully connected by the time buildCachedContent + splitIntoGroups resolve.
-  const browserPromise = config.watch ? null : launchBrowser(config);
+  // Daemon mode reuses its persistent browser; non-watch local runs launch their own;
+  // watch mode defers launch until setupBrowser inside the watch path.
+  const browserPromise = config._daemonBrowser
+    ? Promise.resolve(config._daemonBrowser)
+    : config.watch
+      ? null
+      : launchBrowser(config);
   const [cachedContent, timings] = await Promise.all([
     buildCachedContent(config, config.htmlPaths),
     config.watch
@@ -234,7 +241,7 @@ export async function run(config: Config): Promise<void> {
 
     process.stdout.write('TAP version 13\n');
     process.stdout.write(
-      `# Running ${allFiles.length} test file${allFiles.length === 1 ? '' : 's'} across ${groupCount} group${groupCount === 1 ? '' : 's'}\n`,
+      `# Running ${allFiles.length} test file${allFiles.length === 1 ? '' : 's'} across ${groupCount} group${groupCount === 1 ? '' : 's'}${config._daemonMode ? ' (daemon)' : ''}\n`,
     );
 
     // Build all group bundles and write static files while the browser is starting up.
@@ -359,6 +366,22 @@ export async function run(config: Config): Promise<void> {
 
     if (config.after) {
       await runUserModule(`${process.cwd()}/${config.after}`, config.COUNTER, 'after');
+    }
+
+    // Daemon mode: close the per-run shared server (if any) but never the browser
+    // (the daemon owns it across runs). Throw DaemonRunError so the daemon's run
+    // handler captures the exit code instead of hitting process.exit.
+    if (config._daemonMode) {
+      clearInterval(keepAlive);
+      await closeWithGrace([
+        sharedServer
+          ?.close()
+          .catch(
+            (err: Error) =>
+              config.debug && process.stderr.write(`# [qunitx] server.close: ${err.message}\n`),
+          ),
+      ]);
+      throw new DaemonRunError(exitCode);
     }
 
     // Flush stdout, shut down Chrome cleanly, then exit.
