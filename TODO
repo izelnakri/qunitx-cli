@@ -1,5 +1,4 @@
-Should I add benchmarks for this daemon feature(s)? Is there anyway we can optimize the overall performance of the 
-runtime further? What about test suite?
+Should I add benchmarks for this daemon feature(s)? Is there anyway we can optimize the overall performance of the runtime of the qunitx-cli further? What about my own test suite? Check both in-depth
 
 Did I document daemon feature well on README.md, document it well for first or subsequent viewers/developers.
 Document `daemon` related important things on `$ qunitx` and `$ qunitx help`
@@ -7,6 +6,20 @@ Document `daemon` related important things on `$ qunitx` and `$ qunitx help`
 =======
 Review daemon PR/ask for changes
 =======
+
+======
+  a. NODE_COMPILE_CACHE in test/runner.ts spawn env — ~2-15s saved on the 175s Phase 1.
+
+  node --test runs each top-level test file in a separate worker subprocess. ~30 test files × ~50-100ms recompile cost = 1.5-3s minimum, more on slow CI runners. With compile
+  cache, the first test populates /tmp/qunitx-test-cache, the next 29 hit the cache.
+
+  Within a single CI run (ephemeral runner), the cache populates fresh and helps the 2nd-Nth test files. If you want cross-run benefit on CI, add actions/cache keyed on Node
+  version + relevant source hashes — but that's a CI-yaml change with its own maintenance, and the within-run win is already worth doing.
+
+  Risk: low. V8 invalidates cache when source content changes. Stale cache would manifest as actual test failures (visible). Worst case: someone rm's the cache directory.
+
+  Concrete change: 1 line in test/runner.ts spawn env. ~5-10x ROI on the implementation effort.
+=====
 
 Is the successful(and errorful) test output ideal today?
 
@@ -20,6 +33,17 @@ These should be in another releases each one:
   Each of those three is a real optimization, but each requires non-trivial cache-invalidation contracts that — based on this PR's track record of cache-invalidation bugs surfacing
    only on Windows or under load — I'd want to land in a follow-up PR with their own focused test coverage rather than smuggle into this one.
 
+
+====
+  The one remaining lever: NODE_COMPILE_CACHE. Node 22.8+ ships a V8 compile cache that persists bytecode-compiled modules across invocations. Setting NODE_COMPILE_CACHE=<dir>
+  makes the cli's heaviest cold-start phase (V8 parsing + TS-strip + bytecode-compile of ~40 modules) reuse cached bytecode on subsequent runs.
+
+  Empirically: shaves ~50-100ms off cold cli startup. Daemon mode bypasses this entirely (modules stay loaded in memory, no recompile), so this only benefits non-daemon users on
+  repeat runs.
+
+  It's an env-var setting, not a code change. The clean place to surface it: a one-line note in the README's performance section. Don't enable it programmatically inside cli.ts —
+  there's no hook to set it before our own process loads (it has to be in the parent shell env).
+===
 
 Also make sure cli/binary can be built in deno and would work on macos and windows but first probably daemon mode
 
