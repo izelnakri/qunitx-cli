@@ -22,16 +22,20 @@ perfLog('browser.js: playwright-core import started');
  * For chromium: connects via CDP to the pre-launched Chrome (fast path) or falls
  * back to chromium.launch() if pre-launch failed.
  * For firefox/webkit: uses playwright's standard launch (requires `npx playwright install [browser]`).
+ *
+ * @param skipPrelaunch When true, bypasses the prelaunch CDP path entirely and goes
+ * straight to a fresh chromium.launch(). Used by the daemon's crash-recovery path —
+ * prelaunch is a one-shot startup optimization and recovery needs a fresh browser.
  * @returns {Promise<object>}
  */
-export async function launchBrowser(config: Config): Promise<Browser> {
+export async function launchBrowser(config: Config, skipPrelaunch = false): Promise<Browser> {
   const browserName = config.browser || 'chromium';
 
   if (browserName === 'chromium') {
     const waitStart = Date.now();
     const [playwrightCore, prelaunch] = await Promise.all([
       playwrightCorePromise,
-      prelaunchPromise,
+      skipPrelaunch ? Promise.resolve(null) : prelaunchPromise,
     ]);
     perfLog(
       `browser.js: playwright-core + prelaunch resolved in ${Date.now() - waitStart}ms, prelaunch:`,

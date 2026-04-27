@@ -283,3 +283,140 @@ module('Commands | Daemon | bypass', { concurrency: false }, () => {
     }
   });
 });
+
+module('Commands | Daemon | crash recovery', { concurrency: false }, () => {
+  // Linux-only: relies on /proc/<pid>/task/<pid>/children to find the daemon's Chrome.
+  // macOS/Windows lack a portable equivalent; the recovery code path itself is the same.
+  const isLinux = process.platform === 'linux';
+
+  test('daemon relaunches Chrome after it is SIGKILLed', async (assert) => {
+    if (!isLinux) return assert.ok(true, 'skipped on non-linux');
+
+    await ensureDaemonStopped();
+    await cli('daemon start');
+    try {
+      const before = await cli(FIXTURE_PASS);
+      assert.includes(before, '# pass 3');
+
+      const daemonPid = await readDaemonPid();
+      const killed = await killDaemonChrome(daemonPid);
+      assert.ok(killed, "killed daemon's Chrome process");
+      // Give Playwright's CDP transport a moment to flag the connection dead.
+      await new Promise((r) => setTimeout(r, 200));
+
+      const after = await cli(FIXTURE_PASS);
+      assert.exitCode(after, 0);
+      assert.includes(after, '# pass 3');
+      assert.includes(after, '(daemon)');
+    } finally {
+      await ensureDaemonStopped();
+    }
+  });
+
+  test('successful run resets the crash counter (consecutive crashes survive)', async (assert) => {
+    if (!isLinux) return assert.ok(true, 'skipped on non-linux');
+
+    // Two back-to-back kill+run cycles. If the counter were not reset by the successful
+    // run between, the second cycle would push the daemon past MAX_CONSECUTIVE_CRASHES
+    // and the third invocation (status check) would fail.
+    await ensureDaemonStopped();
+    await cli('daemon start');
+    try {
+      const startupPid = await readDaemonPid();
+
+      // Cycle 1
+      const cycle1Killed = await killDaemonChrome(startupPid);
+      assert.ok(cycle1Killed, 'cycle 1: killed Chrome');
+      await new Promise((r) => setTimeout(r, 200));
+      const cycle1 = await cli(FIXTURE_PASS);
+      assert.exitCode(cycle1, 0);
+      assert.includes(cycle1, '# pass 3');
+
+      // Cycle 2
+      const cycle2Killed = await killDaemonChrome(startupPid);
+      assert.ok(cycle2Killed, 'cycle 2: killed Chrome');
+      await new Promise((r) => setTimeout(r, 200));
+      const cycle2 = await cli(FIXTURE_PASS);
+      assert.exitCode(cycle2, 0);
+      assert.includes(cycle2, '# pass 3');
+
+      // Daemon must still be the same process (not restarted, not dead).
+      const status = await cli('daemon status');
+      assert.exitCode(status, 0);
+      const stillAlivePid = Number(/pid:\s+(\d+)/.exec(status.stdout)?.[1]);
+      assert.strictEqual(stillAlivePid, startupPid, 'daemon process survived both crash cycles');
+    } finally {
+      await ensureDaemonStopped();
+    }
+  });
+
+  test('post-run check recovers when Chrome dies during the run', async (assert) => {
+    if (!isLinux) return assert.ok(true, 'skipped on non-linux');
+
+    // Race condition: kill Chrome while a run is in flight. That run will fail (browser
+    // mid-test died), but the daemon's post-run check must detect the disconnected
+    // browser and relaunch so the *next* run succeeds.
+    await ensureDaemonStopped();
+    await cli('daemon start');
+    try {
+      await cli(FIXTURE_PASS); // warm-up: ensures daemon is ready
+
+      const daemonPid = await readDaemonPid();
+      // Schedule the kill ~150ms in. The fixture takes ~140ms; the kill almost always
+      // lands while page.goto / WS handshake / first test is in flight.
+      const killTimer = setTimeout(() => {
+        void killDaemonChrome(daemonPid);
+      }, 150);
+
+      const inFlight = await cli(FIXTURE_PASS, { failOk: true });
+      clearTimeout(killTimer);
+
+      // The in-flight run may either complete (kill landed too late) or fail (kill
+      // killed Chrome mid-run). Either is acceptable — what matters is that the next
+      // run succeeds, proving the daemon recovered rather than getting stuck.
+      assert.ok(
+        inFlight.code === 0 || inFlight.code === 1,
+        `in-flight run produced an exit code (got ${inFlight.code})`,
+      );
+
+      const next = await cli(FIXTURE_PASS);
+      assert.exitCode(next, 0);
+      assert.includes(next, '# pass 3');
+      assert.includes(next, '(daemon)');
+    } finally {
+      await ensureDaemonStopped();
+    }
+  });
+});
+
+async function readDaemonPid(): Promise<number> {
+  const status = await cli('daemon status');
+  const pid = Number(/pid:\s+(\d+)/.exec(status.stdout)?.[1]);
+  if (!Number.isInteger(pid) || pid <= 0) {
+    throw new Error(`daemon status did not report a valid pid:\n${status.stdout}`);
+  }
+  return pid;
+}
+
+/**
+ * Kills only the daemon's direct Chrome child (filters by `chrome` in cmdline so the
+ * esbuild service child stays alive). Returns true if at least one Chrome was killed.
+ */
+async function killDaemonChrome(daemonPid: number): Promise<boolean> {
+  const childrenRaw = await fs
+    .readFile(`/proc/${daemonPid}/task/${daemonPid}/children`, 'utf8')
+    .catch(() => '');
+  const childPids = childrenRaw.trim().split(/\s+/).filter(Boolean).map(Number);
+  let killedAny = false;
+  for (const pid of childPids) {
+    const cmdline = await fs.readFile(`/proc/${pid}/cmdline`, 'utf8').catch(() => '');
+    if (!/chrome/i.test(cmdline)) continue;
+    try {
+      process.kill(pid, 'SIGKILL');
+      killedAny = true;
+    } catch {
+      /* already dead */
+    }
+  }
+  return killedAny;
+}

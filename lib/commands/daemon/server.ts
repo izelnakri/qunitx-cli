@@ -28,9 +28,15 @@ const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 // returns ECONNREFUSED almost immediately; the timeout only kicks in when the OS is
 // momentarily slow.
 const LIVENESS_PROBE_TIMEOUT_MS = 500;
+// After this many back-to-back browser crashes (no successful run between), the daemon
+// gives up rather than entering a relaunch loop. Two attempts catches the common case
+// (one transient crash followed by recovery) without papering over a broken environment.
+const MAX_CONSECUTIVE_CRASHES = 2;
 
 interface DaemonState {
   browser: Browser;
+  /** Captured at startup; used to relaunch the browser on crash recovery. */
+  baseConfig: Config;
   cwd: string;
   startedAt: number;
   pkgMtime: number;
@@ -43,6 +49,8 @@ interface DaemonState {
   idleTimer: NodeJS.Timeout | null;
   socketPath: string;
   infoPath: string;
+  /** Reset to 0 after any run that left the browser connected. */
+  consecutiveCrashes: number;
 }
 
 /**
@@ -80,6 +88,7 @@ export async function runDaemonServer(): Promise<void> {
 
   const state: DaemonState = {
     browser,
+    baseConfig,
     cwd,
     startedAt: Date.now(),
     pkgMtime,
@@ -90,6 +99,7 @@ export async function runDaemonServer(): Promise<void> {
     idleTimer: null,
     socketPath,
     infoPath,
+    consecutiveCrashes: 0,
   };
 
   const shutdown = (reason: string) => shutdownDaemon(state, reason);
@@ -257,6 +267,17 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
 
   if (state.idleTimer) clearTimeout(state.idleTimer);
 
+  // Pre-flight browser check: relaunch if it died while the daemon was idle. Skipping
+  // this would let the run hang inside Playwright's CDP send waiting for responses
+  // from a dead Chrome until its 30s timeout fires.
+  if (!state.browser.isConnected()) {
+    await recoverBrowser(state);
+    if (state.shuttingDown) {
+      writeChunk(socket, { type: 'fatal', message: 'browser recovery failed' });
+      return void socket.end();
+    }
+  }
+
   let clientAlive = true;
   socket.on('close', () => (clientAlive = false));
 
@@ -279,11 +300,39 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
     process.stderr.write = origStderrWrite;
   }
 
+  // Browser-crash recovery: relaunch the persistent browser if it died this run.
+  if (state.browser.isConnected()) state.consecutiveCrashes = 0;
+  else await recoverBrowser(state);
+
   if (clientAlive) {
     writeChunk(socket, { type: 'done', exitCode });
     socket.end();
   }
   resetIdleTimer(state);
+}
+
+/**
+ * Relaunches the daemon's persistent browser after a crash. Bounded by
+ * `MAX_CONSECUTIVE_CRASHES` so a broken environment shuts the daemon down instead of
+ * looping forever — the next client respawns a fresh daemon.
+ */
+async function recoverBrowser(state: DaemonState): Promise<void> {
+  if (++state.consecutiveCrashes > MAX_CONSECUTIVE_CRASHES) {
+    return void shutdownDaemon(state, `${state.consecutiveCrashes} consecutive browser crashes`);
+  }
+  process.stderr.write(
+    `# [qunitx daemon] browser crashed; relaunching (${state.consecutiveCrashes}/${MAX_CONSECUTIVE_CRASHES})\n`,
+  );
+  // Fire-and-forget close on the dead handle — awaiting browser.close() on a torn-down
+  // CDP socket hangs forever waiting for a protocol reply that never arrives.
+  // skipPrelaunch=true bypasses the singleton prelaunch endpoint (which now points at the
+  // dead Chrome) and goes straight to a fresh chromium.launch().
+  state.browser.close().catch(() => {});
+  try {
+    state.browser = await launchBrowser(state.baseConfig, true);
+  } catch (err) {
+    void shutdownDaemon(state, `browser relaunch failed: ${(err as Error).message || err}`);
+  }
 }
 
 /**
