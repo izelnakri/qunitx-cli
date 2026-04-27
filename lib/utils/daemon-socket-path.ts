@@ -10,17 +10,29 @@ function cwdHash(cwd: string): string {
 }
 
 /**
- * Returns the per-cwd Unix socket path the daemon listens on. Same cwd → same path,
- * so any project gets at most one daemon regardless of how it is invoked.
+ * Returns the per-cwd path the daemon listens on. Platform-specific:
+ *
+ * - POSIX: a Unix domain socket file under `os.tmpdir()` (`/tmp/qunitx-daemon-<hash>.sock`).
+ * - Windows: a named pipe under the special `\\.\pipe\` namespace
+ *   (`\\.\pipe\qunitx-daemon-<hash>`). Node maps `net.Server.listen(pipePath)` to a
+ *   Win32 named pipe; a regular tmpdir filesystem path silently fails to bind.
+ *
+ * `platform` is parameterized for testability; it defaults to `process.platform`.
  */
-export function daemonSocketPath(cwd: string = process.cwd()): string {
-  return path.join(os.tmpdir(), `qunitx-daemon-${cwdHash(cwd)}.sock`);
+export function daemonSocketPath(
+  cwd: string = process.cwd(),
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const name = `qunitx-daemon-${cwdHash(cwd)}`;
+  if (platform === 'win32') return `\\\\.\\pipe\\${name}`;
+  return path.join(os.tmpdir(), `${name}.sock`);
 }
 
 /**
  * Returns the per-cwd sidecar JSON path that mirrors the daemon's socket. Lets
  * `daemon status` introspect daemon identity (pid, node version, uptime) without
- * an IPC roundtrip.
+ * an IPC roundtrip, and serves as the cross-platform "is a daemon present?" sentinel
+ * since Windows named pipes are not visible on the regular filesystem.
  */
 export function daemonInfoPath(cwd: string = process.cwd()): string {
   return path.join(os.tmpdir(), `qunitx-daemon-${cwdHash(cwd)}.json`);

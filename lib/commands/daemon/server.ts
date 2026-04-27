@@ -57,8 +57,12 @@ export async function runDaemonServer(): Promise<void> {
 
   // Race-resolution: if a live daemon already runs for this cwd, the new daemon exits
   // 0 so the client (which polls for socket availability) attaches to the winner.
-  if (fs.existsSync(socketPath) && (await isLiveSocket(socketPath))) process.exit(0);
-  // Stale socket from a previous crash — must be removed before listen().
+  // Use the info file as the presence check: existsSync(socketPath) is unreliable on
+  // Windows (named pipes don't appear on the regular filesystem). isLiveSocket actively
+  // probes via net.createConnection, which works on every platform.
+  if (fs.existsSync(infoPath) && (await isLiveSocket(socketPath))) process.exit(0);
+  // Stale socket from a previous crash — must be removed before listen() (POSIX only;
+  // Windows named pipes auto-recycle, and unlink on a pipe path is a no-op error we ignore).
   await unlink(socketPath).catch(() => {});
 
   // setupConfig reads process.argv directly; the daemon's actual argv is `daemon _serve`
@@ -110,8 +114,10 @@ export async function runDaemonServer(): Promise<void> {
   });
 
   await listen(state.socketServer, socketPath);
-  // chmod after listen — listen creates the socket file, default umask can leave it world-readable.
-  await chmod(socketPath, 0o600).catch(() => {});
+  // chmod after listen — listen creates the socket file with the default umask, which
+  // can leave it world-readable. Skipped on Windows: named pipe paths don't accept
+  // POSIX modes and chmod returns EPERM/EINVAL for them.
+  if (process.platform !== 'win32') await chmod(socketPath, 0o600).catch(() => {});
 
   const info: DaemonInfo = {
     pid: process.pid,
@@ -193,6 +199,14 @@ async function dispatch(req: Request, socket: net.Socket, state: DaemonState): P
     });
     socket.end();
   } else if (req.type === 'shutdown') {
+    // Synchronously remove the info file before acking so its absence is a reliable
+    // "daemon is gone" signal at the moment the client returns. shutdownDaemon's
+    // own async unlink is then a no-op (catch'd ENOENT).
+    try {
+      fs.unlinkSync(state.infoPath);
+    } catch {
+      /* already gone */
+    }
     writeChunk(socket, { type: 'done', exitCode: 0 });
     socket.end();
     void shutdownDaemon(state, 'shutdown request');

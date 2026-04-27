@@ -4,7 +4,7 @@ import { preLaunchChrome } from './pre-launch-chrome.ts';
 import { killProcessGroup } from './kill-process-group.ts';
 import { CHROMIUM_ARGS } from './chromium-args.ts';
 import { perfLog } from './perf-logger.ts';
-import { daemonSocketPath } from './daemon-socket-path.ts';
+import { daemonInfoPath } from './daemon-socket-path.ts';
 
 // This module is statically imported by cli.ts so its module-level code runs
 // at the very start of the process — before the IIFE, before playwright-core loads.
@@ -44,7 +44,10 @@ const isDaemonClientRun =
   !process.env.CI &&
   !process.env.QUNITX_NO_DAEMON &&
   !process.argv.includes('--no-daemon') &&
-  (Boolean(process.env.QUNITX_DAEMON) || existsSync(daemonSocketPath()));
+  // Check the info file rather than the socket path: on Windows the socket is a named
+  // pipe (\\.\pipe\...), which existsSync cannot see. The info file is always a regular
+  // file in os.tmpdir() and is created/removed in lockstep with the daemon's lifetime.
+  (Boolean(process.env.QUNITX_DAEMON) || existsSync(daemonInfoPath()));
 // With --open --watch, Chrome is left alive after qunitx exits so the visible browser window persists.
 // With --open alone, qunitx exits after tests complete; the detached browser is opened separately.
 const openWatchMode = openFromArgv && watchFromArgv;
