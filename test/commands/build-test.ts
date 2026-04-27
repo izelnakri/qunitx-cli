@@ -63,8 +63,12 @@ module(
         await buildTestBundle(config, cached);
 
         assert.ok(cached._esbuildContext, 'esbuild context is created');
+        // Parse the key rather than substring-checking — the JSON encoding escapes
+        // backslashes on Windows, which makes substring assertions implicitly
+        // platform-specific. The contract is "files are encoded in the key".
+        const parsedKey = JSON.parse(cached._esbuildContextKey ?? '{}') as { files?: string[] };
         assert.ok(
-          cached._esbuildContextKey?.includes(FILE_A),
+          parsedKey.files?.includes(FILE_A),
           'context key encodes the single test file path',
         );
         assert.ok(cached.allTestCode, 'allTestCode is populated');
@@ -118,9 +122,9 @@ module(
           firstContext,
           'a new context is created when the file set changes',
         );
-        const newKey = cached._esbuildContextKey ?? '';
+        const newKey = JSON.parse(cached._esbuildContextKey ?? '{}') as { files?: string[] };
         assert.ok(
-          newKey.includes(FILE_A) && newKey.includes(FILE_B),
+          newKey.files?.includes(FILE_A) && newKey.files?.includes(FILE_B),
           'context key encodes both files',
         );
       } finally {
