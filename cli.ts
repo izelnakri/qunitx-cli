@@ -10,16 +10,35 @@ import pkg from './package.json' with { type: 'json' };
 process.title = 'qunitx';
 
 (async () => {
-  if (!process.argv[2]) {
+  const cmd = process.argv[2];
+  if (!cmd) {
     return await displayHelpOutput();
-  } else if (['--version', '-v', 'version'].includes(process.argv[2])) {
+  } else if (['--version', '-v', 'version'].includes(cmd)) {
     return process.stdout.write(pkg.version + '\n');
-  } else if (['help', 'h', 'p', 'print'].includes(process.argv[2])) {
+  } else if (['help', 'h', 'p', 'print'].includes(cmd)) {
     return await displayHelpOutput();
-  } else if (['new', 'n', 'g', 'generate'].includes(process.argv[2])) {
+  } else if (['new', 'n', 'g', 'generate'].includes(cmd)) {
     return await generateTestFiles();
-  } else if (['init'].includes(process.argv[2])) {
+  } else if (cmd === 'init') {
     return await initializeProject();
+  } else if (cmd === 'daemon') {
+    const { runDaemonCommand } = await import('./lib/commands/daemon/index.ts');
+    process.exit(await runDaemonCommand());
+  }
+
+  // Daemon-routed run: when a live daemon exists for this cwd and the invocation is
+  // eligible (no --watch/--open, not CI, not opted out), dispatch the work over the
+  // Unix socket and stream TAP back. Saves ~800ms by reusing the daemon's persistent
+  // Chrome and warm esbuild context. Falls through on connect failure.
+  const { shouldUseDaemon, runViaDaemon } = await import('./lib/commands/daemon/client.ts');
+  if (shouldUseDaemon()) {
+    try {
+      const exitCode = await runViaDaemon(process.argv.slice(2));
+      process.stdout.write('', () => process.exit(exitCode));
+      return;
+    } catch {
+      // Daemon disappeared mid-handshake — fall through to a local run.
+    }
   }
 
   // Lazy import: run.js (and its static imports like esbuild and playwright-core) are

@@ -91,7 +91,9 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         config._onWsOpen?.();
       } else if (event === 'connection') {
         config._phase = 'running';
-        if (!config._groupMode) process.stdout.write('TAP version 13\n');
+        // In daemon mode the daemon emits one TAP version 13 header per run before the
+        // run starts; suppressing here keeps the stream parser-clean across runs.
+        if (!config._groupMode && !config._daemonMode) process.stdout.write('TAP version 13\n');
         if (config.debug && config._groupMode) debugGroupHeader(config);
         config._resetTestTimeout?.();
       } else if (event === 'testEnd' && !abort) {

@@ -398,6 +398,13 @@ export async function run(config: Config): Promise<void> {
   }
 }
 
+/**
+ * Reads each HTML fixture file referenced by the config, classifies them as
+ * dynamic (have qunitx tokens, get bundle-injection at request time) or static,
+ * collects internal asset paths, and resolves the main HTML to inject the test
+ * runtime into. Returns the populated `CachedContent` consumed by `run()` and
+ * the daemon's `runOnce()`.
+ */
 async function buildCachedContent(config: Config, htmlPaths: string[]): Promise<CachedContent> {
   const htmlBuffers = await Promise.all(
     config.htmlPaths.map((htmlPath) => fs.readFile(htmlPath).catch(() => null)),
@@ -587,5 +594,5 @@ function resolveQunitxRoot(projectRoot: string): string {
   return match[1];
 }
 
-export { readTimingCache, computeFileTimes };
+export { readTimingCache, computeFileTimes, buildCachedContent };
 export { run as default };

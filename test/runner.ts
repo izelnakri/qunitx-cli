@@ -82,7 +82,16 @@ function spawnTests(files: string[]): Promise<number> {
       watchMode ? ['--test', '--watch', ...files] : ['--test', '--test-force-exit', ...files],
       {
         stdio: 'inherit',
-        env: { ...process.env, FORCE_COLOR: '0', QUNITX_SEMAPHORE_PORT: String(semaphore.port) },
+        env: {
+          ...process.env,
+          FORCE_COLOR: '0',
+          QUNITX_SEMAPHORE_PORT: String(semaphore.port),
+          // Block accidental daemon routing during the suite: a daemon running for this
+          // project's cwd would be picked up by every `node cli.ts` invocation and
+          // silently change behavior (TAP "(daemon)" suffix, single warm browser shared
+          // across tests). The daemon test file deletes this var for its own client invocations.
+          QUNITX_NO_DAEMON: '1',
+        },
       },
     );
     child.once('exit', (code) => resolve(code ?? 0));

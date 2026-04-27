@@ -1,8 +1,10 @@
+import { existsSync } from 'node:fs';
 import { findChrome } from './find-chrome.ts';
 import { preLaunchChrome } from './pre-launch-chrome.ts';
 import { killProcessGroup } from './kill-process-group.ts';
 import { CHROMIUM_ARGS } from './chromium-args.ts';
 import { perfLog } from './perf-logger.ts';
+import { daemonSocketPath } from './daemon-socket-path.ts';
 
 // This module is statically imported by cli.ts so its module-level code runs
 // at the very start of the process — before the IIFE, before playwright-core loads.
@@ -11,7 +13,11 @@ import { perfLog } from './perf-logger.ts';
 // For help/init/generate, nothing is spawned and this module costs ~0ms.
 
 const NON_RUN_COMMANDS = new Set(['help', 'h', 'p', 'print', 'new', 'n', 'g', 'generate', 'init']);
-const isRunCommand = Boolean(process.argv[2]) && !NON_RUN_COMMANDS.has(process.argv[2]);
+const cmd = process.argv[2];
+// `daemon _serve` is the daemon's own process — it DOES need Chrome. Other daemon
+// subcommands (start/stop/status) are pure client ops and never need Chrome.
+const isDaemonControlCmd = cmd === 'daemon' && process.argv[3] !== '_serve';
+const isRunCommand = Boolean(cmd) && !NON_RUN_COMMANDS.has(cmd) && !isDaemonControlCmd;
 const { browserFromArgv, openFromArgv, watchFromArgv } = process.argv.reduce(
   (flags, arg) => {
     if (arg.startsWith('--browser=')) flags.browserFromArgv = arg.slice(10);
@@ -27,6 +33,18 @@ const { browserFromArgv, openFromArgv, watchFromArgv } = process.argv.reduce(
     watchFromArgv: false,
   },
 );
+// If the daemon is reachable for this cwd and the run is daemon-eligible (not watch,
+// not open, not CI, not opted out), the run will be dispatched over the socket and
+// no local Chrome is needed. Skipping the prelaunch saves the ~150ms spawn cost.
+const isDaemonClientRun =
+  isRunCommand &&
+  cmd !== 'daemon' &&
+  !watchFromArgv &&
+  !openFromArgv &&
+  !process.env.CI &&
+  !process.env.QUNITX_NO_DAEMON &&
+  !process.argv.includes('--no-daemon') &&
+  existsSync(daemonSocketPath());
 // With --open --watch, Chrome is left alive after qunitx exits so the visible browser window persists.
 // With --open alone, qunitx exits after tests complete; the detached browser is opened separately.
 const openWatchMode = openFromArgv && watchFromArgv;
@@ -70,7 +88,10 @@ export async function shutdownPrelaunch(): Promise<void> {
  * the binary correctly and is used directly in browser.ts.
  */
 export const prelaunchPromise =
-  isRunCommand && browserFromArgv === 'chromium' && process.platform !== 'darwin'
+  isRunCommand &&
+  !isDaemonClientRun &&
+  browserFromArgv === 'chromium' &&
+  process.platform !== 'darwin'
     ? findChrome()
         .then((chromePath) => {
           perfLog('chrome-prelaunch.ts: findChrome resolved', chromePath);

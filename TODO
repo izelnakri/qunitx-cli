@@ -1,6 +1,13 @@
-- add jsx/tsx support, from conversation(claude --resume 80202453-1a12-424a-a785-d13f8914ec72)
+  Out of scope for v1 (mentioned in the design discussion):
+  - Browser-crash recovery (daemon shuts down on any unhandled rejection; user restarts)
+  - Concurrent multi-group runs through the daemon (always single-group)
+  - Auto-spawn (user explicitly runs qunitx daemon start)
 
-- Allow the test runner to accept esbuild plugins in the config file, like "esbuild-plugin-vue-next"
+Should I add benchmarks for this daemon feature(s)?
+
+Did I document daemon feature well on README.md, document it well for first or subsequent viewers/developers.
+Document `daemon` related important things on `$ qunitx` and `$ qunitx help`
+
 
 Also make sure cli/binary can be built in deno and would work on macos and windows but first probably daemon mode
 
@@ -8,10 +15,7 @@ https://www.youtube.com/watch?v=SaZEdiV3A3M
 
 - investigate take screenshot feature & visual diffing(implement it percy-like)
 
-- maybe add persisten-daemon mode to shave off ~800ms saved on every run after the first.
-  Every qunitx invocation today: Node startup → load 40+ files → connect to Chrome → esbuild → navigate → run → exit. A qunitx serve daemon would keep Chrome alive and hold the
-  esbuild incremental context warm. qunitx run test/file.ts sends the file list over a Unix socket and streams TAP back. Subsequent runs: ~200–300ms (just esbuild rebuild +
-  navigate). This is the single biggest UX improvement possible for developers running tests frequently in a non-watch workflow.
+- maybe add persistent daemon mode to shave off ~800ms saved on every run after the first. Every qunitx invocation today: Node startup → load 40+ files → connect to Chrome → esbuild → navigate → run → exit. A qunitx serve daemon would keep Chrome alive and hold the esbuild incremental context warm. qunitx run test/file.ts sends the file list over a Unix socket and streams TAP back. Subsequent runs: ~200–300ms (just esbuild rebuild + navigate). This is the single biggest UX improvement possible for developers running tests frequently in a non-watch workflow.
   CLAUDE SESSION: claude --resume b0edfd88-98cb-4111-8322-f103e6d41515
 
 qunitx-cli JS API should be very usable from outside by JS/TS only, by users of this library. Do them, document it well
