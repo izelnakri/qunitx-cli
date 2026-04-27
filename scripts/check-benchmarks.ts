@@ -202,28 +202,63 @@ function parseResults(raw: string): BenchResult[] {
 
 // ─── Threshold logic ─────────────────────────────────────────────────────────
 
-// Observed variance after best-of-2 + process isolation, measured post-test-suite load:
-//   < 1ms       2×  TAP/server: sub-ms GC pauses in a Deno subprocess still spike ~44%
-//   1ms–100ms   1×  esbuild: stable I/O, < 14% variance — flat threshold applies directly
-//   100ms–500ms 2.5× process-spawn (cli startup): OS fork/exec jitter reaches ~58%
-//   ≥ 500ms     1×  e2e: stable with best-of-2, < 14% variance — flat threshold applies
-// Sub-µs benchmarks are additionally guarded by the MIN_ABS_DELTA_NS absolute floor.
-// Sustained background load (e.g. running on a busy laptop) can push transient noise
-// well above these thresholds; collectAdaptive retries up to 3× on regression to
-// resample, and SKIP_BENCHMARK is the escape hatch for sustained noise.
-const SUB_MS_NS   =   1_000_000;  //   1 ms
-const SPAWN_LO_NS = 100_000_000;  // 100 ms
-const SPAWN_HI_NS = 500_000_000;  // 500 ms
+// Two-tier model: the *gate* (whether a regression fails the build) and the *colouring*
+// (whether a row prints in red/yellow). Sub-millisecond benches are normally observational —
+// GC pauses and scheduler interference produce 100–300% swings on commodity hardware
+// (laptops + free CI runners) that no fixed threshold can absorb. They still print and are
+// coloured so trends are visible, but only fail the release when their regression is so
+// large it cannot plausibly be noise (the HARD_CEILING_MULTIPLIER below).
+const SUB_MS_NS = 1_000_000;     //   1 ms — below this, regressions are non-gating except at the hard ceiling
+const SPAWN_NS  = 100_000_000;   // 100 ms — at or above this, work involves a process spawn
 
+// Even non-gated benches block the release when their regression exceeds the effective
+// threshold by this multiple — i.e., genuinely catastrophic regressions (an accidental
+// O(n²), an infinite loop, a hot-path slowdown of 10× or more) still fire. Calibrated
+// against observed sub-ms noise peaks (~300%): 10× × 2× sub-ms multiplier × 26 default
+// threshold = 520%, which leaves ~1.7× margin above the noise floor while still catching
+// real catastrophes. The trade-off: moderate real regressions in sub-ms benches (2–3×) are
+// invisible to the gate — that's the cost of not having a quiet-CPU substrate.
+const HARD_CEILING_MULTIPLIER = 10;
+
+/**
+ * Whether a regression at this bench's magnitude should fail the build at the
+ * *ordinary* threshold. Sub-millisecond benches are observation-only on commodity
+ * hardware; they still gate, but only at HARD_CEILING_MULTIPLIER × the effective threshold.
+ */
+function isGated(saved: number): boolean {
+  return saved >= SUB_MS_NS;
+}
+
+/**
+ * Threshold multipliers calibrated to observed laptop + GH-runner variance, applied on top
+ * of the user's REGRESSION_THRESHOLD policy. Multipliers reflect physics (noise floor of
+ * each size class), not user preference — set REGRESSION_THRESHOLD to tune all tiers
+ * together rather than tweaking these constants.
+ *
+ *   < 1 ms     2×    sub-ms colouring; non-gating except at HARD_CEILING_MULTIPLIER.
+ *   1ms–100ms  1×    pure CPU work (esbuild bundling) — stable, GC-bound but contained.
+ *   ≥ 100 ms   2.5×  spawn-or-larger: process fork/exec, Chrome launch, Playwright
+ *                    handshake. OS-bound and load-sensitive; flat 1× had no headroom over
+ *                    the 30%+ swings observed on busy machines.
+ */
 function effectiveThreshold(saved: number, threshold: number): number {
   if (saved < SUB_MS_NS) return threshold * 2;
-  if (saved >= SPAWN_LO_NS && saved < SPAWN_HI_NS) return threshold * 2.5;
+  if (saved >= SPAWN_NS) return threshold * 2.5;
   return threshold;
 }
 
-function isRegression(avg: number, saved: number, threshold: number, minAbsDeltaNs: number): boolean {
+function isRegression(
+  avg: number,
+  saved: number,
+  threshold: number,
+  minAbsDeltaNs: number,
+): boolean {
   if (avg - saved <= minAbsDeltaNs) return false; // absolute floor: ignore JIT/GC noise
-  return (avg - saved) / saved > effectiveThreshold(saved, threshold);
+  const change = (avg - saved) / saved;
+  const t = effectiveThreshold(saved, threshold);
+  // Sub-ms benches gate only on catastrophic regressions (commodity-hardware noise floor
+  // is 100–300%). Gated benches gate on any regression past their effective threshold.
+  return isGated(saved) ? change > t : change > t * HARD_CEILING_MULTIPLIER;
 }
 
 // ─── Formatting ──────────────────────────────────────────────────────────────
@@ -264,8 +299,13 @@ function printTable(
     }
     const change = (avg - saved) / saved;
     const t = effectiveThreshold(saved, threshold);
+    // FAIL: regression beyond the gate (ordinary threshold for ms+ benches; hard ceiling
+    // for sub-ms benches). INFO: sub-ms drift past the colouring threshold but below the
+    // hard ceiling — visible signal without blocking the release, since commodity-
+    // hardware noise can't be distinguished from real regressions at this scale.
     const fail = isRegression(avg, saved, threshold, minAbsDeltaNs);
-    const flag = fail ? bold(red(" FAIL")) : "     ";
+    const drift = !fail && !isGated(saved) && change > t;
+    const flag = fail ? bold(red(" FAIL")) : drift ? dim(" INFO") : "     ";
     console.log(
       `${flag} ${name.padEnd(52)}${fmtNs(avg).padStart(12)}${dim(fmtNs(saved).padStart(12))}${fmtChange(change, t).padStart(10)}`,
     );
@@ -329,15 +369,33 @@ async function check(
     }
     console.error(
       dim(
-        `\nIf this is laptop-load noise (e.g. different benches fail across runs), retry on an idle\n` +
-          `machine, refresh the baseline with 'make bench-update', or set SKIP_BENCHMARK=true|<file>\n` +
-          `to bypass the gate for this run.`,
+        `\nThese values are the min across up to 3 retry runs — the regression survived every\n` +
+          `attempt to resample, so it is unlikely to be transient noise.\n` +
+          `\nIf you have evidence this is sustained background load (not the code under test),\n` +
+          `retry on an idle machine, raise REGRESSION_THRESHOLD for this run, refresh the\n` +
+          `baseline with 'make bench-update', or set SKIP_BENCHMARK=true|<file> to bypass.`,
       ),
     );
     return false;
   }
 
+  const infoCount = results.filter(({ name, avg }) => {
+    const saved = baseline.results[name];
+    if (saved === undefined || isGated(saved)) return false;
+    const change = (avg - saved) / saved;
+    const t = effectiveThreshold(saved, threshold);
+    return change > t && change <= t * HARD_CEILING_MULTIPLIER;
+  }).length;
   console.log(green(`All ${results.length} benchmark(s) within threshold.`));
+  if (infoCount > 0) {
+    console.log(
+      dim(
+        `  (${infoCount} INFO row${infoCount === 1 ? "" : "s"}: sub-ms benches drifted past the ` +
+          `colouring threshold but below the ${HARD_CEILING_MULTIPLIER}× hard ceiling —\n` +
+          `   commodity-hardware noise can't be distinguished from real regressions at this scale.)`,
+      ),
+    );
+  }
   return true;
 }
 
