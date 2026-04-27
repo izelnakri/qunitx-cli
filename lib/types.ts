@@ -142,6 +142,13 @@ export interface Config {
   _onTestsJsServed: (() => void) | null;
   /** `true` while running a grouped (multi-file) test invocation. */
   _groupMode?: boolean;
+  /**
+   * `true` when running inside the persistent daemon process. Disables `process.exit`
+   * paths in the run pipeline (replaced with `DaemonRunError` throws), suppresses the
+   * per-WS-connection TAP version 13 header, and prevents the daemon's shared browser
+   * from being closed at the end of a run.
+   */
+  _daemonMode?: boolean;
   /** Index within the concurrent group array; set when a shared HTTP server is used. */
   _groupId?: number;
   /** Current lifecycle phase of the test run. */

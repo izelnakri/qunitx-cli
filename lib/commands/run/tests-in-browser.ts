@@ -307,6 +307,12 @@ export async function runTestsInBrowser(
 
       if (!config.watch) {
         await flushConsoleHandlers(config._pendingConsoleHandlers);
+        // Daemon mode: the daemon owns the browser and server lifetimes, so we
+        // must not close them here. Throw instead so the daemon's run handler
+        // captures the exit code and keeps the process alive for the next run.
+        if (config._daemonMode) {
+          throw new DaemonRunError(config.COUNTER.failCount > 0 ? 1 : 0);
+        }
         await closeWithGrace([
           connections.server?.close(),
           connections.browser?.close(),
@@ -316,6 +322,9 @@ export async function runTestsInBrowser(
       }
     }
   } catch (error) {
+    // DaemonRunError signals normal completion in daemon mode (replaces process.exit);
+    // pass it through unchanged so the daemon's run handler can capture the exit code.
+    if (error instanceof DaemonRunError) throw error;
     cachedContent._activeRebuild = null;
     config.lastFailedTestFiles = config.lastRanTestFiles;
     const exception = new BundleError(error);
@@ -803,6 +812,7 @@ async function runTestInsideHTMLFile(
       { server, browser },
       config._groupMode,
       config._pendingConsoleHandlers,
+      config._daemonMode,
     );
   } else if (QUNIT_RESULT.totalTests === 0) {
     // QUnit ran but no tests were registered (or QUnit was not present in the bundle).
@@ -820,6 +830,7 @@ async function runTestInsideHTMLFile(
       { server, browser },
       config._groupMode,
       config._pendingConsoleHandlers,
+      config._daemonMode,
     );
   } else if (QUNIT_RESULT.failedTests > config.COUNTER.failCount) {
     // Safety net: browser tracked failures that WebSocket events never delivered to Node.js
@@ -833,20 +844,24 @@ async function failOnNonWatchMode(
   connections: { server?: HTTPServer; browser?: { close(): Promise<void> } } = {},
   groupMode: boolean = false,
   pendingHandlers?: Set<Promise<void>> | null,
+  daemonMode: boolean = false,
 ): Promise<void> {
-  if (!watchMode) {
-    if (groupMode) {
-      // Parent orchestrator handles cleanup and exit; signal failure via throw.
-      throw new Error('Browser test run failed');
-    }
-    await flushConsoleHandlers(pendingHandlers);
-    await closeWithGrace([
-      connections.server?.close(),
-      connections.browser?.close(),
-      shutdownPrelaunch(),
-    ]);
-    process.exit(1);
+  if (watchMode) return;
+  if (groupMode) {
+    // Parent orchestrator handles cleanup and exit; signal failure via throw.
+    throw new Error('Browser test run failed');
   }
+  await flushConsoleHandlers(pendingHandlers);
+  if (daemonMode) {
+    // Daemon owns browser/server lifetimes — throw so its run handler captures the code.
+    throw new DaemonRunError(1);
+  }
+  await closeWithGrace([
+    connections.server?.close(),
+    connections.browser?.close(),
+    shutdownPrelaunch(),
+  ]);
+  process.exit(1);
 }
 
 // Converts an absolute file path to a relative import path esbuild can resolve from
@@ -864,6 +879,22 @@ class BundleError extends Error {
     super(message);
     this.name = 'BundleError';
     this.message = `esbuild Bundle Error: ${message}`.split('\n').join('\n# ');
+  }
+}
+
+/**
+ * Thrown in daemon mode in place of `process.exit(code)` so the caller (the daemon
+ * server's run handler) can capture the exit code, restore stdout interception, and
+ * keep the daemon process alive for the next run.
+ */
+export class DaemonRunError extends Error {
+  /** The exit code that the run would have passed to `process.exit()` outside of daemon mode. */
+  exitCode: number;
+  /** Constructs a DaemonRunError carrying the run's exit code. */
+  constructor(exitCode: number) {
+    super(`daemon run finished with exit code ${exitCode}`);
+    this.name = 'DaemonRunError';
+    this.exitCode = exitCode;
   }
 }
 
