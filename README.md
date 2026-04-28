@@ -29,6 +29,7 @@ output to the terminal.
 - `--port` defaults to 1234 and auto-increments if taken; fails fast if an explicit port is unavailable
 - `--browser` flag to run tests in Chromium, Firefox, or WebKit
 - `--version` / `-v` prints the installed version
+- Optional daemon mode (`qunitx daemon start`) keeps Chrome and the esbuild context warm across runs — roughly halves the wall-clock time of repeated invocations
 - Docker image for zero-install CI usage
 
 ## Installation
@@ -106,6 +107,45 @@ qunitx test/**/*.js --browser=webkit
 > npx playwright install webkit
 > ```
 
+## Daemon mode
+
+**`qunitx daemon start` is optional.** Set `QUNITX_DAEMON=1` once (in your shell, `.env`, or a CI step) and plain `qunitx <file>` invocations auto-spawn the daemon on first use, then transparently route through it on every run after — no extra commands, no flags, nothing to remember between invocations. The explicit `daemon start` / `stop` subcommands exist only for when you want to control the lifecycle yourself.
+
+What it does: cold-start cost dominates a single `qunitx` run — launching Chrome, loading playwright-core, and creating an esbuild incremental context together account for most of the wall-clock time on a small suite. The daemon keeps all three resources alive across runs so subsequent invocations skip them entirely — roughly **2-3× faster** on repeated runs of the same suite.
+
+A single one-off run won't get faster from spinning the daemon up; it's an opt-in optimization aimed at two situations:
+
+- **Local TDD loops.** Export `QUNITX_DAEMON=1` in your shell profile (or run `qunitx daemon start` once at the top of your session) and forget about it — subsequent runs reuse the daemon automatically until you `daemon stop` or 30 idle minutes pass.
+- **Monorepo CI** where each package shells out to `qunitx` separately. Set `QUNITX_DAEMON=1` for the job and a single daemon is auto-spawned and reused across every package's invocation.
+
+```sh
+# Start a background daemon for this project
+qunitx daemon start
+
+# Run tests as usual — the cli auto-detects the daemon and routes through it
+qunitx test/**/*.ts
+
+# Stop it when you're done
+qunitx daemon stop
+```
+
+`--watch` and `--open` manage their own browser lifecycle and bypass the daemon automatically. Single-invocation CI jobs (where `CI=1` is set) also bypass it by default — `QUNITX_DAEMON=1` overrides if you want it on anyway.
+
+### Daemon subcommands
+
+```sh
+qunitx daemon start    # Launch a detached daemon for this cwd (idempotent)
+qunitx daemon stop     # Ask the running daemon to exit and wait until it has
+qunitx daemon status   # Print the live daemon's pid, socket, and uptime
+qunitx daemon restart  # Stop + start in one step
+```
+
+### How it works
+
+`qunitx daemon start` spawns a detached Node process listening on a per-project Unix socket (named pipe on Windows). Subsequent `qunitx` invocations detect the live socket and forward `argv` + `cwd` + `env` to the daemon; the daemon executes the run in-process and streams TAP back to your terminal. Ctrl+C is forwarded — the daemon abandons the in-flight run cleanly and stays up for the next one. A single daemon serves one run at a time; concurrent invocations queue in arrival order.
+
+Running `qunitx daemon start` upfront is optional. With `QUNITX_DAEMON=1` set in your environment, a plain `qunitx <file>` invocation will spawn the daemon on its own when it doesn't find one already running — so the very first run pays the spawn cost and every run after that is warm. Without `QUNITX_DAEMON=1`, the cli skips auto-spawn and just runs locally; `qunitx daemon start` then becomes the explicit way to opt in.
+
 ## Writing Tests
 
 qunitx-cli runs [QUnitX](https://github.com/izelnakri/qunitx) tests — a superset of QUnit with async
@@ -177,17 +217,17 @@ All CLI flags can also be set in `package.json` under the `qunitx` key, so you d
 }
 ```
 
-| Key          | Default                       | Description                                                                                                                                                                 |
-| ------------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `inputs`     | `[]`                          | Glob patterns, file paths, or directories to use as test entry points. Merged with any paths given on the CLI.                                                              |
-| `htmlPaths`  | `[]`                          | Optional HTML templates to run tests inside. Any listed `.html` file that contains `{{qunitxScript}}` or other handlebars-style tokens is treated as a test runner template. |
-| `extensions` | `["js", "ts", "jsx", "tsx"]`  | File extensions tracked for test discovery (directory scans) and watch-mode rebuild triggers. Add `"mjs"`, `"cjs"`, or any other extension your project uses.               |
-| `output`     | `"tmp"`                       | Directory where compiled test bundles are written.                                                                                                                          |
-| `timeout`    | `20000`                       | Maximum milliseconds to wait for the full test suite before timing out.                                                                                                     |
-| `failFast`   | `false`                       | Stop the run after the first failing test.                                                                                                                                  |
-| `port`       | `1234`                        | Preferred HTTP server port. qunitx auto-selects a free port if this one is taken.                                                                                           |
-| `browser`    | `"chromium"`                  | Browser engine to use: `"chromium"`, `"firefox"`, or `"webkit"`. Overridden by `--browser` on the CLI.                                                                      |
-| `plugins`    | `[]`                          | esbuild plugin specifiers loaded from your `node_modules` and applied to the test bundle. See [esbuild plugins](#esbuild-plugins).                                          |
+| Key          | Default                      | Description                                                                                                                                                                  |
+| ------------ | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `inputs`     | `[]`                         | Glob patterns, file paths, or directories to use as test entry points. Merged with any paths given on the CLI.                                                               |
+| `htmlPaths`  | `[]`                         | Optional HTML templates to run tests inside. Any listed `.html` file that contains `{{qunitxScript}}` or other handlebars-style tokens is treated as a test runner template. |
+| `extensions` | `["js", "ts", "jsx", "tsx"]` | File extensions tracked for test discovery (directory scans) and watch-mode rebuild triggers. Add `"mjs"`, `"cjs"`, or any other extension your project uses.                |
+| `output`     | `"tmp"`                      | Directory where compiled test bundles are written.                                                                                                                           |
+| `timeout`    | `20000`                      | Maximum milliseconds to wait for the full test suite before timing out.                                                                                                      |
+| `failFast`   | `false`                      | Stop the run after the first failing test.                                                                                                                                   |
+| `port`       | `1234`                       | Preferred HTTP server port. qunitx auto-selects a free port if this one is taken.                                                                                            |
+| `browser`    | `"chromium"`                 | Browser engine to use: `"chromium"`, `"firefox"`, or `"webkit"`. Overridden by `--browser` on the CLI.                                                                       |
+| `plugins`    | `[]`                         | esbuild plugin specifiers loaded from your `node_modules` and applied to the test bundle. See [esbuild plugins](#esbuild-plugins).                                           |
 
 CLI flags always override `package.json` values when both are present.
 
@@ -245,20 +285,20 @@ For file formats esbuild does not handle natively (e.g. `.vue` SFCs, `.svelte`),
 
 Each entry is one of:
 
-| Form                          | Behavior                                                                                                                                                  |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `"<package-name>"`             | Imports the package. If the default export is a function, it's called with no arguments to produce the plugin; otherwise the export is used as the plugin. |
+| Form                            | Behavior                                                                                                                                                   |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"<package-name>"`              | Imports the package. If the default export is a function, it's called with no arguments to produce the plugin; otherwise the export is used as the plugin. |
 | `["<package-name>", <options>]` | Same, but the factory is called with `<options>` as its only argument. Use this form to pass plugin-specific configuration.                                |
-| `"./relative/plugin.js"`       | Loads a plugin you wrote yourself. Resolved against the project root (where your `package.json` lives).                                                   |
+| `"./relative/plugin.js"`        | Loads a plugin you wrote yourself. Resolved against the project root (where your `package.json` lives).                                                    |
 
 Don't forget to add the plugin's file extension(s) to `qunitx.extensions` so directory scans and watch-mode rebuilds pick them up.
 
 ### Environment variables
 
-| Variable         | Description                                                                                                   |
-|------------------|---------------------------------------------------------------------------------------------------------------|
+| Variable         | Description                                                                                                                                                                                           |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CHROME_BIN`     | Path to the Chrome/Chromium executable. Required on systems where Chrome is not on `PATH` (e.g. many CI environments). Set automatically when using `browser-actions/setup-chrome` in GitHub Actions. |
-| `QUNITX_BROWSER` | Browser engine to use (`chromium`, `firefox`, `webkit`). Equivalent to `--browser` on the CLI. Useful in CI matrix jobs. |
+| `QUNITX_BROWSER` | Browser engine to use (`chromium`, `firefox`, `webkit`). Equivalent to `--browser` on the CLI. Useful in CI matrix jobs.                                                                              |
 
 If you do not provide any HTML template, qunitx falls back to its built-in `test/tests.html` boilerplate internally, so `qunitx init` is optional.
 
@@ -298,11 +338,11 @@ The browser inherits the **OS system timezone** automatically — no Playwright 
 
 ### Setting a timezone for tests
 
-| Platform | How Chrome resolves the timezone | Override |
-|----------|----------------------------------|---------|
-| **Linux** | glibc reads `TZ` env var first, then `/etc/localtime` | `TZ=America/New_York npx qunitx …` works |
-| **macOS** | CoreFoundation reads the system timezone (ignores `TZ`) | Must set the system timezone: `sudo systemsetup -settimezone America/New_York` |
-| **Windows** | Reads the registry timezone (ignores `TZ`) | Must set the system timezone: `tzutil /s "Eastern Standard Time"` |
+| Platform    | How Chrome resolves the timezone                        | Override                                                                       |
+| ----------- | ------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| **Linux**   | glibc reads `TZ` env var first, then `/etc/localtime`   | `TZ=America/New_York npx qunitx …` works                                       |
+| **macOS**   | CoreFoundation reads the system timezone (ignores `TZ`) | Must set the system timezone: `sudo systemsetup -settimezone America/New_York` |
+| **Windows** | Reads the registry timezone (ignores `TZ`)              | Must set the system timezone: `tzutil /s "Eastern Standard Time"`              |
 
 On Linux, the `TZ` env var is the simplest way to run tests in a specific timezone:
 
@@ -356,12 +396,18 @@ module('Invoice formatting', (hooks) => {
     // Pin "now" to a fixed instant for the whole module
     const FIXED = new realDate('2024-06-01T12:00:00Z');
     globalThis.Date = class extends realDate {
-      constructor(...args) { super(args.length ? args : [FIXED]); }
-      static now() { return FIXED.getTime(); }
+      constructor(...args) {
+        super(args.length ? args : [FIXED]);
+      }
+      static now() {
+        return FIXED.getTime();
+      }
     };
   });
 
-  hooks.after(() => { globalThis.Date = realDate; });
+  hooks.after(() => {
+    globalThis.Date = realDate;
+  });
 
   test('formats the current date correctly', (assert) => {
     assert.equal(new Date().toISOString().slice(0, 10), '2024-06-01');
@@ -377,8 +423,12 @@ import sinon from 'sinon';
 module('Debounce logic', (hooks) => {
   let clock;
 
-  hooks.before(() => { clock = sinon.useFakeTimers({ now: new Date('2024-06-01T00:00:00Z') }); });
-  hooks.after(() => { clock.restore(); });
+  hooks.before(() => {
+    clock = sinon.useFakeTimers({ now: new Date('2024-06-01T00:00:00Z') });
+  });
+  hooks.after(() => {
+    clock.restore();
+  });
 
   test('fires after 300 ms', (assert) => {
     // clock.tick(300) advances fake time without waiting in real time
@@ -393,11 +443,15 @@ If you need the mock active across the entire test run rather than inside a sing
 ```js
 // scripts/mock-date.js  (passed as: qunitx … --before=scripts/mock-date.js)
 const realDate = globalThis.Date;
-const FIXED    = new realDate('2024-06-01T12:00:00Z');
+const FIXED = new realDate('2024-06-01T12:00:00Z');
 
 globalThis.Date = class extends realDate {
-  constructor(...args) { super(args.length ? args : [FIXED]); }
-  static now() { return FIXED.getTime(); }
+  constructor(...args) {
+    super(args.length ? args : [FIXED]);
+  }
+  static now() {
+    return FIXED.getTime();
+  }
 };
 ```
 
@@ -415,6 +469,8 @@ make test-all-browsers          # run full suite on all three browsers
 make demo                       # regenerate docs/demo.gif
 make release LEVEL=patch        # bump version, update changelog, tag, push
 ```
+
+For a tight TDD loop on this repo (or any consuming project), run `qunitx daemon start` once at the top of your session — every subsequent `qunitx` invocation reuses the warm Chrome and esbuild context, roughly halving the wait-per-iteration. AI/LLM coding agents benefit even more, since their inner loop is dozens of `qunitx <file>` invocations per feature. Caveat: agents running inside containers or CI-style environments (GitHub Actions Copilot, sandboxed coding agents) often have `CI=1` set, which bypasses the daemon by default — set `QUNITX_DAEMON=1` in those environments to opt back in.
 
 Use `--trace-perf` to print internal timing to stderr — useful when investigating startup or e2e regressions:
 

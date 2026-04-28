@@ -1,7 +1,6 @@
-Should I add benchmarks for this daemon feature(s)? Is there anyway we can optimize the overall performance of the runtime of the qunitx-cli further? What about my own test suite? Check both in-depth
+Document `daemon` related important things on `$ qunitx` and `$ qunitx help`. It should follow the current style and have the right balance between being useful, minimal, it should be the most UX friendly.
 
-Did I document daemon feature well on README.md, document it well for first or subsequent viewers/developers.
-Document `daemon` related important things on `$ qunitx` and `$ qunitx help`
+Make `qunitx daemon` and `qunitx daemon --help` the same thing. Should it match qunitx --help output in terms of style? Analyze it well and give your best suggestion
 
 =======
 Review daemon PR/ask for changes
@@ -19,7 +18,12 @@ Review daemon PR/ask for changes
   Risk: low. V8 invalidates cache when source content changes. Stale cache would manifest as actual test failures (visible). Worst case: someone rm's the cache directory.
 
   Concrete change: 1 line in test/runner.ts spawn env. ~5-10x ROI on the implementation effort.
+
 =====
+
+  3. README perf section mentioning NODE_COMPILE_CACHE for non-daemon users — documentation, not code.
+
+
 
 Is the successful(and errorful) test output ideal today?
 
