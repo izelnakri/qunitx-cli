@@ -21,9 +21,9 @@ module('Commands | run | closeWithGrace', { concurrency: true }, () => {
   test('returns within graceMs when a close never resolves', async (assert) => {
     // Reproduces the Firefox+Windows browser.close() deadlock — an unresolved promise stands
     // in for the stuck Playwright call. Without closeWithGrace, this would block forever.
-    const start = Date.now();
+    const start = performance.now();
     await closeWithGrace([new Promise<void>(() => {})], HANG_GRACE_MS);
-    const elapsed = Date.now() - start;
+    const elapsed = performance.now() - start;
 
     assert.ok(
       elapsed >= HANG_GRACE_MS && elapsed < HANG_GRACE_UPPER_BOUND_MS,
@@ -32,9 +32,9 @@ module('Commands | run | closeWithGrace', { concurrency: true }, () => {
   });
 
   test('returns immediately when every close has already settled', async (assert) => {
-    const start = Date.now();
+    const start = performance.now();
     await closeWithGrace([Promise.resolve(), Promise.resolve()], 5_000);
-    const elapsed = Date.now() - start;
+    const elapsed = performance.now() - start;
 
     assert.ok(
       elapsed < 50,
@@ -67,9 +67,9 @@ module('Commands | run | closeWithGrace', { concurrency: true }, () => {
   test('returns immediately when the close list is empty', async (assert) => {
     // Defensive: caller might filter all closers away (e.g. no sharedServer), and the helper
     // must not block on an empty Promise.allSettled.
-    const start = Date.now();
+    const start = performance.now();
     await closeWithGrace([], 5_000);
-    const elapsed = Date.now() - start;
+    const elapsed = performance.now() - start;
 
     assert.ok(elapsed < 50, `empty fast path: ${elapsed} ms`);
   });
