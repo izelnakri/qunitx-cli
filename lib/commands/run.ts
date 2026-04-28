@@ -30,6 +30,7 @@ import { TAPDisplayFinalResult } from '../tap/display-final-result.ts';
 import { readTemplate } from '../utils/read-template.ts';
 import { isCustomTemplate } from '../utils/html.ts';
 import { closeWithGrace } from '../utils/close-with-grace.ts';
+import { maybePrintDaemonHint } from '../utils/daemon-hint.ts';
 import type { Config, CachedContent } from '../types.ts';
 
 // Playwright navigation timeout for headed watch-mode reloads (not test execution).
@@ -383,6 +384,11 @@ export async function run(config: Config): Promise<void> {
       ]);
       throw new DaemonRunError(exitCode);
     }
+
+    // First-time discoverability nudge for the daemon — only on local-mode runs that
+    // took long enough to actually benefit. shouldShowDaemonHint() handles the rest of
+    // the suppression matrix (CI / env opt-outs / TTY / sentinel).
+    await maybePrintDaemonHint({ durationMs: process.uptime() * 1000 });
 
     // Flush stdout, shut down Chrome cleanly, then exit.
     // keepAlive holds the event loop open until this callback fires, at which point
