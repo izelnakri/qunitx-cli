@@ -322,7 +322,7 @@ export async function run(config: Config): Promise<void> {
           try {
             await runTestsInBrowser(groupConfig, groupCachedContents[i], connections);
           } finally {
-            await flushConsoleHandlers(groupConfig._pendingConsoleHandlers);
+            await flushConsoleHandlers(groupConfig._pendingConsoleHandlers, connections.page);
             // Per-group cleanup, bounded so a deadlocked page.close (Firefox/WebKit under
             // load) cannot wedge Promise.allSettled forever. The shared server is closed
             // in the final cleanup pass below, not here.
