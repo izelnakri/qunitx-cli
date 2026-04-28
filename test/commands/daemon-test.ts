@@ -78,6 +78,23 @@ module('Commands | Daemon | usage', { concurrency: false }, () => {
     assert.exitCode(result, 1);
     assert.includes(result.stderr, 'Usage: qunitx daemon');
   });
+
+  test('$ qunitx daemon --help / -h / help -> usage on stdout, exits 0', async (assert) => {
+    for (const flag of ['--help', '-h', 'help']) {
+      const result = await cli(`daemon ${flag}`);
+      assert.exitCode(result, 0, `daemon ${flag} exits 0`);
+      assert.includes(
+        result.stdout,
+        'Usage: qunitx daemon',
+        `daemon ${flag} prints usage to stdout`,
+      );
+      assert.includes(
+        result.stdout,
+        'QUNITX_DAEMON=1',
+        `daemon ${flag} mentions auto-spawn env var`,
+      );
+    }
+  });
 });
 
 module('Commands | Daemon | lifecycle', { concurrency: false }, () => {

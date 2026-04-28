@@ -330,6 +330,12 @@ Options:
   --open=<binary>     Open output in a specific browser binary (e.g. brave, google-chrome-lts)
   --port=<n>          HTTP server port (auto-selects a free port if taken)
   --browser=<name>    Browser engine: chromium (default), firefox, or webkit
+  --no-daemon         Don't use the daemon for this run — skips a running daemon and prevents QUNITX_DAEMON auto-spawn
+
+Subcommands:
+  qunitx daemon start | stop | status     Manage the optional persistent daemon
+  qunitx init                             Bootstrap qunitx config + base HTML in this project
+  qunitx new <testFileName>               Create a new qunitx test file
 ```
 
 ## Timezone

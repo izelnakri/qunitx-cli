@@ -13,7 +13,9 @@ const CLI_ENTRY = path.resolve(path.dirname(__filename), '..', '..', '..', 'cli.
 
 /**
  * Dispatches `qunitx daemon <subcommand>`. `_serve` runs the in-process daemon loop
- * (spawned by `start`); all other subcommands are client operations.
+ * (spawned by `start`); all other subcommands are client operations. No subcommand
+ * (or `--help` / `-h` / `help`) prints usage and exits 0; an unknown subcommand
+ * prints usage to stderr and exits 1.
  */
 export function runDaemonCommand(): Promise<number> {
   const sub = process.argv[3];
@@ -21,13 +23,17 @@ export function runDaemonCommand(): Promise<number> {
   if (sub === 'start') return startDaemon();
   if (sub === 'stop') return stopDaemon();
   if (sub === 'status') return statusDaemon();
-  process.stderr.write(
+  const helpRequested = !sub || sub === '--help' || sub === '-h' || sub === 'help';
+  const out = helpRequested ? process.stdout : process.stderr;
+  out.write(
     'Usage: qunitx daemon <start|stop|status>\n' +
-      '  start   Spawn a persistent daemon for this project\n' +
+      '  start   Spawn a persistent daemon for this project (~2× faster repeated runs)\n' +
       '  stop    Stop the running daemon\n' +
-      '  status  Print whether a daemon is running\n',
+      '  status  Print whether a daemon is running\n' +
+      '\n' +
+      'Tip: set QUNITX_DAEMON=1 to auto-spawn the daemon on the first qunitx run.\n',
   );
-  return Promise.resolve(sub ? 1 : 0);
+  return Promise.resolve(helpRequested ? 0 : 1);
 }
 
 async function runServeMode(): Promise<number> {
