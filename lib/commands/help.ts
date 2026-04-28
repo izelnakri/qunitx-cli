@@ -28,12 +28,18 @@ ${color('--extensions')} : comma-separated file extensions to track for discover
 ${color('--browser')} : browser engine to run tests in: chromium, firefox, webkit[default: chromium]
 ${color('--before')} : run a script before the tests(i.e start a new web server before tests)
 ${color('--after')} : run a script after the tests(i.e save test results to a file)
+${color('--no-daemon')} : don't use the daemon for this run — skips a running daemon and prevents ${color('QUNITX_DAEMON')} auto-spawn
 
 ${highlight('Example:')} $ ${color('qunitx test/foo.ts app/e2e --debug --watch --before=scripts/start-new-webserver.js --after=scripts/write-test-results.js')}
 
 ${highlight('Commands:')}
-${color('$ qunitx init')}               # Bootstraps qunitx base html and add qunitx config to package.json if needed
-${color('$ qunitx new $testFileName')}  # Creates a qunitx test file
+${color('$ qunitx init')}                            # Bootstraps qunitx base html and add qunitx config to package.json if needed
+${color('$ qunitx new $testFileName')}               # Creates a qunitx test file
+${color('$ qunitx daemon <start|stop|status>')}      # Optional persistent daemon — ~2× faster repeated runs
+
+${highlight('Environment:')}
+${color('QUNITX_DAEMON=1')}     : auto-spawn the daemon on the first qunitx run; reuse it on every run after (overrides the CI=1 bypass)
+${color('QUNITX_NO_DAEMON=1')}  : never use the daemon for this run
 `);
 }
 

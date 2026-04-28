@@ -1,6 +1,6 @@
-Document `daemon` related important things on `$ qunitx` and `$ qunitx help`. It should follow the current style and have the right balance between being useful, minimal, it should be the most UX friendly.
+CI is flaky: https://github.com/izelnakri/qunitx-cli/actions/runs/25026906458/job/73299935841 Find the core issue, write a test case to reproduce it/verify, then implement the best fix/solution, commit and push
 
-Make `qunitx daemon` and `qunitx daemon --help` the same thing. Should it match qunitx --help output in terms of style? Analyze it well and give your best suggestion
+Make `qunitx daemon` and `qunitx daemon --help` the same thing. Should it match `$ qunitx --help` output in terms of style? Analyze it well and give your best suggestion
 
 =======
 Review daemon PR/ask for changes
