@@ -2,10 +2,29 @@ import { spawn } from 'node:child_process';
 import fs, { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { blue, magenta } from '../../utils/color.ts';
 import { daemonInfoPath, daemonSocketPath } from '../../utils/daemon-socket-path.ts';
 import { pingDaemon, shutdownDaemon } from './client.ts';
+import pkg from '../../../package.json' with { type: 'json' };
 
 const SPAWN_TIMEOUT_MS = 10_000;
+
+const highlight = (text: string): string => magenta().bold(text);
+const color = (text: string): string => blue(text);
+
+const USAGE = `${highlight(`[qunitx v${pkg.version}] Usage:`)} qunitx ${color('daemon <subcommand>')}
+
+${highlight('Subcommands:')}
+${color('$ qunitx daemon start')}    # Spawn a persistent daemon for this project (~2× faster repeated runs)
+${color('$ qunitx daemon stop')}     # Stop the running daemon
+${color('$ qunitx daemon status')}   # Print pid, socket, and uptime
+
+${highlight('Environment:')}
+${color('QUNITX_DAEMON=1')}     : auto-spawn the daemon on the first qunitx run; reuse it on every run after (overrides the CI=1 bypass)
+${color('QUNITX_NO_DAEMON=1')}  : never use the daemon for this run
+
+${highlight('Tip:')} set ${color('QUNITX_DAEMON=1')} to auto-spawn the daemon on the first qunitx run; ${color('$ qunitx --help')} for top-level options.
+`;
 
 const __filename = fileURLToPath(import.meta.url);
 // daemon/index.ts → ../../../cli.ts
@@ -25,14 +44,7 @@ export function runDaemonCommand(): Promise<number> {
   if (sub === 'status') return statusDaemon();
   const helpRequested = !sub || sub === '--help' || sub === '-h' || sub === 'help';
   const out = helpRequested ? process.stdout : process.stderr;
-  out.write(
-    'Usage: qunitx daemon <start|stop|status>\n' +
-      '  start   Spawn a persistent daemon for this project (~2× faster repeated runs)\n' +
-      '  stop    Stop the running daemon\n' +
-      '  status  Print whether a daemon is running\n' +
-      '\n' +
-      'Tip: set QUNITX_DAEMON=1 to auto-spawn the daemon on the first qunitx run.\n',
-  );
+  out.write(USAGE);
   return Promise.resolve(helpRequested ? 0 : 1);
 }
 
