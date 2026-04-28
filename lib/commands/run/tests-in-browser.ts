@@ -9,6 +9,7 @@ import { runUserModule } from '../../utils/run-user-module.ts';
 import { TAPDisplayFinalResult } from '../../tap/display-final-result.ts';
 import { buildErrorHTML, buildNoTestsHTML } from '../../setup/web-server.ts';
 import { extractInlineSourceMap } from '../../utils/source-map-decoder.ts';
+import type { Page } from 'playwright-core';
 import type { Config, CachedContent, Connections } from '../../types.ts';
 import type { HTTPServer } from '../../servers/web.ts';
 
@@ -330,7 +331,7 @@ export async function runTestsInBrowser(
       }
 
       if (!config.watch) {
-        await flushConsoleHandlers(config._pendingConsoleHandlers);
+        await flushConsoleHandlers(config._pendingConsoleHandlers, connections.page);
         // Daemon mode: the daemon owns the browser and server lifetimes, so we
         // must not close them here. Throw instead so the daemon's run handler
         // captures the exit code and keeps the process alive for the next run.
@@ -387,20 +388,31 @@ export async function runTestsInBrowser(
  * Awaits all in-flight console handler promises until the Set is stably empty,
  * recursing to catch handlers added by Firefox BiDi events that arrive during each
  * await. The deadline (default 2 s) guards against infinite recursion.
+ *
+ * Pass `page` whenever the caller is about to close the page/browser. The handlers
+ * Set can otherwise look empty here only because Chrome's `Runtime.consoleAPICalled`
+ * events are still in flight on the CDP WebSocket (a separate channel from QUnit's
+ * `done` WebSocket). A no-op `page.evaluate` request enforces FIFO drain on that
+ * CDP socket: its response cannot arrive before any earlier-queued events have been
+ * read by Playwright and dispatched to `page.on('console')`, so by the time it
+ * resolves every pending handler is in the Set. Without this, late console.log()
+ * output is lost when the page closes mid-flight under concurrent CI load.
  * @returns {Promise<void>}
  */
 export async function flushConsoleHandlers(
   handlers?: Set<Promise<void>> | null,
+  page?: Page | null,
   deadline = Date.now() + CONSOLE_FLUSH_TIMEOUT_MS,
 ): Promise<void> {
   if (!handlers || Date.now() >= deadline) return;
-  // Yield one event-loop cycle so any in-flight CDP console events (which arrive on
-  // a separate TCP connection from the WebSocket 'done' event) can be processed by
-  // the I/O poll phase and register their handlers before we check the Set size.
+  // Force CDP queue drain (page may be closed already — swallow the rejection).
+  if (page) await page.evaluate(() => 0).catch(() => {});
+  // Yield once more so Promise.resolve continuations queued by the dispatch above
+  // run before we observe the Set.
   await new Promise<void>((resolve) => setImmediate(resolve));
   if (handlers.size === 0) return;
   await Promise.allSettled([...handlers]);
-  return flushConsoleHandlers(handlers, deadline);
+  return flushConsoleHandlers(handlers, page, deadline);
 }
 
 /**
@@ -835,7 +847,7 @@ async function runTestInsideHTMLFile(
     console.error('BROWSER: runtime error thrown during executing tests');
     await failOnNonWatchMode(
       config.watch,
-      { server, browser },
+      { server, browser, page },
       config._groupMode,
       config._pendingConsoleHandlers,
       config._daemonMode,
@@ -853,7 +865,7 @@ async function runTestInsideHTMLFile(
     console.error(`BROWSER: TEST TIMED OUT: ${QUNIT_RESULT.currentTest}`);
     await failOnNonWatchMode(
       config.watch,
-      { server, browser },
+      { server, browser, page },
       config._groupMode,
       config._pendingConsoleHandlers,
       config._daemonMode,
@@ -867,7 +879,7 @@ async function runTestInsideHTMLFile(
 
 async function failOnNonWatchMode(
   watchMode: boolean = false,
-  connections: { server?: HTTPServer; browser?: { close(): Promise<void> } } = {},
+  connections: { server?: HTTPServer; browser?: { close(): Promise<void> }; page?: Page } = {},
   groupMode: boolean = false,
   pendingHandlers?: Set<Promise<void>> | null,
   daemonMode: boolean = false,
@@ -877,7 +889,7 @@ async function failOnNonWatchMode(
     // Parent orchestrator handles cleanup and exit; signal failure via throw.
     throw new Error('Browser test run failed');
   }
-  await flushConsoleHandlers(pendingHandlers);
+  await flushConsoleHandlers(pendingHandlers, connections.page);
   if (daemonMode) {
     // Daemon owns browser/server lifetimes — throw so its run handler captures the code.
     throw new DaemonRunError(1);
