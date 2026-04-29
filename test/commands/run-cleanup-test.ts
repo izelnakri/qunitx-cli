@@ -16,6 +16,12 @@ const HANG_GRACE_MS = 100;
 // without indicating any real bug. A hanging close that returns within ~3× HANG_GRACE_MS
 // still proves the helper is bounded — which is the only contract that matters here.
 const HANG_GRACE_UPPER_BOUND_MS = 300;
+// Lower-bound slack absorbs libuv timer jitter. setTimeout(N) can fire up to a few ms
+// before N elapses in wall-clock terms because libuv computes the deadline against its
+// per-loop-iteration cached `uv_now`, not a live monotonic read. Local sampling shows
+// min ≈ N − 1ms; CI hit N − 0.26ms (run 25088492776). 10ms tolerance is ~10× the worst
+// observed, comfortably absorbing jitter without admitting a 0-ms "did we wait?" bug.
+const HANG_GRACE_LOWER_BOUND_MS = HANG_GRACE_MS - 10;
 
 module('Commands | run | closeWithGrace', { concurrency: true }, () => {
   test('returns within graceMs when a close never resolves', async (assert) => {
@@ -26,8 +32,8 @@ module('Commands | run | closeWithGrace', { concurrency: true }, () => {
     const elapsed = performance.now() - start;
 
     assert.ok(
-      elapsed >= HANG_GRACE_MS && elapsed < HANG_GRACE_UPPER_BOUND_MS,
-      `returned within bounded grace: got ${elapsed} ms, expected ${HANG_GRACE_MS}–${HANG_GRACE_UPPER_BOUND_MS} ms`,
+      elapsed >= HANG_GRACE_LOWER_BOUND_MS && elapsed < HANG_GRACE_UPPER_BOUND_MS,
+      `returned within bounded grace: got ${elapsed} ms, expected ${HANG_GRACE_LOWER_BOUND_MS}–${HANG_GRACE_UPPER_BOUND_MS} ms`,
     );
   });
 
