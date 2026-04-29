@@ -160,21 +160,36 @@ export function setupFileWatchers(
     const watchedBasename = path.basename(watchPath);
     // Guard against double-fire: Linux emits IN_MOVED_FROM + IN_MOVED_TO as two separate 'rename'
     // events on the parent. Both callbacks can reach this handler before either completes the async
-    // stat(), so unlinkDir would fire twice without this synchronous guard flag.
+    // stat(), so unlinkDir would fire twice without this synchronous guard flag. Also gates the
+    // macOS rescan-timer fallback below — both code paths funnel through tryFireParentUnlink.
     let parentUnlinkFired = false;
-    const parentWatcher = fs.watch(parentDir, async (eventType, filename) => {
-      if (!ready || filename !== watchedBasename || eventType !== 'rename') return;
-      if (parentUnlinkFired) return;
+    // Holds the macOS rescan timer (if any) so tryFireParentUnlink can clear it when the path
+    // disappears — otherwise the timer keeps no-op-firing every second forever.
+    let rescanTimer: ReturnType<typeof setInterval> | null = null;
+
+    // Idempotent "watchPath is gone" handler. Sets the guard sync before the async stat so a
+    // concurrent caller (parent watcher + rescan timer race on macOS) can't double-fire. Returns
+    // true if watchPath was confirmed missing (and unlinkDir was fired), false otherwise.
+    const tryFireParentUnlink = async (): Promise<boolean> => {
+      if (parentUnlinkFired) return false;
       parentUnlinkFired = true;
       try {
         await stat(watchPath);
         parentUnlinkFired = false; // Still exists — spurious event.
+        return false;
       } catch {
         handleWatchEvent(config, extensions, 'unlinkDir', watchPath, onEventFunc, onFinishFunc);
         childWatcher.close();
         parentWatcher.close();
+        if (rescanTimer) clearInterval(rescanTimer);
         delete fileWatchers[watchPath];
+        return true;
       }
+    };
+
+    const parentWatcher = fs.watch(parentDir, async (eventType, filename) => {
+      if (!ready || filename !== watchedBasename || eventType !== 'rename') return;
+      await tryFireParentUnlink();
     });
     parentWatchers.push(parentWatcher);
     fileWatchers[watchPath] = childWatcher;
@@ -189,24 +204,28 @@ export function setupFileWatchers(
     );
 
     // Safety-net for macOS: FSEvents can drop all events for a directory rename under load
-    // (e.g. Firefox running concurrently). Periodic rescan catches missed removals/additions.
+    // (e.g. Firefox running concurrently). Periodic rescan catches missed removals/additions
+    // *inside* watchPath via rescanDirectoryForDelta, AND missed disappearance of watchPath
+    // itself via tryFireParentUnlink — without that second branch, a dropped parent rename
+    // event leaves unlinkDir un-fired forever (observed: run 25090075388 timed out at 120 s).
     if (process.platform === 'darwin') {
-      rescanTimers.push(
-        setInterval(() => {
-          if (!ready || rescanInProgress) return;
-          rescanInProgress = true;
-          rescanDirectoryForDelta(
-            watchPath,
-            config,
-            extensions,
-            onEventFunc,
-            onFinishFunc,
-            trackSymlink,
-          ).finally(() => {
-            rescanInProgress = false;
-          });
-        }, RESCAN_INTERVAL_MS).unref(),
-      );
+      rescanTimer = setInterval(async () => {
+        if (!ready || rescanInProgress || parentUnlinkFired) return;
+        if (await tryFireParentUnlink()) return;
+        rescanInProgress = true;
+        rescanDirectoryForDelta(
+          watchPath,
+          config,
+          extensions,
+          onEventFunc,
+          onFinishFunc,
+          trackSymlink,
+        ).finally(() => {
+          rescanInProgress = false;
+        });
+      }, RESCAN_INTERVAL_MS);
+      rescanTimer.unref();
+      rescanTimers.push(rescanTimer);
     }
   }
 
