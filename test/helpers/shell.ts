@@ -143,7 +143,13 @@ export async function spawnCapture(
       clearTimeout(timer);
       reject(err);
     });
-    child.once('exit', (code, signal) => {
+    // Resolve on 'close', not 'exit'. Per Node docs, 'exit' fires when the process has
+    // terminated but child stdio streams may still be open — buffered 'data' events
+    // arriving after 'exit' are then missed by the resolved promise. 'close' fires only
+    // after every stdio stream has fully drained, so we capture the entire stdout/stderr.
+    // This was reproducing as truncated CI captures on Windows: process exit at 7.68 s,
+    // last captured stdout at 1.4 s, the intervening test+after-script output dropped.
+    child.once('close', (code, signal) => {
       clearTimeout(timer);
       const result: CapturedResult = {
         stdout,
