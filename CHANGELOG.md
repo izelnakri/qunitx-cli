@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.23.1] - 2026-04-29
+[`v0.23.0...v0.23.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.23.0...v0.23.1)
+
+### Bug Fixes
+- MacOS rescan-timer also detects watchPath disappearance — 2026-04-29 by [@izelnakri](https://github.com/izelnakri) ([`4067a87`](https://github.com/izelnakri/qunitx-cli/commit/4067a877927bf899ff75c1bf8a75f33b03bc8c5f))
+
 ## [0.23.0] - 2026-04-29
 [`v0.22.3...v0.23.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.22.3...v0.23.0)
 
