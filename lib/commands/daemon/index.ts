@@ -7,7 +7,17 @@ import { daemonInfoPath, daemonSocketPath } from '../../utils/daemon-socket-path
 import { pingDaemon, shutdownDaemon } from './client.ts';
 import pkg from '../../../package.json' with { type: 'json' };
 
-const SPAWN_TIMEOUT_MS = 10_000;
+// Daemon startup chains: cli.ts import → setupConfig → launchBrowser (chromium
+// connect) → listen() → writeFile(info). Observed timings:
+//   Linux/macOS: typical 0.8–2 s, worst observed ~5 s.
+//   Windows under heavy CI load: typical 4–8 s, worst observed ~12 s
+//     (run 25088766035 timed out at the previous 10 s budget).
+// 30 s is biased hard toward flake-prevention: a false timeout (legit-slow startup
+// hits the deadline) costs a red CI run and a re-run, while a true timeout (daemon
+// genuinely won't start) just adds ~20 s before the user gets an error — rare and
+// tolerable. Stays under DEFAULT_EXEC_TIMEOUT_MS (60 s) so test runs that wrap
+// `daemon start` keep envelope headroom.
+const SPAWN_TIMEOUT_MS = 30_000;
 
 const highlight = (text: string): string => magenta().bold(text);
 const color = (text: string): string => blue(text);
@@ -137,7 +147,7 @@ async function startDaemon(): Promise<number> {
     process.stdout.write(`Daemon started (pid ${result.pid})\n`);
     return 0;
   }
-  process.stderr.write('Daemon did not start within 10s\n');
+  process.stderr.write(`Daemon did not start within ${SPAWN_TIMEOUT_MS / 1000}s\n`);
   return 1;
 }
 
