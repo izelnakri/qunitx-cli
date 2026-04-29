@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.23.0] - 2026-04-29
+[`v0.22.3...v0.23.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.22.3...v0.23.0)
+
+### Bug Fixes
+- Non-gating sub-ms tier + spawn-tier headroom for cli e2e — 2026-04-27 by [@izelnakri](https://github.com/izelnakri) ([`a398d85`](https://github.com/izelnakri/qunitx-cli/commit/a398d853450817894f2f9400f07e9cd8ae073dd7))
+- Strip CI from test env so daemon tests actually use the daemon — 2026-04-27 by [@izelnakri](https://github.com/izelnakri) ([`c53d361`](https://github.com/izelnakri/qunitx-cli/commit/c53d361224f4bef645be8fde9ec021fdecb5ec7a))
+- Windows support — named-pipe socket path + filesystem-agnostic checks — 2026-04-27 by [@izelnakri](https://github.com/izelnakri) ([`4b7fc72`](https://github.com/izelnakri/qunitx-cli/commit/4b7fc72b1fb86765f9e22a8152724cb1c2ae4da5))
+- Event-driven spawn-wait + listen-failure ownership gate — 2026-04-27 by [@izelnakri](https://github.com/izelnakri) ([`1a9bda3`](https://github.com/izelnakri/qunitx-cli/commit/1a9bda339d0f011b4e37ab7c0a0dfd288d6a95eb))
+- Raise page.goto floor to 6× NAV_GRACE_MS for slow-browser headroom — 2026-04-27 by [@izelnakri](https://github.com/izelnakri) ([`26639b3`](https://github.com/izelnakri/qunitx-cli/commit/26639b319baa163d5a7edbc8810a5a2372b51d5b))
+- Build-test cache-key assertions are platform-independent — 2026-04-27 by [@izelnakri](https://github.com/izelnakri) ([`2a7c310`](https://github.com/izelnakri/qunitx-cli/commit/2a7c3102409431ac1d526d41e95450477420a2b3))
+- Wait for daemon process exit before client shutdownDaemon returns — 2026-04-27 by [@izelnakri](https://github.com/izelnakri) ([`e5bc42b`](https://github.com/izelnakri/qunitx-cli/commit/e5bc42bd5d7176ec8941c25c04a46560ea97781a))
+- Drain CDP queue before page close to capture trailing console.log — 2026-04-28 by [@izelnakri](https://github.com/izelnakri) ([`90a6634`](https://github.com/izelnakri/qunitx-cli/commit/90a663477869e914488cd217c9ae878e5d89308a))
+- Use performance.now() for grace-period elapsed measurement — 2026-04-28 by [@izelnakri](https://github.com/izelnakri) ([`c75abd3`](https://github.com/izelnakri/qunitx-cli/commit/c75abd3edeefe9f85c9d5e54eb7e1ab4280d2fc8))
+- Widen graceMs lower bound to absorb libuv timer jitter — 2026-04-29 by [@izelnakri](https://github.com/izelnakri) ([`f7b9e39`](https://github.com/izelnakri/qunitx-cli/commit/f7b9e39fb6043be930f8ff408d4d950d7c74f6ec))
+- Widen spawn timeout to 30s to absorb Windows CI startup variance — 2026-04-29 by [@izelnakri](https://github.com/izelnakri) ([`458af62`](https://github.com/izelnakri/qunitx-cli/commit/458af62cec8dfa94e9b6b60846deb305823dec22))
+- Wait for child 'close' event, not 'exit', to capture full stdout — 2026-04-29 by [@izelnakri](https://github.com/izelnakri) ([`acb3d6c`](https://github.com/izelnakri/qunitx-cli/commit/acb3d6cfebcb7527b63edd47b50c60411cc771ee))
+
+### Documentation
+- Surface daemon in qunitx help, --no-daemon flag, daemon --help — 2026-04-28 by [@izelnakri](https://github.com/izelnakri) ([`329aab1`](https://github.com/izelnakri/qunitx-cli/commit/329aab11d77eee0d7eecab2660084fe68411d5b5))
+
+### Features
+- Persistent daemon keeps Chrome + esbuild context warm across runs — 2026-04-27 by [@izelnakri](https://github.com/izelnakri) ([`306ad66`](https://github.com/izelnakri/qunitx-cli/commit/306ad66f540841506aa014e6a0c9b5e363364659))
+- Browser-crash recovery — relaunch Chrome instead of dying — 2026-04-27 by [@izelnakri](https://github.com/izelnakri) ([`29392ff`](https://github.com/izelnakri/qunitx-cli/commit/29392ff1fd2ef5d299f2bf311177c9295c6101f0))
+- Concurrent multi-group runs by delegating to run() — 2026-04-27 by [@izelnakri](https://github.com/izelnakri) ([`68b4111`](https://github.com/izelnakri/qunitx-cli/commit/68b4111861dd2816cb38a449820043a1c06f7597))
+- QUNITX_DAEMON=1 auto-spawns the daemon on first run — 2026-04-27 by [@izelnakri](https://github.com/izelnakri) ([`c237e9e`](https://github.com/izelnakri/qunitx-cli/commit/c237e9ee94e41ddca51d1a5a59a1dead44cb5b58))
+- Persistent esbuild incremental-context cache across runs — 2026-04-27 by [@izelnakri](https://github.com/izelnakri) ([`aeef743`](https://github.com/izelnakri/qunitx-cli/commit/aeef74325a374476adc9befc5268e9954c7029d5))
+- QUNITX_DAEMON=1 overrides CI=1 for multi-invocation CI opt-in — 2026-04-27 by [@izelnakri](https://github.com/izelnakri) ([`6fe6933`](https://github.com/izelnakri/qunitx-cli/commit/6fe69331d14e35d55d8b7cd244202f0f924a16f2))
+- One-shot tip nudges users toward QUNITX_DAEMON=1 — 2026-04-28 by [@izelnakri](https://github.com/izelnakri) ([`1c2c902`](https://github.com/izelnakri/qunitx-cli/commit/1c2c9029ba5a516edb67cf146831b2e03a987099))
+- QUNITX_DAEMON_LOG redirects daemon stdout/stderr to a file — 2026-04-29 by [@izelnakri](https://github.com/izelnakri) ([`2ba1912`](https://github.com/izelnakri/qunitx-cli/commit/2ba19128027c8a3133ec4fddc5001f9a643eb01e))
+
+### Performance
+- Lazy-load command modules to skip unused imports on daemon-routed runs — 2026-04-27 by [@izelnakri](https://github.com/izelnakri) ([`31a9c2a`](https://github.com/izelnakri/qunitx-cli/commit/31a9c2ad437a7a4259d2f4856d3208f3e7398989))
+- Add warm-routed benchmark to lock in the headline win — 2026-04-27 by [@izelnakri](https://github.com/izelnakri) ([`167ab88`](https://github.com/izelnakri/qunitx-cli/commit/167ab8885f7257a45b0cd2f44c169e2c744353e1))
+
+### Refactoring
+- Tighten client/server, drop daemonSocketExists wrapper — 2026-04-29 by [@izelnakri](https://github.com/izelnakri) ([`92018c1`](https://github.com/izelnakri/qunitx-cli/commit/92018c15cc71faec3d58750e8aa478a827e2d110))
+
 ## [0.22.3] - 2026-04-27
 [`v0.22.2...v0.22.3`](https://github.com/izelnakri/qunitx-cli/compare/v0.22.2...v0.22.3)
 

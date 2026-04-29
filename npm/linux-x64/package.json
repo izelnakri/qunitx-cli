@@ -1,6 +1,6 @@
 {
   "name": "qunitx-cli-linux-x64",
-  "version": "0.22.3",
+  "version": "0.23.0",
   "description": "Linux x64 SEA binary for qunitx-cli",
   "os": [
     "linux"
