@@ -63,17 +63,15 @@ async function runServeMode(): Promise<number> {
  *
  * Two `existsSync` calls bracket the watcher attachment to close the TOCTOU gap:
  * the file may appear between the entry-point check and `fs.watch` actually being
- * subscribed in the kernel.
+ * subscribed in the kernel. Multiple `settle` calls are harmless: `resolve`,
+ * `clearTimeout`, and `fsWatcher.close` are all idempotent.
  */
 function waitForFile(filePath: string, timeoutMs: number): Promise<boolean> {
   if (existsSync(filePath)) return Promise.resolve(true);
   return new Promise<boolean>((resolve) => {
     const dir = path.dirname(filePath);
     const fileName = path.basename(filePath);
-    let settled = false;
     const settle = (ok: boolean) => {
-      if (settled) return;
-      settled = true;
       clearTimeout(timer);
       watcher.close();
       resolve(ok);

@@ -257,15 +257,19 @@ function writeChunk(socket: net.Socket, chunk: ResponseChunk): void {
 /**
  * Builds a `process.stdout.write`-compatible interceptor that forwards every chunk
  * to the client over the socket while preserving the optional callback contract.
+ * Skips the toString + writeChunk hop entirely once the socket is destroyed —
+ * `socket.destroyed` flips at the moment the 'close' event fires, so this is the
+ * direct equivalent of a `clientAlive` flag without the mutation.
  */
 function makeInterceptor(
   socket: net.Socket,
   type: 'stdout' | 'stderr',
-  isAlive: () => boolean,
 ): typeof process.stdout.write {
   return ((chunk: unknown, ...args: unknown[]): boolean => {
-    const str = typeof chunk === 'string' ? chunk : (chunk as Buffer).toString('utf8');
-    if (isAlive()) writeChunk(socket, { type, data: str });
+    if (!socket.destroyed) {
+      const str = typeof chunk === 'string' ? chunk : (chunk as Buffer).toString('utf8');
+      writeChunk(socket, { type, data: str });
+    }
     const cb = args[args.length - 1];
     if (typeof cb === 'function') queueMicrotask(cb as () => void);
     return true;
@@ -276,15 +280,13 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
   if (state.shuttingDown) {
     writeChunk(socket, { type: 'fatal', message: 'daemon shutting down' });
     return void socket.end();
-  }
-  if (req.cwd !== state.cwd) {
+  } else if (req.cwd !== state.cwd) {
     writeChunk(socket, {
       type: 'fatal',
       message: `cwd mismatch: daemon=${state.cwd} client=${req.cwd}`,
     });
     return void socket.end();
-  }
-  if (req.nodeVersion !== process.version) {
+  } else if (req.nodeVersion !== process.version) {
     writeChunk(socket, {
       type: 'fatal',
       message: `node version mismatch: daemon=${process.version} client=${req.nodeVersion}`,
@@ -313,13 +315,10 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
     }
   }
 
-  let clientAlive = true;
-  socket.on('close', () => (clientAlive = false));
-
   const origStdoutWrite = process.stdout.write.bind(process.stdout);
   const origStderrWrite = process.stderr.write.bind(process.stderr);
-  process.stdout.write = makeInterceptor(socket, 'stdout', () => clientAlive);
-  process.stderr.write = makeInterceptor(socket, 'stderr', () => clientAlive);
+  process.stdout.write = makeInterceptor(socket, 'stdout');
+  process.stderr.write = makeInterceptor(socket, 'stderr');
 
   let exitCode = 0;
   try {
@@ -327,7 +326,7 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
   } catch (err) {
     process.stderr.write = origStderrWrite;
     origStderrWrite(`# [qunitx daemon] run error: ${(err as Error).stack || err}\n`);
-    if (clientAlive)
+    if (!socket.destroyed)
       writeChunk(socket, { type: 'fatal', message: (err as Error).message || String(err) });
     exitCode = 1;
   } finally {
@@ -339,7 +338,7 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
   if (state.browser.isConnected()) state.consecutiveCrashes = 0;
   else await recoverBrowser(state);
 
-  if (clientAlive) {
+  if (!socket.destroyed) {
     writeChunk(socket, { type: 'done', exitCode });
     socket.end();
   }

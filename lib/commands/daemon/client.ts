@@ -2,29 +2,26 @@ import net from 'node:net';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { daemonSocketPath, daemonInfoPath } from '../../utils/daemon-socket-path.ts';
+import { CLEANUP_GRACE_MS } from '../../utils/close-with-grace.ts';
 import { attachLineParser, probeSocket } from './socket-utils.ts';
 import type { Request, ResponseChunk } from './protocol.ts';
 
 const CONNECT_TIMEOUT_MS = 1_000;
 const SIGINT_EXIT_CODE = 130;
 // Maximum time to wait for the daemon process to fully exit after `daemon stop`
-// returns 'done'. The async cleanup (server.close + browser.close + exit) is
-// usually well under a second; 5s is generous headroom for a busy CI runner.
-const SHUTDOWN_PID_WAIT_MS = 5_000;
+// returns 'done'. Two reasons we cap this rather than poll forever:
+//   1. PID reuse — once the daemon's pid is freed, the OS can recycle it for an
+//      unrelated process within seconds; without a deadline `process.kill(pid, 0)`
+//      would succeed forever against the recycled pid and block stop indefinitely.
+//   2. CLI / scripting UX — a daemon stuck in cleanup (browser.close deadlock on
+//      Firefox+Windows, server.close hanging) shouldn't freeze the cli.
+// Same bound as CLEANUP_GRACE_MS — single source of truth for "worst tolerated
+// cleanup time" across the codebase. Generous enough for a loaded CI runner where
+// browser.close + esbuild dispose can take several seconds under contention.
+const SHUTDOWN_PID_WAIT_MS = CLEANUP_GRACE_MS;
 // Poll interval while waiting for the daemon's pid to disappear. 50ms keeps the
 // follow-up `daemon start` snappy without burning CPU.
 const SHUTDOWN_PID_POLL_MS = 50;
-
-/**
- * True if a daemon appears to be present for the given cwd. Checks the sidecar JSON
- * file rather than the socket path because Windows named pipes are not visible on the
- * regular filesystem (existsSync on `\\.\pipe\...` always returns false). The info
- * file is created at startup and unlinked at shutdown — a reliable cross-platform
- * sentinel. Stale info files are caught downstream by tryConnect failing fast.
- */
-export function daemonSocketExists(cwd: string = process.cwd()): boolean {
-  return existsSync(daemonInfoPath(cwd));
-}
 
 /**
  * True if the run could meaningfully use a daemon: not opted out, not a watch/open
@@ -44,12 +41,17 @@ function isDaemonEligible(): boolean {
   return true;
 }
 
+// daemonInfoPath() is the cross-platform "is a daemon present?" sentinel — checked
+// rather than the socket itself because on Windows named pipes (\\.\pipe\...) are
+// not visible to existsSync. The info file is created at startup and unlinked at
+// shutdown; stale files are caught downstream when tryConnect fails fast.
+
 /**
  * True iff a live daemon socket exists and the invocation can use it. The cli's
  * primary dispatch check.
  */
 export function shouldUseDaemon(): boolean {
-  return isDaemonEligible() && daemonSocketExists();
+  return isDaemonEligible() && existsSync(daemonInfoPath());
 }
 
 /**
@@ -58,7 +60,7 @@ export function shouldUseDaemon(): boolean {
  * one before dispatching the run.
  */
 export function shouldAutoSpawnDaemon(): boolean {
-  return Boolean(process.env.QUNITX_DAEMON) && isDaemonEligible() && !daemonSocketExists();
+  return Boolean(process.env.QUNITX_DAEMON) && isDaemonEligible() && !existsSync(daemonInfoPath());
 }
 
 /**
@@ -86,16 +88,17 @@ function awaitClose(socket: net.Socket): Promise<void> {
 export async function pingDaemon(): Promise<ResponseChunk | null> {
   const socket = await tryConnect();
   if (!socket) return null;
-  let result: ResponseChunk | null = null;
-  attachLineParser<ResponseChunk>(socket, (chunk) => {
-    if (chunk.type === 'pong') {
-      result = chunk;
-      socket.end();
-    }
+  const result = new Promise<ResponseChunk | null>((resolve) => {
+    attachLineParser<ResponseChunk>(socket, (chunk) => {
+      if (chunk.type === 'pong') resolve(chunk);
+    });
+    socket.once('close', () => resolve(null));
+    socket.once('error', () => resolve(null));
   });
   send(socket, { type: 'ping' });
-  await awaitClose(socket);
-  return result;
+  const pong = await result;
+  socket.end();
+  return pong;
 }
 
 /**
@@ -169,15 +172,21 @@ export async function runViaDaemon(argv: string[]): Promise<number> {
   const socket = await tryConnect();
   if (!socket) throw new Error('daemon connect failed');
 
-  let exitCode: number | null = null;
-  attachLineParser<ResponseChunk>(socket, (chunk) => {
-    if (chunk.type === 'stdout') process.stdout.write(chunk.data);
-    else if (chunk.type === 'stderr') process.stderr.write(chunk.data);
-    else if (chunk.type === 'done') exitCode = chunk.exitCode;
-    else if (chunk.type === 'fatal') {
-      process.stderr.write(`# [qunitx daemon] ${chunk.message}\n`);
-      exitCode = exitCode ?? 1;
-    }
+  // Per protocol.ts: exactly one terminal message ('done' or 'fatal') ends the
+  // stream. close/error here are last-resort fallbacks for a daemon that drops
+  // the connection without sending one.
+  const exitCode = new Promise<number>((resolve) => {
+    attachLineParser<ResponseChunk>(socket, (chunk) => {
+      if (chunk.type === 'stdout') process.stdout.write(chunk.data);
+      else if (chunk.type === 'stderr') process.stderr.write(chunk.data);
+      else if (chunk.type === 'done') resolve(chunk.exitCode);
+      else if (chunk.type === 'fatal') {
+        process.stderr.write(`# [qunitx daemon] ${chunk.message}\n`);
+        resolve(1);
+      }
+    });
+    socket.once('close', () => resolve(1));
+    socket.once('error', () => resolve(1));
   });
 
   const onSigint = () => {
@@ -195,10 +204,8 @@ export async function runViaDaemon(argv: string[]): Promise<number> {
   });
 
   try {
-    await awaitClose(socket);
+    return await exitCode;
   } finally {
     process.removeListener('SIGINT', onSigint);
   }
-
-  return exitCode ?? 1;
 }
