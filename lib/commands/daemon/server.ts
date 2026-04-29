@@ -76,6 +76,22 @@ export async function runDaemonServer(): Promise<void> {
   // Windows named pipes auto-recycle, and unlink on a pipe path is a no-op error we ignore).
   await unlink(socketPath).catch(() => {});
 
+  // Optional debug log: when QUNITX_DAEMON_LOG=<path> is set, redirect the daemon's
+  // stdout+stderr to that file so idle/startup/shutdown events (otherwise lost to
+  // the spawn's stdio:'ignore') become inspectable. Buffered async writes via
+  // createWriteStream; log-stream errors are swallowed so a broken log path can
+  // never crash the daemon. handleRun's per-run interceptor still works: it captures
+  // whichever write fn is current at run start, so during runs stdout flows to the
+  // client and reverts to the log fn afterwards.
+  const logPath = process.env.QUNITX_DAEMON_LOG;
+  if (logPath) {
+    const log = fs.createWriteStream(logPath, { flags: 'a' });
+    log.on('error', () => {});
+    const forward = log.write.bind(log) as typeof process.stdout.write;
+    process.stdout.write = forward;
+    process.stderr.write = forward;
+  }
+
   // setupConfig reads process.argv directly; the daemon's actual argv is `daemon _serve`
   // which would be parsed as test paths. Strip it for the startup config — we only need
   // the browser type here. Per-run argv comes from the client via runOnce.

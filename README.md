@@ -146,6 +146,17 @@ qunitx daemon restart  # Stop + start in one step
 
 Running `qunitx daemon start` upfront is optional. With `QUNITX_DAEMON=1` set in your environment, a plain `qunitx <file>` invocation will spawn the daemon on its own when it doesn't find one already running — so the very first run pays the spawn cost and every run after that is warm. Without `QUNITX_DAEMON=1`, the cli skips auto-spawn and just runs locally; `qunitx daemon start` then becomes the explicit way to opt in.
 
+### Debugging the daemon
+
+The daemon process is detached with `stdio: 'ignore'`, so its idle/startup/shutdown output never reaches a terminal. Set `QUNITX_DAEMON_LOG=<path>` before `daemon start` to redirect the daemon's stdout + stderr to a file:
+
+```sh
+QUNITX_DAEMON_LOG=/tmp/qunitx-daemon.log qunitx daemon start
+tail -f /tmp/qunitx-daemon.log
+```
+
+The log captures startup banners, browser-crash recovery, idle-timeout shutdown, package.json-mutation restarts, and any unhandled rejection. During an active run the per-run interceptor still forwards stdout to the client; the log catches everything else.
+
 ## Writing Tests
 
 qunitx-cli runs [QUnitX](https://github.com/izelnakri/qunitx) tests — a superset of QUnit with async
