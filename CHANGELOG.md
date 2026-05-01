@@ -1,10 +1,13 @@
 # Changelog
 
-## [0.23.3] - 2026-05-01
-[`v0.23.2...v0.23.3`](https://github.com/izelnakri/qunitx-cli/compare/v0.23.2...v0.23.3)
+## [0.23.4] - 2026-05-01
+[`v0.23.2...v0.23.4`](https://github.com/izelnakri/qunitx-cli/compare/v0.23.2...v0.23.4)
 
 ### Bug Fixes
-- Drop top-level import.meta.url so SEA bundle works — 2026-05-01 by [@izelnakri](https://github.com/izelnakri) ([`f98befe`](https://github.com/izelnakri/qunitx-cli/commit/f98befecd4b4fdf01eebdbe89b7df90c6876d5ca))
+- Drop top-level import.meta.url so SEA bundle works — 2026-05-01 by [@izelnakri](https://github.com/izelnakri) ([`76681f8`](https://github.com/izelnakri/qunitx-cli/commit/76681f8f0f185ee49898e182a65034ed15d0b4fb))
+
+### Performance
+- Enable V8 compile cache for cli + test workers — 2026-05-01 by [@izelnakri](https://github.com/izelnakri) ([`ea2346d`](https://github.com/izelnakri/qunitx-cli/commit/ea2346d062f768e3b0792d6c0ae3052dc4342e3f))
 
 ## [0.23.2] - 2026-05-01
 [`v0.23.1...v0.23.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.23.1...v0.23.2)
