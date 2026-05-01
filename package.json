@@ -1,7 +1,7 @@
 {
   "name": "qunitx-cli",
   "type": "module",
-  "version": "0.23.2",
+  "version": "0.23.3",
   "description": "Browser runner for QUnitx: run your qunitx tests in google-chrome",
   "author": "Izel Nakri",
   "license": "MIT",
