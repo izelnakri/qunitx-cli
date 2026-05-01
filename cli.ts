@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Must be first: ESM evaluates dependencies post-order, so the cache is
+// turned on before chrome-prelaunch.ts and the rest of the dep graph compile.
+import './lib/utils/enable-compile-cache.ts';
 import process from 'node:process';
 import { shutdownPrelaunch } from './lib/utils/chrome-prelaunch.ts';
 import pkg from './package.json' with { type: 'json' };

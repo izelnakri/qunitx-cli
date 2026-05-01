@@ -3,11 +3,21 @@
 // Prefers a pre-built SEA binary from the matching optional platform package
 // (qunitx-cli-linux-x64, qunitx-cli-darwin-arm64, etc.) when available.
 // Falls back to the bundled JS CLI (dist/cli.js) which requires Node.js + node_modules.
+import nodeModule, { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { access, constants, readFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+
+// Turn on V8's on-disk compile cache before importing dist/cli.js — caches
+// the bundle + its external deps (esbuild, playwright-core, ws) across cold
+// invocations. The active dir is written back to process.env so any child
+// spawn (SEA binary below, daemon auto-spawn from cli.ts) inherits and also
+// auto-enables from boot. `in` check preserves a user-set empty string.
+const cacheResult = nodeModule.enableCompileCache?.();
+if (cacheResult?.directory && !('NODE_COMPILE_CACHE' in process.env)) {
+  process.env.NODE_COMPILE_CACHE = cacheResult.directory;
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);

@@ -26,6 +26,14 @@ import createSemaphoreServer from './helpers/semaphore-server.ts';
 import { killProcessGroup } from '../lib/utils/kill-process-group.ts';
 import { cleanupBrowserDir } from '../lib/utils/cleanup-browser-dir.ts';
 
+// Project-local V8 compile-cache dir for spawned workers and the cli.ts
+// processes the test files invoke. Sits under node_modules/.cache (npm
+// convention, gitignored, survives `rm -rf tmp/`, outside the leak-test sweep
+// which only scans qunitx-chrome-* under os.tmpdir()). The runner itself
+// doesn't enable compile cache — its module graph is small and doing so would
+// pollute process.env, overriding the project-local default below.
+const COMPILE_CACHE_DIR = path.resolve('node_modules/.cache/qunitx/v8');
+
 const watchMode = process.argv.includes('--watch');
 // --watch is never mixed with explicit file paths (see package.json scripts), so when
 // it is present there are no explicit files; slice(2) is the file list otherwise.
@@ -83,6 +91,9 @@ function spawnTests(files: string[]): Promise<number> {
       {
         stdio: 'inherit',
         env: {
+          // Default lives before ...process.env so a user override (incl.
+          // `NODE_COMPILE_CACHE=` to disable) wins over our project default.
+          NODE_COMPILE_CACHE: COMPILE_CACHE_DIR,
           ...process.env,
           FORCE_COLOR: '0',
           QUNITX_SEMAPHORE_PORT: String(semaphore.port),
