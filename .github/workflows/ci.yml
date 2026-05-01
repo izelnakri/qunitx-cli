@@ -57,6 +57,22 @@ jobs:
       - uses: browser-actions/setup-chrome@v2
         id: setup-chrome
       - run: npm ci
+      # Cross-run V8 compile cache. test/runner.ts already injects
+      # NODE_COMPILE_CACHE=node_modules/.cache/qunitx/v8 into spawnTests env, which
+      # gives within-run reuse across 30 test workers + their cli.ts spawns. This
+      # step extends that to cross-run reuse: worker 1's parser pass + the first
+      # cli.ts spawn become warm-from-previous-CI rather than cold. Restored AFTER
+      # npm ci because npm ci deletes node_modules entirely. Key includes github.sha
+      # so each run saves a fresh cache (capturing bytecode written this run);
+      # restore-keys fall back to the latest matching prefix. V8 invalidates entries
+      # by content hash + Node version, so stale source bytecode is silently ignored.
+      - uses: actions/cache@v5
+        with:
+          path: node_modules/.cache/qunitx/v8
+          key: ${{ runner.os }}-node24-v8cc-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-node24-v8cc-${{ hashFiles('package-lock.json') }}-
+            ${{ runner.os }}-node24-v8cc-
       # macOS: install playwright-core's chromium-headless-shell instead of using CHROME_BIN.
       # Google Chrome for Testing (ARM64) crashes immediately with playwright-core's mandatory
       # --enable-unsafe-swiftshader flag. chromium-headless-shell is purpose-built for headless
