@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.23.2] - 2026-05-01
+[`v0.23.1...v0.23.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.23.1...v0.23.2)
+
+### Features
+- Configurable idle timeout via QUNITX_DAEMON_IDLE_TIMEOUT — 2026-05-01 by [@izelnakri](https://github.com/izelnakri) ([`42530b2`](https://github.com/izelnakri/qunitx-cli/commit/42530b254694da45c54abc4d4e5c4d82c8fccf14))
+
 ## [0.23.1] - 2026-04-29
 [`v0.23.0...v0.23.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.23.0...v0.23.1)
 
