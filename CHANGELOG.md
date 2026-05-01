@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.23.3] - 2026-05-01
+[`v0.23.2...v0.23.3`](https://github.com/izelnakri/qunitx-cli/compare/v0.23.2...v0.23.3)
+
+### Bug Fixes
+- Drop top-level import.meta.url so SEA bundle works — 2026-05-01 by [@izelnakri](https://github.com/izelnakri) ([`f98befe`](https://github.com/izelnakri/qunitx-cli/commit/f98befecd4b4fdf01eebdbe89b7df90c6876d5ca))
+
 ## [0.23.2] - 2026-05-01
 [`v0.23.1...v0.23.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.23.1...v0.23.2)
 
