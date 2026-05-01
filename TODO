@@ -1,7 +1,3 @@
-=======
-Review daemon PR/ask for changes
-=======
-
 ======
   a. NODE_COMPILE_CACHE in test/runner.ts spawn env — ~2-15s saved on the 175s Phase 1.
 
@@ -51,16 +47,13 @@ https://www.youtube.com/watch?v=SaZEdiV3A3M
 
 - investigate take screenshot feature & visual diffing(implement it percy-like)
 
-- maybe add persistent daemon mode to shave off ~800ms saved on every run after the first. Every qunitx invocation today: Node startup → load 40+ files → connect to Chrome → esbuild → navigate → run → exit. A qunitx serve daemon would keep Chrome alive and hold the esbuild incremental context warm. qunitx run test/file.ts sends the file list over a Unix socket and streams TAP back. Subsequent runs: ~200–300ms (just esbuild rebuild + navigate). This is the single biggest UX improvement possible for developers running tests frequently in a non-watch workflow.
-  CLAUDE SESSION: claude --resume b0edfd88-98cb-4111-8322-f103e6d41515
+daemon mode claude session: claude --resume b0edfd88-98cb-4111-8322-f103e6d41515
 
 qunitx-cli JS API should be very usable from outside by JS/TS only, by users of this library. Do them, document it well
 in the codebase and also on the README.md(if needed). claude --resume 5d51cdce-b6b3-4580-8bb9-94649a17da2c
 
 - Think about error handling in JS. Maybe find a better solution than shellFails. check lua's error handling for JavaScript on all my JS code, if this is a better way to do error handling:
-❯ Given this conversation: https://chatgpt.com/share/69e26e08-4dbc-83eb-8d7d-01bba54c8198 I want to create a general-purpose error handling system for JS/TS. What would be the best way to achieve this for the best general-purpose, very useful, readable, performant and flexible abstraction. Show me in code, in-depth with clear tutorial at the end mention all the corner cases, everything, I suspect it is a good idea, I'm still evaluating but would love a general-purpose solution for better error-handling
-
-Maybe use bun instead of esbuild?
+Given this conversation: https://chatgpt.com/share/69e26e08-4dbc-83eb-8d7d-01bba54c8198 I want to create a general-purpose error handling system for JS/TS. What would be the best way to achieve this for the best general-purpose, very useful, readable, performant and flexible abstraction. Show me in code, in-depth with clear tutorial at the end mention all the corner cases, everything, I suspect it is a good idea, I'm still evaluating but would love a general-purpose solution for better error-handling
 
 - enhance flake.nix and README.md
 

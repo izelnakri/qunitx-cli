@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { blue, magenta } from '../../utils/color.ts';
 import { daemonInfoPath, daemonSocketPath } from '../../utils/daemon-socket-path.ts';
+import { parseDaemonIdleTimeout } from '../../utils/parse-daemon-idle-timeout.ts';
 import { pingDaemon, shutdownDaemon } from './client.ts';
 import pkg from '../../../package.json' with { type: 'json' };
 
@@ -30,8 +31,10 @@ ${color('$ qunitx daemon stop')}     # Stop the running daemon
 ${color('$ qunitx daemon status')}   # Print pid, socket, and uptime
 
 ${highlight('Environment:')}
-${color('QUNITX_DAEMON=1')}     : auto-spawn the daemon on the first qunitx run; reuse it on every run after (overrides the CI=1 bypass)
-${color('QUNITX_NO_DAEMON=1')}  : never use the daemon for this run
+${color('QUNITX_DAEMON=1')}              : auto-spawn the daemon on the first qunitx run; reuse it on every run after (overrides the CI=1 bypass)
+${color('QUNITX_NO_DAEMON=1')}           : never use the daemon for this run
+${color('QUNITX_DAEMON_IDLE_TIMEOUT')}   : idle window before self-shutdown (default 30m). Bare number = minutes; ${color('ms')} / ${color('s')} / ${color('m')} / ${color('h')} suffixes accepted (${color('1h')}, ${color('45s')}, ${color('500ms')}). Set to ${color('false')} to disable auto-shutdown. Read at daemon spawn; invalid values warn and fall back to the default.
+${color('QUNITX_DAEMON_LOG=<path>')}     : redirect the daemon's stdout + stderr to a file (otherwise lost to the detached spawn)
 
 ${highlight('Tip:')} set ${color('QUNITX_DAEMON=1')} to auto-spawn the daemon on the first qunitx run; ${color('$ qunitx --help')} for top-level options.
 `;
@@ -113,6 +116,13 @@ function waitForFile(filePath: string, timeoutMs: number): Promise<boolean> {
  * stale presence sentinels. Both must hold.
  */
 async function spawnAndWaitForDaemon(): Promise<{ pid: number } | null> {
+  // Validate QUNITX_DAEMON_IDLE_TIMEOUT here — the daemon detaches with stdio:'ignore'
+  // so a warning printed from inside it is invisible. Doing it on the CLI side puts
+  // the message on the user's terminal at the moment the env value first becomes
+  // load-bearing (i.e. a fresh spawn).
+  const parsed = parseDaemonIdleTimeout(process.env.QUNITX_DAEMON_IDLE_TIMEOUT);
+  if (parsed.warning) process.stderr.write(parsed.warning + '\n');
+
   // Detached so the daemon outlives the current shell. stdio: 'ignore' detaches all
   // pipes; daemon writes its own startup line to its stderr (now /dev/null analogue).
   spawn(process.execPath, [CLI_ENTRY, 'daemon', '_serve'], {

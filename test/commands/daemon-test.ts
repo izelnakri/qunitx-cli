@@ -1,7 +1,8 @@
 import { module, test } from 'qunitx';
 import process from 'node:process';
 import fs from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import nodeFs, { existsSync } from 'node:fs';
+import path from 'node:path';
 import { promisify } from 'node:util';
 import { exec } from 'node:child_process';
 import { daemonSocketPath, daemonInfoPath } from '../../lib/utils/daemon-socket-path.ts';
@@ -49,9 +50,37 @@ const INFO_PATH = daemonInfoPath(CWD);
 async function ensureDaemonStopped(): Promise<void> {
   // Best-effort cleanup — tolerates a missing daemon (`stop` is idempotent).
   await cli('daemon stop').catch(() => {});
-  // Defensive: drop a stale socket file that a crashed daemon may have left behind.
-  await fs.unlink(SOCKET_PATH).catch(() => {});
-  await fs.unlink(INFO_PATH).catch(() => {});
+  // Defensive: drop stale files that a crashed daemon may have left behind.
+  // Parallelize the two unlinks — they're independent paths and `daemon stop`
+  // already finished, so there's no ordering constraint.
+  await Promise.all([fs.unlink(SOCKET_PATH).catch(() => {}), fs.unlink(INFO_PATH).catch(() => {})]);
+}
+
+/**
+ * Resolves `true` once `filePath` no longer exists, or `false` on timeout.
+ * Event-driven: subscribes to `fs.watch` on the parent directory and reacts to the
+ * kernel's unlink notification (sub-ms latency, zero CPU between events). Inverse
+ * of `waitForFile` in `lib/commands/daemon/index.ts`. The two `existsSync` checks
+ * bracket the watcher attachment to close the TOCTOU gap — the file may disappear
+ * between the entry-point check and the kernel watch becoming active.
+ */
+function waitForFileGone(filePath: string, timeoutMs: number): Promise<boolean> {
+  if (!existsSync(filePath)) return Promise.resolve(true);
+  return new Promise<boolean>((resolve) => {
+    const dir = path.dirname(filePath);
+    const fileName = path.basename(filePath);
+    const settle = (gone: boolean) => {
+      clearTimeout(timer);
+      watcher.close();
+      resolve(gone);
+    };
+    const timer = setTimeout(() => settle(false), timeoutMs);
+    const watcher = nodeFs.watch(dir, (_event, name) => {
+      if (name === fileName && !existsSync(filePath)) settle(true);
+    });
+    watcher.on('error', () => settle(false));
+    if (!existsSync(filePath)) settle(true);
+  });
 }
 
 const FIXTURE_PASS = 'test/fixtures/passing-tests.ts';
@@ -502,6 +531,82 @@ module('Commands | Daemon | auto-spawn', { concurrency: false }, () => {
       // No daemon spawned because --no-daemon vetoes auto-spawn.
       const status = await cli('daemon status', { failOk: true });
       assert.exitCode(status, 1);
+    } finally {
+      await ensureDaemonStopped();
+    }
+  });
+});
+
+module('Commands | Daemon | idle timeout', { concurrency: false }, () => {
+  // Integration coverage focuses on the three distinct daemon behaviors the env var
+  // can drive — short timeout shuts down, "false" stays alive, invalid value warns
+  // and still starts. Parser semantics (units, fractions, edge cases) are exhausted
+  // in test/utils/parse-daemon-idle-timeout-test.ts; we don't re-test them through
+  // process spawns here.
+
+  test('a short QUNITX_DAEMON_IDLE_TIMEOUT shortens the window and the daemon self-exits', async (assert) => {
+    await ensureDaemonStopped();
+    try {
+      const start = await cli('daemon start', {
+        env: { ...CLI_ENV, QUNITX_DAEMON_IDLE_TIMEOUT: '500ms' },
+      });
+      assert.exitCode(start, 0);
+      assert.ok(existsSync(INFO_PATH), 'info file present immediately after start');
+
+      // Event-driven wait via fs.watch — sub-ms latency, zero CPU between events.
+      // 3 s deadline is ~6× the configured timer; covers worst-case CI scheduling
+      // jitter without bleeding test time when the shutdown happens promptly.
+      const gone = await waitForFileGone(INFO_PATH, 3000);
+      assert.ok(gone, 'daemon self-shut-down within the configured window');
+    } finally {
+      await ensureDaemonStopped();
+    }
+  });
+
+  test('QUNITX_DAEMON_IDLE_TIMEOUT=false disables auto-shutdown', async (assert) => {
+    // Paired with the short-timeout test above. If the Infinity branch in
+    // resetIdleTimer regressed and Node's setTimeout clamp converted Infinity to
+    // 1 ms, the daemon would vanish well before this 700 ms wait elapses — strictly
+    // longer than the 500 ms timer the previous test exercised, so a clamp bug is
+    // unambiguously visible here.
+    await ensureDaemonStopped();
+    try {
+      const start = await cli('daemon start', {
+        env: { ...CLI_ENV, QUNITX_DAEMON_IDLE_TIMEOUT: 'false' },
+      });
+      assert.exitCode(start, 0);
+
+      await new Promise((r) => setTimeout(r, 700));
+
+      assert.ok(existsSync(INFO_PATH), 'info file still present after the wait');
+      const status = await cli('daemon status');
+      assert.exitCode(status, 0);
+      assert.includes(status, 'Daemon running');
+    } finally {
+      await ensureDaemonStopped();
+    }
+  });
+
+  test('invalid QUNITX_DAEMON_IDLE_TIMEOUT prints a warning to stderr and starts on the default', async (assert) => {
+    await ensureDaemonStopped();
+    try {
+      const start = await cli('daemon start', {
+        env: { ...CLI_ENV, QUNITX_DAEMON_IDLE_TIMEOUT: 'garbage-value' },
+      });
+      assert.exitCode(start, 0, 'malformed env value must not block daemon startup');
+      assert.includes(start, 'Daemon started', 'daemon still starts on the default');
+
+      // Warning is emitted by the CLI process before spawning (so it isn't lost to
+      // the daemon's detached stdio:'ignore'). Exact phrasing is exercised in the
+      // parser unit test; here we just confirm the warning reached the user's stderr.
+      assert.ok(
+        start.stderr.includes('QUNITX_DAEMON_IDLE_TIMEOUT'),
+        `warning should mention the env var name; got stderr: ${JSON.stringify(start.stderr)}`,
+      );
+      assert.ok(
+        start.stderr.includes('garbage-value'),
+        'warning should quote the bad value so the user knows what to fix',
+      );
     } finally {
       await ensureDaemonStopped();
     }

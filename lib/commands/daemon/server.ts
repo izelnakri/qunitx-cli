@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { writeFile, unlink, stat, chmod } from 'node:fs/promises';
 import path from 'node:path';
 import { daemonSocketPath, daemonInfoPath } from '../../utils/daemon-socket-path.ts';
+import { parseDaemonIdleTimeout } from '../../utils/parse-daemon-idle-timeout.ts';
 import { attachLineParser, probeSocket } from './socket-utils.ts';
 import { setupConfig } from '../../setup/config.ts';
 import { launchBrowser } from '../../setup/browser.ts';
@@ -12,10 +13,13 @@ import type { Request, ResponseChunk, RunRequest, DaemonInfo } from './protocol.
 import type { Browser } from 'playwright-core';
 import type { Config } from '../../types.ts';
 
-// Daemon idle window: 30 minutes after the last run finishes, the daemon shuts itself
-// down. Long enough for typical bursts, short enough that a forgotten daemon reclaims
-// resources without manual intervention.
-const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+// Daemon idle window: after the last run finishes, the daemon shuts itself down.
+// Default 30 minutes; override with `QUNITX_DAEMON_IDLE_TIMEOUT` (see
+// `parseDaemonIdleTimeout`). `Infinity` ⇒ no auto-shutdown — `resetIdleTimer` skips
+// arming the timer in that case. Read once at startup so a running daemon's lifetime
+// is fixed by the env at spawn time. The CLI side validates and warns separately,
+// so any warning here would only land in QUNITX_DAEMON_LOG (or be lost).
+const IDLE_TIMEOUT_MS = parseDaemonIdleTimeout(process.env.QUNITX_DAEMON_IDLE_TIMEOUT).ms;
 // Liveness probe ceiling: if a stale socket file's owning process is gone, connect()
 // returns ECONNREFUSED almost immediately; the timeout only kicks in when the OS is
 // momentarily slow.
@@ -218,6 +222,10 @@ async function shutdownDaemon(state: DaemonState, reason: string): Promise<void>
 
 function resetIdleTimer(state: DaemonState): void {
   if (state.idleTimer) clearTimeout(state.idleTimer);
+  // QUNITX_DAEMON_IDLE_TIMEOUT=false → Infinity → no auto-shutdown. Skip setTimeout
+  // entirely: Node clamps any delay > 2^31-1 ms (~24.8 days) to 1 ms, so passing
+  // Infinity would fire the shutdown almost immediately — the opposite of "never".
+  if (!Number.isFinite(IDLE_TIMEOUT_MS)) return;
   // unref so the timer itself doesn't keep the event loop alive — the socket server
   // is the only ref'd handle. When the timer fires, shutdown closes the server, the
   // loop drains, and the process exits cleanly.

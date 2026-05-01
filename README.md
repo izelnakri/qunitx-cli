@@ -115,7 +115,7 @@ What it does: cold-start cost dominates a single `qunitx` run — launching Chro
 
 A single one-off run won't get faster from spinning the daemon up; it's an opt-in optimization aimed at two situations:
 
-- **Local TDD loops.** Export `QUNITX_DAEMON=1` in your shell profile (or run `qunitx daemon start` once at the top of your session) and forget about it — subsequent runs reuse the daemon automatically until you `daemon stop` or 30 idle minutes pass.
+- **Local TDD loops.** Export `QUNITX_DAEMON=1` in your shell profile (or run `qunitx daemon start` once at the top of your session) and forget about it — subsequent runs reuse the daemon automatically until you `daemon stop` or 30 idle minutes pass. Override the idle window with `QUNITX_DAEMON_IDLE_TIMEOUT` (`1h`, `45s`, `500ms`; bare numbers are minutes), or set it to `false` to disable auto-shutdown entirely.
 - **Monorepo CI** where each package shells out to `qunitx` separately. Set `QUNITX_DAEMON=1` for the job and a single daemon is auto-spawned and reused across every package's invocation.
 
 ```sh
