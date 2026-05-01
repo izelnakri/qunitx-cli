@@ -32,6 +32,7 @@ help:
 	@echo "  bench-update    Alias for bench"
 	@echo "  bench-check     Run benchmarks and fail if regression > REGRESSION_THRESHOLD%"
 	@echo "  build-sea       Build SEA binary for the local platform and publish its npm package"
+	@echo "  smoke-sea       Smoke-test the locally-built SEA binary (~10s; runs inside build-sea)"
 	@echo "  release         Bump version, update changelog, tag, push, publish to npm"
 	@echo ""
 	@echo "Env-var escape hatches:"
@@ -161,10 +162,42 @@ build-sea:
 	chmod +x qunitx-sea; \
 	rm -rf npm/$$TARGET/bin && mkdir -p npm/$$TARGET/bin; \
 	cp qunitx-sea npm/$$TARGET/bin/qunitx; \
+	$(MAKE) smoke-sea TARGET=$$TARGET || { rm -f sea-entry.cjs sea-config.json sea.blob qunitx-sea; exit 1; }; \
 	VERSION=$$(node -p 'require("./package.json").version'); \
 	node scripts/set-pkg-version.js npm/$$TARGET/package.json $$VERSION; \
 	npm publish ./npm/$$TARGET --access public; \
 	rm -f sea-entry.cjs sea-config.json sea.blob qunitx-sea
+
+# Focused smoke test for the SEA binary at npm/$(TARGET)/bin/qunitx.
+# Catches the SEA-specific failure surface (CJS module-load crashes, asset
+# loading via node:sea, daemon respawn path, esbuild sidecar discovery, end-to-end
+# Chrome run) in ~10 seconds — without re-running the full 2:41 npm test suite
+# that already covers source (make check) and bundled JS (test:release).
+# TARGET is auto-detected from the host platform when not passed in.
+.PHONY: smoke-sea
+smoke-sea:
+	@TARGET="$(TARGET)"; \
+	if [ -z "$$TARGET" ]; then \
+	  NODE_PLATFORM=$$(node -p "process.platform"); NODE_ARCH=$$(node -p "process.arch"); \
+	  if [ "$$NODE_PLATFORM" = "darwin" ]; then TARGET="darwin-$$NODE_ARCH"; \
+	  elif [ "$$NODE_PLATFORM" = "linux" ]; then TARGET="linux-$$NODE_ARCH"; \
+	  else echo "smoke-sea: unsupported platform $$NODE_PLATFORM-$$NODE_ARCH" >&2; exit 1; fi; \
+	fi; \
+	SEA=$$(pwd)/npm/$$TARGET/bin/qunitx; \
+	ESBUILD=$$(pwd)/node_modules/@esbuild/$$TARGET/bin/esbuild; \
+	if [ ! -x "$$SEA" ]; then echo "smoke-sea: $$SEA not found (run make build-sea first)" >&2; exit 1; fi; \
+	echo "Smoking SEA binary at $$SEA..."; \
+	OUT=tmp/sea-smoke-$$$$; FAIL=0; \
+	"$$SEA" --version >/dev/null                                                      || { echo "  ✗ --version" >&2; FAIL=1; }; \
+	"$$SEA" daemon 2>&1 | grep -q "Usage: qunitx daemon"                              || { echo "  ✗ daemon (no args)" >&2; FAIL=1; }; \
+	ESBUILD_BINARY_PATH=$$ESBUILD "$$SEA" daemon start >/dev/null                     || { echo "  ✗ daemon start" >&2; FAIL=1; }; \
+	"$$SEA" daemon stop >/dev/null                                                    || { echo "  ✗ daemon stop" >&2; FAIL=1; }; \
+	ESBUILD_BINARY_PATH=$$ESBUILD "$$SEA" test/fixtures/passing-tests.ts --output=$$OUT --no-daemon 2>&1 | grep -q "# pass 3" \
+	                                                                                  || { echo "  ✗ run path" >&2; FAIL=1; }; \
+	rm -rf $$OUT; \
+	"$$SEA" daemon stop >/dev/null 2>&1 || true; \
+	if [ $$FAIL -ne 0 ]; then echo "smoke-sea: FAILED" >&2; exit 1; fi; \
+	echo "smoke-sea: OK"
 
 # Lint, bump version, changelog, publish (SEA + JS), commit, tag, push.
 # Publishes the main package (JS fallback) and the local platform's SEA package.

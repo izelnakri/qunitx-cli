@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import fs, { existsSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { blue, magenta } from '../../utils/color.ts';
 import { daemonInfoPath, daemonSocketPath } from '../../utils/daemon-socket-path.ts';
 import { parseDaemonIdleTimeout } from '../../utils/parse-daemon-idle-timeout.ts';
@@ -39,9 +38,24 @@ ${color('QUNITX_DAEMON_LOG=<path>')}     : redirect the daemon's stdout + stderr
 ${highlight('Tip:')} set ${color('QUNITX_DAEMON=1')} to auto-spawn the daemon on the first qunitx run; ${color('$ qunitx --help')} for top-level options.
 `;
 
-const __filename = fileURLToPath(import.meta.url);
-// daemon/index.ts → ../../../cli.ts
-const CLI_ENTRY = path.resolve(path.dirname(__filename), '..', '..', '..', 'cli.ts');
+/**
+ * Resolves how to respawn this CLI as the detached daemon child.
+ *
+ * - SEA: `process.execPath` IS the qunitx binary; reinvoke with `daemon _serve`.
+ *   `import.meta.url` is undefined in the CJS SEA bundle, so any path-based
+ *   resolution at module scope crashes the entire `daemon` subcommand.
+ * - Source / dist bundle (ESM): respawn `node ${process.argv[1]} daemon _serve`
+ *   so the child enters via the same entrypoint the parent did (cli.ts in
+ *   source, bin/qunitx.js when installed via npm). The previous
+ *   `fileURLToPath(import.meta.url)` + `'..','..','..','cli.ts'` resolution
+ *   was wrong for the ESM bundle too — three levels up from `dist/cli.js`
+ *   pointed outside the package.
+ */
+async function buildDaemonSpawn(): Promise<{ bin: string; args: string[] }> {
+  const sea = await import('node:sea').catch(() => null);
+  if (sea?.isSea()) return { bin: process.execPath, args: ['daemon', '_serve'] };
+  return { bin: process.execPath, args: [process.argv[1], 'daemon', '_serve'] };
+}
 
 /**
  * Dispatches `qunitx daemon <subcommand>`. `_serve` runs the in-process daemon loop
@@ -125,7 +139,8 @@ async function spawnAndWaitForDaemon(): Promise<{ pid: number } | null> {
 
   // Detached so the daemon outlives the current shell. stdio: 'ignore' detaches all
   // pipes; daemon writes its own startup line to its stderr (now /dev/null analogue).
-  spawn(process.execPath, [CLI_ENTRY, 'daemon', '_serve'], {
+  const { bin, args } = await buildDaemonSpawn();
+  spawn(bin, args, {
     detached: true,
     stdio: 'ignore',
     env: { ...process.env, QUNITX_DAEMON_CWD: process.cwd() },

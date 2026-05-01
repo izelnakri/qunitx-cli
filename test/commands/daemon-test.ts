@@ -3,13 +3,11 @@ import process from 'node:process';
 import fs from 'node:fs/promises';
 import nodeFs, { existsSync } from 'node:fs';
 import path from 'node:path';
-import { promisify } from 'node:util';
-import { exec } from 'node:child_process';
 import { daemonSocketPath, daemonInfoPath } from '../../lib/utils/daemon-socket-path.ts';
+import { spawnCapture, type CapturedError, type CapturedResult } from '../helpers/shell.ts';
 import '../helpers/custom-asserts.ts';
 
 const CWD = process.cwd();
-const shellExec = promisify(exec);
 
 // Strip every env var that would cause `shouldUseDaemon` or `shouldAutoSpawnDaemon`
 // to short-circuit, so this file's `node cli.ts <test>` invocations actually route
@@ -25,24 +23,22 @@ const CLI_ENV = (() => {
   return env;
 })();
 
-interface CliResult {
-  stdout: string;
-  stderr: string;
-  code: number;
-}
-
-const cli = (
+// Spawn via shared helper so QUNITX_BIN is honored: when scripts/test-release.sh sets
+// it to the installed binary (or the SEA blob), every daemon invocation here actually
+// exercises the published artefact instead of source. The previous local exec() helper
+// hardcoded `node cli.ts` and silently bypassed the swap, so daemon-specific bugs in
+// any released binary slipped past the consumer test.
+const cli = async (
   args: string,
   opts: { failOk?: boolean; env?: NodeJS.ProcessEnv } = {},
-): Promise<CliResult> =>
-  shellExec(`node ${CWD}/cli.ts ${args}`, { env: opts.env ?? CLI_ENV }).then(
-    ({ stdout, stderr }) => ({ stdout, stderr, code: 0 }),
-    (err: NodeJS.ErrnoException & { stdout: string; stderr: string }) => {
-      if (opts.failOk)
-        return { stdout: err.stdout, stderr: err.stderr, code: err.code as unknown as number };
-      throw err;
-    },
-  );
+): Promise<CapturedResult> => {
+  try {
+    return await spawnCapture(`node ${CWD}/cli.ts ${args}`, { env: opts.env ?? CLI_ENV });
+  } catch (err) {
+    if (opts.failOk) return err as CapturedError;
+    throw err;
+  }
+};
 
 const SOCKET_PATH = daemonSocketPath(CWD);
 const INFO_PATH = daemonInfoPath(CWD);
