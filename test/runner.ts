@@ -40,9 +40,12 @@ const watchMode = process.argv.includes('--watch');
 const cliFiles = watchMode ? [] : process.argv.slice(2);
 
 // Clearing artifacts, starting the semaphore server, and discovering test files are all
-// independent — run them concurrently to cut startup time.
+// independent — run them concurrently to cut startup time. tmp/ is recreated after the
+// rm so node:test can open the per-phase perf-reporter destination on phase 1 spawn.
 const [, semaphore, [fastFiles, watchReruns, leakFiles]] = await Promise.all([
-  fs.rm('./tmp', { recursive: true, force: true }),
+  fs
+    .rm('./tmp', { recursive: true, force: true })
+    .then(() => fs.mkdir('./tmp', { recursive: true })),
   createSemaphoreServer(availableParallelism()),
   cliFiles.length > 0
     ? Promise.resolve([cliFiles, [], []] as [string[], string[], string[]])
@@ -61,10 +64,18 @@ const [, semaphore, [fastFiles, watchReruns, leakFiles]] = await Promise.all([
       ]),
 ]);
 
-const phaseResults: Array<{ name: string; tests: number; durationMs: number }> = [];
+type PerfEntry = { name: string; file: string; ms: number; kind: string; nesting: number };
+
+const REPORTER_PATH = path.resolve('test/helpers/ci-test-summary-reporter.ts');
+const phaseResults: Array<{
+  name: string;
+  slug: string;
+  tests: number;
+  durationMs: number;
+}> = [];
 
 // Phase 1: fast suite — all tests except watch-rerun (concurrent)
-const exitCode1 = await runPhase('Fast suite', fastFiles);
+const exitCode1 = await runPhase('Fast suite', 'fast', fastFiles);
 
 // Sweep between phases: kill Chrome orphaned by SIGKILL'd watch-test.ts children before
 // Phase 2 runs, so orphans from Phase 1 don't inflate the Phase 3 leak-test counts.
@@ -73,7 +84,9 @@ await sweepOrphanedChrome();
 // Phase 2: watch-rerun suite — runs alone so its long-lived Chrome slots don't starve
 // Phase 1 tests. Skipped in watch mode (watch-rerun tests are not meaningful there).
 const exitCode2 =
-  !watchMode && watchReruns.length > 0 ? await runPhase('Watch-rerun', watchReruns) : 0;
+  !watchMode && watchReruns.length > 0
+    ? await runPhase('Watch-rerun', 'watch-rerun', watchReruns)
+    : 0;
 
 // Sweep again: kill Chrome orphaned by the watch-rerun tests (SIGKILL'd on grace-period
 // timeout) before the leak tests inspect /tmp and /proc.
@@ -81,54 +94,109 @@ await sweepOrphanedChrome();
 
 // Phase 3: resource-leak tests, isolated after both sweeps so they see a clean state.
 // Skipped in watch mode — interactive, and leak tests are not meaningful there.
-const exitCode3 = !watchMode && leakFiles.length > 0 ? await runPhase('Leak tests', leakFiles) : 0;
+const exitCode3 =
+  !watchMode && leakFiles.length > 0 ? await runPhase('Leak tests', 'leak', leakFiles) : 0;
 
 // GitHub Actions step summary: small results table at the top of the run UI.
 // No-op locally (GITHUB_STEP_SUMMARY unset) and in watch mode (no end-of-run).
 if (!watchMode && process.env.GITHUB_STEP_SUMMARY) {
   let totalTests = 0;
   let totalMs = 0;
-  let slowest = phaseResults[0];
+  let slowestPhase = phaseResults[0];
   for (const p of phaseResults) {
     totalTests += p.tests;
     totalMs += p.durationMs;
-    if (p.durationMs > slowest.durationMs) slowest = p;
+    if (p.durationMs > slowestPhase.durationMs) slowestPhase = p;
   }
+
+  const allPerf = (
+    await Promise.all(phaseResults.map((p) => readPerf(`./tmp/perf-${p.slug}.jsonl`)))
+  ).flat();
+  const tests = allPerf.filter((e) => e.kind === 'test');
+  const groups = allPerf.filter((e) => e.kind === 'suite' && e.nesting === 0);
+  const slowestTest = tests.reduce((m, e) => (e.ms > m.ms ? e : m), tests[0]);
+  const slowestGroup = groups.reduce((m, e) => (e.ms > m.ms ? e : m), groups[0]);
+  const fileMs = new Map<string, number>();
+  for (const e of tests) if (e.file) fileMs.set(e.file, (fileMs.get(e.file) ?? 0) + e.ms);
+  const [slowestFileName, slowestFileMs] = [...fileMs].reduce((m, e) => (e[1] > m[1] ? e : m), [
+    '',
+    0,
+  ] as [string, number]);
+
   const fmt = (ms: number): string =>
     ms >= 60_000
       ? `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
       : `${(ms / 1000).toFixed(1)}s`;
+  // Pipes in qunit module names ("Commands | Version tests") break markdown
+  // table cells; escape with a backslash per GitHub-Flavored Markdown.
+  const cell = (s: string): string => s.replace(/\|/g, '\\|');
+  // slowestGroup intentionally omits a file path: node:test reports the suite
+  // event's `file` as where qunit's `module()` is *defined* (its library),
+  // not where it's called. Deriving the real file from child test events is
+  // unreliable under parallel test workers (events interleave across files).
+  // The group's qunit name is unique and greppable on its own.
   await fs.appendFile(
     process.env.GITHUB_STEP_SUMMARY,
     `## qunitx-cli test results\n\n` +
       `| metric | value |\n|---|---|\n` +
       `| tests | ${totalTests} ok |\n` +
       `| duration | ${fmt(totalMs)} |\n` +
-      `| slowest phase | ${slowest.name} (${fmt(slowest.durationMs)}) |\n\n`,
+      `| slowest phase | ${slowestPhase.name} (${fmt(slowestPhase.durationMs)}) |\n` +
+      (slowestFileName
+        ? `| slowest file | \`${cell(slowestFileName)}\` (${fmt(slowestFileMs)}) |\n`
+        : '') +
+      (slowestGroup
+        ? `| slowest group | ${cell(slowestGroup.name)} (${fmt(slowestGroup.ms)}) |\n`
+        : '') +
+      (slowestTest
+        ? `| slowest test | ${cell(slowestTest.name)} — \`${cell(slowestTest.file)}\` (${fmt(slowestTest.ms)}) |\n`
+        : '') +
+      '\n',
   );
 }
 
 semaphore.close();
 process.exit(exitCode1 || exitCode2 || exitCode3);
 
-async function runPhase(name: string, files: string[]): Promise<number> {
+async function runPhase(name: string, slug: string, files: string[]): Promise<number> {
   const start = performance.now();
-  const { exitCode, tap } = await spawnTests(files);
+  const { exitCode, tap } = await spawnTests(files, slug);
   phaseResults.push({
     name,
+    slug,
     tests: Number(tap.match(/^# tests (\d+)$/m)?.[1] ?? 0),
     durationMs: performance.now() - start,
   });
   return exitCode;
 }
 
-function spawnTests(files: string[]): Promise<{ exitCode: number; tap: string }> {
+async function readPerf(perfPath: string): Promise<PerfEntry[]> {
+  const text = await fs.readFile(perfPath, 'utf8').catch(() => '');
+  return text
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => JSON.parse(l) as PerfEntry);
+}
+
+function spawnTests(files: string[], slug?: string): Promise<{ exitCode: number; tap: string }> {
   return new Promise((resolve) => {
-    // stdout is piped (not inherited) so we can scrape the trailing `# tests N` summary
-    // for the GitHub Actions step summary while still streaming TAP to the parent stdout.
+    // stdout is piped (not inherited) so we can scrape the trailing `# tests N`
+    // summary while still streaming TAP to the parent stdout. When `slug` is
+    // provided (non-watch mode), a second reporter writes per-test timing JSONL
+    // to tmp/perf-<slug>.jsonl for the step-summary slowest-* rows.
+    const reporterArgs = slug
+      ? [
+          '--test-reporter=tap',
+          '--test-reporter-destination=stdout',
+          `--test-reporter=${REPORTER_PATH}`,
+          `--test-reporter-destination=./tmp/perf-${slug}.jsonl`,
+        ]
+      : [];
     const child = spawn(
       process.execPath,
-      watchMode ? ['--test', '--watch', ...files] : ['--test', '--test-force-exit', ...files],
+      watchMode
+        ? ['--test', '--watch', ...files]
+        : ['--test', '--test-force-exit', ...reporterArgs, ...files],
       {
         stdio: watchMode ? 'inherit' : ['inherit', 'pipe', 'inherit'],
         env: {
