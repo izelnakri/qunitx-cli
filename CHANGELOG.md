@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.5] - 2026-05-02
+[`v0.23.4...v0.23.5`](https://github.com/izelnakri/qunitx-cli/compare/v0.23.4...v0.23.5)
+
+### Bug Fixes
+- Suppress spurious change-after-add races on Windows — 2026-05-02 by [@izelnakri](https://github.com/izelnakri) ([`d761bbb`](https://github.com/izelnakri/qunitx-cli/commit/d761bbb6f1ddb8ef9c18a122ffd83ae25e44e7f6))
+- Resolve reporter via file:// URL for Windows ESM loader — 2026-05-02 by [@izelnakri](https://github.com/izelnakri) ([`98c07da`](https://github.com/izelnakri/qunitx-cli/commit/98c07da3c6a0132dbdb123fcd60e15d6bebe1994))
+
 ## [0.23.4] - 2026-05-01
 [`v0.23.2...v0.23.4`](https://github.com/izelnakri/qunitx-cli/compare/v0.23.2...v0.23.4)
 
