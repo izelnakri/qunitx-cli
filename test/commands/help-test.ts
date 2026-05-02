@@ -40,6 +40,7 @@ Optional flags:
 --before : run a script before the tests(i.e start a new web server before tests)
 --after : run a script after the tests(i.e save test results to a file)
 --no-daemon : don't use the daemon for this run — skips a running daemon and prevents QUNITX_DAEMON auto-spawn
+--trace-perf : write timestamped startup-perf trace lines to stderr (Chrome pre-launch, module load, browser bind)
 
 Example: $ qunitx test/foo.ts app/e2e --debug --watch --before=scripts/start-new-webserver.js --after=scripts/write-test-results.js
 
@@ -50,7 +51,9 @@ $ qunitx daemon <start|stop|status>      # Optional persistent daemon — ~2× f
 
 Environment:
 QUNITX_DAEMON=1     : auto-spawn the daemon on the first qunitx run; reuse it on every run after (overrides the CI=1 bypass)
-QUNITX_NO_DAEMON=1  : never use the daemon for this run`;
+QUNITX_NO_DAEMON=1  : never use the daemon for this run
+QUNITX_BROWSER=...  : default browser engine when --browser is not passed (chromium, firefox, webkit)
+QUNITX_DEBUG=1      : enables --debug for every run; per-invocation --debug=false still wins`;
 
 module('Commands | Version tests', { concurrency: true }, () => {
   test('$ qunitx --version -> prints only the version number', async (assert) => {

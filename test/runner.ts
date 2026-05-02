@@ -61,8 +61,10 @@ const [, semaphore, [fastFiles, watchReruns, leakFiles]] = await Promise.all([
       ]),
 ]);
 
+const phaseResults: Array<{ name: string; tests: number; durationMs: number }> = [];
+
 // Phase 1: fast suite — all tests except watch-rerun (concurrent)
-const exitCode1 = await spawnTests(fastFiles);
+const exitCode1 = await runPhase('Fast suite', fastFiles);
 
 // Sweep between phases: kill Chrome orphaned by SIGKILL'd watch-test.ts children before
 // Phase 2 runs, so orphans from Phase 1 don't inflate the Phase 3 leak-test counts.
@@ -70,7 +72,8 @@ await sweepOrphanedChrome();
 
 // Phase 2: watch-rerun suite — runs alone so its long-lived Chrome slots don't starve
 // Phase 1 tests. Skipped in watch mode (watch-rerun tests are not meaningful there).
-const exitCode2 = !watchMode && watchReruns.length > 0 ? await spawnTests(watchReruns) : 0;
+const exitCode2 =
+  !watchMode && watchReruns.length > 0 ? await runPhase('Watch-rerun', watchReruns) : 0;
 
 // Sweep again: kill Chrome orphaned by the watch-rerun tests (SIGKILL'd on grace-period
 // timeout) before the leak tests inspect /tmp and /proc.
@@ -78,18 +81,56 @@ await sweepOrphanedChrome();
 
 // Phase 3: resource-leak tests, isolated after both sweeps so they see a clean state.
 // Skipped in watch mode — interactive, and leak tests are not meaningful there.
-const exitCode3 = !watchMode && leakFiles.length > 0 ? await spawnTests(leakFiles) : 0;
+const exitCode3 = !watchMode && leakFiles.length > 0 ? await runPhase('Leak tests', leakFiles) : 0;
+
+// GitHub Actions step summary: small results table at the top of the run UI.
+// No-op locally (GITHUB_STEP_SUMMARY unset) and in watch mode (no end-of-run).
+if (!watchMode && process.env.GITHUB_STEP_SUMMARY) {
+  let totalTests = 0;
+  let totalMs = 0;
+  let slowest = phaseResults[0];
+  for (const p of phaseResults) {
+    totalTests += p.tests;
+    totalMs += p.durationMs;
+    if (p.durationMs > slowest.durationMs) slowest = p;
+  }
+  const fmt = (ms: number): string =>
+    ms >= 60_000
+      ? `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
+      : `${(ms / 1000).toFixed(1)}s`;
+  await fs.appendFile(
+    process.env.GITHUB_STEP_SUMMARY,
+    `## qunitx-cli test results\n\n` +
+      `| metric | value |\n|---|---|\n` +
+      `| tests | ${totalTests} ok |\n` +
+      `| duration | ${fmt(totalMs)} |\n` +
+      `| slowest phase | ${slowest.name} (${fmt(slowest.durationMs)}) |\n\n`,
+  );
+}
 
 semaphore.close();
 process.exit(exitCode1 || exitCode2 || exitCode3);
 
-function spawnTests(files: string[]): Promise<number> {
+async function runPhase(name: string, files: string[]): Promise<number> {
+  const start = performance.now();
+  const { exitCode, tap } = await spawnTests(files);
+  phaseResults.push({
+    name,
+    tests: Number(tap.match(/^# tests (\d+)$/m)?.[1] ?? 0),
+    durationMs: performance.now() - start,
+  });
+  return exitCode;
+}
+
+function spawnTests(files: string[]): Promise<{ exitCode: number; tap: string }> {
   return new Promise((resolve) => {
+    // stdout is piped (not inherited) so we can scrape the trailing `# tests N` summary
+    // for the GitHub Actions step summary while still streaming TAP to the parent stdout.
     const child = spawn(
       process.execPath,
       watchMode ? ['--test', '--watch', ...files] : ['--test', '--test-force-exit', ...files],
       {
-        stdio: 'inherit',
+        stdio: watchMode ? 'inherit' : ['inherit', 'pipe', 'inherit'],
         env: {
           // Default lives before ...process.env so a user override (incl.
           // `NODE_COMPILE_CACHE=` to disable) wins over our project default.
@@ -105,7 +146,12 @@ function spawnTests(files: string[]): Promise<number> {
         },
       },
     );
-    child.once('exit', (code) => resolve(code ?? 0));
+    let tap = '';
+    child.stdout?.on('data', (chunk: Buffer) => {
+      process.stdout.write(chunk);
+      tap += chunk.toString();
+    });
+    child.once('exit', (code) => resolve({ exitCode: code ?? 0, tap }));
   });
 }
 

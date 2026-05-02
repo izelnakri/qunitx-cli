@@ -89,13 +89,11 @@ jobs:
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
-          QUNITX_VERBOSE: 1
       - run: npm test
         if: matrix.os != 'ubuntu-latest'
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
-          QUNITX_VERBOSE: 1
       - uses: codecov/codecov-action@v6
         if: matrix.os == 'ubuntu-latest'
         with:

@@ -29,6 +29,7 @@ ${color('--browser')} : browser engine to run tests in: chromium, firefox, webki
 ${color('--before')} : run a script before the tests(i.e start a new web server before tests)
 ${color('--after')} : run a script after the tests(i.e save test results to a file)
 ${color('--no-daemon')} : don't use the daemon for this run — skips a running daemon and prevents ${color('QUNITX_DAEMON')} auto-spawn
+${color('--trace-perf')} : write timestamped startup-perf trace lines to stderr (Chrome pre-launch, module load, browser bind)
 
 ${highlight('Example:')} $ ${color('qunitx test/foo.ts app/e2e --debug --watch --before=scripts/start-new-webserver.js --after=scripts/write-test-results.js')}
 
@@ -40,6 +41,8 @@ ${color('$ qunitx daemon <start|stop|status>')}      # Optional persistent daemo
 ${highlight('Environment:')}
 ${color('QUNITX_DAEMON=1')}     : auto-spawn the daemon on the first qunitx run; reuse it on every run after (overrides the CI=1 bypass)
 ${color('QUNITX_NO_DAEMON=1')}  : never use the daemon for this run
+${color('QUNITX_BROWSER=...')}  : default browser engine when ${color('--browser')} is not passed (chromium, firefox, webkit)
+${color('QUNITX_DEBUG=1')}      : enables ${color('--debug')} for every run; per-invocation ${color('--debug=false')} still wins
 `);
 }
 

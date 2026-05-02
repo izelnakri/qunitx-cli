@@ -354,6 +354,16 @@ function formatTestFailure(
     `last stdout chunk: ${lastStdout ? `${lastStdout.time.toFixed(0)}ms (${lastStdout.data.length} bytes)` : '<none>'}`,
     `last stderr chunk: ${lastStderr ? `${lastStderr.time.toFixed(0)}ms (${lastStderr.data.length} bytes)` : '<none>'}`,
   ];
+  if (err.stdout) {
+    // Tail rather than full dump: failing-CLI stdouts are often hundreds of TAP
+    // lines, but the diagnostic value lives at the end (last assertion, summary
+    // line, crash trace). Reading raw CI logs without this tail forces digging
+    // into chunk buffers in IDE — which the per-chunk timestamps above point at.
+    const allLines = err.stdout.split('\n');
+    const tail = allLines.slice(-50).join('\n');
+    const truncated = allLines.length > 50 ? ` (last 50 of ${allLines.length} lines)` : '';
+    lines.push(`STDOUT${truncated}:\n${tail}`);
+  }
   if (err.stderr) lines.push(`STDERR: ${err.stderr}`);
   return lines.join('\n');
 }

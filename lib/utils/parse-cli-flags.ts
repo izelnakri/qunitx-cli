@@ -105,6 +105,13 @@ export function parseCliFlags(projectRoot: string): ParsedFlags {
     providedFlags.browser = envBrowser as 'chromium' | 'firefox' | 'webkit';
   }
 
+  // QUNITX_DEBUG env mirrors --debug: lower-priority than the explicit flag so
+  // `--debug=false` still wins per-invocation. Lets CI / scripts opt every child
+  // process into debug TAP comments without rewriting commands.
+  if (providedFlags.debug === undefined && process.env.QUNITX_DEBUG) {
+    providedFlags.debug = true;
+  }
+
   return { ...providedFlags, inputs: Array.from(providedFlags.inputs) };
 }
 
