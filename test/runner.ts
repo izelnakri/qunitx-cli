@@ -21,6 +21,7 @@
 import fs from 'node:fs/promises';
 import os, { availableParallelism } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import createSemaphoreServer from './helpers/semaphore-server.ts';
 import { killProcessGroup } from '../lib/utils/kill-process-group.ts';
@@ -66,7 +67,11 @@ const [, semaphore, [fastFiles, watchReruns, leakFiles]] = await Promise.all([
 
 type PerfEntry = { name: string; file: string; ms: number; kind: string; nesting: number };
 
-const REPORTER_PATH = path.resolve('test/helpers/ci-test-summary-reporter.ts');
+// pathToFileURL is required on Windows: an absolute path like
+// `D:\a\qunitx-cli\test\helpers\ci-test-summary-reporter.ts` is parsed by Node's
+// ESM loader as a URL with protocol `d:`, which it rejects (ERR_UNSUPPORTED_ESM_URL_SCHEME).
+// pathToFileURL emits `file:///D:/a/.../reporter.ts` on Windows and `file:///path/...` on POSIX.
+const REPORTER_PATH = pathToFileURL(path.resolve('test/helpers/ci-test-summary-reporter.ts')).href;
 const phaseResults: Array<{
   name: string;
   slug: string;
