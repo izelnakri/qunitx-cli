@@ -51,11 +51,17 @@ module('--watch re-run tests', { concurrency: true }, () => {
       const rerunBuf = await waitForRunComplete(session, 2, 're-run to start');
 
       const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
+      // Pass `{ stdout, fullStdout }`: the assertion checks the latest-run slice for
+      // correctness (older runs may also contain "# pass 3" and would be a false positive),
+      // but on failure surfaces the full session buffer including every "QUnitX running:"
+      // marker and the watcher event log — needed to root-cause flakes like the change-after-add
+      // race that lib/setup/file-watcher.ts ADD_SUPPRESS_WINDOW_MS now suppresses.
+      const ctx = { stdout: rerunOutput, fullStdout: rerunBuf };
       // Filtered run only executes the newly added file (3 tests).
-      assert.includes(rerunOutput, '# pass 3');
-      assert.includes(rerunOutput, '# fail 0');
+      assert.includes(ctx, '# pass 3');
+      assert.includes(ctx, '# fail 0');
       // The new file's module name appears in the filtered re-run output.
-      assert.includes(rerunOutput, newId);
+      assert.includes(ctx, newId);
     } finally {
       await session.kill();
     }

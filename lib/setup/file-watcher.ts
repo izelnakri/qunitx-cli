@@ -10,6 +10,23 @@ const CHANGE_DEDUPE_MS = 10;
 const SYMLINK_POLL_INTERVAL_MS = 500;
 const OVERLAYFS_RENAME_RETRY_MS = 50;
 const RESCAN_INTERVAL_MS = 1_000;
+// Windows fs.watch (ReadDirectoryChangesW) fires both a `rename` (→ classified as 'add')
+// AND one or more spurious `change` events for a single fs.writeFile of a new file. The
+// trailing 'change' arrives after the add's filtered-rebuild has completed, so the existing
+// `_building` gate doesn't catch it — it ends up triggering a redundant FULL rebuild that
+// races the filtered one. Suppressing 'change' for files added within this window kills the
+// race without affecting genuine post-add edits (rare and >> 1s apart in practice).
+const ADD_SUPPRESS_WINDOW_MS = 1_000;
+// Per-Config map of `filePath → ms timestamp` recording when each file was last processed
+// as an 'add'. Module-scoped (not on Config) since it is purely watcher-internal state;
+// the WeakMap entries are GC'd with the Config they belong to.
+const justAddedAt: WeakMap<Config, Map<string, number>> = new WeakMap();
+
+function recordJustAdded(config: Config, filePath: string): void {
+  let map = justAddedAt.get(config);
+  if (!map) justAddedAt.set(config, (map = new Map()));
+  map.set(filePath, Date.now());
+}
 
 /**
  * Starts `fs.watch` watchers for each lookup path and calls `onEventFunc` on JS/TS file changes,
@@ -280,6 +297,14 @@ export function handleWatchEvent(
   if (event === 'change' && config._building && config._justAddedFiles?.has(filePath))
     return Promise.resolve();
 
+  // Same race, post-build: Windows fs.watch fires a trailing 'change' AFTER the add's
+  // build completes, which the `_building` gate above misses. See ADD_SUPPRESS_WINDOW_MS.
+  if (event === 'change') {
+    const addedAt = justAddedAt.get(config)?.get(filePath);
+    if (addedAt !== undefined && Date.now() - addedAt < ADD_SUPPRESS_WINDOW_MS)
+      return Promise.resolve();
+  }
+
   mutateFSTree(config.fsTree, event, filePath);
 
   console.log(
@@ -294,6 +319,8 @@ export function handleWatchEvent(
     '#',
     magenta().bold('=================================================================='),
   );
+
+  if (event === 'add') recordJustAdded(config, filePath);
 
   if (config._building) {
     // Queue this event so it fires immediately after the current build finishes (last-write-wins).

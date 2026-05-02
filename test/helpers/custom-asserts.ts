@@ -284,6 +284,13 @@ function normalize(result) {
   if (typeof result === 'string' || result == null) {
     return { stdout: result ?? '' };
   }
+  // Watch-mode tests assert on a slice of session.stdout (e.g. "the last run's output")
+  // for correctness, but on failure the full buffer is what shows the rerun sequence
+  // and watcher event order. Pass `{ stdout: slice, fullStdout: session.stdout }` so
+  // the assertion checks the slice but surfaces the full buffer on failure.
+  if (typeof result === 'object' && 'stdout' in result && 'fullStdout' in result) {
+    return { stdout: String(result.stdout ?? ''), fullStdout: String(result.fullStdout ?? '') };
+  }
   const lastStdout = result.stdoutChunks?.at?.(-1);
   const lastStderr = result.stderrChunks?.at?.(-1);
   return {

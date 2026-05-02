@@ -258,6 +258,38 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
     assert.deepEqual(calls, [['/project/test/foo.js', 'change']]);
   });
 
+  test('change after a just-completed add is suppressed (Windows flake reproducer)', async (assert) => {
+    // Windows fs.watch fires both a rename (→ classified as 'add') AND one or more
+    // spurious 'change' events for a single fs.writeFile of a new file. The 'add'
+    // correctly triggers a filtered rebuild; the trailing 'change' must be suppressed
+    // — otherwise it fires a redundant FULL rebuild that races the filtered one and
+    // can stomp the user-visible re-run output. Reproduces the failure at
+    // test/flags/watch-rerun-test.ts:38 ("adding a new file ... triggers a filtered re-run").
+    const config = { fsTree: {}, projectRoot: '/project' };
+    const calls: Array<{ event: string; path: string }> = [];
+    const onEvent = (ev: string, p: string): Promise<void> => {
+      calls.push({ event: ev, path: p });
+      return Promise.resolve();
+    };
+
+    await handleWatchEvent(config as Config, ['ts'], 'add', '/project/test/new.ts', onEvent, null);
+    // Spurious change immediately after the add's build completes (Windows behaviour).
+    await handleWatchEvent(
+      config as Config,
+      ['ts'],
+      'change',
+      '/project/test/new.ts',
+      onEvent,
+      null,
+    );
+
+    assert.deepEqual(
+      calls,
+      [{ event: 'add', path: '/project/test/new.ts' }],
+      'only the add fires; trailing change is suppressed',
+    );
+  });
+
   test('_lastBuildEndMs advances on each successive build', async (assert) => {
     const config = { fsTree: { '/project/test/foo.js': null }, projectRoot: '/project' };
     const asyncBuild = () => new Promise<void>((resolve) => setTimeout(resolve, 10));
