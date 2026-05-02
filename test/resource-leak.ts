@@ -55,7 +55,9 @@ module('resource leak tests', () => {
             cwdHolders.push(
               `pid ${entry} cwd=${cwd} cmdline=${cmdline.replace(/\0/g, ' ').slice(0, 120)}`,
             );
-          } catch {}
+          } catch {
+            /* /proc entry vanished mid-scan */
+          }
         }),
       );
 
@@ -90,7 +92,9 @@ module('resource leak tests', () => {
             const status = await fs.readFile(`/proc/${entry}/status`, 'utf8');
             const ppidMatch = status.match(/^PPid:\s+(\d+)/m);
             if (ppidMatch && parseInt(ppidMatch[1]) === 1) orphans.push(entry);
-          } catch {}
+          } catch {
+            /* /proc entry vanished mid-scan */
+          }
         }),
       );
 

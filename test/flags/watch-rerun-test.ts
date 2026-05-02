@@ -203,7 +203,7 @@ module('--watch re-run tests', { concurrency: true }, () => {
     const {
       dir,
       id: id1,
-      testsDir: testsDir1,
+      testsDir: _testsDir1,
       testFile: testFile1,
       testContent,
     } = await makeWatchProject();
@@ -481,8 +481,14 @@ module('--watch re-run tests', { concurrency: true }, () => {
   test('writing through a symlink (modifying its target) triggers a re-run', async (assert) => {
     // writeFile on a symlink path opens and modifies the TARGET file. On Linux this fires
     // rename events for the symlink name, which the change deduplicator handles normally.
-    const { dir, id, symlink, target, testContent, symlinkId } =
-      await makeWatchProjectWithSymlink();
+    const {
+      dir,
+      id,
+      symlink,
+      target: _target,
+      testContent,
+      symlinkId,
+    } = await makeWatchProjectWithSymlink();
     const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
 
     try {
@@ -530,7 +536,7 @@ module('--watch re-run tests', { concurrency: true }, () => {
   test('deleting the target of a symlink (making it dangling) triggers a full re-run', async (assert) => {
     // When the symlink's target is removed, stat() on the symlink path starts failing.
     // The fs.watchFile poll detects nlink === 0 and fires 'unlink' for the symlink path.
-    const { dir, id, symlink, target, symlinkId } = await makeWatchProjectWithSymlink();
+    const { dir, id, symlink: _symlink, target, symlinkId } = await makeWatchProjectWithSymlink();
     const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
 
     try {
@@ -555,8 +561,14 @@ module('--watch re-run tests', { concurrency: true }, () => {
     // a symlink rename fires only the destination rename event via fs.watch — the source's
     // disappearance is detected by the fs.watchFile poll ~500 ms later.
     // This test verifies both mechanisms compose correctly.
-    const { dir, id, testsDir, symlink, symlinkId, testContent } =
-      await makeWatchProjectWithSymlink();
+    const {
+      dir,
+      id,
+      testsDir,
+      symlink,
+      symlinkId,
+      testContent: _testContent,
+    } = await makeWatchProjectWithSymlink();
     const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
 
     try {
@@ -589,7 +601,7 @@ module('--watch re-run tests', { concurrency: true }, () => {
   test('a dangling symlink added to the watched directory is silently ignored', async (assert) => {
     // classifyRenameEvent: stat() fails on the dangling symlink, path is not in fsTree → null.
     // No re-run, no crash, no ADDED: in output.
-    const { dir, id, testsDir } = await makeWatchProject();
+    const { dir, id: _id, testsDir } = await makeWatchProject();
     const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
 
     try {
@@ -725,7 +737,7 @@ module('--watch re-run tests', { concurrency: true }, () => {
 
       // Resolves as soon as messages contains at least n 'refresh' entries, or rejects after 5 s.
       // Checks immediately so it never sleeps when the message has already arrived.
-      function waitForNRefreshes(n: number): Promise<void> {
+      const waitForNRefreshes = (n: number): Promise<void> => {
         const count = () => messages.filter((m) => m === 'refresh').length;
         if (count() >= n) return Promise.resolve();
         return new Promise<void>((resolve, reject) => {
@@ -743,7 +755,7 @@ module('--watch re-run tests', { concurrency: true }, () => {
           };
           refreshWaiters.push(check);
         });
-      }
+      };
 
       try {
         // Trigger the error and wait reactively for the first refresh — no fixed sleep.

@@ -181,9 +181,13 @@ async function sweepOrphanedChrome(): Promise<void> {
             } else {
               try {
                 process.kill(pid, 'SIGKILL');
-              } catch {}
+              } catch {
+                /* already gone */
+              }
             }
-          } catch {}
+          } catch {
+            /* /proc entry vanished mid-scan */
+          }
         }),
       );
     } else if (process.platform === 'win32') {

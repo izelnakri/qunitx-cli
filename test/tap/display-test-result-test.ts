@@ -270,8 +270,8 @@ module('TAP | TAPDisplayTestResult | output', { concurrency: true }, () => {
     });
     assert.includes(output, "name: 'Assertion #1'", 'first assertion block must appear');
     assert.includes(output, "name: 'Assertion #2'", 'second assertion block must appear');
-    assert.strictEqual((output.match(/  ---\n/g) || []).length, 2, 'two --- delimiters');
-    assert.strictEqual((output.match(/  \.\.\.\n/g) || []).length, 2, 'two ... delimiters');
+    assert.strictEqual((output.match(/ {2}---\n/g) || []).length, 2, 'two --- delimiters');
+    assert.strictEqual((output.match(/ {2}\.\.\.\n/g) || []).length, 2, 'two ... delimiters');
     assert.strictEqual(COUNTER.errorCount, 2, 'errorCount must reflect both failures');
   });
 

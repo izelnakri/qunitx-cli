@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 
-module('{{moduleName}} Failing Tests', function (hooks) {
+module('{{moduleName}} Failing Tests', function (_hooks) {
   test('assert true works', function (assert) {
     assert.expect(3);
     assert.ok(true);
@@ -13,8 +13,8 @@ module('{{moduleName}} Failing Tests', function (hooks) {
     assert.expect(4);
 
     const wait = () =>
-      new Promise((resolve, reject) => {
-        window.setTimeout(() => {
+      new Promise((resolve) => {
+        setTimeout(() => {
           console.log('resolving async test');
           console.log({
             moduleName: 'called resolved async test with object',
@@ -35,7 +35,7 @@ module('{{moduleName}} Failing Tests', function (hooks) {
   });
 
   test('runtime error output', function (assert) {
-    let smt = {};
+    const smt = {};
 
     assert.equal(undefined, true);
     assert.deepEqual(smt.first.second, {});

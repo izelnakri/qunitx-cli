@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
-import shell, { shellFails } from '../helpers/shell.ts';
+import { shellFails } from '../helpers/shell.ts';
 
 module('Advanced Error Edge Cases Tests', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('passing a non-existent file path exits with code 1', async (assert, testMetadata) => {

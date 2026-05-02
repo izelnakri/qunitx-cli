@@ -52,8 +52,8 @@ module('Input | custom html', { concurrency: true }, () => {
 async function rmRetry(dir: string, attemptsLeft = 5, delayMs = 300): Promise<void> {
   try {
     await fs.rm(dir, { recursive: true, force: true });
-  } catch (error: any) {
-    if (error.code !== 'EBUSY' || attemptsLeft <= 1) throw error;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EBUSY' || attemptsLeft <= 1) throw error;
     await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
     await rmRetry(dir, attemptsLeft - 1, delayMs + 300);
   }

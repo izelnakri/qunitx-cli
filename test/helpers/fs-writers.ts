@@ -4,10 +4,10 @@ import crypto from 'node:crypto';
 export async function writeTestFolder(
   options = { addFailingTests: false, mixedExtensions: false },
 ) {
-  let { addFailingTests, mixedExtensions } = options;
-  let folderName = crypto.randomUUID();
-  let extension = mixedExtensions ? 'ts' : 'js';
-  let [passingsTestTemplate, failingTestTemplate] = await Promise.all([
+  const { addFailingTests, mixedExtensions } = options;
+  const folderName = crypto.randomUUID();
+  const extension = mixedExtensions ? 'ts' : 'js';
+  const [passingsTestTemplate, failingTestTemplate] = await Promise.all([
     fs.readFile(`${process.cwd()}/test/helpers/passing-tests.ts`),
     options.addFailingTests ? fs.readFile(`${process.cwd()}/test/helpers/failing-tests.ts`) : null,
     fs.mkdir(`${process.cwd()}/tmp/${folderName}`, { recursive: true }),

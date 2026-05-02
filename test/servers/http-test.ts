@@ -101,7 +101,7 @@ module('Servers | HTTPServer | query param routing', { concurrency: true }, () =
 module('Servers | HTTPServer | close()', { concurrency: true }, () => {
   test('close() terminates all connected WebSocket clients', async (assert) => {
     const server = new HTTPServer();
-    server.get('/', (req, res) => res.end('ok'));
+    server.get('/', (_req, res) => res.end('ok'));
     await server.listen(0);
     const port = (server._server.address() as net.AddressInfo).port;
 

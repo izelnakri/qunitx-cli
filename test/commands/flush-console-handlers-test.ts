@@ -15,9 +15,10 @@ module('Commands | run | flushConsoleHandlers', { concurrency: true }, () => {
   test('awaits a handler present in the Set at call time', async (assert) => {
     const handlers = new Set<Promise<void>>();
     const sideEffects: number[] = [];
-    const p = (async () => {
+    const p = new Promise<void>((resolve) => {
       sideEffects.push(1);
-    })();
+      resolve();
+    });
     handlers.add(p);
     p.finally(() => handlers.delete(p));
 

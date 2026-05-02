@@ -11,7 +11,7 @@ const execAsync = promisify(exec);
 // Absolute path to cli.ts so we can invoke it from a different working directory.
 const CLI = `${process.cwd()}/cli.ts`;
 
-module('No-HTML project tests', { concurrency: true }, (_hooks, moduleMetadata) => {
+module('No-HTML project tests', { concurrency: true }, (_hooks, _moduleMetadata) => {
   // Both normal-mode scenarios (no htmlPaths config vs missing htmlPaths file) are
   // independent — run them concurrently within a single test so both Chrome instances
   // acquire their semaphore slots simultaneously (wall time = max(a,b), not a+b).
@@ -113,7 +113,7 @@ async function makeMinimalProject({ withHtmlPaths }: { withHtmlPaths: boolean })
   return { dir, id };
 }
 
-async function runWatch(dir: string, id: string) {
+async function runWatch(dir: string, _id: string) {
   const outputDir = `${process.cwd()}/tmp/run-${randomUUID()}`;
   const permit = await acquireBrowser();
   const child = spawn(

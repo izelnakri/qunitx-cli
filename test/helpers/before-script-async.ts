@@ -6,20 +6,20 @@ import QUnit from 'qunitx';
 export default async function (config) {
   console.log('Starting before script with:');
 
-  let hasServerRunning = !!config.webServer;
+  const hasServerRunning = !!config.webServer;
 
   config.webServer = config.webServer || new HTTPServer();
-  config.webServer.get('/films', (req, res) => {
+  config.webServer.get('/films', (_req, res) => {
     console.log('req received');
     res.json({ film: 'responsed correctly' });
   });
-  config.webServer.get('/movies/too-big-to-fail', (req, res) => {
+  config.webServer.get('/movies/too-big-to-fail', (_req, res) => {
     res.json({ movie: 'is too-big-to-fail' });
   });
 
   if (!hasServerRunning) {
     console.log('DOESNT HAVE SERVER RUNNING');
-    let server = await bindServerToPort(config.webServer, config);
+    await bindServerToPort(config.webServer, config);
 
     QUnit.config.port = config.port;
     console.log(`Web server started on port ${QUnit.config.port}`);

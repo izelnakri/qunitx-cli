@@ -20,7 +20,9 @@ let output = '';
 proc.stdout.on('data', (chunk) => (output += chunk));
 proc.stderr.on('data', (chunk) => (output += chunk));
 proc.on('close', () => {
-  // Strip ANSI escape codes so we can match on plain text
+  // Strip ANSI escape codes so we can match on plain text. \x1b is the ESC byte —
+  // intentionally a control character, deno-lint rule no-control-regex doesn't apply.
+  // deno-lint-ignore no-control-regex
   const plain = output.replace(/\x1b\[[0-9;]*m/g, '');
 
   // Split into per-error blocks (each block starts with "error[")

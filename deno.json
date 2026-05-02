@@ -2,7 +2,8 @@
   "nodeModulesDir": "auto",
   "imports": {
     "esbuild": "npm:esbuild",
-    "ws": "npm:ws"
+    "ws": "npm:ws",
+    "@std/fmt/colors": "jsr:@std/fmt@^1/colors"
   },
   "tasks": {
     "bench": "deno bench --allow-all benches/esbuild.bench.ts benches/server.bench.ts benches/tap.bench.ts benches/e2e.bench.ts",
@@ -10,6 +11,7 @@
     "bench:update": "deno run --allow-all scripts/check-benchmarks.ts --save --files benches/esbuild.bench.ts benches/server.bench.ts benches/tap.bench.ts benches/e2e.bench.ts benches/daemon.bench.ts"
   },
   "lint": {
+    "exclude": ["test/fixtures/", "test/helpers/passing-tests-dist.ts"],
     "rules": {
       "exclude": ["no-process-global", "no-node-globals", "no-window"]
     }

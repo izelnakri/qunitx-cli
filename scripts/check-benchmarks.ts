@@ -49,7 +49,7 @@
  *     --files benches/esbuild.bench.ts ...
  */
 
-import { bold, red, green, yellow, dim, gray } from "jsr:@std/fmt/colors";
+import { bold, red, green, yellow, dim, gray } from "@std/fmt/colors";
 
 const BASELINE_FILE = new URL("../benches/results.json", import.meta.url).pathname;
 
@@ -74,7 +74,7 @@ interface Baseline {
 
 // ─── I/O helpers ─────────────────────────────────────────────────────────────
 
-async function readStdin(): Promise<string> {
+function readStdin(): Promise<string> {
   return new Response(Deno.stdin.readable).text();
 }
 
@@ -338,12 +338,12 @@ async function save(
   console.log(green(`Baseline saved: ${results.length} benchmark(s) → benches/results.json`));
 }
 
-async function check(
+function check(
   results: BenchResult[],
   baseline: Baseline | null,
   thresholdPct: number,
   minAbsDeltaNs: number,
-): Promise<boolean> {
+): boolean {
   const threshold = thresholdPct / 100;
   if (!baseline) {
     console.log(yellow("No baseline found in benches/results.json."));
