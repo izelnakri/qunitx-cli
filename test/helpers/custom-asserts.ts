@@ -12,7 +12,7 @@ Assert.prototype.includes = function (result, needle, message) {
   const passed = ctx.stdout.includes(needle);
   this.pushResult({
     result: passed,
-    actual: passed ? ctx.stdout : ctx,
+    actual: passed ? ctx.stdout : humanize(ctx),
     expected: needle,
     message: message || `should contain: ${needle}`,
   });
@@ -28,7 +28,7 @@ Assert.prototype.notIncludes = function (result, needle, message) {
   const passed = !ctx.stdout.includes(needle);
   this.pushResult({
     result: passed,
-    actual: passed ? ctx.stdout : ctx,
+    actual: passed ? ctx.stdout : humanize(ctx),
     expected: `should NOT contain: ${needle}`,
     message: message || `should not contain: ${needle}`,
   });
@@ -56,7 +56,11 @@ Assert.prototype.outputContains = function (
     result: passed,
     actual: passed
       ? { missing: [], unexpectedlyFound: [] }
-      : { ...ctx, missing: missing.map(String), unexpectedlyFound: unexpectedlyFound.map(String) },
+      : {
+          ...humanize(ctx),
+          missing: missing.map(String),
+          unexpectedlyFound: unexpectedlyFound.map(String),
+        },
     expected: { missing: [], unexpectedlyFound: [] },
     message: message || 'stdout content check',
   });
@@ -71,7 +75,7 @@ Assert.prototype.hasDebugURL = function (result, message) {
   const passed = /# QUnitX running: http:\/\/localhost:\d+/.test(ctx.stdout);
   this.pushResult({
     result: passed,
-    actual: passed ? ctx.stdout : ctx,
+    actual: passed ? ctx.stdout : humanize(ctx),
     expected: '# QUnitX running: http://localhost:<port>',
     message: message || '--debug mode should print QUnitX running URL',
   });
@@ -88,7 +92,7 @@ Assert.prototype.regex = function (result, pattern, message) {
   const passed = pattern.test(ctx.stdout);
   this.pushResult({
     result: passed,
-    actual: passed ? ctx.stdout : ctx,
+    actual: passed ? ctx.stdout : humanize(ctx),
     expected: String(pattern),
     message,
   });
@@ -106,7 +110,7 @@ Assert.prototype.exitCode = function (cmd, expectedCode, message) {
   const ctx = normalize(cmd);
   this.pushResult({
     result: passed,
-    actual: passed ? { code: cmd?.code } : { ...ctx, stdout: ctx.stdout.slice(-1000) },
+    actual: passed ? { code: cmd?.code } : humanize({ ...ctx, stdout: ctx.stdout.slice(-1000) }),
     expected: { code: expectedCode },
     message: message || `expected exit code ${expectedCode}`,
   });
@@ -250,7 +254,7 @@ Assert.prototype.tapResult = function (output, options = { testCount: 0, failCou
   const expectedPass = testCount - failCount;
   // Tail rather than full stdout: TAP summaries are large and test output tails are where
   // the # pass/# fail/# duration lines live; everything earlier is noise for this assert.
-  const actual = { ...ctx, stdout: ctx.stdout.slice(-300) };
+  const actual = humanize({ ...ctx, stdout: ctx.stdout.slice(-300) });
 
   if (failCount) {
     this.pushResult({
@@ -302,6 +306,18 @@ function normalize(result) {
     lastStdoutAtMs: lastStdout ? Math.round(lastStdout.time) : undefined,
     lastStderrAtMs: lastStderr ? Math.round(lastStderr.time) : undefined,
   };
+}
+
+// util.inspect renders any string with `\n` as a one-line escaped literal regardless of
+// breakLength/maxStringLength. Splitting multi-line strings into line arrays forces
+// inspect into multi-line array formatting — readable for both humans and LLMs. Only
+// applied on the failure path; assertion checks still see the joined strings via ctx.
+function humanize(ctx) {
+  const out = {};
+  for (const [k, v] of Object.entries(ctx)) {
+    out[k] = typeof v === 'string' && v.includes('\n') ? v.split('\n') : v;
+  }
+  return out;
 }
 
 function escapeRegex(str) {

@@ -35,8 +35,17 @@ import type { Config, CachedContent } from '../types.ts';
 
 // Playwright navigation timeout for headed watch-mode reloads (not test execution).
 const WATCH_NAV_TIMEOUT_MS = 5_000;
-// Maximum ms to wait for stdout to flush before forcing process.exit().
-const STDOUT_FLUSH_GRACE_MS = 5_000;
+// Maximum ms to wait for the `process.stdout.write` drain callback to fire before
+// forcing process.exit(). On Windows under concurrent CI load (16 parallel tests)
+// the drain callback can take far longer than expected: the parent reader is busy,
+// the OS pipe buffer fills, Node's userland write queue stalls until the reader
+// catches up. The original 5s was too tight — exitTimer fired first and process.exit
+// dropped pending writes (the `--after works when it needs to be awaited` flake
+// reported only the pre-await TAP-13 header). 30s gives realistic headroom; nothing
+// in node:fs can force-drain Node's userland queue (fsync would only flush the OS
+// pipe buffer, not Node's queue — and pipes have no backing store on POSIX anyway),
+// so the only honest fix is to wait longer for the natural drain.
+const STDOUT_FLUSH_GRACE_MS = 30_000;
 // setInterval period that keeps the event loop alive while Promise.allSettled runs.
 const KEEP_ALIVE_INTERVAL_MS = 10_000;
 // Conventional exit code for a process terminated by SIGTERM (128 + signal number 15).

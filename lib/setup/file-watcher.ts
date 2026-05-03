@@ -91,8 +91,18 @@ export function setupFileWatchers(
         // symlink's directory when writing through a symlink — only the target's directory gets
         // the event. fs.watchFile stat-polls the symlink path (stat follows symlinks), so when
         // the target's mtime changes, we synthesize a change event for the symlink path here.
+        // Same per-file debounce as the fs.watch 'change' path: a poll that lands mid-writeFile
+        // would otherwise dispatch a rebuild against partial content.
         if (filePath in config.fsTree) {
-          handleWatchEvent(config, extensions, 'change', filePath, onEventFunc, onFinishFunc);
+          const existing = pendingChangeTimers.get(filePath);
+          if (existing) clearTimeout(existing);
+          pendingChangeTimers.set(
+            filePath,
+            setTimeout(() => {
+              pendingChangeTimers.delete(filePath);
+              handleWatchEvent(config, extensions, 'change', filePath, onEventFunc, onFinishFunc);
+            }, CHANGE_COALESCE_MS),
+          );
         }
       }
     };
