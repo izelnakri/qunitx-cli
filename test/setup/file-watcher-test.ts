@@ -417,6 +417,59 @@ module('Setup | setupFileWatchers', { concurrency: true }, () => {
       await fs.rm(tmpFile, { force: true });
     }
   });
+
+  test('rapid back-to-back writes coalesce into a single rebuild seeing final content', async (assert) => {
+    // Reproducer for test/flags/watch-rerun-test.ts:407 flake on Windows. fs.writeFile is
+    // not atomic on Windows (ReadDirectoryChangesW fires while bytes are still flushing),
+    // so a 'change' event triggered mid-write reads a partial/empty file and the rebuild
+    // produces a 0-tests bundle. Without coalescing, every write fires its own onEventFunc
+    // call — the FIRST race the writeFile and is what the user sees in CI ("0 tests
+    // registered"). Debouncing collapses bursts so the rebuild fires AFTER writeFile
+    // settles, and the LAST onEventFunc invocation reads the final content.
+    const tmpDir = path.join(process.cwd(), 'tmp', `coalesce-${randomUUID()}`);
+    await fs.mkdir(tmpDir, { recursive: true });
+    const tmpFile = path.join(tmpDir, 'a.ts');
+    await fs.writeFile(tmpFile, 'export const a = 0;');
+
+    const config = { fsTree: { [tmpFile]: null }, projectRoot: process.cwd(), extensions: ['ts'] };
+    const seen: Array<{ content: string; at: number }> = [];
+
+    const { killFileWatchers, ready } = setupFileWatchers(
+      [tmpDir],
+      config as unknown as Config,
+      async (_event, file) => {
+        seen.push({ content: await fs.readFile(file, 'utf8'), at: Date.now() });
+      },
+      null,
+    );
+
+    try {
+      await ready;
+      // Five rapid writes — each gives a distinct mtime, so the existing 10ms mtime-based
+      // dedup at file-watcher.ts:140 does NOT collapse them. Without the debounce fix,
+      // onEventFunc fires once per kernel event (5+ times); with it, the events coalesce.
+      for (let i = 1; i <= 5; i++) {
+        await fs.writeFile(tmpFile, `export const a = ${i};`);
+      }
+
+      // Allow the debounce window + a safety margin to elapse so the final fired event
+      // has had time to land.
+      await new Promise<void>((resolve) => setTimeout(resolve, 300));
+
+      assert.ok(
+        seen.length <= 2,
+        `expected ≤2 coalesced calls, got ${seen.length}: ${JSON.stringify(seen.map((s) => s.content))}`,
+      );
+      assert.equal(
+        seen.at(-1)?.content,
+        'export const a = 5;',
+        'final onEventFunc call sees the final content (not a partial mid-write read)',
+      );
+    } finally {
+      killFileWatchers();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

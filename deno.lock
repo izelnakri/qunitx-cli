@@ -2,6 +2,7 @@
   "version": "5",
   "specifiers": {
     "jsr:@std/fmt@*": "1.0.9",
+    "jsr:@std/fmt@1": "1.0.9",
     "npm:@types/ws@*": "8.18.1",
     "npm:esbuild@*": "0.28.0",
     "npm:esbuild@0.28": "0.28.0",
@@ -385,6 +386,7 @@
   },
   "workspace": {
     "dependencies": [
+      "jsr:@std/fmt@1",
       "npm:esbuild@*",
       "npm:ws@*"
     ],

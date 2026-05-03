@@ -10,6 +10,14 @@ const CHANGE_DEDUPE_MS = 10;
 const SYMLINK_POLL_INTERVAL_MS = 500;
 const OVERLAYFS_RENAME_RETRY_MS = 50;
 const RESCAN_INTERVAL_MS = 1_000;
+// Per-file 'change' coalescing window. fs.writeFile is not atomic on Windows
+// (ReadDirectoryChangesW fires while bytes are still flushing) and the kernel
+// can fire 'change' before the writer has finished — also seen on Linux for
+// rapid back-to-back writes. Debouncing each file's 'change' events for this
+// window ensures the rebuild fires AFTER the writeFile burst settles, so esbuild
+// reads the final content rather than a partial snapshot. See the
+// 'rapid back-to-back writes coalesce ...' test in file-watcher-test.ts.
+const CHANGE_COALESCE_MS = 50;
 // Windows fs.watch (ReadDirectoryChangesW) fires both a `rename` (→ classified as 'add')
 // AND one or more spurious `change` events for a single fs.writeFile of a new file. The
 // trailing 'change' arrives after the add's filtered-rebuild has completed, so the existing
@@ -60,6 +68,11 @@ export function setupFileWatchers(
   // symlink path fails (symlink deleted or target gone/moved), nlink drops to 0 and we
   // synthesize an 'unlink' event. A 500 ms interval balances latency vs CPU cost.
   const symlinkPollers = new Map<string, () => void>();
+  // Per-file debounce timers for 'change' events; cleared on killFileWatchers so a
+  // pending timer can't fire onEventFunc against a torn-down watcher. Map (vs Record)
+  // because we delete entries when timers fire — Map skips V8's hidden-class deopt
+  // and gives us .clear() in one call on teardown.
+  const pendingChangeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   function trackSymlink(filePath: string) {
     if (symlinkPollers.has(filePath)) return;
@@ -147,7 +160,19 @@ export function setupFileWatchers(
         } catch {
           // File inaccessible — proceed.
         }
-        return handleWatchEvent(config, extensions, 'change', fullPath, onEventFunc, onFinishFunc);
+        // Debounce: wait CHANGE_COALESCE_MS for the writeFile burst to settle before
+        // dispatching. Each new event resets the timer, so the rebuild fires once after
+        // the LAST event in the burst — the file is fully written by then.
+        const existing = pendingChangeTimers.get(fullPath);
+        if (existing) clearTimeout(existing);
+        pendingChangeTimers.set(
+          fullPath,
+          setTimeout(() => {
+            pendingChangeTimers.delete(fullPath);
+            handleWatchEvent(config, extensions, 'change', fullPath, onEventFunc, onFinishFunc);
+          }, CHANGE_COALESCE_MS),
+        );
+        return;
       }
 
       // 'rename' event — stat to classify as add / addDir / unlink / unlinkDir.
@@ -271,6 +296,8 @@ export function setupFileWatchers(
       rescanTimers.forEach((t) => clearInterval(t));
       symlinkPollers.forEach((cancel) => cancel());
       symlinkPollers.clear();
+      pendingChangeTimers.forEach((t) => clearTimeout(t));
+      pendingChangeTimers.clear();
       return fileWatchers;
     },
   };
