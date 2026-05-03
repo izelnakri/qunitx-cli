@@ -722,20 +722,36 @@ async function runTestInsideHTMLFile(
   // before test bundle compilation finishes). Distinguishes "WS never opened" from "WS opened
   // but tests.js compiled too slowly" — both appear as TIMEOUT but have different root causes.
   let wsConnected = false;
+
+  // Single promise driven by the WS handler:
+  //   config._testRunDone()      → tests finished normally
+  //   config._resetTestTimeout() → reset idle timer; fires as timeout if silent for config.timeout ms
+  // This replaces waitForFunction (CDP polling), which raced against WS testEnd messages
+  // under load: CDP could win and trigger cleanup before Node.js processed the pending messages.
+  //
+  // resolveTestRace is extracted from the Promise constructor (synchronous) so we can fire
+  // the initial timer directly — its budget is 3× config.timeout as a safety net for extreme
+  // CPU starvation. In normal runs Chrome's WS 'open' fires in < 1s (tests.js compiles in
+  // a background thread), so this budget is almost never fully consumed. Once 'connection'
+  // (QUnit.begin) arrives, _resetTestTimeout() switches to the tighter per-test budget.
+  // Hoisted out of the try/catch so the page-close listener registered below shares the
+  // same handler reference for the matching page.off() in finally.
+  let resolveTestRace!: () => void;
+  const testRaceResult = new Promise<void>((resolve) => {
+    resolveTestRace = resolve;
+  });
+  // Browser death (Chrome killed externally, OOM, daemon Chrome crash) emits 'close' on Page.
+  // Resolve the race immediately so the run aborts here rather than waiting for the 60s
+  // startupMs / 80s testsJsMs / 25s per-test timer — a 60s hang is the exact window where
+  // the test runner's 60s SIGTERM beats the daemon's 'done' message, leaving the client
+  // with code=null instead of an exit code. Catch-block diagnostics then fire as for any
+  // other timeout, and (in daemon mode) failOnNonWatchMode throws DaemonRunError so the
+  // daemon writes 'done' to its socket fast.
+  page.on('close', resolveTestRace);
+
   try {
     console.log('#', blue(`QUnitX running: http://localhost:${config.port}${filePath}`));
 
-    // Single promise driven by the WS handler:
-    //   config._testRunDone()      → tests finished normally
-    //   config._resetTestTimeout() → reset idle timer; fires as timeout if silent for config.timeout ms
-    // This replaces waitForFunction (CDP polling), which raced against WS testEnd messages
-    // under load: CDP could win and trigger cleanup before Node.js processed the pending messages.
-    //
-    // resolveTestRace is extracted from the Promise constructor (synchronous) so we can fire
-    // the initial timer directly — its budget is 3× config.timeout as a safety net for extreme
-    // CPU starvation. In normal runs Chrome's WS 'open' fires in < 1s (tests.js compiles in
-    // a background thread), so this budget is almost never fully consumed. Once 'connection'
-    // (QUnit.begin) arrives, _resetTestTimeout() switches to the tighter per-test budget.
     // navMs is the budget Playwright gets to commit the navigation. Startup race timers must
     // never expire before navigation can complete — they are floored at navMs so that small
     // per-test timeouts (e.g. --timeout=500 for testing the timeout feature) don't starve
@@ -747,10 +763,6 @@ async function runTestInsideHTMLFile(
     const startupMs = Math.max(config.timeout * STARTUP_TIMEOUT_FACTOR, navMs);
     const testsJsMs = Math.max(config.timeout * TESTS_JS_TIMEOUT_FACTOR, navMs);
 
-    let resolveTestRace!: () => void;
-    const testRaceResult = new Promise<void>((resolve) => {
-      resolveTestRace = resolve;
-    });
     config._testRunDone = resolveTestRace;
     config._onWsOpen = () => {
       wsConnected = true;
@@ -830,6 +842,7 @@ async function runTestInsideHTMLFile(
     console.error(error);
   } finally {
     clearTimeout(timeoutHandle);
+    page.off('close', resolveTestRace);
     config._onWsOpen = null;
     config._onTestsJsServed = null;
     config._resetTestTimeout = null;
