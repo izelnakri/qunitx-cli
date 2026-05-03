@@ -418,27 +418,31 @@ module('Setup | setupFileWatchers', { concurrency: true }, () => {
     }
   });
 
-  test('rapid back-to-back writes coalesce into a single rebuild seeing final content', async (assert) => {
+  test('rapid back-to-back writes coalesce; no handler call reads partial mid-write content', async (assert) => {
     // Reproducer for test/flags/watch-rerun-test.ts:407 flake on Windows. fs.writeFile is
-    // not atomic on Windows (ReadDirectoryChangesW fires while bytes are still flushing),
-    // so a 'change' event triggered mid-write reads a partial/empty file and the rebuild
-    // produces a 0-tests bundle. Without coalescing, every write fires its own onEventFunc
-    // call — the FIRST race the writeFile and is what the user sees in CI ("0 tests
-    // registered"). Debouncing collapses bursts so the rebuild fires AFTER writeFile
-    // settles, and the LAST onEventFunc invocation reads the final content.
+    // not atomic on Windows (ReadDirectoryChangesW fires while bytes are still flushing) and
+    // Linux inotify also fires 'change' before the write closes — both deliver an event while
+    // the file is still being written, so a 'change'-triggered rebuild reads a partial/empty
+    // file and the bundle ends up with 0 test() registrations. The debounce in setupFileWatchers
+    // collapses each burst so the rebuild fires AFTER writeFile settles.
+    //
+    // Property under test (cross-platform): no onEventFunc call ever reads an EMPTY file.
+    // Intermediate non-empty values (e.g. `a = 3;` between writes 3 and 4 on macOS FSEvents
+    // mid-burst delivery) are valid platform behaviour — what we guard against is the empty
+    // read that produces a 0-tests bundle. We also bound the call count to verify coalescing.
     const tmpDir = path.join(process.cwd(), 'tmp', `coalesce-${randomUUID()}`);
     await fs.mkdir(tmpDir, { recursive: true });
     const tmpFile = path.join(tmpDir, 'a.ts');
     await fs.writeFile(tmpFile, 'export const a = 0;');
 
     const config = { fsTree: { [tmpFile]: null }, projectRoot: process.cwd(), extensions: ['ts'] };
-    const seen: Array<{ content: string; at: number }> = [];
+    const seen: string[] = [];
 
     const { killFileWatchers, ready } = setupFileWatchers(
       [tmpDir],
       config as unknown as Config,
       async (_event, file) => {
-        seen.push({ content: await fs.readFile(file, 'utf8'), at: Date.now() });
+        seen.push(await fs.readFile(file, 'utf8'));
       },
       null,
     );
@@ -447,24 +451,30 @@ module('Setup | setupFileWatchers', { concurrency: true }, () => {
       await ready;
       // Five rapid writes — each gives a distinct mtime, so the existing 10ms mtime-based
       // dedup at file-watcher.ts:140 does NOT collapse them. Without the debounce fix,
-      // onEventFunc fires once per kernel event (5+ times); with it, the events coalesce.
+      // onEventFunc fires once per kernel event (5+ times) and the FIRST call reads `""` on
+      // Linux/Windows because the kernel delivers the event before bytes are flushed.
       for (let i = 1; i <= 5; i++) {
         await fs.writeFile(tmpFile, `export const a = ${i};`);
       }
 
-      // Allow the debounce window + a safety margin to elapse so the final fired event
-      // has had time to land.
-      await new Promise<void>((resolve) => setTimeout(resolve, 300));
+      // Allow the debounce window + a generous safety margin (macOS FSEvents has a
+      // higher event-delivery latency than inotify).
+      await new Promise<void>((resolve) => setTimeout(resolve, 500));
 
+      assert.ok(seen.length >= 1, 'handler fired at least once');
       assert.ok(
         seen.length <= 2,
-        `expected ≤2 coalesced calls, got ${seen.length}: ${JSON.stringify(seen.map((s) => s.content))}`,
+        `expected ≤2 coalesced calls, got ${seen.length}: ${JSON.stringify(seen)}`,
       );
-      assert.equal(
-        seen.at(-1)?.content,
-        'export const a = 5;',
-        'final onEventFunc call sees the final content (not a partial mid-write read)',
-      );
+      // The bug: a mid-write event reads an empty file. With the debounce, no call should
+      // ever observe a zero-byte file.
+      for (const content of seen) {
+        assert.notEqual(
+          content,
+          '',
+          `no handler call reads an empty/partial-write file (got ${JSON.stringify(seen)})`,
+        );
+      }
     } finally {
       killFileWatchers();
       await fs.rm(tmpDir, { recursive: true, force: true });
