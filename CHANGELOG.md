@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.6] - 2026-05-03
+[`v0.23.5...v0.23.6`](https://github.com/izelnakri/qunitx-cli/compare/v0.23.5...v0.23.6)
+
+### Bug Fixes
+- Debounce change events to absorb mid-write race — 2026-05-03 by [@izelnakri](https://github.com/izelnakri) ([`dcbf1c7`](https://github.com/izelnakri/qunitx-cli/commit/dcbf1c71975c5c375fd7f108884f1a858c80fd98))
+- Abort run on page close so daemon doesn't 60s-hang on Chrome death — 2026-05-03 by [@izelnakri](https://github.com/izelnakri) ([`1fc4ddf`](https://github.com/izelnakri/qunitx-cli/commit/1fc4ddf207fe47e3f27733ac318d6ab1e2d11ac1))
+
 ## [0.23.5] - 2026-05-02
 [`v0.23.4...v0.23.5`](https://github.com/izelnakri/qunitx-cli/compare/v0.23.4...v0.23.5)
 
