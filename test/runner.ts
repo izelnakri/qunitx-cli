@@ -65,17 +65,36 @@ const [, semaphore, [fastFiles, watchReruns, leakFiles]] = await Promise.all([
       ]),
 ]);
 
-type PerfEntry = { name: string; file: string; ms: number; kind: string; nesting: number };
+type PerfEntry = {
+  name: string;
+  file: string;
+  ms: number;
+  kind: string;
+  nesting: number;
+  status?: 'pass' | 'fail';
+  error?: string;
+};
 
 // pathToFileURL is required on Windows: an absolute path like
 // `D:\a\qunitx-cli\test\helpers\ci-test-summary-reporter.ts` is parsed by Node's
 // ESM loader as a URL with protocol `d:`, which it rejects (ERR_UNSUPPORTED_ESM_URL_SCHEME).
 // pathToFileURL emits `file:///D:/a/.../reporter.ts` on Windows and `file:///path/...` on POSIX.
 const REPORTER_PATH = pathToFileURL(path.resolve('test/helpers/ci-test-summary-reporter.ts')).href;
+// data: URL preloaded into each `node --test` worker via --import. Widens util.inspect's
+// defaults so node:test's spec-reporter failure formatter shows the full assertion `actual`
+// (captured stdout, error chunks) instead of `[Object]` / truncated `'...'`. Inline as a
+// data URL — `--import` accepts ESM data URLs natively, so we get the preload without a
+// separate helper file. (`--test-reporter` does NOT accept data URLs; it parses the value
+// as a file path and rejects schemes like `d:` — that's why the ci-test-summary-reporter
+// is a real file but this preload isn't.)
+const WORKER_PRELOAD = `data:text/javascript;base64,${Buffer.from(
+  'import{inspect}from"node:util";' +
+    'const o=inspect.defaultOptions;' +
+    'o.breakLength=240;o.depth=Infinity;o.maxStringLength=Infinity;o.maxArrayLength=Infinity;',
+).toString('base64')}`;
 const phaseResults: Array<{
   name: string;
   slug: string;
-  tests: number;
   durationMs: number;
 }> = [];
 
@@ -102,23 +121,28 @@ await sweepOrphanedChrome();
 const exitCode3 =
   !watchMode && leakFiles.length > 0 ? await runPhase('Leak tests', 'leak', leakFiles) : 0;
 
-// GitHub Actions step summary: small results table at the top of the run UI.
-// No-op locally (GITHUB_STEP_SUMMARY unset) and in watch mode (no end-of-run).
-if (!watchMode && process.env.GITHUB_STEP_SUMMARY) {
-  let totalTests = 0;
+// End-of-run summary + junit XML generation. Skipped in watch mode (no end-of-run).
+// Always prints the summary to stdout (visible locally and in CI logs); additionally
+// appends the same markdown to $GITHUB_STEP_SUMMARY when set, and writes one junit
+// XML per phase for dorny/test-reporter consumption.
+if (!watchMode) {
   let totalMs = 0;
-  let slowestPhase = phaseResults[0];
-  for (const p of phaseResults) {
-    totalTests += p.tests;
-    totalMs += p.durationMs;
-    if (p.durationMs > slowestPhase.durationMs) slowestPhase = p;
-  }
+  for (const p of phaseResults) totalMs += p.durationMs;
 
-  const allPerf = (
-    await Promise.all(phaseResults.map((p) => readPerf(`./tmp/perf-${p.slug}.jsonl`)))
-  ).flat();
+  // Read perf JSONL per phase, generate junit XML alongside (consumed by
+  // .github/workflows/test-report.yml → dorny). Reading and writing in parallel.
+  const perfByPhase = await Promise.all(
+    phaseResults.map(async (p) => {
+      const entries = await readPerf(`./tmp/perf-${p.slug}.jsonl`);
+      await writeJunitFromPerf(p.slug, entries);
+      return entries;
+    }),
+  );
+  const allPerf = perfByPhase.flat();
   const tests = allPerf.filter((e) => e.kind === 'test');
   const groups = allPerf.filter((e) => e.kind === 'suite' && e.nesting === 0);
+  const totalTests = tests.length;
+  const failedTests = tests.filter((t) => t.status === 'fail').length;
   const slowestTest = tests.reduce((m, e) => (e.ms > m.ms ? e : m), tests[0]);
   const slowestGroup = groups.reduce((m, e) => (e.ms > m.ms ? e : m), groups[0]);
   const fileMs = new Map<string, number>();
@@ -132,32 +156,33 @@ if (!watchMode && process.env.GITHUB_STEP_SUMMARY) {
     ms >= 60_000
       ? `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
       : `${(ms / 1000).toFixed(1)}s`;
-  // Pipes in qunit module names ("Commands | Version tests") break markdown
-  // table cells; escape with a backslash per GitHub-Flavored Markdown.
+  // Pipes in qunit module names ("Commands | Version tests") break markdown table cells;
+  // escape with a backslash per GitHub-Flavored Markdown.
   const cell = (s: string): string => s.replace(/\|/g, '\\|');
-  // slowestGroup intentionally omits a file path: node:test reports the suite
-  // event's `file` as where qunit's `module()` is *defined* (its library),
-  // not where it's called. Deriving the real file from child test events is
-  // unreliable under parallel test workers (events interleave across files).
-  // The group's qunit name is unique and greppable on its own.
-  await fs.appendFile(
-    process.env.GITHUB_STEP_SUMMARY,
+  // slowestGroup intentionally omits a file path: node:test reports the suite event's
+  // `file` as where qunit's `module()` is defined (its library), not where it's called.
+  // Deriving the real file from child test events is unreliable under parallel test
+  // workers (events interleave across files). Group qunit names are unique and greppable.
+  const summary =
     `## qunitx-cli test results\n\n` +
-      `| metric | value |\n|---|---|\n` +
-      `| tests | ${totalTests} ok |\n` +
-      `| duration | ${fmt(totalMs)} |\n` +
-      `| slowest phase | ${slowestPhase.name} (${fmt(slowestPhase.durationMs)}) |\n` +
-      (slowestFileName
-        ? `| slowest file | \`${cell(slowestFileName)}\` (${fmt(slowestFileMs)}) |\n`
-        : '') +
-      (slowestGroup
-        ? `| slowest group | ${cell(slowestGroup.name)} (${fmt(slowestGroup.ms)}) |\n`
-        : '') +
-      (slowestTest
-        ? `| slowest test | ${cell(slowestTest.name)} — \`${cell(slowestTest.file)}\` (${fmt(slowestTest.ms)}) |\n`
-        : '') +
-      '\n',
-  );
+    `| metric | value |\n|---|---|\n` +
+    `| tests | ${totalTests} ${failedTests ? `(${failedTests} failed)` : 'passed'} |\n` +
+    `| files | ${fileMs.size} |\n` +
+    `| duration | ${fmt(totalMs)} |\n` +
+    (slowestFileName
+      ? `| slowest file | \`${cell(slowestFileName)}\` (${fmt(slowestFileMs)} cumulative test time) |\n`
+      : '') +
+    (slowestGroup
+      ? `| slowest group | ${cell(slowestGroup.name)} (${fmt(slowestGroup.ms)}) |\n`
+      : '') +
+    (slowestTest
+      ? `| slowest test | ${cell(slowestTest.name)} — \`${cell(slowestTest.file)}\` (${fmt(slowestTest.ms)}) |\n`
+      : '') +
+    '\n';
+  process.stdout.write('\n' + summary);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    await fs.appendFile(process.env.GITHUB_STEP_SUMMARY, summary);
+  }
 }
 
 semaphore.close();
@@ -165,13 +190,8 @@ process.exit(exitCode1 || exitCode2 || exitCode3);
 
 async function runPhase(name: string, slug: string, files: string[]): Promise<number> {
   const start = performance.now();
-  const { exitCode, tap } = await spawnTests(files, slug);
-  phaseResults.push({
-    name,
-    slug,
-    tests: Number(tap.match(/^# tests (\d+)$/m)?.[1] ?? 0),
-    durationMs: performance.now() - start,
-  });
+  const exitCode = await spawnTests(files, slug);
+  phaseResults.push({ name, slug, durationMs: performance.now() - start });
   return exitCode;
 }
 
@@ -183,15 +203,73 @@ async function readPerf(perfPath: string): Promise<PerfEntry[]> {
     .map((l) => JSON.parse(l) as PerfEntry);
 }
 
-function spawnTests(files: string[], slug?: string): Promise<{ exitCode: number; tap: string }> {
+/**
+ * Renders junit XML from a phase's perf JSONL — node:test's built-in junit reporter
+ * omits per-testcase file paths and we'd be at 3 reporters anyway (warning-trippy),
+ * so we generate it here from the data the ci-test-summary-reporter already captured.
+ * Each test becomes a `<testcase>` with `classname=<file>` so dorny/test-reporter can
+ * group failures by source file in PR check runs.
+ */
+async function writeJunitFromPerf(slug: string, entries: PerfEntry[]): Promise<void> {
+  const tests = entries.filter((e) => e.kind === 'test');
+  if (tests.length === 0) return;
+  const xmlEsc = (s: string): string =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  // One <testsuite> per source file so dorny renders failures grouped by file in
+  // its check-run UI (instead of one big phase-named bucket). Each testsuite's
+  // `name` is the file path; testcase `classname` keeps the same path so reporters
+  // that group by classname (e.g. dorny's grouping in some configurations) also
+  // work correctly.
+  const byFile = new Map<string, PerfEntry[]>();
+  for (const t of tests) {
+    const file = t.file || `<${slug}>`;
+    const existing = byFile.get(file);
+    if (existing) existing.push(t);
+    else byFile.set(file, [t]);
+  }
+
+  const renderCase = (t: PerfEntry, file: string): string => {
+    const attrs = `name="${xmlEsc(t.name)}" classname="${xmlEsc(file)}" time="${(t.ms / 1000).toFixed(3)}"`;
+    if (t.status === 'fail' && t.error) {
+      const cdata = t.error.replace(/]]>/g, ']]]]><![CDATA[>');
+      return `    <testcase ${attrs}><failure type="AssertionError"><![CDATA[${cdata}]]></failure></testcase>`;
+    }
+    return `    <testcase ${attrs}/>`;
+  };
+
+  const suites = [...byFile]
+    .map(([file, fileTests]) => {
+      const failed = fileTests.filter((t) => t.status === 'fail').length;
+      const time = (fileTests.reduce((s, t) => s + t.ms, 0) / 1000).toFixed(3);
+      const cases = fileTests.map((t) => renderCase(t, file)).join('\n');
+      return (
+        `  <testsuite name="${xmlEsc(file)}" tests="${fileTests.length}" failures="${failed}" time="${time}">\n` +
+        `${cases}\n` +
+        `  </testsuite>`
+      );
+    })
+    .join('\n');
+
+  const xml = `<?xml version="1.0" encoding="utf-8"?>\n<testsuites>\n${suites}\n</testsuites>\n`;
+  await fs.writeFile(`./tmp/junit-${slug}.xml`, xml);
+}
+
+function spawnTests(files: string[], slug?: string): Promise<number> {
   return new Promise((resolve) => {
-    // stdout is piped (not inherited) so we can scrape the trailing `# tests N`
-    // summary while still streaming TAP to the parent stdout. When `slug` is
-    // provided (non-watch mode), a second reporter writes per-test timing JSONL
-    // to tmp/perf-<slug>.jsonl for the step-summary slowest-* rows.
+    // Two reporters are wired up in non-watch mode (3 trips node:test's TestsStream
+    // default-10 listener limit; staying at 2 keeps stderr clean):
+    //   spec   → stdout                        : compact, human/LLM-readable test output
+    //                                            (no TAP YAML diagnostic blocks; ~80% less
+    //                                             stdout noise on green runs).
+    //   ci-test-summary → tmp/perf-<slug>.jsonl: per-test {name, file, ms, status, error?}
+    //                                            JSONL — drives both the local end-of-run
+    //                                            summary AND the junit XML written via
+    //                                            writeJunitFromPerf() for dorny consumption.
+    // Watch mode skips reporters: live spec output via stdio:inherit is what users want.
     const reporterArgs = slug
       ? [
-          '--test-reporter=tap',
+          '--test-reporter=spec',
           '--test-reporter-destination=stdout',
           `--test-reporter=${REPORTER_PATH}`,
           `--test-reporter-destination=./tmp/perf-${slug}.jsonl`,
@@ -200,10 +278,10 @@ function spawnTests(files: string[], slug?: string): Promise<{ exitCode: number;
     const child = spawn(
       process.execPath,
       watchMode
-        ? ['--test', '--watch', ...files]
-        : ['--test', '--test-force-exit', ...reporterArgs, ...files],
+        ? ['--import', WORKER_PRELOAD, '--test', '--watch', ...files]
+        : ['--import', WORKER_PRELOAD, '--test', '--test-force-exit', ...reporterArgs, ...files],
       {
-        stdio: watchMode ? 'inherit' : ['inherit', 'pipe', 'inherit'],
+        stdio: 'inherit',
         env: {
           // Default lives before ...process.env so a user override (incl.
           // `NODE_COMPILE_CACHE=` to disable) wins over our project default.
@@ -219,12 +297,7 @@ function spawnTests(files: string[], slug?: string): Promise<{ exitCode: number;
         },
       },
     );
-    let tap = '';
-    child.stdout?.on('data', (chunk: Buffer) => {
-      process.stdout.write(chunk);
-      tap += chunk.toString();
-    });
-    child.once('exit', (code) => resolve({ exitCode: code ?? 0, tap }));
+    child.once('exit', (code) => resolve(code ?? 0));
   });
 }
 

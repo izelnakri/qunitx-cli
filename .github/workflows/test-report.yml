@@ -1,0 +1,82 @@
+name: Test report
+
+# Renders the test results from CI as PR-friendly check runs and inline annotations
+# (failed-test message + file:line) via dorny/test-reporter. Lives in its own workflow
+# so the test jobs stay focused on running tests; reporting is an independent concern
+# that runs after CI completes.
+#
+# Why workflow_run instead of inlining in ci.yml:
+#   - workflow_run runs in the BASE repo's permission context, even when CI was triggered
+#     by a fork PR. dorny needs `checks: write` and `pull-requests: write` to post
+#     annotations — those tokens are unavailable in fork-triggered workflows otherwise.
+#   - Test job stays focused: lint + test + bench. Reporting is decoupled.
+#   - If reporting fails (dorny outage, format change), test job status is unaffected.
+#
+# How junit XMLs flow:
+#   test/runner.ts spawns `node --test --test-reporter=junit
+#     --test-reporter-destination=./tmp/junit-<phase>.xml` per phase (fast / watch-rerun /
+#   leak). ci.yml's test job uploads `tmp/junit-*.xml` as artifact `junit-<os>` per matrix
+#   platform. This workflow downloads them by run-id and feeds them to dorny one platform
+#   at a time so each OS gets its own check run on the PR.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    # Skip cancelled CI runs — there is nothing to report. Failed runs DO produce junit
+    # XMLs (the upload step uses if: always()) so we still want to render the failures.
+    if: github.event.workflow_run.conclusion != 'cancelled'
+    env:
+      # Opt dorny/test-reporter (still on Node.js 20) into Node.js 24 to silence the
+      # deprecation annotation that fires on every run. Removable once dorny ships a
+      # release that targets Node 24 directly.
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+    steps:
+      # dorny/test-reporter calls `git ls-files` to map junit testcase classnames
+      # back to source paths for the check-run UI. Without the checkout it errors
+      # `fatal: not a git repository`. ref pins the workspace to the SHA that was
+      # tested in the triggering CI run, so dorny's file links resolve correctly.
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: junit-*
+          path: ./junit-artifacts
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: dorny/test-reporter@v2
+        if: always()
+        with:
+          name: Tests (Ubuntu)
+          path: ./junit-artifacts/junit-ubuntu-latest/*.xml
+          reporter: java-junit
+          fail-on-empty: false
+
+      - uses: dorny/test-reporter@v2
+        if: always()
+        with:
+          name: Tests (macOS)
+          path: ./junit-artifacts/junit-macos-latest/*.xml
+          reporter: java-junit
+          fail-on-empty: false
+
+      - uses: dorny/test-reporter@v2
+        if: always()
+        with:
+          name: Tests (Windows)
+          path: ./junit-artifacts/junit-windows-latest/*.xml
+          reporter: java-junit
+          fail-on-empty: false

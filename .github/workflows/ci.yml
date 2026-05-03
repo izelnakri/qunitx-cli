@@ -106,6 +106,16 @@ jobs:
           name: coverage-report
           path: coverage/
           retention-days: 1
+      # JUnit XMLs (one per phase: fast / watch-rerun / leak) are picked up by the
+      # test-report.yml workflow_run trigger to render PR annotations + per-platform
+      # check runs via dorny/test-reporter. Always-upload so failures get reported too.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: junit-${{ matrix.os }}
+          path: tmp/junit-*.xml
+          retention-days: 3
+          if-no-files-found: ignore
 
   # ── Bench ─────────────────────────────────────────────────────────────────────
   # Runs fast microbenchmarks (esbuild bundling, HTTP server, TAP display) on

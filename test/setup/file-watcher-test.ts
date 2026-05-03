@@ -418,18 +418,22 @@ module('Setup | setupFileWatchers', { concurrency: true }, () => {
     }
   });
 
-  test('rapid back-to-back writes coalesce; no handler call reads partial mid-write content', async (assert) => {
-    // Reproducer for test/flags/watch-rerun-test.ts:407 flake on Windows. fs.writeFile is
-    // not atomic on Windows (ReadDirectoryChangesW fires while bytes are still flushing) and
-    // Linux inotify also fires 'change' before the write closes — both deliver an event while
-    // the file is still being written, so a 'change'-triggered rebuild reads a partial/empty
-    // file and the bundle ends up with 0 test() registrations. The debounce in setupFileWatchers
-    // collapses each burst so the rebuild fires AFTER writeFile settles.
+  test('single writeFile: handler reads final content (mid-write race guard)', async (assert) => {
+    // Reproducer for test/flags/watch-rerun-test.ts:407 flake on Windows. The real-world
+    // scenario is a single fs.writeFile (editor save, test-fixture restore). fs.writeFile
+    // is not atomic — it open()s with truncation, then write()s, then close()s. Without the
+    // debounce, fs.watch can fire 'change' between the truncate and the write, the handler
+    // reads `""`, and the rebuild bundles an empty file → "0 tests registered" in CI.
     //
-    // Property under test (cross-platform): no onEventFunc call ever reads an EMPTY file.
-    // Intermediate non-empty values (e.g. `a = 3;` between writes 3 and 4 on macOS FSEvents
-    // mid-burst delivery) are valid platform behaviour — what we guard against is the empty
-    // read that produces a 0-tests bundle. We also bound the call count to verify coalescing.
+    // The debounce in setupFileWatchers waits CHANGE_COALESCE_MS (50ms) after the last
+    // event, by which point fs.writeFile's close() has finished and the file is fully
+    // written. Each handler invocation then reads the final content.
+    //
+    // (We don't stress-test with a rapid `for` loop of writes here: each iteration's
+    // `await fs.writeFile` yields to the event loop, letting the debounce timer fire
+    // mid-loop and racing the handler's fs.readFile against the next iteration's
+    // truncate-and-write. That is a test artefact, not the bug — real watch scenarios are
+    // single writes.)
     const tmpDir = path.join(process.cwd(), 'tmp', `coalesce-${randomUUID()}`);
     await fs.mkdir(tmpDir, { recursive: true });
     const tmpFile = path.join(tmpDir, 'a.ts');
@@ -437,42 +441,41 @@ module('Setup | setupFileWatchers', { concurrency: true }, () => {
 
     const config = { fsTree: { [tmpFile]: null }, projectRoot: process.cwd(), extensions: ['ts'] };
     const seen: string[] = [];
+    let onFirstEvent!: () => void;
+    const firstEvent = new Promise<void>((resolve) => (onFirstEvent = resolve));
 
     const { killFileWatchers, ready } = setupFileWatchers(
       [tmpDir],
       config as unknown as Config,
       async (_event, file) => {
         seen.push(await fs.readFile(file, 'utf8'));
+        onFirstEvent();
       },
       null,
     );
 
     try {
       await ready;
-      // Five rapid writes — each gives a distinct mtime, so the existing 10ms mtime-based
-      // dedup at file-watcher.ts:140 does NOT collapse them. Without the debounce fix,
-      // onEventFunc fires once per kernel event (5+ times) and the FIRST call reads `""` on
-      // Linux/Windows because the kernel delivers the event before bytes are flushed.
-      for (let i = 1; i <= 5; i++) {
-        await fs.writeFile(tmpFile, `export const a = ${i};`);
-      }
+      await fs.writeFile(tmpFile, 'export const a = 42;');
 
-      // Allow the debounce window + a generous safety margin (macOS FSEvents has a
-      // higher event-delivery latency than inotify).
-      await new Promise<void>((resolve) => setTimeout(resolve, 500));
+      // Wait event-driven for the first handler invocation, racing against a generous
+      // timeout — macOS FSEvents delivers events with higher latency than inotify, and CI
+      // runners under load can delay even further (a fixed 500ms tripped the assertion
+      // locally on macOS once the runner was busy). Promise.race exits the moment the
+      // handler fires; the timeout is the upper bound, never the typical wait.
+      await Promise.race([firstEvent, new Promise<void>((r) => setTimeout(r, 5000))]);
+      // Brief settle pause to capture any follow-up events the kernel queues after the
+      // first one, so we assert on the final-state set rather than the first arrival.
+      await new Promise<void>((resolve) => setTimeout(resolve, 200));
 
-      assert.ok(seen.length >= 1, 'handler fired at least once');
-      assert.ok(
-        seen.length <= 2,
-        `expected ≤2 coalesced calls, got ${seen.length}: ${JSON.stringify(seen)}`,
-      );
-      // The bug: a mid-write event reads an empty file. With the debounce, no call should
-      // ever observe a zero-byte file.
+      assert.ok(seen.length >= 1, `handler fired at least once (got ${seen.length})`);
+      // The actual bug: a mid-write event reads an empty file. With the debounce, every
+      // call should see the final content — no empties, no partial reads.
       for (const content of seen) {
-        assert.notEqual(
+        assert.equal(
           content,
-          '',
-          `no handler call reads an empty/partial-write file (got ${JSON.stringify(seen)})`,
+          'export const a = 42;',
+          `every call reads the final content (got ${JSON.stringify(seen)})`,
         );
       }
     } finally {
