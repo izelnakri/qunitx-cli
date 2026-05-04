@@ -114,12 +114,16 @@ function parseCommand(command: string): {
  */
 export async function spawnCapture(
   command: string,
-  { timeout = DEFAULT_EXEC_TIMEOUT_MS, env }: { timeout?: number; env?: NodeJS.ProcessEnv } = {},
+  {
+    timeout = DEFAULT_EXEC_TIMEOUT_MS,
+    env,
+    cwd,
+  }: { timeout?: number; env?: NodeJS.ProcessEnv; cwd?: string } = {},
 ): Promise<CapturedResult> {
   const { bin, args, env: prefixEnv } = parseCommand(command);
   return await new Promise<CapturedResult>((resolve, reject) => {
     const startTime = performance.now();
-    const child = spawn(bin, args, { env: { ...env, ...prefixEnv } });
+    const child = spawn(bin, args, { env: { ...env, ...prefixEnv }, cwd });
     const stdoutChunks: Array<{ time: number; data: string }> = [];
     const stderrChunks: Array<{ time: number; data: string }> = [];
     let stdout = '';

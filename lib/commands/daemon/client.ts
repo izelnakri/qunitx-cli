@@ -117,10 +117,10 @@ export async function pingDaemon(): Promise<ResponseChunk | null> {
  * Returns `true` if a daemon was reached and asked to stop, `false` if no daemon
  * was running.
  */
-export async function shutdownDaemon(): Promise<boolean> {
-  const pid = await readDaemonPid();
+export async function shutdownDaemon(cwd: string = process.cwd()): Promise<boolean> {
+  const pid = await readDaemonPid(cwd);
 
-  const socket = await tryConnect();
+  const socket = await tryConnect(cwd);
   if (!socket) return false;
   attachLineParser<ResponseChunk>(socket, () => {});
   send(socket, { type: 'shutdown' });
@@ -130,9 +130,9 @@ export async function shutdownDaemon(): Promise<boolean> {
   return true;
 }
 
-async function readDaemonPid(): Promise<number | null> {
+async function readDaemonPid(cwd: string = process.cwd()): Promise<number | null> {
   try {
-    const info = JSON.parse(await fs.readFile(daemonInfoPath(), 'utf8')) as { pid?: unknown };
+    const info = JSON.parse(await fs.readFile(daemonInfoPath(cwd), 'utf8')) as { pid?: unknown };
     return typeof info.pid === 'number' ? info.pid : null;
   } catch {
     return null;

@@ -3,12 +3,17 @@ import process from 'node:process';
 import fs from 'node:fs/promises';
 import nodeFs, { existsSync } from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { daemonSocketPath, daemonInfoPath } from '../../lib/utils/daemon-socket-path.ts';
 import { shutdownDaemon } from '../../lib/commands/daemon/client.ts';
 import { spawnCapture, type CapturedError, type CapturedResult } from '../helpers/shell.ts';
+import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 import '../helpers/custom-asserts.ts';
 
 const CWD = process.cwd();
+const FIXTURE_PASS = path.resolve('test/fixtures/passing-tests.ts');
+const FIXTURE_PASS_JS = path.resolve('test/fixtures/passing-tests.js');
+const FIXTURE_FAIL = path.resolve('test/fixtures/failing-tests.ts');
 
 // Strip every env var that would cause `shouldUseDaemon` or `shouldAutoSpawnDaemon`
 // to short-circuit, so this file's `node cli.ts <test>` invocations actually route
@@ -24,37 +29,68 @@ const CLI_ENV = (() => {
   return env;
 })();
 
+interface DaemonProject {
+  cwd: string;
+  socketPath: string;
+  infoPath: string;
+}
+
+/**
+ * Creates a unique tmp/<uuid>/ working directory for one daemon test. Each project
+ * gets its own cwd → its own socketPath/infoPath, so tests can run with concurrency:
+ * true without stepping on each other's daemon state. node_modules is symlinked
+ * from the project root so qunitx and dev deps resolve when the daemon bundles
+ * fixtures at run time.
+ */
+async function makeDaemonProject(): Promise<DaemonProject> {
+  const id = randomUUID();
+  const cwd = path.join(CWD, 'tmp', `daemon-${id}`);
+  await fs.mkdir(cwd, { recursive: true });
+  await Promise.all([
+    fs.symlink(path.join(CWD, 'node_modules'), path.join(cwd, 'node_modules')),
+    fs.writeFile(
+      path.join(cwd, 'package.json'),
+      JSON.stringify({ name: id, version: '0.0.1', type: 'module' }),
+    ),
+  ]);
+  return { cwd, socketPath: daemonSocketPath(cwd), infoPath: daemonInfoPath(cwd) };
+}
+
 // Spawn via shared helper so QUNITX_BIN is honored: when scripts/test-release.sh sets
 // it to the installed binary (or the SEA blob), every daemon invocation here actually
 // exercises the published artefact instead of source. The previous local exec() helper
 // hardcoded `node cli.ts` and silently bypassed the swap, so daemon-specific bugs in
 // any released binary slipped past the consumer test.
 const cli = async (
+  project: DaemonProject,
   args: string,
   opts: { failOk?: boolean; env?: NodeJS.ProcessEnv } = {},
 ): Promise<CapturedResult> => {
   try {
-    return await spawnCapture(`node ${CWD}/cli.ts ${args}`, { env: opts.env ?? CLI_ENV });
+    return await spawnCapture(`node ${CWD}/cli.ts ${args}`, {
+      env: opts.env ?? CLI_ENV,
+      cwd: project.cwd,
+    });
   } catch (err) {
     if (opts.failOk) return err as CapturedError;
     throw err;
   }
 };
 
-const SOCKET_PATH = daemonSocketPath(CWD);
-const INFO_PATH = daemonInfoPath(CWD);
-
-async function ensureDaemonStopped(): Promise<void> {
+async function ensureDaemonStopped(project: DaemonProject): Promise<void> {
   // Cleanup helper: call the lib's shutdownDaemon directly instead of spawning
   // `node cli.ts daemon stop`. Saves ~600 ms per call (cli.ts compile + Node
   // startup) × ~60 calls per suite. The CLI stop path is exercised explicitly
   // by the lifecycle tests below, so we don't need to re-cover it here.
   // shutdownDaemon reads the pid, sends shutdown via socket, waits for pid exit;
   // it returns false (no throw) when no daemon is running.
-  await shutdownDaemon().catch(() => {});
+  await shutdownDaemon(project.cwd).catch(() => {});
   // Defensive: drop stale files that a crashed daemon may have left behind
   // (e.g. SIGKILL'd before the shutdown handler could unlink them).
-  await Promise.all([fs.unlink(SOCKET_PATH).catch(() => {}), fs.unlink(INFO_PATH).catch(() => {})]);
+  await Promise.all([
+    fs.unlink(project.socketPath).catch(() => {}),
+    fs.unlink(project.infoPath).catch(() => {}),
+  ]);
 }
 
 /**
@@ -84,15 +120,49 @@ function waitForFileGone(filePath: string, timeoutMs: number): Promise<boolean> 
   });
 }
 
-const FIXTURE_PASS = 'test/fixtures/passing-tests.ts';
-const FIXTURE_PASS_JS = 'test/fixtures/passing-tests.js';
-const FIXTURE_FAIL = 'test/fixtures/failing-tests.ts';
+/**
+ * Wraps a daemon test in (a) per-test project setup, (b) browser-semaphore acquisition
+ * for tests that actually spawn a daemon (most do — the daemon launches Chrome on start),
+ * and (c) ensureDaemonStopped cleanup on exit. Module-level concurrency:true means many
+ * tests fire at once — the semaphore caps the number of live daemon-Chromes at the same
+ * availableParallelism() ceiling that bounds the rest of the suite, so daemon tests share
+ * one global resource budget with folder-test/jsx-test instead of overrunning the box.
+ */
+function daemonTest(
+  name: string,
+  fn: (assert: Parameters<Parameters<typeof test>[1]>[0], project: DaemonProject) => Promise<void>,
+): void {
+  test(name, async (assert) => {
+    const project = await makeDaemonProject();
+    const permit = await acquireBrowser();
+    try {
+      await fn(assert, project);
+    } finally {
+      await ensureDaemonStopped(project).catch(() => {});
+      permit.release();
+    }
+  });
+}
 
-// Daemon tests must run serially: they share a single per-cwd socket path. Concurrent
-// tests would step on each other's daemon state.
-module('Commands | Daemon | usage', { concurrency: false }, () => {
-  test('$ qunitx daemon -> prints usage and exits 0', async (assert) => {
-    const result = await cli('daemon');
+// "usage" tests don't spawn a daemon — they only test cli subcommand parsing.
+// They get a project for the cwd but don't acquire a browser permit.
+function daemonUsageTest(
+  name: string,
+  fn: (assert: Parameters<Parameters<typeof test>[1]>[0], project: DaemonProject) => Promise<void>,
+): void {
+  test(name, async (assert) => {
+    const project = await makeDaemonProject();
+    await fn(assert, project);
+  });
+}
+
+// Each test now runs in its own per-uuid cwd, so `concurrency: true` is safe — daemon
+// state is isolated per test. The browser semaphore caps the actual chromes-at-once
+// across the whole suite at availableParallelism(), so 32 daemon tests don't all fire
+// at full saturation regardless of node:test's concurrency model.
+module('Commands | Daemon | usage', { concurrency: true }, () => {
+  daemonUsageTest('$ qunitx daemon -> prints usage and exits 0', async (assert, project) => {
+    const result = await cli(project, 'daemon');
 
     assert.exitCode(result, 0);
     const text = result.stdout + result.stderr;
@@ -102,151 +172,148 @@ module('Commands | Daemon | usage', { concurrency: false }, () => {
     assert.includes(text, 'status');
   });
 
-  test('$ qunitx daemon foobar -> prints usage and exits 1', async (assert) => {
-    const result = await cli('daemon foobar', { failOk: true });
+  daemonUsageTest('$ qunitx daemon foobar -> prints usage and exits 1', async (assert, project) => {
+    const result = await cli(project, 'daemon foobar', { failOk: true });
 
     assert.exitCode(result, 1);
     assert.includes(result.stderr, 'Usage: qunitx daemon');
   });
 
-  test('$ qunitx daemon --help / -h / help -> usage on stdout, exits 0', async (assert) => {
-    for (const flag of ['--help', '-h', 'help']) {
-      const result = await cli(`daemon ${flag}`);
-      assert.exitCode(result, 0, `daemon ${flag} exits 0`);
-      assert.includes(
-        result.stdout,
-        'Usage: qunitx daemon',
-        `daemon ${flag} prints usage to stdout`,
-      );
-      assert.includes(
-        result.stdout,
-        'QUNITX_DAEMON=1',
-        `daemon ${flag} mentions auto-spawn env var`,
-      );
-    }
-  });
+  daemonUsageTest(
+    '$ qunitx daemon --help / -h / help -> usage on stdout, exits 0',
+    async (assert, project) => {
+      for (const flag of ['--help', '-h', 'help']) {
+        const result = await cli(project, `daemon ${flag}`);
+        assert.exitCode(result, 0, `daemon ${flag} exits 0`);
+        assert.includes(
+          result.stdout,
+          'Usage: qunitx daemon',
+          `daemon ${flag} prints usage to stdout`,
+        );
+        assert.includes(
+          result.stdout,
+          'QUNITX_DAEMON=1',
+          `daemon ${flag} mentions auto-spawn env var`,
+        );
+      }
+    },
+  );
 });
 
-module('Commands | Daemon | lifecycle', { concurrency: false }, () => {
-  test('status with no daemon running -> exit 1, "No daemon running"', async (assert) => {
-    await ensureDaemonStopped();
-    const result = await cli('daemon status', { failOk: true });
+module('Commands | Daemon | lifecycle', { concurrency: true }, () => {
+  daemonTest(
+    'status with no daemon running -> exit 1, "No daemon running"',
+    async (assert, project) => {
+      const result = await cli(project, 'daemon status', { failOk: true });
 
-    assert.exitCode(result, 1);
-    assert.includes(result, 'No daemon running');
-  });
+      assert.exitCode(result, 1);
+      assert.includes(result, 'No daemon running');
+    },
+  );
 
-  test('stop with no daemon running -> exit 0, "No daemon was running"', async (assert) => {
-    await ensureDaemonStopped();
-    const result = await cli('daemon stop');
+  daemonTest(
+    'stop with no daemon running -> exit 0, "No daemon was running"',
+    async (assert, project) => {
+      const result = await cli(project, 'daemon stop');
+
+      assert.exitCode(result, 0);
+      assert.includes(result, 'No daemon was running');
+    },
+  );
+
+  daemonTest('start -> exit 0, "Daemon started", info file exists', async (assert, project) => {
+    const result = await cli(project, 'daemon start');
 
     assert.exitCode(result, 0);
-    assert.includes(result, 'No daemon was running');
+    assert.includes(result, 'Daemon started');
+    assert.regex(result, /pid \d+/);
+    // Info file is the cross-platform presence sentinel — on Windows the socket is
+    // a named pipe and existsSync(socketPath) cannot see it.
+    assert.ok(existsSync(project.infoPath), 'info file exists');
   });
 
-  test('start -> exit 0, "Daemon started", info file exists', async (assert) => {
-    await ensureDaemonStopped();
-    try {
-      const result = await cli('daemon start');
+  daemonTest('status with daemon running -> exit 0 with full details', async (assert, project) => {
+    await cli(project, 'daemon start');
+    const result = await cli(project, 'daemon status');
 
-      assert.exitCode(result, 0);
-      assert.includes(result, 'Daemon started');
-      assert.regex(result, /pid \d+/);
-      // Info file is the cross-platform presence sentinel — on Windows the socket is
-      // a named pipe and existsSync(SOCKET_PATH) cannot see it.
-      assert.ok(existsSync(INFO_PATH), 'info file exists');
-    } finally {
-      await ensureDaemonStopped();
-    }
+    assert.exitCode(result, 0);
+    assert.includes(result, 'Daemon running');
+    assert.regex(result, /pid:\s+\d+/);
+    assert.includes(result, `cwd:     ${project.cwd}`);
+    assert.regex(result, /node:\s+v\d+/);
+    assert.includes(result, `socket:  ${project.socketPath}`);
   });
 
-  test('status with daemon running -> exit 0 with full details', async (assert) => {
-    await ensureDaemonStopped();
-    await cli('daemon start');
-    try {
-      const result = await cli('daemon status');
+  daemonTest('start when already running -> exit 0, "already running"', async (assert, project) => {
+    await cli(project, 'daemon start');
+    const result = await cli(project, 'daemon start');
 
-      assert.exitCode(result, 0);
-      assert.includes(result, 'Daemon running');
-      assert.regex(result, /pid:\s+\d+/);
-      assert.includes(result, `cwd:     ${CWD}`);
-      assert.regex(result, /node:\s+v\d+/);
-      assert.includes(result, `socket:  ${SOCKET_PATH}`);
-    } finally {
-      await ensureDaemonStopped();
-    }
+    assert.exitCode(result, 0);
+    assert.includes(result, 'already running');
+    assert.regex(result, /pid \d+/);
   });
 
-  test('start when already running -> exit 0, "already running"', async (assert) => {
-    await ensureDaemonStopped();
-    await cli('daemon start');
-    try {
-      const result = await cli('daemon start');
+  daemonTest('stop while running -> exit 0, removes info file', async (assert, project) => {
+    await cli(project, 'daemon start');
+    assert.ok(existsSync(project.infoPath), 'info file exists pre-stop');
 
-      assert.exitCode(result, 0);
-      assert.includes(result, 'already running');
-      assert.regex(result, /pid \d+/);
-    } finally {
-      await ensureDaemonStopped();
-    }
-  });
-
-  test('stop while running -> exit 0, removes info file', async (assert) => {
-    await ensureDaemonStopped();
-    await cli('daemon start');
-    assert.ok(existsSync(INFO_PATH), 'info file exists pre-stop');
-
-    const result = await cli('daemon stop');
+    const result = await cli(project, 'daemon stop');
 
     assert.exitCode(result, 0);
     assert.includes(result, 'Daemon stopped');
-    assert.notOk(existsSync(INFO_PATH), 'info file removed');
+    assert.notOk(existsSync(project.infoPath), 'info file removed');
     // Socket is a named pipe on Windows (no fs entry) — only assert on POSIX.
     if (process.platform !== 'win32') {
-      assert.notOk(existsSync(SOCKET_PATH), 'socket file removed');
+      assert.notOk(existsSync(project.socketPath), 'socket file removed');
     }
   });
 
-  test('rapid stop+start cycles do not race the daemon resource teardown', async (assert) => {
-    // Regression test: the dispatch handler used to ack 'done' to the client BEFORE
-    // the daemon's async cleanup (server.close, browser.close, process.exit) ran.
-    // A fast follow-up `daemon start` could race the dying daemon's socket/named-
-    // pipe handle and hit EADDRINUSE — the new daemon exited, the parent timed out
-    // polling for the info file, and the cli reported "Daemon did not start within
-    // 10s". Especially reliable on Windows where named-pipe handle release lags
-    // process exit. Three cycles back-to-back makes the race detectable on any
-    // platform if the wait-for-pid-exit fix in client.ts ever regresses.
-    await ensureDaemonStopped();
-    for (let i = 0; i < 3; i++) {
-      const start = await cli('daemon start');
-      assert.exitCode(start, 0, `iteration ${i}: start succeeded`);
-      const stop = await cli('daemon stop');
-      assert.exitCode(stop, 0, `iteration ${i}: stop succeeded`);
-    }
-  });
+  daemonTest(
+    'rapid stop+start cycles do not race the daemon resource teardown',
+    async (assert, project) => {
+      // Regression test: the dispatch handler used to ack 'done' to the client BEFORE
+      // the daemon's async cleanup (server.close, browser.close, process.exit) ran.
+      // A fast follow-up `daemon start` could race the dying daemon's socket/named-
+      // pipe handle and hit EADDRINUSE — the new daemon exited, the parent timed out
+      // polling for the info file, and the cli reported "Daemon did not start within
+      // 10s". Especially reliable on Windows where named-pipe handle release lags
+      // process exit. Three cycles back-to-back makes the race detectable on any
+      // platform if the wait-for-pid-exit fix in client.ts ever regresses.
+      for (let i = 0; i < 3; i++) {
+        const start = await cli(project, 'daemon start');
+        assert.exitCode(start, 0, `iteration ${i}: start succeeded`);
+        const stop = await cli(project, 'daemon stop');
+        assert.exitCode(stop, 0, `iteration ${i}: stop succeeded`);
+      }
+    },
+  );
 
-  test('concurrent daemon start invocations converge on a single live daemon', async (assert) => {
-    // Two simultaneous starts exercise THREE invariants in one test:
-    //
-    // 1. Atomic claim: listen() is the only at-most-one operation; whichever
-    //    process binds first wins. The loser hits EADDRINUSE.
-    // 2. Listen-failure cleanup correctness: the loser's shutdown must NOT unlink
-    //    the winner's socket/info files. Without the `listenSucceeded` gate this
-    //    silently corrupts the winner — info file vanishes, POSIX socket dirent
-    //    is removed, the running daemon becomes unreachable to new clients while
-    //    its own fds keep working. Catastrophic and silent.
-    // 3. Convergent client view: both clients' polls — which require BOTH info
-    //    file presence AND a live ping — must report the SAME surviving daemon's
-    //    pid. A pid mismatch would mean one client returned during a brief
-    //    inconsistent window.
-    //
-    // The single-iteration "info file exists at start return" lifecycle test
-    // covers the basic startup contract. This test is the strictly stronger
-    // regression — it would catch every race the lifecycle test catches, plus
-    // listen-failure corruption that single-process tests can't reach.
-    await ensureDaemonStopped();
-    const [r1, r2] = await Promise.all([cli('daemon start'), cli('daemon start')]);
-    try {
+  daemonTest(
+    'concurrent daemon start invocations converge on a single live daemon',
+    async (assert, project) => {
+      // Two simultaneous starts exercise THREE invariants in one test:
+      //
+      // 1. Atomic claim: listen() is the only at-most-one operation; whichever
+      //    process binds first wins. The loser hits EADDRINUSE.
+      // 2. Listen-failure cleanup correctness: the loser's shutdown must NOT unlink
+      //    the winner's socket/info files. Without the `listenSucceeded` gate this
+      //    silently corrupts the winner — info file vanishes, POSIX socket dirent
+      //    is removed, the running daemon becomes unreachable to new clients while
+      //    its own fds keep working. Catastrophic and silent.
+      // 3. Convergent client view: both clients' polls — which require BOTH info
+      //    file presence AND a live ping — must report the SAME surviving daemon's
+      //    pid. A pid mismatch would mean one client returned during a brief
+      //    inconsistent window.
+      //
+      // The single-iteration "info file exists at start return" lifecycle test
+      // covers the basic startup contract. This test is the strictly stronger
+      // regression — it would catch every race the lifecycle test catches, plus
+      // listen-failure corruption that single-process tests can't reach.
+      const [r1, r2] = await Promise.all([
+        cli(project, 'daemon start'),
+        cli(project, 'daemon start'),
+      ]);
+
       assert.exitCode(r1, 0, 'first start exited 0');
       assert.exitCode(r2, 0, 'second start exited 0');
 
@@ -259,79 +326,71 @@ module('Commands | Daemon | lifecycle', { concurrency: false }, () => {
       assert.equal(pid1, pid2, 'both clients converge on the same surviving daemon pid');
 
       // Loser's listen-failure path must NOT have unlinked the winner's files.
-      assert.ok(existsSync(INFO_PATH), 'winner info file intact after concurrent race');
+      assert.ok(existsSync(project.infoPath), 'winner info file intact after concurrent race');
 
-      const status = await cli('daemon status');
+      const status = await cli(project, 'daemon status');
       assert.exitCode(status, 0);
       const statusPid = Number(/pid:\s+(\d+)/.exec(status.stdout)?.[1]);
       assert.equal(statusPid, pid1, 'status reports the surviving daemon pid');
-    } finally {
-      await ensureDaemonStopped();
-    }
-  });
+    },
+  );
 
-  test('start cleans up a stale socket file from a crashed daemon', async (assert) => {
-    // POSIX-only: simulating a stale socket requires writing a regular file at the
-    // socket path. Windows sockets are named pipes (\\.\pipe\...) — fs.writeFile to
-    // that path is not a valid operation, and stale named pipes auto-recycle anyway.
-    if (process.platform === 'win32') return assert.ok(true, 'skipped on win32');
+  daemonTest(
+    'start cleans up a stale socket file from a crashed daemon',
+    async (assert, project) => {
+      // POSIX-only: simulating a stale socket requires writing a regular file at the
+      // socket path. Windows sockets are named pipes (\\.\pipe\...) — fs.writeFile to
+      // that path is not a valid operation, and stale named pipes auto-recycle anyway.
+      if (process.platform === 'win32') return assert.ok(true, 'skipped on win32');
 
-    await ensureDaemonStopped();
-    // Simulate a stale socket from a crashed daemon — file exists but no listener.
-    // The daemon's `isLiveSocket` probe returns false; it `unlink`s and re-listens.
-    await fs.writeFile(SOCKET_PATH, '');
-    assert.ok(existsSync(SOCKET_PATH), 'stale socket file present pre-start');
+      // Simulate a stale socket from a crashed daemon — file exists but no listener.
+      // The daemon's `isLiveSocket` probe returns false; it `unlink`s and re-listens.
+      await fs.writeFile(project.socketPath, '');
+      assert.ok(existsSync(project.socketPath), 'stale socket file present pre-start');
 
-    try {
-      const result = await cli('daemon start');
+      const result = await cli(project, 'daemon start');
 
       assert.exitCode(result, 0);
       assert.includes(result, 'Daemon started');
-      const stats = await fs.stat(SOCKET_PATH);
+      const stats = await fs.stat(project.socketPath);
       assert.ok(stats.isSocket(), 'socket file is a live socket post-start');
-    } finally {
-      await ensureDaemonStopped();
-    }
-  });
+    },
+  );
 });
 
-module('Commands | Daemon | run routing', { concurrency: false }, () => {
-  test('passing test through daemon -> exit 0 and TAP marks "(daemon)"', async (assert) => {
-    await ensureDaemonStopped();
-    await cli('daemon start');
-    try {
-      const result = await cli(FIXTURE_PASS);
+module('Commands | Daemon | run routing', { concurrency: true }, () => {
+  daemonTest(
+    'passing test through daemon -> exit 0 and TAP marks "(daemon)"',
+    async (assert, project) => {
+      await cli(project, 'daemon start');
+      const result = await cli(project, FIXTURE_PASS);
 
       assert.exitCode(result, 0);
       assert.includes(result, 'TAP version 13');
       assert.includes(result, '(daemon)');
       assert.includes(result, '# pass 3');
       assert.includes(result, '# fail 0');
-    } finally {
-      await ensureDaemonStopped();
-    }
-  });
+    },
+  );
 
-  test('failing test through daemon -> exit 1, TAP shows failures', async (assert) => {
-    await ensureDaemonStopped();
-    await cli('daemon start');
-    try {
-      const result = await cli(FIXTURE_FAIL, { failOk: true });
+  daemonTest(
+    'failing test through daemon -> exit 1, TAP shows failures',
+    async (assert, project) => {
+      await cli(project, 'daemon start');
+      const result = await cli(project, FIXTURE_FAIL, { failOk: true });
 
       assert.exitCode(result, 1);
       assert.includes(result, '(daemon)');
       assert.regex(result, /# fail [1-9]/);
-    } finally {
-      await ensureDaemonStopped();
-    }
-  });
+    },
+  );
 
-  test('two consecutive daemon-routed runs both succeed (warm context reuse)', async (assert) => {
-    await ensureDaemonStopped();
-    await cli('daemon start');
-    try {
-      const r1 = await cli(FIXTURE_PASS);
-      const r2 = await cli(FIXTURE_PASS);
+  daemonTest(
+    'two consecutive daemon-routed runs both succeed (warm context reuse)',
+    async (assert, project) => {
+      await cli(project, 'daemon start');
+      const r1 = await cli(project, FIXTURE_PASS);
+      const r2 = await cli(project, FIXTURE_PASS);
 
       assert.exitCode(r1, 0);
       assert.exitCode(r2, 0);
@@ -339,16 +398,14 @@ module('Commands | Daemon | run routing', { concurrency: false }, () => {
       assert.includes(r2, '# pass 3');
       assert.includes(r1, '(daemon)');
       assert.includes(r2, '(daemon)');
-    } finally {
-      await ensureDaemonStopped();
-    }
-  });
+    },
+  );
 
-  test('TAP version 13 header appears exactly once per daemon-routed run', async (assert) => {
-    await ensureDaemonStopped();
-    await cli('daemon start');
-    try {
-      const result = await cli(FIXTURE_PASS);
+  daemonTest(
+    'TAP version 13 header appears exactly once per daemon-routed run',
+    async (assert, project) => {
+      await cli(project, 'daemon start');
+      const result = await cli(project, FIXTURE_PASS);
       const matches = result.stdout.match(/^TAP version 13\b/gm) || [];
 
       assert.strictEqual(
@@ -356,120 +413,97 @@ module('Commands | Daemon | run routing', { concurrency: false }, () => {
         1,
         `expected exactly one TAP version header, got ${matches.length}`,
       );
-    } finally {
-      await ensureDaemonStopped();
-    }
+    },
+  );
+
+  daemonTest('multi-file run uses concurrent groups inside the daemon', async (assert, project) => {
+    await cli(project, 'daemon start');
+    const result = await cli(project, `${FIXTURE_PASS} ${FIXTURE_PASS_JS}`);
+
+    assert.exitCode(result, 0);
+    // 2 files × 3 passing tests each = 6 total
+    assert.includes(result, '# pass 6');
+    assert.includes(result, '# fail 0');
+    // The "(daemon)" tag rides on the same `# Running ...` line as group count.
+    assert.regex(result, /# Running 2 test files across \d+ groups? \(daemon\)/);
+    // Exactly one TAP header even though each group's web-server fires its own
+    // 'connection' event — the suppress-in-daemon-mode check must hold.
+    const headers = result.stdout.match(/^TAP version 13\b/gm) || [];
+    assert.strictEqual(headers.length, 1, 'one TAP version header for the whole run');
   });
 
-  test('multi-file run uses concurrent groups inside the daemon', async (assert) => {
-    await ensureDaemonStopped();
-    await cli('daemon start');
-    try {
-      const result = await cli(`${FIXTURE_PASS} ${FIXTURE_PASS_JS}`);
-
-      assert.exitCode(result, 0);
-      // 2 files × 3 passing tests each = 6 total
-      assert.includes(result, '# pass 6');
-      assert.includes(result, '# fail 0');
-      // The "(daemon)" tag rides on the same `# Running ...` line as group count.
-      assert.regex(result, /# Running 2 test files across \d+ groups? \(daemon\)/);
-      // Exactly one TAP header even though each group's web-server fires its own
-      // 'connection' event — the suppress-in-daemon-mode check must hold.
-      const headers = result.stdout.match(/^TAP version 13\b/gm) || [];
-      assert.strictEqual(headers.length, 1, 'one TAP version header for the whole run');
-    } finally {
-      await ensureDaemonStopped();
-    }
-  });
-
-  test('multi-file run with one failing file -> exit 1, fails counted', async (assert) => {
-    await ensureDaemonStopped();
-    await cli('daemon start');
-    try {
-      const result = await cli(`${FIXTURE_PASS} ${FIXTURE_FAIL}`, { failOk: true });
+  daemonTest(
+    'multi-file run with one failing file -> exit 1, fails counted',
+    async (assert, project) => {
+      await cli(project, 'daemon start');
+      const result = await cli(project, `${FIXTURE_PASS} ${FIXTURE_FAIL}`, { failOk: true });
 
       assert.exitCode(result, 1);
       // Passing fixture contributes 3 passes, failing fixture has at least one fail.
       assert.regex(result, /# pass [3-9]/);
       assert.regex(result, /# fail [1-9]/);
       assert.includes(result, '(daemon)');
-    } finally {
-      await ensureDaemonStopped();
-    }
-  });
+    },
+  );
 });
 
-module('Commands | Daemon | bypass', { concurrency: false }, () => {
-  test('--no-daemon bypasses a running daemon (no "(daemon)" suffix)', async (assert) => {
-    await ensureDaemonStopped();
-    await cli('daemon start');
-    try {
-      const result = await cli(`--no-daemon ${FIXTURE_PASS}`);
+module('Commands | Daemon | bypass', { concurrency: true }, () => {
+  daemonTest(
+    '--no-daemon bypasses a running daemon (no "(daemon)" suffix)',
+    async (assert, project) => {
+      await cli(project, 'daemon start');
+      const result = await cli(project, `--no-daemon ${FIXTURE_PASS}`);
 
       assert.exitCode(result, 0);
       assert.includes(result, '# pass 3');
       assert.notIncludes(result, '(daemon)');
-    } finally {
-      await ensureDaemonStopped();
-    }
+    },
+  );
+
+  daemonTest('QUNITX_NO_DAEMON env var bypasses a running daemon', async (assert, project) => {
+    await cli(project, 'daemon start');
+    const result = await cli(project, FIXTURE_PASS, {
+      env: { ...CLI_ENV, QUNITX_NO_DAEMON: '1' },
+    });
+
+    assert.exitCode(result, 0);
+    assert.includes(result, '# pass 3');
+    assert.notIncludes(result, '(daemon)');
   });
 
-  test('QUNITX_NO_DAEMON env var bypasses a running daemon', async (assert) => {
-    await ensureDaemonStopped();
-    await cli('daemon start');
-    try {
-      const result = await cli(FIXTURE_PASS, {
-        env: { ...CLI_ENV, QUNITX_NO_DAEMON: '1' },
-      });
+  daemonTest('CI env var bypasses a running daemon', async (assert, project) => {
+    await cli(project, 'daemon start');
+    const result = await cli(project, FIXTURE_PASS, { env: { ...CLI_ENV, CI: '1' } });
 
-      assert.exitCode(result, 0);
-      assert.includes(result, '# pass 3');
-      assert.notIncludes(result, '(daemon)');
-    } finally {
-      await ensureDaemonStopped();
-    }
+    assert.exitCode(result, 0);
+    assert.includes(result, '# pass 3');
+    assert.notIncludes(result, '(daemon)');
   });
 
-  test('CI env var bypasses a running daemon', async (assert) => {
-    await ensureDaemonStopped();
-    await cli('daemon start');
-    try {
-      const result = await cli(FIXTURE_PASS, { env: { ...CLI_ENV, CI: '1' } });
-
-      assert.exitCode(result, 0);
-      assert.includes(result, '# pass 3');
-      assert.notIncludes(result, '(daemon)');
-    } finally {
-      await ensureDaemonStopped();
-    }
-  });
-
-  test('QUNITX_DAEMON=1 overrides CI=1 (multi-invocation CI opt-in)', async (assert) => {
-    // Default: CI=1 bypasses the daemon for single-invocation jobs (most CI). When
-    // both CI=1 and QUNITX_DAEMON=1 are set, the explicit opt-in wins — multi-
-    // invocation CI flows (monorepos, pre-commit hooks doing N qunitx calls) need
-    // to be able to share the warm daemon across calls.
-    await ensureDaemonStopped();
-    await cli('daemon start');
-    try {
-      const result = await cli(FIXTURE_PASS, {
+  daemonTest(
+    'QUNITX_DAEMON=1 overrides CI=1 (multi-invocation CI opt-in)',
+    async (assert, project) => {
+      // Default: CI=1 bypasses the daemon for single-invocation jobs (most CI). When
+      // both CI=1 and QUNITX_DAEMON=1 are set, the explicit opt-in wins — multi-
+      // invocation CI flows (monorepos, pre-commit hooks doing N qunitx calls) need
+      // to be able to share the warm daemon across calls.
+      await cli(project, 'daemon start');
+      const result = await cli(project, FIXTURE_PASS, {
         env: { ...CLI_ENV, CI: '1', QUNITX_DAEMON: '1' },
       });
 
       assert.exitCode(result, 0);
       assert.includes(result, '# pass 3');
       assert.includes(result, '(daemon)');
-    } finally {
-      await ensureDaemonStopped();
-    }
-  });
+    },
+  );
 });
 
-module('Commands | Daemon | auto-spawn', { concurrency: false }, () => {
-  test('QUNITX_DAEMON=1 with no daemon -> auto-spawns and routes', async (assert) => {
-    await ensureDaemonStopped();
-    try {
-      const result = await cli(FIXTURE_PASS, {
+module('Commands | Daemon | auto-spawn', { concurrency: true }, () => {
+  daemonTest(
+    'QUNITX_DAEMON=1 with no daemon -> auto-spawns and routes',
+    async (assert, project) => {
+      const result = await cli(project, FIXTURE_PASS, {
         env: { ...CLI_ENV, QUNITX_DAEMON: '1' },
       });
 
@@ -478,51 +512,49 @@ module('Commands | Daemon | auto-spawn', { concurrency: false }, () => {
       assert.includes(result, '(daemon)');
 
       // Daemon must still be running for subsequent invocations to reuse.
-      const status = await cli('daemon status');
+      const status = await cli(project, 'daemon status');
       assert.exitCode(status, 0);
       assert.includes(status, 'Daemon running');
-    } finally {
-      await ensureDaemonStopped();
-    }
-  });
+    },
+  );
 
-  test('without QUNITX_DAEMON, no daemon is spawned and run is local', async (assert) => {
-    await ensureDaemonStopped();
-    const result = await cli(FIXTURE_PASS);
+  daemonTest(
+    'without QUNITX_DAEMON, no daemon is spawned and run is local',
+    async (assert, project) => {
+      const result = await cli(project, FIXTURE_PASS);
 
-    assert.exitCode(result, 0);
-    assert.includes(result, '# pass 3');
-    assert.notIncludes(result, '(daemon)');
+      assert.exitCode(result, 0);
+      assert.includes(result, '# pass 3');
+      assert.notIncludes(result, '(daemon)');
 
-    const status = await cli('daemon status', { failOk: true });
-    assert.exitCode(status, 1);
-    assert.includes(status, 'No daemon running');
-  });
+      const status = await cli(project, 'daemon status', { failOk: true });
+      assert.exitCode(status, 1);
+      assert.includes(status, 'No daemon running');
+    },
+  );
 
-  test('QUNITX_DAEMON=1 with daemon already running -> reuses it', async (assert) => {
-    await ensureDaemonStopped();
-    await cli('daemon start');
-    try {
-      const startupPid = await readDaemonPid();
+  daemonTest(
+    'QUNITX_DAEMON=1 with daemon already running -> reuses it',
+    async (assert, project) => {
+      await cli(project, 'daemon start');
+      const startupPid = await readDaemonPid(project);
 
-      const result = await cli(FIXTURE_PASS, {
+      const result = await cli(project, FIXTURE_PASS, {
         env: { ...CLI_ENV, QUNITX_DAEMON: '1' },
       });
       assert.exitCode(result, 0);
       assert.includes(result, '(daemon)');
 
       // Same daemon instance — no double-spawn.
-      const samePid = await readDaemonPid();
+      const samePid = await readDaemonPid(project);
       assert.strictEqual(samePid, startupPid, 'daemon process unchanged');
-    } finally {
-      await ensureDaemonStopped();
-    }
-  });
+    },
+  );
 
-  test('QUNITX_DAEMON=1 + --no-daemon -> bypass wins, runs locally', async (assert) => {
-    await ensureDaemonStopped();
-    try {
-      const result = await cli(`--no-daemon ${FIXTURE_PASS}`, {
+  daemonTest(
+    'QUNITX_DAEMON=1 + --no-daemon -> bypass wins, runs locally',
+    async (assert, project) => {
+      const result = await cli(project, `--no-daemon ${FIXTURE_PASS}`, {
         env: { ...CLI_ENV, QUNITX_DAEMON: '1' },
       });
       assert.exitCode(result, 0);
@@ -530,68 +562,59 @@ module('Commands | Daemon | auto-spawn', { concurrency: false }, () => {
       assert.notIncludes(result, '(daemon)');
 
       // No daemon spawned because --no-daemon vetoes auto-spawn.
-      const status = await cli('daemon status', { failOk: true });
+      const status = await cli(project, 'daemon status', { failOk: true });
       assert.exitCode(status, 1);
-    } finally {
-      await ensureDaemonStopped();
-    }
-  });
+    },
+  );
 });
 
-module('Commands | Daemon | idle timeout', { concurrency: false }, () => {
+module('Commands | Daemon | idle timeout', { concurrency: true }, () => {
   // Integration coverage focuses on the three distinct daemon behaviors the env var
   // can drive — short timeout shuts down, "false" stays alive, invalid value warns
   // and still starts. Parser semantics (units, fractions, edge cases) are exhausted
   // in test/utils/parse-daemon-idle-timeout-test.ts; we don't re-test them through
   // process spawns here.
 
-  test('a short QUNITX_DAEMON_IDLE_TIMEOUT shortens the window and the daemon self-exits', async (assert) => {
-    await ensureDaemonStopped();
-    try {
-      const start = await cli('daemon start', {
+  daemonTest(
+    'a short QUNITX_DAEMON_IDLE_TIMEOUT shortens the window and the daemon self-exits',
+    async (assert, project) => {
+      const start = await cli(project, 'daemon start', {
         env: { ...CLI_ENV, QUNITX_DAEMON_IDLE_TIMEOUT: '500ms' },
       });
       assert.exitCode(start, 0);
-      assert.ok(existsSync(INFO_PATH), 'info file present immediately after start');
+      assert.ok(existsSync(project.infoPath), 'info file present immediately after start');
 
       // Event-driven wait via fs.watch — sub-ms latency, zero CPU between events.
       // 3 s deadline is ~6× the configured timer; covers worst-case CI scheduling
       // jitter without bleeding test time when the shutdown happens promptly.
-      const gone = await waitForFileGone(INFO_PATH, 3000);
+      const gone = await waitForFileGone(project.infoPath, 3000);
       assert.ok(gone, 'daemon self-shut-down within the configured window');
-    } finally {
-      await ensureDaemonStopped();
-    }
-  });
+    },
+  );
 
-  test('QUNITX_DAEMON_IDLE_TIMEOUT=false disables auto-shutdown', async (assert) => {
+  daemonTest('QUNITX_DAEMON_IDLE_TIMEOUT=false disables auto-shutdown', async (assert, project) => {
     // Paired with the short-timeout test above. If the Infinity branch in
     // resetIdleTimer regressed and Node's setTimeout clamp converted Infinity to
     // 1 ms, the daemon would vanish well before this 700 ms wait elapses — strictly
     // longer than the 500 ms timer the previous test exercised, so a clamp bug is
     // unambiguously visible here.
-    await ensureDaemonStopped();
-    try {
-      const start = await cli('daemon start', {
-        env: { ...CLI_ENV, QUNITX_DAEMON_IDLE_TIMEOUT: 'false' },
-      });
-      assert.exitCode(start, 0);
+    const start = await cli(project, 'daemon start', {
+      env: { ...CLI_ENV, QUNITX_DAEMON_IDLE_TIMEOUT: 'false' },
+    });
+    assert.exitCode(start, 0);
 
-      await new Promise((r) => setTimeout(r, 700));
+    await new Promise((r) => setTimeout(r, 700));
 
-      assert.ok(existsSync(INFO_PATH), 'info file still present after the wait');
-      const status = await cli('daemon status');
-      assert.exitCode(status, 0);
-      assert.includes(status, 'Daemon running');
-    } finally {
-      await ensureDaemonStopped();
-    }
+    assert.ok(existsSync(project.infoPath), 'info file still present after the wait');
+    const status = await cli(project, 'daemon status');
+    assert.exitCode(status, 0);
+    assert.includes(status, 'Daemon running');
   });
 
-  test('invalid QUNITX_DAEMON_IDLE_TIMEOUT prints a warning to stderr and starts on the default', async (assert) => {
-    await ensureDaemonStopped();
-    try {
-      const start = await cli('daemon start', {
+  daemonTest(
+    'invalid QUNITX_DAEMON_IDLE_TIMEOUT prints a warning to stderr and starts on the default',
+    async (assert, project) => {
+      const start = await cli(project, 'daemon start', {
         env: { ...CLI_ENV, QUNITX_DAEMON_IDLE_TIMEOUT: 'garbage-value' },
       });
       assert.exitCode(start, 0, 'malformed env value must not block daemon startup');
@@ -608,57 +631,50 @@ module('Commands | Daemon | idle timeout', { concurrency: false }, () => {
         start.stderr.includes('garbage-value'),
         'warning should quote the bad value so the user knows what to fix',
       );
-    } finally {
-      await ensureDaemonStopped();
-    }
-  });
+    },
+  );
 });
 
-module('Commands | Daemon | crash recovery', { concurrency: false }, () => {
+module('Commands | Daemon | crash recovery', { concurrency: true }, () => {
   // Linux-only: relies on /proc/<pid>/task/<pid>/children to find the daemon's Chrome.
   // macOS/Windows lack a portable equivalent; the recovery code path itself is the same.
   const isLinux = process.platform === 'linux';
 
-  test('daemon relaunches Chrome after it is SIGKILLed', async (assert) => {
+  daemonTest('daemon relaunches Chrome after it is SIGKILLed', async (assert, project) => {
     if (!isLinux) return assert.ok(true, 'skipped on non-linux');
 
-    await ensureDaemonStopped();
-    await cli('daemon start');
-    try {
-      const before = await cli(FIXTURE_PASS);
-      assert.includes(before, '# pass 3');
+    await cli(project, 'daemon start');
+    const before = await cli(project, FIXTURE_PASS);
+    assert.includes(before, '# pass 3');
 
-      const daemonPid = await readDaemonPid();
-      const killed = await killDaemonChrome(daemonPid);
-      assert.ok(killed, "killed daemon's Chrome process");
-      // Give Playwright's CDP transport a moment to flag the connection dead.
-      await new Promise((r) => setTimeout(r, 200));
+    const daemonPid = await readDaemonPid(project);
+    const killed = await killDaemonChrome(daemonPid);
+    assert.ok(killed, "killed daemon's Chrome process");
+    // Give Playwright's CDP transport a moment to flag the connection dead.
+    await new Promise((r) => setTimeout(r, 200));
 
-      const after = await cli(FIXTURE_PASS);
-      assert.exitCode(after, 0);
-      assert.includes(after, '# pass 3');
-      assert.includes(after, '(daemon)');
-    } finally {
-      await ensureDaemonStopped();
-    }
+    const after = await cli(project, FIXTURE_PASS);
+    assert.exitCode(after, 0);
+    assert.includes(after, '# pass 3');
+    assert.includes(after, '(daemon)');
   });
 
-  test('successful run resets the crash counter (consecutive crashes survive)', async (assert) => {
-    if (!isLinux) return assert.ok(true, 'skipped on non-linux');
+  daemonTest(
+    'successful run resets the crash counter (consecutive crashes survive)',
+    async (assert, project) => {
+      if (!isLinux) return assert.ok(true, 'skipped on non-linux');
 
-    // Two back-to-back kill+run cycles. If the counter were not reset by the successful
-    // run between, the second cycle would push the daemon past MAX_CONSECUTIVE_CRASHES
-    // and the third invocation (status check) would fail.
-    await ensureDaemonStopped();
-    await cli('daemon start');
-    try {
-      const startupPid = await readDaemonPid();
+      // Two back-to-back kill+run cycles. If the counter were not reset by the successful
+      // run between, the second cycle would push the daemon past MAX_CONSECUTIVE_CRASHES
+      // and the third invocation (status check) would fail.
+      await cli(project, 'daemon start');
+      const startupPid = await readDaemonPid(project);
 
       // Cycle 1
       const cycle1Killed = await killDaemonChrome(startupPid);
       assert.ok(cycle1Killed, 'cycle 1: killed Chrome');
       await new Promise((r) => setTimeout(r, 200));
-      const cycle1 = await cli(FIXTURE_PASS);
+      const cycle1 = await cli(project, FIXTURE_PASS);
       assert.exitCode(cycle1, 0);
       assert.includes(cycle1, '# pass 3');
 
@@ -666,61 +682,54 @@ module('Commands | Daemon | crash recovery', { concurrency: false }, () => {
       const cycle2Killed = await killDaemonChrome(startupPid);
       assert.ok(cycle2Killed, 'cycle 2: killed Chrome');
       await new Promise((r) => setTimeout(r, 200));
-      const cycle2 = await cli(FIXTURE_PASS);
+      const cycle2 = await cli(project, FIXTURE_PASS);
       assert.exitCode(cycle2, 0);
       assert.includes(cycle2, '# pass 3');
 
       // Daemon must still be the same process (not restarted, not dead).
-      const status = await cli('daemon status');
+      const status = await cli(project, 'daemon status');
       assert.exitCode(status, 0);
       const stillAlivePid = Number(/pid:\s+(\d+)/.exec(status.stdout)?.[1]);
       assert.strictEqual(stillAlivePid, startupPid, 'daemon process survived both crash cycles');
-    } finally {
-      await ensureDaemonStopped();
-    }
-  });
+    },
+  );
 
-  test('post-run check recovers when Chrome dies during the run', async (assert) => {
+  daemonTest('post-run check recovers when Chrome dies during the run', async (assert, project) => {
     if (!isLinux) return assert.ok(true, 'skipped on non-linux');
 
     // Race condition: kill Chrome while a run is in flight. That run will fail (browser
     // mid-test died), but the daemon's post-run check must detect the disconnected
     // browser and relaunch so the *next* run succeeds.
-    await ensureDaemonStopped();
-    await cli('daemon start');
-    try {
-      await cli(FIXTURE_PASS); // warm-up: ensures daemon is ready
+    await cli(project, 'daemon start');
+    await cli(project, FIXTURE_PASS); // warm-up: ensures daemon is ready
 
-      const daemonPid = await readDaemonPid();
-      // Schedule the kill ~150ms in. The fixture takes ~140ms; the kill almost always
-      // lands while page.goto / WS handshake / first test is in flight.
-      const killTimer = setTimeout(() => {
-        void killDaemonChrome(daemonPid);
-      }, 150);
+    const daemonPid = await readDaemonPid(project);
+    // Schedule the kill ~150ms in. The fixture takes ~140ms; the kill almost always
+    // lands while page.goto / WS handshake / first test is in flight.
+    const killTimer = setTimeout(() => {
+      void killDaemonChrome(daemonPid);
+    }, 150);
 
-      const inFlight = await cli(FIXTURE_PASS, { failOk: true });
-      clearTimeout(killTimer);
+    const inFlight = await cli(project, FIXTURE_PASS, { failOk: true });
+    clearTimeout(killTimer);
 
-      // The in-flight run may either complete (kill landed too late) or fail (kill
-      // killed Chrome mid-run). Either is acceptable — what matters is that the next
-      // run succeeds, proving the daemon recovered rather than getting stuck.
-      assert.ok(
-        inFlight.code === 0 || inFlight.code === 1,
-        `in-flight run produced an exit code (got ${inFlight.code})`,
-      );
+    // The in-flight run may either complete (kill landed too late) or fail (kill
+    // killed Chrome mid-run). Either is acceptable — what matters is that the next
+    // run succeeds, proving the daemon recovered rather than getting stuck.
+    assert.ok(
+      inFlight.code === 0 || inFlight.code === 1,
+      `in-flight run produced an exit code (got ${inFlight.code})`,
+    );
 
-      const next = await cli(FIXTURE_PASS);
-      assert.exitCode(next, 0);
-      assert.includes(next, '# pass 3');
-      assert.includes(next, '(daemon)');
-    } finally {
-      await ensureDaemonStopped();
-    }
+    const next = await cli(project, FIXTURE_PASS);
+    assert.exitCode(next, 0);
+    assert.includes(next, '# pass 3');
+    assert.includes(next, '(daemon)');
   });
 });
 
-async function readDaemonPid(): Promise<number> {
-  const status = await cli('daemon status');
+async function readDaemonPid(project: DaemonProject): Promise<number> {
+  const status = await cli(project, 'daemon status');
   const pid = Number(/pid:\s+(\d+)/.exec(status.stdout)?.[1]);
   if (!Number.isInteger(pid) || pid <= 0) {
     throw new Error(`daemon status did not report a valid pid:\n${status.stdout}`);
