@@ -19,6 +19,24 @@ module('Setup | parseCliFlags | inputs', { concurrency: true }, () => {
     const flags = withArgv(['/tmp/demo.ts'], () => parseCliFlags(PROJECT_ROOT));
     assert.deepEqual(flags.inputs, ['/tmp/demo.ts']);
   });
+
+  test('Windows absolute input (drive-letter prefix) is kept as-is, not joined onto cwd', (assert) => {
+    // Regression test: parseCliFlags previously detected absolute paths via
+    // `arg.startsWith('/')`, which missed Windows drive-letter paths. A path like
+    // 'D:\\some\\fixture.ts' would silently get joined onto process.cwd(),
+    // yielding 'D:\\<cwd>\\D:\\some\\fixture.ts' — a path that always ENOENTs.
+    // The check is now path.isAbsolute(), which handles both POSIX and Windows.
+    const winPath = 'D:\\some\\fixture.ts';
+    const flags = withArgv([winPath], () => parseCliFlags(PROJECT_ROOT));
+    // path.isAbsolute on POSIX returns false for 'D:\\…', so this test only
+    // exercises the new behaviour on Windows hosts. On POSIX the input is
+    // (correctly) treated as relative, so we accept either outcome.
+    if (path.isAbsolute(winPath)) {
+      assert.deepEqual(flags.inputs, [winPath]);
+    } else {
+      assert.ok(true, 'POSIX host: path.isAbsolute returns false for drive-letter paths');
+    }
+  });
 });
 
 module('Setup | parseCliFlags | --extensions', { concurrency: true }, () => {

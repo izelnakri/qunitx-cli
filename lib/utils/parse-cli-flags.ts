@@ -82,8 +82,12 @@ export function parseCliFlags(projectRoot: string): ParsedFlags {
         console.warn(`# Warning: Unknown flag "${arg}" — ignored`);
         return result;
       }
+      // path.isAbsolute() is the cross-platform absolute-path check: matches '/'-prefix
+      // on POSIX and drive-letter prefixes ('D:\…') on Windows. The previous explicit
+      // '/' check missed Windows absolute paths and silently joined them onto cwd,
+      // producing 'D:\<cwd>\D:\<arg>' — a path that fails to stat with ENOENT.
       result.inputs.add(
-        arg.startsWith(projectRoot) || arg.startsWith('/') ? arg : path.join(process.cwd(), arg),
+        arg.startsWith(projectRoot) || path.isAbsolute(arg) ? arg : path.join(process.cwd(), arg),
       );
 
       return result;
