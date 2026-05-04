@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import nodeFs, { existsSync } from 'node:fs';
 import path from 'node:path';
 import { daemonSocketPath, daemonInfoPath } from '../../lib/utils/daemon-socket-path.ts';
+import { shutdownDaemon } from '../../lib/commands/daemon/client.ts';
 import { spawnCapture, type CapturedError, type CapturedResult } from '../helpers/shell.ts';
 import '../helpers/custom-asserts.ts';
 
@@ -44,11 +45,15 @@ const SOCKET_PATH = daemonSocketPath(CWD);
 const INFO_PATH = daemonInfoPath(CWD);
 
 async function ensureDaemonStopped(): Promise<void> {
-  // Best-effort cleanup — tolerates a missing daemon (`stop` is idempotent).
-  await cli('daemon stop').catch(() => {});
-  // Defensive: drop stale files that a crashed daemon may have left behind.
-  // Parallelize the two unlinks — they're independent paths and `daemon stop`
-  // already finished, so there's no ordering constraint.
+  // Cleanup helper: call the lib's shutdownDaemon directly instead of spawning
+  // `node cli.ts daemon stop`. Saves ~600 ms per call (cli.ts compile + Node
+  // startup) × ~60 calls per suite. The CLI stop path is exercised explicitly
+  // by the lifecycle tests below, so we don't need to re-cover it here.
+  // shutdownDaemon reads the pid, sends shutdown via socket, waits for pid exit;
+  // it returns false (no throw) when no daemon is running.
+  await shutdownDaemon().catch(() => {});
+  // Defensive: drop stale files that a crashed daemon may have left behind
+  // (e.g. SIGKILL'd before the shutdown handler could unlink them).
   await Promise.all([fs.unlink(SOCKET_PATH).catch(() => {}), fs.unlink(INFO_PATH).catch(() => {})]);
 }
 
