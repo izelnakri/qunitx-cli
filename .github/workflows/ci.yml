@@ -9,6 +9,14 @@ on:
 permissions:
   contents: read
 
+# Cancel stale in-progress runs when a PR is pushed again. Main-branch runs are
+# preserved (they may produce releases, update caches, or deploy Pages), so the
+# cancel is gated on event_name == pull_request. The group key includes ref so
+# unrelated PRs don't compete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # ── Lint ──────────────────────────────────────────────────────────────────────
   # Surfaces formatting (prettier) and code-quality (deno lint) failures fast,
@@ -118,13 +126,17 @@ jobs:
           if-no-files-found: ignore
 
   # ── Bench ─────────────────────────────────────────────────────────────────────
-  # Runs fast microbenchmarks (esbuild bundling, HTTP server, TAP display) on
-  # every push and PR. No Chrome required. Results are informational — the
-  # regression gate lives in `make release` (bench-check) which runs locally
-  # where the saved baseline in benches/results.json is available.
+  # Runs the full bench suite (esbuild, HTTP server, TAP display, e2e, daemon)
+  # against the saved baseline in benches/results.json on every push and PR,
+  # failing the job if any bench regresses past REGRESSION_THRESHOLD (default
+  # 26%, with a 1µs absolute-delta floor — see scripts/check-benchmarks.ts).
+  # Chrome is required because the e2e + daemon benches spawn `node cli.ts`.
+  # If a bench becomes flaky on GHA's noisy shared runners, set
+  # SKIP_BENCHMARK=<basename> in env to skip only that file, or =true to
+  # skip the whole gate while you investigate.
   bench:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -134,8 +146,13 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      - uses: browser-actions/setup-chrome@v2
+        id: setup-chrome
       - run: npm ci
-      - run: deno bench --allow-all benches/esbuild.bench.ts benches/server.bench.ts benches/tap.bench.ts
+      - run: deno task bench:check
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          FORCE_COLOR: 0
 
   # ── Pages (main only) ─────────────────────────────────────────────────────────
   # Runs the CLI against the demo test file to capture live TAP output, copies
