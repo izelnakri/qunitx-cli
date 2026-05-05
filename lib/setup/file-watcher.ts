@@ -17,7 +17,7 @@ const RESCAN_INTERVAL_MS = 1_000;
 // window ensures the rebuild fires AFTER the writeFile burst settles, so esbuild
 // reads the final content rather than a partial snapshot. See the
 // 'rapid back-to-back writes coalesce ...' test in file-watcher-test.ts.
-const CHANGE_COALESCE_MS = 50;
+const CHANGE_COALESCE_MS = 75;
 // Windows fs.watch (ReadDirectoryChangesW) fires both a `rename` (→ classified as 'add')
 // AND one or more spurious `change` events for a single fs.writeFile of a new file. The
 // trailing 'change' arrives after the add's filtered-rebuild has completed, so the existing
