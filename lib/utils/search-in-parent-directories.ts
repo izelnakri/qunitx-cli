@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { pathExists } from './path-exists.ts';
 
 /**
@@ -10,16 +11,17 @@ export async function searchInParentDirectories(
 ): Promise<string | undefined> {
   const resolvedDirectory = directory === '.' ? process.cwd() : directory;
 
-  if (await pathExists(`${resolvedDirectory}/${targetEntry}`)) {
-    return `${resolvedDirectory}/${targetEntry}`;
-  } else if (resolvedDirectory === '') {
-    return;
-  }
+  const candidate = path.join(resolvedDirectory, targetEntry);
+  if (await pathExists(candidate)) return candidate;
 
-  return await searchInParentDirectories(
-    resolvedDirectory.slice(0, resolvedDirectory.lastIndexOf('/')),
-    targetEntry,
-  );
+  // path.dirname returns the same path when at the filesystem root (e.g. '/' or 'C:\\'),
+  // which is the loop terminator. The previous `lastIndexOf('/')` walked one character
+  // at a time on Windows because backslash never matched, then bottomed out at -1
+  // (slice(0,-1) drops just the last char) instead of recognizing the root.
+  const parent = path.dirname(resolvedDirectory);
+  if (parent === resolvedDirectory) return;
+
+  return searchInParentDirectories(parent, targetEntry);
 }
 
 export { searchInParentDirectories as default };
