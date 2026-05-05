@@ -41,19 +41,36 @@ ${highlight('Tip:')} set ${color('QUNITX_DAEMON=1')} to auto-spawn the daemon on
 /**
  * Resolves how to respawn this CLI as the detached daemon child.
  *
- * - SEA: `process.execPath` IS the qunitx binary; reinvoke with `daemon _serve`.
- *   `import.meta.url` is undefined in the CJS SEA bundle, so any path-based
- *   resolution at module scope crashes the entire `daemon` subcommand.
- * - Source / dist bundle (ESM): respawn `node ${process.argv[1]} daemon _serve`
- *   so the child enters via the same entrypoint the parent did (cli.ts in
- *   source, bin/qunitx.js when installed via npm). The previous
- *   `fileURLToPath(import.meta.url)` + `'..','..','..','cli.ts'` resolution
- *   was wrong for the ESM bundle too — three levels up from `dist/cli.js`
- *   pointed outside the package.
+ * - SEA / `deno compile` binary: `process.execPath` IS the qunitx binary;
+ *   reinvoke with `daemon _serve`. `import.meta.url` is undefined in the
+ *   CJS SEA bundle, so any path-based resolution at module scope crashes
+ *   the entire `daemon` subcommand. The Deno-compiled binary is detected
+ *   via `Deno.mainModule` not starting with `file:` (compiled mainModule
+ *   is an `embedded:` / `evfs:` URL pointing into the bundled VFS).
+ * - `deno run cli.ts`: respawn `deno run -A <scriptPath> daemon _serve` so
+ *   the child enters via the same entrypoint the parent did. argv[1] is
+ *   the script path under `deno run`, but `Deno.mainModule` is the
+ *   authoritative source and avoids relative-path surprises.
+ * - Source / dist bundle (Node ESM): respawn `node ${process.argv[1]}
+ *   daemon _serve` so the child enters via the same entrypoint the parent
+ *   did (cli.ts in source, bin/qunitx.js when installed via npm).
  */
 async function buildDaemonSpawn(): Promise<{ bin: string; args: string[] }> {
   const sea = await import('node:sea').catch(() => null);
   if (sea?.isSea()) return { bin: process.execPath, args: ['daemon', '_serve'] };
+
+  const deno = (globalThis as { Deno?: { mainModule: string } }).Deno;
+  if (deno) {
+    if (!deno.mainModule.startsWith('file:')) {
+      return { bin: process.execPath, args: ['daemon', '_serve'] };
+    }
+    const { fileURLToPath } = await import('node:url');
+    return {
+      bin: process.execPath,
+      args: ['run', '-A', fileURLToPath(deno.mainModule), 'daemon', '_serve'],
+    };
+  }
+
   return { bin: process.execPath, args: [process.argv[1], 'daemon', '_serve'] };
 }
 
