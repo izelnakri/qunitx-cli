@@ -12,6 +12,10 @@ import fs from 'node:fs/promises';
 import { join, normalize } from 'node:path';
 import { createRequire } from 'node:module';
 import { availableParallelism } from 'node:os';
+// node:timers returns Timer objects with .unref()/.ref() in both Node and Deno.
+// The bare `setTimeout` global in Deno is the Web platform variant, which returns
+// a number with no unref method.
+import { setTimeout, clearTimeout, setInterval, clearInterval } from 'node:timers';
 import { blue, yellow } from '../utils/color.ts';
 import {
   runTestsInBrowser,

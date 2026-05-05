@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import { readdir, stat, lstat } from 'node:fs/promises';
 import path from 'node:path';
+// See lib/commands/run.ts: node:timers preserves .unref() across Node and Deno.
+import { setInterval, clearInterval, setTimeout, clearTimeout } from 'node:timers';
 import { green, magenta, red, yellow } from '../utils/color.ts';
 import { defaultProjectConfigValues } from './default-project-config-values.ts';
 import type { FSWatcher } from 'node:fs';
