@@ -1,8 +1,16 @@
 import { accessSync, constants } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 
-const CANDIDATES = ['google-chrome-stable', 'google-chrome', 'chromium', 'chromium-browser'];
-const PATH_DIRS = (process.env.PATH || '').split(':').filter(Boolean);
+// On Windows, look for the .exe variants too — accessSync(X_OK) on Windows treats any
+// existing file as executable, but Windows-only chrome binaries don't appear under bare
+// names in PATH directories.
+const CANDIDATES =
+  process.platform === 'win32'
+    ? ['chrome.exe', 'chromium.exe', 'google-chrome.exe']
+    : ['google-chrome-stable', 'google-chrome', 'chromium', 'chromium-browser'];
+// path.delimiter is ':' on POSIX and ';' on Windows — splitting on a hardcoded ':' would
+// produce one nonsense entry like 'C' from 'C:\\Program Files\\...' on Windows.
+const PATH_DIRS = (process.env.PATH || '').split(delimiter).filter(Boolean);
 
 /**
  * Resolves the Chrome/Chromium executable path. Returns a Promise for API compatibility
