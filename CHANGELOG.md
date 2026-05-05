@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.24.0] - 2026-05-05
+[`v0.23.7...v0.24.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.23.7...v0.24.0)
+
+### Bug Fixes
+- Widen CHANGE_COALESCE_MS 50→75 to absorb tighter mid-write races — 2026-05-05 by [@izelnakri](https://github.com/izelnakri) ([`a32a1c3`](https://github.com/izelnakri/qunitx-cli/commit/a32a1c30f272450902bb76b61007648bf4d993a9))
+
+### Features
+- --changed / --since flag for incremental runs — 2026-05-05 by [@izelnakri](https://github.com/izelnakri) ([`1aaa52c`](https://github.com/izelnakri/qunitx-cli/commit/1aaa52cd7ae27f4a6c74883872baeaffc8a3137e))
+
 ## [0.23.7] - 2026-05-05
 [`v0.23.6...v0.23.7`](https://github.com/izelnakri/qunitx-cli/compare/v0.23.6...v0.23.7)
 
