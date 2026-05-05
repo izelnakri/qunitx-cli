@@ -9,6 +9,8 @@ import { runUserModule } from '../../utils/run-user-module.ts';
 import { TAPDisplayFinalResult } from '../../tap/display-final-result.ts';
 import { buildErrorHTML, buildNoTestsHTML } from '../../setup/web-server.ts';
 import { extractInlineSourceMap } from '../../utils/source-map-decoder.ts';
+import { writeMetafileCache } from '../../utils/metafile-cache.ts';
+import type { AffectedMetafile } from '../../utils/get-changed-files.ts';
 import type { Page } from 'playwright-core';
 import type { Config, CachedContent, Connections } from '../../types.ts';
 import type { HTTPServer } from '../../servers/web.ts';
@@ -169,6 +171,10 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
     // tsconfig's `jsxImportSource` or a `@jsxImportSource <pkg>` pragma cover Vue/Preact/Solid.
     jsx: 'automatic',
     plugins: config.plugins,
+    // Required for --changed/--since dep-graph filter on subsequent runs (cache
+    // populates here, reads in setupConfig). Inputs map carries the full reverse-dep
+    // graph; output cost is negligible.
+    metafile: true,
     // Signal the runtime that all test modules are registered. The runtime's maybeStart()
     // waits for both this event and the WebSocket 'open' event before calling QUnit.start().
     // Dispatching from the bundle (rather than from a script onload attr) is reliable across
@@ -186,7 +192,7 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
   const fileKey = bundleCacheKey(buildOptions, allTestFilePaths);
 
   try {
-    const [allTestCode] = await Promise.all([
+    const [{ js: allTestCode, metafile }] = await Promise.all([
       config.watch || config._daemonMode
         ? buildIncrementally(buildOptions, fileKey, cacheHolder, needsDisk)
         : buildWithOverlayfsRetry(buildOptions, needsDisk),
@@ -202,6 +208,9 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
     ]);
     cachedContent.allTestCode = allTestCode;
     config._sourceMapDecoder = extractInlineSourceMap(allTestCode, outDir);
+    // Persist metafile for the next --changed run. Best-effort; cache miss
+    // on subsequent reads degrades to "run all tests."
+    if (metafile) void writeMetafileCache(projectRoot, process.cwd(), metafile);
   } catch (error) {
     cachedContent._buildError = {
       type: deriveBuildErrorType(error),
@@ -517,6 +526,9 @@ export async function buildAllGroupBundles(
     sourcemap,
     write: false,
     jsx: 'automatic',
+    // Required for --changed/--since dep-graph filter on subsequent runs. Same
+    // contract as the single-group path in `buildTestBundle`.
+    metafile: true,
     footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
   };
 
@@ -563,6 +575,10 @@ export async function buildAllGroupBundles(
         return fs.writeFile(destPath, outputFile.contents);
       }),
     );
+    // Persist metafile for the next --changed run (same cache as single-group path).
+    if (result.metafile) {
+      void writeMetafileCache(projectRoot, process.cwd(), result.metafile as AffectedMetafile);
+    }
   } catch (error) {
     const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
     const errorHtml = buildErrorHTML(buildError);
@@ -593,6 +609,8 @@ function buildFilteredTests(
 ): Promise<Buffer> {
   const sourcemap: esbuild.BuildOptions['sourcemap'] = 'inline';
   const needsDisk = Boolean(config.open);
+  // Filtered re-runs (qf shortcut) are a subset bundle; the cached metafile
+  // would be incomplete, so we don't request one or persist it here.
   return buildWithOverlayfsRetry(
     {
       stdin: {
@@ -613,7 +631,7 @@ function buildFilteredTests(
       footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
     },
     needsDisk,
-  );
+  ).then((r) => r.js);
 }
 
 // On Docker/overlayfs CI, a newly written file may be visible to inotify (IN_CREATE fires)
@@ -628,7 +646,7 @@ function buildFilteredTests(
 async function runWithOverlayfsRetry(
   getContents: () => Promise<{ result: esbuild.BuildResult; js: Buffer }>,
   needsDisk: boolean,
-): Promise<Buffer> {
+): Promise<{ js: Buffer; metafile?: AffectedMetafile }> {
   let { result, js } = await getContents();
   const initialSize = js.length;
 
@@ -654,13 +672,13 @@ async function runWithOverlayfsRetry(
     );
   }
 
-  return js;
+  return { js, metafile: result.metafile as AffectedMetafile | undefined };
 }
 
 function buildWithOverlayfsRetry(
   options: esbuild.BuildOptions,
   needsDisk: boolean,
-): Promise<Buffer> {
+): Promise<{ js: Buffer; metafile?: AffectedMetafile }> {
   const buildOpts: esbuild.BuildOptions = { ...options, write: false };
   return runWithOverlayfsRetry(async () => {
     const result = await esbuild.build(buildOpts);
@@ -681,7 +699,7 @@ async function buildIncrementally(
   fileKey: string,
   cache: { _esbuildContext?: esbuild.BuildContext | null; _esbuildContextKey?: string },
   needsDisk: boolean,
-): Promise<Buffer> {
+): Promise<{ js: Buffer; metafile?: AffectedMetafile }> {
   const buildOpts: esbuild.BuildOptions = { ...options, write: false };
 
   if (!cache._esbuildContext || cache._esbuildContextKey !== fileKey) {

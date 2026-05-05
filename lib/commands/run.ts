@@ -210,6 +210,24 @@ export async function run(config: Config): Promise<void> {
     // is hidden behind the ~1.2s Chrome launch. Each group then gets its own
     // HTTP server and Playwright page inside one shared browser instance.
     const allFiles = Object.keys(config.fsTree);
+    // Empty fsTree (e.g. --changed filtered out every test, or the inputs
+    // matched no files): emit a clean TAP plan and exit 0. The downstream
+    // group/build pipeline assumes ≥1 file and would crash on undefined
+    // groupConfigs[0]. In daemon mode, throw DaemonRunError so the daemon's
+    // run handler closes the run cleanly and stays alive for the next call.
+    if (allFiles.length === 0) {
+      process.stdout.write('TAP version 13\n');
+      process.stdout.write(
+        `# Running 0 test files${config._daemonMode ? ' (daemon)' : ''}\n1..0\n`,
+      );
+      if (config._daemonMode) throw new DaemonRunError(0);
+      if (!config.watch) {
+        const browser = config._daemonBrowser ? null : await browserPromise!;
+        await closeWithGrace([browser?.close(), shutdownPrelaunch()]);
+        return process.exit(0);
+      }
+      return;
+    }
     const groupCount = Math.min(allFiles.length, availableParallelism());
     const { groups, weights } = await splitIntoGroups(allFiles, groupCount, timings ?? {});
 

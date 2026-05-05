@@ -19,6 +19,7 @@ interface ParsedFlags {
   browser?: 'chromium' | 'firefox' | 'webkit';
   before?: string | false;
   after?: string | false;
+  changedSince?: string;
 }
 
 /**
@@ -73,6 +74,17 @@ export function parseCliFlags(projectRoot: string): ParsedFlags {
         return Object.assign(result, { before: parseModule(arg.split('=')[1]) });
       } else if (arg.startsWith('--after')) {
         return Object.assign(result, { after: parseModule(arg.split('=')[1]) });
+      } else if (arg === '--changed') {
+        // Shorthand for --since=HEAD. Most common case: "what tests does my
+        // working tree affect compared to last commit?"
+        return Object.assign(result, { changedSince: 'HEAD' });
+      } else if (arg.startsWith('--since')) {
+        const ref = arg.split('=')[1];
+        if (!ref) {
+          console.error(`Invalid --since value: empty. Expected --since=<git-ref>.`);
+          process.exit(1);
+        }
+        return Object.assign(result, { changedSince: ref });
       } else if (arg === '--trace-perf') {
         return result; // consumed by perf-logger.js at module load time, not stored in config
       }

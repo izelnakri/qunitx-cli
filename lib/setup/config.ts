@@ -5,6 +5,7 @@ import { defaultProjectConfigValues } from './default-project-config-values.ts';
 import { findProjectRoot } from '../utils/find-project-root.ts';
 import { buildFSTree } from './fs-tree.ts';
 import { setupTestFilePaths } from './test-file-paths.ts';
+import { getChangedFsTree } from './get-changed-fs-tree.ts';
 import { parseCliFlags } from '../utils/parse-cli-flags.ts';
 import type { Config } from '../types.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
@@ -54,6 +55,13 @@ export async function setupConfig(): Promise<Config> {
     buildFSTree(config.testFileLookupPaths, config),
     pluginsPromise,
   ]);
+
+  // --changed / --since: filter fsTree to test files whose transitive deps
+  // include a changed file. Watch mode skips this — watch is for fast feedback
+  // on every save, not "what does my working tree affect" semantics.
+  if (config.changedSince && !config.watch) {
+    config.fsTree = await getChangedFsTree(config.fsTree, config.projectRoot, config.changedSince);
+  }
 
   return config as Config;
 }

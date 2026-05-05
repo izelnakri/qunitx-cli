@@ -40,6 +40,8 @@ Optional flags:
 --before : run a script before the tests(i.e start a new web server before tests)
 --after : run a script after the tests(i.e save test results to a file)
 --no-daemon : don't use the daemon for this run — skips a running daemon and prevents QUNITX_DAEMON auto-spawn
+--changed : run only test files affected by changes since HEAD (requires git; falls back to running all on first use)
+--since : run only test files affected by changes since the given git ref (e.g. --since=main); --changed = --since=HEAD
 --trace-perf : write timestamped startup-perf trace lines to stderr (Chrome pre-launch, module load, browser bind)
 
 Example: $ qunitx test/foo.ts app/e2e --debug --watch --before=scripts/start-new-webserver.js --after=scripts/write-test-results.js

@@ -581,12 +581,12 @@ module('Commands | Daemon | idle timeout', { concurrency: true }, () => {
       const start = await cli(project, 'daemon start', {
         env: { ...CLI_ENV, QUNITX_DAEMON_IDLE_TIMEOUT: '500ms' },
       });
+      // exitCode 0 already certifies the daemon was up at cli-return time
+      // (the start path waits for both the info file AND a successful ping
+      // before returning). An `existsSync` line right after races the 500 ms
+      // timer on loaded Windows CI — the daemon may have already self-shut-
+      // down — so we omit it; `waitForFileGone` is the load-bearing check.
       assert.exitCode(start, 0);
-      assert.ok(existsSync(project.infoPath), 'info file present immediately after start');
-
-      // Event-driven wait via fs.watch — sub-ms latency, zero CPU between events.
-      // 3 s deadline is ~6× the configured timer; covers worst-case CI scheduling
-      // jitter without bleeding test time when the shutdown happens promptly.
       const gone = await waitForFileGone(project.infoPath, 3000);
       assert.ok(gone, 'daemon self-shut-down within the configured window');
     },
