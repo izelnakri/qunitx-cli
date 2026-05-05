@@ -2,7 +2,7 @@
 
 LEVEL ?= patch
 
-.PHONY: help fix fmt format check lint lint-docs test test-debug dev test-chrome test-firefox test-webkit test-all-browsers test-release build coverage coverage-report docs demo bench-print bench bench-update bench-check build-sea release
+.PHONY: help fix fmt format check lint lint-docs test test-debug dev test-chrome test-firefox test-webkit test-all-browsers test-release build coverage coverage-report docs demo bench-print bench bench-update bench-check build-sea build-deno build-deno-all smoke-deno release
 
 
 
@@ -33,6 +33,9 @@ help:
 	@echo "  bench-check     Run benchmarks and fail if regression > REGRESSION_THRESHOLD%"
 	@echo "  build-sea       Build SEA binary for the local platform and publish its npm package"
 	@echo "  smoke-sea       Smoke-test the locally-built SEA binary (~10s; runs inside build-sea)"
+	@echo "  build-deno      Build a Deno-compiled binary for the local platform into dist/qunitx"
+	@echo "  build-deno-all  Cross-compile Deno binaries for linux/macos/windows × x64/arm64"
+	@echo "  smoke-deno      Smoke-test the locally-built Deno binary (~10s)"
 	@echo "  release         Bump version, update changelog, tag, push, publish to npm"
 	@echo ""
 	@echo "Env-var escape hatches:"
@@ -198,6 +201,56 @@ smoke-sea:
 	"$$SEA" daemon stop >/dev/null 2>&1 || true; \
 	if [ $$FAIL -ne 0 ]; then echo "smoke-sea: FAILED" >&2; exit 1; fi; \
 	echo "smoke-sea: OK"
+
+# Builds a Deno-compiled binary into dist/qunitx for the local host platform.
+# The binary embeds the JS module graph + templates but cannot embed the platform-
+# native esbuild executable. cli.ts auto-discovers an `esbuild` (or `esbuild.exe`)
+# adjacent to the binary at runtime; we copy the local @esbuild/<target> sidecar
+# next to dist/qunitx so the binary works out of the box without env vars.
+build-deno:
+	@mkdir -p dist
+	deno task build:binary
+	@NODE_PLATFORM=$$(node -p "process.platform"); \
+	NODE_ARCH=$$(node -p "process.arch"); \
+	case "$$NODE_PLATFORM-$$NODE_ARCH" in \
+	  linux-x64)    ESBUILD_PKG=@esbuild/linux-x64;    ESBUILD_BIN=esbuild;;     \
+	  linux-arm64)  ESBUILD_PKG=@esbuild/linux-arm64;  ESBUILD_BIN=esbuild;;     \
+	  darwin-x64)   ESBUILD_PKG=@esbuild/darwin-x64;   ESBUILD_BIN=esbuild;;     \
+	  darwin-arm64) ESBUILD_PKG=@esbuild/darwin-arm64; ESBUILD_BIN=esbuild;;     \
+	  win32-x64)    ESBUILD_PKG=@esbuild/win32-x64;    ESBUILD_BIN=esbuild.exe;; \
+	  *) echo "Unsupported platform: $$NODE_PLATFORM-$$NODE_ARCH" && exit 1;;    \
+	esac; \
+	cp "node_modules/$$ESBUILD_PKG/bin/$$ESBUILD_BIN" "dist/$$ESBUILD_BIN"; \
+	echo "Built dist/qunitx (+ dist/$$ESBUILD_BIN sidecar)"
+
+# Cross-compiles for every supported platform into dist/qunitx-<target>{.exe}.
+# Each target uses --target and --output. Sidecars are NOT copied here (you'd need
+# the per-target @esbuild/<target> package; install with `npm i -D @esbuild/<...>`
+# or download from registry.npmjs.org). Distribution scripts handle the pairing.
+build-deno-all:
+	@mkdir -p dist
+	deno compile --allow-all --no-check --target x86_64-unknown-linux-gnu  --include templates --include lib --include package.json --output dist/qunitx-linux-x64       cli.ts
+	deno compile --allow-all --no-check --target aarch64-unknown-linux-gnu --include templates --include lib --include package.json --output dist/qunitx-linux-arm64     cli.ts
+	deno compile --allow-all --no-check --target x86_64-apple-darwin       --include templates --include lib --include package.json --output dist/qunitx-darwin-x64      cli.ts
+	deno compile --allow-all --no-check --target aarch64-apple-darwin      --include templates --include lib --include package.json --output dist/qunitx-darwin-arm64    cli.ts
+	deno compile --allow-all --no-check --target x86_64-pc-windows-msvc    --include templates --include lib --include package.json --output dist/qunitx-windows-x64.exe cli.ts
+
+# Smoke-tests the locally-built dist/qunitx Deno binary against the same fixtures
+# as smoke-sea. Mirrors that target's failure surface (run path, daemon control,
+# end-to-end Chrome run) without re-running the full suite. Requires that
+# `make build-deno` has been run first.
+smoke-deno:
+	@SEA=$(CURDIR)/dist/qunitx; \
+	if [ ! -x "$$SEA" ]; then echo "smoke-deno: $$SEA not found (run make build-deno first)" >&2; exit 1; fi; \
+	echo "Smoking Deno binary at $$SEA..."; \
+	OUT=tmp/deno-smoke-$$$$; FAIL=0; \
+	"$$SEA" --version >/dev/null                                                      || { echo "  ✗ --version" >&2; FAIL=1; }; \
+	"$$SEA" daemon 2>&1 | grep -q "Usage: qunitx daemon"                              || { echo "  ✗ daemon (no args)" >&2; FAIL=1; }; \
+	QUNITX_NO_DAEMON=1 "$$SEA" test/fixtures/passing-tests.ts --output=$$OUT 2>&1 | grep -q "# pass 3" \
+	                                                                                  || { echo "  ✗ run path" >&2; FAIL=1; }; \
+	rm -rf $$OUT; \
+	if [ $$FAIL -ne 0 ]; then echo "smoke-deno: FAILED" >&2; exit 1; fi; \
+	echo "smoke-deno: OK"
 
 # Lint, bump version, changelog, publish (SEA + JS), commit, tag, push.
 # Publishes the main package (JS fallback) and the local platform's SEA package.

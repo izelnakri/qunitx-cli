@@ -34,7 +34,7 @@ output to the terminal.
 
 ## Installation
 
-Requires Node.js >= 24.
+Requires Node.js >= 24 or Deno >= 2.7.
 
 ```sh
 npm install --save-dev qunitx-cli
@@ -57,6 +57,23 @@ With Nix:
 ```sh
 nix profile install github:izelnakri/qunitx-cli
 ```
+
+Build a self-contained binary with Deno (Linux, macOS, Windows; x64 and arm64):
+
+```sh
+deno task build:binary       # → dist/qunitx for the host platform
+make build-deno              # same, plus copies the local @esbuild sidecar next to it
+make build-deno-all          # cross-compiles every supported platform
+```
+
+The compiled binary embeds the JS module graph and templates but expects two
+sidecars at runtime, both of which are auto-discovered:
+
+- `esbuild` (`esbuild.exe` on Windows) adjacent to the binary, **or** an
+  explicit `ESBUILD_BINARY_PATH` env var.
+- A Chrome / Chromium executable on `PATH`, or `CHROME_BIN` set explicitly.
+  `--browser=firefox` and `--browser=webkit` use Playwright's own browser
+  install (`npx playwright install firefox`).
 
 ## Usage
 
