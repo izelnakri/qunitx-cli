@@ -170,6 +170,15 @@ export interface Config {
     _esbuildContext?: import('esbuild').BuildContext | null;
     _esbuildContextKey?: string;
   };
+  /**
+   * The daemon's persistent Page slot for single-group runs. When `slot.page` is
+   * set and connected, `setupBrowser` reuses it instead of `browser.newPage()`,
+   * saving ~70-130ms per warm run. The cleanup hook in `run()` re-stashes the page
+   * here when the run completes healthily; mid-page state is dropped by the next
+   * run's `page.goto(testUrl)` (cross-document navigation destroys the old JS
+   * context, killing residual scripts and the previous run's WebSocket client).
+   */
+  _daemonPageSlot?: { page: import('playwright-core').Page | null };
   /** Index within the concurrent group array; set when a shared HTTP server is used. */
   _groupId?: number;
   /** Current lifecycle phase of the test run. */

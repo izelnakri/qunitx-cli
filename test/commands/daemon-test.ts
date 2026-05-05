@@ -445,6 +445,27 @@ module('Commands | Daemon | run routing', { concurrency: true }, () => {
       assert.includes(result, '(daemon)');
     },
   );
+
+  daemonTest(
+    'failing run does not poison page reuse — next passing run still passes',
+    async (assert, project) => {
+      // Composes 'failing test through daemon' + 'two consecutive daemon-routed runs'
+      // — neither covers the cross-product. PR2's reuse path stashes the page on
+      // the slot whenever the page is healthy, regardless of test exit code; a
+      // future "be defensive" refactor that gated the stash on `exitCode === 0`
+      // would silently disable reuse for any user whose first run after daemon
+      // start happens to fail. This test would catch that.
+      await cli(project, 'daemon start');
+      const fail = await cli(project, FIXTURE_FAIL, { failOk: true });
+      const pass = await cli(project, FIXTURE_PASS);
+
+      assert.exitCode(fail, 1);
+      assert.regex(fail, /# fail [1-9]/);
+      assert.exitCode(pass, 0);
+      assert.includes(pass, '# pass 3');
+      assert.includes(pass, '(daemon)');
+    },
+  );
 });
 
 module('Commands | Daemon | bypass', { concurrency: true }, () => {

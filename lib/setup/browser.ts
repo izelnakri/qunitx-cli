@@ -106,10 +106,25 @@ export async function setupBrowser(
 ): Promise<Connections> {
   const setupStart = Date.now();
 
+  // Daemon single-group fast path: reuse the persistent page from the slot.
+  // The cleanup hook in run.ts re-stashes it when the run completes healthily;
+  // listeners from the previous run are stripped here before fresh ones attach.
+  // `!isClosed()` rejects pages explicitly closed AND also catches pages whose
+  // browser context died (Playwright marks the page closed when the browser
+  // disconnects). Browser-crash recovery in server.ts nulls the slot too, so
+  // this is a belt-and-braces check.
+  const slot = config._daemonPageSlot;
+  const slotPage = slot?.page && !slot.page.isClosed() ? slot.page : null;
+  if (slotPage) {
+    slotPage.removeAllListeners('console');
+    slotPage.removeAllListeners('pageerror');
+    slot!.page = null;
+  }
+
   const [server, browser, page] = await (async () => {
     if (sharedServer) {
       // Concurrent mode with shared server: skip per-group server setup and port binding.
-      const newPage = await existingBrowser!.newPage();
+      const newPage = slotPage ?? (await existingBrowser!.newPage());
       perfLog(`browser.js: newPage (shared server) took ${Date.now() - setupStart}ms`);
       return [sharedServer, existingBrowser!, newPage] as const;
     }
@@ -124,9 +139,11 @@ export async function setupBrowser(
     // otherwise the user sees the blank startup tab AND the new Playwright tab simultaneously.
     // For all other modes (headless, --open=<binary>, or non-watch), always create a fresh page.
     const isHeadedWatchMode = config.open === true && config.watch;
-    const getPage = isHeadedWatchMode
-      ? () => activeBrowser.contexts()[0]?.pages()[0] ?? activeBrowser.newPage()
-      : () => activeBrowser.newPage();
+    const getPage = slotPage
+      ? () => Promise.resolve(slotPage)
+      : isHeadedWatchMode
+        ? () => activeBrowser.contexts()[0]?.pages()[0] ?? activeBrowser.newPage()
+        : () => activeBrowser.newPage();
     const [newPage] = await Promise.all([getPage(), bindServerToPort(newServer, config)]);
     perfLog(`browser.js: newPage + bindServerToPort took ${Date.now() - pageStart}ms`);
     return [newServer, activeBrowser, newPage] as const;
@@ -137,7 +154,10 @@ export async function setupBrowser(
   // Pre-serialize objects to JSON strings in the browser before BiDi sees them:
   // strings are always sent inline, making arg.jsonValue() succeed.
   // Only applied to Firefox — Chrome CDP serialises objects natively.
-  if (config.browser === 'firefox') {
+  // Skip when the page came from the daemon slot: addInitScript appends to a
+  // per-Page list that runs on every navigation, so re-adding here on each
+  // reuse would double-serialise the next test run's console output.
+  if (config.browser === 'firefox' && !slotPage) {
     await page.addInitScript(() => {
       const preSerialize = (arg: unknown): unknown => {
         if (arg === null || typeof arg !== 'object') return arg;

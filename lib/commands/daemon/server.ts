@@ -58,6 +58,12 @@ interface DaemonState {
    * Mutated by reference inside `buildIncrementally`; disposed on daemon shutdown.
    */
   esbuildCache: NonNullable<Config['_daemonEsbuildCache']>;
+  /**
+   * Single-source Page slot for single-group daemon runs. Lives across runs;
+   * `setupBrowser` reuses `slot.page` (when connected) instead of `newPage()`.
+   * Closed on daemon shutdown; cleared (set to null) when the page disconnects.
+   */
+  pageSlot: NonNullable<Config['_daemonPageSlot']>;
 }
 
 /**
@@ -129,6 +135,7 @@ export async function runDaemonServer(): Promise<void> {
     consecutiveCrashes: 0,
     listenSucceeded: false,
     esbuildCache: { _esbuildContext: null },
+    pageSlot: { page: null },
   };
 
   const shutdown = (reason: string) => shutdownDaemon(state, reason);
@@ -214,6 +221,7 @@ async function shutdownDaemon(state: DaemonState, reason: string): Promise<void>
   await Promise.all([
     state.listenSucceeded ? unlink(state.socketPath).catch(() => {}) : null,
     state.listenSucceeded ? unlink(state.infoPath).catch(() => {}) : null,
+    state.pageSlot.page?.close().catch(() => {}),
     state.browser.close().catch(() => {}),
     state.esbuildCache._esbuildContext?.dispose().catch(() => {}),
   ]);
@@ -386,6 +394,10 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
   // skipPrelaunch=true bypasses the singleton prelaunch endpoint (which now points at the
   // dead Chrome) and goes straight to a fresh chromium.launch().
   state.browser.close().catch(() => {});
+  // The persistent page belongs to the dead browser; drop the reference so the
+  // next setupBrowser mints a fresh page on the new browser without paying an
+  // isConnected() round-trip on a doomed CDP socket.
+  state.pageSlot.page = null;
   try {
     state.browser = await launchBrowser(state.baseConfig, true);
   } catch (err) {
@@ -429,6 +441,7 @@ async function runOnce(
   config._daemonMode = true;
   config._daemonBrowser = state.browser;
   config._daemonEsbuildCache = state.esbuildCache;
+  config._daemonPageSlot = state.pageSlot;
   config.watch = false;
   config.open = false;
 

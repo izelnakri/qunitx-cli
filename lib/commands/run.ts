@@ -247,6 +247,12 @@ export async function run(config: Config): Promise<void> {
       fsTree: Object.fromEntries(groupFiles.map((filePath) => [filePath, config.fsTree[filePath]])),
       // Single group keeps the root output dir for backward-compatible file paths.
       output: groupCount === 1 ? config.output : `${config.output}/group-${i}`,
+      // Page reuse is single-group only: in concurrent group mode group 0 would
+      // otherwise drain `slot.page` (setupBrowser consumes it) without re-stashing
+      // (cleanup's `groupCount === 1` guard rejects), leaving the slot empty for
+      // the next single-file run. Withhold the slot here so the warm page survives
+      // a transient multi-file invocation untouched.
+      _daemonPageSlot: groupCount === 1 ? config._daemonPageSlot : undefined,
       _groupMode: true,
       _phase: 'bundling' as Config['_phase'],
     }));
@@ -350,12 +356,23 @@ export async function run(config: Config): Promise<void> {
             await runTestsInBrowser(groupConfig, groupCachedContents[i], connections);
           } finally {
             await flushConsoleHandlers(groupConfig._pendingConsoleHandlers, connections.page);
+            // Daemon single-group fast path: stash the page on the slot for the
+            // next run instead of closing it (saves ~70-130ms of newPage cost
+            // per warm run). Mid-page state is dropped by the next run's
+            // page.goto(testUrl), which destroys the JS context. Group mode
+            // (groupCount > 1) and any disconnected page fall through to close.
+            const reusePage =
+              groupCount === 1 &&
+              groupConfig._daemonPageSlot &&
+              connections.page &&
+              !connections.page.isClosed();
+            if (reusePage) groupConfig._daemonPageSlot!.page = connections.page;
             // Per-group cleanup, bounded so a deadlocked page.close (Firefox/WebKit under
             // load) cannot wedge Promise.allSettled forever. The shared server is closed
             // in the final cleanup pass below, not here.
             await closeWithGrace([
               sharedServer ? undefined : connections.server?.close(),
-              connections.page?.close(),
+              reusePage ? undefined : connections.page?.close(),
             ]);
           }
         })();
