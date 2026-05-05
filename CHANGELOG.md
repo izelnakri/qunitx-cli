@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.23.7] - 2026-05-05
+[`v0.23.6...v0.23.7`](https://github.com/izelnakri/qunitx-cli/compare/v0.23.6...v0.23.7)
+
+### Bug Fixes
+- Stabilize symlink rebuilds, Windows stdout flush, assert readability — 2026-05-03 by [@izelnakri](https://github.com/izelnakri) ([`152f6d7`](https://github.com/izelnakri/qunitx-cli/commit/152f6d7cf308fc75b06fef02bcff1bc964fb244c))
+- Accept Windows absolute paths as test inputs — 2026-05-04 by [@izelnakri](https://github.com/izelnakri) ([`c680fb8`](https://github.com/izelnakri/qunitx-cli/commit/c680fb8809edd83a18a3eaa34a332e657c9af4be))
+
+### Performance
+- Direct-shutdown the daemon in test cleanup — 2026-05-04 by [@izelnakri](https://github.com/izelnakri) ([`9531e4e`](https://github.com/izelnakri/qunitx-cli/commit/9531e4e703488b48ccec383e2d4fa969656d5a49))
+- Parallelize daemon tests via per-cwd sockets — 2026-05-04 by [@izelnakri](https://github.com/izelnakri) ([`b6ead06`](https://github.com/izelnakri/qunitx-cli/commit/b6ead0653ca066592715af3ef296e5cdae872c5a))
+
 ## [0.23.6] - 2026-05-03
 [`v0.23.5...v0.23.6`](https://github.com/izelnakri/qunitx-cli/compare/v0.23.5...v0.23.6)
 
