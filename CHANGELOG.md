@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.25.0] - 2026-05-05
+[`v0.24.0...v0.25.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.24.0...v0.25.0)
+
+### Performance
+- Reuse one persistent Page across single-group runs — 2026-05-05 by [@izelnakri](https://github.com/izelnakri) ([`0976f20`](https://github.com/izelnakri/qunitx-cli/commit/0976f2094b9771d9ecde33878fc9fb6968bca437))
+
 ## [0.24.0] - 2026-05-05
 [`v0.23.7...v0.24.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.23.7...v0.24.0)
 
