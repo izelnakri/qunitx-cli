@@ -57,7 +57,7 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: dorny/test-reporter@v2
+      - uses: dorny/test-reporter@v3
         if: always()
         with:
           name: Tests (Ubuntu)
@@ -65,7 +65,7 @@ jobs:
           reporter: java-junit
           fail-on-empty: false
 
-      - uses: dorny/test-reporter@v2
+      - uses: dorny/test-reporter@v3
         if: always()
         with:
           name: Tests (macOS)
@@ -73,7 +73,7 @@ jobs:
           reporter: java-junit
           fail-on-empty: false
 
-      - uses: dorny/test-reporter@v2
+      - uses: dorny/test-reporter@v3
         if: always()
         with:
           name: Tests (Windows)
