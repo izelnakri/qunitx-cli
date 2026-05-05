@@ -17,11 +17,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# `if: !DUPLICATE_PR_EVENT` (inlined per job below): same-repo PRs fire BOTH
+# `push` and `pull_request` for the same SHA; skip the pull_request leg since
+# push already covers it. Forks still run via pull_request because pushes from
+# forks don't fire here. Applied to lint / test / bench only — every other job
+# already filters on `refs/heads/main` or `refs/tags/v*`.
 jobs:
   # ── Lint ──────────────────────────────────────────────────────────────────────
   # Surfaces formatting (prettier) and code-quality (deno lint) failures fast,
   # independent of the slower test job.
   lint:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -49,6 +55,7 @@ jobs:
   # Matrix covers all three platforms so Chromium behaviour is verified on each OS.
   # macOS/Windows get extra time: Chrome startup and I/O are slower off Linux.
   test:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 15 || 25 }}
@@ -135,6 +142,7 @@ jobs:
   # SKIP_BENCHMARK=<basename> in env to skip only that file, or =true to
   # skip the whole gate while you investigate.
   bench:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
