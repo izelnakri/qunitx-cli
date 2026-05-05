@@ -1,27 +1,3 @@
-Is the successful(and errorful) test output ideal today?
-
-These should be in another releases each one:
-  - fsTree caching (~30-80ms) — has cache-invalidation risk across runs (file additions/deletions during daemon lifetime would need fs.watch with the same correctness contract
-  complexity as the esbuild context cache).
-  - cachedContent caching (~20-50ms) — needs a type-split refactor of CachedContent (mixing stable + run-specific fields), and HTML-file mtime invalidation.
-  - HTTPServer instance reuse (~50ms) — the STATIC_FILES_PATH constraint at server creation captures config.output once, so reuse requires either fixing output paths daemon-wide
-  (behavior change) or refactoring web-server.ts route handlers to read current cachedContent per request (instability across runs while requests are in flight).
-
-  Each of those three is a real optimization, but each requires non-trivial cache-invalidation contracts that — based on this PR's track record of cache-invalidation bugs surfacing
-   only on Windows or under load — I'd want to land in a follow-up PR with their own focused test coverage rather than smuggle into this one.
-
-
-====
-  The one remaining lever: NODE_COMPILE_CACHE. Node 22.8+ ships a V8 compile cache that persists bytecode-compiled modules across invocations. Setting NODE_COMPILE_CACHE=<dir>
-  makes the cli's heaviest cold-start phase (V8 parsing + TS-strip + bytecode-compile of ~40 modules) reuse cached bytecode on subsequent runs.
-
-  Empirically: shaves ~50-100ms off cold cli startup. Daemon mode bypasses this entirely (modules stay loaded in memory, no recompile), so this only benefits non-daemon users on
-  repeat runs.
-
-  It's an env-var setting, not a code change. The clean place to surface it: a one-line note in the README's performance section. Don't enable it programmatically inside cli.ts —
-  there's no hook to set it before our own process loads (it has to be in the parent shell env).
-===
-
 Also make sure cli/binary can be built in deno and would work on macos and windows but first probably daemon mode
 
 https://www.youtube.com/watch?v=SaZEdiV3A3M
