@@ -109,6 +109,28 @@ module('Setup | parseCliFlags | --failFast', { concurrency: true }, () => {
   });
 });
 
+module('Setup | parseCliFlags | --changed / --since', { concurrency: true }, () => {
+  test('--changed sets changedSince to "HEAD"', (assert) => {
+    const flags = withArgv(['--changed'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.changedSince, 'HEAD');
+  });
+
+  test('--since=<ref> sets changedSince to the given ref', (assert) => {
+    const flags = withArgv(['--since=main'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.changedSince, 'main');
+  });
+
+  test('--since=origin/main keeps the slash-bearing ref', (assert) => {
+    const flags = withArgv(['--since=origin/main'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.changedSince, 'origin/main');
+  });
+
+  test('changedSince is undefined when neither flag is present', (assert) => {
+    const flags = withArgv([], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.changedSince, undefined);
+  });
+});
+
 module('Setup | parseCliFlags | --timeout', { concurrency: true }, () => {
   test('--timeout value is parsed as a number, not a string', (assert) => {
     const flags = withArgv(['--timeout=5000'], () => parseCliFlags(PROJECT_ROOT));

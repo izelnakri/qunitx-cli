@@ -21,7 +21,16 @@ export async function writeOutputStaticFiles(
     );
   });
   const assetPromises = Array.from(cachedContent.assets).map(async (assetAbsolutePath) => {
-    const assetRelativePath = path.relative(projectRoot, assetAbsolutePath);
+    // When the asset lives outside projectRoot — pnpm/yarn workspaces with a
+    // hoisted `node_modules`, npm-link'd dev deps, or test fixtures that
+    // symlink `node_modules` — `path.relative` returns leading `..` segments.
+    // Joining those onto outDir cancels its trailing segments, so distinct
+    // group outputs would converge on the same on-disk path AND the served
+    // file wouldn't match the URL the browser requests. Strip the leading
+    // escape so the asset always lands at `<outDir>/<rest>`.
+    const assetRelativePath = path
+      .relative(projectRoot, assetAbsolutePath)
+      .replace(/^(?:\.\.[\\/])+/, '');
     const outDir = path.resolve(projectRoot, output);
     await ensureFolderExists(path.join(outDir, assetRelativePath));
     await fs.copyFile(assetAbsolutePath, path.join(outDir, assetRelativePath));

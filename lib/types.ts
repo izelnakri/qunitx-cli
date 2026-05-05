@@ -126,6 +126,12 @@ export interface Config {
   open?: boolean | string;
   /** Print the local server URL and forward browser console output to stdout. */
   debug?: boolean;
+  /**
+   * When set, run only test files whose transitive imports include any file
+   * changed since this git ref. `--changed` is shorthand for `--since=HEAD`.
+   * Falls back to running all tests on git failure or missing metafile cache.
+   */
+  changedSince?: string;
   /** Mutable test-outcome counters updated as TAP events arrive. */
   COUNTER: Counter;
   /** Test files that failed on the previous run (drives re-run filtering). */
