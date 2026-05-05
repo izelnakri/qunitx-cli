@@ -131,6 +131,26 @@ module('Setup | parseCliFlags | --changed / --since', { concurrency: true }, () 
   });
 });
 
+module('Setup | parseCliFlags | --shard', { concurrency: true }, () => {
+  test('--shard=2/4 parses to 0-indexed shardIndex + shardTotal', (assert) => {
+    const flags = withArgv(['--shard=2/4'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.shardIndex, 1, 'human-facing 2 → 0-indexed 1');
+    assert.strictEqual(flags.shardTotal, 4);
+  });
+
+  test('--shard=1/1 is a valid no-op partition (every file in shard 0 of 1)', (assert) => {
+    const flags = withArgv(['--shard=1/1'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.shardIndex, 0);
+    assert.strictEqual(flags.shardTotal, 1);
+  });
+
+  test('shardIndex/shardTotal are undefined when --shard is not provided', (assert) => {
+    const flags = withArgv([], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.shardIndex, undefined);
+    assert.strictEqual(flags.shardTotal, undefined);
+  });
+});
+
 module('Setup | parseCliFlags | --timeout', { concurrency: true }, () => {
   test('--timeout value is parsed as a number, not a string', (assert) => {
     const flags = withArgv(['--timeout=5000'], () => parseCliFlags(PROJECT_ROOT));

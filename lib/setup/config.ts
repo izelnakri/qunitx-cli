@@ -6,6 +6,7 @@ import { findProjectRoot } from '../utils/find-project-root.ts';
 import { buildFSTree } from './fs-tree.ts';
 import { setupTestFilePaths } from './test-file-paths.ts';
 import { getChangedFsTree } from './get-changed-fs-tree.ts';
+import { shardFsTree } from '../utils/shard-fs-tree.ts';
 import { parseCliFlags } from '../utils/parse-cli-flags.ts';
 import type { Config } from '../types.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
@@ -61,6 +62,23 @@ export async function setupConfig(): Promise<Config> {
   // on every save, not "what does my working tree affect" semantics.
   if (config.changedSince && !config.watch) {
     config.fsTree = await getChangedFsTree(config.fsTree, config.projectRoot, config.changedSince);
+  }
+
+  // --shard=N/M: keep only files in this shard. Stacks after --changed so the
+  // same shard always claims the same affected-tests subset on every CI worker.
+  // Watch mode skips: sharding is a CI distribution feature, not a dev loop one.
+  if (config.shardIndex !== undefined && config.shardTotal !== undefined && !config.watch) {
+    const before = Object.keys(config.fsTree).length;
+    config.fsTree = shardFsTree(
+      config.fsTree,
+      config.projectRoot,
+      config.shardIndex,
+      config.shardTotal,
+    );
+    const after = Object.keys(config.fsTree).length;
+    process.stdout.write(
+      `# --shard: ${after} of ${before} test files in shard ${config.shardIndex + 1}/${config.shardTotal}\n`,
+    );
   }
 
   return config as Config;

@@ -20,6 +20,8 @@ interface ParsedFlags {
   before?: string | false;
   after?: string | false;
   changedSince?: string;
+  shardIndex?: number;
+  shardTotal?: number;
 }
 
 /**
@@ -85,6 +87,19 @@ export function parseCliFlags(projectRoot: string): ParsedFlags {
           process.exit(1);
         }
         return Object.assign(result, { changedSince: ref });
+      } else if (arg.startsWith('--shard')) {
+        const value = arg.split('=')[1] ?? '';
+        const match = /^(\d+)\/(\d+)$/.exec(value);
+        const n = match ? Number(match[1]) : NaN;
+        const m = match ? Number(match[2]) : NaN;
+        if (!match || n < 1 || m < 1 || n > m) {
+          console.error(
+            `Invalid --shard value: "${value}". Expected N/M with 1 ≤ N ≤ M (e.g. --shard=1/4).`,
+          );
+          process.exit(1);
+        }
+        // Store 0-indexed for consistent modulo math; humans pass 1-indexed.
+        return Object.assign(result, { shardIndex: n - 1, shardTotal: m });
       } else if (arg === '--trace-perf') {
         return result; // consumed by perf-logger.js at module load time, not stored in config
       }

@@ -31,6 +31,7 @@ ${color('--after')} : run a script after the tests(i.e save test results to a fi
 ${color('--no-daemon')} : don't use the daemon for this run — skips a running daemon and prevents ${color('QUNITX_DAEMON')} auto-spawn
 ${color('--changed')} : run only test files affected by changes since ${color('HEAD')} (requires git; falls back to running all on first use)
 ${color('--since')} : run only test files affected by changes since the given git ref (e.g. ${color('--since=main')}); ${color('--changed')} = ${color('--since=HEAD')}
+${color('--shard')} : run only the Nth shard of M (e.g. ${color('--shard=2/4')}) for distributed CI matrix jobs — every file lands in exactly one shard, deterministically across machines
 ${color('--trace-perf')} : write timestamped startup-perf trace lines to stderr (Chrome pre-launch, module load, browser bind)
 
 ${highlight('Example:')} $ ${color('qunitx test/foo.ts app/e2e --debug --watch --before=scripts/start-new-webserver.js --after=scripts/write-test-results.js')}

@@ -132,6 +132,15 @@ export interface Config {
    * Falls back to running all tests on git failure or missing metafile cache.
    */
   changedSince?: string;
+  /**
+   * 0-indexed shard number; set by `--shard=N/M` (parser converts the
+   * human-facing 1-indexed N to 0-indexed). Files are partitioned by stable
+   * SHA-1 hash of their projectRoot-relative path, so every shard returns a
+   * disjoint slice and the union of all M shards equals the input set.
+   */
+  shardIndex?: number;
+  /** Total shard count, paired with `shardIndex`. */
+  shardTotal?: number;
   /** Mutable test-outcome counters updated as TAP events arrive. */
   COUNTER: Counter;
   /** Test files that failed on the previous run (drives re-run filtering). */
