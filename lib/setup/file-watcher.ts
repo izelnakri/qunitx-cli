@@ -85,16 +85,14 @@ export function setupFileWatchers(
         if (filePath in config.fsTree) {
           handleWatchEvent(config, extensions, 'unlink', filePath, onEventFunc, onFinishFunc);
         }
-      } else if (
-        (process.platform === 'win32' || process.platform === 'darwin') &&
-        curr.mtimeMs !== prev.mtimeMs
-      ) {
-        // Windows (ReadDirectoryChangesW) and macOS (FSEvents) do not fire change events in the
-        // symlink's directory when writing through a symlink — only the target's directory gets
-        // the event. fs.watchFile stat-polls the symlink path (stat follows symlinks), so when
-        // the target's mtime changes, we synthesize a change event for the symlink path here.
-        // Same per-file debounce as the fs.watch 'change' path: a poll that lands mid-writeFile
-        // would otherwise dispatch a rebuild against partial content.
+      } else if (curr.mtimeMs !== prev.mtimeMs) {
+        // None of Windows (ReadDirectoryChangesW), macOS (FSEvents), or Linux (inotify) fire a
+        // change event in the symlink's directory when writing through a symlink — only the
+        // target's directory does, and the target may be outside the watched tree. fs.watchFile
+        // stat-polls the symlink path (stat follows symlinks), so when the target's mtime moves,
+        // we synthesize a change event for the symlink path here. Same per-file debounce as the
+        // fs.watch 'change' path: a poll that lands mid-writeFile would otherwise dispatch a
+        // rebuild against partial content.
         if (filePath in config.fsTree) {
           const existing = pendingChangeTimers.get(filePath);
           if (existing) clearTimeout(existing);
