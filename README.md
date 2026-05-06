@@ -58,22 +58,32 @@ With Nix:
 nix profile install github:izelnakri/qunitx-cli
 ```
 
-Build a self-contained binary with Deno (Linux, macOS, Windows; x64 and arm64):
+Standalone binary — no Node or Deno required at runtime (Linux x64, macOS arm64, Windows x64):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/izelnakri/qunitx-cli/main/install.sh | sh
+export PATH="$HOME/.qunitx:$PATH"
+```
+
+Pin a version or change the install location with env vars:
+
+```sh
+VERSION=v0.25.0 INSTALL_DIR=$HOME/.local/bin sh install.sh
+```
+
+The script downloads the matching `qunitx-deno-<target>.tar.gz` (or `.zip` on
+Windows) from GitHub Releases — a `deno compile`d binary plus the matching
+esbuild sidecar — and unpacks both into `$INSTALL_DIR`. A system Chrome on
+`PATH` (or `CHROME_BIN`) is the only remaining runtime dependency for the
+default `--browser=chromium`.
+
+Build the same binary yourself from source:
 
 ```sh
 deno task build:binary       # → dist/qunitx for the host platform
 make build-deno              # same, plus copies the local @esbuild sidecar next to it
 make build-deno-all          # cross-compiles every supported platform
 ```
-
-The compiled binary embeds the JS module graph and templates but expects two
-sidecars at runtime, both of which are auto-discovered:
-
-- `esbuild` (`esbuild.exe` on Windows) adjacent to the binary, **or** an
-  explicit `ESBUILD_BINARY_PATH` env var.
-- A Chrome / Chromium executable on `PATH`, or `CHROME_BIN` set explicitly.
-  `--browser=firefox` and `--browser=webkit` use Playwright's own browser
-  install (`npx playwright install firefox`).
 
 ## Usage
 
