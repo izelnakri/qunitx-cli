@@ -182,7 +182,12 @@ export async function shellWatch(
   {
     until,
     timeout = DEFAULT_WATCH_TIMEOUT_MS,
-  }: { until?: (buf: string) => boolean; timeout?: number } = {},
+    onSpawn,
+  }: {
+    until?: (buf: string) => boolean;
+    timeout?: number;
+    onSpawn?: (child: ChildProcessWithoutNullStreams) => void;
+  } = {},
 ): Promise<string> {
   const command = applyImplicitFlags(commandString);
   const { bin, args, env: prefixEnv } = parseCommand(command);
@@ -191,6 +196,7 @@ export async function shellWatch(
   const child = spawn(bin, args, {
     env: { ...process.env, FORCE_COLOR: '0', ...prefixEnv },
   });
+  onSpawn?.(child);
 
   try {
     return await new Promise((resolve, reject) => {

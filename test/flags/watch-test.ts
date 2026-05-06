@@ -1,5 +1,5 @@
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { module, test } from 'qunitx';
-import net from 'node:net';
 import '../helpers/custom-asserts.ts';
 import { shellWatch } from '../helpers/shell.ts';
 
@@ -20,67 +20,31 @@ module('--watch flag tests', { concurrency: true }, () => {
   });
 
   // Regression test: shellWatch was releasing the semaphore permit immediately after sending
-  // SIGTERM, before the CLI process (and its HTTP server) had fully exited. This allowed the
-  // next test to acquire the permit and launch a new Chrome while the previous Chrome was still
-  // shutting down — momentarily exceeding the concurrency cap.
+  // SIGTERM, before the CLI process had fully exited. This allowed the next test to acquire
+  // the permit and launch a new Chrome while the previous Chrome was still shutting down —
+  // momentarily exceeding the concurrency cap.
   //
-  // After the fix, shellWatch waits for the child to exit before releasing the permit. We verify
-  // this by binding to the port the CLI server used: if the child is still alive it still holds
-  // the port, so the bind fails.
+  // The exact contract: shellWatch must await `child.on('exit')` before releasing the permit.
+  // Node sets `child.exitCode`/`child.signalCode` only when that event fires, so checking
+  // them after shellWatch returns is the most direct possible test of the contract. No
+  // kernel-state proxies (port-free probes flaked under load due to lingering TCP cleanup),
+  // no syscalls, no platform variance — exactly what shellWatch's internal terminateChild
+  // is supposed to be waiting on.
   test('shellWatch releases the semaphore permit only after the child process has fully exited', async (assert) => {
-    // Use a dedicated free port so a concurrently-running watch test cannot rebind the
-    // same default port (1234) before portFreeWithRetry finishes checking.
-    const { number: port, release } = await findFreePort();
-    await release();
-    let cliPort: number | null = null;
+    let captured: ChildProcessWithoutNullStreams | null = null;
 
-    await shellWatch(`node cli.ts test/helpers/passing-tests.ts --watch --port=${port}`, {
-      until: (buf) => {
-        const match = buf.match(/http:\/\/localhost:(\d+)/);
-        if (match && cliPort === null) cliPort = Number(match[1]);
-        return buf.includes('Press "qq"');
+    await shellWatch('node cli.ts test/helpers/passing-tests.ts --watch', {
+      until: (buf) => buf.includes('Press "qq"'),
+      onSpawn: (child) => {
+        captured = child;
       },
     });
 
-    assert.ok(cliPort !== null, 'server URL appeared in shellWatch output');
-
-    // After shellWatch returns the HTTP server port must be free — the CLI's HTTP server is
-    // only released when the child process exits, so a successful bind proves the child has
-    // already exited. We retry briefly (≤500ms) because on macOS the kernel can take a few ms
-    // to reclaim a listening socket after waitpid() returns; the regression this test guards
-    // (permit released before the child exits at all) takes several seconds, so 500ms is
-    // still a tight enough bound.
-    function portFreeWithRetry(port: number, attemptsLeft = 25): Promise<boolean> {
-      return new Promise<boolean>((resolve) => {
-        const probe = net.createServer();
-        probe.once('error', () =>
-          attemptsLeft > 1
-            ? setTimeout(() => portFreeWithRetry(port, attemptsLeft - 1).then(resolve), 20)
-            : resolve(false),
-        );
-        probe.once('listening', () => {
-          probe.close();
-          resolve(true);
-        });
-        probe.listen(port);
-      });
-    }
-
+    assert.ok(captured !== null, 'shellWatch exposed the spawned child');
+    const exited = captured!.exitCode !== null || captured!.signalCode !== null;
     assert.true(
-      await portFreeWithRetry(cliPort!),
-      'HTTP server port is free shortly after shellWatch returns — child has fully exited before permit release',
+      exited,
+      `shellWatch's child emitted 'exit' before permit release (exitCode=${captured!.exitCode}, signalCode=${captured!.signalCode})`,
     );
   });
 });
-
-function findFreePort(): Promise<{ number: number; release: () => Promise<void> }> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once('error', reject);
-    server.once('listening', () => {
-      const number = (server.address() as net.AddressInfo).port;
-      resolve({ number, release: () => new Promise((res) => server.close(res)) });
-    });
-    server.listen(0, '::');
-  });
-}
