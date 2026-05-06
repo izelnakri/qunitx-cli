@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.25.2] - 2026-05-06
+[`v0.25.0...v0.25.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.25.0...v0.25.2)
+
+### Bug Fixes
+- Use path.delimiter so PATH parses on Windows — 2026-05-05 by [@izelnakri](https://github.com/izelnakri) ([`68339cc`](https://github.com/izelnakri/qunitx-cli/commit/68339cc1892b4c818fabec8ef121990d22bd445b))
+- Use path.dirname to strip the filename on Windows — 2026-05-05 by [@izelnakri](https://github.com/izelnakri) ([`6ea5bff`](https://github.com/izelnakri/qunitx-cli/commit/6ea5bffa4e0abebecb5b007addee6d9e1d0f9798))
+- Use path.dirname for ancestor walk — 2026-05-05 by [@izelnakri](https://github.com/izelnakri) ([`32e12ac`](https://github.com/izelnakri/qunitx-cli/commit/32e12aca91653e13d2c4733e9c7b23b6fe6901b7))
+- Import setTimeout/setInterval from node:timers for Deno — 2026-05-05 by [@izelnakri](https://github.com/izelnakri) ([`f1def23`](https://github.com/izelnakri/qunitx-cli/commit/f1def23935c42c61acf9cbc940e50b5d4c24684a))
+- Synthesize symlink-target change events on Linux too — 2026-05-05 by [@izelnakri](https://github.com/izelnakri) ([`50ef4bc`](https://github.com/izelnakri/qunitx-cli/commit/50ef4bc00c3a5baf06ce8879bc27c0e9a3e0903d))
+
 ## [0.25.0] - 2026-05-05
 [`v0.24.0...v0.25.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.24.0...v0.25.0)
 
