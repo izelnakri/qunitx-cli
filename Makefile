@@ -275,6 +275,7 @@ release:
 	npm run test:release
 	npm version $(LEVEL) --no-git-tag-version
 	@for d in npm/*/; do node scripts/set-pkg-version.js "$$d/package.json" "$$(node -p 'require("./package.json").version')"; done
+	@node scripts/set-pkg-version.js jsr/deno.json "$$(node -p 'require("./package.json").version')"
 	$(MAKE) build-sea
 	@NODE_PLATFORM=$$(node -p "process.platform"); \
 	NODE_ARCH=$$(node -p "process.arch"); \
