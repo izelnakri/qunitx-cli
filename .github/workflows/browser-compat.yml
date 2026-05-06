@@ -70,3 +70,85 @@ jobs:
         env:
           QUNITX_BROWSER: ${{ matrix.browser }}
           FORCE_COLOR: 0
+
+  # Same matrix as `browser-compat` but routed through the deno-compiled binary.
+  # Mirrors the test-deno job in ci.yml: build dist/qunitx via `deno task
+  # build:binary`, copy the local @esbuild sidecar next to it, point QUNITX_BIN
+  # at the binary, run only the browser-specific subset (test:browser). Catches
+  # firefox/webkit regressions specific to the Deno path (different child_process
+  # compat, different module-load ordering) without re-running the full unit suite.
+  browser-compat-deno:
+    name: deno · ${{ matrix.os }} / ${{ matrix.browser }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        browser: [firefox, webkit]
+        exclude:
+          - os: windows-latest
+            browser: webkit
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - run: npm ci
+
+      - name: Get Playwright version
+        id: pw-version
+        run: echo "version=$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browser (${{ matrix.browser }})
+        id: playwright-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ matrix.browser }}-${{ matrix.os }}-${{ steps.pw-version.outputs.version }}
+
+      - name: Install Playwright browser (${{ matrix.browser }})
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright@${{ steps.pw-version.outputs.version }} install --with-deps ${{ matrix.browser }}
+
+      - name: Install Playwright system deps (${{ matrix.browser }})
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright@${{ steps.pw-version.outputs.version }} install-deps ${{ matrix.browser }}
+
+      - name: Build Deno binary + esbuild sidecar
+        shell: bash
+        run: |
+          mkdir -p dist
+          deno task build:binary
+          case "${{ runner.os }}-${{ runner.arch }}" in
+            Linux-X64)   PKG=linux-x64;    BIN=esbuild;;
+            macOS-ARM64) PKG=darwin-arm64; BIN=esbuild;;
+            Windows-X64) PKG=win32-x64;    BIN=esbuild.exe;;
+            *) echo "Unsupported ${{ runner.os }}-${{ runner.arch }}" >&2; exit 1;;
+          esac
+          cp "node_modules/@esbuild/$PKG/bin/$BIN" "dist/$BIN"
+
+      - name: Run browser tests against Deno binary (${{ matrix.browser }})
+        if: runner.os != 'Windows'
+        shell: bash
+        run: QUNITX_BIN="$(pwd)/dist/qunitx" npm run test:browser
+        env:
+          QUNITX_BROWSER: ${{ matrix.browser }}
+          FORCE_COLOR: 0
+
+      - name: Run browser tests against Deno binary (Windows, ${{ matrix.browser }})
+        if: runner.os == 'Windows'
+        shell: bash
+        run: QUNITX_BIN="$(pwd -W)/dist/qunitx.exe" npm run test:browser
+        env:
+          QUNITX_BROWSER: ${{ matrix.browser }}
+          FORCE_COLOR: 0
