@@ -213,15 +213,15 @@ build-deno:
 	@NODE_PLATFORM=$$(node -p "process.platform"); \
 	NODE_ARCH=$$(node -p "process.arch"); \
 	case "$$NODE_PLATFORM-$$NODE_ARCH" in \
-	  linux-x64)    ESBUILD_PKG=@esbuild/linux-x64;    ESBUILD_BIN=esbuild;;     \
-	  linux-arm64)  ESBUILD_PKG=@esbuild/linux-arm64;  ESBUILD_BIN=esbuild;;     \
-	  darwin-x64)   ESBUILD_PKG=@esbuild/darwin-x64;   ESBUILD_BIN=esbuild;;     \
-	  darwin-arm64) ESBUILD_PKG=@esbuild/darwin-arm64; ESBUILD_BIN=esbuild;;     \
-	  win32-x64)    ESBUILD_PKG=@esbuild/win32-x64;    ESBUILD_BIN=esbuild.exe;; \
-	  *) echo "Unsupported platform: $$NODE_PLATFORM-$$NODE_ARCH" && exit 1;;    \
+	  linux-x64)    ESBUILD_SRC=node_modules/@esbuild/linux-x64/bin/esbuild;    ESBUILD_DST=esbuild;;     \
+	  linux-arm64)  ESBUILD_SRC=node_modules/@esbuild/linux-arm64/bin/esbuild;  ESBUILD_DST=esbuild;;     \
+	  darwin-x64)   ESBUILD_SRC=node_modules/@esbuild/darwin-x64/bin/esbuild;   ESBUILD_DST=esbuild;;     \
+	  darwin-arm64) ESBUILD_SRC=node_modules/@esbuild/darwin-arm64/bin/esbuild; ESBUILD_DST=esbuild;;     \
+	  win32-x64)    ESBUILD_SRC=node_modules/@esbuild/win32-x64/esbuild.exe;    ESBUILD_DST=esbuild.exe;; \
+	  *) echo "Unsupported platform: $$NODE_PLATFORM-$$NODE_ARCH" && exit 1;;                            \
 	esac; \
-	cp "node_modules/$$ESBUILD_PKG/bin/$$ESBUILD_BIN" "dist/$$ESBUILD_BIN"; \
-	echo "Built dist/qunitx (+ dist/$$ESBUILD_BIN sidecar)"
+	cp "$$ESBUILD_SRC" "dist/$$ESBUILD_DST"; \
+	echo "Built dist/qunitx (+ dist/$$ESBUILD_DST sidecar)"
 
 # Cross-compiles for every supported platform into dist/qunitx-<target>{.exe}.
 # Each target uses --target and --output. Sidecars are NOT copied here (you'd need

@@ -129,13 +129,14 @@ jobs:
         run: |
           mkdir -p dist
           deno task build:binary
+          # Windows ships @esbuild/<pkg>/esbuild.exe at the package root, not under bin/.
           case "${{ runner.os }}-${{ runner.arch }}" in
-            Linux-X64)   PKG=linux-x64;    BIN=esbuild;;
-            macOS-ARM64) PKG=darwin-arm64; BIN=esbuild;;
-            Windows-X64) PKG=win32-x64;    BIN=esbuild.exe;;
+            Linux-X64)   SRC=node_modules/@esbuild/linux-x64/bin/esbuild;    DST=dist/esbuild;;
+            macOS-ARM64) SRC=node_modules/@esbuild/darwin-arm64/bin/esbuild; DST=dist/esbuild;;
+            Windows-X64) SRC=node_modules/@esbuild/win32-x64/esbuild.exe;    DST=dist/esbuild.exe;;
             *) echo "Unsupported ${{ runner.os }}-${{ runner.arch }}" >&2; exit 1;;
           esac
-          cp "node_modules/@esbuild/$PKG/bin/$BIN" "dist/$BIN"
+          cp "$SRC" "$DST"
 
       - name: Run browser tests against Deno binary (${{ matrix.browser }})
         if: runner.os != 'Windows'

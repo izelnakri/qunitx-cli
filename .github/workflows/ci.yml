@@ -206,13 +206,16 @@ jobs:
         run: |
           mkdir -p dist
           deno task build:binary
+          # @esbuild/<pkg> layout differs by platform: POSIX ships under bin/,
+          # Windows puts esbuild.exe at the package root (no bin/ dir). Mirror
+          # the existing `build-binaries` job's matrix paths.
           case "${{ runner.os }}-${{ runner.arch }}" in
-            Linux-X64)   PKG=linux-x64;    BIN=esbuild;;
-            macOS-ARM64) PKG=darwin-arm64; BIN=esbuild;;
-            Windows-X64) PKG=win32-x64;    BIN=esbuild.exe;;
+            Linux-X64)   SRC=node_modules/@esbuild/linux-x64/bin/esbuild;    DST=dist/esbuild;;
+            macOS-ARM64) SRC=node_modules/@esbuild/darwin-arm64/bin/esbuild; DST=dist/esbuild;;
+            Windows-X64) SRC=node_modules/@esbuild/win32-x64/esbuild.exe;    DST=dist/esbuild.exe;;
             *) echo "Unsupported ${{ runner.os }}-${{ runner.arch }}" >&2; exit 1;;
           esac
-          cp "node_modules/@esbuild/$PKG/bin/$BIN" "dist/$BIN"
+          cp "$SRC" "$DST"
       # Git Bash $(pwd) returns a POSIX-style path (/d/a/...) that Node.spawn
       # cannot pass to a .exe; pwd -W returns the Windows form (D:/a/...).
       - name: Run test suite against Deno binary
@@ -594,6 +597,100 @@ jobs:
           name: qunitx-${{ matrix.target }}
           path: qunitx-${{ matrix.target }}.*
 
+  # ── Deno-compiled binaries (tags only) ────────────────────────────────────────
+  # Parallel to build-binaries (which uses Node SEA): produces a self-contained
+  # binary built with `deno compile` plus the matching @esbuild sidecar, packaged
+  # as `qunitx-deno-<target>.tar.gz` (or .zip on Windows). Lives alongside the SEA
+  # artifacts on the GitHub release so users can pick the binary that matches
+  # their preferred runtime without extra steps.
+  #
+  # Why per-platform native runners (vs deno compile --target cross-compile):
+  #   - We need the matching `@esbuild/<target>` sidecar; only the host's native
+  #     package is in node_modules without extra installs.
+  #   - Each native runner gets a free smoke (binary + sidecar are cp'd on the
+  #     same host they were built for; staleness/path mismatches surface here).
+  build-deno-binaries:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [lint, test]
+    name: Build deno binary · ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            esbuild_src: node_modules/@esbuild/linux-x64/bin/esbuild
+            esbuild_dst: esbuild
+          - os: macos-latest
+            target: macos-arm64
+            esbuild_src: node_modules/@esbuild/darwin-arm64/bin/esbuild
+            esbuild_dst: esbuild
+          - os: windows-latest
+            target: windows-x64
+            esbuild_src: node_modules/@esbuild/win32-x64/esbuild.exe
+            esbuild_dst: esbuild.exe
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: npm ci
+
+      - name: Build Deno binary + esbuild sidecar
+        shell: bash
+        run: |
+          mkdir -p dist/qunitx-deno-${{ matrix.target }}
+          deno task build:binary
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            mv dist/qunitx.exe dist/qunitx-deno-${{ matrix.target }}/qunitx.exe
+          else
+            mv dist/qunitx     dist/qunitx-deno-${{ matrix.target }}/qunitx
+            chmod +x dist/qunitx-deno-${{ matrix.target }}/qunitx
+          fi
+          cp "${{ matrix.esbuild_src }}" \
+             "dist/qunitx-deno-${{ matrix.target }}/${{ matrix.esbuild_dst }}"
+          chmod +x "dist/qunitx-deno-${{ matrix.target }}/${{ matrix.esbuild_dst }}" 2>/dev/null || true
+
+      - name: Smoke test
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          BIN="$(pwd)/dist/qunitx-deno-${{ matrix.target }}/qunitx"
+          "$BIN" --version
+          "$BIN" daemon 2>&1 | grep -q "Usage: qunitx daemon"
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          BIN="$(pwd -W)/dist/qunitx-deno-${{ matrix.target }}/qunitx.exe"
+          "$BIN" --version
+          "$BIN" daemon 2>&1 | grep -q "Usage: qunitx daemon"
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: tar czf qunitx-deno-${{ matrix.target }}.tar.gz -C dist qunitx-deno-${{ matrix.target }}
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/qunitx-deno-${{ matrix.target }}" `
+            -DestinationPath "qunitx-deno-${{ matrix.target }}.zip"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qunitx-deno-${{ matrix.target }}
+          path: qunitx-deno-${{ matrix.target }}.*
+
   # ── GitHub release (tags only) ────────────────────────────────────────────────
   # Creates the release entry from the matching CHANGELOG.md section (so the
   # body matches the rich changelog `make release` already committed) and
@@ -607,12 +704,15 @@ jobs:
   # publish failures (GH API outages, runner death, etc.).
   github-release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-binaries]
+    needs: [build-binaries, build-deno-binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v6
+      # download-artifact's `pattern: qunitx-*` matches both `qunitx-<target>`
+      # (SEA tarballs) and `qunitx-deno-<target>` (Deno tarballs); merge-multiple
+      # collapses them into one artifacts/ dir for publish-release to upload.
       - uses: actions/download-artifact@v8
         with:
           pattern: qunitx-*
