@@ -19,12 +19,20 @@ const QUNITX_DEBUG = process.env.QUNITX_DEBUG;
 const IS_CLI = /\bnode cli\.ts\b/;
 const NON_BROWSER_SUBCOMMAND = /\bnode cli\.ts\b\s+(generate|g|new|n|help|h|p|print|init)\b/;
 
-// Default exec timeout for one-shot CLI invocations. Long enough to absorb cold Chrome
-// startup on Windows CI, short enough that a genuinely hung CLI doesn't stall the suite.
-const DEFAULT_EXEC_TIMEOUT_MS = 60_000;
-// Default timeout for shellWatch — slightly shorter; watch tests usually wait for a specific
-// stdout marker rather than full process exit.
-const DEFAULT_WATCH_TIMEOUT_MS = 45_000;
+// Default exec timeout for one-shot CLI invocations. Sized to comfortably exceed
+// every observed tail of the Deno-compiled binary path under concurrent CI
+// load (each cli call cold-loads ~190 MB of embedded VFS; daemon spawn time
+// alone can reach SPAWN_TIMEOUT_MS = 120 s). 180 s leaves wraparound for the
+// surrounding ping + assertion flow without letting a genuinely hung CLI
+// stall the suite indefinitely. Cost is asymmetric — green runs finish in
+// 2–10 s and aren't affected; a real hang takes 180 s to surface vs 90 s
+// before. CI job budgets (15–25 min) absorb several such hangs.
+const DEFAULT_EXEC_TIMEOUT_MS = 180_000;
+// Default timeout for shellWatch — wide enough to absorb the same Chrome-
+// launch tail (webkit on macOS / firefox on Windows under contention have
+// been observed >60 s before the watch prompt appears). Watch tests usually
+// resolve on a specific stdout marker, so they exit fast in the green path.
+const DEFAULT_WATCH_TIMEOUT_MS = 120_000;
 // Maximum time to wait for a child process to exit after SIGTERM before giving up.
 // Prevents a stuck child (e.g. Firefox/WebKit SIGTERM deadlock) from indefinitely
 // blocking the semaphore permit and starving subsequent test workers.
@@ -124,6 +132,15 @@ export async function spawnCapture(
   return await new Promise<CapturedResult>((resolve, reject) => {
     const startTime = performance.now();
     const child = spawn(bin, args, { env: { ...env, ...prefixEnv }, cwd });
+    // EventEmitter throws unhandled 'error' events synchronously, and Node 24's default
+    // for uncaughtException terminates the worker — which on Windows manifests as a
+    // "test failed" at file:1:1 with no sub-test reported, because the worker died
+    // before any test could finish. Child stdio pipes can emit 'error' (EPIPE / abrupt
+    // close during TerminateProcess on Windows) independently of the child's own
+    // 'error' event, so the listener on `child` alone isn't enough.
+    child.stdin.on('error', () => {});
+    child.stdout.on('error', () => {});
+    child.stderr.on('error', () => {});
     const stdoutChunks: Array<{ time: number; data: string }> = [];
     const stderrChunks: Array<{ time: number; data: string }> = [];
     let stdout = '';
@@ -196,6 +213,14 @@ export async function shellWatch(
   const child = spawn(bin, args, {
     env: { ...process.env, FORCE_COLOR: '0', ...prefixEnv },
   });
+  // Attached BEFORE onSpawn (and before the data listener below) so any 'error'
+  // surfaced through child stdio — most often during forced termination on Windows,
+  // where SIGTERM = TerminateProcess abruptly closes the pipes — is absorbed instead
+  // of bubbling to uncaughtException and killing the test worker. See spawnCapture
+  // above for the matching note.
+  child.stdin.on('error', () => {});
+  child.stdout.on('error', () => {});
+  child.stderr.on('error', () => {});
   onSpawn?.(child);
 
   try {
