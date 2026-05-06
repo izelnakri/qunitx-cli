@@ -17,6 +17,7 @@ export async function preLaunchChrome(
   chromePath: string | null | undefined,
   args: string[],
   headless = true,
+  onSpawn?: (proc: import('node:child_process').ChildProcess) => void,
 ): Promise<EarlyChrome | null> {
   if (!chromePath) return null;
 
@@ -31,6 +32,13 @@ export async function preLaunchChrome(
     // subprocesses from accumulating inotify watches across test runs.
     { stdio: ['ignore', 'ignore', 'pipe'], detached: true },
   );
+  // Notify the caller of the spawned proc synchronously, BEFORE the CDP-ready
+  // wait below resolves. The caller (chrome-prelaunch.ts) uses this to track
+  // the Chrome PID immediately so its process.on('exit') fallback can SIGKILL
+  // Chrome even if the process exits while CDP is still negotiating —
+  // important for the daemon's decoupled-launch path where the daemon can
+  // shut down with Chrome still mid-launch and otherwise leak the process.
+  onSpawn?.(proc);
 
   // Cleanup runs exactly one path: rm() here when Chrome never connected (shutdown() won't
   // be called), or cleanupBrowserDir() in shutdown() when it did. The cdpConnected flag

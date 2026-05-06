@@ -86,12 +86,28 @@ export async function launchBrowser(config: Config, skipPrelaunch = false): Prom
   }
 
   const playwrightCore = await playwrightCorePromise;
-  return playwrightCore[browserName].launch({
+  const launchOpts = {
     headless: !(config.open && config.watch),
     // See comment in the chromium fallback path above for why these are disabled.
     handleSIGTERM: false,
     handleSIGHUP: false,
-  });
+  };
+  // POSIX: a single launch attempt — no flake to absorb.
+  if (process.platform !== 'win32') return playwrightCore[browserName].launch(launchOpts);
+  // Windows-only retry for the Deno-compiled binary path: deno compile's
+  // node:child_process shim intermittently fails with "The handle is invalid.
+  // (os error 6)" when Playwright spawns firefox/webkit through
+  // playwright-core's processLauncher. Chromium isn't affected — it goes
+  // through our CDP pre-launch (chrome-prelaunch.ts) and never calls
+  // child_process.spawn for the browser process. Remove this once upstream
+  // Deno fixes their spawn shim for compiled binaries on Windows.
+  try {
+    return await playwrightCore[browserName].launch(launchOpts);
+  } catch (err) {
+    if (!/os error 6|handle is invalid/i.test((err as Error).message || '')) throw err;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    return playwrightCore[browserName].launch(launchOpts);
+  }
 }
 
 /**

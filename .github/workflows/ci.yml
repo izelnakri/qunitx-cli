@@ -438,6 +438,11 @@ jobs:
       - name: Get Playwright version
         if: matrix.browser != 'chromium'
         id: pw-version
+        # See browser-compat.yml: bash is mandatory so the bash-shaped echo runs
+        # under bash on every OS instead of silently no-op'ing in PowerShell on
+        # windows-latest (would leave version empty → `npx playwright@` → latest
+        # → mismatched firefox build vs pinned playwright-core).
+        shell: bash
         run: echo "version=$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright browser (${{ matrix.browser }})
@@ -458,6 +463,124 @@ jobs:
 
       - run: bash scripts/test-release.sh
         shell: bash
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          QUNITX_BROWSER: ${{ matrix.browser }}
+          TEST_SCRIPT: ${{ matrix.test_script }}
+          FORCE_COLOR: 0
+
+  # ── Deno-binary release consumer test (tags only) ─────────────────────────────
+  # Mirrors release-consumer-test for the deno-compiled binary path: builds
+  # dist/qunitx + esbuild sidecar in-job from the current ref's source (same
+  # shape as release-consumer-test using `npm pack` to package locally), then
+  # runs the test suite with QUNITX_BIN pointing at the freshly-built binary.
+  # Self-contained — no `needs:` on build-deno-binaries — so the test always
+  # exercises HEAD's code without cross-job artifact plumbing.
+  #
+  # Same browser matrix shape as release-consumer-test (chromium runs the full
+  # suite, firefox/webkit run test:browser only) so per-platform packaging
+  # surprises are caught before the release ships.
+  release-consumer-test-deno:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [lint, test]
+    name: Release consumer test (deno) · ${{ matrix.os }} / ${{ matrix.browser }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            browser: chromium
+            test_script: test
+          - os: ubuntu-latest
+            browser: firefox
+            test_script: test:browser
+          - os: ubuntu-latest
+            browser: webkit
+            test_script: test:browser
+          - os: macos-latest
+            browser: firefox
+            test_script: test:browser
+          - os: macos-latest
+            browser: webkit
+            test_script: test:browser
+          - os: windows-latest
+            browser: firefox
+            test_script: test:browser
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - uses: browser-actions/setup-chrome@v2
+        if: matrix.browser == 'chromium'
+        id: setup-chrome
+
+      - run: npm ci
+
+      - name: Get Playwright version
+        if: matrix.browser != 'chromium'
+        id: pw-version
+        # See browser-compat.yml: bash is mandatory so the bash-shaped echo runs
+        # under bash on every OS instead of silently no-op'ing in PowerShell on
+        # windows-latest (would leave version empty → `npx playwright@` → latest
+        # → mismatched firefox build vs pinned playwright-core).
+        shell: bash
+        run: echo "version=$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browser (${{ matrix.browser }})
+        if: matrix.browser != 'chromium'
+        id: playwright-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ matrix.browser }}-${{ matrix.os }}-${{ steps.pw-version.outputs.version }}
+
+      - name: Install Playwright browser (${{ matrix.browser }})
+        if: matrix.browser != 'chromium' && steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright@${{ steps.pw-version.outputs.version }} install --with-deps ${{ matrix.browser }}
+
+      - name: Install Playwright system deps (${{ matrix.browser }})
+        if: matrix.browser != 'chromium' && steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright@${{ steps.pw-version.outputs.version }} install-deps ${{ matrix.browser }}
+
+      - name: Build Deno binary + esbuild sidecar
+        shell: bash
+        run: |
+          mkdir -p dist
+          deno task build:binary
+          # @esbuild/<pkg> ships under bin/ on POSIX, at root on Windows.
+          case "${{ runner.os }}-${{ runner.arch }}" in
+            Linux-X64)   SRC=node_modules/@esbuild/linux-x64/bin/esbuild;    DST=dist/esbuild;;
+            macOS-ARM64) SRC=node_modules/@esbuild/darwin-arm64/bin/esbuild; DST=dist/esbuild;;
+            Windows-X64) SRC=node_modules/@esbuild/win32-x64/esbuild.exe;    DST=dist/esbuild.exe;;
+            *) echo "Unsupported ${{ runner.os }}-${{ runner.arch }}" >&2; exit 1;;
+          esac
+          cp "$SRC" "$DST"
+
+      - name: Run test suite via locally-built deno binary
+        if: runner.os != 'Windows'
+        shell: bash
+        run: QUNITX_BIN="$(pwd)/dist/qunitx" npm run "${TEST_SCRIPT}"
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          QUNITX_BROWSER: ${{ matrix.browser }}
+          TEST_SCRIPT: ${{ matrix.test_script }}
+          FORCE_COLOR: 0
+
+      - name: Run test suite via locally-built deno binary (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: QUNITX_BIN="$(pwd -W)/dist/qunitx.exe" npm run "${TEST_SCRIPT}"
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           QUNITX_BROWSER: ${{ matrix.browser }}

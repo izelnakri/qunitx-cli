@@ -9,15 +9,20 @@ import pkg from '../../../package.json' with { type: 'json' };
 
 // Daemon startup chains: cli.ts import → setupConfig → launchBrowser (chromium
 // connect) → listen() → writeFile(info). Observed timings:
-//   Linux/macOS: typical 0.8–2 s, worst observed ~5 s.
-//   Windows under heavy CI load: typical 4–8 s, worst observed ~12 s
-//     (run 25088766035 timed out at the previous 10 s budget).
-// 30 s is biased hard toward flake-prevention: a false timeout (legit-slow startup
-// hits the deadline) costs a red CI run and a re-run, while a true timeout (daemon
-// genuinely won't start) just adds ~20 s before the user gets an error — rare and
-// tolerable. Stays under DEFAULT_EXEC_TIMEOUT_MS (60 s) so test runs that wrap
-// `daemon start` keep envelope headroom.
-const SPAWN_TIMEOUT_MS = 30_000;
+//   Node, Linux/macOS: typical 0.8–2 s, worst observed ~5 s.
+//   Node, Windows under heavy CI load: typical 4–8 s, worst observed ~12 s.
+//   Deno-compiled binary: each cli call cold-loads ~190 MB of embedded VFS and
+//     spawns a binary-as-daemon child that does the same. Under concurrent
+//     test load (many parallel daemon spawns + Chrome launches), this stack
+//     reliably blows past 60 s (CI runs 25837497338 + 25896459457).
+// 120 s gives a wide margin over every observed tail. The cost is asymmetric:
+// green runs are unaffected (typical 0.8–5 s, doesn't approach the budget);
+// a genuine daemon hang takes 120 s to surface vs 60 s before — fine because
+// real hangs are rare and CI job budgets (15–25 min) absorb several. Must
+// stay under DEFAULT_EXEC_TIMEOUT_MS (180 s in test/helpers/shell.ts) so the
+// daemon's "did not start" message reaches the client before the test exec
+// fires SIGTERM.
+const SPAWN_TIMEOUT_MS = 120_000;
 
 const highlight = (text: string): string => magenta().bold(text);
 const color = (text: string): string => blue(text);
@@ -45,12 +50,13 @@ ${highlight('Tip:')} set ${color('QUNITX_DAEMON=1')} to auto-spawn the daemon on
  *   reinvoke with `daemon _serve`. `import.meta.url` is undefined in the
  *   CJS SEA bundle, so any path-based resolution at module scope crashes
  *   the entire `daemon` subcommand. The Deno-compiled binary is detected
- *   via `Deno.mainModule` not starting with `file:` (compiled mainModule
- *   is an `embedded:` / `evfs:` URL pointing into the bundled VFS).
+ *   via `process.execPath` not ending in `deno`/`deno.exe` (compiled
+ *   binaries inherit the user's binary name; only `deno run` keeps the
+ *   runtime's own name on the path).
  * - `deno run cli.ts`: respawn `deno run -A <scriptPath> daemon _serve` so
- *   the child enters via the same entrypoint the parent did. argv[1] is
- *   the script path under `deno run`, but `Deno.mainModule` is the
- *   authoritative source and avoids relative-path surprises.
+ *   the child enters via the same entrypoint the parent did.
+ *   `Deno.mainModule` is the authoritative source and avoids relative-path
+ *   surprises.
  * - Source / dist bundle (Node ESM): respawn `node ${process.argv[1]}
  *   daemon _serve` so the child enters via the same entrypoint the parent
  *   did (cli.ts in source, bin/qunitx.js when installed via npm).
@@ -61,7 +67,14 @@ async function buildDaemonSpawn(): Promise<{ bin: string; args: string[] }> {
 
   const deno = (globalThis as { Deno?: { mainModule: string } }).Deno;
   if (deno) {
-    if (!deno.mainModule.startsWith('file:')) {
+    // Inside a `deno compile`d binary `Deno.mainModule` is also a `file:` URL
+    // (a virtual path under `/tmp/deno-compile-<name>/`), so the previous
+    // mainModule-prefix check always fell into the `deno run` branch and tried
+    // to spawn `<binary> run -A <virtual-path> daemon _serve` — the binary has
+    // no `run` subcommand and the spawn silently failed. process.execPath
+    // ending in `deno` (or `deno.exe`) is the reliable signal: only `deno run`
+    // preserves the runtime's name on the path.
+    if (!/[/\\]deno(\.exe)?$/i.test(process.execPath)) {
       return { bin: process.execPath, args: ['daemon', '_serve'] };
     }
     const { fileURLToPath } = await import('node:url');

@@ -32,8 +32,17 @@ export async function writeOutputStaticFiles(
       .relative(projectRoot, assetAbsolutePath)
       .replace(/^(?:\.\.[\\/])+/, '');
     const outDir = path.resolve(projectRoot, output);
-    await ensureFolderExists(path.join(outDir, assetRelativePath));
-    await fs.copyFile(assetAbsolutePath, path.join(outDir, assetRelativePath));
+    const destPath = path.join(outDir, assetRelativePath);
+    await ensureFolderExists(destPath);
+    // read+write rather than copyFile: the `Deno.copyFile` shim under
+    // deno-compile binaries on Windows fails with INVALID_HANDLE (os error 6)
+    // when the source path traverses `node_modules/.deno/<pkg>/...` (the
+    // layout used by `deno install`). Buffering the content trades a small
+    // amount of memory for a syscall path that works portably on every
+    // runtime + platform we ship for. Node-side performance is unchanged in
+    // practice — these assets are kilobyte-scale (qunit.css ≈ 8 KB) and the
+    // copy happens once per output dir setup.
+    await fs.writeFile(destPath, await fs.readFile(assetAbsolutePath));
   });
 
   await Promise.all(staticHTMLPromises.concat(assetPromises));

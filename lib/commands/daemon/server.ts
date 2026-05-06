@@ -33,7 +33,29 @@ const LIVENESS_PROBE_TIMEOUT_MS = 500;
 const MAX_CONSECUTIVE_CRASHES = 2;
 
 interface DaemonState {
-  browser: Browser;
+  /**
+   * Resolved Chrome handle. `null` until the initial in-flight launch settles
+   * (see `browserReady`) and again briefly during `recoverBrowser`. Run
+   * handlers MUST go through `awaitBrowser(state)` rather than reading this
+   * field directly — it's null until the first awaiting caller resolves it.
+   * The split lets `runDaemonServer` `listen()` and write the info file
+   * immediately, instead of blocking on Chrome launch. Under CI load Chrome
+   * launch tail latencies regularly exceed 100 s; gating socket readiness
+   * on Chrome would propagate that latency to every `daemon start`/`status`/
+   * ping and exhaust client-side spawn timeouts in both the Node and Deno
+   * paths (CI runs 26006815757 + 26007923495).
+   */
+  browser: Browser | null;
+  /**
+   * Promise of the in-flight Chrome launch. Settles exactly once for the
+   * initial launch and is replaced whenever `recoverBrowser` runs. Awaited
+   * inside `handleRun` (via `awaitBrowser`) so a run request that arrives
+   * before Chrome is up waits the same amount of time it would have waited
+   * for the synchronous launch — but `daemon start`/ping/status return as
+   * soon as the socket is up. Decoupling Chrome from socket readiness is the
+   * fix for the "Daemon did not start within Ns" timeout class on slow CI.
+   */
+  browserReady: Promise<Browser>;
   /** Captured at startup; used to relaunch the browser on crash recovery. */
   baseConfig: Config;
   cwd: string;
@@ -85,9 +107,13 @@ export async function runDaemonServer(): Promise<void> {
   // Windows (named pipes don't appear on the regular filesystem). isLiveSocket actively
   // probes via net.createConnection, which works on every platform.
   if (fs.existsSync(infoPath) && (await isLiveSocket(socketPath))) process.exit(0);
-  // Stale socket from a previous crash — must be removed before listen() (POSIX only;
-  // Windows named pipes auto-recycle, and unlink on a pipe path is a no-op error we ignore).
-  await unlink(socketPath).catch(() => {});
+  // Stale-socket cleanup is deferred to listenWithStaleCleanup below. A blanket
+  // unlink here would race two concurrent daemon spawns: A could win listen()
+  // and create the socket dirent, then B's pre-listen unlink would remove A's
+  // live dirent, B's listen would succeed against a freshly created file at the
+  // same path, and both processes end up as live listeners with B's file
+  // shadowing A. The stale-cleanup helper gates the unlink on an isLiveSocket
+  // probe so a live peer is never unlinked.
 
   // Optional debug log: when QUNITX_DAEMON_LOG=<path> is set, redirect the daemon's
   // stdout+stderr to that file so idle/startup/shutdown events (otherwise lost to
@@ -120,10 +146,30 @@ export async function runDaemonServer(): Promise<void> {
   baseConfig.watch = false;
   baseConfig.open = false;
 
-  const [browser, pkgMtime] = await Promise.all([launchBrowser(baseConfig), readPkgMtime(cwd)]);
+  // Don't await launchBrowser before listen() — see DaemonState.browserReady
+  // for the full rationale. Chrome launch tail latency can exceed 100 s under
+  // CI contention; making the daemon socket unreachable that long propagates
+  // the latency to every client-side spawn timeout. Kick off the launch in
+  // parallel; the dispatch handler awaits it lazily inside `awaitBrowser`.
+  const browserReady = launchBrowser(baseConfig);
+  // Absorb the unhandled-rejection: an early launch failure is also re-
+  // surfaced through `awaitBrowser` to the first awaiting client (which
+  // sends a 'fatal' chunk + triggers shutdown). Logging to stderr means an
+  // operator with `QUNITX_DAEMON_LOG` set sees exactly when Chrome failed;
+  // without this `.catch` the rejection would trip the daemon's
+  // `unhandledRejection → shutdown` path before any client ever gets the
+  // diagnostic, AND the daemon's stdio is `'ignore'` by default so end
+  // users would see nothing.
+  browserReady.catch((err) => {
+    process.stderr.write(
+      `# [qunitx daemon] initial browser launch failed: ${(err as Error).message ?? err}\n`,
+    );
+  });
+  const pkgMtime = await readPkgMtime(cwd);
 
   const state: DaemonState = {
-    browser,
+    browser: null,
+    browserReady,
     baseConfig,
     cwd,
     startedAt: Date.now(),
@@ -164,7 +210,7 @@ export async function runDaemonServer(): Promise<void> {
   // missing presence state. The client's spawn-poll waits for both info file
   // existence AND a successful ping, so the brief gap between listen() returning
   // and writeFile resolving is bridged on the client side, not the server.
-  await listen(state.socketServer, socketPath);
+  await listenWithStaleCleanup(state.socketServer, socketPath);
   // Set the ownership flag in the same microtask as listen()'s resolution. Signals
   // are delivered as macrotasks; they cannot interleave between two synchronous
   // statements, so this flag is observed atomically with bind success.
@@ -204,6 +250,33 @@ function listen(server: net.Server, socketPath: string): Promise<void> {
   });
 }
 
+/**
+ * listen() at `socketPath`, cleaning up a stale-socket file without the
+ * destructive blanket-unlink the old code used. The old pattern
+ * (`unlink → listen`) had a race window: a winner daemon could `listen()` and
+ * create the socket dirent, then a concurrent peer's pre-listen `unlink`
+ * would remove the winner's live dirent, the peer's `listen()` would succeed
+ * against a freshly-created file at the same path, and both processes ended
+ * up bound — with the peer's file shadowing the winner. If the peer then
+ * died for any reason its `shutdownDaemon` would unlink the SHARED file
+ * (both processes had `listenSucceeded=true`), taking down the live socket.
+ *
+ * The fix is to make the unlink CONDITIONAL on the existing file being stale
+ * (no listener on it): if the file is a live socket, the unlink is skipped
+ * and the listen below fails fast with EADDRINUSE, letting the existing
+ * race-resolution path bail to the winner. listen() on the SAME server
+ * can't be called twice across a failed first attempt — Node leaves the
+ * server in a partial state, observed as "Daemon did not start within Ns"
+ * hangs in CI — so we pre-clean before the first listen rather than
+ * catching EADDRINUSE.
+ */
+async function listenWithStaleCleanup(server: net.Server, socketPath: string): Promise<void> {
+  if (fs.existsSync(socketPath) && !(await isLiveSocket(socketPath))) {
+    await unlink(socketPath).catch(() => {});
+  }
+  await listen(server, socketPath);
+}
+
 async function shutdownDaemon(state: DaemonState, reason: string): Promise<void> {
   if (state.shuttingDown) return;
   state.shuttingDown = true;
@@ -218,6 +291,27 @@ async function shutdownDaemon(state: DaemonState, reason: string): Promise<void>
   }
 
   await new Promise<void>((resolve) => state.socketServer.close(() => resolve()));
+  // Bounded await on the in-flight browser launch so we can close it through
+  // Playwright's API rather than relying on the chrome-prelaunch.ts exit hook
+  // alone. Two reasons this matters specifically post-decoupling: (1) the
+  // daemon can shut down before any run request awaits browserReady — without
+  // this wait, state.browser stays null and the Promise's Browser handle leaks
+  // (Playwright's Browser keeps its own bookkeeping); (2) the rapid-stop+start
+  // test exposes exactly this — leaked Chromes from previous cycles compound
+  // and starve the next spawn's Chrome launch budget. 3 s is enough for a
+  // healthy CI launch (typical 0.5–2 s); if Chrome takes longer than that the
+  // exit hook in chrome-prelaunch.ts (which now tracks the proc synchronously
+  // at spawn time) SIGKILLs the in-flight Chrome process as the fallback.
+  const SHUTDOWN_BROWSER_GRACE_MS = 3_000;
+  const browser =
+    state.browser ??
+    (await Promise.race([
+      state.browserReady.then(
+        (b) => b,
+        () => null,
+      ),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), SHUTDOWN_BROWSER_GRACE_MS)),
+    ]));
   // Only unlink files this process actually owns. A daemon whose listen() failed
   // (concurrent-spawn race: lost to EADDRINUSE) reaches this path via unhandled-
   // Rejection but doesn't own the socket/info — unlinking corrupts the winner.
@@ -225,10 +319,26 @@ async function shutdownDaemon(state: DaemonState, reason: string): Promise<void>
     state.listenSucceeded ? unlink(state.socketPath).catch(() => {}) : null,
     state.listenSucceeded ? unlink(state.infoPath).catch(() => {}) : null,
     state.pageSlot.page?.close().catch(() => {}),
-    state.browser.close().catch(() => {}),
+    // browser may be null if the launch hadn't settled within the grace window
+    // (or never started at all); the chrome-prelaunch exit hook handles that.
+    browser?.close().catch(() => {}),
     state.esbuildCache._esbuildContext?.dispose().catch(() => {}),
   ]);
   process.exit(0);
+}
+
+/**
+ * Resolves the daemon's browser handle, awaiting the in-flight launch on the
+ * first call and after `recoverBrowser` replaces `browserReady`. Caches the
+ * resolved value on `state.browser` so subsequent handlers skip the await.
+ * Throws if the launch failed; `handleRun` wraps the throw and sends a
+ * 'fatal' chunk to the client + shuts the daemon down (the next client
+ * respawns a fresh daemon).
+ */
+async function awaitBrowser(state: DaemonState): Promise<Browser> {
+  if (state.browser) return state.browser;
+  state.browser = await state.browserReady;
+  return state.browser;
 }
 
 function resetIdleTimer(state: DaemonState): void {
@@ -339,10 +449,24 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
 
   if (state.idleTimer) clearTimeout(state.idleTimer);
 
-  // Pre-flight browser check: relaunch if it died while the daemon was idle. Skipping
-  // this would let the run hang inside Playwright's CDP send waiting for responses
-  // from a dead Chrome until its 30s timeout fires.
-  if (!state.browser.isConnected()) {
+  // Two browser-readiness cases handled here:
+  //   1. Initial launch in progress — `state.browser` is null until the decoupled
+  //      `browserReady` settles (see runDaemonServer comment). The first run
+  //      after spawn awaits it here, paying the launch cost once.
+  //   2. Browser died while the daemon was idle — without recovery the run
+  //      would hang inside Playwright's CDP send waiting for a response from
+  //      a dead Chrome until its 30s internal timeout fires.
+  try {
+    await awaitBrowser(state);
+  } catch (err) {
+    writeChunk(socket, {
+      type: 'fatal',
+      message: `browser launch failed: ${(err as Error).message ?? err}`,
+    });
+    socket.end();
+    return void shutdownDaemon(state, 'initial browser launch failed');
+  }
+  if (!state.browser!.isConnected()) {
     await recoverBrowser(state);
     if (state.shuttingDown) {
       writeChunk(socket, { type: 'fatal', message: 'browser recovery failed' });
@@ -369,8 +493,11 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
     process.stderr.write = origStderrWrite;
   }
 
-  // Browser-crash recovery: relaunch the persistent browser if it died this run.
-  if (state.browser.isConnected()) state.consecutiveCrashes = 0;
+  // Browser-crash recovery: relaunch the persistent browser if it died this
+  // run. state.browser is non-null here — awaitBrowser succeeded above and
+  // recoverBrowser (if it ran) reassigned it; the non-null assertion lets us
+  // reuse the existing isConnected() check verbatim.
+  if (state.browser!.isConnected()) state.consecutiveCrashes = 0;
   else await recoverBrowser(state);
 
   if (!socket.destroyed) {
@@ -396,13 +523,24 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
   // CDP socket hangs forever waiting for a protocol reply that never arrives.
   // skipPrelaunch=true bypasses the singleton prelaunch endpoint (which now points at the
   // dead Chrome) and goes straight to a fresh chromium.launch().
-  state.browser.close().catch(() => {});
+  state.browser?.close().catch(() => {});
   // The persistent page belongs to the dead browser; drop the reference so the
   // next setupBrowser mints a fresh page on the new browser without paying an
   // isConnected() round-trip on a doomed CDP socket.
   state.pageSlot.page = null;
+  // Null state.browser and stage the replacement on browserReady, mirroring
+  // the initial-launch shape: any concurrent awaitBrowser caller waits on the
+  // new promise instead of returning the dead handle. The .catch keeps the
+  // unhandled-rejection logged path consistent with the initial launch.
+  state.browser = null;
+  state.browserReady = launchBrowser(state.baseConfig, true);
+  state.browserReady.catch((err) => {
+    process.stderr.write(
+      `# [qunitx daemon] browser relaunch failed: ${(err as Error).message ?? err}\n`,
+    );
+  });
   try {
-    state.browser = await launchBrowser(state.baseConfig, true);
+    state.browser = await state.browserReady;
   } catch (err) {
     void shutdownDaemon(state, `browser relaunch failed: ${(err as Error).message || err}`);
   }
@@ -442,7 +580,9 @@ async function runOnce(
   // slot so the warm module graph survives across runs. watch/open are forced off
   // — those modes don't make sense inside a daemon run.
   config._daemonMode = true;
-  config._daemonBrowser = state.browser;
+  // state.browser is non-null here — runOnce only fires from handleRun after
+  // awaitBrowser has resolved (and recoverBrowser, if it ran, reassigned it).
+  config._daemonBrowser = state.browser!;
   config._daemonEsbuildCache = state.esbuildCache;
   config._daemonPageSlot = state.pageSlot;
   config.watch = false;
