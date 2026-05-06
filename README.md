@@ -65,6 +65,12 @@ curl -fsSL https://raw.githubusercontent.com/izelnakri/qunitx-cli/main/install.s
 export PATH="$HOME/.qunitx:$PATH"
 ```
 
+Already on Deno? `deno install` resolves the bootstrap which fetches the matching prebuilt binary on first run and caches it under `~/.cache/qunitx/`:
+
+```sh
+deno install -Agf jsr:@izelnakri/qunitx-cli
+```
+
 Pin a version or change the install location with env vars:
 
 ```sh
