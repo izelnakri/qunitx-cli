@@ -162,6 +162,81 @@ jobs:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
 
+  # ── Test (Deno binary) ────────────────────────────────────────────────────────
+  # Builds dist/qunitx via `deno task build:binary` and runs the same 592-test
+  # suite with QUNITX_BIN pointing at it; test/helpers/shell.ts swaps `node
+  # cli.ts` for that binary at parse time. Goal: catch regressions in the
+  # `deno compile` path AND surface flakes the Node lane misses (different GC,
+  # different timer impl, different child_process compat). Allowed to be flaky:
+  # NOT a `needs:` of pages or docker-nightly so a Deno-only failure cannot
+  # block main-branch deploys.
+  #
+  # Coverage gap: six tests bypass `parseCommand` (they spawn process.execPath
+  # with cli.ts literally — port-test.ts:160, watch-rerun-test.ts:832,
+  # custom-html-test.ts:21+101, no-html-test.ts:120, plugins-test.ts:40), so
+  # this lane exercises 586/592 against the binary. Migrating those is a
+  # separate follow-up.
+  test-deno:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
+    name: test-deno (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 15 || 25 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: browser-actions/setup-chrome@v2
+        id: setup-chrome
+      - run: npm ci
+      # macOS: see the equivalent step in the `test` job above for why the
+      # chromium-headless-shell install is required instead of using CHROME_BIN.
+      - run: node_modules/.bin/playwright-core install chromium-headless-shell
+        if: runner.os == 'macOS'
+      - name: Build Deno binary + esbuild sidecar
+        shell: bash
+        run: |
+          mkdir -p dist
+          deno task build:binary
+          case "${{ runner.os }}-${{ runner.arch }}" in
+            Linux-X64)   PKG=linux-x64;    BIN=esbuild;;
+            macOS-ARM64) PKG=darwin-arm64; BIN=esbuild;;
+            Windows-X64) PKG=win32-x64;    BIN=esbuild.exe;;
+            *) echo "Unsupported ${{ runner.os }}-${{ runner.arch }}" >&2; exit 1;;
+          esac
+          cp "node_modules/@esbuild/$PKG/bin/$BIN" "dist/$BIN"
+      # Git Bash $(pwd) returns a POSIX-style path (/d/a/...) that Node.spawn
+      # cannot pass to a .exe; pwd -W returns the Windows form (D:/a/...).
+      - name: Run test suite against Deno binary
+        if: runner.os != 'Windows'
+        shell: bash
+        run: QUNITX_BIN="$(pwd)/dist/qunitx" npm test
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          FORCE_COLOR: 0
+      - name: Run test suite against Deno binary (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: QUNITX_BIN="$(pwd -W)/dist/qunitx.exe" npm test
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          FORCE_COLOR: 0
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: junit-deno-${{ matrix.os }}
+          path: tmp/junit-*.xml
+          retention-days: 3
+          if-no-files-found: ignore
+
   # ── Pages (main only) ─────────────────────────────────────────────────────────
   # Runs the CLI against the demo test file to capture live TAP output, copies
   # the composite demo GIF, generates API docs (deno doc --html), embeds the

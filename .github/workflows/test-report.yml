@@ -80,3 +80,27 @@ jobs:
           path: ./junit-artifacts/junit-windows-latest/*.xml
           reporter: java-junit
           fail-on-empty: false
+
+      - uses: dorny/test-reporter@v3
+        if: always()
+        with:
+          name: Tests (Deno · Ubuntu)
+          path: ./junit-artifacts/junit-deno-ubuntu-latest/*.xml
+          reporter: java-junit
+          fail-on-empty: false
+
+      - uses: dorny/test-reporter@v3
+        if: always()
+        with:
+          name: Tests (Deno · macOS)
+          path: ./junit-artifacts/junit-deno-macos-latest/*.xml
+          reporter: java-junit
+          fail-on-empty: false
+
+      - uses: dorny/test-reporter@v3
+        if: always()
+        with:
+          name: Tests (Deno · Windows)
+          path: ./junit-artifacts/junit-deno-windows-latest/*.xml
+          reporter: java-junit
+          fail-on-empty: false
