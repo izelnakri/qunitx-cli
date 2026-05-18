@@ -95,6 +95,15 @@ async function makeCustomHTMLProject() {
   return { dir, id };
 }
 
+// Mirrors STARTUP_TIMEOUT_FACTOR * config.timeout in lib/commands/run/tests-in-browser.ts
+// (6 * 20s = 120s) plus a 30s buffer for setupBrowser + bundle + page.goto + the
+// `Press "qq"` ready-marker print. 45 s was previously enough for chromium on
+// every lane but hit the wall on firefox + macOS-deno (CI run 26042614416 / job
+// 76558103180): Playwright firefox/webkit launches go through Deno's
+// node:child_process compat which serializes spawn-heavy startup on macOS;
+// initial-run wall clock landed around 60-90 s.
+const WATCH_READY_TIMEOUT_MS = 150_000;
+
 async function runWatch(dir: string): Promise<string> {
   const outputDir = path.resolve(`tmp/run-${randomUUID()}`);
   const permit = await acquireBrowser();
@@ -107,8 +116,8 @@ async function runWatch(dir: string): Promise<string> {
   try {
     return await new Promise<string>((resolve, reject) => {
       const timer = setTimeout(
-        () => reject(new Error('watch mode timed out after 45000ms')),
-        45000,
+        () => reject(new Error(`watch mode timed out after ${WATCH_READY_TIMEOUT_MS}ms`)),
+        WATCH_READY_TIMEOUT_MS,
       );
       let buf = '';
       child.stdout.on('data', (chunk: Buffer) => {

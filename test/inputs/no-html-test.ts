@@ -113,6 +113,12 @@ async function makeMinimalProject({ withHtmlPaths }: { withHtmlPaths: boolean })
   return { dir, id };
 }
 
+// Mirrors STARTUP_TIMEOUT_FACTOR * config.timeout in lib/commands/run/tests-in-browser.ts
+// (6 * 20s = 120s) plus a 30s buffer for setupBrowser + bundle + page.goto + the
+// `Press "qq"` ready-marker print. See custom-html-test.ts for the original
+// observation under firefox + macOS-deno.
+const WATCH_READY_TIMEOUT_MS = 150_000;
+
 async function runWatch(dir: string, _id: string) {
   const outputDir = `${process.cwd()}/tmp/run-${randomUUID()}`;
   const permit = await acquireBrowser();
@@ -125,8 +131,8 @@ async function runWatch(dir: string, _id: string) {
   try {
     return await new Promise<string>((resolve, reject) => {
       const timer = setTimeout(
-        () => reject(new Error('watch mode timed out after 45000ms')),
-        45000,
+        () => reject(new Error(`watch mode timed out after ${WATCH_READY_TIMEOUT_MS}ms`)),
+        WATCH_READY_TIMEOUT_MS,
       );
       let buf = '';
       child.stdout.on('data', (chunk: Buffer) => {
