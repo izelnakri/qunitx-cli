@@ -1,13 +1,13 @@
 import net from 'node:net';
 import fs from 'node:fs';
-import { writeFile, unlink, stat, chmod } from 'node:fs/promises';
+import { writeFile, unlink, stat, chmod, readFile, link } from 'node:fs/promises';
 import path from 'node:path';
 // See lib/commands/run.ts: node:timers returns the unref-capable Timer object
 // in both Node and Deno; the bare setTimeout global in Deno is the Web variant.
 import { setTimeout, clearTimeout } from 'node:timers';
 import { daemonSocketPath, daemonInfoPath } from '../../utils/daemon-socket-path.ts';
 import { parseDaemonIdleTimeout } from '../../utils/parse-daemon-idle-timeout.ts';
-import { attachLineParser, probeSocket } from './socket-utils.ts';
+import { attachLineParser } from './socket-utils.ts';
 import { setupConfig } from '../../setup/config.ts';
 import { launchBrowser } from '../../setup/browser.ts';
 import { DaemonRunError } from '../run/tests-in-browser.ts';
@@ -23,14 +23,72 @@ import type { Config } from '../../types.ts';
 // is fixed by the env at spawn time. The CLI side validates and warns separately,
 // so any warning here would only land in QUNITX_DAEMON_LOG (or be lost).
 const IDLE_TIMEOUT_MS = parseDaemonIdleTimeout(process.env.QUNITX_DAEMON_IDLE_TIMEOUT).ms;
-// Liveness probe ceiling: if a stale socket file's owning process is gone, connect()
-// returns ECONNREFUSED almost immediately; the timeout only kicks in when the OS is
-// momentarily slow.
-const LIVENESS_PROBE_TIMEOUT_MS = 500;
 // After this many back-to-back browser crashes (no successful run between), the daemon
 // gives up rather than entering a relaunch loop. Two attempts catches the common case
 // (one transient crash followed by recovery) without papering over a broken environment.
 const MAX_CONSECUTIVE_CRASHES = 2;
+
+/**
+ * Atomic at-most-one-daemon lock acquisition via tmpfile-then-link — the
+ * canonical POSIX pattern for "publish a file with content atomically."
+ * `link(tmp, target)` either succeeds (target dirent now points at the
+ * already-populated inode) or fails EEXIST (someone else got there first).
+ * Whoever links `${infoPath}.lock` wins; losers exit 0 and their client
+ * still finds the winner's info file via the existing spawn-poll.
+ *
+ * Needed because Deno's `net.Server.listen()` on Unix domain sockets does
+ * NOT enforce single-bind from the compiled binary: two daemons can both
+ * `await listen()` successfully on the same path. Verified locally — Node
+ * returns EADDRINUSE to the loser 5/5; `deno compile`d binary lets both
+ * pass 5/5. Race resolution moves off the socket onto a lockfile without
+ * changing the client contract (info file still means "ready").
+ *
+ * Why not `writeFile(..., { flag: 'wx' })`: that's `O_CREAT | O_EXCL` plus
+ * a separate `write(2)`. The create is atomic but the content arrives a
+ * few microseconds later — a contender that lands in that window reads
+ * empty content, parses pid as NaN, decides the lock is stale (owner not
+ * alive), unlinks the live lock and "wins" too. Observed in CI as both
+ * daemons surviving the race (run 26013489092 on the Node lane).
+ *
+ * Stale-lock recovery: the lockfile content is the owning pid. A contender
+ * reads it, checks `process.kill(pid, 0)`, and unlinks + retries once if
+ * the pid is dead — covers daemons that crashed before reaching shutdown.
+ */
+async function tryAcquireDaemonLock(lockPath: string): Promise<boolean> {
+  // Fast path: existing live lock means we lose without doing any work.
+  let ownerPid = Number((await readFile(lockPath, 'utf8').catch(() => '')).trim());
+  if (ownerPid > 0 && isProcessAlive(ownerPid)) return false;
+
+  const tmpPath = `${lockPath}.${process.pid}.tmp`;
+  await writeFile(tmpPath, String(process.pid));
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await link(tmpPath, lockPath);
+        return true;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+        ownerPid = Number((await readFile(lockPath, 'utf8').catch(() => '')).trim());
+        if (ownerPid > 0 && isProcessAlive(ownerPid)) return false;
+        await unlink(lockPath).catch(() => {});
+      }
+    }
+    return false;
+  } finally {
+    // Drop the second hardlink. On success the inode lives on via lockPath
+    // until shutdownDaemon unlinks it; on failure tmpPath was the only ref
+    // and unlinking here reaps the inode.
+    await unlink(tmpPath).catch(() => {});
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    return process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+}
 
 interface DaemonState {
   /**
@@ -70,6 +128,7 @@ interface DaemonState {
   idleTimer: NodeJS.Timeout | null;
   socketPath: string;
   infoPath: string;
+  lockPath: string;
   /** Reset to 0 after any run that left the browser connected. */
   consecutiveCrashes: number;
   /**
@@ -100,20 +159,14 @@ export async function runDaemonServer(): Promise<void> {
   const cwd = process.cwd();
   const socketPath = daemonSocketPath(cwd);
   const infoPath = daemonInfoPath(cwd);
+  const lockPath = `${infoPath}.lock`;
 
-  // Race-resolution: if a live daemon already runs for this cwd, the new daemon exits
-  // 0 so the client (which polls for socket availability) attaches to the winner.
-  // Use the info file as the presence check: existsSync(socketPath) is unreliable on
-  // Windows (named pipes don't appear on the regular filesystem). isLiveSocket actively
-  // probes via net.createConnection, which works on every platform.
-  if (fs.existsSync(infoPath) && (await isLiveSocket(socketPath))) process.exit(0);
-  // Stale-socket cleanup is deferred to listenWithStaleCleanup below. A blanket
-  // unlink here would race two concurrent daemon spawns: A could win listen()
-  // and create the socket dirent, then B's pre-listen unlink would remove A's
-  // live dirent, B's listen would succeed against a freshly created file at the
-  // same path, and both processes end up as live listeners with B's file
-  // shadowing A. The stale-cleanup helper gates the unlink on an isLiveSocket
-  // probe so a live peer is never unlinked.
+  // Atomic race-resolution: whoever creates the lockfile is the sole daemon
+  // for this cwd. Losers exit 0; their client poll finds the winner's info
+  // file (written below after listen) and pings the winner. See
+  // `tryAcquireDaemonLock` for why this is on a lockfile rather than on the
+  // socket listen itself.
+  if (!(await tryAcquireDaemonLock(lockPath))) process.exit(0);
 
   // Optional debug log: when QUNITX_DAEMON_LOG=<path> is set, redirect the daemon's
   // stdout+stderr to that file so idle/startup/shutdown events (otherwise lost to
@@ -181,6 +234,7 @@ export async function runDaemonServer(): Promise<void> {
     idleTimer: null,
     socketPath,
     infoPath,
+    lockPath,
     consecutiveCrashes: 0,
     listenSucceeded: false,
     esbuildCache: { _esbuildContext: null },
@@ -202,15 +256,11 @@ export async function runDaemonServer(): Promise<void> {
     void shutdown('server error');
   });
 
-  // listen() is the atomic at-most-one-daemon claim — only one process can bind to
-  // the socket path. Once it returns, we know we own the daemon role and can publish
-  // the info file with our identity. Writing the info file BEFORE listen would let
-  // a losing concurrent-spawn process overwrite the winner's info with its own pid,
-  // then unlink it on its own EADDRINUSE — leaving the winner with corrupted or
-  // missing presence state. The client's spawn-poll waits for both info file
-  // existence AND a successful ping, so the brief gap between listen() returning
-  // and writeFile resolving is bridged on the client side, not the server.
-  await listenWithStaleCleanup(state.socketServer, socketPath);
+  // Lock guarantees we're the sole daemon for this cwd — any socket file at the
+  // path is from a crashed previous daemon (its lockfile would have been stale-
+  // recovered above). Unlink so the bind below creates a fresh dirent.
+  if (fs.existsSync(socketPath)) await unlink(socketPath).catch(() => {});
+  await listen(state.socketServer, socketPath);
   // Set the ownership flag in the same microtask as listen()'s resolution. Signals
   // are delivered as macrotasks; they cannot interleave between two synchronous
   // statements, so this flag is observed atomically with bind success.
@@ -250,33 +300,6 @@ function listen(server: net.Server, socketPath: string): Promise<void> {
   });
 }
 
-/**
- * listen() at `socketPath`, cleaning up a stale-socket file without the
- * destructive blanket-unlink the old code used. The old pattern
- * (`unlink → listen`) had a race window: a winner daemon could `listen()` and
- * create the socket dirent, then a concurrent peer's pre-listen `unlink`
- * would remove the winner's live dirent, the peer's `listen()` would succeed
- * against a freshly-created file at the same path, and both processes ended
- * up bound — with the peer's file shadowing the winner. If the peer then
- * died for any reason its `shutdownDaemon` would unlink the SHARED file
- * (both processes had `listenSucceeded=true`), taking down the live socket.
- *
- * The fix is to make the unlink CONDITIONAL on the existing file being stale
- * (no listener on it): if the file is a live socket, the unlink is skipped
- * and the listen below fails fast with EADDRINUSE, letting the existing
- * race-resolution path bail to the winner. listen() on the SAME server
- * can't be called twice across a failed first attempt — Node leaves the
- * server in a partial state, observed as "Daemon did not start within Ns"
- * hangs in CI — so we pre-clean before the first listen rather than
- * catching EADDRINUSE.
- */
-async function listenWithStaleCleanup(server: net.Server, socketPath: string): Promise<void> {
-  if (fs.existsSync(socketPath) && !(await isLiveSocket(socketPath))) {
-    await unlink(socketPath).catch(() => {});
-  }
-  await listen(server, socketPath);
-}
-
 async function shutdownDaemon(state: DaemonState, reason: string): Promise<void> {
   if (state.shuttingDown) return;
   state.shuttingDown = true;
@@ -312,12 +335,16 @@ async function shutdownDaemon(state: DaemonState, reason: string): Promise<void>
       ),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), SHUTDOWN_BROWSER_GRACE_MS)),
     ]));
-  // Only unlink files this process actually owns. A daemon whose listen() failed
-  // (concurrent-spawn race: lost to EADDRINUSE) reaches this path via unhandled-
-  // Rejection but doesn't own the socket/info — unlinking corrupts the winner.
+  // socket/info are gated on listenSucceeded: a daemon that reaches shutdown
+  // without ever listening (e.g. an early throw before bind) doesn't own those
+  // files and unlinking would corrupt whatever started in its place. The
+  // lockfile IS ours unconditionally — reaching this function means
+  // tryAcquireDaemonLock returned true above, so always release it so the next
+  // spawn doesn't have to stale-pid-recover.
   await Promise.all([
     state.listenSucceeded ? unlink(state.socketPath).catch(() => {}) : null,
     state.listenSucceeded ? unlink(state.infoPath).catch(() => {}) : null,
+    unlink(state.lockPath).catch(() => {}),
     state.pageSlot.page?.close().catch(() => {}),
     // browser may be null if the launch hadn't settled within the grace window
     // (or never started at all); the chrome-prelaunch exit hook handles that.
@@ -603,13 +630,6 @@ async function runOnce(
     }
     Object.assign(process.env, envSnapshot);
   }
-}
-
-async function isLiveSocket(socketPath: string): Promise<boolean> {
-  const sock = await probeSocket(socketPath, LIVENESS_PROBE_TIMEOUT_MS);
-  if (!sock) return false;
-  sock.destroy();
-  return true;
 }
 
 async function readPkgMtime(cwd: string): Promise<number> {
