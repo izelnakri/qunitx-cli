@@ -783,6 +783,21 @@ function replaceAssetPaths(html: string, htmlPath: string, projectRoot: string):
 function testRuntimeToInject(config: Config, groupId?: number): string {
   const groupIdPart = groupId !== undefined ? `, groupId: ${groupId}` : '';
   return `<script>
+    // Idempotency guard: if this runtime script ran in this Window already, do not
+    // re-arm Promise.all + QUnit listeners. CI run 26046813154 (job 76573047617)
+    // captured COUNTER = 2 * expected with the diagnostic firing
+    // "wss accepted connection #2" — TWO WS connections AND every test re-fired
+    // testEnd. The only shape that produces both at once is the IIFE running
+    // twice in one page: each invocation registers its own setupWebSocket and
+    // its own QUnit.on('testEnd'), and QUnit then fires each event to BOTH
+    // listeners. The trigger is rare (a sub-resource preload race observed on
+    // Chromium + slow CI) but the consequence is a flaky pass count. Guarding
+    // on a window-scoped sentinel is cheap and covers every reentry path
+    // without needing to find the exact preload that caused it.
+    if (window.__QUNITX_RUNTIME_INIT__) {
+      console.log('# [qunitx][diag] runtime IIFE re-entry suppressed — already initialised in this Window');
+    } else {
+      window.__QUNITX_RUNTIME_INIT__ = true;
     (function() {
       // setupQUnit runs exactly once, after both the WebSocket is open and tests.js has loaded.
       // Promise.all is naturally idempotent — resolving a Promise a second time is a no-op,
@@ -807,6 +822,13 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
       const WS_MAX_RETRIES = Math.ceil(${config.timeout} / ${WS_RETRY_INTERVAL_MS}); // retry for the full test timeout window
 
       function setupWebSocket() {
+        // Tear down the previous WebSocket before opening a new one. Without
+        // this, a transient 'error' that triggered the retry can leave the
+        // old WS still mid-handshake; if it later succeeds, the server sees
+        // two accepted connections from one page load.
+        if (window.socket) {
+          try { window.socket.close(); } catch {}
+        }
         try {
           window.socket = new WebSocket(\`ws://localhost:\${location.port}\`);
         } catch (error) {
@@ -839,6 +861,8 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
       }
 
       function retryOrFail() {
+        // Already connected (from this socket or a previous retry) → no work.
+        if (window.socket && window.socket.readyState === WebSocket.OPEN) return;
         wsRetryCount++;
         if (wsRetryCount > WS_MAX_RETRIES) {
           console.log('WebSocket connection failed after ' + WS_MAX_RETRIES + ' retries');
@@ -849,6 +873,7 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
 
       setupWebSocket();
     })();
+    }
 
     function getCircularReplacer() {
       const ancestors = [];
