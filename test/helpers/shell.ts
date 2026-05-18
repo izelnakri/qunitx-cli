@@ -28,11 +28,16 @@ const NON_BROWSER_SUBCOMMAND = /\bnode cli\.ts\b\s+(generate|g|new|n|help|h|p|pr
 // 2–10 s and aren't affected; a real hang takes 180 s to surface vs 90 s
 // before. CI job budgets (15–25 min) absorb several such hangs.
 const DEFAULT_EXEC_TIMEOUT_MS = 180_000;
-// Default timeout for shellWatch — wide enough to absorb the same Chrome-
-// launch tail (webkit on macOS / firefox on Windows under contention have
-// been observed >60 s before the watch prompt appears). Watch tests usually
-// resolve on a specific stdout marker, so they exit fast in the green path.
-const DEFAULT_WATCH_TIMEOUT_MS = 120_000;
+// Default timeout for shellWatch — sized to the CLI's own startup safety net.
+// lib/commands/run/tests-in-browser.ts STARTUP_TIMEOUT_FACTOR (6) × default
+// config.timeout (20s) = 120s of CLI-internal WS-open wait, plus 60s for
+// shellWatch's own setupBrowser + bundle + page.goto + ready-marker print.
+// Bumped from 120s to 180s after webkit-on-macOS-deno hit exactly 128s in
+// CI run 26045661239 (job 76569035701: `--watch runs tests, starts the
+// server, and prints watching info`). Watch tests usually resolve on a
+// specific stdout marker in 1-5s on chromium, so the budget bump is only
+// load-bearing for slow browsers under contention.
+const DEFAULT_WATCH_TIMEOUT_MS = 180_000;
 // Maximum time to wait for a child process to exit after SIGTERM before giving up.
 // Prevents a stuck child (e.g. Firefox/WebKit SIGTERM deadlock) from indefinitely
 // blocking the semaphore permit and starving subsequent test workers.
