@@ -17,6 +17,19 @@ const WATCH_WS_RECONNECT_MAX_RETRIES = 120;
 // Retry interval for the QUnit page's WebSocket setup attempts (ms).
 const WS_RETRY_INTERVAL_MS = 10;
 
+// Writes a diagnostic warning to BOTH stdout and stderr. stderr is the natural
+// stream for warnings but is captured-then-discarded by many test helpers
+// (e.g. test/inputs/plugins-test.ts's runFixtureCli), making warnings invisible
+// when a test fails. stdout writes the same text as a TAP `#` comment — TAP
+// parsers ignore `#` lines, so it does not affect test outcomes, and assertion-
+// failure dumps that snapshot stdout (custom-asserts.tapResult) now include the
+// warning surface. Dual write keeps either stream a sufficient signal in CI
+// logs.
+function diagWrite(msg: string): void {
+  process.stderr.write(msg);
+  process.stdout.write(msg);
+}
+
 /** Static 404 page served for HTML-accepting requests to missing static assets. */
 const NOT_FOUND_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -83,7 +96,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
   server.wss.on('connection', function connection(socket) {
     config._wsConnectionCount = (config._wsConnectionCount ?? 0) + 1;
     if (config._wsConnectionCount > 1) {
-      process.stderr.write(
+      diagWrite(
         `# [qunitx][diag] wss accepted connection #${config._wsConnectionCount} — ` +
           `single-group runs should see exactly one WS connection per run. ` +
           `Multiple connections from one page are the prime suspect for the 2× testEnd flake ` +
@@ -118,7 +131,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         const count = (config._testEndCounts?.get(fullName) ?? 0) + 1;
         config._testEndCounts?.set(fullName, count);
         if (count > 1) {
-          process.stderr.write(
+          diagWrite(
             `# [qunitx][diag] duplicate testEnd #${count} for "${fullName}" — ` +
               `single-run testEnds should be unique. ` +
               `Pass/Fail counts will report the actual duplicated value.\n`,
@@ -677,7 +690,7 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
         const count = (config._testEndCounts?.get(fullName) ?? 0) + 1;
         config._testEndCounts?.set(fullName, count);
         if (count > 1) {
-          process.stderr.write(
+          diagWrite(
             `# [qunitx][diag] group ${resolvedGroupId} duplicate testEnd #${count} for "${fullName}" — ` +
               `single-run testEnds should be unique.\n`,
           );
