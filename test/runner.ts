@@ -106,18 +106,17 @@ type PerfEntry = {
 // ESM loader as a URL with protocol `d:`, which it rejects (ERR_UNSUPPORTED_ESM_URL_SCHEME).
 // pathToFileURL emits `file:///D:/a/.../reporter.ts` on Windows and `file:///path/...` on POSIX.
 const REPORTER_PATH = pathToFileURL(path.resolve('test/helpers/ci-test-summary-reporter.ts')).href;
-// data: URL preloaded into each `node --test` worker via --import. Widens util.inspect's
-// defaults so node:test's spec-reporter failure formatter shows the full assertion `actual`
-// (captured stdout, error chunks) instead of `[Object]` / truncated `'...'`. Inline as a
-// data URL — `--import` accepts ESM data URLs natively, so we get the preload without a
-// separate helper file. (`--test-reporter` does NOT accept data URLs; it parses the value
-// as a file path and rejects schemes like `d:` — that's why the ci-test-summary-reporter
-// is a real file but this preload isn't.)
-const WORKER_PRELOAD = `data:text/javascript;base64,${Buffer.from(
-  'import{inspect}from"node:util";' +
-    'const o=inspect.defaultOptions;' +
-    'o.breakLength=240;o.depth=Infinity;o.maxStringLength=Infinity;o.maxArrayLength=Infinity;',
-).toString('base64')}`;
+// Preload imported into every `node --test` worker. Two responsibilities:
+// (1) widens util.inspect defaults so the spec-reporter shows full failure
+// actuals, (2) annotates worker stderr on process.exit/uncaught/unhandled-
+// rejection events so future "silent worker death" failures (where node:test
+// renders the whole file as a single `'test failed'` with no further context —
+// observed on test (windows-latest) for watch-rerun-test.ts in CI run
+// 26037993172) are diagnosable from the job log alone. See the file's
+// leading comment for details.
+const WORKER_PRELOAD = pathToFileURL(
+  path.resolve('test/helpers/test-worker-preload.ts'),
+).href;
 const phaseResults: Array<{
   name: string;
   slug: string;
