@@ -61,19 +61,32 @@ async function makeDaemonProject(): Promise<DaemonProject> {
 // exercises the published artefact instead of source. The previous local exec() helper
 // hardcoded `node cli.ts` and silently bypassed the swap, so daemon-specific bugs in
 // any released binary slipped past the consumer test.
+//
+// QUNITX_DAEMON_LOG points at a per-project file so every daemon spawned during this
+// test (the explicit `daemon start` AND any auto-spawn from a subsequent run cli)
+// redirects stdout+stderr to it. The daemon itself defaults to stdio:'ignore' once
+// detached, so without this redirect any diagnostic the daemon writes — Chrome launch
+// failures, listen errors, the "listening on..." line — is invisible to the test. On
+// rejection we read the log back and attach it to the error so the assertion failure
+// shows the daemon's POV inline (CI reports → no extra artifact wiring needed).
 const cli = async (
   project: DaemonProject,
   args: string,
   opts: { failOk?: boolean; env?: NodeJS.ProcessEnv } = {},
 ): Promise<CapturedResult> => {
+  const daemonLogPath = path.join(project.cwd, 'daemon.log');
+  const baseEnv = opts.env ?? CLI_ENV;
   try {
     return await spawnCapture(`node ${CWD}/cli.ts ${args}`, {
-      env: opts.env ?? CLI_ENV,
+      env: { ...baseEnv, QUNITX_DAEMON_LOG: daemonLogPath },
       cwd: project.cwd,
     });
   } catch (err) {
-    if (opts.failOk) return err as CapturedError;
-    throw err;
+    const log = await fs.readFile(daemonLogPath, 'utf8').catch(() => '<no daemon log written>');
+    const annotated = err as CapturedError;
+    annotated.stderr = `${annotated.stderr}\n----- daemon log (${daemonLogPath}) -----\n${log}`;
+    if (opts.failOk) return annotated;
+    throw annotated;
   }
 };
 
