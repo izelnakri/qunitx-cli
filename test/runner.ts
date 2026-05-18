@@ -114,9 +114,7 @@ const REPORTER_PATH = pathToFileURL(path.resolve('test/helpers/ci-test-summary-r
 // observed on test (windows-latest) for watch-rerun-test.ts in CI run
 // 26037993172) are diagnosable from the job log alone. See the file's
 // leading comment for details.
-const WORKER_PRELOAD = pathToFileURL(
-  path.resolve('test/helpers/test-worker-preload.ts'),
-).href;
+const WORKER_PRELOAD = pathToFileURL(path.resolve('test/helpers/test-worker-preload.ts')).href;
 const phaseResults: Array<{
   name: string;
   slug: string;
