@@ -48,8 +48,18 @@ const MAX_NAV_SLOWDOWN_FACTOR = 6;
 // environment-bound (browser launch + OS scheduling + port setup) and must not shrink
 // when the user passes a small --timeout.
 const MIN_NAV_MS = NAV_GRACE_MS * MAX_NAV_SLOWDOWN_FACTOR;
-// Startup safety-net: Chrome WS 'open' must arrive within 3× config.timeout.
-const STARTUP_TIMEOUT_FACTOR = 3;
+// Startup safety-net: Chrome WS 'open' must arrive within 6× config.timeout.
+// Bumped from 3× to 6× to absorb the 3-way concurrent Chrome launch on macOS-
+// and Windows-deno-binary CI lanes: with one shared Browser process serving
+// 3 BrowserContexts (one per group) on a 3-core macos-latest runner, Chrome
+// renderer CPU saturates and WS 'open' commonly lands at 60-90 s after
+// page.goto. The prior 3× factor capped at 60 s (max(20 * 3, MIN_NAV_MS=60)),
+// which was exactly the observed timeout in CI run 26042614416. 6× = 120 s
+// gives the slow startup full headroom; cost is asymmetric — green-path runs
+// (Chrome opens WS in < 1 s) are unaffected, only genuine startup hangs take
+// 120 s to surface vs 60 s previously, and CI job budgets (15-25 min) absorb
+// that with room.
+const STARTUP_TIMEOUT_FACTOR = 6;
 // tests.js compile safety-net: V8 compilation must finish within 4× config.timeout from serve.
 const TESTS_JS_TIMEOUT_FACTOR = 4;
 // Maximum ms to wait for in-flight browser console handlers to drain before closing the page.
