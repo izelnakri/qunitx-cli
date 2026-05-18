@@ -112,16 +112,29 @@ async function runServeMode(): Promise<number> {
   return 0;
 }
 
+// Polling fallback interval for waitForFile. Linux inotify silently drops events
+// when /proc/sys/fs/inotify/max_queued_events overflows (default 16384) — under
+// the parallel daemon test load this CAN happen: `tmp/qunitx-daemon-*` files +
+// the suite's broader watcher activity share the /tmp event queue. macOS FSEvents
+// also coalesces under load. A dropped event would otherwise burn the full
+// SPAWN_TIMEOUT_MS budget (120 s) even though the file is on disk within ms.
+// 2 s is short enough that worst-case latency stays well under the timeout and
+// long enough that polling cost is negligible (60 stats over the full budget).
+const WAIT_FOR_FILE_POLL_MS = 2_000;
+
 /**
  * Event-driven wait for `filePath` to appear, bounded by `timeoutMs`. Subscribes via
  * `fs.watch` on the parent directory — kernel notifications (inotify / FSEvents /
  * ReadDirectoryChangesW) deliver events sub-ms after file creation, so detection
- * latency is OS-bound, not poll-interval-bound, and zero CPU is burned between events.
+ * latency is OS-bound when events flow correctly. A periodic existsSync poll runs
+ * alongside to catch dropped events (inotify queue overflow on Linux, FSEvents
+ * coalescing on macOS under load): without the poll a single dropped notification
+ * costs the entire timeoutMs even though the file is on disk.
  *
  * Two `existsSync` calls bracket the watcher attachment to close the TOCTOU gap:
  * the file may appear between the entry-point check and `fs.watch` actually being
  * subscribed in the kernel. Multiple `settle` calls are harmless: `resolve`,
- * `clearTimeout`, and `fsWatcher.close` are all idempotent.
+ * `clearTimeout`, `clearInterval`, and `fsWatcher.close` are all idempotent.
  */
 function waitForFile(filePath: string, timeoutMs: number): Promise<boolean> {
   if (existsSync(filePath)) return Promise.resolve(true);
@@ -130,10 +143,14 @@ function waitForFile(filePath: string, timeoutMs: number): Promise<boolean> {
     const fileName = path.basename(filePath);
     const settle = (ok: boolean) => {
       clearTimeout(timer);
+      clearInterval(poll);
       watcher.close();
       resolve(ok);
     };
     const timer = setTimeout(() => settle(false), timeoutMs);
+    const poll = setInterval(() => {
+      if (existsSync(filePath)) settle(true);
+    }, WAIT_FOR_FILE_POLL_MS);
     const watcher = fs.watch(dir, (_event, name) => {
       // Reconfirm with existsSync — fs.watch fires for both create and unlink.
       if (name === fileName && existsSync(filePath)) settle(true);
