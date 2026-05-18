@@ -124,11 +124,19 @@ jobs:
       # JUnit XMLs (one per phase: fast / watch-rerun / leak) are picked up by the
       # test-report.yml workflow_run trigger to render PR annotations + per-platform
       # check runs via dorny/test-reporter. Always-upload so failures get reported too.
+      # Daemon logs (tmp/daemon-*/daemon.log) are bundled too: test/commands/daemon-test.ts
+      # sets QUNITX_DAEMON_LOG so every spawned daemon's stderr lands in a per-project
+      # file. The log content is also inlined into err.stderr on rejection (visible in the
+      # CI job stream), but uploading as artifact lets a human download and grep across
+      # all daemon runs even on green builds — useful for tail-latency analysis and for
+      # the rare case where the test runner crashes before printing the annotated error.
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: junit-${{ matrix.os }}
-          path: tmp/junit-*.xml
+          path: |
+            tmp/junit-*.xml
+            tmp/daemon-*/daemon.log
           retention-days: 3
           if-no-files-found: ignore
 
@@ -236,7 +244,9 @@ jobs:
         if: always()
         with:
           name: junit-deno-${{ matrix.os }}
-          path: tmp/junit-*.xml
+          path: |
+            tmp/junit-*.xml
+            tmp/daemon-*/daemon.log
           retention-days: 3
           if-no-files-found: ignore
 
