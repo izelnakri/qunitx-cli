@@ -79,7 +79,17 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
           process.stderr.write(`# [qunitx] writeFile ${filePath}: ${err.message}\n`),
       );
 
+  config._wsConnectionCount = 0;
   server.wss.on('connection', function connection(socket) {
+    config._wsConnectionCount = (config._wsConnectionCount ?? 0) + 1;
+    if (config._wsConnectionCount > 1) {
+      process.stderr.write(
+        `# [qunitx][diag] wss accepted connection #${config._wsConnectionCount} — ` +
+          `single-group runs should see exactly one WS connection per run. ` +
+          `Multiple connections from one page are the prime suspect for the 2× testEnd flake ` +
+          `(WS retry race in the injected runtime).\n`,
+      );
+    }
     socket.on('message', function message(data) {
       const { event, details, qunitResult, abort } = JSON.parse(data);
 
@@ -91,12 +101,30 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         config._onWsOpen?.();
       } else if (event === 'connection') {
         config._phase = 'running';
+        // Reset per-run testEnd-count map for the diagnostic warning below;
+        // see Config._testEndCounts. Diagnostic only — does NOT dedupe.
+        config._testEndCounts = new Map();
         // In daemon mode the daemon emits one TAP version 13 header per run before the
         // run starts; suppressing here keeps the stream parser-clean across runs.
         if (!config._groupMode && !config._daemonMode) process.stdout.write('TAP version 13\n');
         if (config.debug && config._groupMode) debugGroupHeader(config);
         config._resetTestTimeout?.();
       } else if (event === 'testEnd' && !abort) {
+        // Diagnostic: count testEnd arrivals per fullName. Warning on duplicate
+        // SURFACES the 2× flake without masking it — COUNTER still increments
+        // as before so test pass-counts match real behaviour. See
+        // Config._testEndCounts for why dedup-then-skip broke no-html-test.
+        const fullName = details.fullName.join(' | ');
+        const count = (config._testEndCounts?.get(fullName) ?? 0) + 1;
+        config._testEndCounts?.set(fullName, count);
+        if (count > 1) {
+          process.stderr.write(
+            `# [qunitx][diag] duplicate testEnd #${count} for "${fullName}" — ` +
+              `single-run testEnds should be unique. ` +
+              `Pass/Fail counts will report the actual duplicated value.\n`,
+          );
+        }
+
         if (details.status === 'failed') {
           config.lastFailedTestFiles = config.lastRanTestFiles;
         }
@@ -606,6 +634,10 @@ export function registerGroupRoutes(
  */
 export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]): void {
   const socketToGroupId = new WeakMap<object, number>();
+  // Diagnostic: count distinct WS connections seen by THIS shared-server handler
+  // for each groupConfig. > 1 per group is suspicious in single-test runs;
+  // see setupWebServer's _wsConnectionCount comment for full rationale.
+  for (const gc of groupConfigs) gc._wsConnectionCount = 0;
 
   server.wss.on('connection', function connection(socket) {
     socket.on('message', function message(data) {
@@ -615,6 +647,16 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
       if (event === 'wsOpen' && typeof groupId === 'number') {
         resolvedGroupId = groupId;
         socketToGroupId.set(socket, groupId);
+        const config = groupConfigs[resolvedGroupId];
+        if (config) {
+          config._wsConnectionCount = (config._wsConnectionCount ?? 0) + 1;
+          if (config._wsConnectionCount > 1) {
+            process.stderr.write(
+              `# [qunitx][diag] group ${resolvedGroupId} accepted WS connection #${config._wsConnectionCount} — ` +
+                `WS retry race in the injected runtime is the prime suspect.\n`,
+            );
+          }
+        }
       }
       if (resolvedGroupId === undefined) return;
       const config = groupConfigs[resolvedGroupId];
@@ -625,9 +667,21 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
         config._onWsOpen?.();
       } else if (event === 'connection') {
         config._phase = 'running';
+        // Reset per-run testEnd-count map; see Config._testEndCounts for details.
+        config._testEndCounts = new Map();
         if (config.debug) debugGroupHeader(config);
         config._resetTestTimeout?.();
       } else if (event === 'testEnd' && !abort) {
+        // Diagnostic-only duplicate detection; see setupWebServer for rationale.
+        const fullName = details.fullName.join(' | ');
+        const count = (config._testEndCounts?.get(fullName) ?? 0) + 1;
+        config._testEndCounts?.set(fullName, count);
+        if (count > 1) {
+          process.stderr.write(
+            `# [qunitx][diag] group ${resolvedGroupId} duplicate testEnd #${count} for "${fullName}" — ` +
+              `single-run testEnds should be unique.\n`,
+          );
+        }
         if (details.status === 'failed') {
           config.lastFailedTestFiles = config.lastRanTestFiles;
         }

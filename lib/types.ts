@@ -183,6 +183,28 @@ export interface Config {
   _groupId?: number;
   /** Current lifecycle phase of the test run. */
   _phase?: 'bundling' | 'connecting' | 'loading' | 'running' | 'done';
+  /**
+   * Diagnostic-only: counts how many `testEnd` events have arrived per test
+   * fullName in the current run. Reset on every `connection` event (run start)
+   * and by `runTestsInBrowser` between watch reruns. Used to emit a
+   * `# [qunitx][diag] duplicate testEnd ...` warning when the same fullName
+   * arrives more than once — the 2× test-execution flake (plugins-test on
+   * macOS test-deno, custom-html-test on Windows test-deno) reports
+   * `pass = 2 * expected` and the duplicate detection should pinpoint which
+   * layer (browser/Playwright/QUnit/runtime) re-fires the event. Does NOT
+   * suppress the second dispatch — that broke no-html-test in CI run
+   * 26042614416 — so the COUNTER stays equal to the actual number of events
+   * received and the existing pre-dedup behaviour is preserved bit-for-bit.
+   */
+  _testEndCounts?: Map<string, number>;
+  /**
+   * Diagnostic-only: counts how many distinct WS connections have been
+   * accepted by the current run's wss handler. Reset on every fresh server
+   * setup (per setupWebServer call). > 1 indicates the browser opened
+   * multiple WebSocket connections within a single run — the prime suspect
+   * for the 2× test-execution flake (WS retry path in the injected runtime).
+   */
+  _wsConnectionCount?: number;
   /** QUNIT_RESULT delivered via the WS 'done' message; avoids a page.evaluate() CDP round-trip. */
   _lastQUnitResult?: {
     totalTests: number;
