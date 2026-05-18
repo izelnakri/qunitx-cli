@@ -3,7 +3,6 @@ import process from 'node:process';
 import fs from 'node:fs/promises';
 import nodeFs, { existsSync } from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { daemonSocketPath, daemonInfoPath } from '../../lib/utils/daemon-socket-path.ts';
 import { shutdownDaemon } from '../../lib/commands/daemon/client.ts';
@@ -395,10 +394,19 @@ module('Commands | Daemon | lifecycle', { concurrency: true }, () => {
       // contender would see EEXIST on `link`, read the dead pid, but if it treated
       // EEXIST as fatal would never proceed.
       //
-      // Simulate by writing a lockfile pointing at PID 1 from a child that ALSO
-      // exits — re-using the now-dead child's pid as the "owner" guarantees
-      // process.kill(pid, 0) returns ESRCH so the contender unlinks + retries.
-      const deadPid = await spawnAndReap();
+      // Pid is guaranteed-not-running rather than spawn-and-reaped: Windows
+      // recycles pids fast (CI run 26046813154 / job 76573047602 spent 120s on
+      // a spawnAndReap'd pid that was already reassigned to a real process by
+      // the time the daemon checked `process.kill(pid, 0)`). Using a pid in the
+      // 32-bit-but-far-above-realistic range (Linux default max 32768, Windows
+      // ~100k) sidesteps the recycle window entirely — no normal init can ever
+      // hand out a pid this high, so `process.kill(pid, 0)` reliably throws
+      // ESRCH and the stale-recovery path runs.
+      const deadPid = 0x3FFFFFFE; // ~1 billion, well above any platform's pid space
+      assert.notOk(
+        await pidLooksAlive(deadPid),
+        `synthetic deadPid ${deadPid} is dead (sanity check)`,
+      );
       const lockPath = `${project.infoPath}.lock`;
       await fs.writeFile(lockPath, String(deadPid));
       assert.ok(existsSync(lockPath), 'stale lockfile present pre-start');
@@ -417,24 +425,18 @@ module('Commands | Daemon | lifecycle', { concurrency: true }, () => {
 });
 
 /**
- * Spawns a trivial child that exits immediately and returns its (now-dead) pid.
- * Used by the stale-lockfile test: the recovered pid is GUARANTEED to be dead +
- * un-recycled across the test window — there's no race between "write the fake
- * lockfile" and "daemon start probes the pid". A constant like 1 (init) would
- * be alive forever and treat the lock as live; a random high number could be a
- * real running process on the runner. Spawning gives us a real, freshly-dead pid.
- *
- * Async to avoid blocking the event loop in the concurrent test suite — the
- * sync variant would stall every other test that's also using the daemon
- * semaphore for the duration of the child's startup.
+ * Mirrors lib/commands/daemon/server.ts isProcessAlive: `process.kill(pid, 0)`
+ * returns truthy if the pid maps to a live process (or, on a permission-denied
+ * read, an inaccessible-but-existing one), throws ESRCH on a free pid. Used
+ * only as a sanity check that the synthetic stale pid is actually dead at
+ * assertion time on every CI runner.
  */
-async function spawnAndReap(): Promise<number> {
-  const proc = spawn(process.execPath, ['-e', '']);
-  await new Promise<void>((resolve, reject) => {
-    proc.once('close', () => resolve());
-    proc.once('error', reject);
-  });
-  return proc.pid!;
+function pidLooksAlive(pid: number): boolean {
+  try {
+    return process.kill(pid, 0);
+  } catch {
+    return false;
+  }
 }
 
 module('Commands | Daemon | run routing', { concurrency: true }, () => {
