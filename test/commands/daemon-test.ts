@@ -3,6 +3,7 @@ import process from 'node:process';
 import fs from 'node:fs/promises';
 import nodeFs, { existsSync } from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { daemonSocketPath, daemonInfoPath } from '../../lib/utils/daemon-socket-path.ts';
 import { shutdownDaemon } from '../../lib/commands/daemon/client.ts';
@@ -371,7 +372,8 @@ module('Commands | Daemon | lifecycle', { concurrency: true }, () => {
       if (process.platform === 'win32') return assert.ok(true, 'skipped on win32');
 
       // Simulate a stale socket from a crashed daemon — file exists but no listener.
-      // The daemon's `isLiveSocket` probe returns false; it `unlink`s and re-listens.
+      // The daemon's pre-listen unlink (held safe by the lockfile claim) removes it
+      // and binds fresh.
       await fs.writeFile(project.socketPath, '');
       assert.ok(existsSync(project.socketPath), 'stale socket file present pre-start');
 
@@ -383,7 +385,57 @@ module('Commands | Daemon | lifecycle', { concurrency: true }, () => {
       assert.ok(stats.isSocket(), 'socket file is a live socket post-start');
     },
   );
+
+  daemonTest(
+    'start recovers from a stale lockfile whose owning pid is dead',
+    async (assert, project) => {
+      // Lockfile (the at-most-one-daemon claim) is the new race-resolution sentinel.
+      // Without stale-pid recovery, a daemon that SIGKILL'd before reaching the
+      // unlink-on-shutdown path would block every subsequent start forever — the
+      // contender would see EEXIST on `link`, read the dead pid, but if it treated
+      // EEXIST as fatal would never proceed.
+      //
+      // Simulate by writing a lockfile pointing at PID 1 from a child that ALSO
+      // exits — re-using the now-dead child's pid as the "owner" guarantees
+      // process.kill(pid, 0) returns ESRCH so the contender unlinks + retries.
+      const deadPid = await spawnAndReap();
+      const lockPath = `${project.infoPath}.lock`;
+      await fs.writeFile(lockPath, String(deadPid));
+      assert.ok(existsSync(lockPath), 'stale lockfile present pre-start');
+
+      const result = await cli(project, 'daemon start');
+
+      assert.exitCode(result, 0);
+      assert.includes(result, 'Daemon started');
+      // Live daemon must own the lockfile now — its pid in the file proves
+      // recovery happened (the original deadPid was unlinked + replaced).
+      const ownerPid = Number((await fs.readFile(lockPath, 'utf8')).trim());
+      assert.notEqual(ownerPid, deadPid, 'lockfile no longer points at the dead pid');
+      assert.ok(ownerPid > 0, 'lockfile points at a positive pid');
+    },
+  );
 });
+
+/**
+ * Spawns a trivial child that exits immediately and returns its (now-dead) pid.
+ * Used by the stale-lockfile test: the recovered pid is GUARANTEED to be dead +
+ * un-recycled across the test window — there's no race between "write the fake
+ * lockfile" and "daemon start probes the pid". A constant like 1 (init) would
+ * be alive forever and treat the lock as live; a random high number could be a
+ * real running process on the runner. Spawning gives us a real, freshly-dead pid.
+ *
+ * Async to avoid blocking the event loop in the concurrent test suite — the
+ * sync variant would stall every other test that's also using the daemon
+ * semaphore for the duration of the child's startup.
+ */
+async function spawnAndReap(): Promise<number> {
+  const proc = spawn(process.execPath, ['-e', '']);
+  await new Promise<void>((resolve, reject) => {
+    proc.once('close', () => resolve());
+    proc.once('error', reject);
+  });
+  return proc.pid!;
+}
 
 module('Commands | Daemon | run routing', { concurrency: true }, () => {
   daemonTest(
