@@ -183,19 +183,6 @@ export interface Config {
   _groupId?: number;
   /** Current lifecycle phase of the test run. */
   _phase?: 'bundling' | 'connecting' | 'loading' | 'running' | 'done';
-  /**
-   * Set of test fullNames whose `testEnd` event has already been dispatched
-   * in the current run. Reset at every `connection` WS event (run start) and
-   * by `runTestsInBrowser` between watch reruns. Enforces the invariant that
-   * QUnit fires `testEnd` exactly once per registered test per run — a
-   * second arrival means something double-fired (observed intermittently on
-   * CI: `plugins-test` on macOS-deno and `custom-html-test` on Windows-deno
-   * report `pass = 2 * expected` for fixtures with N tests). Hitting the
-   * dedup logs a loud `# [qunitx] WARNING:` so the underlying layer
-   * (browser/Playwright/network race) stays visible while users no longer
-   * see the spurious test failure.
-   */
-  _seenTestEnds?: Set<string>;
   /** QUNIT_RESULT delivered via the WS 'done' message; avoids a page.evaluate() CDP round-trip. */
   _lastQUnitResult?: {
     totalTests: number;
