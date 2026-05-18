@@ -35,6 +35,32 @@ import { cleanupBrowserDir } from '../lib/utils/cleanup-browser-dir.ts';
 // pollute process.env, overriding the project-local default below.
 const COMPILE_CACHE_DIR = path.resolve('node_modules/.cache/qunitx/v8');
 
+// Per-test deadline passed to `node --test --test-timeout=N`. node:test fails any
+// test whose runtime exceeds this and force-completes its subtests, so a hung
+// test surfaces by name in the spec output and the worker moves on cleanly —
+// no zombies, no SIGKILL hammer, no whole-phase loss.
+//
+// Sized to comfortably exceed the slowest observed healthy test. Watch-rerun
+// tests are the long tail: per-test wall clock has been observed up to 120 s
+// on slow CI runners under contention (Windows + concurrent Chrome launches).
+// Daemon tests' rapid-stop+start used to peak at 120 s pre-leak-fix; current
+// healthy max is ~15 s. 300 s = 5 min ≈ 2.5× the observed slow tail leaves
+// room for the runner's natural tail variance without misfiring on real-but-
+// slow runs. Anything past 5 min is genuinely stuck.
+//
+// Below this the per-call `DEFAULT_EXEC_TIMEOUT_MS = 180_000` in
+// test/helpers/shell.ts cuts off individual cli invocations; this is the
+// outer safety net for the test itself.
+//
+// Above this, GitHub Actions' job-level `timeout-minutes` (15 on ubuntu, 25
+// on macos/windows in ci.yml) is the ultimate fallback if --test-timeout
+// somehow fails to release a worker (rare: requires a worker stuck in a
+// non-interruptible syscall). We don't add a phase-level SIGKILL deadman of
+// our own because it'd leave orphan cli/daemon/Chrome processes the next run
+// would inherit, and `--test-timeout` already covers the case that actually
+// matters.
+const PER_TEST_TIMEOUT_MS = 300_000;
+
 const watchMode = process.argv.includes('--watch');
 // --watch is never mixed with explicit file paths (see package.json scripts), so when
 // it is present there are no explicit files; slice(2) is the file list otherwise.
@@ -279,7 +305,15 @@ function spawnTests(files: string[], slug?: string): Promise<number> {
       process.execPath,
       watchMode
         ? ['--import', WORKER_PRELOAD, '--test', '--watch', ...files]
-        : ['--import', WORKER_PRELOAD, '--test', '--test-force-exit', ...reporterArgs, ...files],
+        : [
+            '--import',
+            WORKER_PRELOAD,
+            '--test',
+            '--test-force-exit',
+            `--test-timeout=${PER_TEST_TIMEOUT_MS}`,
+            ...reporterArgs,
+            ...files,
+          ],
       {
         stdio: 'inherit',
         env: {
