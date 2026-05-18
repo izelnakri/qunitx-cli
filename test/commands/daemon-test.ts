@@ -402,7 +402,7 @@ module('Commands | Daemon | lifecycle', { concurrency: true }, () => {
       // ~100k) sidesteps the recycle window entirely — no normal init can ever
       // hand out a pid this high, so `process.kill(pid, 0)` reliably throws
       // ESRCH and the stale-recovery path runs.
-      const deadPid = 0x3FFFFFFE; // ~1 billion, well above any platform's pid space
+      const deadPid = 0x3ffffffe; // ~1 billion, well above any platform's pid space
       assert.notOk(
         await pidLooksAlive(deadPid),
         `synthetic deadPid ${deadPid} is dead (sanity check)`,

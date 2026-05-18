@@ -96,13 +96,11 @@ async function makeCustomHTMLProject() {
 }
 
 // Mirrors STARTUP_TIMEOUT_FACTOR * config.timeout in lib/commands/run/tests-in-browser.ts
-// (6 * 20s = 120s) plus a 30s buffer for setupBrowser + bundle + page.goto + the
-// `Press "qq"` ready-marker print. 45 s was previously enough for chromium on
-// every lane but hit the wall on firefox + macOS-deno (CI run 26042614416 / job
-// 76558103180): Playwright firefox/webkit launches go through Deno's
-// node:child_process compat which serializes spawn-heavy startup on macOS;
-// initial-run wall clock landed around 60-90 s.
-const WATCH_READY_TIMEOUT_MS = 150_000;
+// (9 * 20s = 180s) plus a 30s buffer for setupBrowser + bundle + page.goto + the
+// `Press "qq"` ready-marker print. Bumped 45s → 150s → 210s as STARTUP_TIMEOUT_FACTOR
+// grew over two iterations (firefox-on-macOS-deno hit 45s in CI 26042614416;
+// JSX-on-macOS-deno hit 121s in CI 26046813154).
+const WATCH_READY_TIMEOUT_MS = 210_000;
 
 async function runWatch(dir: string): Promise<string> {
   const outputDir = path.resolve(`tmp/run-${randomUUID()}`);
