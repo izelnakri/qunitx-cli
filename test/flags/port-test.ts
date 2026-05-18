@@ -80,6 +80,16 @@ module('--port flag tests for browser mode', { concurrency: true }, (_hooks, mod
   });
 
   test('fails with a clear error when --port is explicitly taken', async (assert, testMetadata) => {
+    // Skip on Windows + deno-compiled binary: the binary's net.Server.listen()
+    // never emits the 'error' event for EADDRINUSE on Windows, so bindServerToPort
+    // hangs in its retry loop forever. Same root cause family as the daemon-on-
+    // windows skip in test/commands/daemon-test.ts — deno compile's node:net
+    // compat misroutes server-bind errors on win32. Remove this guard once Deno
+    // ships the fix upstream.
+    if (process.platform === 'win32' && process.env.QUNITX_BIN?.endsWith('.exe')) {
+      return assert.ok(true, 'skipped: net.Server EADDRINUSE silent on Windows + deno binary');
+    }
+
     const free = await findFreePort();
     const takenPort = free.number;
     // Keep it occupied for the duration of the test.
