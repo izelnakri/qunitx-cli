@@ -91,12 +91,23 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         config._onWsOpen?.();
       } else if (event === 'connection') {
         config._phase = 'running';
+        // Reset per-run testEnd dedup state; see Config._seenTestEnds for rationale.
+        config._seenTestEnds = new Set();
         // In daemon mode the daemon emits one TAP version 13 header per run before the
         // run starts; suppressing here keeps the stream parser-clean across runs.
         if (!config._groupMode && !config._daemonMode) process.stdout.write('TAP version 13\n');
         if (config.debug && config._groupMode) debugGroupHeader(config);
         config._resetTestTimeout?.();
       } else if (event === 'testEnd' && !abort) {
+        const fullName = details.fullName.join(' | ');
+        if (config._seenTestEnds?.has(fullName)) {
+          process.stderr.write(
+            `# [qunitx] WARNING: duplicate testEnd ignored for "${fullName}" — ` +
+              `browser/Playwright fired the event twice in one run. Counter not incremented.\n`,
+          );
+          return;
+        }
+        config._seenTestEnds?.add(fullName);
         if (details.status === 'failed') {
           config.lastFailedTestFiles = config.lastRanTestFiles;
         }
@@ -625,9 +636,20 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
         config._onWsOpen?.();
       } else if (event === 'connection') {
         config._phase = 'running';
+        // Reset per-run testEnd dedup state; see Config._seenTestEnds for rationale.
+        config._seenTestEnds = new Set();
         if (config.debug) debugGroupHeader(config);
         config._resetTestTimeout?.();
       } else if (event === 'testEnd' && !abort) {
+        const fullName = details.fullName.join(' | ');
+        if (config._seenTestEnds?.has(fullName)) {
+          process.stderr.write(
+            `# [qunitx] WARNING: duplicate testEnd ignored for "${fullName}" — ` +
+              `browser/Playwright fired the event twice in one run. Counter not incremented.\n`,
+          );
+          return;
+        }
+        config._seenTestEnds?.add(fullName);
         if (details.status === 'failed') {
           config.lastFailedTestFiles = config.lastRanTestFiles;
         }
