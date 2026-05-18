@@ -52,3 +52,33 @@ process.exit = function (code?: number | string | null): never {
 // diagnostic logging and does not suppress the framework's own crash semantics.
 process.on('uncaughtException', (err) => log('uncaughtException', err));
 process.on('unhandledRejection', (reason) => log('unhandledRejection', reason));
+
+// Final-exit observer. Fires once per process, AFTER all other handlers, for
+// any exit path (process.exit, --test-force-exit, end of event loop, signal
+// with handler). If we see this with a non-zero code, the worker died and we
+// have no other diagnostic, the bare exit-code value at least tells whether
+// it was a process.exit(1) (matches our wrap above) vs --test-force-exit (no
+// wrap call) vs uncaught (different code) — distinguishing those narrows the
+// next investigation. Synchronous-only handler per Node docs.
+process.on('exit', (code) => {
+  if (code !== 0) log(`process 'exit' event with code ${code}`, new Error('exit observed'));
+});
+
+// Signal handlers: SIGTERM / SIGINT can arrive from the parent (e.g. parent
+// killing the test worker after a timeout). Without observers, Node's default
+// signal handling exits the process with no log. The handler logs and then
+// re-raises by removing itself and re-sending the signal — preserves default
+// behaviour while adding a breadcrumb.
+for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(sig, () => {
+    log(`signal ${sig} received`, new Error('signal observed'));
+    process.removeAllListeners(sig);
+    process.kill(process.pid, sig);
+  });
+}
+
+// Startup marker — written once on preload load. Surviving in CI logs means
+// the preload itself loaded successfully (rules out an --import failure as
+// the cause of a silent death). Goes to stderr so it doesn't interleave with
+// the spec-reporter's stdout output.
+process.stderr.write(`# [worker-preload] active (pid ${process.pid})\n`);
