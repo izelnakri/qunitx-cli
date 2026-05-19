@@ -114,28 +114,37 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         config._onWsOpen?.();
       } else if (event === 'connection') {
         config._phase = 'running';
-        // Reset per-run testEnd-count map for the diagnostic warning below;
-        // see Config._testEndCounts. Diagnostic only — does NOT dedupe.
-        config._testEndCounts = new Map();
+        // Dedup map reset is owned by runTestsInBrowser (alongside COUNTER
+        // reset), NOT this WS handler. Resetting on every 'connection' was
+        // the bug that broke no-html-test in CI run 26042614416: a stale
+        // testEnd arriving just after `connection` for a watch rerun got
+        // counted spuriously because the dedup map had been wiped. The map
+        // is now reset only at the same lifecycle boundary as COUNTER.
         // In daemon mode the daemon emits one TAP version 13 header per run before the
         // run starts; suppressing here keeps the stream parser-clean across runs.
         if (!config._groupMode && !config._daemonMode) process.stdout.write('TAP version 13\n');
         if (config.debug && config._groupMode) debugGroupHeader(config);
         config._resetTestTimeout?.();
       } else if (event === 'testEnd' && !abort) {
-        // Diagnostic: count testEnd arrivals per fullName. Warning on duplicate
-        // SURFACES the 2× flake without masking it — COUNTER still increments
-        // as before so test pass-counts match real behaviour. See
-        // Config._testEndCounts for why dedup-then-skip broke no-html-test.
+        // Server-side enforcement of "QUnit fires testEnd exactly once per
+        // registered test per run." The 2× flake (CI runs 26046813154 and
+        // 26077472287) ships a duplicate testEnd via the same WS connection
+        // through paths we cannot fully trace from outside the browser
+        // (WS-retry race + sub-resource preload race observed on webkit /
+        // macOS / Deno-compiled binary). Dedup makes the contract explicit
+        // and load-bearing: the second arrival of any fullName in the
+        // current run is dropped with a loud warning so the underlying
+        // browser/runtime bug stays visible while COUNTER stays correct.
         const fullName = details.fullName.join(' | ');
         const count = (config._testEndCounts?.get(fullName) ?? 0) + 1;
         config._testEndCounts?.set(fullName, count);
         if (count > 1) {
           diagWrite(
-            `# [qunitx][diag] duplicate testEnd #${count} for "${fullName}" — ` +
-              `single-run testEnds should be unique. ` +
-              `Pass/Fail counts will report the actual duplicated value.\n`,
+            `# [qunitx] WARNING: duplicate testEnd ignored for "${fullName}" — ` +
+              `browser/Playwright fired the event twice in one run. ` +
+              `Counter not incremented; see Config._testEndCounts for details.\n`,
           );
+          return;
         }
 
         if (details.status === 'failed') {
@@ -680,20 +689,21 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
         config._onWsOpen?.();
       } else if (event === 'connection') {
         config._phase = 'running';
-        // Reset per-run testEnd-count map; see Config._testEndCounts for details.
-        config._testEndCounts = new Map();
+        // Dedup map reset owned by run.ts at groupConfig construction (see
+        // setupWebServer for the equivalent rationale); not reset here.
         if (config.debug) debugGroupHeader(config);
         config._resetTestTimeout?.();
       } else if (event === 'testEnd' && !abort) {
-        // Diagnostic-only duplicate detection; see setupWebServer for rationale.
+        // Server-side enforcement; see setupWebServer for full rationale.
         const fullName = details.fullName.join(' | ');
         const count = (config._testEndCounts?.get(fullName) ?? 0) + 1;
         config._testEndCounts?.set(fullName, count);
         if (count > 1) {
           diagWrite(
-            `# [qunitx][diag] group ${resolvedGroupId} duplicate testEnd #${count} for "${fullName}" — ` +
+            `# [qunitx] WARNING: group ${resolvedGroupId} duplicate testEnd ignored for "${fullName}" — ` +
               `single-run testEnds should be unique.\n`,
           );
+          return;
         }
         if (details.status === 'failed') {
           config.lastFailedTestFiles = config.lastRanTestFiles;

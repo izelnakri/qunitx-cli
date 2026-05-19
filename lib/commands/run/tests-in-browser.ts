@@ -261,6 +261,14 @@ export async function runTestsInBrowser(
       passCount: 0,
       errorCount: 0,
     };
+    // Reset the per-run testEnd dedup map in lockstep with COUNTER so the two
+    // share the same lifetime. WS handler ONLY checks the map — it does not
+    // reset on 'connection' events. That avoids the watch-rerun regression
+    // from CI run 26042614416 where a stale testEnd arriving just after
+    // `connection` for the next run got counted spuriously because the dedup
+    // map had been wiped. Tying the reset to COUNTER reset is the single
+    // source of truth for "this is a fresh run, drop old tracking state."
+    config._testEndCounts = new Map();
   }
   config.lastRanTestFiles = targetTestFilesToFilter || allTestFilePaths;
 

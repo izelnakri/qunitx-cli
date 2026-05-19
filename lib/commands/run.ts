@@ -248,6 +248,15 @@ export async function run(config: Config): Promise<void> {
 
     const groupConfigs = groups.map((groupFiles, i) => ({
       ...config,
+      // Per-group dedup map for the testEnd handler — see
+      // Config._testEndCounts. Each group's COUNTER bucket is shared via the
+      // parent `config`, but the dedup state is per-group so a duplicate
+      // testEnd in group A doesn't accidentally suppress the legitimate first
+      // testEnd of the same name in group B. (Two groups CAN legitimately
+      // share a fullName when they bundle different files that happen to
+      // register tests with the same module/test names — the dedup key is
+      // intra-group.)
+      _testEndCounts: new Map<string, number>(),
       fsTree: Object.fromEntries(groupFiles.map((filePath) => [filePath, config.fsTree[filePath]])),
       // Single group keeps the root output dir for backward-compatible file paths.
       output: groupCount === 1 ? config.output : `${config.output}/group-${i}`,
