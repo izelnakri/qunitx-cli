@@ -83,6 +83,139 @@ module('Setup | web-server | header links to /', { concurrency: true }, () => {
 // counters are 2 — exactly the production failure shape.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// WS testEnd dedup (server-side enforcement of the QUnit contract).
+//
+// Regression suite for two intermingled bugs:
+//
+//   1. The 2× test-execution flake (CI runs 26046813154 / 26077472287,
+//      macOS-deno webkit): plugins-test reports pass=2 for a 1-test
+//      fixture because the browser ships duplicate testEnd events via
+//      paths we can't trace from the server side (WS retry race +
+//      sub-resource preload race). The dedup map in Config._testEndCounts
+//      drops the second arrival of any fullName.
+//
+//   2. The no-html-test regression (CI run 26042614416): when the dedup
+//      map was reset on every WS 'connection' event, a stale testEnd
+//      arriving just after the next-run's `connection` got counted
+//      spuriously because the map had been wiped. Tying the reset to
+//      COUNTER reset (runTestsInBrowser / groupConfig construction)
+//      keeps the two state lifetimes locked together.
+//
+// Both must hold simultaneously: duplicate suppression within one run AND
+// fresh accounting across legitimate reruns.
+// ---------------------------------------------------------------------------
+
+module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
+  test('duplicate testEnd in one run increments COUNTER exactly once', async (assert) => {
+    const config = makeConfig();
+    config._testEndCounts = new Map(); // run.ts / runTestsInBrowser ordinarily seeds this
+    const server = setupWebServer(config, makeCachedContent());
+    await server.listen(0);
+    const port = (server._server.address() as { port: number }).port;
+    try {
+      const ws = await openWebSocket(port);
+      ws.send(JSON.stringify({ event: 'wsOpen' }));
+      ws.send(JSON.stringify({ event: 'connection' }));
+      const testEnd = JSON.stringify({
+        event: 'testEnd',
+        details: { fullName: ['Mod', 'a test'], status: 'passed', runtime: 1, assertions: [] },
+      });
+      ws.send(testEnd);
+      ws.send(testEnd); // duplicate — the bug we defend against
+      const done = new Promise<void>((resolve) => {
+        config._testRunDone = resolve;
+      });
+      ws.send(
+        JSON.stringify({
+          event: 'done',
+          details: { passed: 1, failed: 0, runtime: 1 },
+          qunitResult: { totalTests: 1, finishedTests: 1, failedTests: 0, currentTest: null },
+        }),
+      );
+      await done;
+      ws.close();
+      assert.equal(config.COUNTER.testCount, 1, 'second testEnd is dropped (COUNTER stays at 1)');
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('stale testEnd arriving after the next-run connection is dropped (no-html regression)', async (assert) => {
+    const config = makeConfig();
+    config._testEndCounts = new Map();
+    const server = setupWebServer(config, makeCachedContent());
+    await server.listen(0);
+    const port = (server._server.address() as { port: number }).port;
+    try {
+      // First run: one test, normal flow.
+      const ws1 = await openWebSocket(port);
+      ws1.send(JSON.stringify({ event: 'connection' }));
+      const sameTestEnd = JSON.stringify({
+        event: 'testEnd',
+        details: { fullName: ['Mod', 'a test'], status: 'passed', runtime: 1, assertions: [] },
+      });
+      ws1.send(sameTestEnd);
+      const done1 = new Promise<void>((resolve) => {
+        config._testRunDone = resolve;
+      });
+      ws1.send(
+        JSON.stringify({
+          event: 'done',
+          details: { passed: 1, failed: 0, runtime: 1 },
+          qunitResult: { totalTests: 1, finishedTests: 1, failedTests: 0, currentTest: null },
+        }),
+      );
+      await done1;
+      assert.equal(config.COUNTER.testCount, 1, 'first run counter = 1');
+
+      // Simulate watch-rerun lifecycle: runTestsInBrowser reset for the next
+      // run. WS connection from this new run arrives, then a STALE testEnd
+      // from the previous run drifts in. The stale event must NOT count
+      // because the dedup map remembers the previous run's name.
+      // (Without the run-tied reset, the map is wiped on 'connection' and
+      // the stale event leaks into the new run's count — the original bug.)
+      config.COUNTER.testCount = 0;
+      // NOTE: deliberately do NOT reset config._testEndCounts here. In real
+      // code, runTestsInBrowser would reset both COUNTER and _testEndCounts
+      // together; this test is verifying that the WS handler does not
+      // ALSO reset the map (which would re-admit the stale event).
+      const ws2 = await openWebSocket(port);
+      ws2.send(JSON.stringify({ event: 'connection' }));
+      ws2.send(sameTestEnd); // stale arrival from previous run
+      const done2 = new Promise<void>((resolve) => {
+        config._testRunDone = resolve;
+      });
+      ws2.send(
+        JSON.stringify({
+          event: 'done',
+          details: { passed: 0, failed: 0, runtime: 1 },
+          qunitResult: { totalTests: 0, finishedTests: 0, failedTests: 0, currentTest: null },
+        }),
+      );
+      await done2;
+      ws2.close();
+      assert.equal(
+        config.COUNTER.testCount,
+        0,
+        'stale testEnd from previous run is dropped (counter stays at 0)',
+      );
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+async function openWebSocket(port: number): Promise<import('ws').WebSocket> {
+  const WebSocketClass = (await import('ws')).WebSocket;
+  const ws = new WebSocketClass(`ws://127.0.0.1:${port}`);
+  await new Promise<void>((resolve, reject) => {
+    ws.once('open', () => resolve());
+    ws.once('error', reject);
+  });
+  return ws;
+}
+
 module('Setup | web-server | runtime IIFE idempotency', { concurrency: true }, () => {
   test('a second invocation in the same Window opens exactly one WebSocket', async (assert) => {
     // Fetch the actual served HTML so the test exercises the runtime script

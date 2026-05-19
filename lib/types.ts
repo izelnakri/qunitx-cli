@@ -184,17 +184,20 @@ export interface Config {
   /** Current lifecycle phase of the test run. */
   _phase?: 'bundling' | 'connecting' | 'loading' | 'running' | 'done';
   /**
-   * Diagnostic-only: counts how many `testEnd` events have arrived per test
-   * fullName in the current run. Reset on every `connection` event (run start)
-   * and by `runTestsInBrowser` between watch reruns. Used to emit a
-   * `# [qunitx][diag] duplicate testEnd ...` warning when the same fullName
-   * arrives more than once — the 2× test-execution flake (plugins-test on
-   * macOS test-deno, custom-html-test on Windows test-deno) reports
-   * `pass = 2 * expected` and the duplicate detection should pinpoint which
-   * layer (browser/Playwright/QUnit/runtime) re-fires the event. Does NOT
-   * suppress the second dispatch — that broke no-html-test in CI run
-   * 26042614416 — so the COUNTER stays equal to the actual number of events
-   * received and the existing pre-dedup behaviour is preserved bit-for-bit.
+   * Tracks `testEnd` arrivals per test fullName in the current run. Reset in
+   * `runTestsInBrowser` (single-group) and at groupConfig construction
+   * (multi-group) — explicitly NOT on every WS 'connection' event, which
+   * was the bug that broke no-html-test in CI run 26042614416. Lifetime is
+   * tied to COUNTER lifetime so the two stay consistent.
+   *
+   * The WS testEnd handler enforces "QUnit fires testEnd exactly once per
+   * registered test per run" by checking this map before incrementing
+   * COUNTER: a second arrival of the same fullName is dropped with a
+   * `# [qunitx] WARNING: duplicate testEnd ignored ...` line on stderr+stdout
+   * so the underlying browser/runtime bug stays visible while pass counts
+   * stay correct. Needed because the 2× flake (CI runs 26046813154 +
+   * 26077472287 on macOS-deno webkit) ships duplicate testEnd events via
+   * paths we can't fully trace from outside the browser.
    */
   _testEndCounts?: Map<string, number>;
   /**
