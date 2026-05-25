@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
+import { terminateChild } from '../helpers/shell.ts';
 
 const execAsync = promisify(exec);
 
@@ -142,15 +143,13 @@ async function runWatch(dir: string, _id: string) {
           resolve(buf);
         }
       });
-      child.stderr.resume();
+      // Drain stderr so a noisy cli (diagnostic warnings) can't fill the OS
+      // pipe and stall. Plain .resume() is unreliable under Deno compat.
+      child.stderr.on('data', () => {});
       child.on('error', reject);
     });
   } finally {
-    child.kill('SIGTERM');
-    child.stdin.destroy();
-    child.stdout.destroy();
-    child.stderr.destroy();
-    child.unref();
+    await terminateChild(child);
     permit.release();
   }
 }

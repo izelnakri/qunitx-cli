@@ -9,7 +9,7 @@
     "npm:js-yaml@^4.1.1": "4.1.1",
     "npm:playwright-core@^1.59.1": "1.59.1",
     "npm:prettier@^3.8.3": "3.8.3",
-    "npm:qunitx@^1.2.9": "1.2.9",
+    "npm:qunitx@^1.2.18": "1.2.18",
     "npm:react-dom@^19.2.5": "19.2.5_react@19.2.5",
     "npm:react@^19.2.5": "19.2.5",
     "npm:typescript@^6.0.3": "6.0.3",
@@ -340,8 +340,8 @@
       "integrity": "sha512-7igPTM53cGHMW8xWuVTydi2KO233VFiTNyF5hLJqpilHfmn8C8gPf+PS7dUT64YcXFbiMGZxS9pCSxL/Dxm/Jw==",
       "bin": true
     },
-    "qunitx@1.2.9": {
-      "integrity": "sha512-+eyBiIaHxhp4If611fcAinQwi93JP1db1d+crs1kzfYG2eZUEtYbJ0EUBKac0tlL9DsuiIMXonBu26hbQOS7xw=="
+    "qunitx@1.2.18": {
+      "integrity": "sha512-evp1xkPLSgT4Cj+c72q2HMIvdlJw/3+3mzAZx+mSOPzpBpRiTpnAiSRl4lBpRppxLSCf9LNfwxoSkRS87IONgg=="
     },
     "react-dom@19.2.5_react@19.2.5": {
       "integrity": "sha512-J5bAZz+DXMMwW/wV3xzKke59Af6CHY7G4uYLN1OvBcKEsWOs4pQExj86BBKamxl/Ik5bx9whOrvBlSDfWzgSag==",
@@ -396,7 +396,7 @@
         "npm:js-yaml@^4.1.1",
         "npm:playwright-core@^1.59.1",
         "npm:prettier@^3.8.3",
-        "npm:qunitx@^1.2.9",
+        "npm:qunitx@^1.2.18",
         "npm:react-dom@^19.2.5",
         "npm:react@^19.2.5",
         "npm:typescript@^6.0.3",

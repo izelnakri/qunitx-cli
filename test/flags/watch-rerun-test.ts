@@ -2,13 +2,15 @@ import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+// node:timers' setTimeout returns a Timeout object with .unref() in both Node and
+// Deno; the global setTimeout under Deno returns a plain number (web spec) and
+// crashes on .unref().
+import { setTimeout, clearTimeout } from 'node:timers';
 import '../helpers/custom-asserts.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
+import { terminateChild } from '../helpers/shell.ts';
 
 const CLI = `${process.cwd()}/cli.ts`;
-
-// Maximum time to wait for a child process to exit after SIGTERM before giving up.
-const CHILD_EXIT_GRACE_MS = 5000;
 const QUNITX_BROWSER = process.env.QUNITX_BROWSER;
 
 module('--watch re-run tests', { concurrency: true }, () => {
@@ -837,7 +839,13 @@ async function spawnWatch(
     buf += chunk.toString();
     for (const l of [...listeners]) l(buf);
   });
-  child.stderr.resume();
+  // A no-op 'data' listener drains the OS pipe; child.stderr.resume() alone is
+  // unreliable under Deno's node:child_process compat (it doesn't pump the
+  // stream's underlying read syscall the way Node does), and the cli's
+  // diagnostic warnings can fill the 64 KB pipe buffer, back-pressuring the
+  // cli's stderr writes and stalling tests. Confirmed: replacing .resume()
+  // with this listener turns 4 hanging tests green under deno test.
+  child.stderr.on('data', () => {});
 
   // Track unexpected exits so waitFor can reject immediately instead of hanging.
   let exitCode: number | null = null;
@@ -887,35 +895,16 @@ async function spawnWatch(
         listeners.push(listener);
       });
     },
-    kill() {
-      return new Promise<void>((resolve) => {
-        // Safety valve: if the process hasn't exited in CHILD_EXIT_GRACE_MS, stop waiting.
-        // Crucially: remove the 'exit' listener and unref() the child so the
-        // ChildProcess handle no longer keeps the Node.js event loop alive.
-        // Without this, a stuck child (rare but observed on CI) causes the
-        // test runner to hang indefinitely after the test function resolves.
-        const timer = setTimeout(() => {
-          child.removeListener('exit', done);
-          child.unref();
-          permit.release();
-          resolve();
-        }, CHILD_EXIT_GRACE_MS);
-        timer.unref();
-
-        // Resolve after exit so the next test doesn't start until Chrome and the
-        // HTTP server from this run are fully released (prevents resource contention
-        // on CI where consecutive Chrome instances can starve the new one).
-        const done = () => {
-          clearTimeout(timer);
-          permit.release();
-          resolve();
-        };
-        child.once('exit', done);
-        child.kill('SIGTERM');
-        child.stdin.destroy();
-        child.stdout.destroy();
-        child.stderr.destroy();
-      });
+    async kill() {
+      // terminateChild does SIGTERM → await 'close' → SIGKILL escalation. Awaiting
+      // here ensures the next test doesn't acquire its browser permit until Chrome
+      // and the HTTP server from this run have actually released (prior race caused
+      // consecutive Chrome instances to starve each other under CI contention).
+      try {
+        await terminateChild(child);
+      } finally {
+        permit.release();
+      }
     },
     get stdout() {
       return buf;

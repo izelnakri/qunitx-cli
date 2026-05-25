@@ -27,6 +27,13 @@ import createSemaphoreServer from './helpers/semaphore-server.ts';
 import { killProcessGroup } from '../lib/utils/kill-process-group.ts';
 import { cleanupBrowserDir } from '../lib/utils/cleanup-browser-dir.ts';
 
+// When invoked as `deno run -A test/runner.ts ...` (CI deno lanes), we spawn
+// `deno test` workers instead of `node --test`. Detection is one runtime
+// check; everything downstream branches off this flag so the same file drives
+// both lanes without a parallel runner-deno.ts.
+const IS_DENO = typeof (globalThis as { Deno?: { execPath(): string } }).Deno !== 'undefined';
+const DENO_EXEC = IS_DENO ? (globalThis as { Deno: { execPath(): string } }).Deno.execPath() : '';
+
 // Project-local V8 compile-cache dir for spawned workers and the cli.ts
 // processes the test files invoke. Sits under node_modules/.cache (npm
 // convention, gitignored, survives `rm -rf tmp/`, outside the leak-test sweep
@@ -66,6 +73,41 @@ const watchMode = process.argv.includes('--watch');
 // it is present there are no explicit files; slice(2) is the file list otherwise.
 const cliFiles = watchMode ? [] : process.argv.slice(2);
 
+// Concurrent Chrome cap. Default = availableParallelism so the semaphore matches
+// the runner's CPU budget. Lowered to 2 in two combinations where browser
+// startup contention reliably manifests on hosted CI runners and a 250-ms
+// stagger experiment failed to recover them (cd31f12 → Windows test-deno
+// hit the same 25-min timeout, macos webkit's watch-mode bundle-error test
+// still flaked):
+//
+//   * Windows under Deno: deno-compile cli binary (~190 MB embedded VFS)
+//     cold-starts slowly on Windows (no page-cache between invocations the
+//     way POSIX has). N=4 parallel cli cold-starts each spawning Chrome
+//     deadlock the runner — multiple test files stall together at the start
+//     of the browser phase and the suite never recovers, hitting the 25-min
+//     job timeout. The root cause behaves like resource exhaustion (file
+//     handles / ports) rather than a timing burst, so spacing launches isn't
+//     sufficient — concurrency itself has to drop.
+//
+//   * macOS + webkit: the watch-mode "build error in watch mode ..." tests
+//     intermittently stall on the post-fix page.reload() — a webkit-page-
+//     lifecycle bug after a hung /tests.js request, not a cold-start race.
+//     Halving parallel pressure removes the stall without serializing the
+//     whole lane.
+//
+// Both caps are removable once the upstream platforms stabilize (see also
+// the windows/firefox exclude in browser-compat.yml and the daemon-on-Windows
+// skip in test/commands/daemon-test.ts — same root family).
+const CHROME_CAP = isContentionLane()
+  ? Math.min(2, availableParallelism())
+  : availableParallelism();
+
+function isContentionLane(): boolean {
+  if (process.platform === 'win32' && IS_DENO) return true;
+  if (process.platform === 'darwin' && process.env.QUNITX_BROWSER === 'webkit') return true;
+  return false;
+}
+
 // Clearing artifacts, starting the semaphore server, and discovering test files are all
 // independent — run them concurrently to cut startup time. tmp/ is recreated after the
 // rm so node:test can open the per-phase perf-reporter destination on phase 1 spawn.
@@ -73,7 +115,7 @@ const [, semaphore, [fastFiles, watchReruns, leakFiles]] = await Promise.all([
   fs
     .rm('./tmp', { recursive: true, force: true })
     .then(() => fs.mkdir('./tmp', { recursive: true })),
-  createSemaphoreServer(availableParallelism()),
+  createSemaphoreServer(CHROME_CAP),
   cliFiles.length > 0
     ? Promise.resolve([cliFiles, [], []] as [string[], string[], string[]])
     : Promise.all([
@@ -146,62 +188,82 @@ const exitCode3 =
 
 // End-of-run summary + junit XML generation. Skipped in watch mode (no end-of-run).
 // Always prints the summary to stdout (visible locally and in CI logs); additionally
-// appends the same markdown to $GITHUB_STEP_SUMMARY when set, and writes one junit
-// XML per phase for dorny/test-reporter consumption.
+// appends the same markdown to $GITHUB_STEP_SUMMARY when set.
+//
+// Node lane: derive a rich summary from the per-test perf JSONL (slowest test / file /
+// group). The same data also feeds writeJunitFromPerf() for dorny consumption.
+// Deno lane: junit XML is written directly by `deno test --junit-path=` (no JSONL
+// produced — Deno has only one reporter slot and we're using --reporter=pretty for
+// stdout). Without per-test perf data, the rich breakdown isn't reconstructable from
+// junit alone (deno's junit duplicates testcases as steps under the qunitx-internal
+// path; trying to mine slowest-test from that is misleading). The Deno branch falls
+// back to a phase-totals summary — the per-OS wall-clock comparison the user wants
+// is still right there, and the test names + durations remain visible in the live
+// pretty output above.
 if (!watchMode) {
-  let totalMs = 0;
-  for (const p of phaseResults) totalMs += p.durationMs;
-
-  // Read perf JSONL per phase, generate junit XML alongside (consumed by
-  // .github/workflows/test-report.yml → dorny). Reading and writing in parallel.
-  const perfByPhase = await Promise.all(
-    phaseResults.map(async (p) => {
-      const entries = await readPerf(`./tmp/perf-${p.slug}.jsonl`);
-      await writeJunitFromPerf(p.slug, entries);
-      return entries;
-    }),
-  );
-  const allPerf = perfByPhase.flat();
-  const tests = allPerf.filter((e) => e.kind === 'test');
-  const groups = allPerf.filter((e) => e.kind === 'suite' && e.nesting === 0);
-  const totalTests = tests.length;
-  const failedTests = tests.filter((t) => t.status === 'fail').length;
-  const slowestTest = tests.reduce((m, e) => (e.ms > m.ms ? e : m), tests[0]);
-  const slowestGroup = groups.reduce((m, e) => (e.ms > m.ms ? e : m), groups[0]);
-  const fileMs = new Map<string, number>();
-  for (const e of tests) if (e.file) fileMs.set(e.file, (fileMs.get(e.file) ?? 0) + e.ms);
-  const [slowestFileName, slowestFileMs] = [...fileMs].reduce((m, e) => (e[1] > m[1] ? e : m), [
-    '',
-    0,
-  ] as [string, number]);
-
   const fmt = (ms: number): string =>
     ms >= 60_000
       ? `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
       : `${(ms / 1000).toFixed(1)}s`;
-  // Pipes in qunit module names ("Commands | Version tests") break markdown table cells;
-  // escape with a backslash per GitHub-Flavored Markdown.
-  const cell = (s: string): string => s.replace(/\|/g, '\\|');
-  // slowestGroup intentionally omits a file path: node:test reports the suite event's
-  // `file` as where qunit's `module()` is defined (its library), not where it's called.
-  // Deriving the real file from child test events is unreliable under parallel test
-  // workers (events interleave across files). Group qunit names are unique and greppable.
-  const summary =
-    `## qunitx-cli test results\n\n` +
-    `| metric | value |\n|---|---|\n` +
-    `| tests | ${totalTests} ${failedTests ? `(${failedTests} failed)` : 'passed'} |\n` +
-    `| files | ${fileMs.size} |\n` +
-    `| duration | ${fmt(totalMs)} |\n` +
-    (slowestFileName
-      ? `| slowest file | \`${cell(slowestFileName)}\` (${fmt(slowestFileMs)} cumulative test time) |\n`
-      : '') +
-    (slowestGroup
-      ? `| slowest group | ${cell(slowestGroup.name)} (${fmt(slowestGroup.ms)}) |\n`
-      : '') +
-    (slowestTest
-      ? `| slowest test | ${cell(slowestTest.name)} — \`${cell(slowestTest.file)}\` (${fmt(slowestTest.ms)}) |\n`
-      : '') +
-    '\n';
+  let totalMs = 0;
+  for (const p of phaseResults) totalMs += p.durationMs;
+
+  let summary: string;
+  if (IS_DENO) {
+    const rows = phaseResults.map((p) => `| ${p.name} | ${fmt(p.durationMs)} |`).join('\n');
+    summary =
+      `## qunitx-cli test results (deno)\n\n` +
+      `| phase | duration |\n|---|---|\n${rows}\n` +
+      `| **total** | **${fmt(totalMs)}** |\n\n` +
+      `_Per-test breakdown is in the live \`deno test --reporter=pretty\` output above; ` +
+      `junit XML is written to \`tmp/junit-<phase>.xml\` for dorny._\n`;
+  } else {
+    // Read perf JSONL per phase, generate junit XML alongside (consumed by
+    // .github/workflows/test-report.yml → dorny). Reading and writing in parallel.
+    const perfByPhase = await Promise.all(
+      phaseResults.map(async (p) => {
+        const entries = await readPerf(`./tmp/perf-${p.slug}.jsonl`);
+        await writeJunitFromPerf(p.slug, entries);
+        return entries;
+      }),
+    );
+    const allPerf = perfByPhase.flat();
+    const tests = allPerf.filter((e) => e.kind === 'test');
+    const groups = allPerf.filter((e) => e.kind === 'suite' && e.nesting === 0);
+    const totalTests = tests.length;
+    const failedTests = tests.filter((t) => t.status === 'fail').length;
+    const slowestTest = tests.reduce((m, e) => (e.ms > m.ms ? e : m), tests[0]);
+    const slowestGroup = groups.reduce((m, e) => (e.ms > m.ms ? e : m), groups[0]);
+    const fileMs = new Map<string, number>();
+    for (const e of tests) if (e.file) fileMs.set(e.file, (fileMs.get(e.file) ?? 0) + e.ms);
+    const [slowestFileName, slowestFileMs] = [...fileMs].reduce((m, e) => (e[1] > m[1] ? e : m), [
+      '',
+      0,
+    ] as [string, number]);
+    // Pipes in qunit module names ("Commands | Version tests") break markdown table cells;
+    // escape with a backslash per GitHub-Flavored Markdown.
+    const cell = (s: string): string => s.replace(/\|/g, '\\|');
+    // slowestGroup intentionally omits a file path: node:test reports the suite event's
+    // `file` as where qunit's `module()` is defined (its library), not where it's called.
+    // Deriving the real file from child test events is unreliable under parallel test
+    // workers (events interleave across files). Group qunit names are unique and greppable.
+    summary =
+      `## qunitx-cli test results\n\n` +
+      `| metric | value |\n|---|---|\n` +
+      `| tests | ${totalTests} ${failedTests ? `(${failedTests} failed)` : 'passed'} |\n` +
+      `| files | ${fileMs.size} |\n` +
+      `| duration | ${fmt(totalMs)} |\n` +
+      (slowestFileName
+        ? `| slowest file | \`${cell(slowestFileName)}\` (${fmt(slowestFileMs)} cumulative test time) |\n`
+        : '') +
+      (slowestGroup
+        ? `| slowest group | ${cell(slowestGroup.name)} (${fmt(slowestGroup.ms)}) |\n`
+        : '') +
+      (slowestTest
+        ? `| slowest test | ${cell(slowestTest.name)} — \`${cell(slowestTest.file)}\` (${fmt(slowestTest.ms)}) |\n`
+        : '') +
+      '\n';
+  }
   process.stdout.write('\n' + summary);
   if (process.env.GITHUB_STEP_SUMMARY) {
     await fs.appendFile(process.env.GITHUB_STEP_SUMMARY, summary);
@@ -280,8 +342,67 @@ async function writeJunitFromPerf(slug: string, entries: PerfEntry[]): Promise<v
 
 function spawnTests(files: string[], slug?: string): Promise<number> {
   return new Promise((resolve) => {
-    // Two reporters are wired up in non-watch mode (3 trips node:test's TestsStream
-    // default-10 listener limit; staying at 2 keeps stderr clean):
+    const env = {
+      // Default lives before ...process.env so a user override (incl.
+      // `NODE_COMPILE_CACHE=` to disable) wins over our project default.
+      // Harmless under Deno (it ignores the var).
+      NODE_COMPILE_CACHE: COMPILE_CACHE_DIR,
+      // Match the Chrome semaphore cap on Windows so deno test's worker pool
+      // doesn't spawn 4 concurrent cli cold-starts (each a 190 MB embedded
+      // VFS) only to have 2 of them queue forever on the semaphore — Windows
+      // I/O contention from the queued workers themselves was contributing to
+      // the same hang we're avoiding at the Chrome layer. DENO_JOBS is read
+      // by `deno test --parallel` before workers fork, so it has to be in env
+      // here (not on the args list). Set BEFORE ...process.env so user
+      // overrides win.
+      ...(process.platform === 'win32' && IS_DENO ? { DENO_JOBS: String(CHROME_CAP) } : {}),
+      ...process.env,
+      FORCE_COLOR: '0',
+      QUNITX_SEMAPHORE_PORT: String(semaphore.port),
+      // Block accidental daemon routing during the suite: a daemon running for this
+      // project's cwd would be picked up by every `node cli.ts` invocation and
+      // silently change behavior (TAP "(daemon)" suffix, single warm browser shared
+      // across tests). The daemon test file deletes this var for its own client invocations.
+      QUNITX_NO_DAEMON: '1',
+    };
+
+    if (IS_DENO) {
+      // Deno path: `deno test --allow-all --no-check --parallel`.
+      //   --allow-all  : same surface area as node (fs/net/child_process all needed).
+      //   --no-check   : skip TS type-check at test time. Matches the Node lane (which
+      //                  uses Node's strip-types — also no type-check) so the two runtimes
+      //                  exercise the same code surface and one doesn't fail on .d.ts
+      //                  inconsistencies in node_modules that aren't real bugs. Type
+      //                  safety belongs in a dedicated `deno check lib/ test/ cli.ts`
+      //                  step (single CI pass, fast feedback) — not per-phase test spawns
+      //                  (3× the cost, repeated across the OS×browser matrix).
+      //   --parallel   : run test MODULES in parallel (file granularity); semaphore still
+      //                  caps Chrome instances at availableParallelism().
+      //   --junit-path : deno writes junit XML directly (no perf-JSONL → junit step needed).
+      //                  Caveat: deno's junit output emits a second <testsuite> per file
+      //                  whose name points at qunitx's internal dist/deno/index.js (one
+      //                  testcase per Deno.test.step). Dorny shows it; harmless but noisy.
+      // No --import preload: deno has no equivalent flag, and the silent-death diagnostic
+      // the preload provides is a node:test-specific symptom (whole file → single 'test
+      // failed' with no context). Deno's pretty reporter shows failures directly.
+      // No --test-timeout / --test-force-exit equivalents on deno; the outer GHA
+      // job-level timeout remains the safety net.
+      const args = [
+        'test',
+        '--allow-all',
+        '--no-check',
+        '--parallel',
+        ...(slug ? [`--junit-path=./tmp/junit-${slug}.xml`] : []),
+        ...(watchMode ? ['--watch'] : []),
+        ...files,
+      ];
+      const child = spawn(DENO_EXEC, args, { stdio: 'inherit', env });
+      child.once('exit', (code) => resolve(code ?? 0));
+      return;
+    }
+
+    // Node path. Two reporters are wired up in non-watch mode (3 trips node:test's
+    // TestsStream default-10 listener limit; staying at 2 keeps stderr clean):
     //   spec   → stdout                        : compact, human/LLM-readable test output
     //                                            (no TAP YAML diagnostic blocks; ~80% less
     //                                             stdout noise on green runs).
@@ -311,22 +432,7 @@ function spawnTests(files: string[], slug?: string): Promise<number> {
             ...reporterArgs,
             ...files,
           ],
-      {
-        stdio: 'inherit',
-        env: {
-          // Default lives before ...process.env so a user override (incl.
-          // `NODE_COMPILE_CACHE=` to disable) wins over our project default.
-          NODE_COMPILE_CACHE: COMPILE_CACHE_DIR,
-          ...process.env,
-          FORCE_COLOR: '0',
-          QUNITX_SEMAPHORE_PORT: String(semaphore.port),
-          // Block accidental daemon routing during the suite: a daemon running for this
-          // project's cwd would be picked up by every `node cli.ts` invocation and
-          // silently change behavior (TAP "(daemon)" suffix, single warm browser shared
-          // across tests). The daemon test file deletes this var for its own client invocations.
-          QUNITX_NO_DAEMON: '1',
-        },
-      },
+      { stdio: 'inherit', env },
     );
     child.once('exit', (code) => resolve(code ?? 0));
   });

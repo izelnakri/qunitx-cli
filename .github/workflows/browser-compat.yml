@@ -49,10 +49,7 @@ jobs:
       - name: Get Playwright version
         id: pw-version
         # shell: bash is mandatory — the default windows-latest shell is PowerShell,
-        # which can't parse `$(...)` or `"$GITHUB_OUTPUT"`. Without it, version stays
-        # empty on Windows and `npx playwright@` resolves to whatever happens to be
-        # latest (which silently mismatches the pinned playwright-core's firefox build
-        # the moment a new playwright minor ships).
+        # which can't parse `$(...)` or `"$GITHUB_OUTPUT"`.
         shell: bash
         run: echo "version=$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
 
@@ -77,12 +74,16 @@ jobs:
           QUNITX_BROWSER: ${{ matrix.browser }}
           FORCE_COLOR: 0
 
-  # Same matrix as `browser-compat` but routed through the deno-compiled binary.
-  # Mirrors the test-deno job in ci.yml: build dist/qunitx via `deno task
-  # build:binary`, copy the local @esbuild sidecar next to it, point QUNITX_BIN
-  # at the binary, run only the browser-specific subset (test:browser). Catches
-  # firefox/webkit regressions specific to the Deno path (different child_process
-  # compat, different module-load ordering) without re-running the full unit suite.
+  # Same matrix as `browser-compat`, but routed entirely through Deno:
+  #   1. `test/runner.ts` itself runs under `deno run -A` (script `test:browser:deno`).
+  #   2. It spawns `deno test --allow-all --no-check --parallel --junit-path=…` workers
+  #      for each phase (see `test/runner.ts`'s `IS_DENO` branch in spawnTests).
+  #   3. Every CLI invocation inside those tests goes through `QUNITX_BIN`, which
+  #      points at the deno-compiled `dist/qunitx[.exe]`.
+  # Net: three Deno surfaces under test simultaneously (test runner / test worker /
+  # CLI binary). That's the cross-runtime coverage this lane exists to provide —
+  # any Deno-specific regression (node:fs.watch gaps, child_process compat,
+  # node:timers shape) surfaces here rather than slipping into a release.
   #
   # windows-latest / firefox is excluded — Playwright's Firefox launch on Windows
   # goes through playwright-core's processLauncher (chromium uses our CDP pre-
@@ -92,8 +93,8 @@ jobs:
   # 6) on browser launch AND test fixtures running multiple times because the
   # page lifecycle behaves differently under that stack. The real fix is
   # upstream in Deno's Windows child_process compat; re-enable once that lands.
-  # Coverage is preserved: Firefox is still tested on ubuntu+macos under Deno,
-  # and on Windows under Node (`browser-compat` job above).
+  # Firefox is still tested on ubuntu+macos under Deno & on Windows under Node
+  # (`browser-compat` job above).
   browser-compat-deno:
     name: deno · ${{ matrix.os }} / ${{ matrix.browser }}
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
@@ -163,18 +164,18 @@ jobs:
           esac
           cp "$SRC" "$DST"
 
-      - name: Run browser tests against Deno binary (${{ matrix.browser }})
+      - name: Run browser tests under Deno runner + binary (${{ matrix.browser }})
         if: runner.os != 'Windows'
         shell: bash
-        run: QUNITX_BIN="$(pwd)/dist/qunitx" npm run test:browser
+        run: QUNITX_BIN="$(pwd)/dist/qunitx" npm run test:browser:deno
         env:
           QUNITX_BROWSER: ${{ matrix.browser }}
           FORCE_COLOR: 0
 
-      - name: Run browser tests against Deno binary (Windows, ${{ matrix.browser }})
+      - name: Run browser tests under Deno runner + binary (Windows, ${{ matrix.browser }})
         if: runner.os == 'Windows'
         shell: bash
-        run: QUNITX_BIN="$(pwd -W)/dist/qunitx.exe" npm run test:browser
+        run: QUNITX_BIN="$(pwd -W)/dist/qunitx.exe" npm run test:browser:deno
         env:
           QUNITX_BROWSER: ${{ matrix.browser }}
           FORCE_COLOR: 0

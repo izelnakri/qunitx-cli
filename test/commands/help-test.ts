@@ -10,12 +10,13 @@ const VERSION = JSON.parse(await fs.readFile(`${CWD}/package.json`, 'utf8')).ver
 const shell = promisify(exec);
 const CLI_ENV = { ...process.env, FORCE_COLOR: '0' };
 const cli = async function (arg = '') {
+  // Under the Deno-driven test runner (`npm run test:deno`), process.argv[0] is the
+  // deno binary. cli.ts works under both runtimes (chrome-prelaunch is statically
+  // imported, so the spawn needs --allow-run + --allow-write + --allow-env + …, i.e.
+  // effectively `-A`).
   if (process.argv[0].includes('deno')) {
-    return await shell(`deno run --allow-read --allow-env ${CWD}/deno/cli.ts ${arg}`, {
-      env: CLI_ENV,
-    });
+    return await shell(`deno run -A ${CWD}/cli.ts ${arg}`, { env: CLI_ENV });
   }
-
   return await shell(`node ${CWD}/cli.ts ${arg}`, { env: CLI_ENV });
 };
 

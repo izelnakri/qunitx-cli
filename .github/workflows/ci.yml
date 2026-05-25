@@ -170,14 +170,20 @@ jobs:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
 
-  # ── Test (Deno binary) ────────────────────────────────────────────────────────
-  # Builds dist/qunitx via `deno task build:binary` and runs the same 592-test
-  # suite with QUNITX_BIN pointing at it; test/helpers/shell.ts swaps `node
-  # cli.ts` for that binary at parse time. Goal: catch regressions in the
-  # `deno compile` path AND surface flakes the Node lane misses (different GC,
-  # different timer impl, different child_process compat). Allowed to be flaky:
-  # NOT a `needs:` of pages or docker-nightly so a Deno-only failure cannot
-  # block main-branch deploys.
+  # ── Test (Deno end-to-end) ────────────────────────────────────────────────────
+  # Runs the entire test pipeline through Deno:
+  #   • test/runner.ts itself runs under `deno run -A` (`npm run test:deno`).
+  #   • Each phase spawns `deno test --allow-all --no-check --parallel --junit-path=…`
+  #     workers (see `test/runner.ts` IS_DENO branch in spawnTests).
+  #   • Every cli invocation inside those tests goes through QUNITX_BIN
+  #     (test/helpers/shell.ts swaps `node cli.ts` at parse time), so the
+  #     deno-compiled `dist/qunitx[.exe]` is what each cli call hits.
+  # Three Deno surfaces under test simultaneously (runner / worker / binary).
+  # Goal: catch regressions in the `deno compile` path AND surface flakes the
+  # Node lane misses (different GC, different timer impl, different
+  # child_process compat, different node:fs.watch event delivery).
+  # Allowed to be flaky: NOT a `needs:` of pages or docker-nightly so a
+  # Deno-only failure cannot block main-branch deploys.
   #
   # Coverage gap: six tests bypass `parseCommand` (they spawn process.execPath
   # with cli.ts literally — port-test.ts:160, watch-rerun-test.ts:832,
@@ -226,20 +232,27 @@ jobs:
           cp "$SRC" "$DST"
       # Git Bash $(pwd) returns a POSIX-style path (/d/a/...) that Node.spawn
       # cannot pass to a .exe; pwd -W returns the Windows form (D:/a/...).
-      - name: Run test suite against Deno binary
+      - name: Run test suite under Deno runner + binary
         if: runner.os != 'Windows'
         shell: bash
-        run: QUNITX_BIN="$(pwd)/dist/qunitx" npm test
+        run: QUNITX_BIN="$(pwd)/dist/qunitx" npm run test:deno
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
-      - name: Run test suite against Deno binary (Windows)
+      - name: Run test suite under Deno runner + binary (Windows)
         if: runner.os == 'Windows'
         shell: bash
-        run: QUNITX_BIN="$(pwd -W)/dist/qunitx.exe" npm test
+        run: QUNITX_BIN="$(pwd -W)/dist/qunitx.exe" npm run test:deno
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
+          # Windows-only diagnostic: every cli invocation streams its perf
+          # milestones (module-eval / chrome-spawn / cdp-ready / page-bind) to
+          # stderr. Costs ~5 KB of extra log output per cli call; pays for
+          # itself the moment a Windows-specific hang regresses — the perf
+          # trace pinpoints which milestone stalls, no second CI round-trip
+          # needed. See lib/utils/perf-logger.ts for the gating semantics.
+          QUNITX_TRACE_PERF: '1'
       - uses: actions/upload-artifact@v7
         if: always()
         with:
