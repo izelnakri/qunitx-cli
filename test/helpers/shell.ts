@@ -1,6 +1,11 @@
 import { performance } from 'node:perf_hooks';
 import { randomUUID } from 'node:crypto';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
+// Use node:timers' setTimeout (returns a Timeout object with .unref()) rather than
+// the global setTimeout. Under Deno, global setTimeout follows the web spec and
+// returns a plain number — `.unref()` doesn't exist on a number, so the kill-timer
+// teardown below would crash with `timer.unref is not a function`.
+import { setTimeout, clearTimeout } from 'node:timers';
 import { acquireBrowser } from './browser-semaphore-queue.ts';
 
 // When QUNITX_BROWSER is set, all browser test runs use that engine (firefox, webkit, chromium).
@@ -241,7 +246,11 @@ export async function shellWatch(
           resolve(buf);
         }
       });
-      child.stderr.resume(); // drain stderr so it never blocks stdout
+      // No-op data listener drains stderr so it never blocks stdout.
+      // resume() alone is unreliable under Deno's node:child_process compat —
+      // the OS pipe doesn't get pumped, and a noisy stderr (e.g. cli
+      // diagnostic warnings) back-pressures the writer and stalls the test.
+      child.stderr.on('data', () => {});
       child.on('error', reject);
     });
   } finally {
@@ -332,32 +341,72 @@ function applyImplicitFlags(commandString: string): string {
  * if the child hangs in its SIGTERM handler (Playwright Firefox/WebKit do this regularly),
  * those handles keep the worker event loop alive forever.
  */
-async function terminateChild(child: ChildProcessWithoutNullStreams): Promise<void> {
+/**
+ * Sends SIGTERM, destroys stdio, and awaits the child's 'close' event (= process
+ * exited AND stdio drained). If the child doesn't close within
+ * CHILD_EXIT_GRACE_MS, escalates to SIGKILL and waits another POST_SIGKILL_DRAIN_MS.
+ * If even that doesn't close it, throws — a genuinely undeadable child is a bug
+ * worth surfacing loudly, not silently leaking.
+ *
+ * Exported so test files spawning their own long-running CLI children can reuse
+ * the same escalation instead of reimplementing it inline. The prior in-test
+ * reimplementations either missed the close-wait entirely (`no-html-test.ts`),
+ * used 'exit' instead of 'close' (the stdio resource handle stays open past
+ * 'exit', so Deno's leak sanitizer flagged tests as "child process not closed"
+ * even after exit fired), or escaped the wait via a timer race that left
+ * Deno's pending op_wait dangling.
+ */
+export async function terminateChild(child: ChildProcessWithoutNullStreams): Promise<void> {
+  if (process.platform === 'win32') {
+    // Windows: child.kill() is TerminateProcess(), which kills only the direct
+    // child. The cli's Chrome subprocesses (renderer / GPU / crashpad helpers)
+    // re-parent to wininit and orphan, eventually exhausting the GUI session
+    // under load. `taskkill /F /T /PID` walks the process tree from the cli
+    // PID and force-kills every descendant in one call — must be issued while
+    // the parent is still alive so the tree walk can reach the children.
+    spawnSync('taskkill', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore' });
+    child.stdin.destroy();
+    child.stdout.destroy();
+    child.stderr.destroy();
+    await waitForClose(child, CHILD_EXIT_GRACE_MS);
+    child.unref();
+    return;
+  }
+
   child.kill('SIGTERM');
   child.stdin.destroy();
   child.stdout.destroy();
   child.stderr.destroy();
 
-  const exited = await waitForExit(child, CHILD_EXIT_GRACE_MS);
-  if (!exited) {
-    try {
-      child.kill('SIGKILL');
-    } catch {
-      /* already gone */
-    }
-    if (child.exitCode === null && child.signalCode === null) {
-      await waitForExit(child, POST_SIGKILL_DRAIN_MS);
-    }
+  if (await waitForClose(child, CHILD_EXIT_GRACE_MS)) {
+    child.unref();
+    return;
   }
+
+  try {
+    child.kill('SIGKILL');
+  } catch {
+    /* already gone */
+  }
+  if (await waitForClose(child, POST_SIGKILL_DRAIN_MS)) {
+    child.unref();
+    return;
+  }
+
   child.unref();
+  throw new Error(
+    `Child process (pid=${child.pid}) failed to close within ${CHILD_EXIT_GRACE_MS}ms after SIGTERM + ${POST_SIGKILL_DRAIN_MS}ms after SIGKILL. exitCode=${child.exitCode} signalCode=${child.signalCode}`,
+  );
 }
 
-function waitForExit(child: ChildProcessWithoutNullStreams, ms: number): Promise<boolean> {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+// 'close' (not 'exit') is the lifecycle event that releases the OS-level stdio
+// handles Deno tracks for leak detection. Awaiting 'exit' returned before stdio
+// streams had drained, leaving Deno's child-process resource still flagged.
+function waitForClose(child: ChildProcessWithoutNullStreams, ms: number): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     const timer = setTimeout(() => resolve(false), ms);
     timer.unref();
-    child.once('exit', () => {
+    child.once('close', () => {
       clearTimeout(timer);
       resolve(true);
     });

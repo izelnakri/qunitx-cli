@@ -2,12 +2,13 @@ import { module, test } from 'qunitx';
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
+// node:timers' setTimeout returns a Timeout object with .unref() in both Node and
+// Deno; the global setTimeout under Deno returns a plain number (web spec) and
+// crashes on .unref().
+import { setTimeout, clearTimeout } from 'node:timers';
 import '../helpers/custom-asserts.ts';
-import shell, { shellFails } from '../helpers/shell.ts';
+import shell, { shellFails, terminateChild } from '../helpers/shell.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
-
-// Maximum time to wait for a child process to exit after SIGTERM before giving up.
-const CHILD_EXIT_GRACE_MS = 5000;
 
 module('--port flag tests for browser mode', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('--port flag is accepted and tests complete successfully', async (assert, testMetadata) => {
@@ -213,23 +214,15 @@ async function withRunningServer(
   try {
     await fn(port, accum);
   } finally {
-    child.kill('SIGTERM');
-    child.stdin.destroy();
-    child.stdout.destroy();
-    child.stderr.destroy();
-    // Wait for the child to exit before releasing the permit so the next test does
-    // not start while this process's HTTP server is still bound to its port.
-    // Race against CHILD_EXIT_GRACE_MS in case the child hangs on SIGTERM.
-    await new Promise<void>((resolve) => {
-      const exitTimer = setTimeout(resolve, CHILD_EXIT_GRACE_MS);
-      exitTimer.unref();
-      child.once('exit', () => {
-        clearTimeout(exitTimer);
-        resolve();
-      });
-    });
-    child.unref();
-    permit.release();
+    // terminateChild handles SIGTERM → close-wait → SIGKILL escalation on
+    // POSIX, and `taskkill /F /T /PID` on Windows so the HTTP server's port
+    // (and Chrome subprocesses, if launched) is released before the next test
+    // acquires the permit.
+    try {
+      await terminateChild(child);
+    } finally {
+      permit.release();
+    }
   }
 
   return port;

@@ -1,11 +1,16 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import { exec as execCb, spawn } from 'node:child_process';
+// node:timers' setTimeout returns a Timeout object with .unref() in both Node and
+// Deno; the global setTimeout under Deno returns a plain number (web spec) and
+// crashes on .unref().
+import { setTimeout, clearTimeout } from 'node:timers';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import '../helpers/custom-asserts.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
+import { terminateChild } from '../helpers/shell.ts';
 
 const exec = promisify(execCb);
 const CLI = path.resolve('cli.ts');
@@ -125,26 +130,16 @@ async function runWatch(dir: string): Promise<string> {
           resolve(buf);
         }
       });
-      child.stderr.resume();
+      // Drain stderr so a noisy cli (diagnostic warnings) can't fill the OS
+      // pipe and stall. Plain .resume() is unreliable under Deno compat.
+      child.stderr.on('data', () => {});
       child.on('error', reject);
     });
   } finally {
-    child.kill('SIGTERM');
-    child.stdin.destroy();
-    child.stdout.destroy();
-    child.stderr.destroy();
-    // Wait for the child to fully exit before releasing the permit. On Windows,
-    // fs.watch holds directory handles; if the process hasn't exited when the
-    // test's finally-block runs fs.rm(), rmdir fails with EBUSY.
-    await new Promise<void>((resolve) => {
-      const t = setTimeout(resolve, 5000);
-      (t as NodeJS.Timeout).unref();
-      child.once('exit', () => {
-        clearTimeout(t);
-        resolve();
-      });
-    });
-    child.unref();
+    // terminateChild awaits 'close' (not 'exit'), so on Windows fs.watch directory
+    // handles inside the child are released before the test's fs.rm() runs —
+    // otherwise rmdir fails with EBUSY.
+    await terminateChild(child);
     permit.release();
   }
 }

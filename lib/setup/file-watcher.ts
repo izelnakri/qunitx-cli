@@ -12,6 +12,19 @@ const CHANGE_DEDUPE_MS = 10;
 const SYMLINK_POLL_INTERVAL_MS = 500;
 const OVERLAYFS_RENAME_RETRY_MS = 50;
 const RESCAN_INTERVAL_MS = 1_000;
+// Rename-event coalescing window. Deno's node:fs.watch compat fires duplicate
+// 'rename' events for the same path under recursive watching (e.g. two
+// consecutive 'rename subdir' events for a single fs.rename). Coalescing
+// duplicates within this window prevents double-classification (e.g. two
+// unlinkDir invocations → two "REMOVED:" prints for one rename).
+const RENAME_DEDUPE_MS = 100;
+// True when this process is the Deno runtime (as opposed to Node). Used to
+// enable a periodic directory rescan as a safety net for Deno's node:fs.watch
+// gaps: on Linux, Deno's recursive watcher silently drops symlink creation /
+// rename events. The same rescan loop already exists for macOS FSEvents drops;
+// extending it to Deno keeps the cli's add/remove detection complete in both
+// environments without a Deno-only fallback path.
+const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== 'undefined';
 // Per-file 'change' coalescing window. fs.writeFile is not atomic on Windows
 // (ReadDirectoryChangesW fires while bytes are still flushing) and the kernel
 // can fire 'change' before the writer has finished — also seen on Linux for
@@ -122,27 +135,46 @@ export function setupFileWatchers(
     // seenMtimeMs: file mtime recorded at the last event (detects echoes vs genuine new writes).
     const lastEventMs: Record<string, number> = {};
     const seenMtimeMs: Record<string, number> = {};
+    // lastRenameMs: per-path timestamp of the most recent 'rename' event, used to drop
+    // duplicate rename events Deno's node:fs.watch compat fires under recursive watching
+    // (observed: a single fs.rename produces 'rename subdir' twice in quick succession,
+    // which without dedup would double-classify as unlinkDir and emit two "REMOVED:" lines).
+    const lastRenameMs: Record<string, number> = {};
+    // Needed so the change-event handler can attribute Deno's empty-filename
+    // events (see below) to watchPath itself. One sync stat at setup time is
+    // negligible (setupFileWatchers runs once at startup, before workers).
+    const watchPathIsFile = fs.statSync(watchPath, { throwIfNoEntry: false })?.isFile() ?? false;
 
     // Child watcher: tracks file-level events within watchPath.
     const childWatcher = fs.watch(watchPath, { recursive: true }, async (eventType, filename) => {
       if (!ready) return;
-      // macOS FSEvents can coalesce events and deliver rename with filename=null under load.
-      // Rescan the directory to find any new/removed files that the null event may be reporting.
+      // Two distinct empty-filename cases:
+      //   (a) macOS FSEvents coalesces under load and delivers events with
+      //       filename=null for a directory; rescan recovers the delta.
+      //   (b) Deno's node:fs.watch on a single FILE (not dir) with
+      //       recursive:true fires 'change' with filename="" — no rescan
+      //       applies because there is nothing to scan, but the event IS for
+      //       watchPath itself. Treat it as basename(watchPath) so the
+      //       existing fullPath derivation below picks it up.
       if (!filename) {
-        if (process.platform === 'darwin' && !rescanInProgress) {
-          rescanInProgress = true;
-          rescanDirectoryForDelta(
-            watchPath,
-            config,
-            extensions,
-            onEventFunc,
-            onFinishFunc,
-            trackSymlink,
-          ).finally(() => {
-            rescanInProgress = false;
-          });
+        if (watchPathIsFile) {
+          filename = path.basename(watchPath);
+        } else {
+          if (process.platform === 'darwin' && !rescanInProgress) {
+            rescanInProgress = true;
+            rescanDirectoryForDelta(
+              watchPath,
+              config,
+              extensions,
+              onEventFunc,
+              onFinishFunc,
+              trackSymlink,
+            ).finally(() => {
+              rescanInProgress = false;
+            });
+          }
+          return;
         }
-        return;
       }
       // When watchPath is a file, fs.watch fires with filename = the file's own basename,
       // making path.join(watchPath, filename) produce the nonsense doubled path "foo.ts/foo.ts".
@@ -184,6 +216,15 @@ export function setupFileWatchers(
         );
         return;
       }
+
+      // Drop duplicate 'rename' events for the same path within RENAME_DEDUPE_MS.
+      // Deno's node:fs.watch compat repeats them under recursive watching; without
+      // this, a single fs.rename produces 'rename subdir' twice → cli classifies
+      // each as unlinkDir → two "REMOVED:" log lines for one logical rename.
+      const renameNow = Date.now();
+      const lastRename = lastRenameMs[fullPath] ?? 0;
+      if (renameNow - lastRename < RENAME_DEDUPE_MS) return;
+      lastRenameMs[fullPath] = renameNow;
 
       // 'rename' event — stat to classify as add / addDir / unlink / unlinkDir.
       const event = await classifyRenameEvent(fullPath, config.fsTree);
@@ -260,7 +301,13 @@ export function setupFileWatchers(
     // *inside* watchPath via rescanDirectoryForDelta, AND missed disappearance of watchPath
     // itself via tryFireParentUnlink — without that second branch, a dropped parent rename
     // event leaves unlinkDir un-fired forever (observed: run 25090075388 timed out at 120 s).
-    if (process.platform === 'darwin') {
+    //
+    // Also on Linux when running under Deno: deno's node:fs.watch compat silently drops
+    // symlink creation/rename events under recursive watching, so the rescan plays the same
+    // role — picks up newly-added symlinks and missed unlinks the kernel notify path didn't
+    // surface. See test/flags/watch-rerun-test.ts "adding a symlink ..." / "renaming a
+    // symlink ..." for the failing scenarios this catches.
+    if (process.platform === 'darwin' || IS_DENO) {
       rescanTimer = setInterval(async () => {
         if (!ready || rescanInProgress || parentUnlinkFired) return;
         if (await tryFireParentUnlink()) return;

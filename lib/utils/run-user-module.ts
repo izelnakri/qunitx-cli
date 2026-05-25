@@ -56,6 +56,16 @@ async function resolveImportTarget(
     target: 'node20',
     nodePaths,
     logLevel: 'silent',
+    // Prefer the `deno` export condition over `node` so package.json conditional
+    // exports resolve to their deno-targeted entries when present. qunitx (and
+    // similar cross-runtime packages) ship a thinner deno bundle that avoids
+    // imports like `node:assert`, which the deno-compile binary only embeds at
+    // build time if cli.ts statically references them — a transitive dynamic
+    // import from a user --before script otherwise fails at runtime on the
+    // OSes whose deno-compile didn't happen to bundle that module
+    // (intermittent under macOS specifically). Fallback chain keeps Node
+    // resolution working unchanged.
+    conditions: ['deno', 'import', 'module', 'node', 'default'],
     // Bundled CJS deps (e.g. `ws` via `qunitx`) call bare `require('events')`.
     // In ESM there is no global `require`; esbuild's `__require` polyfill checks
     // `typeof require !== 'undefined'` and throws otherwise. The banner installs

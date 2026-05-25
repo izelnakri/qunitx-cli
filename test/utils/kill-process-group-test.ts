@@ -3,14 +3,18 @@ import { spawn } from 'node:child_process';
 import { killProcessGroup } from '../../lib/utils/kill-process-group.ts';
 
 module('Utils | killProcessGroup', { concurrency: true }, () => {
+  // POSIX-only tests use `sh -c` rather than process.execPath so they're
+  // runtime-agnostic. Under the Deno-driven test runner, process.execPath is
+  // the deno binary, which doesn't accept node's `-e` / `--input-type=module`
+  // / `--eval` flags. The behavior under test (killProcessGroup) is a wrapper
+  // over `process.kill(-pid)` — what the child process actually runs is
+  // irrelevant, so a 60-second `sleep` from /bin/sh is the simplest stand-in.
+
   test(
     'kills the spawned process when it has no children',
     { skip: process.platform === 'win32' },
     async (assert) => {
-      const proc = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], {
-        detached: true,
-        stdio: 'ignore',
-      });
+      const proc = spawn('sh', ['-c', 'sleep 60'], { detached: true, stdio: 'ignore' });
       proc.unref();
       const pid = proc.pid!;
 
@@ -27,26 +31,14 @@ module('Utils | killProcessGroup', { concurrency: true }, () => {
     'kills the entire process group — parent and its children share the same PGID',
     { skip: process.platform === 'win32' },
     async (assert) => {
-      // Spawn a parent process (detached → PGID = parent.pid).
-      // The parent spawns a grandchild that sleeps; both are in the same process group
-      // because the grandchild inherits the parent's PGID by default.
-      // We read the grandchild PID from stdout so we can verify it was also killed.
-      const parent = spawn(
-        process.execPath,
-        [
-          '--input-type=module',
-          '--eval',
-          `
-          import { spawn } from 'node:child_process';
-          const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], {
-            stdio: 'ignore',
-          });
-          process.stdout.write(String(child.pid) + '\\n');
-          setTimeout(() => {}, 60000);
-          `,
-        ],
-        { detached: true, stdio: ['ignore', 'pipe', 'ignore'] },
-      );
+      // Parent shell backgrounds a `sleep 60` (the grandchild), prints its PID
+      // via $!, then `wait`s to stay alive. detached:true makes the shell a
+      // group leader, so the backgrounded sleep inherits its PGID — the
+      // condition killProcessGroup is supposed to handle.
+      const parent = spawn('sh', ['-c', 'sleep 60 & echo $!; wait'], {
+        detached: true,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
 
       const grandchildPid = await new Promise<number>((resolve, reject) => {
         const timer = setTimeout(

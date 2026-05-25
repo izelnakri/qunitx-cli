@@ -82,3 +82,25 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
 // the cause of a silent death). Goes to stderr so it doesn't interleave with
 // the spec-reporter's stdout output.
 process.stderr.write(`# [worker-preload] active (pid ${process.pid})\n`);
+
+// Final catch-all: when a test file fails to load (top-level import throws,
+// SyntaxError, MODULE_NOT_FOUND, etc.), node:test catches the error and
+// emits a generic file-failed event with `'test failed'` and no detail in
+// the spec reporter. The throw IS still observable on the unhandledRejection
+// path in some Node versions, but the diagnostic landing zone is fragile.
+// Patching console.error and process.nextTick to surface anything written
+// during the import phase gives us a paper trail when the standard handlers
+// stay silent — observed on test (windows-latest) for before-test.ts where
+// `'test failed'` printed with zero accompanying diagnostic and no worker
+// crash signal.
+const originalConsoleError = console.error;
+console.error = function (...args: unknown[]): void {
+  try {
+    process.stderr.write(
+      `# [worker-preload] console.error: ${args.map((a) => (a instanceof Error ? a.stack : String(a))).join(' ')}\n`,
+    );
+  } catch {
+    /* swallow */
+  }
+  return originalConsoleError.apply(console, args as []);
+};
