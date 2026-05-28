@@ -20,10 +20,16 @@ interface Target {
   isZip: boolean;
 }
 
+// Keys are `${Deno.build.os}-${Deno.build.arch}` (see platformKey below).
+// Every entry MUST have a matching artifact published by the build-deno-binaries
+// job in .github/workflows/ci.yml — adding a target here without a release
+// runner produces a 404 for users on that platform.
 const TARGETS: Record<string, Target> = {
-  'linux-x86_64':  { archive: 'qunitx-deno-linux-x64.tar.gz',     bin: 'qunitx',     isZip: false },
-  'darwin-aarch64': { archive: 'qunitx-deno-macos-arm64.tar.gz',  bin: 'qunitx',     isZip: false },
-  'windows-x86_64': { archive: 'qunitx-deno-windows-x64.zip',     bin: 'qunitx.exe', isZip: true  },
+  'linux-x86_64':   { archive: 'qunitx-deno-linux-x64.tar.gz',     bin: 'qunitx',     isZip: false },
+  'linux-aarch64':  { archive: 'qunitx-deno-linux-arm64.tar.gz',   bin: 'qunitx',     isZip: false },
+  'darwin-aarch64': { archive: 'qunitx-deno-macos-arm64.tar.gz',   bin: 'qunitx',     isZip: false },
+  'windows-x86_64': { archive: 'qunitx-deno-windows-x64.zip',      bin: 'qunitx.exe', isZip: true  },
+  'windows-aarch64':{ archive: 'qunitx-deno-windows-arm64.zip',    bin: 'qunitx.exe', isZip: true  },
 };
 
 const platformKey = `${Deno.build.os}-${Deno.build.arch}`;
@@ -39,7 +45,15 @@ if (!home) {
   Deno.exit(1);
 }
 
-const cacheDir = `${home}/.cache/qunitx/${denoJson.version}/${platformKey}`;
+// Per-OS cache root: %LOCALAPPDATA% on Windows (the documented place for
+// app-managed caches), $XDG_CACHE_HOME or ~/.cache elsewhere. Without the
+// Windows branch the binary lands under C:\Users\foo\.cache\qunitx — works,
+// but surprises anyone inspecting %LOCALAPPDATA% to find it.
+const cacheRoot =
+  Deno.build.os === 'windows'
+    ? Deno.env.get('LOCALAPPDATA') ?? `${home}/AppData/Local`
+    : Deno.env.get('XDG_CACHE_HOME') ?? `${home}/.cache`;
+const cacheDir = `${cacheRoot}/qunitx/${denoJson.version}/${platformKey}`;
 const binPath = `${cacheDir}/${target.bin}`;
 
 let binStat: Deno.FileInfo | null = null;
@@ -89,7 +103,7 @@ async function downloadAndExtract(): Promise<void> {
     await extract(archivePath, stageDir, target.isZip);
     // The archive layout is qunitx-deno-<target>/{qunitx[.exe], esbuild[.exe]}.
     const inner = `${stageDir}/${target.archive.replace(/\.(tar\.gz|zip)$/, '')}`;
-    for (const entry of Deno.readDirSync(inner)) {
+    for await (const entry of Deno.readDir(inner)) {
       const dest = `${cacheDir}/${entry.name}`;
       await Deno.rename(`${inner}/${entry.name}`, dest);
       if (Deno.build.os !== 'windows') await Deno.chmod(dest, 0o755);

@@ -11,13 +11,6 @@ name: Test report
 #     annotations — those tokens are unavailable in fork-triggered workflows otherwise.
 #   - Test job stays focused: lint + test + bench. Reporting is decoupled.
 #   - If reporting fails (dorny outage, format change), test job status is unaffected.
-#
-# How junit XMLs flow:
-#   test/runner.ts spawns `node --test --test-reporter=junit
-#     --test-reporter-destination=./tmp/junit-<phase>.xml` per phase (fast / watch-rerun /
-#   leak). ci.yml's test job uploads `tmp/junit-*.xml` as artifact `junit-<os>` per matrix
-#   platform. This workflow downloads them by run-id and feeds them to dorny one platform
-#   at a time so each OS gets its own check run on the PR.
 
 on:
   workflow_run:
@@ -33,8 +26,6 @@ permissions:
 jobs:
   report:
     runs-on: ubuntu-latest
-    # Skip cancelled CI runs — there is nothing to report. Failed runs DO produce junit
-    # XMLs (the upload step uses if: always()) so we still want to render the failures.
     if: github.event.workflow_run.conclusion != 'cancelled'
     env:
       # Opt dorny/test-reporter (still on Node.js 20) into Node.js 24 to silence the

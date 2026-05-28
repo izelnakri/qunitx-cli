@@ -20,6 +20,12 @@ if (mode === 'success') {
 } else if (mode === 'echo-env') {
   // Echo a known env var so the test can assert it was forwarded by the env-prefix parser.
   process.stdout.write(`MY_TEST_VAR=${process.env.MY_TEST_VAR ?? 'unset'}`);
+} else if (mode === 'ready-then-sleep') {
+  // Prints a startup line then idles. Used by shellWatch resilience tests that need a
+  // long-running child whose stdout has emitted at least one chunk so the test can
+  // synchronize on a known marker before triggering stdio events.
+  process.stdout.write('ready\n');
+  setTimeout(() => {}, 30_000);
 } else {
   process.stderr.write(`unknown mode: ${mode}`);
   process.exit(2);
