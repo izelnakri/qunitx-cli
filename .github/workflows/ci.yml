@@ -23,9 +23,6 @@ concurrency:
 # forks don't fire here. Applied to lint / test / bench only — every other job
 # already filters on `refs/heads/main` or `refs/tags/v*`.
 jobs:
-  # ── Lint ──────────────────────────────────────────────────────────────────────
-  # Surfaces formatting (prettier) and code-quality (deno lint) failures fast,
-  # independent of the slower test job.
   lint:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
     runs-on: ubuntu-latest
@@ -43,17 +40,8 @@ jobs:
       - run: npm run format
       - run: npm run lint
       - run: npm run lint:docs
-      # Type-check bench files under Deno so Node-globals leaking into shared lib/
-      # code (e.g. raw `Buffer` references without a node:buffer import) fails fast
-      # in lint instead of only surfacing in the bench job.
       - run: deno check 'benches/**/*.ts'
 
-  # ── Test ──────────────────────────────────────────────────────────────────────
-  # Runs in parallel with lint. Test files run concurrently — safe because each
-  # CLI invocation gets a unique --output dir and the port binder starts from
-  # 1234 and auto-increments on EADDRINUSE to avoid collisions.
-  # Matrix covers all three platforms so Chromium behaviour is verified on each OS.
-  # macOS/Windows get extra time: Chrome startup and I/O are slower off Linux.
   test:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
     name: test (${{ matrix.os }})
@@ -94,11 +82,6 @@ jobs:
       # testing and handles this correctly. Pre-launch is skipped on macOS (chrome-prelaunch.ts).
       - run: node_modules/.bin/playwright-core install chromium-headless-shell
         if: runner.os == 'macOS'
-      # Ubuntu only: wrap the test run with c8 to collect V8 coverage from all child
-      # node processes (the CLI subprocesses spawned by tests). c8 sets NODE_V8_COVERAGE
-      # so every `node cli.ts` invocation writes coverage data; c8 merges them and emits
-      # coverage/lcov.info for Codecov. Running coverage here (instead of a separate job)
-      # avoids re-running the full test suite a second time on a dedicated runner.
       - run: npx c8 --reporter=lcov --reporter=text --reporter=html npm test
         if: matrix.os == 'ubuntu-latest'
         env:
@@ -140,15 +123,6 @@ jobs:
           retention-days: 3
           if-no-files-found: ignore
 
-  # ── Bench ─────────────────────────────────────────────────────────────────────
-  # Runs the full bench suite (esbuild, HTTP server, TAP display, e2e, daemon)
-  # against the saved baseline in benches/results.json on every push and PR,
-  # failing the job if any bench regresses past REGRESSION_THRESHOLD (default
-  # 26%, with a 1µs absolute-delta floor — see scripts/check-benchmarks.ts).
-  # Chrome is required because the e2e + daemon benches spawn `node cli.ts`.
-  # If a bench becomes flaky on GHA's noisy shared runners, set
-  # SKIP_BENCHMARK=<basename> in env to skip only that file, or =true to
-  # skip the whole gate while you investigate.
   bench:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
     runs-on: ubuntu-latest
@@ -221,8 +195,6 @@ jobs:
           mkdir -p dist
           deno task build:binary
           # @esbuild/<pkg> layout differs by platform: POSIX ships under bin/,
-          # Windows puts esbuild.exe at the package root (no bin/ dir). Mirror
-          # the existing `build-binaries` job's matrix paths.
           case "${{ runner.os }}-${{ runner.arch }}" in
             Linux-X64)   SRC=node_modules/@esbuild/linux-x64/bin/esbuild;    DST=dist/esbuild;;
             macOS-ARM64) SRC=node_modules/@esbuild/darwin-arm64/bin/esbuild; DST=dist/esbuild;;
@@ -230,8 +202,6 @@ jobs:
             *) echo "Unsupported ${{ runner.os }}-${{ runner.arch }}" >&2; exit 1;;
           esac
           cp "$SRC" "$DST"
-      # Git Bash $(pwd) returns a POSIX-style path (/d/a/...) that Node.spawn
-      # cannot pass to a .exe; pwd -W returns the Windows form (D:/a/...).
       - name: Run test suite under Deno runner + binary
         if: runner.os != 'Windows'
         shell: bash
@@ -375,9 +345,6 @@ jobs:
       - id: deploy
         uses: actions/deploy-pages@v5
 
-  # ── Docker nightly ─────────────────────────────────────────────────────────────
-  # Builds and pushes a `nightly` image to GHCR on every successful main-branch
-  # push. PRs only build (no push) so the image cache stays warm for main.
   docker-nightly:
     if: github.ref == 'refs/heads/main'
     needs: [lint, test]
@@ -414,8 +381,6 @@ jobs:
   # Packs the built artefact, installs it into a throwaway consumer directory,
   # and runs the test suite with QUNITX_BIN pointing at the installed binary —
   # catching packaging bugs that source tests cannot see.
-  # Mirrors browser-compat.yml: chromium runs the full suite, firefox/webkit
-  # run only the browser-specific subset (test:browser) at concurrency=1.
   release-consumer-test:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [lint, test]
@@ -461,10 +426,7 @@ jobs:
       - name: Get Playwright version
         if: matrix.browser != 'chromium'
         id: pw-version
-        # See browser-compat.yml: bash is mandatory so the bash-shaped echo runs
-        # under bash on every OS instead of silently no-op'ing in PowerShell on
-        # windows-latest (would leave version empty → `npx playwright@` → latest
-        # → mismatched firefox build vs pinned playwright-core).
+        # shell: bash is mandatory, PowerShell can't parse `$(...)` or `"$GITHUB_OUTPUT"`
         shell: bash
         run: echo "version=$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
 
@@ -497,12 +459,6 @@ jobs:
   # dist/qunitx + esbuild sidecar in-job from the current ref's source (same
   # shape as release-consumer-test using `npm pack` to package locally), then
   # runs the test suite with QUNITX_BIN pointing at the freshly-built binary.
-  # Self-contained — no `needs:` on build-deno-binaries — so the test always
-  # exercises HEAD's code without cross-job artifact plumbing.
-  #
-  # Same browser matrix shape as release-consumer-test (chromium runs the full
-  # suite, firefox/webkit run test:browser only) so per-platform packaging
-  # surprises are caught before the release ships.
   release-consumer-test-deno:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [lint, test]
@@ -553,10 +509,7 @@ jobs:
       - name: Get Playwright version
         if: matrix.browser != 'chromium'
         id: pw-version
-        # See browser-compat.yml: bash is mandatory so the bash-shaped echo runs
-        # under bash on every OS instead of silently no-op'ing in PowerShell on
-        # windows-latest (would leave version empty → `npx playwright@` → latest
-        # → mismatched firefox build vs pinned playwright-core).
+        # shell: bash is mandatory, PowerShell can't parse `$(...)` or `"$GITHUB_OUTPUT"`
         shell: bash
         run: echo "version=$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
 
@@ -653,8 +606,6 @@ jobs:
       - run: npm ci
 
       # Bundle the entire CLI (including esbuild's JS) into a single CJS file.
-      # fsevents is the only optional native addon — mark it external so esbuild
-      # skips it cleanly (chokidar falls back to polling without it).
       # The banner preamble runs first and sets ESBUILD_BINARY_PATH so the
       # bundled esbuild JS finds the native binary next to the executable.
       - name: Bundle CLI to CJS
@@ -769,6 +720,10 @@ jobs:
             target: linux-x64
             esbuild_src: node_modules/@esbuild/linux-x64/bin/esbuild
             esbuild_dst: esbuild
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            esbuild_src: node_modules/@esbuild/linux-arm64/bin/esbuild
+            esbuild_dst: esbuild
           - os: macos-latest
             target: macos-arm64
             esbuild_src: node_modules/@esbuild/darwin-arm64/bin/esbuild
@@ -776,6 +731,10 @@ jobs:
           - os: windows-latest
             target: windows-x64
             esbuild_src: node_modules/@esbuild/win32-x64/esbuild.exe
+            esbuild_dst: esbuild.exe
+          - os: windows-11-arm
+            target: windows-arm64
+            esbuild_src: node_modules/@esbuild/win32-arm64/esbuild.exe
             esbuild_dst: esbuild.exe
 
     steps:

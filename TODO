@@ -1,12 +1,6 @@
-CI failed/flaky: https://github.com/izelnakri/qunitx-cli/actions/runs/25402906763/job/74506749888
-
 Also make sure cli/binary can be built in deno and would work on macos and windows
 
-https://www.youtube.com/watch?v=SaZEdiV3A3M
-
 - investigate take screenshot feature & visual diffing(implement it percy-like)
-
-daemon mode claude session: claude --resume b0edfd88-98cb-4111-8322-f103e6d41515
 
 qunitx-cli JS API should be very usable from outside by JS/TS only, by users of this library. Do them, document it well
 in the codebase and also on the README.md(if needed). claude --resume 5d51cdce-b6b3-4580-8bb9-94649a17da2c
@@ -31,8 +25,7 @@ Maybe move BundleError to ./errors directory
 - check if there are any variables we can remove and/or rename on lib/types.ts
 
 
-● Looked through the README, CLI flags, TAP output, and existing keyboard/watcher infra. Here are the ones I'd argue clear the "significant UX win" bar — ranked by how much they
-  actually change the day-to-day:
+● Looked through the README, CLI flags, TAP output, and existing keyboard/watcher infra. Here are the ones I'd argue clear the "significant UX win" bar — ranked by how much they actually change the day-to-day:
 
   1. --only-failed / persistent failure cache
 
@@ -62,3 +55,4 @@ Maybe move BundleError to ./errors directory
   Not glamorous, but JUnit XML is the format every enterprise CI dashboard ingests natively (GitHub Actions test summary, GitLab MR view, CircleCI Insights, BuildKite, Jenkins).
   Without it, adoption hits a wall in CI orgs that don't speak TAP. Mechanical to add — open a write stream, accumulate <testcase> per testEnd, flush on runEnd.
 
+- Test and optimize Dockerfile
