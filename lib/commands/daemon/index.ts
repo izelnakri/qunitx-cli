@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
 import fs, { existsSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { blue, magenta } from '../../utils/color.ts';
-import { daemonInfoPath, daemonSocketPath } from '../../utils/daemon-socket-path.ts';
+import { daemonInfoPath, daemonSocketPath, daemonDir } from '../../utils/daemon-socket-path.ts';
 import { parseDaemonIdleTimeout } from '../../utils/parse-daemon-idle-timeout.ts';
 import { pingDaemon, shutdownDaemon } from './client.ts';
 import pkg from '../../../package.json' with { type: 'json' };
@@ -183,6 +184,12 @@ async function spawnAndWaitForDaemon(): Promise<{ pid: number } | null> {
   // load-bearing (i.e. a fresh spawn).
   const parsed = parseDaemonIdleTimeout(process.env.QUNITX_DAEMON_IDLE_TIMEOUT);
   if (parsed.warning) process.stderr.write(parsed.warning + '\n');
+
+  // Create the per-cwd daemon dir on the client side BEFORE waitForFile attaches
+  // fs.watch to it. The daemon process also mkdir's it (idempotent), but that
+  // happens after spawn → race window where fs.watch fires ENOENT. Doing it
+  // here closes the race; recursive:true is safe across concurrent attempts.
+  await mkdir(daemonDir(), { recursive: true });
 
   // Detached so the daemon outlives the current shell. stdio: 'ignore' detaches all
   // pipes; daemon writes its own startup line to its stderr (now /dev/null analogue).

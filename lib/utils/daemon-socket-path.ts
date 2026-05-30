@@ -29,11 +29,35 @@ export function daemonSocketPath(
 }
 
 /**
+ * Returns the per-cwd subdirectory that holds the daemon's info file, lockfile,
+ * and any future per-daemon state.
+ *
+ * Why a subdirectory instead of files directly under os.tmpdir():
+ * the client's `waitForFile` (see lib/commands/daemon/index.ts) calls
+ * `fs.watch(path.dirname(daemonInfoPath()))` to detect daemon-readiness.
+ * On Windows, `fs.watch` on `os.tmpdir()` itself crashes the process with
+ * `Assertion failed: !_wcsnicmp(filename, dir, dirlen), file src\win\fs-event.c, line 72`
+ * (libuv exit code 3221226505 / STATUS_STACK_BUFFER_OVERRUN) when concurrent
+ * tests churn the system temp root with unrelated file events whose absolute
+ * paths don't case-insensitively start with the watched dir prefix —
+ * reproducible on hosted windows-latest under the test (windows-latest) lane.
+ *
+ * Giving the daemon its own small private directory keeps watch traffic to
+ * events the watcher actually cares about and sidesteps the libuv wart.
+ */
+export function daemonDir(cwd: string = process.cwd()): string {
+  return path.join(os.tmpdir(), `qunitx-daemon-${cwdHash(cwd)}`);
+}
+
+/**
  * Returns the per-cwd sidecar JSON path that mirrors the daemon's socket. Lets
  * `daemon status` introspect daemon identity (pid, node version, uptime) without
  * an IPC roundtrip, and serves as the cross-platform "is a daemon present?" sentinel
  * since Windows named pipes are not visible on the regular filesystem.
+ *
+ * Lives inside `daemonDir(cwd)` rather than directly under os.tmpdir() — see
+ * `daemonDir` for the Windows-fs.watch crash this avoids.
  */
 export function daemonInfoPath(cwd: string = process.cwd()): string {
-  return path.join(os.tmpdir(), `qunitx-daemon-${cwdHash(cwd)}.json`);
+  return path.join(daemonDir(cwd), 'info.json');
 }

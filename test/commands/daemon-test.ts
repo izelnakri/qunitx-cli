@@ -408,6 +408,11 @@ module('Commands | Daemon | lifecycle', { concurrency: true }, () => {
         `synthetic deadPid ${deadPid} is dead (sanity check)`,
       );
       const lockPath = `${project.infoPath}.lock`;
+      // The daemon directory is created on first `daemon start` (or by the
+      // client's spawnAndWaitForDaemon mkdir). For this test we're simulating
+      // a STALE lockfile from a prior daemon — its dir must exist before we
+      // can write the lockfile inside it. recursive:true is idempotent.
+      await fs.mkdir(path.dirname(lockPath), { recursive: true });
       await fs.writeFile(lockPath, String(deadPid));
       assert.ok(existsSync(lockPath), 'stale lockfile present pre-start');
 

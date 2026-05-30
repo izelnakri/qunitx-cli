@@ -1,11 +1,11 @@
 import net from 'node:net';
 import fs from 'node:fs';
-import { writeFile, unlink, stat, chmod, readFile, link } from 'node:fs/promises';
+import { writeFile, unlink, stat, chmod, readFile, link, mkdir, rmdir } from 'node:fs/promises';
 import path from 'node:path';
 // See lib/commands/run.ts: node:timers returns the unref-capable Timer object
 // in both Node and Deno; the bare setTimeout global in Deno is the Web variant.
 import { setTimeout, clearTimeout } from 'node:timers';
-import { daemonSocketPath, daemonInfoPath } from '../../utils/daemon-socket-path.ts';
+import { daemonSocketPath, daemonInfoPath, daemonDir } from '../../utils/daemon-socket-path.ts';
 import { parseDaemonIdleTimeout } from '../../utils/parse-daemon-idle-timeout.ts';
 import { attachLineParser } from './socket-utils.ts';
 import { setupConfig } from '../../setup/config.ts';
@@ -160,6 +160,13 @@ export async function runDaemonServer(): Promise<void> {
   const socketPath = daemonSocketPath(cwd);
   const infoPath = daemonInfoPath(cwd);
   const lockPath = `${infoPath}.lock`;
+
+  // Ensure the per-cwd daemon directory exists before tryAcquireDaemonLock
+  // touches any file inside it (it writeFile()s a tmp file then link()s it
+  // onto lockPath — both fail with ENOENT if the parent isn't there).
+  // recursive:true is idempotent across the race: concurrent daemon attempts
+  // each create-or-find the same dir; only one wins the lock below.
+  await mkdir(daemonDir(cwd), { recursive: true });
 
   // Atomic race-resolution: whoever creates the lockfile is the sole daemon
   // for this cwd. Losers exit 0; their client poll finds the winner's info
@@ -351,6 +358,12 @@ async function shutdownDaemon(state: DaemonState, reason: string): Promise<void>
     browser?.close().catch(() => {}),
     state.esbuildCache._esbuildContext?.dispose().catch(() => {}),
   ]);
+  // Best-effort cleanup of the per-cwd daemon dir created in runDaemonServer.
+  // rmdir refuses non-empty dirs (we swallow the ENOTEMPTY) so a concurrent
+  // sibling that re-created files inside is never trampled. Skip on POSIX
+  // socket path? — socketPath lives outside daemonDir, so the dir is empty
+  // after the unlinks above unless another actor wrote to it.
+  await rmdir(daemonDir(process.cwd())).catch(() => {});
   process.exit(0);
 }
 
