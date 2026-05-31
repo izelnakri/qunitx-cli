@@ -23,24 +23,6 @@ const SHUTDOWN_PID_WAIT_MS = CLEANUP_GRACE_MS;
 // follow-up `daemon start` snappy without burning CPU.
 const SHUTDOWN_PID_POLL_MS = 50;
 
-/**
- * True if the run could meaningfully use a daemon: not opted out, not a watch/open
- * mode (those need their own browser lifecycle locally). CI is bypassed by default
- * (single-invocation CI jobs lose to daemon's spawn cost) but `QUNITX_DAEMON=1`
- * overrides — multi-invocation CI flows (monorepos running qunitx per package) can
- * opt in. Explicit user intent always beats environment-driven default.
- */
-function isDaemonEligible(): boolean {
-  if (process.env.QUNITX_NO_DAEMON) return false;
-  if (process.env.CI && !process.env.QUNITX_DAEMON) return false;
-  for (const arg of process.argv) {
-    if (arg === '--no-daemon') return false;
-    if (arg === '--watch' || arg === '-w') return false;
-    if (arg === '--open' || arg === '-o' || arg.startsWith('--open=')) return false;
-  }
-  return true;
-}
-
 // daemonInfoPath() is the cross-platform "is a daemon present?" sentinel — checked
 // rather than the socket itself because on Windows named pipes (\\.\pipe\...) are
 // not visible to existsSync. The info file is created at startup and unlinked at
@@ -69,19 +51,6 @@ export function shouldAutoSpawnDaemon(): boolean {
  */
 export function tryConnect(cwd: string = process.cwd()): Promise<net.Socket | null> {
   return probeSocket(daemonSocketPath(cwd), CONNECT_TIMEOUT_MS);
-}
-
-function send(socket: net.Socket, req: Request): void {
-  socket.write(JSON.stringify(req) + '\n');
-}
-
-/** Awaits socket close (any path: end / close / error). */
-function awaitClose(socket: net.Socket): Promise<void> {
-  return new Promise((resolve) => {
-    socket.once('end', () => resolve());
-    socket.once('close', () => resolve());
-    socket.once('error', () => resolve());
-  });
 }
 
 /** Sends a `ping` and resolves the daemon's `pong` response (or `null` on failure). */
@@ -130,38 +99,6 @@ export async function shutdownDaemon(cwd: string = process.cwd()): Promise<boole
   return true;
 }
 
-async function readDaemonPid(cwd: string = process.cwd()): Promise<number | null> {
-  try {
-    const info = JSON.parse(await fs.readFile(daemonInfoPath(cwd), 'utf8')) as { pid?: unknown };
-    return typeof info.pid === 'number' ? info.pid : null;
-  } catch {
-    return null;
-  }
-}
-
-function waitForPidExit(pid: number, timeoutMs: number): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const deadline = Date.now() + timeoutMs;
-    const poll = (): void => {
-      if (!pidIsAlive(pid) || Date.now() >= deadline) return resolve();
-      setTimeout(poll, SHUTDOWN_PID_POLL_MS);
-    };
-    poll();
-  });
-}
-
-function pidIsAlive(pid: number): boolean {
-  // process.kill(pid, 0) is the portable "does this pid exist?" check. Throws
-  // ESRCH when gone, EPERM when alive but not signalable. Daemon is our own
-  // child so EPERM is unexpected — treat as alive defensively.
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
 /**
  * Sends `argv` to the daemon and streams its TAP output back to local stdout/stderr.
  * Returns the exit code reported by the daemon. Throws if the connection fails.
@@ -207,5 +144,68 @@ export async function runViaDaemon(argv: string[]): Promise<number> {
     return await exitCode;
   } finally {
     process.removeListener('SIGINT', onSigint);
+  }
+}
+
+/**
+ * True if the run could meaningfully use a daemon: not opted out, not a watch/open
+ * mode (those need their own browser lifecycle locally). CI is bypassed by default
+ * (single-invocation CI jobs lose to daemon's spawn cost) but `QUNITX_DAEMON=1`
+ * overrides — multi-invocation CI flows (monorepos running qunitx per package) can
+ * opt in. Explicit user intent always beats environment-driven default.
+ */
+function isDaemonEligible(): boolean {
+  if (process.env.QUNITX_NO_DAEMON) return false;
+  if (process.env.CI && !process.env.QUNITX_DAEMON) return false;
+  for (const arg of process.argv) {
+    if (arg === '--no-daemon') return false;
+    if (arg === '--watch' || arg === '-w') return false;
+    if (arg === '--open' || arg === '-o' || arg.startsWith('--open=')) return false;
+  }
+  return true;
+}
+
+function send(socket: net.Socket, req: Request): void {
+  socket.write(JSON.stringify(req) + '\n');
+}
+
+/** Awaits socket close (any path: end / close / error). */
+function awaitClose(socket: net.Socket): Promise<void> {
+  return new Promise((resolve) => {
+    socket.once('end', () => resolve());
+    socket.once('close', () => resolve());
+    socket.once('error', () => resolve());
+  });
+}
+
+async function readDaemonPid(cwd: string = process.cwd()): Promise<number | null> {
+  try {
+    const info = JSON.parse(await fs.readFile(daemonInfoPath(cwd), 'utf8')) as { pid?: unknown };
+    return typeof info.pid === 'number' ? info.pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function waitForPidExit(pid: number, timeoutMs: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const deadline = Date.now() + timeoutMs;
+    const poll = (): void => {
+      if (!pidIsAlive(pid) || Date.now() >= deadline) return resolve();
+      setTimeout(poll, SHUTDOWN_PID_POLL_MS);
+    };
+    poll();
+  });
+}
+
+function pidIsAlive(pid: number): boolean {
+  // process.kill(pid, 0) is the portable "does this pid exist?" check. Throws
+  // ESRCH when gone, EPERM when alive but not signalable. Daemon is our own
+  // child so EPERM is unexpected — treat as alive defensively.
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
   }
 }

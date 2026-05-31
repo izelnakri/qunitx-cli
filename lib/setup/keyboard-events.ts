@@ -33,8 +33,8 @@ export function setupKeyboardEvents(
   });
 }
 
+export { setupKeyboardEvents as default };
+
 function abortBrowserQUnit(_config: Config, connections: Connections): void {
   connections.server.publish('abort');
 }
-
-export { setupKeyboardEvents as default };

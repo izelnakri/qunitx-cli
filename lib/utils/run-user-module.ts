@@ -5,6 +5,40 @@ import path from 'node:path';
 import { red } from './color.ts';
 
 /**
+ * Dynamically imports `modulePath` and calls its default export with `params`; exits with code 1 on error.
+ * @returns {Promise<void>}
+ */
+export async function runUserModule(
+  modulePath: string,
+  params: unknown,
+  scriptPosition: string,
+): Promise<void> {
+  const { url, cleanup } = await resolveImportTarget(modulePath);
+  try {
+    const func = await import(url);
+    if (func) {
+      func.default
+        ? await func.default(params)
+        : typeof func === 'function'
+          ? await func(params)
+          : null;
+    }
+  } catch (error) {
+    console.log('#', red(`QUnitX ${scriptPosition} script failed:`));
+    console.trace(error);
+    console.error(error);
+
+    // Flush stdout before exiting — in piped contexts stdout is buffered and
+    // process.exit() can drop pending writes before they reach the OS.
+    process.stdout.write('', () => process.exit(1));
+  } finally {
+    await cleanup();
+  }
+}
+
+export { runUserModule as default };
+
+/**
  * True when running inside a `deno compile`d binary (vs `deno run script.ts` or
  * plain Node). Detection is on `process.execPath`: under `deno run` it ends with
  * `deno` (or `deno.exe` on Windows); inside a compiled binary it's the user's
@@ -80,37 +114,3 @@ async function resolveImportTarget(
     cleanup: () => rm(stageDir, { recursive: true, force: true }).catch(() => {}),
   };
 }
-
-/**
- * Dynamically imports `modulePath` and calls its default export with `params`; exits with code 1 on error.
- * @returns {Promise<void>}
- */
-export async function runUserModule(
-  modulePath: string,
-  params: unknown,
-  scriptPosition: string,
-): Promise<void> {
-  const { url, cleanup } = await resolveImportTarget(modulePath);
-  try {
-    const func = await import(url);
-    if (func) {
-      func.default
-        ? await func.default(params)
-        : typeof func === 'function'
-          ? await func(params)
-          : null;
-    }
-  } catch (error) {
-    console.log('#', red(`QUnitX ${scriptPosition} script failed:`));
-    console.trace(error);
-    console.error(error);
-
-    // Flush stdout before exiting — in piped contexts stdout is buffered and
-    // process.exit() can drop pending writes before they reach the OS.
-    process.stdout.write('', () => process.exit(1));
-  } finally {
-    await cleanup();
-  }
-}
-
-export { runUserModule as default };

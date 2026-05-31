@@ -484,6 +484,9 @@ export async function run(config: Config): Promise<void> {
   }
 }
 
+export { readTimingCache, computeFileTimes, buildCachedContent };
+export { run as default };
+
 /**
  * Reads each HTML fixture file referenced by the config, classifies them as
  * dynamic (have qunitx tokens, get bundle-injection at request time) or static,
@@ -679,6 +682,3 @@ function resolveQunitxRoot(projectRoot: string): string {
   if (!match) throw new Error(`Could not derive qunitx root from ${mainEntry}`);
   return match[1];
 }
-
-export { readTimingCache, computeFileTimes, buildCachedContent };
-export { run as default };
