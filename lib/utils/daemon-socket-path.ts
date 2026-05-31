@@ -2,13 +2,6 @@ import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
-// Socket path is derived from the cwd hash so each project gets its own daemon.
-// Hash truncated to 12 hex chars: 48 bits, collision-resistant for the small set
-// of cwds a developer machine ever uses simultaneously.
-function cwdHash(cwd: string): string {
-  return createHash('sha256').update(cwd).digest('hex').slice(0, 12);
-}
-
 /**
  * Returns the per-cwd path the daemon listens on. Platform-specific:
  *
@@ -60,4 +53,11 @@ export function daemonDir(cwd: string = process.cwd()): string {
  */
 export function daemonInfoPath(cwd: string = process.cwd()): string {
   return path.join(daemonDir(cwd), 'info.json');
+}
+
+// Socket path is derived from the cwd hash so each project gets its own daemon.
+// Hash truncated to 12 hex chars: 48 bits, collision-resistant for the small set
+// of cwds a developer machine ever uses simultaneously.
+function cwdHash(cwd: string): string {
+  return createHash('sha256').update(cwd).digest('hex').slice(0, 12);
 }

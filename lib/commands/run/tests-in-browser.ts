@@ -618,6 +618,22 @@ export async function buildAllGroupBundles(
   }
 }
 
+/**
+ * Thrown in daemon mode in place of `process.exit(code)` so the caller (the daemon
+ * server's run handler) can capture the exit code, restore stdout interception, and
+ * keep the daemon process alive for the next run.
+ */
+export class DaemonRunError extends Error {
+  /** The exit code that the run would have passed to `process.exit()` outside of daemon mode. */
+  exitCode: number;
+  /** Constructs a DaemonRunError carrying the run's exit code. */
+  constructor(exitCode: number) {
+    super(`daemon run finished with exit code ${exitCode}`);
+    this.name = 'DaemonRunError';
+    this.exitCode = exitCode;
+  }
+}
+
 export { runTestsInBrowser as default };
 
 function buildFilteredTests(
@@ -966,22 +982,6 @@ class BundleError extends Error {
     super(message);
     this.name = 'BundleError';
     this.message = `esbuild Bundle Error: ${message}`.split('\n').join('\n# ');
-  }
-}
-
-/**
- * Thrown in daemon mode in place of `process.exit(code)` so the caller (the daemon
- * server's run handler) can capture the exit code, restore stdout interception, and
- * keep the daemon process alive for the next run.
- */
-export class DaemonRunError extends Error {
-  /** The exit code that the run would have passed to `process.exit()` outside of daemon mode. */
-  exitCode: number;
-  /** Constructs a DaemonRunError carrying the run's exit code. */
-  constructor(exitCode: number) {
-    super(`daemon run finished with exit code ${exitCode}`);
-    this.name = 'DaemonRunError';
-    this.exitCode = exitCode;
   }
 }
 
