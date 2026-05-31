@@ -113,28 +113,42 @@ async function runServeMode(): Promise<number> {
   return 0;
 }
 
-// Polling fallback interval for waitForFile. Linux inotify silently drops events
-// when /proc/sys/fs/inotify/max_queued_events overflows (default 16384) — under
-// the parallel daemon test load this CAN happen: `tmp/qunitx-daemon-*` files +
-// the suite's broader watcher activity share the /tmp event queue. macOS FSEvents
-// also coalesces under load. A dropped event would otherwise burn the full
-// SPAWN_TIMEOUT_MS budget (120 s) even though the file is on disk within ms.
-// 2 s is short enough that worst-case latency stays well under the timeout and
-// long enough that polling cost is negligible (60 stats over the full budget).
-const WAIT_FOR_FILE_POLL_MS = 2_000;
+// Polling interval for waitForFile.
+//
+// POSIX (2 s): event-driven via fs.watch is the fast path; polling is a
+// safety net for kernel notification drops (inotify queue overflow on Linux,
+// FSEvents coalescing on macOS under load). 2 s is short enough that
+// worst-case latency stays well under SPAWN_TIMEOUT_MS (120 s) and long
+// enough that polling cost is negligible (60 stats over the full budget).
+//
+// Windows (100 ms): polling IS the fast path — fs.watch is disabled (see
+// waitForFile). Tighter interval keeps latency snappy. 100 ms × 1200 polls
+// = SPAWN_TIMEOUT_MS = 120 s, 6 µs per stat ≈ <8 ms of total CPU.
+const WAIT_FOR_FILE_POLL_MS = process.platform === 'win32' ? 100 : 2_000;
 
 /**
- * Event-driven wait for `filePath` to appear, bounded by `timeoutMs`. Subscribes via
- * `fs.watch` on the parent directory — kernel notifications (inotify / FSEvents /
- * ReadDirectoryChangesW) deliver events sub-ms after file creation, so detection
- * latency is OS-bound when events flow correctly. A periodic existsSync poll runs
- * alongside to catch dropped events (inotify queue overflow on Linux, FSEvents
- * coalescing on macOS under load): without the poll a single dropped notification
- * costs the entire timeoutMs even though the file is on disk.
+ * Bounded wait for `filePath` to appear, returning `true` on success or `false`
+ * after `timeoutMs`.
  *
- * Two `existsSync` calls bracket the watcher attachment to close the TOCTOU gap:
- * the file may appear between the entry-point check and `fs.watch` actually being
- * subscribed in the kernel. Multiple `settle` calls are harmless: `resolve`,
+ * POSIX: subscribes to fs.watch on the parent directory for sub-ms detection
+ * (kernel notify path), with a polling fallback to catch dropped events.
+ *
+ * Windows: polls only — fs.watch on Windows occasionally crashes the process
+ * with
+ *   Assertion failed: !_wcsnicmp(filename, dir, dirlen),
+ *     file src\win\fs-event.c, line 72
+ * (libuv exit 3221226505 / STATUS_STACK_BUFFER_OVERRUN) when path normalisation
+ * inside libuv produces a prefix mismatch between the watched directory and the
+ * event's absolute path. Even watching a small private subdir doesn't reliably
+ * dodge it under parallel CI load (reproduced on test (windows-latest) and
+ * test-deno (windows-latest) in CI runs 26552908498 / 26694937698). The
+ * 100 ms poll gives near-event-driven latency without the crash; daemon
+ * startup takes 0.8-12 s on Windows so the extra 50 ms average detection
+ * latency is irrelevant.
+ *
+ * Two `existsSync` calls bracket subscription to close the TOCTOU gap: the
+ * file may appear between the entry-point check and the watcher/interval
+ * actually being live. Multiple `settle` calls are harmless: `resolve`,
  * `clearTimeout`, `clearInterval`, and `fsWatcher.close` are all idempotent.
  */
 function waitForFile(filePath: string, timeoutMs: number): Promise<boolean> {
@@ -142,22 +156,25 @@ function waitForFile(filePath: string, timeoutMs: number): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     const dir = path.dirname(filePath);
     const fileName = path.basename(filePath);
+    let watcher: fs.FSWatcher | null = null;
     const settle = (ok: boolean) => {
       clearTimeout(timer);
       clearInterval(poll);
-      watcher.close();
+      watcher?.close();
       resolve(ok);
     };
     const timer = setTimeout(() => settle(false), timeoutMs);
     const poll = setInterval(() => {
       if (existsSync(filePath)) settle(true);
     }, WAIT_FOR_FILE_POLL_MS);
-    const watcher = fs.watch(dir, (_event, name) => {
-      // Reconfirm with existsSync — fs.watch fires for both create and unlink.
-      if (name === fileName && existsSync(filePath)) settle(true);
-    });
-    watcher.on('error', () => settle(false));
-    // Re-check now that the kernel watch is live (TOCTOU close).
+    if (process.platform !== 'win32') {
+      watcher = fs.watch(dir, (_event, name) => {
+        // Reconfirm with existsSync — fs.watch fires for both create and unlink.
+        if (name === fileName && existsSync(filePath)) settle(true);
+      });
+      watcher.on('error', () => settle(false));
+    }
+    // Re-check now that the watch/poll is live (TOCTOU close).
     if (existsSync(filePath)) settle(true);
   });
 }

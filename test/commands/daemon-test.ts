@@ -108,27 +108,45 @@ async function ensureDaemonStopped(project: DaemonProject): Promise<void> {
 
 /**
  * Resolves `true` once `filePath` no longer exists, or `false` on timeout.
- * Event-driven: subscribes to `fs.watch` on the parent directory and reacts to the
- * kernel's unlink notification (sub-ms latency, zero CPU between events). Inverse
- * of `waitForFile` in `lib/commands/daemon/index.ts`. The two `existsSync` checks
- * bracket the watcher attachment to close the TOCTOU gap — the file may disappear
- * between the entry-point check and the kernel watch becoming active.
+ *
+ * POSIX: subscribes to `fs.watch` on the parent directory and reacts to the
+ * kernel's unlink notification (sub-ms latency, zero CPU between events).
+ *
+ * Windows: polls with `existsSync` every 100 ms — fs.watch on Windows can
+ * crash the process with the libuv `_wcsnicmp` assertion (see waitForFile in
+ * lib/commands/daemon/index.ts for the full story). 100 ms keeps detection
+ * latency low; daemon shutdown takes hundreds of ms anyway so the extra
+ * polling cost is negligible.
+ *
+ * Both paths bracket subscription with `existsSync` to close the TOCTOU gap
+ * — the file may disappear between the entry-point check and the watch/poll
+ * actually being live.
  */
 function waitForFileGone(filePath: string, timeoutMs: number): Promise<boolean> {
   if (!existsSync(filePath)) return Promise.resolve(true);
   return new Promise<boolean>((resolve) => {
     const dir = path.dirname(filePath);
     const fileName = path.basename(filePath);
+    let watcher: nodeFs.FSWatcher | null = null;
     const settle = (gone: boolean) => {
       clearTimeout(timer);
-      watcher.close();
+      clearInterval(poll);
+      watcher?.close();
       resolve(gone);
     };
     const timer = setTimeout(() => settle(false), timeoutMs);
-    const watcher = nodeFs.watch(dir, (_event, name) => {
-      if (name === fileName && !existsSync(filePath)) settle(true);
-    });
-    watcher.on('error', () => settle(false));
+    const poll = setInterval(
+      () => {
+        if (!existsSync(filePath)) settle(true);
+      },
+      process.platform === 'win32' ? 100 : 2_000,
+    );
+    if (process.platform !== 'win32') {
+      watcher = nodeFs.watch(dir, (_event, name) => {
+        if (name === fileName && !existsSync(filePath)) settle(true);
+      });
+      watcher.on('error', () => settle(false));
+    }
     if (!existsSync(filePath)) settle(true);
   });
 }
