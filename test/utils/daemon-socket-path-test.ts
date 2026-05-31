@@ -80,7 +80,8 @@ module('Utils | daemonInfoPath', { concurrency: true }, () => {
     const sock = daemonSocketPath(FIXED_CWD, 'linux');
     const info = daemonInfoPath(FIXED_CWD);
     const sockHash = /-([0-9a-f]{12})\.sock$/.exec(sock)?.[1];
-    const infoHash = /-([0-9a-f]{12})\//.exec(info)?.[1];
+    // Match either separator: POSIX joins with '/', Windows with '\'.
+    const infoHash = /-([0-9a-f]{12})[/\\]/.exec(info)?.[1];
     assert.ok(sockHash && infoHash, 'both paths carry a hash');
     assert.equal(sockHash, infoHash);
   });
