@@ -81,7 +81,7 @@ jobs:
       # so each run saves a fresh cache (capturing bytecode written this run);
       # restore-keys fall back to the latest matching prefix. V8 invalidates entries
       # by content hash + Node version, so stale source bytecode is silently ignored.
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         with:
           path: node_modules/.cache/qunitx/v8
           key: ${{ runner.os }}-node24-v8cc-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
@@ -365,7 +365,7 @@ jobs:
       - name: Cache Playwright browser (${{ matrix.browser }})
         if: matrix.browser != 'chromium'
         id: playwright-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ matrix.browser }}-${{ matrix.os }}-${{ steps.pw-version.outputs.version }}
