@@ -829,6 +829,112 @@ jobs:
           artifacts_dir: artifacts
           github_token: ${{ github.token }}
 
+  # ── install.sh consumer test (tags only) ──────────────────────────────────────
+  # Exercises the README's `curl … install.sh | sh` path end-to-end: downloads the
+  # just-published deno tarball from the GitHub release, unpacks it, and runs the
+  # full suite via QUNITX_BIN pointing at the installed binary. This is the ONLY
+  # job that covers install.sh's own logic (target mapping, download, unpack, copy,
+  # PATH) and the layout contract it shares with build-deno-binaries.
+  #
+  # needs: [github-release] — not `on: release: published`. publish-release runs
+  # `gh release create` (publish) BEFORE `gh release upload` (assets), so the
+  # release event fires while assets are still missing; gating on the job that
+  # does the upload guarantees the tarball exists before install.sh fetches it.
+  # Matrix mirrors release-consumer-test-deno but only install.sh's supported
+  # targets: ubuntu=linux-x64, macos-latest=macos-arm64, windows-latest=windows-x64.
+  release-install-sh-test:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [github-release]
+    name: Release install.sh test · ${{ matrix.os }} / ${{ matrix.browser }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            browser: chromium
+            test_script: test
+          - os: ubuntu-latest
+            browser: firefox
+            test_script: test:browser
+          - os: ubuntu-latest
+            browser: webkit
+            test_script: test:browser
+          - os: macos-latest
+            browser: firefox
+            test_script: test:browser
+          - os: macos-latest
+            browser: webkit
+            test_script: test:browser
+          - os: windows-latest
+            browser: firefox
+            test_script: test:browser
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: browser-actions/setup-chrome@v2
+        if: matrix.browser == 'chromium'
+        id: setup-chrome
+
+      - run: npm ci
+
+      - name: Get Playwright version
+        if: matrix.browser != 'chromium'
+        id: pw-version
+        # shell: bash is mandatory, PowerShell can't parse `$(...)` or `"$GITHUB_OUTPUT"`
+        shell: bash
+        run: echo "version=$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browser (${{ matrix.browser }})
+        if: matrix.browser != 'chromium'
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ matrix.browser }}-${{ matrix.os }}-${{ steps.pw-version.outputs.version }}
+
+      - name: Install Playwright browser (${{ matrix.browser }})
+        if: matrix.browser != 'chromium' && steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright@${{ steps.pw-version.outputs.version }} install --with-deps ${{ matrix.browser }}
+
+      - name: Install Playwright system deps (${{ matrix.browser }})
+        if: matrix.browser != 'chromium' && steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright@${{ steps.pw-version.outputs.version }} install-deps ${{ matrix.browser }}
+
+      # VERSION is pinned to the released tag (not install.sh's default `latest`
+      # API lookup) so the test can't race the `latest` pointer or hit the
+      # unauthenticated API rate limit; the download/unpack/copy path is identical.
+      - name: Install via install.sh
+        shell: bash
+        run: VERSION="${{ github.ref_name }}" INSTALL_DIR="$(pwd)/.qunitx-install" sh install.sh
+
+      - name: Run test suite via install.sh-installed binary
+        if: runner.os != 'Windows'
+        shell: bash
+        run: QUNITX_BIN="$(pwd)/.qunitx-install/qunitx" npm run "${TEST_SCRIPT}"
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          QUNITX_BROWSER: ${{ matrix.browser }}
+          TEST_SCRIPT: ${{ matrix.test_script }}
+          FORCE_COLOR: 0
+
+      - name: Run test suite via install.sh-installed binary (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: QUNITX_BIN="$(pwd -W)/.qunitx-install/qunitx.exe" npm run "${TEST_SCRIPT}"
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          QUNITX_BROWSER: ${{ matrix.browser }}
+          TEST_SCRIPT: ${{ matrix.test_script }}
+          FORCE_COLOR: 0
+
   # ── Docker versioned image (tags only) ────────────────────────────────────────
   publish-docker:
     if: startsWith(github.ref, 'refs/tags/v')
