@@ -1,12 +1,16 @@
 {
   "name": "@izelnakri/qunitx-cli",
-  "version": "0.25.0",
+  "version": "0.26.3",
   "description": "Bootstrap that fetches and caches the matching qunitx-cli prebuilt binary, then spawns it.",
   "license": "MIT",
   "exports": {
     ".": "./cli.ts"
   },
   "publish": {
-    "include": ["cli.ts", "deno.json", "README.md"]
+    "include": [
+      "cli.ts",
+      "deno.json",
+      "README.md"
+    ]
   }
 }

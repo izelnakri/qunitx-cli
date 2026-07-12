@@ -291,7 +291,7 @@ release:
 	@node scripts/remove-optional-deps.js
 	@npm install --package-lock-only --ignore-scripts
 	git-cliff --tag "v$$(node -p 'require("./package.json").version')" --output CHANGELOG.md
-	git add package.json package-lock.json CHANGELOG.md npm/*/package.json
+	git add package.json package-lock.json CHANGELOG.md npm/*/package.json jsr/deno.json
 	git commit -m "Release $$(node -p 'require("./package.json").version')"
 	git tag "v$$(node -p 'require("./package.json").version')"
 	git push && git push --tags
