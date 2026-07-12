@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.26.1] - 2026-07-12
+[`v0.26.0...v0.26.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.26.0...v0.26.1)
+
+### Bug Fixes
+- Keep _lastBuildEndMs pinned to the last successful build — 2026-07-12 by [@izelnakri](https://github.com/izelnakri) ([`dab0a55`](https://github.com/izelnakri/qunitx-cli/commit/dab0a55eac38c9573fa03a16155dfc983cbd2b6f))
+
 ## [0.26.0] - 2026-07-12
 [`v0.25.2...v0.26.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.25.2...v0.26.0)
 
