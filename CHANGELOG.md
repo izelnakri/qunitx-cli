@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.26.2] - 2026-07-12
+[`v0.26.1...v0.26.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.26.1...v0.26.2)
+
+### Bug Fixes
+- Pin playwright-core to exact 1.59.1 — 2026-07-12 by [@izelnakri](https://github.com/izelnakri) ([`dcd9346`](https://github.com/izelnakri/qunitx-cli/commit/dcd9346eb917cd0ef334798c2a12419948673a3a))
+
 ## [0.26.1] - 2026-07-12
 [`v0.26.0...v0.26.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.26.0...v0.26.1)
 
