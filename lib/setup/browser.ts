@@ -100,7 +100,7 @@ export async function launchBrowser(config: Config, skipPrelaunch = false): Prom
   // playwright-core's processLauncher. Chromium isn't affected — it goes
   // through our CDP pre-launch (chrome-prelaunch.ts) and never calls
   // child_process.spawn for the browser process. Remove this once upstream
-  // Deno fixes their spawn shim for compiled binaries on Windows.
+  // Deno fixes their spawn shim for compiled binaries on Windows (denoland/deno#35994).
   try {
     return await playwrightCore[browserName].launch(launchOpts);
   } catch (err) {

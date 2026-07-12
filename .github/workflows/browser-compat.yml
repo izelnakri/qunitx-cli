@@ -90,7 +90,8 @@ jobs:
   # Playwright passes. Observed symptoms: intermittent INVALID_HANDLE (os error
   # 6) on browser launch AND test fixtures running multiple times because the
   # page lifecycle behaves differently under that stack. The real fix is
-  # upstream in Deno's Windows child_process compat; re-enable once that lands.
+  # upstream in Deno's Windows child_process compat (denoland/deno#35994);
+  # re-enable once that lands.
   # Firefox is still tested on ubuntu+macos under Deno & on Windows under Node
   # (`browser-compat` job above).
   browser-compat-deno:
