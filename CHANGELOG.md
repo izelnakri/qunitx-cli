@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.26.0] - 2026-07-12
+[`v0.25.2...v0.26.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.25.2...v0.26.0)
+
+### Bug Fixes
+- Atomic lockfile race-resolution (works around Deno listen bug) — 2026-05-18 by [@izelnakri](https://github.com/izelnakri) ([`196ba64`](https://github.com/izelnakri/qunitx-cli/commit/196ba6402b37afcc639bbd699cd02b550ae7d9a4))
+- Dedupe duplicate WS testEnd events within one run — 2026-05-18 by [@izelnakri](https://github.com/izelnakri) ([`85ad940`](https://github.com/izelnakri/qunitx-cli/commit/85ad94066ec61551fa70e5c542fcb8026f62f2af))
+- Poll waitForFile alongside fs.watch to survive dropped events — 2026-05-18 by [@izelnakri](https://github.com/izelnakri) ([`3f9f4cf`](https://github.com/izelnakri/qunitx-cli/commit/3f9f4cfca1aa434a529ac33f4732b672643b3505))
+- Raise startup-timeout factor 3×→6× to absorb 3-way Chrome contention — 2026-05-18 by [@izelnakri](https://github.com/izelnakri) ([`777e253`](https://github.com/izelnakri/qunitx-cli/commit/777e2531f396e2c7a6eef47856540db467100edb))
+- Guard runtime IIFE re-entry + close stale retry WS — 2026-05-18 by [@izelnakri](https://github.com/izelnakri) ([`7d79c22`](https://github.com/izelnakri/qunitx-cli/commit/7d79c22acbb266875420f3c72205923a06ccb49c))
+- Raise startup-timeout factor 6×→9× to absorb macOS-deno JSX tail — 2026-05-18 by [@izelnakri](https://github.com/izelnakri) ([`2d4dd7b`](https://github.com/izelnakri/qunitx-cli/commit/2d4dd7b969a84a9e024308e50336417c72cb006d))
+- Dedupe testEnd at server, reset map alongside COUNTER — 2026-05-19 by [@izelnakri](https://github.com/izelnakri) ([`b21e49f`](https://github.com/izelnakri/qunitx-cli/commit/b21e49f34791429f51e0d36d64a5a23a5ab1010f))
+- Isolate per-cwd files in subdir to avoid Windows fs.watch crash — 2026-05-30 by [@izelnakri](https://github.com/izelnakri) ([`b1be33b`](https://github.com/izelnakri/qunitx-cli/commit/b1be33b19d5de9b4fbdceff7d883fc9559b3d71c))
+- Skip fs.watch on Windows in waitForFile{,Gone} (libuv crash) — 2026-05-31 by [@izelnakri](https://github.com/izelnakri) ([`00b349b`](https://github.com/izelnakri/qunitx-cli/commit/00b349ba4526a88d4ad6ecef121fd2f25972ad63))
+
+### Features
+- Build a self-contained binary with `deno compile` — 2026-05-05 by [@izelnakri](https://github.com/izelnakri) ([`728f976`](https://github.com/izelnakri/qunitx-cli/commit/728f9768f71e58a04598b1b34d4e0d7dda6d686f))
+- One-line install.sh for the deno-compiled binary — 2026-05-06 by [@izelnakri](https://github.com/izelnakri) ([`a2735f1`](https://github.com/izelnakri/qunitx-cli/commit/a2735f11033e0828868f09cd5d7f4855aae53556))
+- Bootstrap package fetches the prebuilt binary on first run — 2026-05-06 by [@izelnakri](https://github.com/izelnakri) ([`c717ff7`](https://github.com/izelnakri/qunitx-cli/commit/c717ff7615210b8b7605bc1ea5357214ee87ed48))
+- Drive test runner + workers + cli binary under Deno end-to-end — 2026-05-25 by [@izelnakri](https://github.com/izelnakri) ([`b33aeb4`](https://github.com/izelnakri/qunitx-cli/commit/b33aeb4451af06e2a309fc12a6938e44c067abec))
+
+### Refactoring
+- Move private helper functions to bottom per convention — 2026-05-31 by [@izelnakri](https://github.com/izelnakri) ([`cd6975f`](https://github.com/izelnakri/qunitx-cli/commit/cd6975f59a47f9b8c59073d90366bba18a3fac1b))
+
 ## [0.25.2] - 2026-05-06
 [`v0.25.0...v0.25.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.25.0...v0.25.2)
 
