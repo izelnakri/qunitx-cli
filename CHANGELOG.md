@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.26.3] - 2026-07-12
+[`v0.26.2...v0.26.3`](https://github.com/izelnakri/qunitx-cli/compare/v0.26.2...v0.26.3)
+
+### Documentation
+- Link denoland/deno#35994 in the Windows/Firefox exclusion comments — 2026-07-12 by [@izelnakri](https://github.com/izelnakri) ([`c8ef300`](https://github.com/izelnakri/qunitx-cli/commit/c8ef300728107b08866954a604a9c66b58d4392a))
+
 ## [0.26.2] - 2026-07-12
 [`v0.26.1...v0.26.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.26.1...v0.26.2)
 
