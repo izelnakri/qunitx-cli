@@ -22,8 +22,8 @@
     "build": "node scripts/build-cli.js",
     "bin": "chmod +x cli.ts && ./cli.ts",
     "prepublishOnly": "npm run build",
-    "format": "prettier --check \"lib/**/*.ts\" \"test/**/*.ts\" \"scripts/**/*.js\" \"bin/**/*.js\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
-    "format:fix": "prettier --write \"lib/**/*.ts\" \"test/**/*.ts\" \"scripts/**/*.js\" \"bin/**/*.js\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
+    "format": "prettier --check \"lib/**/*.ts\" \"test/**/*.ts\" \"!test/helpers/passing-tests-dist.ts\" \"scripts/**/*.js\" \"bin/**/*.js\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
+    "format:fix": "prettier --write \"lib/**/*.ts\" \"test/**/*.ts\" \"!test/helpers/passing-tests-dist.ts\" \"scripts/**/*.js\" \"bin/**/*.js\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
     "lint": "deno lint lib/ bin/ test/ scripts/ cli.ts",
     "lint:docs": "node scripts/lint-docs.js",
     "docs": "deno doc --html --name=\"qunitx-cli\" --output=docs/lib 'lib/**/*.ts' README.md",
@@ -53,18 +53,18 @@
     "url": "git+https://github.com/izelnakri/qunitx-cli.git"
   },
   "dependencies": {
-    "esbuild": "^0.28.0",
-    "playwright-core": "1.59.1",
-    "ws": "^8.20.0"
+    "esbuild": "^0.28.1",
+    "playwright-core": "1.61.1",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
-    "js-yaml": "^4.1.1",
-    "prettier": "^3.8.3",
+    "js-yaml": "^5.2.1",
+    "prettier": "^3.9.5",
     "qunitx": "^1.2.18",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
-    "typescript": "^6.0.3",
-    "vue": "^3.5.33"
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "typescript": "^7.0.2",
+    "vue": "^3.5.39"
   },
   "volta": {
     "node": "24.14.0"
