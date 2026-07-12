@@ -484,9 +484,9 @@ jobs:
           - os: macos-latest
             browser: webkit
             test_script: test:browser
-          - os: windows-latest
-            browser: firefox
-            test_script: test:browser
+          # windows-latest/firefox omitted: Playwright cannot spawn Firefox from a
+          # deno-compiled binary on Windows (Deno child_process "handle is invalid"
+          # bug). Consistent with browser-compat.yml; the Node/SEA path covers it.
 
     steps:
       - uses: actions/checkout@v7
@@ -867,9 +867,9 @@ jobs:
           - os: macos-latest
             browser: webkit
             test_script: test:browser
-          - os: windows-latest
-            browser: firefox
-            test_script: test:browser
+          # windows-latest/firefox omitted: Playwright cannot spawn Firefox from a
+          # deno-compiled binary on Windows (Deno child_process "handle is invalid"
+          # bug). Consistent with browser-compat.yml; the Node/SEA path covers it.
 
     steps:
       - uses: actions/checkout@v7
