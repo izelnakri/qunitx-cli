@@ -221,7 +221,9 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
     // Persist metafile for the next --changed run. Best-effort; cache miss
     // on subsequent reads degrades to "run all tests."
     if (metafile) void writeMetafileCache(projectRoot, process.cwd(), metafile);
+    config._lastBuildErrored = false;
   } catch (error) {
+    config._lastBuildErrored = true;
     cachedContent._buildError = {
       type: deriveBuildErrorType(error),
       formatted: formatBuildErrors(error),

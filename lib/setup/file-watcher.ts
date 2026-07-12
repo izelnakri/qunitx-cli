@@ -430,7 +430,13 @@ export function handleWatchEvent(
     .catch((error) => console.error('#', red('Build error:'), error.message || error))
     .finally(() => {
       config._building = false;
-      config._lastBuildEndMs = Date.now();
+      // Only advance the "last successful build" timestamp on a clean build. A failed
+      // build (esbuild bundle error) leaves no successfully-built content, so keeping the
+      // timestamp pinned to the last good build means the echo-suppression below (and the
+      // rescan path) won't fence out the user's fix — which on coarse-mtime filesystems
+      // (CI overlayfs) can land in the same/earlier second as the failed build's end and
+      // otherwise gets dropped, hanging watch mode on the error until an unrelated change.
+      if (!config._lastBuildErrored) config._lastBuildEndMs = Date.now();
       if (config._pendingBuildTrigger) {
         const trigger = config._pendingBuildTrigger;
         config._pendingBuildTrigger = null;

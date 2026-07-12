@@ -221,8 +221,11 @@ export interface Config {
   _pendingBuildTrigger?: (() => void) | null;
   /** File paths added since the last build, used to decide whether a rebuild is needed. */
   _justAddedFiles?: Set<string>;
-  /** Timestamp (ms) of the most recently completed build, used for debounce logic. */
+  /** Timestamp (ms) of the most recent *successful* build, used for debounce logic. */
   _lastBuildEndMs?: number;
+  /** `true` if the most recent build ended in an esbuild error. Keeps `_lastBuildEndMs`
+   * pinned to the last good build so a fix arriving after the error is never suppressed. */
+  _lastBuildErrored?: boolean;
   /** In-flight console handler promises; awaited before browser/page close so Firefox BiDi round-trips complete. */
   _pendingConsoleHandlers?: Set<Promise<void>> | null;
   /** Web server instance injected during integration tests. */
