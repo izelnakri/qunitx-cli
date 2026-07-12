@@ -37,7 +37,7 @@ jobs:
       # back to source paths for the check-run UI. Without the checkout it errors
       # `fatal: not a git repository`. ref pins the workspace to the SHA that was
       # tested in the triggering CI run, so dorny's file links resolve correctly.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
