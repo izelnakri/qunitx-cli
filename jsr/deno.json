@@ -1,6 +1,6 @@
 {
   "name": "@izelnakri/qunitx-cli",
-  "version": "0.26.4",
+  "version": "0.26.5",
   "description": "Bootstrap that fetches and caches the matching qunitx-cli prebuilt binary, then spawns it.",
   "license": "MIT",
   "exports": {

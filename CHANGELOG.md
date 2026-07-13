@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.26.5] - 2026-07-13
+[`v0.26.4...v0.26.5`](https://github.com/izelnakri/qunitx-cli/compare/v0.26.4...v0.26.5)
+
+### Bug Fixes
+- Retry the test-page WebSocket on close, not error (2× connection flake) — 2026-07-13 by [@izelnakri](https://github.com/izelnakri) ([`33b058b`](https://github.com/izelnakri/qunitx-cli/commit/33b058b7395613aedd11497fa7b7d5680527afb6))
+- Detect changes by content hash, not mtime (macOS same-second coalesce hang) — 2026-07-13 by [@izelnakri](https://github.com/izelnakri) ([`6280aaa`](https://github.com/izelnakri/qunitx-cli/commit/6280aaa67060ba7720d7cdcceeaef7b7232cc59d))
+- Drop content-hash baseline on build error so the fix re-runs — 2026-07-13 by [@izelnakri](https://github.com/izelnakri) ([`c46f776`](https://github.com/izelnakri/qunitx-cli/commit/c46f77686bd3282410be0d91100af95f54935ea4))
+
+### Documentation
+- Alphabetize targets and format for readability — 2026-07-13 by [@izelnakri](https://github.com/izelnakri) ([`e1507a9`](https://github.com/izelnakri/qunitx-cli/commit/e1507a9dcf40124a41ee8b2e818d04cb0b0821ab))
+
+### Refactoring
+- Export resolveSidecarEsbuild + isDenoCompiledBinary for testability — 2026-07-13 by [@izelnakri](https://github.com/izelnakri) ([`2c59393`](https://github.com/izelnakri/qunitx-cli/commit/2c5939302b2cc6147f6d191208e9e25611e4b1cb))
+- Drop read-template's Deno.readFile branch (redundant on 2.9.2) — 2026-07-13 by [@izelnakri](https://github.com/izelnakri) ([`ce7f03f`](https://github.com/izelnakri/qunitx-cli/commit/ce7f03f4e992f856c7ae37a8608dad1812742587))
+- Use fs.copyFile for output assets (redundant workaround on 2.9.2) — 2026-07-13 by [@izelnakri](https://github.com/izelnakri) ([`51149e7`](https://github.com/izelnakri/qunitx-cli/commit/51149e7091863fef75827bbebb29a699b8e742ee))
+
 ## [0.26.4] - 2026-07-13
 [`v0.26.3...v0.26.4`](https://github.com/izelnakri/qunitx-cli/compare/v0.26.3...v0.26.4)
 
