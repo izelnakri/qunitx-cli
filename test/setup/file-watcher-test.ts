@@ -318,6 +318,55 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
     );
     assert.ok(config._lastBuildEndMs > firstEndMs);
   });
+
+  test('a failed build drops the file content-hash baseline so a revert to built content re-fires', async (assert) => {
+    // Regression (120s macOS watch hang): a build-error write can arrive as an fs.watch 'rename'
+    // that fires the rebuild without advancing _builtContentHash. Reverting the file to its last
+    // successfully-built content then hashes identically to the stale baseline and is suppressed as
+    // a no-op, so watch mode never re-runs the fix. The build-error branch must drop the entry.
+    const file = '/project/test/foo.ts';
+    const config = {
+      fsTree: { [file]: null },
+      projectRoot: '/project',
+      _builtContentHash: { [file]: sha1('valid content') },
+      _lastBuildErrored: false,
+    };
+    // buildTestBundle sets _lastBuildErrored = true on an esbuild failure (see tests-in-browser.ts).
+    await handleWatchEvent(
+      config as Config,
+      ['ts'],
+      'change',
+      file,
+      () => {
+        config._lastBuildErrored = true;
+        return Promise.resolve();
+      },
+      null,
+    );
+    assert.notOk(config._builtContentHash[file], 'baseline dropped after a failed build');
+  });
+
+  test('a clean build keeps the file content-hash baseline (no spurious re-fire)', async (assert) => {
+    const file = '/project/test/foo.ts';
+    const config = {
+      fsTree: { [file]: null },
+      projectRoot: '/project',
+      _builtContentHash: { [file]: sha1('built content') },
+      _lastBuildErrored: false,
+    };
+    await handleWatchEvent(
+      config as Config,
+      ['ts'],
+      'change',
+      file,
+      () => {
+        config._lastBuildErrored = false;
+        return Promise.resolve();
+      },
+      null,
+    );
+    assert.equal(config._builtContentHash[file], sha1('built content'), 'baseline preserved');
+  });
 });
 
 // ---------------------------------------------------------------------------

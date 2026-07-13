@@ -490,7 +490,15 @@ export function handleWatchEvent(
       // rescan path) won't fence out the user's fix — which on coarse-mtime filesystems
       // (CI overlayfs) can land in the same/earlier second as the failed build's end and
       // otherwise gets dropped, hanging watch mode on the error until an unrelated change.
-      if (!config._lastBuildErrored) config._lastBuildEndMs = Date.now();
+      if (!config._lastBuildErrored) {
+        config._lastBuildEndMs = Date.now();
+      } else if (config._builtContentHash) {
+        // A failed build leaves the bundle broken, so the content-hash baseline is stale: drop this
+        // file's entry so the fix re-fires even when it reverts to the last successfully-built
+        // content (identical hash). Otherwise a build-error → revert cycle hangs on macOS, where
+        // the error's write can arrive as an fs.watch 'rename' that never advanced the baseline.
+        delete config._builtContentHash[filePath];
+      }
       if (config._pendingBuildTrigger) {
         const trigger = config._pendingBuildTrigger;
         config._pendingBuildTrigger = null;
