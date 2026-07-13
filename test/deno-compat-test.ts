@@ -35,10 +35,12 @@ const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== 'undefined';
 //     Check: the "deno-compiled-binary detection" tests below cover the gate; the
 //     bundling path itself is exercised by the --before/--after tests on test-deno.
 //
-//  3. template reads via Deno.readFile — lib/utils/read-template.ts#31
-//     Why: node:fs.readFile rejects inside the deno-compile virtual FS. Check: the
-//     "template reading" tests below (run under test-deno). Full redundancy needs the
-//     compiled binary — remove the `if (DENO)` branch and run the test-deno lane.
+//  3. template reads — lib/utils/read-template.ts  [RETIRED on Deno 2.9.2]
+//     Was: node:fs.readFile rejected inside the deno-compile virtual FS, so we read
+//     via Deno.readFile. Deno 2.9.2 reads `--include`d files through node:fs.readFile
+//     (verified via `dist/qunitx init`/`generate`), so the branch was removed. Guard:
+//     the release-consumer-test-deno CI lane runs template commands through the
+//     compiled binary; the "template reading" tests below cover source / deno run.
 //
 //  4. asset copy via read+write (not copyFile) — lib/setup/write-output-static-files.ts#37
 //     Why: Deno.copyFile throws INVALID_HANDLE (os error 6) on the compiled Windows
