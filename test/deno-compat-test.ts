@@ -42,10 +42,11 @@ const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== 'undefined';
 //     the release-consumer-test-deno CI lane runs template commands through the
 //     compiled binary; the "template reading" tests below cover source / deno run.
 //
-//  4. asset copy via read+write (not copyFile) — lib/setup/write-output-static-files.ts#37
-//     Why: Deno.copyFile throws INVALID_HANDLE (os error 6) on the compiled Windows
-//     binary for node_modules/.deno/* sources. Check: test/setup/write-output-static-files-test.ts
-//     on the test-deno windows-latest lane.
+//  4. asset copy — lib/setup/write-output-static-files.ts  [RETIRED on Deno 2.9.2]
+//     Was: Deno.copyFile threw INVALID_HANDLE (os error 6) on the compiled Windows
+//     binary for node_modules/.deno/* sources, so we buffered via read+write. A
+//     windows-latest probe on 2.9.2 (Deno.copyFile of a node_modules/.deno path)
+//     succeeded, so it's back to plain fs.copyFile.
 //
 //  5. rename-event dedupe (RENAME_DEDUPE_MS) — lib/setup/file-watcher.ts#15
 //     Why: Deno's node:fs.watch fires duplicate 'rename' events under recursive
@@ -64,7 +65,8 @@ const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== 'undefined';
 //
 //  8. daemon tests skipped on deno-compile Windows — test/commands/daemon-test.ts
 //     Why: `cli daemon start` hangs (suspected child_process detach + named-pipe).
-//     Check: drop SKIP_DAEMON_TESTS and run the test-deno windows-latest lane.
+//     STILL NEEDED on 2.9.2: a windows probe with the skip off hung the full daemon
+//     suite past 25 min (a lone `daemon start` returns, but the suite does not).
 //
 //  9. stderr drain listener — test/helpers/shell.ts#252
 //     Why: under Deno's node:child_process, .resume() doesn't pump the pipe, so a noisy
