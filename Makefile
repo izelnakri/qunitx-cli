@@ -1,116 +1,12 @@
 .DEFAULT_GOAL := help
 
 LEVEL ?= patch
-
-.PHONY: help fix fmt format check lint lint-docs test test-debug dev test-chrome test-firefox test-webkit test-all-browsers test-release build coverage coverage-report docs demo bench-print bench bench-update bench-check build-sea build-deno build-deno-all smoke-deno release
-
-
-
 REGRESSION_THRESHOLD ?= 26
 
-help:
-	@echo "Usage: make <target> [LEVEL=patch|minor|major] [REGRESSION_THRESHOLD=26]"
-	@echo ""
-	@echo "  fix             Auto-fix formatting"
-	@echo "  format          Check formatting (prettier)"
-	@echo "  lint            Check code quality (deno lint)"
-	@echo "  bench-typecheck Type-check benchmark files (catches Node-globals leaks under Deno)"
-	@echo "  check           Format + lint + bench-typecheck + tests"
-	@echo "  test            Run full test suite (chromium)"
-	@echo "  test-debug      Run full test suite with --debug on all qunitx invocations"
-	@echo "  dev             Watch all tests with --debug (for development)"
-	@echo "  test-chrome     Alias for test"
-	@echo "  test-firefox    Run browser tests with Firefox (requires: npx playwright install firefox)"
-	@echo "  test-webkit     Run browser tests with WebKit (requires: npx playwright install webkit)"
-	@echo "  test-all-browsers Run full suite on chromium, then browser tests on firefox + webkit"
-	@echo "  test-release    Build, pack, install tarball, run full suite against the binary"
-	@echo "  build           Build the project"
-	@echo "  coverage        Run tests with coverage report"
-	@echo "  demo            Regenerate docs/demo.gif"
-	@echo "  bench-print     Run all benchmarks (display only, no save)"
-	@echo "  bench           Run all benchmarks and save results as new baseline"
-	@echo "  bench-update    Alias for bench"
-	@echo "  bench-check     Run benchmarks and fail if regression > REGRESSION_THRESHOLD%"
-	@echo "  build-sea       Build SEA binary for the local platform and publish its npm package"
-	@echo "  smoke-sea       Smoke-test the locally-built SEA binary (~10s; runs inside build-sea)"
-	@echo "  build-deno      Build a Deno-compiled binary for the local platform into dist/qunitx"
-	@echo "  build-deno-all  Cross-compile Deno binaries for linux/macos/windows × x64/arm64"
-	@echo "  smoke-deno      Smoke-test the locally-built Deno binary (~10s)"
-	@echo "  release         Bump version, update changelog, tag, push, publish to npm"
-	@echo ""
-	@echo "Env-var escape hatches:"
-	@echo "  SKIP_BENCHMARK=true                       skip bench-check entirely (e.g. SKIP_BENCHMARK=true make release)"
-	@echo "  SKIP_BENCHMARK=<file>[,<file>...]         skip specific bench files by basename, e.g. SKIP_BENCHMARK=e2e,tap"
-
-fix:
-	npm run format:fix
-
-fmt:
-	npm run format:fix
-
-format:
-	npm run format
-
-lint:
-	npm run lint
-
-lint-docs:
-	npm run lint:docs
-
-# Type-check the benchmark files (and their lib/ imports) under Deno.
-# Catches Node-globals leaking into shared code (e.g. raw `Buffer` references
-# without a node:buffer import) which would otherwise only surface in CI bench.
-bench-typecheck:
-	deno check 'benches/**/*.ts'
-
-docs:
-	npm run docs
-
-check: format lint lint-docs bench-typecheck test
-
-test:
-	npm test
-
-test-debug:
-	npm run test:debug
-
-dev:
-	npm run dev
-
-test-chrome: test
-
-test-firefox:
-	QUNITX_BROWSER=firefox npm run test:browser
-
-test-webkit:
-	QUNITX_BROWSER=webkit npm run test:browser
-
-test-all-browsers: test test-firefox test-webkit
-
-test-release:
-	bash scripts/test-release.sh
-
-build:
-	npm run build
-
-coverage:
-	npx c8 --reporter=lcov --reporter=text --reporter=html npm test
-
-coverage-report:
-	npx c8 --reporter=lcov --reporter=text --reporter=html --open npm test
-
-# Regenerate docs/demo.gif (composite terminal + browser GIF).
-# Requires: nix (for vhs, ffmpeg, gifsicle), CHROME_BIN set or Nix-resolved chromium.
-demo:
-	bash docs/make-demo-gif.sh
-
-bench-print:
-	deno task bench
+.PHONY: bench bench-check bench-print bench-typecheck bench-update build build-deno build-deno-all build-sea check coverage coverage-report demo dev docs fix fmt format help lint lint-docs release smoke-deno smoke-sea test test-all-browsers test-chrome test-debug test-firefox test-release test-webkit
 
 bench:
 	deno task bench:update
-
-bench-update: bench
 
 # Runs all benchmarks and compares results against benches/results.json.
 # Exits non-zero if any benchmark regresses more than REGRESSION_THRESHOLD% (default: 26).
@@ -129,6 +25,52 @@ bench-check:
 		REGRESSION_THRESHOLD=$(REGRESSION_THRESHOLD) SKIP_BENCHMARK="$(SKIP_BENCHMARK)" deno task bench:check; \
 	fi
 
+bench-print:
+	deno task bench
+
+# Type-check the benchmark files (and their lib/ imports) under Deno.
+# Catches Node-globals leaking into shared code (e.g. raw `Buffer` references
+# without a node:buffer import) which would otherwise only surface in CI bench.
+bench-typecheck:
+	deno check 'benches/**/*.ts'
+
+bench-update: bench
+
+build:
+	npm run build
+
+# Builds a Deno-compiled binary into dist/qunitx for the local host platform.
+# The binary embeds the JS module graph + templates but cannot embed the platform-
+# native esbuild executable. cli.ts auto-discovers an `esbuild` (or `esbuild.exe`)
+# adjacent to the binary at runtime; we copy the local @esbuild/<target> sidecar
+# next to dist/qunitx so the binary works out of the box without env vars.
+build-deno:
+	@mkdir -p dist
+	deno task build:binary
+	@NODE_PLATFORM=$$(node -p "process.platform"); \
+	NODE_ARCH=$$(node -p "process.arch"); \
+	case "$$NODE_PLATFORM-$$NODE_ARCH" in \
+	  linux-x64)    ESBUILD_SRC=node_modules/@esbuild/linux-x64/bin/esbuild;    ESBUILD_DST=esbuild;;     \
+	  linux-arm64)  ESBUILD_SRC=node_modules/@esbuild/linux-arm64/bin/esbuild;  ESBUILD_DST=esbuild;;     \
+	  darwin-x64)   ESBUILD_SRC=node_modules/@esbuild/darwin-x64/bin/esbuild;   ESBUILD_DST=esbuild;;     \
+	  darwin-arm64) ESBUILD_SRC=node_modules/@esbuild/darwin-arm64/bin/esbuild; ESBUILD_DST=esbuild;;     \
+	  win32-x64)    ESBUILD_SRC=node_modules/@esbuild/win32-x64/esbuild.exe;    ESBUILD_DST=esbuild.exe;; \
+	  *) echo "Unsupported platform: $$NODE_PLATFORM-$$NODE_ARCH" && exit 1;;                            \
+	esac; \
+	cp "$$ESBUILD_SRC" "dist/$$ESBUILD_DST"; \
+	echo "Built dist/qunitx (+ dist/$$ESBUILD_DST sidecar)"
+
+# Cross-compiles for every supported platform into dist/qunitx-<target>{.exe}.
+# Each target uses --target and --output. Sidecars are NOT copied here (you'd need
+# the per-target @esbuild/<target> package; install with `npm i -D @esbuild/<...>`
+# or download from registry.npmjs.org). Distribution scripts handle the pairing.
+build-deno-all:
+	@mkdir -p dist
+	deno compile --allow-all --no-check --target x86_64-unknown-linux-gnu  --include templates --include lib --include package.json --output dist/qunitx-linux-x64       cli.ts
+	deno compile --allow-all --no-check --target aarch64-unknown-linux-gnu --include templates --include lib --include package.json --output dist/qunitx-linux-arm64     cli.ts
+	deno compile --allow-all --no-check --target x86_64-apple-darwin       --include templates --include lib --include package.json --output dist/qunitx-darwin-x64      cli.ts
+	deno compile --allow-all --no-check --target aarch64-apple-darwin      --include templates --include lib --include package.json --output dist/qunitx-darwin-arm64    cli.ts
+	deno compile --allow-all --no-check --target x86_64-pc-windows-msvc    --include templates --include lib --include package.json --output dist/qunitx-windows-x64.exe cli.ts
 
 # Builds a Node.js SEA binary for the current platform, places it in the
 # matching npm/<target>/bin/ directory, and publishes that platform package.
@@ -171,86 +113,73 @@ build-sea:
 	npm publish ./npm/$$TARGET --access public; \
 	rm -f sea-entry.cjs sea-config.json sea.blob qunitx-sea
 
-# Focused smoke test for the SEA binary at npm/$(TARGET)/bin/qunitx.
-# Catches the SEA-specific failure surface (CJS module-load crashes, asset
-# loading via node:sea, daemon respawn path, esbuild sidecar discovery, end-to-end
-# Chrome run) in ~10 seconds — without re-running the full 2:41 npm test suite
-# that already covers source (make check) and bundled JS (test:release).
-# TARGET is auto-detected from the host platform when not passed in.
-.PHONY: smoke-sea
-smoke-sea:
-	@TARGET="$(TARGET)"; \
-	if [ -z "$$TARGET" ]; then \
-	  NODE_PLATFORM=$$(node -p "process.platform"); NODE_ARCH=$$(node -p "process.arch"); \
-	  if [ "$$NODE_PLATFORM" = "darwin" ]; then TARGET="darwin-$$NODE_ARCH"; \
-	  elif [ "$$NODE_PLATFORM" = "linux" ]; then TARGET="linux-$$NODE_ARCH"; \
-	  else echo "smoke-sea: unsupported platform $$NODE_PLATFORM-$$NODE_ARCH" >&2; exit 1; fi; \
-	fi; \
-	SEA=$$(pwd)/npm/$$TARGET/bin/qunitx; \
-	ESBUILD=$$(pwd)/node_modules/@esbuild/$$TARGET/bin/esbuild; \
-	if [ ! -x "$$SEA" ]; then echo "smoke-sea: $$SEA not found (run make build-sea first)" >&2; exit 1; fi; \
-	echo "Smoking SEA binary at $$SEA..."; \
-	OUT=tmp/sea-smoke-$$$$; FAIL=0; \
-	"$$SEA" --version >/dev/null                                                      || { echo "  ✗ --version" >&2; FAIL=1; }; \
-	"$$SEA" daemon 2>&1 | grep -q "Usage: qunitx daemon"                              || { echo "  ✗ daemon (no args)" >&2; FAIL=1; }; \
-	ESBUILD_BINARY_PATH=$$ESBUILD "$$SEA" daemon start >/dev/null                     || { echo "  ✗ daemon start" >&2; FAIL=1; }; \
-	"$$SEA" daemon stop >/dev/null                                                    || { echo "  ✗ daemon stop" >&2; FAIL=1; }; \
-	ESBUILD_BINARY_PATH=$$ESBUILD "$$SEA" test/fixtures/passing-tests.ts --output=$$OUT --no-daemon 2>&1 | grep -q "# pass 3" \
-	                                                                                  || { echo "  ✗ run path" >&2; FAIL=1; }; \
-	rm -rf $$OUT; \
-	"$$SEA" daemon stop >/dev/null 2>&1 || true; \
-	if [ $$FAIL -ne 0 ]; then echo "smoke-sea: FAILED" >&2; exit 1; fi; \
-	echo "smoke-sea: OK"
+check: format lint lint-docs bench-typecheck test
 
-# Builds a Deno-compiled binary into dist/qunitx for the local host platform.
-# The binary embeds the JS module graph + templates but cannot embed the platform-
-# native esbuild executable. cli.ts auto-discovers an `esbuild` (or `esbuild.exe`)
-# adjacent to the binary at runtime; we copy the local @esbuild/<target> sidecar
-# next to dist/qunitx so the binary works out of the box without env vars.
-build-deno:
-	@mkdir -p dist
-	deno task build:binary
-	@NODE_PLATFORM=$$(node -p "process.platform"); \
-	NODE_ARCH=$$(node -p "process.arch"); \
-	case "$$NODE_PLATFORM-$$NODE_ARCH" in \
-	  linux-x64)    ESBUILD_SRC=node_modules/@esbuild/linux-x64/bin/esbuild;    ESBUILD_DST=esbuild;;     \
-	  linux-arm64)  ESBUILD_SRC=node_modules/@esbuild/linux-arm64/bin/esbuild;  ESBUILD_DST=esbuild;;     \
-	  darwin-x64)   ESBUILD_SRC=node_modules/@esbuild/darwin-x64/bin/esbuild;   ESBUILD_DST=esbuild;;     \
-	  darwin-arm64) ESBUILD_SRC=node_modules/@esbuild/darwin-arm64/bin/esbuild; ESBUILD_DST=esbuild;;     \
-	  win32-x64)    ESBUILD_SRC=node_modules/@esbuild/win32-x64/esbuild.exe;    ESBUILD_DST=esbuild.exe;; \
-	  *) echo "Unsupported platform: $$NODE_PLATFORM-$$NODE_ARCH" && exit 1;;                            \
-	esac; \
-	cp "$$ESBUILD_SRC" "dist/$$ESBUILD_DST"; \
-	echo "Built dist/qunitx (+ dist/$$ESBUILD_DST sidecar)"
+coverage:
+	npx c8 --reporter=lcov --reporter=text --reporter=html npm test
 
-# Cross-compiles for every supported platform into dist/qunitx-<target>{.exe}.
-# Each target uses --target and --output. Sidecars are NOT copied here (you'd need
-# the per-target @esbuild/<target> package; install with `npm i -D @esbuild/<...>`
-# or download from registry.npmjs.org). Distribution scripts handle the pairing.
-build-deno-all:
-	@mkdir -p dist
-	deno compile --allow-all --no-check --target x86_64-unknown-linux-gnu  --include templates --include lib --include package.json --output dist/qunitx-linux-x64       cli.ts
-	deno compile --allow-all --no-check --target aarch64-unknown-linux-gnu --include templates --include lib --include package.json --output dist/qunitx-linux-arm64     cli.ts
-	deno compile --allow-all --no-check --target x86_64-apple-darwin       --include templates --include lib --include package.json --output dist/qunitx-darwin-x64      cli.ts
-	deno compile --allow-all --no-check --target aarch64-apple-darwin      --include templates --include lib --include package.json --output dist/qunitx-darwin-arm64    cli.ts
-	deno compile --allow-all --no-check --target x86_64-pc-windows-msvc    --include templates --include lib --include package.json --output dist/qunitx-windows-x64.exe cli.ts
+coverage-report:
+	npx c8 --reporter=lcov --reporter=text --reporter=html --open npm test
 
-# Smoke-tests the locally-built dist/qunitx Deno binary against the same fixtures
-# as smoke-sea. Mirrors that target's failure surface (run path, daemon control,
-# end-to-end Chrome run) without re-running the full suite. Requires that
-# `make build-deno` has been run first.
-smoke-deno:
-	@SEA=$(CURDIR)/dist/qunitx; \
-	if [ ! -x "$$SEA" ]; then echo "smoke-deno: $$SEA not found (run make build-deno first)" >&2; exit 1; fi; \
-	echo "Smoking Deno binary at $$SEA..."; \
-	OUT=tmp/deno-smoke-$$$$; FAIL=0; \
-	"$$SEA" --version >/dev/null                                                      || { echo "  ✗ --version" >&2; FAIL=1; }; \
-	"$$SEA" daemon 2>&1 | grep -q "Usage: qunitx daemon"                              || { echo "  ✗ daemon (no args)" >&2; FAIL=1; }; \
-	QUNITX_NO_DAEMON=1 "$$SEA" test/fixtures/passing-tests.ts --output=$$OUT 2>&1 | grep -q "# pass 3" \
-	                                                                                  || { echo "  ✗ run path" >&2; FAIL=1; }; \
-	rm -rf $$OUT; \
-	if [ $$FAIL -ne 0 ]; then echo "smoke-deno: FAILED" >&2; exit 1; fi; \
-	echo "smoke-deno: OK"
+# Regenerate docs/demo.gif (composite terminal + browser GIF).
+# Requires: nix (for vhs, ffmpeg, gifsicle), CHROME_BIN set or Nix-resolved chromium.
+demo:
+	bash docs/make-demo-gif.sh
+
+dev:
+	npm run dev
+
+docs:
+	npm run docs
+
+fix:
+	npm run format:fix
+
+fmt:
+	npm run format:fix
+
+format:
+	npm run format
+
+help:
+	@echo "Usage: make <target> [LEVEL=patch|minor|major] [REGRESSION_THRESHOLD=26]"
+	@echo ""
+	@echo "  bench           Run all benchmarks and save results as new baseline"
+	@echo "  bench-check     Run benchmarks and fail if regression > REGRESSION_THRESHOLD%"
+	@echo "  bench-print     Run all benchmarks (display only, no save)"
+	@echo "  bench-typecheck Type-check benchmark files (catches Node-globals leaks under Deno)"
+	@echo "  bench-update    Alias for bench"
+	@echo "  build           Build the project"
+	@echo "  build-deno      Build a Deno-compiled binary for the local platform into dist/qunitx"
+	@echo "  build-deno-all  Cross-compile Deno binaries for linux/macos/windows × x64/arm64"
+	@echo "  build-sea       Build SEA binary for the local platform and publish its npm package"
+	@echo "  check           Format + lint + bench-typecheck + tests"
+	@echo "  coverage        Run tests with coverage report"
+	@echo "  demo            Regenerate docs/demo.gif"
+	@echo "  dev             Watch all tests with --debug (for development)"
+	@echo "  fix             Auto-fix formatting"
+	@echo "  format          Check formatting (prettier)"
+	@echo "  lint            Check code quality (deno lint)"
+	@echo "  release         Bump version, update changelog, tag, push, publish to npm"
+	@echo "  smoke-deno      Smoke-test the locally-built Deno binary (~10s)"
+	@echo "  smoke-sea       Smoke-test the locally-built SEA binary (~10s; runs inside build-sea)"
+	@echo "  test            Run full test suite (chromium)"
+	@echo "  test-all-browsers Run full suite on chromium, then browser tests on firefox + webkit"
+	@echo "  test-chrome     Alias for test"
+	@echo "  test-debug      Run full test suite with --debug on all qunitx invocations"
+	@echo "  test-firefox    Run browser tests with Firefox (requires: npx playwright install firefox)"
+	@echo "  test-release    Build, pack, install tarball, run full suite against the binary"
+	@echo "  test-webkit     Run browser tests with WebKit (requires: npx playwright install webkit)"
+	@echo ""
+	@echo "Env-var escape hatches:"
+	@echo "  SKIP_BENCHMARK=true                       skip bench-check entirely (e.g. SKIP_BENCHMARK=true make release)"
+	@echo "  SKIP_BENCHMARK=<file>[,<file>...]         skip specific bench files by basename, e.g. SKIP_BENCHMARK=e2e,tap"
+
+lint:
+	npm run lint
+
+lint-docs:
+	npm run lint:docs
 
 # Lint, bump version, changelog, publish (SEA + JS), commit, tag, push.
 # Publishes the main package (JS fallback) and the local platform's SEA package.
@@ -301,3 +230,69 @@ release:
 	git tag "v$$(node -p 'require("./package.json").version')"
 	git push && git push --tags
 	$(MAKE) bench
+
+# Smoke-tests the locally-built dist/qunitx Deno binary against the same fixtures
+# as smoke-sea. Mirrors that target's failure surface (run path, daemon control,
+# end-to-end Chrome run) without re-running the full suite. Requires that
+# `make build-deno` has been run first.
+smoke-deno:
+	@SEA=$(CURDIR)/dist/qunitx; \
+	if [ ! -x "$$SEA" ]; then echo "smoke-deno: $$SEA not found (run make build-deno first)" >&2; exit 1; fi; \
+	echo "Smoking Deno binary at $$SEA..."; \
+	OUT=tmp/deno-smoke-$$$$; FAIL=0; \
+	"$$SEA" --version >/dev/null                                                      || { echo "  ✗ --version" >&2; FAIL=1; }; \
+	"$$SEA" daemon 2>&1 | grep -q "Usage: qunitx daemon"                              || { echo "  ✗ daemon (no args)" >&2; FAIL=1; }; \
+	QUNITX_NO_DAEMON=1 "$$SEA" test/fixtures/passing-tests.ts --output=$$OUT 2>&1 | grep -q "# pass 3" \
+	                                                                                  || { echo "  ✗ run path" >&2; FAIL=1; }; \
+	rm -rf $$OUT; \
+	if [ $$FAIL -ne 0 ]; then echo "smoke-deno: FAILED" >&2; exit 1; fi; \
+	echo "smoke-deno: OK"
+
+# Focused smoke test for the SEA binary at npm/$(TARGET)/bin/qunitx.
+# Catches the SEA-specific failure surface (CJS module-load crashes, asset
+# loading via node:sea, daemon respawn path, esbuild sidecar discovery, end-to-end
+# Chrome run) in ~10 seconds — without re-running the full 2:41 npm test suite
+# that already covers source (make check) and bundled JS (test:release).
+# TARGET is auto-detected from the host platform when not passed in.
+smoke-sea:
+	@TARGET="$(TARGET)"; \
+	if [ -z "$$TARGET" ]; then \
+	  NODE_PLATFORM=$$(node -p "process.platform"); NODE_ARCH=$$(node -p "process.arch"); \
+	  if [ "$$NODE_PLATFORM" = "darwin" ]; then TARGET="darwin-$$NODE_ARCH"; \
+	  elif [ "$$NODE_PLATFORM" = "linux" ]; then TARGET="linux-$$NODE_ARCH"; \
+	  else echo "smoke-sea: unsupported platform $$NODE_PLATFORM-$$NODE_ARCH" >&2; exit 1; fi; \
+	fi; \
+	SEA=$$(pwd)/npm/$$TARGET/bin/qunitx; \
+	ESBUILD=$$(pwd)/node_modules/@esbuild/$$TARGET/bin/esbuild; \
+	if [ ! -x "$$SEA" ]; then echo "smoke-sea: $$SEA not found (run make build-sea first)" >&2; exit 1; fi; \
+	echo "Smoking SEA binary at $$SEA..."; \
+	OUT=tmp/sea-smoke-$$$$; FAIL=0; \
+	"$$SEA" --version >/dev/null                                                      || { echo "  ✗ --version" >&2; FAIL=1; }; \
+	"$$SEA" daemon 2>&1 | grep -q "Usage: qunitx daemon"                              || { echo "  ✗ daemon (no args)" >&2; FAIL=1; }; \
+	ESBUILD_BINARY_PATH=$$ESBUILD "$$SEA" daemon start >/dev/null                     || { echo "  ✗ daemon start" >&2; FAIL=1; }; \
+	"$$SEA" daemon stop >/dev/null                                                    || { echo "  ✗ daemon stop" >&2; FAIL=1; }; \
+	ESBUILD_BINARY_PATH=$$ESBUILD "$$SEA" test/fixtures/passing-tests.ts --output=$$OUT --no-daemon 2>&1 | grep -q "# pass 3" \
+	                                                                                  || { echo "  ✗ run path" >&2; FAIL=1; }; \
+	rm -rf $$OUT; \
+	"$$SEA" daemon stop >/dev/null 2>&1 || true; \
+	if [ $$FAIL -ne 0 ]; then echo "smoke-sea: FAILED" >&2; exit 1; fi; \
+	echo "smoke-sea: OK"
+
+test:
+	npm test
+
+test-all-browsers: test test-firefox test-webkit
+
+test-chrome: test
+
+test-debug:
+	npm run test:debug
+
+test-firefox:
+	QUNITX_BROWSER=firefox npm run test:browser
+
+test-release:
+	bash scripts/test-release.sh
+
+test-webkit:
+	QUNITX_BROWSER=webkit npm run test:browser
