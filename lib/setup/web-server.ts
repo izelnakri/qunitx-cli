@@ -5,6 +5,7 @@ import { injectScript } from '../utils/html.ts';
 import { TAPDisplayTestResult } from '../tap/display-test-result.ts';
 import { blue } from '../utils/color.ts';
 import { HTTPServer, MIME_TYPES } from '../servers/web.ts';
+import { createReconnectingSocket } from './ws-client.js';
 import type { Config, CachedContent } from '../types.ts';
 
 const fsPromise = fs.promises;
@@ -828,60 +829,39 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
       // is already resolved above, so setupQUnit fires as soon as tests load.
       if (window.location.protocol === 'file:') return;
 
-      let wsRetryCount = 0;
       const WS_MAX_RETRIES = Math.ceil(${config.timeout} / ${WS_RETRY_INTERVAL_MS}); // retry for the full test timeout window
 
-      function setupWebSocket() {
-        // Tear down the previous WebSocket before opening a new one. Without
-        // this, a transient 'error' that triggered the retry can leave the
-        // old WS still mid-handshake; if it later succeeds, the server sees
-        // two accepted connections from one page load.
-        if (window.socket) {
-          try { window.socket.close(); } catch {}
-        }
-        try {
-          window.socket = new WebSocket(\`ws://localhost:\${location.port}\`);
-        } catch (error) {
-          console.log(error);
-          retryOrFail();
-          return;
-        }
+      ${createReconnectingSocket.toString()}
 
-        window.socket.addEventListener('open', function() {
+      createReconnectingSocket({
+        url: \`ws://localhost:\${location.port}\`,
+        maxRetries: WS_MAX_RETRIES,
+        retryIntervalMs: ${WS_RETRY_INTERVAL_MS},
+        WebSocketCtor: WebSocket,
+        setTimeoutFn: function (fn, ms) { window.setTimeout(fn, ms); },
+        onSocket: function (socket) { window.socket = socket; },
+        onOpen: function (socket) {
           resolveWsReady();
           // Notify Node.js that the WS socket is open. This fires immediately (< 1 s) because
           // this runtime script is tiny — tests.js background compilation hasn't finished yet.
           // Node.js uses this to distinguish "WS never connected" from "WS connected but bundle slow".
           if (navigator.webdriver) {
-            window.socket.send(JSON.stringify({ event: 'wsOpen'${groupIdPart} }));
+            socket.send(JSON.stringify({ event: 'wsOpen'${groupIdPart} }));
           }
-        });
-        window.socket.addEventListener('error', function() {
-          retryOrFail();
-        });
-        window.socket.addEventListener('message', function(messageEvent) {
+        },
+        onMessage: function (socket, messageEvent) {
           if (!navigator.webdriver && messageEvent.data === 'refresh') {
             window.location.reload(true);
           } else if (navigator.webdriver && messageEvent.data === 'abort') {
             window.abortQUnit = true;
             window.QUnit.config.queue.length = 0;
-            window.socket.send(JSON.stringify({ event: 'abort' }));
+            socket.send(JSON.stringify({ event: 'abort' }));
           }
-        });
-      }
-
-      function retryOrFail() {
-        // Already connected (from this socket or a previous retry) → no work.
-        if (window.socket && window.socket.readyState === WebSocket.OPEN) return;
-        wsRetryCount++;
-        if (wsRetryCount > WS_MAX_RETRIES) {
+        },
+        onExhausted: function () {
           console.log('WebSocket connection failed after ' + WS_MAX_RETRIES + ' retries');
-          return;
-        }
-        window.setTimeout(setupWebSocket, ${WS_RETRY_INTERVAL_MS});
-      }
-
-      setupWebSocket();
+        },
+      }).connect();
     })();
     }
 
