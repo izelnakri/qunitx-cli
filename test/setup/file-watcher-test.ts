@@ -1,7 +1,9 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+
+const sha1 = (content: string) => createHash('sha1').update(content).digest('hex');
 import {
   setupFileWatchers,
   mutateFSTree,
@@ -546,29 +548,21 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
     }
   });
 
-  test('fires change for a tracked file whose mtime moved past the last build', async (assert) => {
-    // Reproduces a flake hit on macOS Firefox CI: when FSEvents drops a 'change' event under
-    // load, the periodic rescan must catch the missed modification — otherwise the watcher
-    // sits forever on stale content, which manifests as a 120-second test timeout the next
-    // time anyone fixes a file after a build error. Without this safety net, only adds and
-    // unlinks are recovered; modifications to files already in fsTree are silently lost.
+  test('fires change when a tracked file content differs from the built baseline', async (assert) => {
+    // When FSEvents drops a 'change' event under load, the rescan must catch the missed
+    // modification — otherwise the watcher sits forever on stale content (a 120-second timeout).
+    // Detection is by content hash, not mtime.
     const dir = path.join(process.cwd(), `tmp/rescan-change-${randomUUID()}`);
     await fs.mkdir(dir, { recursive: true });
     const tracked = path.join(dir, 'tracked.ts');
     await fs.writeFile(tracked, 'before');
-
-    // Pin the build-end timestamp before the modification so the rescan can tell that the
-    // post-modification mtime is genuinely newer than what the build last consumed.
-    const lastBuildEndMs = Date.now();
-    // Filesystem mtime resolution is 1 ms on most platforms but only 1 s on FAT/HFS+; sleep
-    // past the 1 s boundary so the post-write mtime is unambiguously newer.
-    await new Promise((resolve) => setTimeout(resolve, 1100));
     await fs.writeFile(tracked, 'after');
 
     const config: Partial<Config> & { fsTree: FSTree } = {
       fsTree: { [tracked]: null },
       projectRoot: dir,
-      _lastBuildEndMs: lastBuildEndMs,
+      _lastBuildEndMs: Date.now(),
+      _builtContentHash: { [tracked]: sha1('before') },
     };
     const events: Array<{ event: string; file: string }> = [];
 
@@ -584,27 +578,26 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
       assert.equal(events.length, 1, 'exactly one event fires');
       assert.equal(events[0].event, 'change', 'event is a change, not add or unlink');
       assert.equal(events[0].file, tracked);
+      assert.equal(config._builtContentHash![tracked], sha1('after'), 'baseline advanced');
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
   });
 
-  test('does not fire change when the tracked file is older than the last build', async (assert) => {
-    // Defensive cousin of the test above: at startup the rescan must not fire spurious change
-    // events for pre-existing untouched files. The seeded _lastBuildEndMs is the gate.
+  test('does not fire change when the tracked file content matches the built baseline', async (assert) => {
+    // At startup the rescan must not fire spurious change events for pre-existing untouched
+    // files — their content hashes identically to the seeded baseline, even though their mtime
+    // sits inside the grace window.
     const dir = path.join(process.cwd(), `tmp/rescan-nochange-${randomUUID()}`);
     await fs.mkdir(dir, { recursive: true });
     const tracked = path.join(dir, 'untouched.ts');
     await fs.writeFile(tracked, 'content');
-    // Sleep past the 1 s mtime resolution boundary so the seeded lastBuildEndMs is strictly
-    // greater than the file's mtime, confirming the rescan suppresses the event.
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-    const lastBuildEndMs = Date.now();
 
     const config: Partial<Config> & { fsTree: FSTree } = {
       fsTree: { [tracked]: null },
       projectRoot: dir,
-      _lastBuildEndMs: lastBuildEndMs,
+      _lastBuildEndMs: Date.now(),
+      _builtContentHash: { [tracked]: sha1('content') },
     };
     const events: Array<{ event: string; file: string }> = [];
 
@@ -617,7 +610,50 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
     );
 
     try {
-      assert.equal(events.length, 0, 'no event fires for an unchanged file');
+      assert.equal(events.length, 0, 'no event fires for unchanged content');
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('fires a same-second rewrite whose content differs but mtime is unchanged', async (assert) => {
+    // The macOS/webkit "rapid file changes coalesce" hang: the intermediate and final writes of
+    // a burst land in the same 1-second mtime bucket, so mtime can't distinguish them — and the
+    // final write also completes WHILE a slow webkit build is still running, so its mtime even
+    // predates _lastBuildEndMs. The old `mtime > _lastBuildEndMs` rescan gate dropped it forever,
+    // leaving the final state untested. Content-hash detection must still fire for it.
+    const dir = path.join(process.cwd(), `tmp/rescan-samesecond-${randomUUID()}`);
+    await fs.mkdir(dir, { recursive: true });
+    const tracked = path.join(dir, 'tracked.ts');
+    await fs.writeFile(tracked, 'built content');
+    const { mtimeMs } = await fs.stat(tracked);
+    // Rewrite with DIFFERENT content but pin the SAME mtime — simulates the 1s-resolution
+    // collision where the final write is indistinguishable from the built one by mtime.
+    await fs.writeFile(tracked, 'final content');
+    await fs.utimes(tracked, new Date(mtimeMs), new Date(mtimeMs));
+
+    const config: Partial<Config> & { fsTree: FSTree } = {
+      fsTree: { [tracked]: null },
+      projectRoot: dir,
+      // A slow (webkit) build ended AFTER this write, so its mtime predates the build end —
+      // exactly the case the old mtime gate dropped.
+      _lastBuildEndMs: mtimeMs + 1000,
+      _builtContentHash: { [tracked]: sha1('built content') },
+    };
+    const events: Array<{ event: string; file: string }> = [];
+
+    await rescanDirectoryForDelta(
+      dir,
+      config as Config,
+      ['ts', 'js'],
+      (ev, f) => events.push({ event: ev, file: f }),
+      null,
+    );
+
+    try {
+      assert.equal(events.length, 1, 'the differing final content fires despite identical mtime');
+      assert.equal(events[0].event, 'change');
+      assert.equal(config._builtContentHash![tracked], sha1('final content'), 'baseline advanced');
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
-import { readdir, stat, lstat } from 'node:fs/promises';
+import { readdir, readFile, stat, lstat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 // See lib/commands/run.ts: node:timers preserves .unref() across Node and Deno.
 import { setInterval, clearInterval, setTimeout, clearTimeout } from 'node:timers';
@@ -9,6 +10,12 @@ import type { FSWatcher } from 'node:fs';
 import type { Config, FSTree } from '../types.ts';
 
 const CHANGE_DEDUPE_MS = 10;
+// Rescan mtime pre-filter grace: only tracked files whose mtime is within this window of the
+// last build are hashed for change detection (the hash, not mtime, is authoritative — this
+// just caps the hashing cost). Generous because `_lastBuildEndMs` is the moment the last build
+// *finished*, and a slow browser run (webkit) can push it seconds past the write; a write that
+// landed during that build must still be a candidate. Genuinely stale files fall outside it.
+const RESCAN_MTIME_GRACE_MS = 30_000;
 const SYMLINK_POLL_INTERVAL_MS = 500;
 const OVERLAYFS_RENAME_RETRY_MS = 50;
 const RESCAN_INTERVAL_MS = 1_000;
@@ -51,6 +58,35 @@ function recordJustAdded(config: Config, filePath: string): void {
   map.set(filePath, Date.now());
 }
 
+// Dispatch a 'change' build ONLY when the file's CONTENT actually differs from what was last
+// built. mtime alone is unreliable: macOS/HFS+ reports 1-second mtime resolution, so a burst
+// of rapid writes with different content in the same second is indistinguishable by mtime —
+// which let the final write of the burst go untested (a 120s watch hang on macOS/webkit).
+// Hashing the content is authoritative: an overlayfs/kernel echo hashes identically and is
+// dropped, while a genuine change — even one that lands during a slow (webkit) build — is
+// always caught. config._builtContentHash is shared by the fs.watch change handler and the
+// rescan safety-net, so whichever dispatches first records the hash and the other won't re-fire.
+async function dispatchIfContentChanged(
+  config: Config,
+  extensions: string[],
+  filePath: string,
+  onEventFunc: (event: string, file: string) => unknown,
+  onFinishFunc: ((path: string, event: string) => void) | null | undefined,
+): Promise<void> {
+  let hash: string;
+  try {
+    hash = createHash('sha1')
+      .update(await readFile(filePath))
+      .digest('hex');
+  } catch {
+    return; // file vanished mid-read — the unlink/rename passes handle removal
+  }
+  const hashes = (config._builtContentHash ??= {});
+  if (hash === hashes[filePath]) return;
+  hashes[filePath] = hash;
+  handleWatchEvent(config, extensions, 'change', filePath, onEventFunc, onFinishFunc);
+}
+
 /**
  * Starts `fs.watch` watchers for each lookup path and calls `onEventFunc` on JS/TS file changes,
  * debounced via a per-file timestamp. Also watches each path's parent directory to detect when a
@@ -73,6 +109,25 @@ export function setupFileWatchers(
   // runs directly from run.ts), so on a failed initial build _lastBuildEndMs would otherwise
   // stay undefined and the rescan could not distinguish stale files from genuine modifications.
   config._lastBuildEndMs ??= Date.now();
+  // Seed the content-hash baseline for already-tracked files so the first rescan tick doesn't
+  // rebuild every file: an unchanged file hashes identically to its seed and is skipped, while a
+  // genuine post-startup modification — even a same-second one mtime can't see — hashes
+  // differently and fires. Reads run in parallel (non-blocking), but each watcher's `ready` flag
+  // is gated on this promise below, so no change event is processed until seeding completes. That
+  // ordering is load-bearing: without it, a seed read that lands after the first user write would
+  // capture the already-changed content and then miss that change (it hashes identically to the
+  // seed) — which was the hang. `??=` never clobbers a hash a build already recorded.
+  const builtContentHash = (config._builtContentHash ??= {});
+  const seedPromise = Promise.all(
+    Object.keys(config.fsTree).map(async (filePath) => {
+      try {
+        const buf = await readFile(filePath);
+        builtContentHash[filePath] ??= createHash('sha1').update(buf).digest('hex');
+      } catch {
+        /* unreadable at startup — first real event will be treated as a change */
+      }
+    }),
+  );
   const readyPromises: Promise<void>[] = [];
   const parentWatchers: FSWatcher[] = [];
   const rescanTimers: ReturnType<typeof setInterval>[] = [];
@@ -132,7 +187,7 @@ export function setupFileWatchers(
     let ready = false;
     let rescanInProgress = false;
     // lastEventMs: wall-clock time the last event arrived (guards the 10ms burst window).
-    // seenMtimeMs: file mtime recorded at the last event (detects echoes vs genuine new writes).
+    // seenMtimeMs: file mtime recorded at the last event (fast-path kernel-duplicate filter).
     const lastEventMs: Record<string, number> = {};
     const seenMtimeMs: Record<string, number> = {};
     // lastRenameMs: per-path timestamp of the most recent 'rename' event, used to drop
@@ -189,29 +244,23 @@ export function setupFileWatchers(
           const { mtimeMs } = await stat(fullPath);
           const prevMtime = seenMtimeMs[fullPath] ?? 0;
           seenMtimeMs[fullPath] = mtimeMs;
-          // Suppress inotify/FSEvents kernel duplicates: same mtime within the burst window.
-          // Genuine new writes have a strictly newer mtime and are always let through — even
-          // during a running build — so the pending-trigger mechanism sees the latest content.
+          // Cheap kernel-duplicate filter: identical mtime within the 10ms burst window.
+          // Real content changes are confirmed by hash at dispatch time (see below), so this
+          // is only a fast-path to avoid re-reading the file for obvious inotify/FSEvents dups.
           if (now - last < CHANGE_DEDUPE_MS && mtimeMs > 0 && mtimeMs === prevMtime) return;
-          // Suppress overlayfs late IN_CLOSE_WRITE echoes (arrive 100ms–1s after IN_MODIFY):
-          // if the file's mtime predates the last build (second-aligned, 1s overlayfs resolution),
-          // that content was already processed. Using `<` (not `<=`) lets writes in the same
-          // second as the build end through (e.g. an immediate fix after a build error).
-          if (config._lastBuildEndMs && mtimeMs < Math.floor(config._lastBuildEndMs / 1000) * 1000)
-            return;
         } catch {
           // File inaccessible — proceed.
         }
-        // Debounce: wait CHANGE_COALESCE_MS for the writeFile burst to settle before
-        // dispatching. Each new event resets the timer, so the rebuild fires once after
-        // the LAST event in the burst — the file is fully written by then.
+        // Debounce: wait CHANGE_COALESCE_MS for the writeFile burst to settle, then dispatch a
+        // rebuild only if the file's CONTENT actually changed (dispatchIfContentChanged hashes
+        // it). Each new event resets the timer, so the file is fully written by dispatch time.
         const existing = pendingChangeTimers.get(fullPath);
         if (existing) clearTimeout(existing);
         pendingChangeTimers.set(
           fullPath,
           setTimeout(() => {
             pendingChangeTimers.delete(fullPath);
-            handleWatchEvent(config, extensions, 'change', fullPath, onEventFunc, onFinishFunc);
+            dispatchIfContentChanged(config, extensions, fullPath, onEventFunc, onFinishFunc);
           }, CHANGE_COALESCE_MS),
         );
         return;
@@ -287,12 +336,17 @@ export function setupFileWatchers(
     parentWatchers.push(parentWatcher);
     fileWatchers[watchPath] = childWatcher;
 
+    // Gate readiness on the content-hash seed: the change handler and rescan both drop events
+    // until `ready`, so seeding always finishes before any write is processed (see seedPromise).
     readyPromises.push(
-      new Promise<void>((resolve) =>
-        setImmediate(() => {
-          ready = true;
-          resolve();
-        }),
+      seedPromise.then(
+        () =>
+          new Promise<void>((resolve) =>
+            setImmediate(() => {
+              ready = true;
+              resolve();
+            }),
+          ),
       ),
     );
 
@@ -486,18 +540,19 @@ export async function rescanDirectoryForDelta(
         trackedToRecheck.push(entryPath);
       }
     }
-    // Detect modifies fs.watch may have dropped: stat every tracked file in parallel and
-    // fire 'change' when its mtime is strictly newer than the last build's end. setupFileWatchers
-    // seeds _lastBuildEndMs at startup, so on the first rescan tick this only fires for files
-    // genuinely modified after the watcher came up — never for pre-existing untouched files.
+    // Detect modifies fs.watch may have dropped: re-check every tracked file whose mtime is
+    // recent enough to be a candidate, then confirm a genuine change by content hash. mtime is
+    // only a coarse first filter — widened by RESCAN_MTIME_GRACE_MS because macOS/HFS+ reports
+    // 1-second mtime resolution, so a write in the same second as the last build must still be
+    // considered. The hash (in dispatchIfContentChanged) is what actually distinguishes a new
+    // write from an untouched file, so pre-existing files are never spuriously rebuilt.
     const buildEndMs = config._lastBuildEndMs ?? 0;
     await Promise.all(
       trackedToRecheck.map(async (filePath) => {
         try {
           const { mtimeMs } = await stat(filePath);
-          if (mtimeMs > buildEndMs) {
-            handleWatchEvent(config, extensions, 'change', filePath, onEventFunc, onFinishFunc);
-          }
+          if (mtimeMs < buildEndMs - RESCAN_MTIME_GRACE_MS) return;
+          await dispatchIfContentChanged(config, extensions, filePath, onEventFunc, onFinishFunc);
         } catch {
           /* file disappeared between readdir and stat — handled by the unlink pass below */
         }

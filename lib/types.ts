@@ -226,6 +226,11 @@ export interface Config {
   /** `true` if the most recent build ended in an esbuild error. Keeps `_lastBuildEndMs`
    * pinned to the last good build so a fix arriving after the error is never suppressed. */
   _lastBuildErrored?: boolean;
+  /** Per-file content hash of what was last dispatched to a build. Both the fs.watch change
+   * handler and the macOS/Deno rescan compare against this instead of mtime — mtime has
+   * 1-second resolution on some filesystems (macOS/HFS+), so rapid same-second writes with
+   * different content are indistinguishable by mtime; the hash catches them and drops echoes. */
+  _builtContentHash?: Record<string, string>;
   /** In-flight console handler promises; awaited before browser/page close so Firefox BiDi round-trips complete. */
   _pendingConsoleHandlers?: Set<Promise<void>> | null;
   /** Web server instance injected during integration tests. */
