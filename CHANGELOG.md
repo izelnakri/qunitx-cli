@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.26.4] - 2026-07-13
+[`v0.26.3...v0.26.4`](https://github.com/izelnakri/qunitx-cli/compare/v0.26.3...v0.26.4)
+
+### Bug Fixes
+- Commit jsr/deno.json in the release step — 2026-07-12 by [@izelnakri](https://github.com/izelnakri) ([`d5d1cb9`](https://github.com/izelnakri/qunitx-cli/commit/d5d1cb9c6063a41f8d46838c133c42a4bc0ed631))
+
 ## [0.26.3] - 2026-07-12
 [`v0.26.2...v0.26.3`](https://github.com/izelnakri/qunitx-cli/compare/v0.26.2...v0.26.3)
 
