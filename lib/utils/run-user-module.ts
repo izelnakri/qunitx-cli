@@ -46,9 +46,12 @@ export { runUserModule as default };
  * compiled binaries (a virtual path under `/tmp/deno-compile-<name>/`), so it
  * can't differentiate the two.
  */
-function isDenoCompiledBinary(): boolean {
-  if (!('Deno' in globalThis)) return false;
-  return !/[/\\]deno(\.exe)?$/i.test(process.execPath);
+export function isDenoCompiledBinary(
+  hasDeno: boolean = typeof (globalThis as { Deno?: unknown }).Deno !== 'undefined',
+  execPath: string = process.execPath,
+): boolean {
+  if (!hasDeno) return false;
+  return !/[/\\]deno(\.exe)?$/i.test(execPath);
 }
 
 /**

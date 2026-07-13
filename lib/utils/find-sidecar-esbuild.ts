@@ -19,17 +19,31 @@
 import { accessSync, constants } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-if (!('ESBUILD_BINARY_PATH' in process.env)) {
-  const execDir = dirname(process.execPath);
-  const candidates = process.platform === 'win32' ? ['esbuild.exe', 'esbuild'] : ['esbuild'];
+/**
+ * Returns the path to an executable esbuild sidecar sitting next to `execDir`, or
+ * null if none is present. On Windows the `.exe` variant is preferred. Pure and
+ * injectable so the lookup order is unit-testable without a real compiled binary.
+ */
+export function resolveSidecarEsbuild(
+  execDir: string,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  const candidates = platform === 'win32' ? ['esbuild.exe', 'esbuild'] : ['esbuild'];
   for (const name of candidates) {
     const candidate = join(execDir, name);
     try {
       accessSync(candidate, constants.X_OK);
-      process.env.ESBUILD_BINARY_PATH = candidate;
-      break;
+      return candidate;
     } catch {
       /* not present — try next */
     }
   }
+  return null;
+}
+
+// Side-effect on import: populate ESBUILD_BINARY_PATH from the sidecar unless it is
+// already set (including to an empty string, meaning "use esbuild's install default").
+if (!('ESBUILD_BINARY_PATH' in process.env)) {
+  const found = resolveSidecarEsbuild(dirname(process.execPath));
+  if (found) process.env.ESBUILD_BINARY_PATH = found;
 }
