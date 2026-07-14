@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.26.6] - 2026-07-14
+[`v0.26.5...v0.26.6`](https://github.com/izelnakri/qunitx-cli/compare/v0.26.5...v0.26.6)
+
+### Bug Fixes
+- Only warn on unexpected extra WS connections — 2026-07-14 by [@izelnakri](https://github.com/izelnakri) ([`93072a7`](https://github.com/izelnakri/qunitx-cli/commit/93072a702f4c73e96ef17f6f92536d2e5416f6b4))
+
+### Features
+- Resolve 'qunitx' from the embedded runtime when not installed — 2026-07-14 by [@izelnakri](https://github.com/izelnakri) ([`64dd652`](https://github.com/izelnakri/qunitx-cli/commit/64dd6528b337d87a5b6e6d9639e787a20fd09ead))
+- Serve qunit.css with consumer precedence + embedded fallback — 2026-07-14 by [@izelnakri](https://github.com/izelnakri) ([`5e48371`](https://github.com/izelnakri/qunitx-cli/commit/5e48371b26accca77c9bf73dacc1844d0b5cf2c1))
+
 ## [0.26.5] - 2026-07-13
 [`v0.26.4...v0.26.5`](https://github.com/izelnakri/qunitx-cli/compare/v0.26.4...v0.26.5)
 
