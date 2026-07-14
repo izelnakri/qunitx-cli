@@ -67,7 +67,7 @@
     "vue": "^3.5.39"
   },
   "volta": {
-    "node": "24.14.0"
+    "node": "24.18.0"
   },
   "prettier": {
     "printWidth": 100,

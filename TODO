@@ -1,4 +1,35 @@
-Also make sure cli/binary can be built in deno and would work on macos and windows
+● Looked through the README, CLI flags, TAP output, and existing keyboard/watcher infra. Here are the ones I'd argue clear the "significant UX win" bar — ranked by how much they actually change the day-to-day:
+
+  1. --failed / persistent failure cache
+
+  The single biggest TDD friction left. After a failing run your next move is almost always "rerun that one." Today you have to copy the path out of the TAP output (and there's no
+  way to scope down further than a file). Stash the failures from the last run in tmp/.qunitx-last-failures.json — { file, moduleId, testName, browser } — and let qunitx
+  --only-failed (-f) re-run just those. Pairs perfectly with the daemon and watch mode. Vitest/Jest/pytest all ship this; not having it is the most conspicuous gap.
+
+  2. -t / --filter test-name pattern . -t ok, maybe -m as well?
+
+  No way to narrow within a file right now. A 30-test file = run all 30. Every neighboring runner has it: Jest -t, Vitest -t, Mocha --grep, AVA --match. QUnit already exposes
+  QUnit.config.testFilter and moduleFilter (regex-capable), so this is mostly wiring. Combines naturally with #1 and the watch hotkeys below.
+
+  3. Watch-mode interactive hotkeys (Vitest-style)
+
+  The infrastructure exists (lib/setup/keyboard-events.ts, lib/utils/listen-to-keyboard-key.ts, ~100 LOC total) — only the bindings are missing. f = only failed, t = prompt for
+  test-name regex, p = prompt for file glob, a = all, o = open output, q = quit. Turns --watch from "rerun on save" into an interactive REPL for the suite. Highest ratio of
+  impact-to-implementation-cost on the list.
+
+  4. Built-in code coverage (--coverage)
+
+  The genuinely differentiating one. qunitx already drives Chrome over CDP — precise V8 coverage is one Profiler.startPreciseCoverage call plus takePreciseCoverage at run end,
+  mapped through the existing source-map decoder. Default: terminal summary; optional --coverage=lcov,html. jsdom-based runners can't match real-browser coverage cleanly, and
+  Playwright/Cypress coverage is awkward. This is the kind of feature that becomes a reason to choose qunitx over the alternative.
+
+  5. --reporter=junit (small reporter slot, not a plugin system)
+
+  Not glamorous, but JUnit XML is the format every enterprise CI dashboard ingests natively (GitHub Actions test summary, GitLab MR view, CircleCI Insights, BuildKite, Jenkins).
+  Without it, adoption hits a wall in CI orgs that don't speak TAP. Mechanical to add — open a write stream, accumulate <testcase> per testEnd, flush on runEnd.
+
+
+
 
 - investigate take screenshot feature & visual diffing(implement it percy-like)
 
@@ -24,35 +55,5 @@ Maybe move BundleError to ./errors directory
 
 - check if there are any variables we can remove and/or rename on lib/types.ts
 
-
-● Looked through the README, CLI flags, TAP output, and existing keyboard/watcher infra. Here are the ones I'd argue clear the "significant UX win" bar — ranked by how much they actually change the day-to-day:
-
-  1. --only-failed / persistent failure cache
-
-  The single biggest TDD friction left. After a failing run your next move is almost always "rerun that one." Today you have to copy the path out of the TAP output (and there's no
-  way to scope down further than a file). Stash the failures from the last run in tmp/.qunitx-last-failures.json — { file, moduleId, testName, browser } — and let qunitx
-  --only-failed (-f) re-run just those. Pairs perfectly with the daemon and watch mode. Vitest/Jest/pytest all ship this; not having it is the most conspicuous gap.
-
-  2. -t / --filter test-name pattern
-
-  No way to narrow within a file right now. A 30-test file = run all 30. Every neighboring runner has it: Jest -t, Vitest -t, Mocha --grep, AVA --match. QUnit already exposes
-  QUnit.config.testFilter and moduleFilter (regex-capable), so this is mostly wiring. Combines naturally with #1 and the watch hotkeys below.
-
-  3. Watch-mode interactive hotkeys (Vitest-style)
-
-  The infrastructure exists (lib/setup/keyboard-events.ts, lib/utils/listen-to-keyboard-key.ts, ~100 LOC total) — only the bindings are missing. f = only failed, t = prompt for
-  test-name regex, p = prompt for file glob, a = all, o = open output, q = quit. Turns --watch from "rerun on save" into an interactive REPL for the suite. Highest ratio of
-  impact-to-implementation-cost on the list.
-
-  4. Built-in code coverage (--coverage)
-
-  The genuinely differentiating one. qunitx already drives Chrome over CDP — precise V8 coverage is one Profiler.startPreciseCoverage call plus takePreciseCoverage at run end,
-  mapped through the existing source-map decoder. Default: terminal summary; optional --coverage=lcov,html. jsdom-based runners can't match real-browser coverage cleanly, and
-  Playwright/Cypress coverage is awkward. This is the kind of feature that becomes a reason to choose qunitx over the alternative.
-
-  5. --reporter=junit (small reporter slot, not a plugin system)
-
-  Not glamorous, but JUnit XML is the format every enterprise CI dashboard ingests natively (GitHub Actions test summary, GitLab MR view, CircleCI Insights, BuildKite, Jenkins).
-  Without it, adoption hits a wall in CI orgs that don't speak TAP. Mechanical to add — open a write stream, accumulate <testcase> per testEnd, flush on runEnd.
 
 - Test and optimize Dockerfile

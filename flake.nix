@@ -1,7 +1,7 @@
 {
   description = "A flake for napalm";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
   inputs.napalm.url = "github:nix-community/napalm";
 
   # NOTE: This is optional, but is how to configure napalm's env
