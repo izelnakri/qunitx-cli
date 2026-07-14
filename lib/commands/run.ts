@@ -9,8 +9,7 @@ import {
 } from '../setup/web-server.ts';
 import { openOutputInBrowser } from '../utils/open-output-in-browser.ts';
 import fs from 'node:fs/promises';
-import { join, normalize } from 'node:path';
-import { createRequire } from 'node:module';
+import { normalize } from 'node:path';
 import { availableParallelism } from 'node:os';
 // node:timers returns Timer objects with .unref()/.ref() in both Node and Deno.
 // The bare `setTimeout` global in Deno is the Web platform variant, which returns
@@ -554,10 +553,9 @@ async function addCachedContentMainHTML(
   } else {
     const html = await readTemplate('setup/tests.hbs');
     cachedContent.mainHTML = { filePath: `${projectRoot}/test/tests.html`, html };
-    // Resolve qunitx via the user's project rather than assuming it sits flat at
-    // <projectRoot>/node_modules/qunitx — that assumption breaks under npm workspaces
-    // (deps hoist to the workspace root) and when qunitx-cli is invoked through npx.
-    cachedContent.assets.add(join(resolveQunitxRoot(projectRoot), 'vendor/qunit.css'));
+    // qunit.css (linked by the template) is served by the web server from the CLI's own embedded
+    // copy — see the /node_modules/qunitx/vendor/qunit.css route in web-server.ts. It is no longer
+    // copied out of the consumer's node_modules, so projects need not install `qunitx`.
   }
 
   return cachedContent;
@@ -668,17 +666,4 @@ function normalizeInternalAssetPathFromHTML(
   return assetPath.startsWith('./')
     ? normalize(`${currentDirectory}/${assetPath.slice(2)}`)
     : normalize(`${currentDirectory}/${assetPath}`);
-}
-
-/**
- * Returns qunitx's package root directory, resolved from the user's project. Robust to npm
- * workspaces, pnpm's `.pnpm/<pkg>@<ver>/node_modules/<pkg>` layout, and global/npx installs —
- * all of which keep `/qunitx/` literally in the resolved entry-point path. Greedy `.*` matches
- * the rightmost `/qunitx/` so any ancestor directory accidentally named "qunitx" cannot win.
- */
-function resolveQunitxRoot(projectRoot: string): string {
-  const mainEntry = createRequire(`${projectRoot}/package.json`).resolve('qunitx');
-  const match = /^(.*[\\/]qunitx)[\\/]/.exec(mainEntry);
-  if (!match) throw new Error(`Could not derive qunitx root from ${mainEntry}`);
-  return match[1];
 }

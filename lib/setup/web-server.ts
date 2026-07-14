@@ -1,11 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
 import { injectScript } from '../utils/html.ts';
 import { TAPDisplayTestResult } from '../tap/display-test-result.ts';
 import { blue } from '../utils/color.ts';
 import { HTTPServer, MIME_TYPES } from '../servers/web.ts';
 import { createReconnectingSocket } from './ws-client.js';
+import { readTemplate } from '../utils/read-template.ts';
 import type { Config, CachedContent } from '../types.ts';
 
 const fsPromise = fs.promises;
@@ -66,6 +68,7 @@ const NOT_FOUND_HTML = `<!DOCTYPE html>
  */
 export function setupWebServer(config: Config, cachedContent: CachedContent): HTTPServer {
   const STATIC_FILES_PATH = path.resolve(config.projectRoot, config.output);
+  const consumerQunitCssCandidate = resolveConsumerQunitCssCandidate(config.projectRoot);
   const server = new HTTPServer();
   const mainHTMLWithReplacedAssets = replaceAssetPaths(
     cachedContent.mainHTML.html,
@@ -232,6 +235,18 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
       'Content-Length': bytes,
     });
     res.end(cachedContent.allTestCode);
+  });
+
+  // Serve qunit.css preferring the consumer's installed qunitx, falling back to the CLI's embedded
+  // copy so projects don't need to `npm install qunitx` (mirrors the JS runtime plugin's
+  // resolve-first precedence). The generated tests.html links ../node_modules/qunitx/vendor/
+  // qunit.css, which resolves to this root URL (single- and group-mode pages both land here).
+  server.get('/node_modules/qunitx/vendor/qunit.css', async (_req, res) => {
+    const consumer = consumerQunitCssCandidate
+      ? await fsPromise.readFile(consumerQunitCssCandidate).catch(() => null)
+      : null;
+    res.writeHead(200, { 'Content-Type': MIME_TYPES.css, 'Cache-Control': 'no-store' });
+    res.end(consumer ?? (await readTemplate('vendor/qunit.css')));
   });
 
   server.get('/filtered-tests.js', (_req, res) => {
@@ -595,6 +610,7 @@ export function registerGroupRoutes(
   groupCachedContent: CachedContent,
   groupId: number,
 ): void {
+  const consumerQunitCssCandidate = resolveConsumerQunitCssCandidate(groupConfig.projectRoot);
   const mainHTMLWithReplacedAssets = replaceAssetPaths(
     groupCachedContent.mainHTML.html!,
     groupCachedContent.mainHTML.filePath!,
@@ -647,6 +663,17 @@ export function registerGroupRoutes(
       'Content-Length': bytes,
     });
     res.end(groupCachedContent.allTestCode);
+  });
+
+  // Group pages resolve the template's qunit.css link to /group-N/node_modules/qunitx/vendor/
+  // qunit.css; serve the consumer's copy when installed, else the CLI's embedded one (see the
+  // single-mode route in setupWebServer).
+  server.get(`/group-${groupId}/node_modules/qunitx/vendor/qunit.css`, async (_req, res) => {
+    const consumer = consumerQunitCssCandidate
+      ? await fsPromise.readFile(consumerQunitCssCandidate).catch(() => null)
+      : null;
+    res.writeHead(200, { 'Content-Type': MIME_TYPES.css, 'Cache-Control': 'no-store' });
+    res.end(consumer ?? (await readTemplate('vendor/qunit.css')));
   });
 }
 
@@ -779,6 +806,22 @@ export function registerSharedStaticHandler(server: HTTPServer, groupConfigs: Co
 }
 
 export { NOT_FOUND_HTML, setupWebServer as default };
+
+// Candidate path to the consumer project's own qunit.css, so an installed qunitx takes precedence
+// over the CLI's embedded copy (mirrors the esbuild runtime plugin's build.resolve-first behavior).
+// Robust to npm workspaces / pnpm / npx layouts — all keep `/qunitx/` in the resolved entry path.
+// Returns null when qunitx isn't installed; the caller reads the candidate non-blocking and falls
+// back to the embedded css if it (or the file) is absent. `createRequire().resolve` is a one-time
+// sync module lookup, not blocking file I/O.
+function resolveConsumerQunitCssCandidate(projectRoot: string): string | null {
+  try {
+    const entry = createRequire(`${projectRoot}/package.json`).resolve('qunitx');
+    const match = /^(.*[\\/]qunitx)[\\/]/.exec(entry);
+    return match ? path.join(match[1], 'vendor/qunit.css') : null;
+  } catch {
+    return null;
+  }
+}
 
 function replaceAssetPaths(html: string, htmlPath: string, projectRoot: string): string {
   const assetPaths = findInternalAssetsFromHTML(html);
