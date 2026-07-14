@@ -9,6 +9,7 @@ import {
   isBundleUrl,
   resolveFrame,
   resolveStack,
+  sourceAbsolutePath,
   type Segment,
   type SourceMapDecoder,
 } from '../../lib/utils/source-map-decoder.ts';
@@ -884,3 +885,69 @@ function bundleWithInlineMap(mapJson: object): string {
   const b64 = btoa(JSON.stringify(mapJson));
   return `console.log("bundle");\n//# sourceMappingURL=data:application/json;base64,${b64}`;
 }
+
+// This module is POSIX-only by design (it must run in the browser, so no node:path), but callers
+// hand it OS paths. On Windows an unconverted `outDir` stays one glued segment that a leading
+// `..` pops wholesale, yielding a *relative* path — which silently defeats the `/node_modules/`
+// and project-root prefix checks downstream. Windows shapes are simulated so this is provable
+// on any platform.
+module('Utils | source-map-decoder | Windows path handling', { concurrency: true }, () => {
+  const decoderFor = (outDir: string): SourceMapDecoder =>
+    parseSourceMap(
+      JSON.stringify({
+        version: 3,
+        sources: ['../../node_modules/qunitx/dist/browser/index.js', '../../src/app.ts'],
+        sourcesContent: [null, null],
+        mappings: '',
+      }),
+      outDir,
+    );
+
+  test('resolves sources to absolute paths from a POSIX outDir', (assert) => {
+    const decoder = decoderFor('/proj/tmp/run-x');
+    assert.strictEqual(
+      sourceAbsolutePath(decoder, 0),
+      '/proj/node_modules/qunitx/dist/browser/index.js',
+    );
+    assert.strictEqual(sourceAbsolutePath(decoder, 1), '/proj/src/app.ts');
+  });
+
+  test('resolves sources to absolute paths from a Windows outDir', (assert) => {
+    const decoder = decoderFor('D:\\a\\proj\\tmp\\run-x');
+    assert.strictEqual(
+      sourceAbsolutePath(decoder, 0),
+      'D:/a/proj/node_modules/qunitx/dist/browser/index.js',
+      'backslash outDir must not collapse into a relative path',
+    );
+    assert.strictEqual(sourceAbsolutePath(decoder, 1), 'D:/a/proj/src/app.ts');
+  });
+
+  test('a Windows-resolved dependency path still reads as node_modules', (assert) => {
+    // The consequence that matters: without normalization this path lost its leading segments,
+    // so `/node_modules/` never matched and dependencies leaked into coverage / user frames.
+    const dependency = sourceAbsolutePath(decoderFor('D:\\a\\proj\\tmp\\run-x'), 0)!;
+    assert.true(dependency.includes('/node_modules/'), 'dependency is detectable as a dependency');
+  });
+
+  test('resolveStack strips a Windows projectRoot prefix from user frames', (assert) => {
+    const decoder = parseSourceMap(
+      JSON.stringify({
+        version: 3,
+        sources: ['../src/app.ts'],
+        sourcesContent: ['const a = 1;\n'],
+        mappings: 'AAAA',
+      }),
+      'D:\\a\\proj\\tmp',
+    );
+    const { firstUserFrame } = resolveStack(
+      '    at fn (http://localhost:1234/tests.js:1:1)',
+      decoder,
+      'D:\\a\\proj',
+    );
+    assert.strictEqual(firstUserFrame, 'src/app.ts:1:1', 'display path is project-relative');
+  });
+
+  test('returns null for an out-of-range source index', (assert) => {
+    assert.strictEqual(sourceAbsolutePath(decoderFor('/proj/tmp'), 99), null);
+  });
+});

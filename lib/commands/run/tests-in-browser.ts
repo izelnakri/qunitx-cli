@@ -10,6 +10,8 @@ import { TAPDisplayFinalResult } from '../../tap/display-final-result.ts';
 import { buildErrorHTML, buildNoTestsHTML } from '../../setup/web-server.ts';
 import { extractInlineSourceMap } from '../../utils/source-map-decoder.ts';
 import { writeJUnitReport } from '../../reporter/junit.ts';
+import { collectCoverage } from '../../coverage/collect.ts';
+import { writeCoverageReport } from '../../coverage/report.ts';
 import { writeMetafileCache } from '../../utils/metafile-cache.ts';
 import { writeFailureCache, buildFailureCache } from '../../utils/failure-cache.ts';
 import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
@@ -279,10 +281,11 @@ export async function runTestsInBrowser(
     // resets these once on the parent config in run.ts before the shared spread.
     config._failedTestFiles = new Set();
     config._failedTests = [];
-    // Fresh JUnit accumulator per run in single/watch mode (group mode owns it on the parent
-    // config in run.ts). Reset in lockstep with COUNTER so a watch rerun reports only that
-    // run's cases, not an accumulation across reruns.
+    // Fresh reporter/coverage accumulators per run in single/watch mode (group mode owns
+    // these on the parent config in run.ts). Reset in lockstep with COUNTER so a watch
+    // rerun reports only that run's cases and coverage, not an accumulation across reruns.
     config._junitCollector = config.reporter === 'junit' ? [] : null;
+    config._coverageCollector = config.coverage ? new Map() : null;
   }
   config.lastRanTestFiles = targetTestFilesToFilter || allTestFilePaths;
 
@@ -377,6 +380,7 @@ export async function runTestsInBrowser(
       }
 
       if (config.reporter === 'junit') await writeJUnitReport(config);
+      if (config.coverage) await writeCoverageReport(config, allTestFilePaths);
 
       if (config.after) {
         await runUserModule(`${process.cwd()}/${config.after}`, config.COUNTER, 'after');
@@ -799,6 +803,11 @@ async function runTestInsideHTMLFile(
   // before test bundle compilation finishes). Distinguishes "WS never opened" from "WS opened
   // but tests.js compiled too slowly" — both appear as TIMEOUT but have different root causes.
   let wsConnected = false;
+  // Tracks whether V8 coverage was successfully armed on this page so `finally` only calls
+  // stopJSCoverage() when a matching start succeeded (a double-start throws; a stop without a
+  // start rejects). Coverage is chromium-only (guarded in run.ts) and page.coverage exists
+  // only on chromium pages, so guard the start behind both flags.
+  let coverageStarted = false;
 
   // Single promise driven by the WS handler:
   //   config._testRunDone()      → tests finished normally
@@ -878,6 +887,18 @@ async function runTestInsideHTMLFile(
       timeoutHandle = setTimeout(resolveTestRace, config.timeout + TEST_STALL_BUFFER_MS);
     };
 
+    // Arm V8 coverage before navigation. resetOnNavigation:false keeps the collected data
+    // across the goto/reload below so the bundle's execution is captured (Playwright's
+    // page.coverage is Chromium-only; config.coverage is already gated to chromium in run.ts).
+    if (config.coverage && (config.browser ?? 'chromium') === 'chromium') {
+      await page.coverage
+        .startJSCoverage({ resetOnNavigation: false })
+        .then(() => {
+          coverageStarted = true;
+        })
+        .catch(() => {});
+    }
+
     const targetUrl = `http://localhost:${config.port}${filePath}`;
     const navOptions = { timeout: navMs, waitUntil: 'commit' as const };
     // Use 'commit' (navigation committed, HTTP response started) rather than 'domcontentloaded'.
@@ -925,6 +946,20 @@ async function runTestInsideHTMLFile(
     config._resetTestTimeout = null;
     config._testRunDone = null;
     config._lastQUnitResult = null;
+    // Collect coverage before the caller closes the page. stopJSCoverage returns the V8 ranges
+    // + bundle source for every script; collectCoverage keeps only the test bundle and maps it
+    // back to original sources via config._sourceMapDecoder, merging into the shared collector.
+    if (coverageStarted) {
+      const entries = await page.coverage.stopJSCoverage().catch(() => []);
+      try {
+        await collectCoverage(config, entries);
+      } catch (error) {
+        config.debug &&
+          process.stderr.write(
+            `# [qunitx] coverage collection failed: ${(error as Error).message}\n`,
+          );
+      }
+    }
   }
 
   if (!QUNIT_RESULT) {

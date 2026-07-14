@@ -29,6 +29,7 @@ ${color('--extensions')} : comma-separated file extensions to track for discover
 ${color('--browser')} : browser engine to run tests in: chromium, firefox, webkit[default: chromium]
 ${color('--reporter')} : output reporter: tap (default) or junit; ${color('junit')} also writes a JUnit XML file (TAP still streams to stdout)
 ${color('--junit-output')} : JUnit XML file path when ${color('--reporter=junit')} [default: <output>/junit.xml]
+${color('--coverage')} : collect V8 line coverage (chromium only); ${color('--coverage=lcov,html')} also writes <output>/coverage/ reports
 ${color('--before')} : run a script before the tests(i.e start a new web server before tests)
 ${color('--after')} : run a script after the tests(i.e save test results to a file)
 ${color('--no-daemon')} : don't use the daemon for this run — skips a running daemon and prevents ${color('QUNITX_DAEMON')} auto-spawn

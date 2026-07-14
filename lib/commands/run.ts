@@ -41,6 +41,7 @@ import {
   resolveOnlyFailedFiles,
 } from '../utils/failure-cache.ts';
 import { writeJUnitReport } from '../reporter/junit.ts';
+import { writeCoverageReport } from '../coverage/report.ts';
 import type { Config, CachedContent } from '../types.ts';
 
 // Playwright navigation timeout for headed watch-mode reloads (not test execution).
@@ -75,6 +76,15 @@ const EXIT_CODE_SIGTERM = 128 + 15;
  * @returns {Promise<void>}
  */
 export async function run(config: Config): Promise<void> {
+  // Coverage is V8-precise-coverage over CDP, which only the chromium engine exposes. For
+  // firefox/webkit, warn once and disable so the rest of the pipeline treats it as off.
+  if (config.coverage && config.browser !== 'chromium') {
+    console.log(
+      `# Warning: --coverage requires the chromium browser; skipping coverage for ${config.browser}.`,
+    );
+    config.coverage = false;
+  }
+
   // Kick off all I/O that doesn't need cachedContent in parallel with buildCachedContent:
   //   launchBrowser: CDP connect to pre-launched Chrome (~30-50ms)
   //   readTimingCache: reads tmp/test-timings.json (~2ms)
@@ -303,10 +313,11 @@ export async function run(config: Config): Promise<void> {
     config._failedTestFiles = new Set();
     config._failedTests = [];
 
-    // Shared JUnit accumulator. Set on the parent config BEFORE the group configs are spread
-    // off it, so every group pushes into the same collector and the final report covers the
-    // whole run (mirrors how COUNTER is shared above).
+    // Shared reporter/coverage accumulators. Set on the parent config BEFORE the group
+    // configs are spread off it, so every group pushes into the same collector and the
+    // final report covers the whole run (mirrors how COUNTER is shared above).
     config._junitCollector = config.reporter === 'junit' ? [] : null;
+    config._coverageCollector = config.coverage ? new Map() : null;
 
     const groupConfigs = groups.map((groupFiles, i) => ({
       ...config,
@@ -498,6 +509,7 @@ export async function run(config: Config): Promise<void> {
     TAPDisplayFinalResult(config.COUNTER, TIME_COUNTER.stop());
 
     if (config.reporter === 'junit') await writeJUnitReport(config);
+    if (config.coverage) await writeCoverageReport(config, allFiles);
 
     const fileTimes = computeFileTimes(groups, weights, wallTimes);
     persistTimings(fileTimes, config.projectRoot).catch(

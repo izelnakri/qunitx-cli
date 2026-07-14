@@ -100,6 +100,22 @@ export interface JUnitCase {
 }
 
 /**
+ * Per-source-file line coverage, accumulated across every executed bundle.
+ * Keyed by absolute source path. Lines are 1-based, matching editor/lcov conventions.
+ */
+export interface FileCoverage {
+  /** 1-based line numbers that the source map attributes to executable bundle positions. */
+  coverable: Set<number>;
+  /** 1-based line number → highest V8 hit count observed for that line. */
+  covered: Map<number, number>;
+  /** Verbatim original source text (from the map's `sourcesContent`), for the HTML report. */
+  sourceContent: string | null;
+}
+
+/** Absolute source path → its accumulated {@link FileCoverage}. */
+export type CoverageFileMap = Map<string, FileCoverage>;
+
+/**
  * Full resolved qunitx configuration for a single run, merging `package.json` settings,
  * CLI flags, and runtime state. Most fields are read-only after `setupConfig()` resolves;
  * underscore-prefixed fields are mutable runtime slots populated during the run lifecycle.
@@ -150,6 +166,16 @@ export interface Config {
    * Defaults to `<output>/junit.xml` (resolved against `projectRoot`).
    */
   junitOutput?: string;
+  /**
+   * When `true`, collect V8 line coverage of the test bundle and emit a terminal summary
+   * at run end. Chromium-only; ignored (with a warning) for firefox/webkit.
+   */
+  coverage?: boolean;
+  /**
+   * Extra coverage report formats beyond the always-on terminal summary:
+   * `'lcov'` writes `<output>/coverage/lcov.info`, `'html'` writes `<output>/coverage/index.html`.
+   */
+  coverageFormats?: string[];
   /** Enable file-watch mode: re-run affected tests on every save. */
   watch?: boolean;
   /**
@@ -288,6 +314,11 @@ export interface Config {
    * off it) so the final `junit.xml` covers the whole run. `null`/absent when TAP-only.
    */
   _junitCollector?: JUnitCase[] | null;
+  /**
+   * Accumulator for per-source line coverage when `coverage` is enabled. Shared across all
+   * concurrent groups (same lifetime as `_junitCollector`). `null`/absent when coverage is off.
+   */
+  _coverageCollector?: CoverageFileMap | null;
 }
 
 /**
