@@ -13,6 +13,8 @@ await writeFile(
         'setup/tests.hbs': 'templates/setup/tests.hbs',
         'setup/tsconfig.json': 'templates/setup/tsconfig.json',
         'test.js': 'templates/test.js',
+        'vendor/qunitx-runtime.js': 'templates/vendor/qunitx-runtime.js',
+        'vendor/qunit.css': 'templates/vendor/qunit.css',
       },
     },
     null,
