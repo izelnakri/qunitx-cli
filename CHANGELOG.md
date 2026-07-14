@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.27.0] - 2026-07-14
+[`v0.26.6...v0.27.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.26.6...v0.27.0)
+
+### Bug Fixes
+- Probe browser liveness actively before reusing it — 2026-07-14 by [@izelnakri](https://github.com/izelnakri) ([`68eec89`](https://github.com/izelnakri/qunitx-cli/commit/68eec89d3042dd99cf50b250d0b5ef1e6eb1f2aa))
+- Bound the connecting phase so a wedged connect can't ride the 180s deadline — 2026-07-14 by [@izelnakri](https://github.com/izelnakri) ([`1b0183a`](https://github.com/izelnakri/qunitx-cli/commit/1b0183ac9fd84a96530d7e4ada771fd47b6f7804))
+
+### Features
+- Add --only-failed persistent failure cache — 2026-07-14 by [@izelnakri](https://github.com/izelnakri) ([`c41b98e`](https://github.com/izelnakri/qunitx-cli/commit/c41b98e1c850fd598599f7082d1aebbeb67ecc5e))
+- Scope --changed/--since initial run like --only-failed — 2026-07-14 by [@izelnakri](https://github.com/izelnakri) ([`72df655`](https://github.com/izelnakri/qunitx-cli/commit/72df655cb10154e6da0d9088d6274b9217fba676))
+
 ## [0.26.6] - 2026-07-14
 [`v0.26.5...v0.26.6`](https://github.com/izelnakri/qunitx-cli/compare/v0.26.5...v0.26.6)
 
