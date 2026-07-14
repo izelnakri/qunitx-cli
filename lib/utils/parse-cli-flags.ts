@@ -23,6 +23,8 @@ interface ParsedFlags {
   changedSince?: string;
   reporter?: 'tap' | 'junit';
   junitOutput?: string;
+  coverage?: boolean;
+  coverageFormats?: string[];
 }
 
 /**
@@ -103,6 +105,28 @@ export function parseCliFlags(projectRoot: string): ParsedFlags {
         return Object.assign(result, { reporter: (value as 'tap' | 'junit') || 'junit' });
       } else if (arg.startsWith('--junit-output')) {
         return Object.assign(result, { junitOutput: arg.split('=')[1] });
+      } else if (arg.startsWith('--coverage')) {
+        // `--coverage` → terminal summary only. `--coverage=lcov,html` → also write those
+        // report files. `text` is accepted as an explicit alias for the always-on terminal
+        // summary, so it never becomes an extra format.
+        const value = arg.split('=')[1];
+        const formats = value
+          ? value
+              .split(',')
+              .map((format) => format.trim())
+              .filter(Boolean)
+          : [];
+        const invalid = formats.filter((format) => !['text', 'lcov', 'html'].includes(format));
+        if (invalid.length > 0) {
+          console.error(
+            `Invalid --coverage format(s): "${invalid.join(', ')}". Must be one of: lcov, html`,
+          );
+          process.exit(1);
+        }
+        return Object.assign(result, {
+          coverage: true,
+          coverageFormats: formats.filter((format) => format !== 'text'),
+        });
       } else if (arg === '--trace-perf') {
         return result; // consumed by perf-logger.js at module load time, not stored in config
       }

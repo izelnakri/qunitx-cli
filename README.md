@@ -30,6 +30,7 @@ output to the terminal.
 - `--port` defaults to 1234 and auto-increments if taken; fails fast if an explicit port is unavailable
 - `--browser` flag to run tests in Chromium, Firefox, or WebKit
 - `--reporter=junit` writes a JUnit XML report for CI dashboards while TAP keeps streaming to the terminal
+- `--coverage` reports V8 line coverage (terminal summary, plus optional `lcov` and `html` reports)
 - `--version` / `-v` prints the installed version
 - Optional daemon mode (`qunitx daemon start`) keeps Chrome and the esbuild context warm across runs — roughly halves the wall-clock time of repeated invocations
 - Docker image for zero-install CI usage
@@ -383,6 +384,7 @@ Options:
   --browser=<name>    Browser engine: chromium (default), firefox, or webkit
   --reporter=<name>   Output reporter: tap (default) or junit (also writes a JUnit XML file)
   --junit-output=<f>  JUnit XML path when --reporter=junit  [default: <output>/junit.xml]
+  --coverage[=fmts]   Collect V8 line coverage (chromium only). fmts: lcov,html (comma-separated)
   --no-daemon         Don't use the daemon for this run — skips a running daemon and prevents QUNITX_DAEMON auto-spawn
 
 Subcommands:
@@ -409,6 +411,25 @@ qunitx test/ --reporter=junit --junit-output=reports/junit.xml
 - Skipped tests and `todo` tests are reported as `<skipped/>`.
 - The default path is `<output>/junit.xml` (so `tmp/junit.xml` by default); override with
   `--junit-output`. `reporter` can also be set under `qunitx` in `package.json`.
+
+## Code coverage
+
+`--coverage` collects **V8 line coverage** of your test bundle over the Chrome DevTools Protocol
+and maps it back through the bundle's source map to your original files. Because everything is
+bundled, only the non-test source your tests actually import is reported — test files and
+`node_modules` are excluded, and code eliminated by tree-shaking (never shipped to the browser)
+does not appear.
+
+```bash
+qunitx test/                    # terminal summary only
+qunitx test/ --coverage=lcov    # + tmp/coverage/lcov.info  (Codecov, Coveralls, GitLab, genhtml)
+qunitx test/ --coverage=html    # + tmp/coverage/index.html (self-contained, line-highlighted)
+qunitx test/ --coverage=lcov,html
+```
+
+- Chromium only — Firefox/WebKit runs print a warning and skip coverage.
+- The terminal summary is always printed when `--coverage` is on; `lcov`/`html` are additive.
+- Reports are written under `<output>/coverage/`.
 
 ## Timezone
 

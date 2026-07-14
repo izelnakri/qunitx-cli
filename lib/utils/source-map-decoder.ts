@@ -252,6 +252,18 @@ export function isBundleUrl(url: string): boolean {
 }
 
 /**
+ * Resolves the absolute path of the source at `sourceIndex` in the map's `sources` array,
+ * applying the same `sourceRoot` + `outDir` rules as position lookups. Returns `null` when
+ * the index is out of range or the entry is empty. Used by the coverage collector to key
+ * accumulated line coverage by absolute source path.
+ */
+export function sourceAbsolutePath(decoder: SourceMapDecoder, sourceIndex: number): string | null {
+  const rawSource = decoder.sources[sourceIndex];
+  if (!rawSource) return null;
+  return toAbsolutePath(rawSource, decoder.outDir, decoder.sourceRoot);
+}
+
+/**
  * Attempts to resolve a single stack-frame line to its original source location.
  * Handles Chrome named (`at FUNC (URL:L:C)`), Chrome anonymous (`at [async] URL:L:C`),
  * and Firefox/WebKit (`FUNC@URL:L:C`) formats.
@@ -399,20 +411,37 @@ function normalizePosix(path: string): string {
   return (path.startsWith('/') ? '/' : '') + parts.join('/');
 }
 
+/**
+ * Everything below is POSIX-only by design — this module runs in the browser, so it cannot use
+ * node:path. Callers hand us OS paths though (`outDir`, `projectRoot`), and on Windows those use
+ * backslashes. `normalizePosix` splits on `/`, so an unconverted Windows path stays a single
+ * glued segment that a leading `..` pops wholesale — turning `D:\proj\tmp\..\node_modules\x`
+ * into the *relative* `node_modules/x`. That silently defeats every prefix check downstream
+ * (`isNodeModulesPath`, `makeDisplayPath`). Converting at the boundary makes both platforms
+ * produce identical absolute paths.
+ */
+function toPosix(path: string): string {
+  return path.replace(/\\/g, '/');
+}
+
 function toAbsolutePath(rawSource: string, outDir: string, sourceRoot: string): string {
-  if (rawSource.startsWith('file://')) return rawSource.slice(7);
-  if (rawSource.startsWith('/')) return rawSource;
-  const base = sourceRoot ? normalizePosix(`${outDir}/${sourceRoot}`) : outDir;
-  return normalizePosix(`${base}/${rawSource}`);
+  const source = toPosix(rawSource);
+  if (source.startsWith('file://')) return source.slice(7);
+  if (source.startsWith('/')) return source;
+  const base = sourceRoot
+    ? normalizePosix(`${toPosix(outDir)}/${toPosix(sourceRoot)}`)
+    : toPosix(outDir);
+  return normalizePosix(`${base}/${source}`);
 }
 
 function isNodeModulesPath(path: string): boolean {
-  return path.includes('/node_modules/') || path.includes('\\node_modules\\');
+  return toPosix(path).includes('/node_modules/');
 }
 
 function makeDisplayPath(absolutePath: string, projectRoot: string): string {
-  const prefix = projectRoot + '/';
-  return absolutePath.startsWith(prefix) ? absolutePath.slice(prefix.length) : absolutePath;
+  const prefix = `${toPosix(projectRoot)}/`;
+  const absolute = toPosix(absolutePath);
+  return absolute.startsWith(prefix) ? absolute.slice(prefix.length) : absolute;
 }
 
 /** Resolves a `URL:LINE:COL` string to a display path + userPath + sourceText, or null on miss. */
