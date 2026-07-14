@@ -8,3 +8,4 @@ import './watch-test.ts';
 import './watch-rerun-test.ts';
 import './open-test.ts';
 import './timezone-test.ts';
+import './reporter-junit-test.ts';

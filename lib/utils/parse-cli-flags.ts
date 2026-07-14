@@ -21,6 +21,8 @@ interface ParsedFlags {
   before?: string | false;
   after?: string | false;
   changedSince?: string;
+  reporter?: 'tap' | 'junit';
+  junitOutput?: string;
 }
 
 /**
@@ -90,6 +92,17 @@ export function parseCliFlags(projectRoot: string): ParsedFlags {
           process.exit(1);
         }
         return Object.assign(result, { changedSince: ref });
+      } else if (arg.startsWith('--reporter')) {
+        // `--reporter=junit` enables the JUnit XML file (TAP still streams to stdout);
+        // bare `--reporter` is treated as junit. `tap` is the default and a no-op here.
+        const value = arg.split('=')[1];
+        if (value && !['tap', 'junit'].includes(value)) {
+          console.error(`Invalid --reporter value: "${value}". Must be one of: tap, junit`);
+          process.exit(1);
+        }
+        return Object.assign(result, { reporter: (value as 'tap' | 'junit') || 'junit' });
+      } else if (arg.startsWith('--junit-output')) {
+        return Object.assign(result, { junitOutput: arg.split('=')[1] });
       } else if (arg === '--trace-perf') {
         return result; // consumed by perf-logger.js at module load time, not stored in config
       }

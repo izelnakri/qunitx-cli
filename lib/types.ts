@@ -81,6 +81,25 @@ export interface CachedContent {
 }
 
 /**
+ * One collected JUnit `<testcase>` — accumulated per `testEnd` and serialized into
+ * `junit.xml` at run end when `--reporter=junit` is active.
+ */
+export interface JUnitCase {
+  /** Suite name: the QUnit module path (fullName minus the test name). */
+  classname: string;
+  /** The test-case name (the last element of QUnit's fullName). */
+  name: string;
+  /** Test runtime in **seconds** (QUnit reports ms; converted on record). */
+  time: number;
+  /** Outcome of the test case. */
+  status: 'passed' | 'failed' | 'skipped' | 'todo';
+  /** First failing assertion's message (failed cases only). */
+  failureMessage?: string;
+  /** Concatenated failing-assertion messages + resolved stacks (failed cases only). */
+  failureDetail?: string;
+}
+
+/**
  * Full resolved qunitx configuration for a single run, merging `package.json` settings,
  * CLI flags, and runtime state. Most fields are read-only after `setupConfig()` resolves;
  * underscore-prefixed fields are mutable runtime slots populated during the run lifecycle.
@@ -121,6 +140,16 @@ export interface Config {
    * project-specific resolvers/loaders.
    */
   plugins?: EsbuildPlugin[];
+  /**
+   * Output reporter. `'tap'` (default) streams TAP to stdout. `'junit'` keeps the TAP
+   * stream and additionally writes a JUnit XML file at run end (see `junitOutput`).
+   */
+  reporter?: 'tap' | 'junit';
+  /**
+   * Destination for the JUnit XML file when `reporter === 'junit'`.
+   * Defaults to `<output>/junit.xml` (resolved against `projectRoot`).
+   */
+  junitOutput?: string;
   /** Enable file-watch mode: re-run affected tests on every save. */
   watch?: boolean;
   /**
@@ -253,6 +282,12 @@ export interface Config {
   webServer?: unknown;
   /** Decoded inline source map for the active test bundle; used to resolve stack frames to original sources. */
   _sourceMapDecoder?: SourceMapDecoder | null;
+  /**
+   * Accumulator for JUnit `<testcase>` records when `reporter === 'junit'`. Shared across
+   * all concurrent groups (set once on the parent config before the group configs are spread
+   * off it) so the final `junit.xml` covers the whole run. `null`/absent when TAP-only.
+   */
+  _junitCollector?: JUnitCase[] | null;
 }
 
 /**

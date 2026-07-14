@@ -40,6 +40,7 @@ import {
   buildFailureCache,
   resolveOnlyFailedFiles,
 } from '../utils/failure-cache.ts';
+import { writeJUnitReport } from '../reporter/junit.ts';
 import type { Config, CachedContent } from '../types.ts';
 
 // Playwright navigation timeout for headed watch-mode reloads (not test execution).
@@ -302,6 +303,11 @@ export async function run(config: Config): Promise<void> {
     config._failedTestFiles = new Set();
     config._failedTests = [];
 
+    // Shared JUnit accumulator. Set on the parent config BEFORE the group configs are spread
+    // off it, so every group pushes into the same collector and the final report covers the
+    // whole run (mirrors how COUNTER is shared above).
+    config._junitCollector = config.reporter === 'junit' ? [] : null;
+
     const groupConfigs = groups.map((groupFiles, i) => ({
       ...config,
       // Per-group dedup map for the testEnd handler — see
@@ -490,6 +496,8 @@ export async function run(config: Config): Promise<void> {
     }
 
     TAPDisplayFinalResult(config.COUNTER, TIME_COUNTER.stop());
+
+    if (config.reporter === 'junit') await writeJUnitReport(config);
 
     const fileTimes = computeFileTimes(groups, weights, wallTimes);
     persistTimings(fileTimes, config.projectRoot).catch(

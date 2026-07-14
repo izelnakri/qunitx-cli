@@ -29,6 +29,7 @@ output to the terminal.
 - `--timeout` controls the maximum ms to wait for the full suite to finish
 - `--port` defaults to 1234 and auto-increments if taken; fails fast if an explicit port is unavailable
 - `--browser` flag to run tests in Chromium, Firefox, or WebKit
+- `--reporter=junit` writes a JUnit XML report for CI dashboards while TAP keeps streaming to the terminal
 - `--version` / `-v` prints the installed version
 - Optional daemon mode (`qunitx daemon start`) keeps Chrome and the esbuild context warm across runs — roughly halves the wall-clock time of repeated invocations
 - Docker image for zero-install CI usage
@@ -380,6 +381,8 @@ Options:
   --open=<binary>     Open output in a specific browser binary (e.g. brave, google-chrome-lts)
   --port=<n>          HTTP server port (auto-selects a free port if taken)
   --browser=<name>    Browser engine: chromium (default), firefox, or webkit
+  --reporter=<name>   Output reporter: tap (default) or junit (also writes a JUnit XML file)
+  --junit-output=<f>  JUnit XML path when --reporter=junit  [default: <output>/junit.xml]
   --no-daemon         Don't use the daemon for this run — skips a running daemon and prevents QUNITX_DAEMON auto-spawn
 
 Subcommands:
@@ -387,6 +390,25 @@ Subcommands:
   qunitx init                             Bootstrap qunitx config + base HTML in this project
   qunitx new <testFileName>               Create a new qunitx test file
 ```
+
+## JUnit reporter
+
+Most CI dashboards (GitHub Actions test summaries, GitLab merge-request views, CircleCI Insights,
+BuildKite, Jenkins) ingest JUnit XML natively but not TAP. `--reporter=junit` writes a JUnit XML
+file **in addition to** the normal TAP stream — the terminal output is unchanged, so humans and
+`--failFast` keep working while CI gets a machine-readable artifact.
+
+```bash
+qunitx test/                              # writes tmp/junit.xml (default output dir)
+qunitx test/ --reporter=junit --junit-output=reports/junit.xml
+```
+
+- One `<testsuite>` is emitted per QUnit module; each test is a `<testcase>`.
+- Failing tests carry a `<failure>` with the assertion message and a stack resolved back to your
+  original source files (same mapping as the TAP `at:` field).
+- Skipped tests and `todo` tests are reported as `<skipped/>`.
+- The default path is `<output>/junit.xml` (so `tmp/junit.xml` by default); override with
+  `--junit-output`. `reporter` can also be set under `qunitx` in `package.json`.
 
 ## Timezone
 

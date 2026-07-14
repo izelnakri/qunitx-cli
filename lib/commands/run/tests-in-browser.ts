@@ -9,6 +9,7 @@ import { runUserModule } from '../../utils/run-user-module.ts';
 import { TAPDisplayFinalResult } from '../../tap/display-final-result.ts';
 import { buildErrorHTML, buildNoTestsHTML } from '../../setup/web-server.ts';
 import { extractInlineSourceMap } from '../../utils/source-map-decoder.ts';
+import { writeJUnitReport } from '../../reporter/junit.ts';
 import { writeMetafileCache } from '../../utils/metafile-cache.ts';
 import { writeFailureCache, buildFailureCache } from '../../utils/failure-cache.ts';
 import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
@@ -278,6 +279,10 @@ export async function runTestsInBrowser(
     // resets these once on the parent config in run.ts before the shared spread.
     config._failedTestFiles = new Set();
     config._failedTests = [];
+    // Fresh JUnit accumulator per run in single/watch mode (group mode owns it on the parent
+    // config in run.ts). Reset in lockstep with COUNTER so a watch rerun reports only that
+    // run's cases, not an accumulation across reruns.
+    config._junitCollector = config.reporter === 'junit' ? [] : null;
   }
   config.lastRanTestFiles = targetTestFilesToFilter || allTestFilePaths;
 
@@ -370,6 +375,8 @@ export async function runTestsInBrowser(
             config.debug && process.stderr.write(`# [qunitx] writeFailureCache: ${err.message}\n`),
         );
       }
+
+      if (config.reporter === 'junit') await writeJUnitReport(config);
 
       if (config.after) {
         await runUserModule(`${process.cwd()}/${config.after}`, config.COUNTER, 'after');

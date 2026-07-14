@@ -6,4 +6,5 @@ export const defaultProjectConfigValues = {
   port: 1234,
   extensions: ['js', 'ts', 'jsx', 'tsx'],
   browser: 'chromium',
+  reporter: 'tap',
 };
