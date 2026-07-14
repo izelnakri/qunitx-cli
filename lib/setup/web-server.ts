@@ -99,7 +99,12 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
   config._wsConnectionCount = 0;
   server.wss.on('connection', function connection(socket) {
     config._wsConnectionCount = (config._wsConnectionCount ?? 0) + 1;
-    if (config._wsConnectionCount > 1) {
+    // A second WS connection is expected in watch/--open mode — the user opening http://localhost:PORT
+    // in their own browser (the watch banner invites it) or a headed reload — so warning there is
+    // noise. In a plain single run (e.g. CI) the lone headless page must connect exactly once, so a
+    // duplicate is the real tell for the 2× testEnd flake (WS retry race). --debug forces it on for
+    // investigating a watch-mode double-connect.
+    if (config._wsConnectionCount > 1 && (config.debug || !(config.watch || config.open))) {
       diagWrite(
         `# [qunitx][diag] wss accepted connection #${config._wsConnectionCount} — ` +
           `single-group runs should see exactly one WS connection per run. ` +
