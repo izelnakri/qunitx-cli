@@ -51,6 +51,15 @@ const WATCH_NAV_TIMEOUT_MS = 5_000;
 const STDOUT_FLUSH_GRACE_MS = 30_000;
 // setInterval period that keeps the event loop alive while Promise.allSettled runs.
 const KEEP_ALIVE_INTERVAL_MS = 10_000;
+// Daemon-only bound on the "connecting" phase (setupBrowser → newPage on the reused
+// browser). newPage() is the one connecting step with no timeout — it only rejects once
+// Playwright observes the transport close, which under load can lag a browser that died in
+// the microsecond window after the pre-run liveness probe passed. Without a bound, that
+// wedges the run on the 180s GROUP_TIMEOUT and hangs the client (no timeout of its own).
+// 30s is orders of magnitude over a healthy connect (sub-second) yet well under the group
+// deadline, so it only ever fires on a genuine wedge; the daemon then recovers for the next
+// run. Local runs launch a fresh browser per invocation, so this race can't apply there.
+const DAEMON_CONNECT_TIMEOUT_MS = 30_000;
 // Conventional exit code for a process terminated by SIGTERM (128 + signal number 15).
 const EXIT_CODE_SIGTERM = 128 + 15;
 
@@ -352,12 +361,32 @@ export async function run(config: Config): Promise<void> {
         const startMs = Date.now();
         const work = (async () => {
           groupConfig._phase = 'connecting';
-          const connections = await setupBrowser(
+          const connectWork = setupBrowser(
             groupConfig,
             groupCachedContents[i],
             browser,
             sharedServer,
           );
+          // Daemon runs reuse a persistent browser; bound the connect so a handle that
+          // died just after the pre-run probe fails fast here (recovered next run) instead
+          // of wedging until GROUP_TIMEOUT. See DAEMON_CONNECT_TIMEOUT_MS.
+          const connections = config._daemonMode
+            ? await Promise.race([
+                connectWork,
+                new Promise<never>((_, reject) => {
+                  const t = setTimeout(
+                    () =>
+                      reject(
+                        new Error(
+                          `Group ${i} browser connect timed out after ${DAEMON_CONNECT_TIMEOUT_MS / 1000}s — the daemon's browser appears to have died mid-connect`,
+                        ),
+                      ),
+                    DAEMON_CONNECT_TIMEOUT_MS,
+                  );
+                  t.unref();
+                }),
+              ])
+            : await connectWork;
           groupConfig.webServer = connections.server;
 
           if (config.before) {
