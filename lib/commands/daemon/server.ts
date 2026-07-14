@@ -506,7 +506,13 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
     socket.end();
     return void shutdownDaemon(state, 'initial browser launch failed');
   }
-  if (!state.browser!.isConnected()) {
+  // isConnected() is a point-in-time flag that lags a browser killed while the daemon
+  // was idle — the CDP transport hasn't processed the socket/process close yet, and
+  // under CI load that turn is delayed past the moment the run arrives. Trusting the
+  // stale `true` lets the run proceed against a doomed browser and wedge in an
+  // unbounded newPage() until the 180s GROUP_TIMEOUT, hanging the client (which has no
+  // timeout). An active, bounded CDP round-trip catches the dead handle here instead.
+  if (!(await browserResponsive(state.browser!, state.baseConfig.browser || 'chromium'))) {
     await recoverBrowser(state);
     if (state.shuttingDown) {
       writeChunk(socket, { type: 'fatal', message: 'browser recovery failed' });
@@ -545,6 +551,51 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
     socket.end();
   }
   resetIdleTimer(state);
+}
+
+/**
+ * Budget for the pre-run liveness probe. A healthy CDP round-trip answers in single-digit
+ * ms even on a loaded runner, so this is generous headroom: if it elapses, the browser is
+ * dead (or wedged) and recovery relaunches a fresh one. Kept well under GROUP_TIMEOUT_MS so
+ * a doomed browser surfaces in seconds, not the 3-minute last-resort deadline.
+ */
+export const BROWSER_PROBE_TIMEOUT_MS = 3_000;
+
+/**
+ * Actively confirms the browser's CDP channel is alive, unlike the passive
+ * `isConnected()` flag which lags a killed browser under load. Does a real
+ * `newBrowserCDPSession` round-trip bounded by `timeoutMs` — a dead or wedged
+ * channel resolves `false` within the budget rather than hanging. Chromium-only:
+ * firefox/webkit use a pipe transport whose 'disconnected' fires promptly on
+ * process exit, so `isConnected()` is already reliable there.
+ */
+export async function browserResponsive(
+  browser: Pick<Browser, 'isConnected'> & {
+    newBrowserCDPSession?: Browser['newBrowserCDPSession'];
+  },
+  browserName: string,
+  timeoutMs: number = BROWSER_PROBE_TIMEOUT_MS,
+): Promise<boolean> {
+  if (!browser.isConnected()) return false;
+  if (browserName !== 'chromium' || !browser.newBrowserCDPSession) return true;
+  const timeout = new Promise<null>((resolve) => {
+    const t = setTimeout(() => resolve(null), timeoutMs);
+    t.unref?.();
+  });
+  const probe = browser.newBrowserCDPSession().then(
+    (session) => session,
+    () => null,
+  );
+  const winner = await Promise.race([probe, timeout]);
+  if (winner) {
+    // Healthy: tidy up the probe session so it doesn't leak across runs.
+    void winner.detach().catch(() => {});
+    return true;
+  }
+  // Not responsive within budget (dead channel or CDP error). If the probe was merely
+  // slow and resolves a session after the timeout, detach it so it doesn't leak.
+  void probe.then((session) => session?.detach().catch(() => {}));
+  return false;
 }
 
 /**
