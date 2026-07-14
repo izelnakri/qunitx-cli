@@ -10,6 +10,7 @@ import { TAPDisplayFinalResult } from '../../tap/display-final-result.ts';
 import { buildErrorHTML, buildNoTestsHTML } from '../../setup/web-server.ts';
 import { extractInlineSourceMap } from '../../utils/source-map-decoder.ts';
 import { writeMetafileCache } from '../../utils/metafile-cache.ts';
+import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
 import type { AffectedMetafile } from '../../utils/get-changed-files.ts';
 import type { Page } from 'playwright-core';
 import type { Config, CachedContent, Connections } from '../../types.ts';
@@ -122,7 +123,8 @@ export function formatBuildErrors(error: unknown): string {
  * Cache key for the daemon/watch incremental esbuild context. Single source of truth
  * for what makes two builds interchangeable: file set + every BuildOption that varies
  * between runs. Items intentionally NOT keyed: `plugins` (daemon shuts down on
- * package.json mtime change), `nodePaths` (cwd-bound, daemon stays in cwd), and the
+ * package.json mtime change; the prepended qunitxRuntimePlugin is static and
+ * deterministic), `nodePaths` (cwd-bound, daemon stays in cwd), and the
  * hardcoded literals (`bundle`, `keepNames`, `legalComments`, `jsx`, `sourcemap`,
  * `footer`, `logLevel`). When adding a new variable BuildOption, extend this function
  * — that is the contract enforced by the unit suite.
@@ -180,7 +182,7 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
     // `import { jsx } from 'react/jsx-runtime'` for .tsx/.jsx files. Per-file overrides via
     // tsconfig's `jsxImportSource` or a `@jsxImportSource <pkg>` pragma cover Vue/Preact/Solid.
     jsx: 'automatic',
-    plugins: config.plugins,
+    plugins: [qunitxRuntimePlugin(), ...(config.plugins ?? [])],
     // Required for --changed/--since dep-graph filter on subsequent runs (cache
     // populates here, reads in setupConfig). Inputs map carries the full reverse-dep
     // graph; output cost is negligible.
@@ -533,7 +535,7 @@ export async function buildAllGroupBundles(
     // groupEntryPlugin must run first — it owns the virtual entry-point modules every other
     // plugin sees. User plugins follow and apply to the resolved test files just like in
     // single-group mode (`buildTestBundle`).
-    plugins: [groupEntryPlugin, ...(groupConfigs[0].plugins ?? [])],
+    plugins: [groupEntryPlugin, qunitxRuntimePlugin(), ...(groupConfigs[0].plugins ?? [])],
     nodePaths: ANCESTOR_NODE_MODULES,
     bundle: true,
     logLevel: 'silent',
@@ -663,7 +665,7 @@ function buildFilteredTests(
       target: esbuildTarget(config.browser),
       sourcemap,
       jsx: 'automatic',
-      plugins: config.plugins,
+      plugins: [qunitxRuntimePlugin(), ...(config.plugins ?? [])],
       footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
     },
     needsDisk,
