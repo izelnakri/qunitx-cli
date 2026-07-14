@@ -22,6 +22,7 @@ output to the terminal.
 - Concurrent mode (default) splits test files across all CPU cores for fast parallel runs
 - `--watch` mode re-runs affected tests on file change
 - `--failFast` stops the run after the first failing test
+- `--only-failed` / `-f` re-runs only the test files that failed on the previous run (cached in `tmp/.qunitx-last-failures.json`)
 - `--debug` prints the local server URL and pipes browser console to stdout
 - `--open` / `-o` opens the test output in the same browser the tests run in as soon as the bundle is ready; `--open=brave` opens in a specific binary instead
 - `--before` / `--after` hook scripts for server setup and teardown
@@ -108,6 +109,9 @@ qunitx test/**/*.js --watch
 
 # Stop on the first failure
 qunitx test/**/*.js --failFast
+
+# Re-run only the files that failed last time (from the persistent failure cache)
+qunitx test/ --only-failed   # or: -f, --failed
 
 # Print the server URL and pipe browser console to stdout
 qunitx test/**/*.js --debug
@@ -365,6 +369,7 @@ Usage: qunitx [files/folders...] [options]
 Options:
   --watch             Re-run tests on file changes
   --failFast          Stop after the first failure
+  --only-failed, -f   Re-run only the files that failed on the previous run (alias: --failed)
   --debug             Print the server URL; pipe browser console to stdout
   --timeout=<ms>      Max ms to wait for the suite to finish  [default: 20000]
   --output=<dir>      Directory for compiled test assets     [default: ./tmp]

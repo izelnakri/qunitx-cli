@@ -7,7 +7,8 @@ import { buildFSTree } from './fs-tree.ts';
 import { setupTestFilePaths } from './test-file-paths.ts';
 import { getChangedFsTree } from './get-changed-fs-tree.ts';
 import { parseCliFlags } from '../utils/parse-cli-flags.ts';
-import type { Config } from '../types.ts';
+import { resolveOnlyFailedFiles, type FailedTestRecord } from '../utils/failure-cache.ts';
+import type { Config, FSTree } from '../types.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
 
 /**
@@ -37,6 +38,8 @@ export async function setupConfig(): Promise<Config> {
     testFileLookupPaths: setupTestFilePaths(inputs),
     lastFailedTestFiles: null as string[] | null,
     lastRanTestFiles: null as string[] | null,
+    _failedTestFiles: new Set<string>(),
+    _failedTests: [] as FailedTestRecord[],
     COUNTER: {
       testCount: 0,
       failCount: 0,
@@ -63,6 +66,14 @@ export async function setupConfig(): Promise<Config> {
     config.fsTree = await getChangedFsTree(config.fsTree, config.projectRoot, config.changedSince);
   }
 
+  // --only-failed: restrict the whole run to files that failed on the previous run (persistent
+  // cache). Watch mode is handled separately in run.ts — there the full fsTree is preserved (so
+  // `qa` and file-save reruns still see every file) and only the INITIAL run is scoped to the
+  // failures. See applyOnlyFailedFilter for the no-targets vs. scoped-targets behavior.
+  if (config.onlyFailed && !config.watch) {
+    config.fsTree = await applyOnlyFailedFilter(config as Config);
+  }
+
   return config as Config;
 }
 
@@ -76,6 +87,33 @@ async function readConfigFromPackageJSON(projectRoot: string) {
 
 function normalizeHTMLPaths(projectRoot: string, htmlPaths: string[]): string[] {
   return Array.from(new Set(htmlPaths.map((htmlPath) => `${projectRoot}/${htmlPath}`)));
+}
+
+/**
+ * Builds the `--only-failed` fsTree from the persistent failure cache. With no input targets it
+ * re-runs exactly the cached files; with targets it intersects the cache with the discovered
+ * fsTree so failures are scoped to what the user asked for. Files that no longer exist (deleted
+ * or renamed since the failing run) are dropped. A missing cache falls back to running everything.
+ */
+async function applyOnlyFailedFilter(config: Config): Promise<FSTree> {
+  const failed = await resolveOnlyFailedFiles(
+    config.projectRoot,
+    config.inputs.length > 0,
+    config.fsTree,
+  );
+  if (failed === null) {
+    console.log('#', `qunitx --only-failed: no failure cache found — running all tests`);
+    return config.fsTree;
+  }
+
+  const count = failed.length;
+  console.log(
+    '#',
+    count === 0
+      ? `qunitx --only-failed: no previously-failing test files to run`
+      : `qunitx --only-failed: re-running ${count} previously-failing test file${count === 1 ? '' : 's'}`,
+  );
+  return Object.fromEntries(failed.map((file) => [file, config.fsTree[file] ?? null]));
 }
 
 function readInputsFromPackageJSON(packageJSON: {

@@ -10,6 +10,7 @@ import { TAPDisplayFinalResult } from '../../tap/display-final-result.ts';
 import { buildErrorHTML, buildNoTestsHTML } from '../../setup/web-server.ts';
 import { extractInlineSourceMap } from '../../utils/source-map-decoder.ts';
 import { writeMetafileCache } from '../../utils/metafile-cache.ts';
+import { writeFailureCache, buildFailureCache } from '../../utils/failure-cache.ts';
 import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
 import type { AffectedMetafile } from '../../utils/get-changed-files.ts';
 import type { Page } from 'playwright-core';
@@ -273,6 +274,10 @@ export async function runTestsInBrowser(
     // map had been wiped. Tying the reset to COUNTER reset is the single
     // source of truth for "this is a fresh run, drop old tracking state."
     config._testEndCounts = new Map();
+    // Fresh failure-cache accumulators for this run (watch/single-group path). Group mode
+    // resets these once on the parent config in run.ts before the shared spread.
+    config._failedTestFiles = new Set();
+    config._failedTests = [];
   }
   config.lastRanTestFiles = targetTestFilesToFilter || allTestFilePaths;
 
@@ -356,6 +361,15 @@ export async function runTestsInBrowser(
       }
 
       TAPDisplayFinalResult(config.COUNTER, TIME_TAKEN);
+
+      // Persist failures for the next `--only-failed`. Skip filtered (partial) reruns so a
+      // scoped re-run can't shrink the cache below the full known-failing set.
+      if (!runHasFilter) {
+        writeFailureCache(config.projectRoot, buildFailureCache(config)).catch(
+          (err: Error) =>
+            config.debug && process.stderr.write(`# [qunitx] writeFailureCache: ${err.message}\n`),
+        );
+      }
 
       if (config.after) {
         await runUserModule(`${process.cwd()}/${config.after}`, config.COUNTER, 'after');

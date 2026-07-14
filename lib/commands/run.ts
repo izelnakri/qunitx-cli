@@ -34,6 +34,11 @@ import { readTemplate } from '../utils/read-template.ts';
 import { isCustomTemplate } from '../utils/html.ts';
 import { closeWithGrace } from '../utils/close-with-grace.ts';
 import { maybePrintDaemonHint } from '../utils/daemon-hint.ts';
+import {
+  writeFailureCache,
+  buildFailureCache,
+  resolveOnlyFailedFiles,
+} from '../utils/failure-cache.ts';
 import type { Config, CachedContent } from '../types.ts';
 
 // Playwright navigation timeout for headed watch-mode reloads (not test execution).
@@ -139,8 +144,31 @@ export async function run(config: Config): Promise<void> {
       await runUserModule(`${process.cwd()}/${config.before}`, config, 'before');
     }
 
+    // --only-failed in watch: scope only the FIRST run to the last failures. The full fsTree is
+    // left intact (setupConfig skips the filter in watch mode), so `qa` still runs everything and
+    // file-save reruns behave normally. No cache, or no still-present failures → full start.
+    let initialFilter: string[] | undefined;
+    if (config.onlyFailed) {
+      const failed = await resolveOnlyFailedFiles(
+        config.projectRoot,
+        config.inputs.length > 0,
+        config.fsTree,
+      );
+      if (failed && failed.length > 0) {
+        initialFilter = failed;
+        console.log(
+          '#',
+          blue(
+            `qunitx --only-failed: first run scoped to ${failed.length} previously-failing test file${failed.length === 1 ? '' : 's'} — press "qa" to run all`,
+          ),
+        );
+      } else {
+        console.log('#', blue(`qunitx --only-failed: no cached failures — running all tests`));
+      }
+    }
+
     try {
-      await runTestsInBrowser(config, cachedContent, connections);
+      await runTestsInBrowser(config, cachedContent, connections, initialFilter);
     } catch (error) {
       await closeWithGrace([connections.server?.close(), connections.browser?.close()]);
       throw error;
@@ -253,6 +281,10 @@ export async function run(config: Config): Promise<void> {
       errorCount: 0,
     };
     config.lastRanTestFiles = allFiles;
+    // Fresh failure-cache accumulators, shared by reference into every group config below (like
+    // COUNTER) so all groups add into one set. Reset here so a run never inherits stale failures.
+    config._failedTestFiles = new Set();
+    config._failedTests = [];
 
     const groupConfigs = groups.map((groupFiles, i) => ({
       ...config,
@@ -448,6 +480,16 @@ export async function run(config: Config): Promise<void> {
       (err: Error) =>
         config.debug && process.stderr.write(`# [qunitx] persistTimings: ${err.message}\n`),
     );
+    // Persist this run's failures for the next `--only-failed`. An empty set (all green) is
+    // written too, so a passing re-run clears the cache. Awaited on the exit path below (unlike
+    // timings, which tolerate loss) so a slow filesystem can't lose the cache to process.exit.
+    const failureCacheWrite = writeFailureCache(
+      config.projectRoot,
+      buildFailureCache(config),
+    ).catch(
+      (err: Error) =>
+        config.debug && process.stderr.write(`# [qunitx] writeFailureCache: ${err.message}\n`),
+    );
     if (config.debug) printFileTimings(fileTimes, config.projectRoot);
 
     if (config.after) {
@@ -492,6 +534,7 @@ export async function run(config: Config): Promise<void> {
       // Firefox + Windows, leaving the CLI alive but silent until the test runner
       // SIGTERMs it ~60 s later. Best-effort cleanup, exit anyway.
       await closeWithGrace([
+        failureCacheWrite,
         sharedServer
           ?.close()
           .catch(
