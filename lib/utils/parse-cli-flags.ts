@@ -3,13 +3,14 @@ import path from 'node:path';
 // Fallback when --timeout is passed with an unparseable or zero value.
 const FALLBACK_TIMEOUT_MS = 10_000;
 
-// { inputs: [], debug: true, watch: true, open: true, failFast: true, htmlPaths: [], output }
+// { inputs: [], debug: true, watch: true, open: true, failFast: true, onlyFailed: true, htmlPaths: [], output }
 interface ParsedFlags {
   inputs: string[];
   debug?: boolean;
   watch?: boolean;
   open?: boolean | string;
   failFast?: boolean;
+  onlyFailed?: boolean;
   timeout?: number;
   output?: string;
   htmlPaths?: string[];
@@ -40,6 +41,10 @@ export function parseCliFlags(projectRoot: string): ParsedFlags {
         return Object.assign(result, { open });
       } else if (arg.startsWith('--failfast') || arg.startsWith('--failFast')) {
         return Object.assign(result, { failFast: parseBoolean(arg.split('=')[1]) });
+      } else if (arg === '-f' || arg.startsWith('--only-failed') || arg.startsWith('--failed')) {
+        // Re-run only the test files that failed on the previous run (from the persistent
+        // tmp/.qunitx-last-failures.json cache). Checked before the generic flag handling below.
+        return Object.assign(result, { onlyFailed: parseBoolean(arg.split('=')[1]) });
       } else if (arg.startsWith('--timeout')) {
         return Object.assign(result, { timeout: Number(arg.split('=')[1]) || FALLBACK_TIMEOUT_MS });
       } else if (arg.startsWith('--output')) {

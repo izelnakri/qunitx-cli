@@ -35,6 +35,7 @@ Optional flags:
 --timeout : change default timeout per test case
 --output : folder to distribute built qunitx html and js that a webservers can run[default: tmp]
 --failFast : run the target file or folders with immediate abort if a single test fails
+--only-failed : re-run only the test files that failed on the previous run (short: -f, alias: --failed)
 --port : HTTP server port (auto-selects a free port if the given port is taken)[default: 1234]
 --extensions : comma-separated file extensions to track for discovery and watch-mode rebuilds[default: js,ts,jsx,tsx]
 --browser : browser engine to run tests in: chromium, firefox, webkit[default: chromium]

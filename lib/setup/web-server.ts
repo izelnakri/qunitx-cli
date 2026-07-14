@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
 import { injectScript } from '../utils/html.ts';
 import { TAPDisplayTestResult } from '../tap/display-test-result.ts';
+import { recordFailedTest } from '../utils/failure-cache.ts';
 import { blue } from '../utils/color.ts';
 import { HTTPServer, MIME_TYPES } from '../servers/web.ts';
 import { createReconnectingSocket } from './ws-client.js';
@@ -158,6 +159,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
 
         if (details.status === 'failed') {
           config.lastFailedTestFiles = config.lastRanTestFiles;
+          recordFailedTest(config, details);
         }
 
         if (config.debug && details.runtime > config.timeout * 0.8) {
@@ -740,6 +742,7 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
         }
         if (details.status === 'failed') {
           config.lastFailedTestFiles = config.lastRanTestFiles;
+          recordFailedTest(config, details);
         }
         if (config.debug && details.runtime > config.timeout * 0.8) {
           process.stdout.write(

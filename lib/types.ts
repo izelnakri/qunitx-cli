@@ -4,6 +4,7 @@ import type { ChildProcess } from 'node:child_process';
 import type { Buffer } from 'node:buffer';
 import type { BuildContext, Plugin as EsbuildPlugin } from 'esbuild';
 import type { SourceMapDecoder } from './utils/source-map-decoder.ts';
+import type { FailedTestRecord } from './utils/failure-cache.ts';
 
 /**
  * Running totals of test outcomes for a single test run.
@@ -122,6 +123,13 @@ export interface Config {
   plugins?: EsbuildPlugin[];
   /** Enable file-watch mode: re-run affected tests on every save. */
   watch?: boolean;
+  /**
+   * When set, run only the test files that failed on the previous run, read from the persistent
+   * `tmp/.qunitx-last-failures.json` cache. With no input targets it re-runs exactly the cached
+   * files; with targets it intersects the cache with them. In watch mode only the initial run is
+   * scoped to the failures — the full set stays watched, and `qa` / `qf` / `ql` switch interactively.
+   */
+  onlyFailed?: boolean;
   /** Open the test output in a browser window; a string value specifies the browser binary. */
   open?: boolean | string;
   /** Print the local server URL and forward browser console output to stdout. */
@@ -138,6 +146,14 @@ export interface Config {
   lastFailedTestFiles: string[] | null;
   /** Test files executed on the previous run. */
   lastRanTestFiles: string[] | null;
+  /**
+   * Absolute paths of test files with ≥1 failure in the current run, attributed per-test via
+   * source maps. Shared by reference across group configs (like `COUNTER`) so all groups
+   * accumulate into one set; reset at the start of each run. Persisted to the failure cache.
+   */
+  _failedTestFiles?: Set<string>;
+  /** Per-test metadata for the current run's failures; shared and reset alongside `_failedTestFiles`. */
+  _failedTests?: FailedTestRecord[];
   /** Resolves when the browser signals that the test run is complete. */
   _testRunDone: (() => void) | null;
   /** Resets the inactivity timeout; called on each TAP progress event. */
