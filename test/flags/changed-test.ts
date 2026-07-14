@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
-import { spawnCapture } from '../helpers/shell.ts';
+import { spawnCapture, shellWatch } from '../helpers/shell.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 import { metafileCachePath } from '../../lib/utils/metafile-cache.ts';
 
@@ -143,5 +143,23 @@ module('--changed flag', { concurrency: true }, () => {
     assert.exitCode(result, 0);
     assert.includes(result, 'blast-radius');
     assert.includes(result, '# pass 2');
+  });
+
+  test('--changed --watch scopes only the initial run to the affected files', async (assert) => {
+    const project = await makeChangedProject();
+
+    // Warm the metafile with a full run, then change only src/a.ts so a-test is affected.
+    await runCli(project, 'test/');
+    await fs.writeFile(path.join(project.cwd, 'src/a.ts'), 'export const a = 1;\n// tweak\n');
+
+    // watch keeps the full fsTree (qa/save still see every file); only the first run is scoped.
+    const stdout = await shellWatch(`node ${CWD}/cli.ts test/ --changed --watch`, {
+      cwd: project.cwd,
+      until: (buf) => buf.includes('Press "qq"'),
+    });
+    assert.includes(stdout, '1 of 2 test files affected');
+    assert.includes(stdout, 'press "qa" to run all');
+    assert.includes(stdout, '# pass 1');
+    assert.notIncludes(stdout, '# pass 2');
   });
 });
