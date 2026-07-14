@@ -1,6 +1,9 @@
 import { module, test } from 'qunitx';
 import http from 'node:http';
 import vm from 'node:vm';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
   setupWebServer,
@@ -8,6 +11,7 @@ import {
   buildErrorHTML,
   buildNoTestsHTML,
 } from '../../lib/setup/web-server.ts';
+import '../helpers/custom-asserts.ts';
 import type { Config, CachedContent } from '../../lib/types.ts';
 
 const CWD = process.cwd();
@@ -293,6 +297,74 @@ module('Setup | web-server | runtime IIFE idempotency', { concurrency: true }, (
       1,
       `second invocation MUST NOT construct another WebSocket (got ${wsConstructorCalls.length}) — without the guard this would be 2, the exact CI 26046813154 failure shape`,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// qunit.css route — consumer's copy takes precedence over the CLI's embedded one
+// ---------------------------------------------------------------------------
+
+module('Setup | web-server | qunit.css resolution', { concurrency: true }, () => {
+  async function fetchCss(projectRoot: string): Promise<{ status: number; body: string }> {
+    const server = setupWebServer({ ...makeConfig(), projectRoot } as Config, makeCachedContent());
+    await server.listen(0);
+    const port = (server._server.address() as { port: number }).port;
+    try {
+      return await get(port, '/node_modules/qunitx/vendor/qunit.css');
+    } finally {
+      await server.close();
+    }
+  }
+
+  test('prefers the consumer-installed qunitx qunit.css over the embedded copy', async (assert) => {
+    // A project that installed qunitx gets ITS qunit.css. The marker below is absent from the
+    // embedded stylesheet, so asserting it proves the served bytes are the consumer's, not the
+    // CLI default — the css analogue of the JS runtime plugin's build.resolve-first precedence.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ws-css-consumer-'));
+    try {
+      await fs.writeFile(
+        path.join(dir, 'package.json'),
+        JSON.stringify({ name: 'p', version: '1.0.0' }),
+      );
+      const pkg = path.join(dir, 'node_modules/qunitx');
+      await fs.mkdir(path.join(pkg, 'vendor'), { recursive: true });
+      await fs.writeFile(
+        path.join(pkg, 'package.json'),
+        JSON.stringify({
+          name: 'qunitx',
+          version: '9.9.9',
+          main: 'index.js',
+          exports: './index.js',
+        }),
+      );
+      await fs.writeFile(path.join(pkg, 'index.js'), 'export default {};\n');
+      await fs.writeFile(
+        path.join(pkg, 'vendor/qunit.css'),
+        '/* PROJECT-QUNIT-CSS-MARKER */\n#qunit-tests {}\n',
+      );
+
+      const { status, body } = await fetchCss(dir);
+      assert.equal(status, 200);
+      assert.includes(body, 'PROJECT-QUNIT-CSS-MARKER', 'serves the consumer project qunit.css');
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('falls back to the embedded qunit.css when the project has no qunitx', async (assert) => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ws-css-embedded-'));
+    try {
+      await fs.writeFile(
+        path.join(dir, 'package.json'),
+        JSON.stringify({ name: 'p', version: '1.0.0' }),
+      );
+      const { status, body } = await fetchCss(dir);
+      assert.equal(status, 200, 'css route responds 200 without a copied file');
+      assert.includes(body, 'qunit-tests', 'serves the embedded QUnit stylesheet');
+      assert.notIncludes(body, 'PROJECT-QUNIT-CSS-MARKER', 'not a consumer file');
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 });
 
