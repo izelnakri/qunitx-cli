@@ -24,6 +24,7 @@ import {
   DaemonRunError,
 } from './run/tests-in-browser.ts';
 import { setupFileWatchers } from '../setup/file-watcher.ts';
+import { getChangedFsTree } from '../setup/get-changed-fs-tree.ts';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
 import { runUserModule } from '../utils/run-user-module.ts';
 import { setupKeyboardEvents } from '../setup/keyboard-events.ts';
@@ -144,9 +145,9 @@ export async function run(config: Config): Promise<void> {
       await runUserModule(`${process.cwd()}/${config.before}`, config, 'before');
     }
 
-    // --only-failed in watch: scope only the FIRST run to the last failures. The full fsTree is
-    // left intact (setupConfig skips the filter in watch mode), so `qa` still runs everything and
-    // file-save reruns behave normally. No cache, or no still-present failures → full start.
+    // A run-narrowing flag (--only-failed / --changed / --since) scopes only the FIRST run in
+    // watch mode. The full fsTree is left intact (setupConfig skips these filters in watch), so
+    // `qa` and file-save reruns still see every file; `qf` / `ql` cover the rest interactively.
     let initialFilter: string[] | undefined;
     if (config.onlyFailed) {
       const failed = await resolveOnlyFailedFiles(
@@ -164,6 +165,21 @@ export async function run(config: Config): Promise<void> {
         );
       } else {
         console.log('#', blue(`qunitx --only-failed: no cached failures — running all tests`));
+      }
+    } else if (config.changedSince) {
+      // getChangedFsTree logs its own affected/fallback counts and returns the full tree on
+      // fallback (cold metafile / git failure / blast-radius); scope only when it narrowed.
+      const changed = Object.keys(
+        await getChangedFsTree(config.fsTree, config.projectRoot, config.changedSince),
+      );
+      if (changed.length < Object.keys(config.fsTree).length) {
+        initialFilter = changed;
+        if (changed.length > 0) {
+          console.log(
+            '#',
+            blue(`qunitx --changed/--since: first run scoped — press "qa" to run all`),
+          );
+        }
       }
     }
 
