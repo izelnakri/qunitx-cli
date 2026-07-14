@@ -109,6 +109,39 @@ module('Setup | parseCliFlags | --failFast', { concurrency: true }, () => {
   });
 });
 
+module('Setup | parseCliFlags | --only-failed', { concurrency: true }, () => {
+  test('--only-failed sets onlyFailed to true', (assert) => {
+    const flags = withArgv(['--only-failed'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.onlyFailed, true);
+  });
+
+  test('-f shorthand sets onlyFailed to true', (assert) => {
+    const flags = withArgv(['-f'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.onlyFailed, true);
+  });
+
+  test('--failed alias sets onlyFailed to true', (assert) => {
+    const flags = withArgv(['--failed'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.onlyFailed, true);
+  });
+
+  test('--only-failed=false sets onlyFailed to false', (assert) => {
+    const flags = withArgv(['--only-failed=false'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.onlyFailed, false);
+  });
+
+  test('onlyFailed is undefined when the flag is not provided', (assert) => {
+    const flags = withArgv([], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.onlyFailed, undefined);
+  });
+
+  test('--failed does not collide with --failFast', (assert) => {
+    const flags = withArgv(['--failFast'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.onlyFailed, undefined, '--failFast must not set onlyFailed');
+    assert.strictEqual(flags.failFast, true);
+  });
+});
+
 module('Setup | parseCliFlags | --changed / --since', { concurrency: true }, () => {
   test('--changed sets changedSince to "HEAD"', (assert) => {
     const flags = withArgv(['--changed'], () => parseCliFlags(PROJECT_ROOT));

@@ -209,10 +209,12 @@ export async function shellWatch(
     until,
     timeout = DEFAULT_WATCH_TIMEOUT_MS,
     onSpawn,
+    cwd,
   }: {
     until?: (buf: string) => boolean;
     timeout?: number;
     onSpawn?: (child: ChildProcessWithoutNullStreams) => void;
+    cwd?: string;
   } = {},
 ): Promise<string> {
   const command = applyImplicitFlags(commandString);
@@ -221,6 +223,7 @@ export async function shellWatch(
   const permit = await acquireBrowser();
   const child = spawn(bin, args, {
     env: { ...process.env, FORCE_COLOR: '0', ...prefixEnv },
+    ...(cwd ? { cwd } : {}),
   });
   // Attached BEFORE onSpawn (and before the data listener below) so any 'error'
   // surfaced through child stdio — most often during forced termination on Windows,
