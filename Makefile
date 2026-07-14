@@ -3,7 +3,7 @@
 LEVEL ?= patch
 REGRESSION_THRESHOLD ?= 26
 
-.PHONY: bench bench-check bench-print bench-typecheck bench-update build build-deno build-deno-all build-sea check coverage coverage-report demo dev docs fix fmt format help lint lint-docs release smoke-deno smoke-sea test test-all-browsers test-chrome test-debug test-firefox test-release test-webkit
+.PHONY: bench bench-check bench-print bench-typecheck bench-update build build-deno build-deno-all build-sea check coverage coverage-report demo dev docs fix fmt format help lint lint-docs release smoke-deno smoke-sea test test-all-browsers test-chrome test-debug test-firefox test-release test-webkit vendor
 
 bench:
 	deno task bench:update
@@ -170,6 +170,7 @@ help:
 	@echo "  test-firefox    Run browser tests with Firefox (requires: npx playwright install firefox)"
 	@echo "  test-release    Build, pack, install tarball, run full suite against the binary"
 	@echo "  test-webkit     Run browser tests with WebKit (requires: npx playwright install webkit)"
+	@echo "  vendor          Regenerate the embedded qunitx runtime + qunit.css (run after bumping qunitx)"
 	@echo ""
 	@echo "Env-var escape hatches:"
 	@echo "  SKIP_BENCHMARK=true                       skip bench-check entirely (e.g. SKIP_BENCHMARK=true make release)"
@@ -199,6 +200,10 @@ release:
 	@eval $$(ssh-agent -s); trap "ssh-agent -k > /dev/null" EXIT; ssh-add
 	@npm whoami > /dev/null 2>&1 || npm login
 	@echo "npm user: $$(npm whoami) | $$(date '+%Y-%m-%d %H:%M:%S %Z')"
+# Regenerate the embedded qunitx runtime + qunit.css from the installed qunitx BEFORE checks / build /
+# publish, so every release ships vendored assets matching package.json's qunitx. The freshness test
+# in `check` then validates them, and they are committed with the release commit below.
+	$(MAKE) vendor
 	$(MAKE) bench-check
 	$(MAKE) check
 	npm run test:release
@@ -225,7 +230,7 @@ release:
 	@node scripts/remove-optional-deps.js
 	@npm install --package-lock-only --ignore-scripts
 	git-cliff --tag "v$$(node -p 'require("./package.json").version')" --output CHANGELOG.md
-	git add package.json package-lock.json CHANGELOG.md npm/*/package.json jsr/deno.json
+	git add package.json package-lock.json CHANGELOG.md npm/*/package.json jsr/deno.json templates/vendor
 	git commit -m "Release $$(node -p 'require("./package.json").version')"
 	git tag "v$$(node -p 'require("./package.json").version')"
 	git push && git push --tags
@@ -296,3 +301,9 @@ test-release:
 
 test-webkit:
 	QUNITX_BROWSER=webkit npm run test:browser
+
+# Regenerates templates/vendor/{qunitx-runtime.js,qunit.css} from the installed qunitx
+# devDependency. Run after bumping qunitx in package.json, then commit the outputs — they are
+# embedded into every distribution (npm/SEA/deno) so consumers need no `npm install qunitx`.
+vendor:
+	node scripts/write-vendor-runtime.ts
