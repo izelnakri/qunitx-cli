@@ -26,6 +26,7 @@ import { spawn } from 'node:child_process';
 import createSemaphoreServer from './helpers/semaphore-server.ts';
 import { killProcessGroup } from '../lib/utils/kill-process-group.ts';
 import { cleanupBrowserDir } from '../lib/utils/cleanup-browser-dir.ts';
+import { PER_TEST_TIMEOUT_MS } from './helpers/per-test-timeout.ts';
 
 // When invoked as `deno run -A test/runner.ts ...` (CI deno lanes), we spawn
 // `deno test` workers instead of `node --test`. Detection is one runtime
@@ -41,32 +42,6 @@ const DENO_EXEC = IS_DENO ? (globalThis as { Deno: { execPath(): string } }).Den
 // doesn't enable compile cache — its module graph is small and doing so would
 // pollute process.env, overriding the project-local default below.
 const COMPILE_CACHE_DIR = path.resolve('node_modules/.cache/qunitx/v8');
-
-// Per-test deadline passed to `node --test --test-timeout=N`. node:test fails any
-// test whose runtime exceeds this and force-completes its subtests, so a hung
-// test surfaces by name in the spec output and the worker moves on cleanly —
-// no zombies, no SIGKILL hammer, no whole-phase loss.
-//
-// Sized to comfortably exceed the slowest observed healthy test. Watch-rerun
-// tests are the long tail: per-test wall clock has been observed up to 120 s
-// on slow CI runners under contention (Windows + concurrent Chrome launches).
-// Daemon tests' rapid-stop+start used to peak at 120 s pre-leak-fix; current
-// healthy max is ~15 s. 300 s = 5 min ≈ 2.5× the observed slow tail leaves
-// room for the runner's natural tail variance without misfiring on real-but-
-// slow runs. Anything past 5 min is genuinely stuck.
-//
-// Below this the per-call `DEFAULT_EXEC_TIMEOUT_MS = 180_000` in
-// test/helpers/shell.ts cuts off individual cli invocations; this is the
-// outer safety net for the test itself.
-//
-// Above this, GitHub Actions' job-level `timeout-minutes` (15 on ubuntu, 25
-// on macos/windows in ci.yml) is the ultimate fallback if --test-timeout
-// somehow fails to release a worker (rare: requires a worker stuck in a
-// non-interruptible syscall). We don't add a phase-level SIGKILL deadman of
-// our own because it'd leave orphan cli/daemon/Chrome processes the next run
-// would inherit, and `--test-timeout` already covers the case that actually
-// matters.
-const PER_TEST_TIMEOUT_MS = 300_000;
 
 const watchMode = process.argv.includes('--watch');
 // --watch is never mixed with explicit file paths (see package.json scripts), so when
@@ -157,6 +132,12 @@ const REPORTER_PATH = pathToFileURL(path.resolve('test/helpers/ci-test-summary-r
 // 26037993172) are diagnosable from the job log alone. See the file's
 // leading comment for details.
 const WORKER_PRELOAD = pathToFileURL(path.resolve('test/helpers/test-worker-preload.ts')).href;
+// Deno lane's equivalent of node's --test-timeout: preloaded into every test worker so it can
+// wrap Deno.test with PER_TEST_TIMEOUT_MS. See test/helpers/deno-test-timeout.ts for why this
+// has to be a preload rather than a flag.
+const DENO_TEST_TIMEOUT_PRELOAD = pathToFileURL(
+  path.resolve('test/helpers/deno-test-timeout.ts'),
+).href;
 const phaseResults: Array<{
   name: string;
   slug: string;
@@ -382,16 +363,23 @@ function spawnTests(files: string[], slug?: string): Promise<number> {
       //                  Caveat: deno's junit output emits a second <testsuite> per file
       //                  whose name points at qunitx's internal dist/deno/index.js (one
       //                  testcase per Deno.test.step). Dorny shows it; harmless but noisy.
-      // No --import preload: deno has no equivalent flag, and the silent-death diagnostic
-      // the preload provides is a node:test-specific symptom (whole file → single 'test
-      // failed' with no context). Deno's pretty reporter shows failures directly.
-      // No --test-timeout / --test-force-exit equivalents on deno; the outer GHA
-      // job-level timeout remains the safety net.
+      //   --preload    : DENO_TEST_TIMEOUT_PRELOAD wraps Deno.test with a per-test deadline.
+      //                  Deno has no --test-timeout (still absent as of 2.9) and no timeout in
+      //                  Deno.test's options, so a hung test used to consume the whole GHA job
+      //                  — 25 min, cancelled, naming nothing. This gives the lane the same
+      //                  fail-fast-by-name behaviour --test-timeout gives node. It does NOT
+      //                  carry WORKER_PRELOAD's silent-death diagnostic: that translates a
+      //                  node:test-specific symptom (whole file → one context-free 'test
+      //                  failed') which deno's reporter doesn't have.
+      // No --test-force-exit equivalent on deno; the outer GHA job-level timeout still backs
+      // up anything the per-test deadline can't see (a hang at module top-level, or between
+      // tests, rather than inside a test fn).
       const args = [
         'test',
         '--allow-all',
         '--no-check',
         '--parallel',
+        `--preload=${DENO_TEST_TIMEOUT_PRELOAD}`,
         ...(slug ? [`--junit-path=./tmp/junit-${slug}.xml`] : []),
         ...(watchMode ? ['--watch'] : []),
         ...files,
