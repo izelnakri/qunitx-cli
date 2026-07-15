@@ -19,7 +19,9 @@ module('--reporter', { concurrency: true }, (_hooks, moduleMetadata) => {
     );
     assert.exitCode(result, 1);
     assert.ok(
-      /Invalid --reporter value: "nope"\. Must be one of: tap, spec, dot/.test(result.stderr ?? ''),
+      /Invalid --reporter value: "nope"\. Must be one of: tap, spec, dot, github/.test(
+        result.stderr ?? '',
+      ),
       'error names the value and the valid set',
     );
   });
@@ -154,5 +156,36 @@ module('--reporter=dot', { concurrency: true }, (_hooks, moduleMetadata) => {
     } finally {
       await fs.rm(output, { recursive: true, force: true });
     }
+  });
+});
+
+module('--reporter=github', { concurrency: true }, (_hooks, moduleMetadata) => {
+  test('annotates failures at their original source line, on top of spec output', async (assert, testMetadata) => {
+    const result = await shellFails(
+      `node cli.ts test/fixtures/failing-tests.ts --reporter=github --output=tmp/gh-${randomUUID()}`,
+      { ...moduleMetadata, ...testMetadata },
+    );
+    assert.exitCode(result, 1, 'failing run still exits 1');
+    assert.outputContains(result, {
+      contains: [
+        // Annotation points at the original .ts source, not the bundle — the source map is
+        // already resolved by the shared failure descriptor.
+        /::error file=test\/fixtures\/failing-tests\.ts,line=\d+,col=\d+,title=/,
+        '3 failing', // spec output is still there
+        /✖ deepEqual true works/,
+      ],
+      notContains: ['TAP version 13'],
+    });
+  });
+
+  test('a passing run emits no annotations', async (assert, testMetadata) => {
+    const result = await shell(
+      `node cli.ts test/fixtures/passing-tests.ts --reporter=github --output=tmp/gh-${randomUUID()}`,
+      { ...moduleMetadata, ...testMetadata },
+    );
+    assert.outputContains(result, {
+      contains: ['3 passing'],
+      notContains: ['::error'],
+    });
   });
 });

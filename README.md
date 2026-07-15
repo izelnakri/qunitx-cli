@@ -29,7 +29,7 @@ output to the terminal.
 - `--timeout` controls the maximum ms to wait for the full suite to finish
 - `--port` defaults to 1234 and auto-increments if taken; fails fast if an explicit port is unavailable
 - `--browser` flag to run tests in Chromium, Firefox, or WebKit
-- `--reporter` picks the stdout format: `tap` (default), `spec` (readable, module-grouped), or `dot`
+- `--reporter` picks the stdout format: `tap` (default), `spec`, `dot`, or `github` (annotates failures on the PR diff)
 - `--junit` writes a JUnit XML report for CI dashboards, alongside the normal terminal output
 - `--coverage` reports V8 line coverage (terminal summary, plus optional `lcov` and `html` reports)
 - `--version` / `-v` prints the installed version
@@ -383,7 +383,7 @@ Options:
   --open=<binary>     Open output in a specific browser binary (e.g. brave, google-chrome-lts)
   --port=<n>          HTTP server port (auto-selects a free port if taken)
   --browser=<name>    Browser engine: chromium (default), firefox, or webkit
-  --reporter=<name>   Stdout format: tap, spec, dot  [default: tap]
+  --reporter=<name>   Stdout format: tap, spec, dot, github  [default: tap]
   --junit[=<path>]    Also write a JUnit XML report  [default: <output>/junit.xml]
   --coverage[=fmts]   Collect V8 line coverage (chromium only). fmts: lcov,html (comma-separated)
   --no-daemon         Don't use the daemon for this run — skips a running daemon and prevents QUNITX_DAEMON auto-spawn
