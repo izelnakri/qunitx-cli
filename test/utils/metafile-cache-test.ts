@@ -76,3 +76,66 @@ module('Utils | metafile-cache', { concurrency: true }, () => {
     assert.equal(await readMetafileCache(root), null);
   });
 });
+
+// The cache is written by a build and read by --changed, and in watch mode those happen in the
+// SAME run: run.ts fires buildTestBundle (which writes here) and then calls getChangedFsTree
+// (which reads). `fs.writeFile` truncates on open, so an in-place write leaves the cache empty
+// for the whole write window — a reader that lands there parses garbage, concludes "no metafile
+// cache yet", and silently runs every test file instead of the affected subset. That surfaced as
+// an intermittent CI failure of `--changed --watch scopes only the initial run`, worse under load
+// because a slower write widens the window. These pin the atomic-publish behaviour that fixes it.
+module('Utils | metafile-cache | atomic publish', { concurrency: true }, () => {
+  // Big enough that the write cannot plausibly complete between the calls below — an in-place
+  // write is observably torn here (19/20 reads before the fix), so this needs no timing luck.
+  const BIG: AffectedMetafile = {
+    inputs: Object.fromEntries(
+      Array.from({ length: 400 }, (_, i) => [
+        `src/f${i}.ts`,
+        { imports: [{ path: `src/d${i}.ts` }] },
+      ]),
+    ),
+  };
+
+  test('a read during an in-flight write never sees a torn cache', async (assert) => {
+    const root = await tempProjectRoot();
+    await writeMetafileCache(root, '/cwd', BIG);
+
+    let torn = 0;
+    for (let i = 0; i < 20; i++) {
+      writeMetafileCache(root, '/cwd', BIG); // in flight, exactly as watch mode leaves it
+      if (!(await readMetafileCache(root))) torn++;
+    }
+    assert.equal(torn, 0, 'every concurrent read saw a complete cache');
+  });
+
+  test('the previous cache stays readable until the new one is complete', async (assert) => {
+    const root = await tempProjectRoot();
+    await writeMetafileCache(root, '/first', SAMPLE);
+
+    writeMetafileCache(root, '/second', BIG); // in flight
+    const during = await readMetafileCache(root);
+    assert.ok(during, 'never a miss mid-write');
+    assert.ok(
+      during!.esbuildCwd === '/first' || during!.esbuildCwd === '/second',
+      'sees one whole cache or the other, never a blend',
+    );
+  });
+
+  test('concurrent writers cannot corrupt each other', async (assert) => {
+    const root = await tempProjectRoot();
+    await Promise.all(
+      Array.from({ length: 8 }, (_, i) => writeMetafileCache(root, `/cwd-${i}`, BIG)),
+    );
+    const got = await readMetafileCache(root);
+    assert.ok(got, 'the cache is valid after 8 racing writers');
+    assert.equal(Object.keys(got!.metafile.inputs).length, 400, 'and complete, not truncated');
+  });
+
+  test('publishing leaves no temp files behind', async (assert) => {
+    const root = await tempProjectRoot();
+    await writeMetafileCache(root, '/cwd', SAMPLE);
+    const dir = path.dirname(metafileCachePath(root));
+    const leftovers = (await fs.readdir(dir)).filter((f) => f.endsWith('.tmp'));
+    assert.deepEqual(leftovers, [], 'the temp file is renamed, not abandoned');
+  });
+});
