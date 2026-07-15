@@ -833,7 +833,12 @@ async function runTestInsideHTMLFile(
   page.on('close', resolveTestRace);
 
   try {
-    console.log('#', blue(`QUnitX running: http://localhost:${config.port}${filePath}`));
+    // A TAP `#` comment, so it only belongs in the TAP stream — it would be noise in a
+    // spec/dot/github run. --debug forces it on regardless: the URL is the whole point of
+    // debug mode (open it in a real browser), whatever the reporter.
+    if (config.reporter === 'tap' || config.debug) {
+      console.log('#', blue(`QUnitX running: http://localhost:${config.port}${filePath}`));
+    }
 
     // navMs is the budget Playwright gets to commit the navigation. Startup race timers must
     // never expire before navigation can complete — they are floored at navMs so that small

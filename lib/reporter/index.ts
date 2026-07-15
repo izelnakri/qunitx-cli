@@ -1,4 +1,5 @@
 import { TapReporter } from './tap.ts';
+import { SpecReporter } from './spec.ts';
 import { JUnitReporter } from './junit.ts';
 import { updateCounter } from './types.ts';
 import type { Reporter, RunStartInfo, RunEndInfo, TestDetails } from './types.ts';
@@ -11,7 +12,9 @@ import type { Config } from '../types.ts';
  * they all reference this same array (the same way `COUNTER` is shared).
  */
 export function createReporters(config: Config): Reporter[] {
-  const reporters: Reporter[] = [new TapReporter()];
+  const reporters: Reporter[] = [
+    config.reporter === 'spec' ? new SpecReporter() : new TapReporter(),
+  ];
   // Additive artifact reporters stack on top of whichever stdout reporter is active.
   if (config.junit) reporters.push(new JUnitReporter());
   return reporters;
