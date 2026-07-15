@@ -9,4 +9,5 @@ import './watch-rerun-test.ts';
 import './open-test.ts';
 import './timezone-test.ts';
 import './junit-test.ts';
+import './reporter-test.ts';
 import './coverage-test.ts';

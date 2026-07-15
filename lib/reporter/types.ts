@@ -6,7 +6,7 @@ import type { Config, Counter } from '../types.ts';
  * This module is a leaf (type-only imports), so `parse-cli-flags` can validate against it
  * without pulling the reporter implementations into the CLI's startup path.
  */
-export const REPORTERS = ['tap'] as const;
+export const REPORTERS = ['tap', 'spec'] as const;
 
 /** A valid `--reporter` value. */
 export type ReporterName = (typeof REPORTERS)[number];

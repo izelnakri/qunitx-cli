@@ -39,7 +39,7 @@ Optional flags:
 --port : HTTP server port (auto-selects a free port if the given port is taken)[default: 1234]
 --extensions : comma-separated file extensions to track for discovery and watch-mode rebuilds[default: js,ts,jsx,tsx]
 --browser : browser engine to run tests in: chromium, firefox, webkit[default: chromium]
---reporter : stdout format: tap[default: tap]
+--reporter : stdout format: tap, spec[default: tap]
 --junit : also write a JUnit XML report[default path: <output>/junit.xml; --junit=<path> to override]
 --coverage : collect V8 line coverage (chromium only); --coverage=lcov,html also writes <output>/coverage/ reports
 --before : run a script before the tests(i.e start a new web server before tests)
