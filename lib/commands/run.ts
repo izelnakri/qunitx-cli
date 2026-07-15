@@ -40,7 +40,6 @@ import {
   buildFailureCache,
   resolveOnlyFailedFiles,
 } from '../utils/failure-cache.ts';
-import { writeJUnitReport } from '../reporter/junit.ts';
 import { writeCoverageReport } from '../coverage/report.ts';
 import type { Config, CachedContent } from '../types.ts';
 
@@ -313,7 +312,6 @@ export async function run(config: Config): Promise<void> {
     // Shared reporter/coverage accumulators. Set on the parent config BEFORE the group
     // configs are spread off it, so every group pushes into the same collector and the
     // final report covers the whole run (mirrors how COUNTER is shared above).
-    config._junitCollector = config.reporter === 'junit' ? [] : null;
     config._coverageCollector = config.coverage ? new Map() : null;
 
     const groupConfigs = groups.map((groupFiles, i) => ({
@@ -502,7 +500,6 @@ export async function run(config: Config): Promise<void> {
 
     await reportRunEnd(config, { durationMs: TIME_COUNTER.stop() });
 
-    if (config.reporter === 'junit') await writeJUnitReport(config);
     if (config.coverage) await writeCoverageReport(config, allFiles);
 
     const fileTimes = computeFileTimes(groups, weights, wallTimes);

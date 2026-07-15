@@ -1,40 +1,58 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { resolveStack } from '../utils/source-map-decoder.ts';
+import { failedAssertions } from './failure.ts';
+import type { Reporter, RunEndInfo, TestDetails } from './types.ts';
 import type { Config, JUnitCase } from '../types.ts';
 
 /**
- * JUnit XML reporter. When `--reporter=junit` is active, `recordJUnitCase` is called from the
- * WebSocket `testEnd` handler (the same point TAP is streamed) for every test, and
- * `writeJUnitReport` serializes the accumulated cases into a `junit.xml` file at run end.
- * TAP continues to stream to stdout unchanged — the XML is an additional machine-readable
- * artifact for CI dashboards (GitHub Actions, GitLab, CircleCI, Jenkins, …).
+ * JUnit XML reporter — an *additive artifact* reporter, not a stdout format. Enabled with
+ * `--junit[=<path>]`, it accumulates a `<testcase>` per `testEnd` and writes the document at
+ * run end, while whichever `--reporter` is active keeps owning stdout. That split matters:
+ * CI wants a readable log *and* a machine-readable file, and it's what `--coverage=lcov`
+ * already does for coverage artifacts.
+ *
+ * Cases live on the instance (not on `config`), and the instance is shared across concurrent
+ * groups, so one document covers the whole run. `onRunStart` resets it for watch reruns.
  */
+export class JUnitReporter implements Reporter {
+  #cases: JUnitCase[] = [];
 
-// Shape of the QUnit `testEnd` payload the WS handler forwards. Non-failed tests carry the
-// trimmed `{ status, fullName, runtime }`; failed tests carry the full details incl. assertions.
-interface TestDetails {
-  status: string;
-  fullName: string[];
-  runtime: number;
-  assertions?: Array<{
-    passed: boolean;
-    todo: boolean;
-    message?: string;
-    stack?: string;
-  }>;
+  /** Drops cases from any previous run so watch reruns start clean. */
+  onRunStart(): void {
+    this.#cases = [];
+  }
+
+  /** Accumulates one `<testcase>`; the document is written once at run end. */
+  onTestEnd(config: Config, details: TestDetails): void {
+    this.#cases.push(toJUnitCase(config, details));
+  }
+
+  /** Serializes the accumulated cases and writes the XML document to disk. */
+  async onRunEnd(config: Config, _info: RunEndInfo): Promise<void> {
+    const outputPath = junitOutputPath(config);
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await fs.writeFile(outputPath, buildJUnitXML(this.#cases));
+    process.stdout.write(
+      `# wrote JUnit report to ${relativeToRoot(outputPath, config.projectRoot)}\n`,
+    );
+  }
 }
 
 /**
- * Records one `testEnd` as a JUnit `<testcase>` on the run's shared collector. No-op unless a
- * collector is present (i.e. `--reporter=junit`). Failing assertions are flattened into a
- * `failureDetail` string with stacks resolved back to original sources via the bundle's source
- * map, matching the TAP `at:` behavior.
+ * Resolves where the JUnit document is written: `--junit=<path>` (relative to the project
+ * root) when given a string, else `<output>/junit.xml`.
  */
-export function recordJUnitCase(config: Config, details: TestDetails): void {
-  const collector = config._junitCollector;
-  if (!collector) return;
+export function junitOutputPath(config: Config): string {
+  return typeof config.junit === 'string'
+    ? path.resolve(config.projectRoot, config.junit)
+    : path.join(path.resolve(config.projectRoot, config.output), 'junit.xml');
+}
 
+/**
+ * Converts one `testEnd` into a JUnit `<testcase>`. Failing assertions are flattened into a
+ * `failureDetail` with stacks resolved back to original sources (same as the TAP `at:` field).
+ */
+export function toJUnitCase(config: Config, details: TestDetails): JUnitCase {
   const fullName = details.fullName;
   const name = fullName[fullName.length - 1] ?? fullName.join(' | ');
   const classname = fullName.slice(0, -1).join(' > ') || '(root)';
@@ -46,126 +64,95 @@ export function recordJUnitCase(config: Config, details: TestDetails): void {
     status,
   };
 
-  if (status === 'failed') {
-    const failed = (details.assertions ?? []).filter((a) => !a.passed && a.todo === false);
-    if (failed.length > 0) {
-      testCase.failureMessage = failed[0].message || 'Assertion failed';
-      testCase.failureDetail = failed
-        .map((assertion, index) => {
-          const message = assertion.message || `Assertion #${index + 1} failed`;
-          const stack = resolveAssertionStack(config, assertion.stack);
-          return stack ? `${message}\n${stack}` : message;
-        })
-        .join('\n\n');
-    } else {
-      // Failed status with no failing assertion recorded (e.g. an uncaught error mid-test).
-      testCase.failureMessage = 'Test failed';
-    }
+  if (status !== 'failed') return testCase;
+
+  const failures = failedAssertions(details, config._sourceMapDecoder, config.projectRoot);
+  if (failures.length === 0) {
+    // Failed status with no failing assertion recorded (e.g. an uncaught error mid-test).
+    testCase.failureMessage = 'Test failed';
+    return testCase;
   }
-
-  collector.push(testCase);
-}
-
-/**
- * Serializes the run's accumulated JUnit cases to `config.junitOutput` (default
- * `<output>/junit.xml`, resolved against `projectRoot`), grouping cases into one `<testsuite>`
- * per QUnit module. Prints the destination as a TAP `#` comment. No-op when no cases collected.
- */
-export async function writeJUnitReport(config: Config): Promise<void> {
-  const collector = config._junitCollector;
-  if (!collector) return;
-
-  const outputPath = config.junitOutput
-    ? path.resolve(config.projectRoot, config.junitOutput)
-    : path.join(path.resolve(config.projectRoot, config.output), 'junit.xml');
-
-  await fs.mkdir(path.dirname(outputPath), { recursive: true });
-  await fs.writeFile(outputPath, buildJUnitXML(collector));
-  process.stdout.write(
-    `# wrote JUnit report to ${relativeToRoot(outputPath, config.projectRoot)}\n`,
-  );
+  testCase.failureMessage = failures[0].message || 'Assertion failed';
+  testCase.failureDetail = failures
+    .map((failure) => {
+      const message = failure.message || `Assertion #${failure.index} failed`;
+      return failure.stack ? `${message}\n${failure.stack}` : message;
+    })
+    .join('\n\n');
+  return testCase;
 }
 
 /** Builds the full JUnit XML document string from a flat list of test cases. */
 export function buildJUnitXML(cases: JUnitCase[]): string {
-  const suites = new Map<string, JUnitCase[]>();
-  for (const testCase of cases) {
-    const bucket = suites.get(testCase.classname);
-    if (bucket) bucket.push(testCase);
-    else suites.set(testCase.classname, [testCase]);
-  }
+  // Map.groupBy keys by first appearance, so suites stay in the order their tests ran.
+  const suites = Map.groupBy(cases, (testCase) => testCase.classname);
 
-  const totalTime = cases.reduce((sum, testCase) => sum + testCase.time, 0);
-  const totalFailures = cases.filter((testCase) => testCase.status === 'failed').length;
-  const totalSkipped = cases.filter(
-    (testCase) => testCase.status === 'skipped' || testCase.status === 'todo',
-  ).length;
-
-  const lines: string[] = ['<?xml version="1.0" encoding="UTF-8"?>'];
-  lines.push(
-    `<testsuites name="qunitx" tests="${cases.length}" failures="${totalFailures}" ` +
-      `skipped="${totalSkipped}" time="${formatTime(totalTime)}">`,
+  return (
+    [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      `<testsuites name="qunitx" tests="${cases.length}" failures="${countFailed(cases)}" ` +
+        `skipped="${countSkipped(cases)}" time="${formatTime(totalTime(cases))}">`,
+      ...[...suites].flatMap(([suiteName, suiteCases]) => buildSuite(suiteName, suiteCases)),
+      '</testsuites>',
+    ].join('\n') + '\n'
   );
-  for (const [suiteName, suiteCases] of suites) {
-    lines.push(...buildSuite(suiteName, suiteCases));
-  }
-  lines.push('</testsuites>');
-  return lines.join('\n') + '\n';
 }
-
-export { writeJUnitReport as default };
 
 /** Builds the `<testsuite>` block (with nested `<testcase>` elements) for one QUnit module. */
 function buildSuite(suiteName: string, cases: JUnitCase[]): string[] {
-  const suiteTime = cases.reduce((sum, testCase) => sum + testCase.time, 0);
-  const failures = cases.filter((testCase) => testCase.status === 'failed').length;
-  const skipped = cases.filter(
-    (testCase) => testCase.status === 'skipped' || testCase.status === 'todo',
-  ).length;
-
-  const lines = [
+  return [
     `  <testsuite name="${escapeAttr(suiteName)}" tests="${cases.length}" ` +
-      `failures="${failures}" skipped="${skipped}" time="${formatTime(suiteTime)}">`,
+      `failures="${countFailed(cases)}" skipped="${countSkipped(cases)}" ` +
+      `time="${formatTime(totalTime(cases))}">`,
+    ...cases.flatMap(buildCase),
+    '  </testsuite>',
   ];
-  for (const testCase of cases) {
-    const open =
-      `    <testcase name="${escapeAttr(testCase.name)}" ` +
-      `classname="${escapeAttr(testCase.classname)}" time="${formatTime(testCase.time)}"`;
-    if (testCase.status === 'failed') {
-      lines.push(`${open}>`);
-      lines.push(
-        `      <failure message="${escapeAttr(testCase.failureMessage ?? 'failed')}">` +
-          `${escapeText(testCase.failureDetail ?? testCase.failureMessage ?? '')}</failure>`,
-      );
-      lines.push('    </testcase>');
-    } else if (testCase.status === 'skipped' || testCase.status === 'todo') {
-      lines.push(`${open}>`);
-      lines.push(`      <skipped/>`);
-      lines.push('    </testcase>');
-    } else {
-      lines.push(`${open}/>`);
-    }
+}
+
+/** One `<testcase>`: self-closing when it passed, wrapping `<failure>`/`<skipped/>` otherwise. */
+function buildCase(testCase: JUnitCase): string[] {
+  const open =
+    `    <testcase name="${escapeAttr(testCase.name)}" ` +
+    `classname="${escapeAttr(testCase.classname)}" time="${formatTime(testCase.time)}"`;
+
+  if (testCase.status === 'failed') {
+    return [
+      `${open}>`,
+      `      <failure message="${escapeAttr(testCase.failureMessage ?? 'failed')}">` +
+        `${escapeText(testCase.failureDetail ?? testCase.failureMessage ?? '')}</failure>`,
+      '    </testcase>',
+    ];
+  } else if (testCase.status === 'skipped' || testCase.status === 'todo') {
+    return [`${open}>`, `      <skipped/>`, '    </testcase>'];
   }
-  lines.push('  </testsuite>');
-  return lines;
+  return [`${open}/>`];
+}
+
+function totalTime(cases: JUnitCase[]): number {
+  return cases.reduce((sum, testCase) => sum + testCase.time, 0);
+}
+
+function countFailed(cases: JUnitCase[]): number {
+  return cases.filter((testCase) => testCase.status === 'failed').length;
+}
+
+// `todo` has no JUnit equivalent and reports as skipped (see normalizeStatus), so both statuses
+// count here. Shared by the <testsuites> and <testsuite> levels so the two can never disagree.
+function countSkipped(cases: JUnitCase[]): number {
+  return cases.filter((testCase) => testCase.status === 'skipped' || testCase.status === 'todo')
+    .length;
 }
 
 // QUnit's `skipped` maps to JUnit `<skipped/>`; `todo` (expected-fail work-in-progress) has no
 // JUnit equivalent, so it is reported as skipped rather than polluting the failure count.
-function normalizeStatus(status: string): JUnitCase['status'] {
-  if (status === 'failed') return 'failed';
-  if (status === 'skipped') return 'skipped';
-  if (status === 'todo') return 'todo';
-  return 'passed';
-}
+const JUNIT_STATUSES: Record<string, JUnitCase['status']> = {
+  failed: 'failed',
+  skipped: 'skipped',
+  todo: 'todo',
+};
 
-function resolveAssertionStack(config: Config, stack?: string): string | null {
-  if (!stack) return null;
-  const decoder = config._sourceMapDecoder;
-  if (decoder && config.projectRoot) {
-    return resolveStack(stack, decoder, config.projectRoot).resolvedStack.trim() || stack.trim();
-  }
-  return stack.trim();
+function normalizeStatus(status: string): JUnitCase['status'] {
+  return JUNIT_STATUSES[status] ?? 'passed';
 }
 
 function relativeToRoot(absolutePath: string, projectRoot: string): string {

@@ -4,7 +4,7 @@ import type { ChildProcess } from 'node:child_process';
 import type { Buffer } from 'node:buffer';
 import type { BuildContext, Plugin as EsbuildPlugin } from 'esbuild';
 import type { SourceMapDecoder } from './utils/source-map-decoder.ts';
-import type { Reporter } from './reporter/types.ts';
+import type { Reporter, ReporterName } from './reporter/types.ts';
 import type { FailedTestRecord } from './utils/failure-cache.ts';
 
 /**
@@ -158,15 +158,15 @@ export interface Config {
    */
   plugins?: EsbuildPlugin[];
   /**
-   * Output reporter. `'tap'` (default) streams TAP to stdout. `'junit'` keeps the TAP
-   * stream and additionally writes a JUnit XML file at run end (see `junitOutput`).
+   * The single stdout format for the run (default `'tap'`). Artifact outputs (`junit`,
+   * `coverage`) are separate additive options, not values of this field.
    */
-  reporter?: 'tap' | 'junit';
+  reporter?: ReporterName;
   /**
-   * Destination for the JUnit XML file when `reporter === 'junit'`.
-   * Defaults to `<output>/junit.xml` (resolved against `projectRoot`).
+   * Write a JUnit XML report in addition to the `reporter` stdout stream. `true` writes
+   * `<output>/junit.xml`; a string is a path (resolved against `projectRoot`).
    */
-  junitOutput?: string;
+  junit?: boolean | string;
   /**
    * When `true`, collect V8 line coverage of the test bundle and emit a terminal summary
    * at run end. Chromium-only; ignored (with a warning) for firefox/webkit.
@@ -310,12 +310,6 @@ export interface Config {
   /** Decoded inline source map for the active test bundle; used to resolve stack frames to original sources. */
   _sourceMapDecoder?: SourceMapDecoder | null;
   /**
-   * Accumulator for JUnit `<testcase>` records when `reporter === 'junit'`. Shared across
-   * all concurrent groups (set once on the parent config before the group configs are spread
-   * off it) so the final `junit.xml` covers the whole run. `null`/absent when TAP-only.
-   */
-  _junitCollector?: JUnitCase[] | null;
-  /**
    * Active reporter instances for this run, built by `createReporters` in `setupConfig`.
    * Shared by reference across all concurrent groups (same as `COUNTER`), so a stateful
    * reporter sees the whole run rather than one group's slice.
@@ -323,7 +317,8 @@ export interface Config {
   _reporters?: Reporter[];
   /**
    * Accumulator for per-source line coverage when `coverage` is enabled. Shared across all
-   * concurrent groups (same lifetime as `_junitCollector`). `null`/absent when coverage is off.
+   * concurrent groups (set once on the parent config before the group configs are spread off
+   * it). `null`/absent when coverage is off.
    */
   _coverageCollector?: CoverageFileMap | null;
 }

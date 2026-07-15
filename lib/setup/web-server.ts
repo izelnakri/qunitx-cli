@@ -5,7 +5,6 @@ import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-h
 import { injectScript } from '../utils/html.ts';
 import { reportRunStart, reportTestEnd } from '../reporter/index.ts';
 import { recordFailedTest } from '../utils/failure-cache.ts';
-import { recordJUnitCase } from '../reporter/junit.ts';
 import { blue } from '../utils/color.ts';
 import { HTTPServer, MIME_TYPES } from '../servers/web.ts';
 import { createReconnectingSocket } from './ws-client.js';
@@ -172,7 +171,6 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         }
         config._resetTestTimeout?.();
         reportTestEnd(config, details);
-        recordJUnitCase(config, details);
       } else if (event === 'done') {
         // Signal test completion. TCP ordering guarantees all testEnd messages
         // preceding this on the same connection are already processed by Node.js.
@@ -755,7 +753,6 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
         }
         config._resetTestTimeout?.();
         reportTestEnd(config, details);
-        recordJUnitCase(config, details);
       } else if (event === 'done') {
         config._phase = 'done';
         config._lastQUnitResult = qunitResult ?? null;
