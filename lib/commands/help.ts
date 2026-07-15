@@ -27,8 +27,8 @@ ${color('--only-failed')} : re-run only the test files that failed on the previo
 ${color('--port')} : HTTP server port (auto-selects a free port if the given port is taken)[default: 1234]
 ${color('--extensions')} : comma-separated file extensions to track for discovery and watch-mode rebuilds[default: js,ts,jsx,tsx]
 ${color('--browser')} : browser engine to run tests in: chromium, firefox, webkit[default: chromium]
-${color('--reporter')} : output reporter: tap (default) or junit; ${color('junit')} also writes a JUnit XML file (TAP still streams to stdout)
-${color('--junit-output')} : JUnit XML file path when ${color('--reporter=junit')} [default: <output>/junit.xml]
+${color('--reporter')} : stdout format: tap[default: tap]
+${color('--junit')} : also write a JUnit XML report[default path: <output>/junit.xml; ${color('--junit=<path>')} to override]
 ${color('--coverage')} : collect V8 line coverage (chromium only); ${color('--coverage=lcov,html')} also writes <output>/coverage/ reports
 ${color('--before')} : run a script before the tests(i.e start a new web server before tests)
 ${color('--after')} : run a script after the tests(i.e save test results to a file)

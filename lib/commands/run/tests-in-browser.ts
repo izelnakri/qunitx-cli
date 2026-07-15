@@ -9,7 +9,6 @@ import { runUserModule } from '../../utils/run-user-module.ts';
 import { reportRunEnd } from '../../reporter/index.ts';
 import { buildErrorHTML, buildNoTestsHTML } from '../../setup/web-server.ts';
 import { extractInlineSourceMap } from '../../utils/source-map-decoder.ts';
-import { writeJUnitReport } from '../../reporter/junit.ts';
 import { collectCoverage } from '../../coverage/collect.ts';
 import { writeCoverageReport } from '../../coverage/report.ts';
 import { writeMetafileCache } from '../../utils/metafile-cache.ts';
@@ -284,7 +283,6 @@ export async function runTestsInBrowser(
     // Fresh reporter/coverage accumulators per run in single/watch mode (group mode owns
     // these on the parent config in run.ts). Reset in lockstep with COUNTER so a watch
     // rerun reports only that run's cases and coverage, not an accumulation across reruns.
-    config._junitCollector = config.reporter === 'junit' ? [] : null;
     config._coverageCollector = config.coverage ? new Map() : null;
   }
   config.lastRanTestFiles = targetTestFilesToFilter || allTestFilePaths;
@@ -379,7 +377,6 @@ export async function runTestsInBrowser(
         );
       }
 
-      if (config.reporter === 'junit') await writeJUnitReport(config);
       if (config.coverage) await writeCoverageReport(config, allTestFilePaths);
 
       if (config.after) {

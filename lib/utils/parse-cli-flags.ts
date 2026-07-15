@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { REPORTERS, type ReporterName } from '../reporter/types.ts';
 
 // Fallback when --timeout is passed with an unparseable or zero value.
 const FALLBACK_TIMEOUT_MS = 10_000;
@@ -21,8 +22,8 @@ interface ParsedFlags {
   before?: string | false;
   after?: string | false;
   changedSince?: string;
-  reporter?: 'tap' | 'junit';
-  junitOutput?: string;
+  reporter?: ReporterName;
+  junit?: boolean | string;
   coverage?: boolean;
   coverageFormats?: string[];
 }
@@ -95,16 +96,20 @@ export function parseCliFlags(projectRoot: string): ParsedFlags {
         }
         return Object.assign(result, { changedSince: ref });
       } else if (arg.startsWith('--reporter')) {
-        // `--reporter=junit` enables the JUnit XML file (TAP still streams to stdout);
-        // bare `--reporter` is treated as junit. `tap` is the default and a no-op here.
+        // `--reporter` selects the single stdout format. Artifacts (--junit, --coverage) are
+        // separate additive flags, so `--reporter=dot --junit` is a coherent combination.
         const value = arg.split('=')[1];
-        if (value && !['tap', 'junit'].includes(value)) {
-          console.error(`Invalid --reporter value: "${value}". Must be one of: tap, junit`);
+        if (!value || !REPORTERS.includes(value as ReporterName)) {
+          console.error(
+            `Invalid --reporter value: "${value ?? ''}". Must be one of: ${REPORTERS.join(', ')}`,
+          );
           process.exit(1);
         }
-        return Object.assign(result, { reporter: (value as 'tap' | 'junit') || 'junit' });
-      } else if (arg.startsWith('--junit-output')) {
-        return Object.assign(result, { junitOutput: arg.split('=')[1] });
+        return Object.assign(result, { reporter: value as ReporterName });
+      } else if (arg.startsWith('--junit')) {
+        // Bare `--junit` writes <output>/junit.xml; `--junit=<path>` overrides the destination.
+        const value = arg.split('=')[1];
+        return Object.assign(result, { junit: value ? value : true });
       } else if (arg.startsWith('--coverage')) {
         // `--coverage` → terminal summary only. `--coverage=lcov,html` → also write those
         // report files. `text` is accepted as an explicit alias for the always-on terminal

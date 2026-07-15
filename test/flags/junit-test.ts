@@ -4,12 +4,12 @@ import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
 import shell, { shellFails } from '../helpers/shell.ts';
 
-module('--reporter=junit', { concurrency: true }, (_hooks, moduleMetadata) => {
+module('--junit', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('writes junit.xml alongside the streamed TAP for a passing run', async (assert, testMetadata) => {
     const output = `tmp/junit-pass-${randomUUID()}`;
     try {
       const result = await shell(
-        `node cli.ts test/fixtures/passing-tests.ts --reporter=junit --output=${output}`,
+        `node cli.ts test/fixtures/passing-tests.ts --junit --output=${output}`,
         { ...moduleMetadata, ...testMetadata },
       );
 
@@ -36,7 +36,7 @@ module('--reporter=junit', { concurrency: true }, (_hooks, moduleMetadata) => {
     const output = `tmp/junit-fail-${randomUUID()}`;
     try {
       const result = await shellFails(
-        `node cli.ts test/fixtures/failing-tests.ts --reporter=junit --output=${output}`,
+        `node cli.ts test/fixtures/failing-tests.ts --junit --output=${output}`,
         { ...moduleMetadata, ...testMetadata },
       );
       assert.exitCode(result, 1, 'failing run exits 1');
@@ -51,12 +51,12 @@ module('--reporter=junit', { concurrency: true }, (_hooks, moduleMetadata) => {
     }
   });
 
-  test('--junit-output overrides the destination path (nested dirs created)', async (assert, testMetadata) => {
+  test('--junit=<path> overrides the destination path (nested dirs created)', async (assert, testMetadata) => {
     const output = `tmp/junit-custom-${randomUUID()}`;
     const junitPath = `${output}/reports/nested/report.xml`;
     try {
       await shell(
-        `node cli.ts test/fixtures/passing-tests.ts --reporter=junit --junit-output=${junitPath} --output=${output}`,
+        `node cli.ts test/fixtures/passing-tests.ts --junit=${junitPath} --output=${output}`,
         { ...moduleMetadata, ...testMetadata },
       );
       const xml = await fs.readFile(junitPath, 'utf8');
@@ -71,7 +71,31 @@ module('--reporter=junit', { concurrency: true }, (_hooks, moduleMetadata) => {
     }
   });
 
-  test('tap remains the default reporter (no junit.xml without the flag)', async (assert, testMetadata) => {
+  test('composes with an explicit --reporter (separate axes)', async (assert, testMetadata) => {
+    const output = `tmp/junit-axes-${randomUUID()}`;
+    try {
+      const result = await shell(
+        `node cli.ts test/fixtures/passing-tests.ts --reporter=tap --junit --output=${output}`,
+        { ...moduleMetadata, ...testMetadata },
+      );
+      assert.tapResult(result, { testCount: 3 });
+      const xml = await fs.readFile(`${output}/junit.xml`, 'utf8');
+      assert.ok(xml.includes('<testsuites'), '--reporter and --junit are independent');
+    } finally {
+      await fs.rm(output, { recursive: true, force: true });
+    }
+  });
+
+  test('--reporter=junit is rejected — junit is an artifact, not a stdout format', async (assert) => {
+    const result = await shellFails(`node cli.ts test/fixtures/passing-tests.ts --reporter=junit`);
+    assert.exitCode(result, 1, 'invalid reporter value exits 1');
+    assert.ok(
+      /Invalid --reporter value: "junit"/.test(result.stderr ?? ''),
+      'error names the offending value',
+    );
+  });
+
+  test('no junit.xml is written without the flag', async (assert, testMetadata) => {
     const output = `tmp/junit-none-${randomUUID()}`;
     try {
       const result = await shell(`node cli.ts test/fixtures/passing-tests.ts --output=${output}`, {
