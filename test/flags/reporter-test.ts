@@ -19,7 +19,7 @@ module('--reporter', { concurrency: true }, (_hooks, moduleMetadata) => {
     );
     assert.exitCode(result, 1);
     assert.ok(
-      /Invalid --reporter value: "nope"\. Must be one of: tap, spec/.test(result.stderr ?? ''),
+      /Invalid --reporter value: "nope"\. Must be one of: tap, spec, dot/.test(result.stderr ?? ''),
       'error names the value and the valid set',
     );
   });
@@ -83,6 +83,64 @@ module('--reporter=spec', { concurrency: true }, (_hooks, moduleMetadata) => {
     const output = `tmp/spec-junit-${randomUUID()}`;
     const result = await shell(
       `node cli.ts test/fixtures/passing-tests.ts --reporter=spec --junit --output=${output}`,
+      { ...moduleMetadata, ...testMetadata },
+    );
+    assert.outputContains(result, {
+      contains: ['3 passing', 'wrote JUnit report'],
+      notContains: ['TAP version 13'],
+    });
+    const fs = await import('node:fs/promises');
+    try {
+      const xml = await fs.readFile(`${output}/junit.xml`, 'utf8');
+      assert.ok(/<testsuites name="qunitx" tests="3"/.test(xml), 'junit artifact still produced');
+    } finally {
+      await fs.rm(output, { recursive: true, force: true });
+    }
+  });
+});
+
+// These assert dot's wiring, not its layout. The matrix is the one piece of output that leaves
+// its line open, so anything else the run prints lands on it: browser console warnings are
+// forwarded to stdout unconditionally (browser.ts `alwaysShow`) and arrive asynchronously —
+// Firefox emits one from the bundle on every run, so the matrix line legitimately reads
+// `...[JavaScript Warning: …]`, and under load the dots can split across lines. That's inherent
+// to a one-char-per-test format (mocha/vitest included). Exact marks, per-status characters and
+// 72-column wrapping are pinned deterministically in test/reporter/dot-test.ts, which owns
+// stdout and can assert them exactly.
+module('--reporter=dot', { concurrency: true }, (_hooks, moduleMetadata) => {
+  test('reports a run through the dot summary rather than TAP', async (assert, testMetadata) => {
+    const result = await shell(
+      `node cli.ts test/fixtures/passing-tests.ts --reporter=dot --output=tmp/dot-${randomUUID()}`,
+      { ...moduleMetadata, ...testMetadata },
+    );
+    assert.outputContains(result, {
+      contains: ['Running 1 test file across 1 worker(s)', '3 passing'],
+      notContains: ['TAP version 13', 'ok 1 ', '1..3', '# QUnitX running'],
+    });
+  });
+
+  test('failures are counted and detailed at the end', async (assert, testMetadata) => {
+    const result = await shellFails(
+      `node cli.ts test/fixtures/failing-tests.ts --reporter=dot --output=tmp/dot-${randomUUID()}`,
+      { ...moduleMetadata, ...testMetadata },
+    );
+    assert.exitCode(result, 1, 'failing run still exits 1');
+    assert.outputContains(result, {
+      contains: [
+        '1 passing',
+        '3 failing',
+        'Failures:',
+        '1) {{moduleName}} Failing Tests | async test finishes',
+        'at test/fixtures/failing-tests.ts:',
+      ],
+      notContains: ['not ok 1 ', 'TAP version 13'],
+    });
+  });
+
+  test('composes with --junit: dot owns stdout, junit.xml is still written', async (assert, testMetadata) => {
+    const output = `tmp/dot-junit-${randomUUID()}`;
+    const result = await shell(
+      `node cli.ts test/fixtures/passing-tests.ts --reporter=dot --junit --output=${output}`,
       { ...moduleMetadata, ...testMetadata },
     );
     assert.outputContains(result, {
