@@ -5,6 +5,19 @@
  */
 import TAPDisplayTestResult from "../lib/tap/display-test-result.ts";
 import TAPDisplayFinalResult from "../lib/tap/display-final-result.ts";
+import { updateCounter } from "../lib/reporter/types.ts";
+import { failedAssertions } from "../lib/reporter/failure.ts";
+
+// Mirrors what a real run does per test (reportTestEnd -> TapReporter.onTestEnd): count it,
+// resolve any failures, then render. TAPDisplayTestResult is a pure formatter now, so calling
+// it alone would measure less work than the runner actually performs.
+const displayTestResult = (
+  counter: Parameters<typeof updateCounter>[0],
+  details: Parameters<typeof failedAssertions>[0],
+) => {
+  updateCounter(counter, details);
+  TAPDisplayTestResult(counter.testCount, details, failedAssertions(details));
+};
 
 // Suppress all output once at module level — patching inside each
 // iteration deoptimises V8's JIT-compiled inline cache, inflating
@@ -49,23 +62,23 @@ Deno.bench("tap: display single passing result", {
   baseline: true,
 }, () => {
   const counter = { testCount: 0, passCount: 0, skipCount: 0, todoCount: 0, failCount: 0, errorCount: 0 };
-  TAPDisplayTestResult(counter, PASSING_DETAILS);
+  displayTestResult(counter, PASSING_DETAILS);
 });
 
 Deno.bench("tap: display single failing result", {
   group: "tap",
 }, () => {
   const counter = { testCount: 0, passCount: 0, skipCount: 0, todoCount: 0, failCount: 0, errorCount: 0 };
-  TAPDisplayTestResult(counter, FAILING_DETAILS);
+  displayTestResult(counter, FAILING_DETAILS);
 });
 
 Deno.bench("tap: display 100 mixed results", {
   group: "tap",
 }, () => {
   const counter = { testCount: 0, passCount: 0, skipCount: 0, todoCount: 0, failCount: 0, errorCount: 0 };
-  for (let i = 0; i < 80; i++) TAPDisplayTestResult(counter, PASSING_DETAILS);
-  for (let i = 0; i < 10; i++) TAPDisplayTestResult(counter, FAILING_DETAILS);
-  for (let i = 0; i < 10; i++) TAPDisplayTestResult(counter, SKIPPED_DETAILS);
+  for (let i = 0; i < 80; i++) displayTestResult(counter, PASSING_DETAILS);
+  for (let i = 0; i < 10; i++) displayTestResult(counter, FAILING_DETAILS);
+  for (let i = 0; i < 10; i++) displayTestResult(counter, SKIPPED_DETAILS);
 });
 
 Deno.bench("tap: display final result summary", {

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
 import { injectScript } from '../utils/html.ts';
-import { TAPDisplayTestResult } from '../tap/display-test-result.ts';
+import { reportRunStart, reportTestEnd } from '../reporter/index.ts';
 import { recordFailedTest } from '../utils/failure-cache.ts';
 import { recordJUnitCase } from '../reporter/junit.ts';
 import { blue } from '../utils/color.ts';
@@ -131,9 +131,11 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         // testEnd arriving just after `connection` for a watch rerun got
         // counted spuriously because the dedup map had been wiped. The map
         // is now reset only at the same lifecycle boundary as COUNTER.
-        // In daemon mode the daemon emits one TAP version 13 header per run before the
-        // run starts; suppressing here keeps the stream parser-clean across runs.
-        if (!config._groupMode && !config._daemonMode) process.stdout.write('TAP version 13\n');
+        // Group and daemon runs emit run-start once up front in run.ts; only the watch/single
+        // path announces per browser connection (each rerun opens a fresh one).
+        if (!config._groupMode && !config._daemonMode) {
+          reportRunStart(config, { fileCount: null, groupCount: null });
+        }
         if (config.debug && config._groupMode) debugGroupHeader(config);
         config._resetTestTimeout?.();
       } else if (event === 'testEnd' && !abort) {
@@ -169,7 +171,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
           );
         }
         config._resetTestTimeout?.();
-        TAPDisplayTestResult(config.COUNTER, details, config._sourceMapDecoder, config.projectRoot);
+        reportTestEnd(config, details);
         recordJUnitCase(config, details);
       } else if (event === 'done') {
         // Signal test completion. TCP ordering guarantees all testEnd messages
@@ -752,7 +754,7 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
           );
         }
         config._resetTestTimeout?.();
-        TAPDisplayTestResult(config.COUNTER, details, config._sourceMapDecoder, config.projectRoot);
+        reportTestEnd(config, details);
         recordJUnitCase(config, details);
       } else if (event === 'done') {
         config._phase = 'done';

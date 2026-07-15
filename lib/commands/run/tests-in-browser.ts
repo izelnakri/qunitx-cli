@@ -6,7 +6,7 @@ import { closeWithGrace } from '../../utils/close-with-grace.ts';
 import esbuild from 'esbuild';
 import { timeCounter } from '../../utils/time-counter.ts';
 import { runUserModule } from '../../utils/run-user-module.ts';
-import { TAPDisplayFinalResult } from '../../tap/display-final-result.ts';
+import { reportRunEnd } from '../../reporter/index.ts';
 import { buildErrorHTML, buildNoTestsHTML } from '../../setup/web-server.ts';
 import { extractInlineSourceMap } from '../../utils/source-map-decoder.ts';
 import { writeJUnitReport } from '../../reporter/junit.ts';
@@ -368,7 +368,7 @@ export async function runTestsInBrowser(
         );
       }
 
-      TAPDisplayFinalResult(config.COUNTER, TIME_TAKEN);
+      await reportRunEnd(config, { durationMs: TIME_TAKEN });
 
       // Persist failures for the next `--only-failed`. Skip filtered (partial) reruns so a
       // scoped re-run can't shrink the cache below the full known-failing set.

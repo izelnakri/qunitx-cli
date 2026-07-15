@@ -1,0 +1,96 @@
+import type { Config, Counter } from '../types.ts';
+
+/**
+ * The internal reporter contract. Reporters render a run to stdout (or to a file, for
+ * additive artifact reporters like JUnit). This is deliberately **not** public API — it is
+ * not exported from the package entry point and carries no stability promise. Custom
+ * reporters are expected to arrive later via the JS API's event stream, not by freezing
+ * QUnit's `testEnd` payload as third-party surface.
+ *
+ * Lifecycle: `onRunStart` → `onTestEnd` (× N) → `onRunEnd`. In watch mode the whole cycle
+ * repeats per rerun, so stateful reporters must reset in `onRunStart`.
+ *
+ * Concurrency: one reporter instance is shared across all concurrent groups (the group
+ * configs are spread off the parent config, so `_reporters` is the same array). `onTestEnd`
+ * therefore arrives interleaved across groups.
+ */
+export interface Reporter {
+  /** Called once before any test output. In watch mode, once per rerun. */
+  onRunStart?(config: Config, info: RunStartInfo): void;
+  /** Called once per test, after `COUNTER` has already been updated for this test. */
+  onTestEnd?(config: Config, details: TestDetails): void;
+  /** Called once when the run finishes, with the final counts on `config.COUNTER`. */
+  onRunEnd?(config: Config, info: RunEndInfo): void | Promise<void>;
+}
+
+/** One QUnit assertion inside a `testEnd` payload. */
+export interface TestAssertion {
+  /** `true` when the assertion held. */
+  passed: boolean;
+  /** `true` for assertions inside a `todo` test, which are expected to fail. */
+  todo: boolean;
+  /** Raw stack captured at the assertion, with frames pointing at the bundle. */
+  stack?: string;
+  /** The value the assertion actually saw. */
+  actual?: unknown;
+  /** The value the assertion required. */
+  expected?: unknown;
+  /** The assertion's message, when one was given. */
+  message?: string;
+}
+
+/**
+ * The QUnit `testEnd` payload as it arrives over the WebSocket. Passing tests carry the
+ * trimmed `{ status, fullName, runtime }`; failing tests additionally carry `assertions`.
+ */
+export interface TestDetails {
+  /** QUnit's outcome: `passed` | `failed` | `skipped` | `todo`. */
+  status: string;
+  /** Module path followed by the test name, e.g. `['Math', 'adds']`. */
+  fullName: string[];
+  /** Test duration in milliseconds. */
+  runtime: number;
+  /** Present on failing tests only (QUnit trims the payload otherwise). */
+  assertions?: TestAssertion[];
+}
+
+/**
+ * Run-scope counts. `fileCount === null` means "counts unknown at this point" (watch mode,
+ * where the header is emitted per browser connection rather than per file batch).
+ */
+export interface RunStartInfo {
+  /** Test files in this run, or `null` when not known at announce time. */
+  fileCount: number | null;
+  /** Concurrent groups the files were split across, or `null` alongside a null `fileCount`. */
+  groupCount: number | null;
+}
+
+/** Final run info; the counts themselves live on `config.COUNTER`. */
+export interface RunEndInfo {
+  /** Wall-clock duration of the run in milliseconds. */
+  durationMs: number;
+}
+
+/**
+ * Applies one `testEnd` to the run's counters. Kept separate from any reporter so the
+ * numbers are identical no matter which reporter (or how many) is active — the exit code
+ * and the TAP plan both read `COUNTER`, so it must be updated exactly once per test.
+ */
+export function updateCounter(COUNTER: Counter, details: TestDetails): void {
+  COUNTER.testCount++;
+
+  if (details.status === 'skipped') {
+    COUNTER.skipCount++;
+  } else if (details.status === 'todo') {
+    COUNTER.todoCount = (COUNTER.todoCount ?? 0) + 1;
+  } else if (details.status === 'failed') {
+    COUNTER.failCount++;
+    (details.assertions ?? []).forEach((assertion) => {
+      if (!assertion.passed && assertion.todo === false) {
+        COUNTER.errorCount = (COUNTER.errorCount ?? 0) + 1;
+      }
+    });
+  } else if (details.status === 'passed') {
+    COUNTER.passCount++;
+  }
+}
