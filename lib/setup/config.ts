@@ -8,6 +8,7 @@ import { setupTestFilePaths } from './test-file-paths.ts';
 import { getChangedFsTree } from './get-changed-fs-tree.ts';
 import { parseCliFlags } from '../utils/parse-cli-flags.ts';
 import { resolveOnlyFailedFiles, type FailedTestRecord } from '../utils/failure-cache.ts';
+import { createReporters } from '../reporter/index.ts';
 import type { Config, FSTree } from '../types.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
 
@@ -73,6 +74,10 @@ export async function setupConfig(): Promise<Config> {
   if (config.onlyFailed && !config.watch) {
     config.fsTree = await applyOnlyFailedFilter(config as Config);
   }
+
+  // Built last: reporter selection reads the fully-merged flags. One instance per run, shared
+  // by every concurrent group via the group-config spread in run.ts.
+  (config as Config)._reporters = createReporters(config as Config);
 
   return config as Config;
 }

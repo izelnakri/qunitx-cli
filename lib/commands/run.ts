@@ -30,7 +30,7 @@ import { runUserModule } from '../utils/run-user-module.ts';
 import { setupKeyboardEvents } from '../setup/keyboard-events.ts';
 import { writeOutputStaticFiles } from '../setup/write-output-static-files.ts';
 import { timeCounter } from '../utils/time-counter.ts';
-import { TAPDisplayFinalResult } from '../tap/display-final-result.ts';
+import { reportRunStart, reportRunEnd } from '../reporter/index.ts';
 import { readTemplate } from '../utils/read-template.ts';
 import { isCustomTemplate } from '../utils/html.ts';
 import { closeWithGrace } from '../utils/close-with-grace.ts';
@@ -283,10 +283,7 @@ export async function run(config: Config): Promise<void> {
     // groupConfigs[0]. In daemon mode, throw DaemonRunError so the daemon's
     // run handler closes the run cleanly and stays alive for the next call.
     if (allFiles.length === 0) {
-      process.stdout.write('TAP version 13\n');
-      process.stdout.write(
-        `# Running 0 test files${config._daemonMode ? ' (daemon)' : ''}\n1..0\n`,
-      );
+      reportRunStart(config, { fileCount: 0, groupCount: 0 });
       if (config._daemonMode) throw new DaemonRunError(0);
       if (!config.watch) {
         const browser = config._daemonBrowser ? null : await browserPromise!;
@@ -359,10 +356,7 @@ export async function run(config: Config): Promise<void> {
           })()
         : null;
 
-    process.stdout.write('TAP version 13\n');
-    process.stdout.write(
-      `# Running ${allFiles.length} test file${allFiles.length === 1 ? '' : 's'} across ${groupCount} group${groupCount === 1 ? '' : 's'}${config._daemonMode ? ' (daemon)' : ''}\n`,
-    );
+    reportRunStart(config, { fileCount: allFiles.length, groupCount });
 
     // Build all group bundles and write static files while the browser is starting up.
     // Bind the shared server's port in the same parallel window when active.
@@ -506,7 +500,7 @@ export async function run(config: Config): Promise<void> {
       );
     }
 
-    TAPDisplayFinalResult(config.COUNTER, TIME_COUNTER.stop());
+    await reportRunEnd(config, { durationMs: TIME_COUNTER.stop() });
 
     if (config.reporter === 'junit') await writeJUnitReport(config);
     if (config.coverage) await writeCoverageReport(config, allFiles);

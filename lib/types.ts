@@ -4,6 +4,7 @@ import type { ChildProcess } from 'node:child_process';
 import type { Buffer } from 'node:buffer';
 import type { BuildContext, Plugin as EsbuildPlugin } from 'esbuild';
 import type { SourceMapDecoder } from './utils/source-map-decoder.ts';
+import type { Reporter } from './reporter/types.ts';
 import type { FailedTestRecord } from './utils/failure-cache.ts';
 
 /**
@@ -314,6 +315,12 @@ export interface Config {
    * off it) so the final `junit.xml` covers the whole run. `null`/absent when TAP-only.
    */
   _junitCollector?: JUnitCase[] | null;
+  /**
+   * Active reporter instances for this run, built by `createReporters` in `setupConfig`.
+   * Shared by reference across all concurrent groups (same as `COUNTER`), so a stateful
+   * reporter sees the whole run rather than one group's slice.
+   */
+  _reporters?: Reporter[];
   /**
    * Accumulator for per-source line coverage when `coverage` is enabled. Shared across all
    * concurrent groups (same lifetime as `_junitCollector`). `null`/absent when coverage is off.
