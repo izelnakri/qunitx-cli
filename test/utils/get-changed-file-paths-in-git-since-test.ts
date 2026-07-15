@@ -8,6 +8,7 @@ import {
   BLAST_RADIUS_FILES,
   BLAST_RADIUS_PATTERNS,
   getChangedFilePathsInGitSince,
+  runGit,
 } from '../../lib/utils/get-changed-file-paths-in-git-since.ts';
 
 const execFileAsync = promisify(execFile);
@@ -105,5 +106,42 @@ module('Utils | getChangedFilePathsInGitSince | git interaction', { concurrency:
       getChangedFilePathsInGitSince(root, 'no-such-ref'),
       'unknown ref bubbles as a rejection',
     );
+  });
+});
+
+// `--changed` degrades to "run all tests" whenever git fails, but before this bound git could
+// only ever *hang*: nothing killed a wedged child and nothing gave up waiting, so the CLI waited
+// forever. That surfaced as a CI job consumed to its 25-minute timeout with no diagnostic (deno
+// + Windows lane, where node:child_process can leave a spawned child's exit undelivered). An
+// unbounded subprocess in the run path is the bug; these pin the bound.
+//
+// `git hash-object --stdin` reads stdin until EOF and execFile leaves that pipe open, so it
+// never exits on its own — a real, deterministic wedged git, with no stubbing and no reliance on
+// timing luck.
+module('Utils | getChangedFilePathsInGitSince | bounded execution', { concurrency: true }, () => {
+  test('kills and rejects a git that never exits, rather than waiting forever', async (assert) => {
+    const root = await makeRepo({ 'src/app.ts': 'export const a = 1;\n' });
+    const startedAt = Date.now();
+    let error: Error | undefined;
+    try {
+      await runGit(['hash-object', '--stdin'], root, 300);
+    } catch (caught) {
+      error = caught as Error;
+    }
+    const elapsed = Date.now() - startedAt;
+
+    assert.ok(error, 'settles as a rejection instead of hanging forever');
+    assert.ok(elapsed < 10_000, `settles at the bound, not never (took ${elapsed}ms)`);
+    // getChangedFsTree funnels any git error into "run all test files" (covered in
+    // test/setup/get-changed-fs-tree-test.ts), so rejecting here is what converts an
+    // unrecoverable hang into the documented safe fallback.
+  });
+
+  test('a healthy git still resolves normally under the default bound', async (assert) => {
+    const root = await makeRepo({ 'src/app.ts': 'export const a = 1;\n' });
+    await fs.writeFile(path.join(root, 'src/app.ts'), 'export const a = 2;\n');
+    const changed = await getChangedFilePathsInGitSince(root, 'HEAD');
+    assert.ok(changed, 'the bound does not interfere with a normal lookup');
+    assert.ok(changed!.has(path.join(root, 'src/app.ts')), 'the modified file is reported');
   });
 });
