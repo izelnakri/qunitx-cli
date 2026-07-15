@@ -1,5 +1,6 @@
 import { TapReporter } from './tap.ts';
 import { SpecReporter } from './spec.ts';
+import { DotReporter } from './dot.ts';
 import { JUnitReporter } from './junit.ts';
 import { updateCounter } from './types.ts';
 import type { Reporter, RunStartInfo, RunEndInfo, TestDetails } from './types.ts';
@@ -12,9 +13,7 @@ import type { Config } from '../types.ts';
  * they all reference this same array (the same way `COUNTER` is shared).
  */
 export function createReporters(config: Config): Reporter[] {
-  const reporters: Reporter[] = [
-    config.reporter === 'spec' ? new SpecReporter() : new TapReporter(),
-  ];
+  const reporters: Reporter[] = [stdoutReporter(config)];
   // Additive artifact reporters stack on top of whichever stdout reporter is active.
   if (config.junit) reporters.push(new JUnitReporter());
   return reporters;
@@ -43,3 +42,11 @@ export async function reportRunEnd(config: Config, info: RunEndInfo): Promise<vo
 }
 
 export type { Reporter, RunStartInfo, RunEndInfo, TestDetails };
+
+// Exactly one stdout reporter per run. `--reporter` is validated in parse-cli-flags, so an
+// unknown value never reaches here; tap is the default and the fallback.
+function stdoutReporter(config: Config): Reporter {
+  if (config.reporter === 'spec') return new SpecReporter();
+  if (config.reporter === 'dot') return new DotReporter();
+  return new TapReporter();
+}
