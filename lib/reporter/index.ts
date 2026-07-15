@@ -1,10 +1,20 @@
 import { TapReporter } from './tap.ts';
 import { SpecReporter } from './spec.ts';
 import { DotReporter } from './dot.ts';
+import { GithubReporter } from './github.ts';
 import { JUnitReporter } from './junit.ts';
 import { updateCounter } from './types.ts';
-import type { Reporter, RunStartInfo, RunEndInfo, TestDetails } from './types.ts';
+import type { Reporter, ReporterName, RunStartInfo, RunEndInfo, TestDetails } from './types.ts';
 import type { Config } from '../types.ts';
+
+// The `--reporter` value -> stdout reporter. Keyed by ReporterName so adding a name to
+// REPORTERS without wiring it up here is a type error rather than a silent fall back to tap.
+const STDOUT_REPORTERS: Record<ReporterName, new () => Reporter> = {
+  tap: TapReporter,
+  spec: SpecReporter,
+  dot: DotReporter,
+  github: GithubReporter,
+};
 
 /**
  * Reporter wiring. `config.reporter` selects exactly one stdout reporter; artifact
@@ -13,10 +23,9 @@ import type { Config } from '../types.ts';
  * they all reference this same array (the same way `COUNTER` is shared).
  */
 export function createReporters(config: Config): Reporter[] {
-  const reporters: Reporter[] = [stdoutReporter(config)];
-  // Additive artifact reporters stack on top of whichever stdout reporter is active.
-  if (config.junit) reporters.push(new JUnitReporter());
-  return reporters;
+  // Exactly one stdout reporter, plus any additive artifact reporters. A plain run is a
+  // 1-element array; `--reporter=dot --junit` is 2 — one owning stdout, one owning the file.
+  return [stdoutReporter(config), ...(config.junit ? [new JUnitReporter()] : [])];
 }
 
 /** Emits run start to every active reporter. In watch mode this fires once per rerun. */
@@ -46,7 +55,5 @@ export type { Reporter, RunStartInfo, RunEndInfo, TestDetails };
 // Exactly one stdout reporter per run. `--reporter` is validated in parse-cli-flags, so an
 // unknown value never reaches here; tap is the default and the fallback.
 function stdoutReporter(config: Config): Reporter {
-  if (config.reporter === 'spec') return new SpecReporter();
-  if (config.reporter === 'dot') return new DotReporter();
-  return new TapReporter();
+  return new (STDOUT_REPORTERS[config.reporter ?? 'tap'] ?? TapReporter)();
 }
