@@ -30,11 +30,15 @@ export class TapReporter implements Reporter {
 
   /** Emits the `ok` / `not ok` line, with a YAML block for each failing assertion. */
   onTestEnd(config: Config, details: TestDetails): void {
-    TAPDisplayTestResult(
-      config.COUNTER.testCount,
-      details,
-      failedAssertions(details, config._sourceMapDecoder, config.projectRoot),
-    );
+    // Only failed tests carry assertions — the injected runtime sends the trimmed
+    // `{ status, fullName, runtime }` for every other status — so resolving failures for a
+    // passing test is a call and an allocation that can never produce output. Guarding here
+    // matches what every other reporter already does.
+    const failures =
+      details.status === 'failed'
+        ? failedAssertions(details, config._sourceMapDecoder, config.projectRoot)
+        : [];
+    TAPDisplayTestResult(config.COUNTER.testCount, details, failures);
   }
 
   /** Emits the TAP plan line and the run summary. */
