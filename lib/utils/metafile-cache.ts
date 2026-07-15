@@ -23,6 +23,12 @@ interface MetafileCachePayload {
 const CACHE_FILE = 'metafile.json';
 
 /**
+ * Distinguishes concurrent temp files. One process can have two writes in flight (a watch-mode
+ * rebuild starting before the previous write settled), so the pid alone is not unique.
+ */
+let writeSequence = 0;
+
+/**
  * Returns the on-disk cache path for `projectRoot`. The path embeds a SHA-1
  * tag of the absolute project root so projects that share a hoisted/symlinked
  * `node_modules` (pnpm workspaces, monorepos, integration test fixtures) write
@@ -34,21 +40,37 @@ export function metafileCachePath(projectRoot: string): string {
   return path.join(projectRoot, 'node_modules', '.cache', 'qunitx', tag, CACHE_FILE);
 }
 
-/** Best-effort write; failures are swallowed because cache miss on the next read just degrades to "run all tests." */
+/**
+ * Best-effort write; failures are swallowed because a cache miss on the next read just degrades
+ * to "run all tests."
+ *
+ * Publishes by writing a temp file and renaming it into place, because `fs.writeFile` **truncates
+ * on open**: for the whole write window the cache is an empty (then partial) file, and any reader
+ * in that window parses garbage and concludes there is no cache. That is not theoretical — watch
+ * mode fires `buildTestBundle` (which lands here) and *then* calls `getChangedFsTree`, so a
+ * `--changed --watch` run races its own write and intermittently reports "no metafile cache yet
+ * — running all N test files" instead of the affected subset. `rename` is atomic, so a reader
+ * always sees either the previous complete cache or this one, never a torn one. It also makes
+ * concurrent writers (two runs sharing a checkout) and a process killed mid-write safe: the
+ * worst case is a leftover temp file, never a corrupt cache.
+ */
 export async function writeMetafileCache(
   projectRoot: string,
   esbuildCwd: string,
   metafile: AffectedMetafile,
 ): Promise<void> {
   const file = metafileCachePath(projectRoot);
+  const tmpFile = `${file}.${process.pid}-${++writeSequence}.tmp`;
   try {
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(
-      file,
+      tmpFile,
       JSON.stringify({ esbuildCwd, metafile } satisfies MetafileCachePayload),
     );
+    await fs.rename(tmpFile, file);
   } catch {
     /* node_modules/.cache may not be writable (read-only FS, EACCES); silent degrade. */
+    await fs.unlink(tmpFile).catch(() => {});
   }
 }
 
