@@ -27,6 +27,7 @@ import createSemaphoreServer from './helpers/semaphore-server.ts';
 import { killProcessGroup } from '../lib/utils/kill-process-group.ts';
 import { cleanupBrowserDir } from '../lib/utils/cleanup-browser-dir.ts';
 import { PER_TEST_TIMEOUT_MS } from './helpers/per-test-timeout.ts';
+import { joinRunnerRegistry } from './helpers/runner-registry.ts';
 
 // When invoked as `deno run -A test/runner.ts ...` (CI deno lanes), we spawn
 // `deno test` workers instead of `node --test`. Detection is one runtime
@@ -83,13 +84,16 @@ function isContentionLane(): boolean {
   return false;
 }
 
-// Clearing artifacts, starting the semaphore server, and discovering test files are all
-// independent — run them concurrently to cut startup time. tmp/ is recreated after the
-// rm so node:test can open the per-phase perf-reporter destination on phase 1 spawn.
-const [, semaphore, [fastFiles, watchReruns, leakFiles]] = await Promise.all([
-  fs
-    .rm('./tmp', { recursive: true, force: true })
-    .then(() => fs.mkdir('./tmp', { recursive: true })),
+// Joining the registry, starting the semaphore server, and discovering test files are all
+// independent — run them concurrently to cut startup time.
+//
+// The tmp/ wipe happens inside joinRunnerRegistry, and only when no other runner is live: tmp/
+// is shared, so wiping it while another run is using it deletes that run's fixtures mid-flight
+// (see the helper for why the mutex, not just the check, is what makes this safe). Solo runs —
+// the overwhelmingly common case — behave exactly as before. tmp/ is recreated below so
+// node:test can open the per-phase perf-reporter destination on phase 1 spawn.
+const [runner, semaphore, [fastFiles, watchReruns, leakFiles]] = await Promise.all([
+  joinRunnerRegistry(() => fs.rm('./tmp', { recursive: true, force: true })),
   createSemaphoreServer(CHROME_CAP),
   cliFiles.length > 0
     ? Promise.resolve([cliFiles, [], []] as [string[], string[], string[]])
@@ -107,6 +111,11 @@ const [, semaphore, [fastFiles, watchReruns, leakFiles]] = await Promise.all([
         Array.fromAsync(fs.glob('test/**/*-leak.ts')),
       ]),
 ]);
+await fs.mkdir('./tmp', { recursive: true });
+
+// Scopes this run's artifacts. Concurrent runners must not clobber each other's reporter
+// output; CI globs tmp/junit-*.xml, so the extra segment still matches.
+const RUN_ID = runner.runId;
 
 type PerfEntry = {
   name: string;
@@ -197,13 +206,13 @@ if (!watchMode) {
       `| phase | duration |\n|---|---|\n${rows}\n` +
       `| **total** | **${fmt(totalMs)}** |\n\n` +
       `_Per-test breakdown is in the live \`deno test --reporter=pretty\` output above; ` +
-      `junit XML is written to \`tmp/junit-<phase>.xml\` for dorny._\n`;
+      `junit XML is written to \`tmp/junit-<run>-<phase>.xml\` for dorny._\n`;
   } else {
     // Read perf JSONL per phase, generate junit XML alongside (consumed by
     // .github/workflows/test-report.yml → dorny). Reading and writing in parallel.
     const perfByPhase = await Promise.all(
       phaseResults.map(async (p) => {
-        const entries = await readPerf(`./tmp/perf-${p.slug}.jsonl`);
+        const entries = await readPerf(`./tmp/perf-${RUN_ID}-${p.slug}.jsonl`);
         await writeJunitFromPerf(p.slug, entries);
         return entries;
       }),
@@ -252,6 +261,7 @@ if (!watchMode) {
 }
 
 semaphore.close();
+await runner.release();
 process.exit(exitCode1 || exitCode2 || exitCode3);
 
 async function runPhase(name: string, slug: string, files: string[]): Promise<number> {
@@ -318,7 +328,7 @@ async function writeJunitFromPerf(slug: string, entries: PerfEntry[]): Promise<v
     .join('\n');
 
   const xml = `<?xml version="1.0" encoding="utf-8"?>\n<testsuites>\n${suites}\n</testsuites>\n`;
-  await fs.writeFile(`./tmp/junit-${slug}.xml`, xml);
+  await fs.writeFile(`./tmp/junit-${RUN_ID}-${slug}.xml`, xml);
 }
 
 function spawnTests(files: string[], slug?: string): Promise<number> {
@@ -380,7 +390,7 @@ function spawnTests(files: string[], slug?: string): Promise<number> {
         '--no-check',
         '--parallel',
         `--preload=${DENO_TEST_TIMEOUT_PRELOAD}`,
-        ...(slug ? [`--junit-path=./tmp/junit-${slug}.xml`] : []),
+        ...(slug ? [`--junit-path=./tmp/junit-${RUN_ID}-${slug}.xml`] : []),
         ...(watchMode ? ['--watch'] : []),
         ...files,
       ];
@@ -394,7 +404,7 @@ function spawnTests(files: string[], slug?: string): Promise<number> {
     //   spec   → stdout                        : compact, human/LLM-readable test output
     //                                            (no TAP YAML diagnostic blocks; ~80% less
     //                                             stdout noise on green runs).
-    //   ci-test-summary → tmp/perf-<slug>.jsonl: per-test {name, file, ms, status, error?}
+    //   ci-test-summary → tmp/perf-<run>-<slug>.jsonl: per-test {name, file, ms, status, error?}
     //                                            JSONL — drives both the local end-of-run
     //                                            summary AND the junit XML written via
     //                                            writeJunitFromPerf() for dorny consumption.
@@ -404,7 +414,7 @@ function spawnTests(files: string[], slug?: string): Promise<number> {
           '--test-reporter=spec',
           '--test-reporter-destination=stdout',
           `--test-reporter=${REPORTER_PATH}`,
-          `--test-reporter-destination=./tmp/perf-${slug}.jsonl`,
+          `--test-reporter-destination=./tmp/perf-${RUN_ID}-${slug}.jsonl`,
         ]
       : [];
     const child = spawn(
