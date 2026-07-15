@@ -68,7 +68,7 @@ function attributeEntry(
   const lineStarts = computeLineStarts(source);
   const sourceLength = source.length;
   const segmentsByLine = decoder.segmentsByLine;
-  // Cache per-sourceIndex absolute-path resolution (null = excluded, e.g. node_modules).
+  // Cache per-sourceIndex path resolution (null = a dependency, or unresolvable).
   const pathCache = new Map<number, string | null>();
 
   for (let generatedLine = 0; generatedLine < segmentsByLine.length; generatedLine++) {
@@ -85,7 +85,8 @@ function attributeEntry(
 
       let absolutePath = pathCache.get(segment.sourceIndex);
       if (absolutePath === undefined) {
-        absolutePath = resolveIncludedSource(decoder, segment.sourceIndex);
+        const resolved = sourceAbsolutePath(decoder, segment.sourceIndex);
+        absolutePath = resolved && !isDependencyPath(resolved) ? resolved : null;
         pathCache.set(segment.sourceIndex, absolutePath);
       }
       if (absolutePath === null) continue;
@@ -110,14 +111,12 @@ function attributeEntry(
   }
 }
 
-/** Returns the absolute source path for `sourceIndex`, or `null` for node_modules / unresolvable. */
-function resolveIncludedSource(decoder: SourceMapDecoder, sourceIndex: number): string | null {
-  const absolutePath = sourceAbsolutePath(decoder, sourceIndex);
-  if (!absolutePath) return null;
-  if (absolutePath.includes('/node_modules/') || absolutePath.includes('\\node_modules\\')) {
-    return null;
-  }
-  return absolutePath;
+/**
+ * The bundle inlines every dependency it imports — qunitx itself is most of the bytes — but that
+ * code is not the user's to fix, so it never enters the report.
+ */
+function isDependencyPath(absolutePath: string): boolean {
+  return absolutePath.includes('/node_modules/') || absolutePath.includes('\\node_modules\\');
 }
 
 /**
