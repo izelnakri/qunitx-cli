@@ -307,7 +307,17 @@ function listen(server: net.Server, socketPath: string): Promise<void> {
   });
 }
 
-async function shutdownDaemon(state: DaemonState, reason: string): Promise<void> {
+/**
+ * Tears the daemon down: notifies pending clients, removes the on-disk liveness markers, closes
+ * the browser/esbuild within a bounded grace, then exits. Idempotent via `state.shuttingDown`.
+ * `exit` is injectable only so the shutdown ordering can be tested without killing the test
+ * process; production always uses the default. See test/commands/daemon-shutdown-test.ts.
+ */
+export async function shutdownDaemon(
+  state: DaemonState,
+  reason: string,
+  exit: () => void = () => process.exit(0),
+): Promise<void> {
   if (state.shuttingDown) return;
   state.shuttingDown = true;
   process.stderr.write(`# [qunitx daemon] shutting down: ${reason}\n`);
@@ -321,17 +331,20 @@ async function shutdownDaemon(state: DaemonState, reason: string): Promise<void>
   }
 
   await new Promise<void>((resolve) => state.socketServer.close(() => resolve()));
-  // Bounded await on the in-flight browser launch so we can close it through
-  // Playwright's API rather than relying on the chrome-prelaunch.ts exit hook
-  // alone. Two reasons this matters specifically post-decoupling: (1) the
-  // daemon can shut down before any run request awaits browserReady — without
-  // this wait, state.browser stays null and the Promise's Browser handle leaks
-  // (Playwright's Browser keeps its own bookkeeping); (2) the rapid-stop+start
-  // test exposes exactly this — leaked Chromes from previous cycles compound
-  // and starve the next spawn's Chrome launch budget. 3 s is enough for a
-  // healthy CI launch (typical 0.5–2 s); if Chrome takes longer than that the
-  // exit hook in chrome-prelaunch.ts (which now tracks the proc synchronously
-  // at spawn time) SIGKILLs the in-flight Chrome process as the fallback.
+
+  // Remove the on-disk liveness markers NOW — before the browser teardown below. They are how
+  // clients and the next spawn detect "daemon gone"; the browser close that follows can take up
+  // to SHUTDOWN_BROWSER_GRACE_MS on a loaded runner whose pre-launched Chrome hasn't settled, and
+  // gating removal behind it left a self-exited daemon still advertising itself for ~3 s (the
+  // `QUNITX_DAEMON_IDLE_TIMEOUT` self-exit test flaked on exactly this — run 29469560203).
+  await removeLivenessFiles(state);
+
+  // Bounded await on the in-flight browser launch so we can close it through Playwright's API
+  // rather than relying on the chrome-prelaunch.ts exit hook alone. Two reasons post-decoupling:
+  // (1) the daemon can shut down before any run request awaited browserReady — without this wait
+  // state.browser stays null and the Browser handle leaks; (2) the rapid-stop+start test compounds
+  // leaked Chromes that starve the next spawn's launch budget. 3 s covers a healthy launch (typical
+  // 0.5–2 s); slower than that, chrome-prelaunch.ts's exit hook SIGKILLs the in-flight Chrome.
   const SHUTDOWN_BROWSER_GRACE_MS = 3_000;
   const browser =
     state.browser ??
@@ -342,29 +355,33 @@ async function shutdownDaemon(state: DaemonState, reason: string): Promise<void>
       ),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), SHUTDOWN_BROWSER_GRACE_MS)),
     ]));
-  // socket/info are gated on listenSucceeded: a daemon that reaches shutdown
-  // without ever listening (e.g. an early throw before bind) doesn't own those
-  // files and unlinking would corrupt whatever started in its place. The
-  // lockfile IS ours unconditionally — reaching this function means
-  // tryAcquireDaemonLock returned true above, so always release it so the next
-  // spawn doesn't have to stale-pid-recover.
   await Promise.all([
-    state.listenSucceeded ? unlink(state.socketPath).catch(() => {}) : null,
-    state.listenSucceeded ? unlink(state.infoPath).catch(() => {}) : null,
-    unlink(state.lockPath).catch(() => {}),
     state.pageSlot.page?.close().catch(() => {}),
     // browser may be null if the launch hadn't settled within the grace window
     // (or never started at all); the chrome-prelaunch exit hook handles that.
     browser?.close().catch(() => {}),
     state.esbuildCache._esbuildContext?.dispose().catch(() => {}),
   ]);
-  // Best-effort cleanup of the per-cwd daemon dir created in runDaemonServer.
-  // rmdir refuses non-empty dirs (we swallow the ENOTEMPTY) so a concurrent
-  // sibling that re-created files inside is never trampled. Skip on POSIX
-  // socket path? — socketPath lives outside daemonDir, so the dir is empty
-  // after the unlinks above unless another actor wrote to it.
+  // Best-effort cleanup of the per-cwd daemon dir created in runDaemonServer. rmdir refuses
+  // non-empty dirs (we swallow the ENOTEMPTY) so a concurrent sibling that re-created files inside
+  // is never trampled. socketPath lives outside daemonDir, so the dir is empty after the unlinks.
   await rmdir(daemonDir(process.cwd())).catch(() => {});
-  process.exit(0);
+  exit();
+}
+
+/**
+ * Unlinks the daemon's on-disk liveness markers: the socket, the info file, and the lock.
+ * socket/info are gated on `listenSucceeded` — a daemon that reaches shutdown without ever binding
+ * (e.g. an early throw) doesn't own them, and unlinking would corrupt whatever started in its
+ * place. The lock IS ours unconditionally: reaching shutdown means tryAcquireDaemonLock returned
+ * true, so always release it or the next spawn has to stale-pid-recover.
+ */
+export async function removeLivenessFiles(state: DaemonState): Promise<void> {
+  await Promise.all([
+    state.listenSucceeded ? unlink(state.socketPath).catch(() => {}) : null,
+    state.listenSucceeded ? unlink(state.infoPath).catch(() => {}) : null,
+    unlink(state.lockPath).catch(() => {}),
+  ]);
 }
 
 /**
