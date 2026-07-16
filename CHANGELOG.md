@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.27.1] - 2026-07-16
+[`v0.27.0...v0.27.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.27.0...v0.27.1)
+
+### Bug Fixes
+- Bound git subprocesses so --changed can never hang the run — 2026-07-15 by [@izelnakri](https://github.com/izelnakri) ([`94d6559`](https://github.com/izelnakri/qunitx-cli/commit/94d6559d96bf88e2778df78daa654b9551c3e766))
+- Give the deno lane a per-test timeout — 2026-07-15 by [@izelnakri](https://github.com/izelnakri) ([`d7c93fd`](https://github.com/izelnakri/qunitx-cli/commit/d7c93fd97c03e39a5e49e4e7cfbcb869191f1634))
+- Let several test runners share one checkout — 2026-07-15 by [@izelnakri](https://github.com/izelnakri) ([`eaa8c6a`](https://github.com/izelnakri/qunitx-cli/commit/eaa8c6a021da292e93487d2406a3d3068faec0ef))
+- Publish the metafile cache atomically — 2026-07-15 by [@izelnakri](https://github.com/izelnakri) ([`b1d8d5d`](https://github.com/izelnakri/qunitx-cli/commit/b1d8d5dea4d3fbfa053f82e5ce523c823cc6bc57))
+- Stop esbuild's service instead of force-exiting workers — 2026-07-16 by [@izelnakri](https://github.com/izelnakri) ([`656187b`](https://github.com/izelnakri/qunitx-cli/commit/656187b58507d5db3476107c1dd3f237ace8f1bf))
+
+### Features
+- Add --reporter=junit JUnit XML output — 2026-07-14 by [@izelnakri](https://github.com/izelnakri) ([`1c2a3b8`](https://github.com/izelnakri/qunitx-cli/commit/1c2a3b80f42890d3d7efddca62ebb4c5691972c2))
+- Add --coverage (V8 line coverage: terminal, lcov, html) — 2026-07-14 by [@izelnakri](https://github.com/izelnakri) ([`bd018b4`](https://github.com/izelnakri/qunitx-cli/commit/bd018b4ecac0bba8d6fee4cfea880ffefd8a199b))
+- [**breaking**] Split the reporter and artifact axes — --junit[=path] — 2026-07-15 by [@izelnakri](https://github.com/izelnakri) ([`a27bdf1`](https://github.com/izelnakri/qunitx-cli/commit/a27bdf1c9ec441d185e90c6980439d2348dfc2dc))
+- Add --reporter=spec — 2026-07-15 by [@izelnakri](https://github.com/izelnakri) ([`16011a6`](https://github.com/izelnakri/qunitx-cli/commit/16011a6cce10cd0e76cd844522c5b6a1fc162965))
+- Add --reporter=dot — 2026-07-15 by [@izelnakri](https://github.com/izelnakri) ([`bbb289a`](https://github.com/izelnakri/qunitx-cli/commit/bbb289a022f3d082fbe85489b33f9f33e2b1df74))
+- Add --reporter=github — 2026-07-15 by [@izelnakri](https://github.com/izelnakri) ([`9afb60c`](https://github.com/izelnakri/qunitx-cli/commit/9afb60c373d4ef74846ec85d5c9cf109db136c9d))
+
+### Performance
+- Skip failure resolution for non-failed tests in TAP — 2026-07-15 by [@izelnakri](https://github.com/izelnakri) ([`87f52d8`](https://github.com/izelnakri/qunitx-cli/commit/87f52d819f8ff67d4f1cc918bc7fe1548c21e5a8))
+
+### Refactoring
+- Route TAP through an internal reporter interface — 2026-07-15 by [@izelnakri](https://github.com/izelnakri) ([`8d31f8c`](https://github.com/izelnakri/qunitx-cli/commit/8d31f8c759a94cb30b11be15f880a718632410e0))
+- Split source resolution from the dependency filter — 2026-07-15 by [@izelnakri](https://github.com/izelnakri) ([`da3d8ba`](https://github.com/izelnakri/qunitx-cli/commit/da3d8ba8579eddf42110cd5a7d710dd8e1c6c13f))
+
 ## [0.27.0] - 2026-07-14
 [`v0.26.6...v0.27.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.26.6...v0.27.0)
 
