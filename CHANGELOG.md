@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.28.0] - 2026-07-16
+[`v0.27.1...v0.28.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.27.1...v0.28.0)
+
+### Bug Fixes
+- Make closeWithGrace tests immune to event-loop starvation — 2026-07-16 by [@izelnakri](https://github.com/izelnakri) ([`bcfca32`](https://github.com/izelnakri/qunitx-cli/commit/bcfca320aa426ac94aa953e1b16ee61caad2f808))
+- Remove liveness files before the browser teardown on shutdown — 2026-07-16 by [@izelnakri](https://github.com/izelnakri) ([`e193026`](https://github.com/izelnakri/qunitx-cli/commit/e193026aaffc432bfba64dd30f0e1295ed22a5c6))
+- Read a changed file until its content settles before rebuilding — 2026-07-16 by [@izelnakri](https://github.com/izelnakri) ([`0f34464`](https://github.com/izelnakri/qunitx-cli/commit/0f344647ccde24d2a948ce7675e8ad93cc7f23cf))
+- Make the runGit-bound test hang deterministically across runtimes — 2026-07-16 by [@izelnakri](https://github.com/izelnakri) ([`ab913d7`](https://github.com/izelnakri/qunitx-cli/commit/ab913d70a34fc6947f4ee39c2ee15b766fadfb0d))
+
 ## [0.27.1] - 2026-07-16
 [`v0.27.0...v0.27.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.27.0...v0.27.1)
 
