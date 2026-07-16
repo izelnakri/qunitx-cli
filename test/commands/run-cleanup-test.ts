@@ -11,41 +11,53 @@ import { closeWithGrace } from '../../lib/utils/close-with-grace.ts';
 // Each scenario uses Promise primitives only — no Playwright, no real shutdown — so the
 // behavior is verified in milliseconds and adds < 1 s to the test suite.
 
+// The grace used by the hanging-close scenarios. Kept small so the suite stays fast.
 const HANG_GRACE_MS = 100;
-// Generous slack on the upper bound: CI runners under load can blow past tight numbers
-// without indicating any real bug. A hanging close that returns within ~3× HANG_GRACE_MS
-// still proves the helper is bounded — which is the only contract that matters here.
-const HANG_GRACE_UPPER_BOUND_MS = 300;
-// Lower-bound slack absorbs libuv timer jitter. setTimeout(N) can fire up to a few ms
-// before N elapses in wall-clock terms because libuv computes the deadline against its
-// per-loop-iteration cached `uv_now`, not a live monotonic read. Local sampling shows
-// min ≈ N − 1ms; CI hit N − 0.26ms (run 25088492776). 10ms tolerance is ~10× the worst
-// observed, comfortably absorbing jitter without admitting a 0-ms "did we wait?" bug.
-const HANG_GRACE_LOWER_BOUND_MS = HANG_GRACE_MS - 10;
 
 module('Commands | run | closeWithGrace', { concurrency: true }, () => {
-  test('returns within graceMs when a close never resolves', async (assert) => {
-    // Reproduces the Firefox+Windows browser.close() deadlock — an unresolved promise stands
-    // in for the stuck Playwright call. Without closeWithGrace, this would block forever.
+  test('is bounded by the grace timer, not by a hanging close', async (assert) => {
+    // Reproduces the Firefox+Windows browser.close() deadlock: a close that only settles when we
+    // say so stands in for the stuck Playwright call.
+    let closeSettled = false;
+    let settleClose = () => {};
+    const hangingClose = new Promise<void>((resolve) => {
+      settleClose = () => {
+        closeSettled = true;
+        resolve();
+      };
+    });
+
     const start = performance.now();
-    await closeWithGrace([new Promise<void>(() => {})], HANG_GRACE_MS);
+    await closeWithGrace([hangingClose], HANG_GRACE_MS);
     const elapsed = performance.now() - start;
 
-    assert.ok(
-      elapsed >= HANG_GRACE_LOWER_BOUND_MS && elapsed < HANG_GRACE_UPPER_BOUND_MS,
-      `returned within bounded grace: got ${elapsed} ms, expected ${HANG_GRACE_LOWER_BOUND_MS}–${HANG_GRACE_UPPER_BOUND_MS} ms`,
-    );
+    try {
+      // Bounded by grace, not the close: the close is still pending, so the grace timer is what
+      // returned us. Pure ordering — no wall clock, immune to load.
+      assert.ok(!closeSettled, 'returned while the hanging close was still pending');
+      // It actually waited the grace. Only a LOWER bound is load-stable: a timer fires at most
+      // ~1 ms early and under load only later, so starvation can never break this — unlike the
+      // previous 300 ms UPPER bound, which a loaded runner blew past (821 ms, run 29469560203).
+      // 10 ms is ~12× the worst early-fire seen.
+      assert.ok(
+        elapsed >= HANG_GRACE_MS - 10,
+        `waited for the grace timer rather than short-circuiting: got ${elapsed} ms`,
+      );
+    } finally {
+      settleClose(); // let the dangling close settle so it doesn't leak into the next test
+    }
   });
 
   test('returns immediately when every close has already settled', async (assert) => {
-    const start = performance.now();
+    // The fast path resolves on microtasks, which always drain before the loop reaches the timer
+    // phase — so it completes before even a 0 ms timer, however loaded the machine is. (An earlier
+    // `elapsed < 50 ms` assertion was the same load-fragile shape as the hanging-close flake.)
+    let timerFired = false;
+    const timer = setTimeout(() => (timerFired = true), 0);
     await closeWithGrace([Promise.resolve(), Promise.resolve()], 5_000);
-    const elapsed = performance.now() - start;
+    clearTimeout(timer);
 
-    assert.ok(
-      elapsed < 50,
-      `fast path: did not wait the grace period when nothing was hanging (got ${elapsed} ms)`,
-    );
+    assert.ok(!timerFired, 'fast path resolved on microtasks, before a 0 ms timer could fire');
   });
 
   test('does not throw when a close rejects', async (assert) => {
@@ -71,13 +83,17 @@ module('Commands | run | closeWithGrace', { concurrency: true }, () => {
   });
 
   test('returns immediately when the close list is empty', async (assert) => {
-    // Defensive: caller might filter all closers away (e.g. no sharedServer), and the helper
-    // must not block on an empty Promise.allSettled.
-    const start = performance.now();
+    // Defensive: caller might filter all closers away (e.g. no sharedServer), and the helper must
+    // not block on an empty Promise.allSettled. Same microtask-before-timer ordering as above.
+    let timerFired = false;
+    const timer = setTimeout(() => (timerFired = true), 0);
     await closeWithGrace([], 5_000);
-    const elapsed = performance.now() - start;
+    clearTimeout(timer);
 
-    assert.ok(elapsed < 50, `empty fast path: ${elapsed} ms`);
+    assert.ok(
+      !timerFired,
+      'empty fast path resolved on microtasks, before a 0 ms timer could fire',
+    );
   });
 
   test('writes a single diagnostic line to stderr when the grace timer fires', async (assert) => {
