@@ -40,6 +40,15 @@ const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== 'undefined';
 // reads the final content rather than a partial snapshot. See the
 // 'rapid back-to-back writes coalesce ...' test in file-watcher-test.ts.
 const CHANGE_COALESCE_MS = 75;
+// A just-written file can be observed mid-flush: fs.writeFile truncates then writes, and Windows'
+// ReadDirectoryChangesW fires 'change' at truncate, so a single read can catch the 0-byte window
+// and hash empty content — the rebuild then bundles a truncated file esbuild reports as "0 tests".
+// readFileStable re-reads until two reads spaced STABILITY_GAP_MS apart are byte-identical; the gap
+// lets the write's bytes land between reads, so writeFile's sub-ms truncate window can't survive
+// both. Bounded so a file under continuous rewrite proceeds with the latest content rather than
+// looping. The gap is negligible next to the 75ms coalesce window that already precedes it.
+const STABILITY_GAP_MS = 10;
+const MAX_STABILITY_ATTEMPTS = 10;
 // Windows fs.watch (ReadDirectoryChangesW) fires both a `rename` (→ classified as 'add')
 // AND one or more spurious `change` events for a single fs.writeFile of a new file. The
 // trailing 'change' arrives after the add's filtered-rebuild has completed, so the existing
@@ -66,6 +75,27 @@ function recordJustAdded(config: Config, filePath: string): void {
 // dropped, while a genuine change — even one that lands during a slow (webkit) build — is
 // always caught. config._builtContentHash is shared by the fs.watch change handler and the
 // rescan safety-net, so whichever dispatches first records the hash and the other won't re-fire.
+/**
+ * Reads a file, re-reading until two reads spaced `STABILITY_GAP_MS` apart return byte-identical
+ * content — so a file caught mid-write (Windows truncate→flush; see STABILITY_GAP_MS) is hashed
+ * only once its bytes have settled. Bounded by MAX_STABILITY_ATTEMPTS; returns the latest content
+ * if it never stabilizes. `read` is injectable for tests; production reads from disk. Read errors
+ * propagate so the caller's catch can treat a vanished file as a removal.
+ */
+export async function readFileStable(
+  filePath: string,
+  read: (p: string) => Promise<Buffer> = (p) => readFile(p),
+): Promise<Buffer> {
+  let previous = await read(filePath);
+  for (let attempt = 0; attempt < MAX_STABILITY_ATTEMPTS; attempt++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, STABILITY_GAP_MS));
+    const current = await read(filePath);
+    if (current.equals(previous)) return current;
+    previous = current;
+  }
+  return previous;
+}
+
 async function dispatchIfContentChanged(
   config: Config,
   extensions: string[],
@@ -76,7 +106,7 @@ async function dispatchIfContentChanged(
   let hash: string;
   try {
     hash = createHash('sha1')
-      .update(await readFile(filePath))
+      .update(await readFileStable(filePath))
       .digest('hex');
   } catch {
     return; // file vanished mid-read — the unlink/rename passes handle removal

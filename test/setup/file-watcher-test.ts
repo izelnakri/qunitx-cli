@@ -9,9 +9,71 @@ import {
   mutateFSTree,
   handleWatchEvent,
   rescanDirectoryForDelta,
+  readFileStable,
 } from '../../lib/setup/file-watcher.ts';
 import '../helpers/custom-asserts.ts';
 import type { Config, FSTree } from '../../lib/types.ts';
+
+// ---------------------------------------------------------------------------
+// readFileStable — the Windows write-race fix
+// ---------------------------------------------------------------------------
+
+module('Setup | readFileStable', { concurrency: true }, () => {
+  // Reproduces the flake: on Windows fs.writeFile truncates then writes, and the 'change' event
+  // can fire at truncate, so a single read catches the 0-byte window. The change handler hashed
+  // that empty snapshot and rebuilt it — esbuild bundled a file with no test() calls, printing
+  // "0 tests registered" (test/flags/watch-rerun-test.ts, run 29508249303 on windows-latest).
+  test('returns the settled content, not a mid-write truncate snapshot', async (assert) => {
+    // A read landing in the truncate window sees empty; the next read (window passed) sees the
+    // real bytes. A single read — the old behavior — would have hashed the empty first snapshot.
+    const snapshots = [Buffer.from(''), Buffer.from('test("a", () => {})')];
+    let reads = 0;
+    const stubRead = () => Promise.resolve(snapshots[Math.min(reads++, snapshots.length - 1)]);
+
+    const result = await readFileStable('x.ts', stubRead);
+
+    assert.equal(
+      snapshots[0].toString(),
+      '',
+      'a single read would have returned this empty snapshot (the bug)',
+    );
+    assert.equal(
+      result.toString(),
+      'test("a", () => {})',
+      'readFileStable waited for the bytes to land',
+    );
+  });
+
+  test('fast path: content already stable returns after one confirming read', async (assert) => {
+    let reads = 0;
+    const stubRead = () => {
+      reads++;
+      return Promise.resolve(Buffer.from('stable'));
+    };
+
+    const result = await readFileStable('x.ts', stubRead);
+
+    assert.equal(result.toString(), 'stable', 'returns the content');
+    assert.equal(
+      reads,
+      2,
+      'one read plus one confirming read — no retry loop when already settled',
+    );
+  });
+
+  test('gives up after the attempt cap and returns the latest content', async (assert) => {
+    // A file under continuous rewrite never stabilizes; the helper must proceed, not loop forever.
+    let reads = 0;
+    const stubRead = () => Promise.resolve(Buffer.from(`content-${reads++}`));
+
+    const result = await readFileStable('x.ts', stubRead);
+
+    assert.ok(
+      result.toString().startsWith('content-'),
+      'returned the latest read rather than hanging',
+    );
+  });
+});
 
 // ---------------------------------------------------------------------------
 // mutateFSTree
