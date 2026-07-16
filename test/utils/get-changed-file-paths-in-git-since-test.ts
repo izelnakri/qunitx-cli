@@ -115,16 +115,21 @@ module('Utils | getChangedFilePathsInGitSince | git interaction', { concurrency:
 // + Windows lane, where node:child_process can leave a spawned child's exit undelivered). An
 // unbounded subprocess in the run path is the bug; these pin the bound.
 //
-// `git hash-object --stdin` reads stdin until EOF and execFile leaves that pipe open, so it
-// never exits on its own — a real, deterministic wedged git, with no stubbing and no reliance on
-// timing luck.
+// The wedged process must hang the SAME way on every runtime. `git hash-object --stdin` reads
+// stdin until EOF, which hangs under Node (execFile leaves the pipe open) but exits under Deno
+// (its node:child_process EOFs the child's stdin), so it flaked the deno lane. A process kept
+// alive by a pending timer hangs regardless of stdin — spawn the current runtime (via runGit's
+// injectable command) so the bound is tested against a genuinely, portably unkillable child.
+const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== 'undefined';
+const HANG_ARGS = IS_DENO
+  ? ['eval', 'setInterval(() => {}, 1e9)']
+  : ['-e', 'setInterval(() => {}, 1e9)'];
 module('Utils | getChangedFilePathsInGitSince | bounded execution', { concurrency: true }, () => {
-  test('kills and rejects a git that never exits, rather than waiting forever', async (assert) => {
-    const root = await makeRepo({ 'src/app.ts': 'export const a = 1;\n' });
+  test('kills and rejects a subprocess that never exits, rather than waiting forever', async (assert) => {
     const startedAt = Date.now();
     let error: Error | undefined;
     try {
-      await runGit(['hash-object', '--stdin'], root, 300);
+      await runGit(HANG_ARGS, process.cwd(), 300, process.execPath);
     } catch (caught) {
       error = caught as Error;
     }

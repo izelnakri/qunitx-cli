@@ -30,8 +30,17 @@ const GIT_KILL_GRACE_MS = 2_000;
  * nobody is listening for it to die. That second layer is what turns an unkillable hang into a
  * normal rejection the caller already knows how to degrade on.
  */
-export function runGit(args: string[], cwd: string, timeoutMs = GIT_TIMEOUT_MS): Promise<string> {
-  const pending = execFileAsync('git', args, {
+export function runGit(
+  args: string[],
+  cwd: string,
+  timeoutMs = GIT_TIMEOUT_MS,
+  // `command` is injectable only so the bound can be tested with a process that hangs
+  // deterministically. Production always spawns git. A test must not lean on a real git that
+  // *happens* to hang — `git hash-object --stdin` hangs under Node but exits under Deno (whose
+  // node:child_process EOFs the child's stdin), which flaked the deno lane (run 29512448230).
+  command = 'git',
+): Promise<string> {
+  const pending = execFileAsync(command, args, {
     cwd,
     maxBuffer: 16 * 1024 * 1024,
     timeout: timeoutMs,
