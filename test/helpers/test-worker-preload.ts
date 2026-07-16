@@ -1,6 +1,6 @@
 // Side-effect module imported via `node --import` into every test-worker process
-// (see test/runner.ts spawnTests). Two responsibilities, both observability-only —
-// nothing here changes test behaviour:
+// (see test/runner.ts spawnTests). Three responsibilities — (1) and (2) are
+// observability-only and change no test behaviour; (3) is worker teardown:
 //
 // 1. Widens util.inspect defaults so node:test's spec-reporter shows full
 //    assertion actuals instead of `[Object]` / truncated `'...'`.
@@ -15,7 +15,11 @@
 //    With it: every process.exit(non-zero), uncaughtException, and
 //    unhandledRejection is annotated with `# [worker-preload] ...` + stack
 //    so the surrounding context survives to the CI job stream.
+//
+// 3. Stops esbuild's service process once a worker's tests finish, so the worker
+//    can exit on its own (see the hook below).
 
+import { after } from 'node:test';
 import { inspect } from 'node:util';
 
 const o = inspect.defaultOptions;
@@ -23,6 +27,15 @@ o.breakLength = 240;
 o.depth = Infinity;
 o.maxStringLength = Infinity;
 o.maxArrayLength = Infinity;
+
+// esbuild keeps one long-lived `--service` child per process, ref'd along with its two
+// stdio sockets, so any worker that touched the esbuild API in-process never exits on its
+// own — the real "post-test hang" that --test-force-exit papered over at the cost of
+// killing workers mid-report. Lazy import: stop() no-ops if the service never started.
+after(async () => {
+  const { stop } = await import('esbuild');
+  await stop();
+});
 
 // process.stderr.write is synchronous when wired to a pipe/tty (the case under
 // node --test with stdio:'inherit'), so the diagnostic flushes before the

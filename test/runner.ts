@@ -104,8 +104,12 @@ const [runner, semaphore, [fastFiles, watchReruns, leakFiles]] = await Promise.a
         // *-leak.ts  — isolation tests; must run after the main suite + sweep because they
         //              check global state (/tmp dirs, /proc) and would see false orphans
         //              from concurrent watch-mode tests that legitimately SIGKILL node-cli.
+        // test/fixtures/** are inputs tests hand to the CLI — the coverage fixture is bundled
+        // for the browser by flags/coverage-test.ts — not node:test files; running one as a
+        // test crashes the worker on `import 'qunitx'`. The -test.ts suffix is part of the
+        // fixture's realism, so exclude by location rather than renaming it.
         Array.fromAsync(fs.glob('test/**/*-test.ts')).then((files) =>
-          files.filter((f) => !f.includes('watch-rerun')),
+          files.filter((f) => !f.includes('watch-rerun') && !/(^|[\\/])fixtures[\\/]/.test(f)),
         ),
         Array.fromAsync(fs.glob('test/**/watch-rerun-test.ts')),
         Array.fromAsync(fs.glob('test/**/*-leak.ts')),
@@ -425,7 +429,6 @@ function spawnTests(files: string[], slug?: string): Promise<number> {
             '--import',
             WORKER_PRELOAD,
             '--test',
-            '--test-force-exit',
             `--test-timeout=${PER_TEST_TIMEOUT_MS}`,
             ...reporterArgs,
             ...files,
