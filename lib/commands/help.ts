@@ -15,19 +15,24 @@ ${highlight('Input options:')}
 - Folder: $ ${color('qunitx test/login')}
 - Globs: $ ${color('qunitx test/**/*-test.js')}
 - Combination: $ ${color('qunitx test/foo.js test/bar.js test/*-test.js test/logout')}
+- Line target: $ ${color('qunitx test/foo-test.ts#34')} — run just the test at that line (or: ${color('test/foo-test.ts:34')})
 
 ${highlight('Optional flags:')}
-${color('--debug')} : print console output when tests run in browser
-${color('--watch')} : run the target file or folders, watch them for continuous run and expose http server under localhost
+${color('--debug')} : print console output when tests run in browser (alias: ${color('--console')})
+${color('--watch')} : run the target file or folders, watch them for continuous run and expose http server under localhost (short: ${color('-w')})
 ${color('--open')} : run tests in a visible browser window instead of headless; keeps the server alive (short: ${color('-o')})
 ${color('--timeout')} : change default timeout per test case
 ${color('--output')} : folder to distribute built qunitx html and js that a webservers can run[default: tmp]
 ${color('--failFast')} : run the target file or folders with immediate abort if a single test fails
 ${color('--only-failed')} : re-run only the test files that failed on the previous run (short: ${color('-f')}, alias: ${color('--failed')})
+${color('--filter')} : run only tests whose ${color('"Module: test name"')} matches; substring, ${color('/regex/')}, ${color('/regex/i')}, or ${color('!')} to invert (spellings: ${color('-t')}, ${color('-m')}, ${color('-n')}, ${color('--module')})
+${color('--search')} : list the tests the filter matches and exit, without running them (spellings: ${color('-s')}, ${color('-p')}, ${color('--print')}, ${color('--preview')})
+  values may be unquoted and multi-word, up to the next flag (${color('qunitx test/ -m Cart checkout')}); put file targets before the filter, or after ${color('--')}
+  substring is case-insensitive; a regex is case-sensitive unless you add ${color('/i')}. For one module and not its lookalikes: ${color("-t '/^Cart(:| >)/'")}
 ${color('--port')} : HTTP server port (auto-selects a free port if the given port is taken)[default: 1234]
 ${color('--extensions')} : comma-separated file extensions to track for discovery and watch-mode rebuilds[default: js,ts,jsx,tsx]
 ${color('--browser')} : browser engine to run tests in: chromium, firefox, webkit[default: chromium]
-${color('--reporter')} : stdout format: tap, spec, dot, github[default: tap]
+${color('--reporter')} : stdout format: tap, spec, dot, github[default: tap] (short: ${color('-r')})
 ${color('--junit')} : also write a JUnit XML report[default path: <output>/junit.xml; ${color('--junit=<path>')} to override]
 ${color('--coverage')} : collect V8 line coverage (chromium only); ${color('--coverage=lcov,html')} also writes <output>/coverage/ reports
 ${color('--before')} : run a script before the tests(i.e start a new web server before tests)
