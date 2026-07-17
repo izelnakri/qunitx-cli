@@ -23,6 +23,9 @@ output to the terminal.
 - `--watch` mode re-runs affected tests on file change
 - `--failFast` stops the run after the first failing test
 - `--only-failed` / `-f` re-runs only the test files that failed on the previous run (cached in `tmp/.qunitx-last-failures.json`)
+- `--filter` / `-t` / `--module` / `-m` / `-n` — one test filter, five spellings, matched against `"Module: test name"`: substring, `/regex/`, `/regex/i`, or `!` to invert
+- `--search` / `-s` / `--print` / `-p` / `--preview` lists the tests a filter matches and exits, without running them (no browser — instant)
+- `file.ts#34` / `file.ts:34` runs just the test at that line — or the whole module, when the line is a `module(...)`
 - `--debug` prints the local server URL and pipes browser console to stdout
 - `--open` / `-o` opens the test output in the same browser the tests run in as soon as the bundle is ready; `--open=brave` opens in a specific binary instead
 - `--before` / `--after` hook scripts for server setup and teardown
@@ -115,6 +118,40 @@ qunitx test/**/*.js --failFast
 
 # Re-run only the files that failed last time (from the persistent failure cache)
 qunitx test/ --only-failed   # or: -f, --failed
+
+# Filter by name. -t, --filter, -m and --module are FOUR SPELLINGS OF ONE FLAG:
+# all match against "Module: test name", so they find modules and test names alike.
+qunitx test/ -t 'renders the header'
+qunitx test/ -m Cart              # everything under/named Cart (substring)
+qunitx test/ -t Coupons           # finds a nested module by its own name
+
+# Values may be unquoted and multi-word, up to the next flag:
+qunitx test/ -m Cart checkout           # filter "Cart checkout"
+qunitx -t adds to cart --reporter=spec  # filter "adds to cart", then --reporter
+# The value is greedy, so put file targets BEFORE the filter, or after `--`:
+qunitx -t adds to cart -- test/cart     # filter "adds to cart", target test/cart
+
+# Substring is case-INsensitive; a regex is case-SENSITIVE unless you add /i:
+qunitx test/ -t cart        # matches Cart, ShoppingCart, CartItem, Cart checkout
+qunitx test/ -t '/cart/'    # matches nothing — regexes are case-sensitive
+qunitx test/ -t '/cart/i'   # matches all of them again
+qunitx test/ -t '!slow'     # invert (also works as !/regex/)
+
+# EXACT MODULE: to match one module and its children but NOT its lookalikes
+# (ShoppingCart, CartItem, Cart checkout), anchor with ^ and require ": " or " > ":
+qunitx test/ -t '/^Cart(:| >)/'   # Cart + Cart > Coupons only
+qunitx test/ -t '/^Cart: /'       # Cart's own tests, without nested children
+
+# Preview what a filter matches WITHOUT running anything (no browser — instant).
+# Each line is the QUnit name plus a location you can paste back as a line target.
+qunitx test/ --print              # list every test
+qunitx test/ -s Cart              # list what `-t Cart` would run
+#   Cart: adds item               test/cart-test.ts#4
+#   Cart > Coupons: applies code  test/cart-test.ts#6
+#   2 of 5 tests match "Cart" in 1 file
+
+# Run the test at a line — paste a location straight from a stack trace
+qunitx test/cart-test.ts#34   # or: test/cart-test.ts:34
 
 # Print the server URL and pipe browser console to stdout
 qunitx test/**/*.js --debug
@@ -370,9 +407,16 @@ The `{{qunitxScript}}` placeholder is replaced with a `<script>` tag containing 
 Usage: qunitx [files/folders...] [options]
 
 Options:
-  --watch             Re-run tests on file changes
+  --watch, -w         Re-run tests on file changes
   --failFast          Stop after the first failure
   --only-failed, -f   Re-run only the files that failed on the previous run (alias: --failed)
+  --filter, -t        Run only tests matching "Module: test name"  (substring, /regex/, !invert)
+  --module, -m, -n    Same flag as --filter — one matcher, several spellings
+  --search, -s        List the tests the filter matches, then exit without running them
+  --print, -p         Same flag as --search
+  --preview           Same flag as --search
+  --reporter, -r      stdout format: tap, spec, dot, github
+  --console           Alias for --debug
   --debug             Print the server URL; pipe browser console to stdout
   --timeout=<ms>      Max ms to wait for the suite to finish  [default: 20000]
   --output=<dir>      Directory for compiled test assets     [default: ./tmp]

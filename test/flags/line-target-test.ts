@@ -1,0 +1,116 @@
+import { module, test } from 'qunitx';
+import '../helpers/custom-asserts.ts';
+import shell, { shellWatch } from '../helpers/shell.ts';
+
+// Line numbers below are the ones asserted in test/fixtures/nested-module-tests.ts:
+//   7 module('Outer')   8 test('outer first')   12 test('outer second')
+//  16 module('Inner')  17 test('inner only')   23 module('Separate')  24 test('separate one')
+const NESTED = 'test/fixtures/nested-module-tests.ts';
+
+module('file#line targeting', { concurrency: true }, (_hooks, moduleMetadata) => {
+  test('#N on a test( line runs only that test', async (assert, tm) => {
+    const result = await shell(`node cli.ts ${NESTED}#8`, { ...moduleMetadata, ...tm });
+
+    assert.tapResult(result, { testCount: 1 });
+    assert.includes(result.stdout, 'Outer | outer first');
+  });
+
+  test('#N inside a test body runs only that test', async (assert, tm) => {
+    const result = await shell(`node cli.ts ${NESTED}#13`, { ...moduleMetadata, ...tm });
+
+    assert.tapResult(result, { testCount: 1 });
+    assert.includes(result.stdout, 'Outer | outer second');
+  });
+
+  test(':N is accepted as an alias for #N', async (assert, tm) => {
+    const result = await shell(`node cli.ts ${NESTED}:8`, { ...moduleMetadata, ...tm });
+
+    assert.tapResult(result, { testCount: 1 });
+    assert.includes(result.stdout, 'Outer | outer first');
+  });
+
+  test('#N on a nested module( line runs that module', async (assert, tm) => {
+    const result = await shell(`node cli.ts ${NESTED}#16`, { ...moduleMetadata, ...tm });
+
+    assert.tapResult(result, { testCount: 1 });
+    assert.includes(result.stdout, 'Outer | Inner | inner only');
+  });
+
+  test('#N on an outer module( line runs the module and its nested children', async (assert, tm) => {
+    const result = await shell(`node cli.ts ${NESTED}#7`, { ...moduleMetadata, ...tm });
+
+    assert.tapResult(result, { testCount: 3 });
+    assert.includes(result.stdout, 'Outer | Inner | inner only');
+    assert.notIncludes(result.stdout, 'separate one');
+  });
+
+  test('two line targets on one file run both tests', async (assert, tm) => {
+    const result = await shell(`node cli.ts ${NESTED}#8 ${NESTED}#24`, {
+      ...moduleMetadata,
+      ...tm,
+    });
+
+    assert.tapResult(result, { testCount: 2 });
+    assert.includes(result.stdout, 'outer first');
+    assert.includes(result.stdout, 'separate one');
+  });
+
+  test('a line target scopes only its own file; a plain input still runs whole', async (assert, tm) => {
+    const result = await shell(`node cli.ts ${NESTED}#8 test/fixtures/passing-tests.ts`, {
+      ...moduleMetadata,
+      ...tm,
+    });
+
+    // The whole point of running each line-targeted file as its own group: one page has one
+    // QUnit config, so a shared page could not scope one file without scoping the other.
+    assert.tapResult(result, { testCount: 4 });
+    assert.includes(result.stdout, 'Outer | outer first');
+    assert.includes(result.stdout, 'deepEqual true works');
+    assert.notIncludes(result.stdout, 'outer second');
+  });
+
+  test('an unresolvable line warns and runs the whole file', async (assert, tm) => {
+    const result = await shell(`node cli.ts ${NESTED}#1`, { ...moduleMetadata, ...tm });
+
+    assert.includes(
+      result.stdout,
+      `# qunitx: no test or module found at ${NESTED}#1 — running the whole file`,
+    );
+    assert.tapResult(result, { testCount: 4 });
+  });
+
+  test('a line target composes with -t', async (assert, tm) => {
+    // testFilter is ANDed after filter, so a -t that excludes the targeted test yields nothing.
+    const result = await shell(`node cli.ts ${NESTED}#7 -t 'second'`, {
+      ...moduleMetadata,
+      ...tm,
+    });
+
+    assert.tapResult(result, { testCount: 1 });
+    assert.includes(result.stdout, 'outer second');
+  });
+
+  test('a line-targeted run leaves the failure cache alone', async (assert, tm) => {
+    // Same reasoning as -t: the run saw one test, so its failure set is not the file's.
+    const result = await shell(`node cli.ts ${NESTED}#8 --debug`, { ...moduleMetadata, ...tm });
+
+    assert.tapResult(result, { testCount: 1 });
+  });
+});
+
+module('file#line targeting in watch mode', { concurrency: true }, () => {
+  test('--watch with a line target scopes the session and says what it dropped', async (assert) => {
+    const stdout = await shellWatch(
+      `node cli.ts ${NESTED}#8 test/fixtures/passing-tests.ts --watch`,
+      { until: (buf) => buf.includes('Press "qq"') },
+    );
+
+    // Watch is one page with one QUnit config, so the untargeted file cannot be left unscoped
+    // the way concurrent mode manages. It is dropped and named rather than silently loaded.
+    assert.includes(stdout, 'runs only the targeted file');
+    assert.includes(stdout, '1 other file excluded');
+    assert.includes(stdout, 'press "qa" to run every test');
+    assert.includes(stdout, 'ok 1 Outer | outer first');
+    assert.includes(stdout, '1..1');
+  });
+});

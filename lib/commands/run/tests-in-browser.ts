@@ -13,6 +13,7 @@ import { collectCoverage } from '../../coverage/collect.ts';
 import { writeCoverageReport } from '../../coverage/report.ts';
 import { writeMetafileCache } from '../../utils/metafile-cache.ts';
 import { writeFailureCache, buildFailureCache } from '../../utils/failure-cache.ts';
+import { isFilteredRun, qunitFilterQuery } from '../../utils/qunit-filter.ts';
 import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
 import type { AffectedMetafile } from '../../utils/get-changed-files.ts';
 import type { Page } from 'playwright-core';
@@ -368,9 +369,10 @@ export async function runTestsInBrowser(
 
       await reportRunEnd(config, { durationMs: TIME_TAKEN });
 
-      // Persist failures for the next `--only-failed`. Skip filtered (partial) reruns so a
-      // scoped re-run can't shrink the cache below the full known-failing set.
-      if (!runHasFilter) {
+      // Persist failures for the next `--only-failed`. Skip partial reruns — whether scoped to
+      // a file subset (runHasFilter) or to a test subset (-t/-m/line target) — so a scoped
+      // re-run can't shrink the cache below the full known-failing set.
+      if (!runHasFilter && !isFilteredRun(config)) {
         writeFailureCache(config.projectRoot, buildFailureCache(config)).catch(
           (err: Error) =>
             config.debug && process.stderr.write(`# [qunitx] writeFailureCache: ${err.message}\n`),
@@ -901,7 +903,7 @@ async function runTestInsideHTMLFile(
         .catch(() => {});
     }
 
-    const targetUrl = `http://localhost:${config.port}${filePath}`;
+    const targetUrl = `http://localhost:${config.port}${filePath}${qunitFilterQuery(config)}`;
     const navOptions = { timeout: navMs, waitUntil: 'commit' as const };
     // Use 'commit' (navigation committed, HTTP response started) rather than 'domcontentloaded'.
     // The test bundle (tests.js) is an external async script — it does NOT block DOMContentLoaded.
@@ -915,7 +917,9 @@ async function runTestInsideHTMLFile(
     // page.goto(same_url) can silently trigger a same-document navigation shortcut in Chrome —
     // not a true reload, so old scripts and the WebSocket from the previous run remain alive.
     // page.reload() forces a real reload when already on the right page.
-    if (page.url().split('?')[0] === targetUrl) {
+    // Compare the FULL url, query included: the query carries the QUnit filter, so two runs on
+    // the same path with different filters are different pages and must goto, not reload.
+    if (page.url() === targetUrl) {
       await page.reload(navOptions);
     } else {
       await page.goto(targetUrl, navOptions);

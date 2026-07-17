@@ -27,19 +27,24 @@ Input options:
 - Folder: $ qunitx test/login
 - Globs: $ qunitx test/**/*-test.js
 - Combination: $ qunitx test/foo.js test/bar.js test/*-test.js test/logout
+- Line target: $ qunitx test/foo-test.ts#34 — run just the test at that line (or: test/foo-test.ts:34)
 
 Optional flags:
---debug : print console output when tests run in browser
---watch : run the target file or folders, watch them for continuous run and expose http server under localhost
+--debug : print console output when tests run in browser (alias: --console)
+--watch : run the target file or folders, watch them for continuous run and expose http server under localhost (short: -w)
 --open : run tests in a visible browser window instead of headless; keeps the server alive (short: -o)
 --timeout : change default timeout per test case
 --output : folder to distribute built qunitx html and js that a webservers can run[default: tmp]
 --failFast : run the target file or folders with immediate abort if a single test fails
 --only-failed : re-run only the test files that failed on the previous run (short: -f, alias: --failed)
+--filter : run only tests whose "Module: test name" matches; substring, /regex/, /regex/i, or ! to invert (spellings: -t, -m, -n, --module)
+--search : list the tests the filter matches and exit, without running them (spellings: -s, -p, --print, --preview)
+  values may be unquoted and multi-word, up to the next flag (qunitx test/ -m Cart checkout); put file targets before the filter, or after --
+  substring is case-insensitive; a regex is case-sensitive unless you add /i. For one module and not its lookalikes: -t '/^Cart(:| >)/'
 --port : HTTP server port (auto-selects a free port if the given port is taken)[default: 1234]
 --extensions : comma-separated file extensions to track for discovery and watch-mode rebuilds[default: js,ts,jsx,tsx]
 --browser : browser engine to run tests in: chromium, firefox, webkit[default: chromium]
---reporter : stdout format: tap, spec, dot, github[default: tap]
+--reporter : stdout format: tap, spec, dot, github[default: tap] (short: -r)
 --junit : also write a JUnit XML report[default path: <output>/junit.xml; --junit=<path> to override]
 --coverage : collect V8 line coverage (chromium only); --coverage=lcov,html also writes <output>/coverage/ reports
 --before : run a script before the tests(i.e start a new web server before tests)

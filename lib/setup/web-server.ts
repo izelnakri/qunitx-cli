@@ -5,6 +5,7 @@ import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-h
 import { injectScript } from '../utils/html.ts';
 import { reportRunStart, reportTestEnd } from '../reporter/index.ts';
 import { recordFailedTest } from '../utils/failure-cache.ts';
+import { isFilteredRun } from '../utils/qunit-filter.ts';
 import { blue } from '../utils/color.ts';
 import { HTTPServer, MIME_TYPES } from '../servers/web.ts';
 import { createReconnectingSocket } from './ws-client.js';
@@ -844,9 +845,44 @@ function replaceAssetPaths(html: string, htmlPath: string, projectRoot: string):
   }, html);
 }
 
+/**
+ * Applies `file#34` line targets by pre-seeding `QUnit.config.testFilter`.
+ *
+ * QUnit merges `window.QUnit.config` into its own config at load time when the stub has no
+ * `.version` (its "preconfig" path), then replaces `window.QUnit` with the real thing. This is
+ * the channel for testFilter specifically: unlike `filter`/`module`, the html-reporter's
+ * url-param block never overwrites it, so it also survives `--open`, where the saved file:// page
+ * has whatever query it was opened with but the run itself is long over.
+ *
+ * A function is what makes exact selection possible — `filter` is a regex over a joined
+ * "Module: test name" string, which cannot distinguish a module literally named `a: b`, and would
+ * need every metacharacter in a user's test name escaped. QUnit ANDs testFilter after
+ * filter/module, so -t/-m still compose.
+ */
+function qunitSelectorPreconfig(config: Config): string {
+  if (!config._qunitSelectors?.length) {
+    return '';
+  }
+
+  return `window.QUnit = { config: { testFilter: (function () {
+      const selectors = ${JSON.stringify(config._qunitSelectors)};
+      return function (testInfo) {
+        return selectors.some(function (selector) {
+          // No 'test' key means the target was a module: take it and everything nested under it.
+          if (selector.test === undefined) {
+            return testInfo.module === selector.module ||
+              testInfo.module.indexOf(selector.module + ' > ') === 0;
+          }
+          return testInfo.module === selector.module && testInfo.testName === selector.test;
+        });
+      };
+    })() } };`;
+}
+
 function testRuntimeToInject(config: Config, groupId?: number): string {
   const groupIdPart = groupId !== undefined ? `, groupId: ${groupId}` : '';
   return `<script>
+    ${qunitSelectorPreconfig(config)}
     // Idempotency guard: if this runtime script ran in this Window already, do not
     // re-arm Promise.all + QUnit listeners. CI run 26046813154 (job 76573047617)
     // captured COUNTER = 2 * expected with the diagnostic firing
@@ -938,7 +974,11 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
     function setupQUnit() {
       window.QUNIT_RESULT = { totalTests: 0, finishedTests: 0, failedTests: 0, currentTest: '' };
 
-      if (!window.QUnit) {
+      // .version is what tells the real QUnit apart from the preconfig stub above: QUnit's own
+      // preconfig detection keys off the same absence, and it only replaces window.QUnit once it
+      // has loaded. Without the version check, a bundle that never imports qunitx would find the
+      // stub here and blow up on QUnit.begin instead of reporting 0 tests.
+      if (!window.QUnit || !window.QUnit.version) {
         console.log('QUnit not found after WebSocket connected');
         if (navigator.webdriver) {
           // Signal the Playwright runner that the run is complete with 0 tests rather than
@@ -980,6 +1020,12 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
       });
 
       window.QUnit.config.testTimeout = ${config.timeout};
+      // QUnit's failOnZeroTests synthesizes a "global failure" test when nothing matched. Under
+      // a filter that is normal for most groups — only the group holding the match runs tests —
+      // so leaving it on turns a working filter into N spurious failures. The aggregate
+      // "nothing matched anywhere" check lives in run.ts, which can see every group.
+      // Read in ProcessingQueue.done(), so setting it here (after declarations) is in time.
+      window.QUnit.config.failOnZeroTests = ${!isFilteredRun(config)};
       window.QUnit.start();
     }
   </script>`;
