@@ -18,11 +18,19 @@ const cmd = process.argv[2];
 // subcommands (start/stop/status) are pure client ops and never need Chrome.
 const isDaemonControlCmd = cmd === 'daemon' && process.argv[3] !== '_serve';
 const isRunCommand = Boolean(cmd) && !NON_RUN_COMMANDS.has(cmd) && !isDaemonControlCmd;
-const { browserFromArgv, openFromArgv, watchFromArgv } = process.argv.reduce(
+// --search/--print lists tests from a static scan and exits — it never opens a browser. It also
+// finishes faster than Chrome's CDP becomes ready, so a prelaunch would not merely be wasted: the
+// shutdown handle does not exist yet when the process exits, leaving an orphaned Chrome and its
+// user-data-dir behind. Not spawning at all is both the fix and the fast path.
+// A deliberately local argv scan rather than the shared tokenizer: this module is statically
+// imported first so Chrome spawns at ~t=5ms, and it stays free of avoidable imports.
+const SEARCH_FLAG = /^(-s|--search|-p|--print|--preview)(=|$)/;
+const { browserFromArgv, openFromArgv, watchFromArgv, searchFromArgv } = process.argv.reduce(
   (flags, arg) => {
     if (arg.startsWith('--browser=')) flags.browserFromArgv = arg.slice(10);
     else if (arg === '--open' || arg === '-o') flags.openFromArgv = true;
     else if (arg === '--watch' || arg === '-w') flags.watchFromArgv = true;
+    else if (SEARCH_FLAG.test(arg)) flags.searchFromArgv = true;
     return flags;
   },
   // QUNITX_BROWSER env var seeds the default so prelaunch is skipped for firefox/webkit
@@ -31,6 +39,7 @@ const { browserFromArgv, openFromArgv, watchFromArgv } = process.argv.reduce(
     browserFromArgv: process.env.QUNITX_BROWSER || 'chromium',
     openFromArgv: false,
     watchFromArgv: false,
+    searchFromArgv: false,
   },
 );
 // If the run will go through the daemon (existing socket OR QUNITX_DAEMON=1
@@ -103,6 +112,7 @@ export async function shutdownPrelaunch(): Promise<void> {
 export const prelaunchPromise =
   isRunCommand &&
   !isDaemonClientRun &&
+  !searchFromArgv &&
   browserFromArgv === 'chromium' &&
   process.platform !== 'darwin'
     ? findChrome()
