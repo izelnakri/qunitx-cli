@@ -86,12 +86,20 @@ module('Commands | Daemon | shutdown', { concurrency: true }, () => {
       exited = true;
     });
 
-    assert.ok(
-      await waitForGone(paths.infoPath, 2_000),
-      'info file removed while the browser launch was still pending',
-    );
-    assert.notOk(existsSync(paths.socketPath), 'socket file removed too');
-    assert.notOk(existsSync(paths.lockPath), 'lock file removed too');
+    // removeLivenessFiles unlinks the three markers concurrently (one Promise.all) with no
+    // ordering guarantee, so poll for each rather than assuming that once info is gone the other
+    // two are visibly gone too. They resolve out of order ~12% of the time, and on APFS/Deno the
+    // on-disk visibility of the laggards trails info's — an `existsSync` here flaked on exactly
+    // that. All three are still removed before the browser park, so each vanishes well within the
+    // budget; the point being pinned is "before the browser teardown", not their relative order.
+    const [infoGone, socketGone, lockGone] = await Promise.all([
+      waitForGone(paths.infoPath, 2_000),
+      waitForGone(paths.socketPath, 2_000),
+      waitForGone(paths.lockPath, 2_000),
+    ]);
+    assert.ok(infoGone, 'info file removed while the browser launch was still pending');
+    assert.ok(socketGone, 'socket file removed too');
+    assert.ok(lockGone, 'lock file removed too');
     assert.notOk(exited, 'still mid-shutdown: exit() not reached until the browser settles');
 
     settleBrowser(); // release the launch so shutdown finishes cleanly
