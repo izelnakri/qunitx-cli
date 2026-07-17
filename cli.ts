@@ -69,6 +69,15 @@ process.title = 'qunitx';
   ]);
   const config = await setupConfig();
 
+  // --search/--print lists what the filter matches and exits: no browser, no bundle, no tests.
+  // Chrome was pre-launched at module load, so shut it back down rather than leaking it.
+  if (config.search) {
+    const { searchTests } = await import('./lib/commands/search.ts');
+    const exitCode = await searchTests(config);
+    await shutdownPrelaunch();
+    return process.stdout.write('', () => process.exit(exitCode));
+  }
+
   try {
     return await run(config);
   } catch (error) {
