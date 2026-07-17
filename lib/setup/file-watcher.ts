@@ -213,7 +213,14 @@ export function setupFileWatchers(
     symlinkPollers.delete(filePath);
   }
 
-  for (const watchPath of testFileLookupPaths) {
+  // A glob lookup path (`test/**/!(x).ts`) is not a real filesystem path, so fs.watch would ENOENT
+  // on it. Collapse each lookup path to the deepest directory that actually exists — the glob's
+  // base dir — and dedupe, so several globs under one tree share a single recursive watcher. Real
+  // file/dir inputs pass through unchanged. The extension + fsTree filtering downstream still
+  // decides which changes trigger a rerun, exactly as it does for a plain folder input.
+  const watchRoots = [...new Set(testFileLookupPaths.map(toWatchableRoot))];
+
+  for (const watchPath of watchRoots) {
     let ready = false;
     let rescanInProgress = false;
     // lastEventMs: wall-clock time the last event arrived (guards the 10ms burst window).
@@ -682,4 +689,20 @@ function colorEvent(event: string): unknown {
   if (event === 'change') return yellow('CHANGED:');
   if (event === 'add' || event === 'addDir') return green('ADDED:');
   return red('REMOVED:');
+}
+
+/**
+ * Maps a lookup path to a path fs.watch can actually watch. A real file or directory is returned
+ * as-is; a glob is walked up to the deepest ancestor directory that exists — its base dir — which
+ * fs.watch can watch recursively (`test/x/!(plugin).ts` collapses to `test/x`).
+ */
+function toWatchableRoot(lookupPath: string): string {
+  if (fs.existsSync(lookupPath)) return lookupPath;
+  let dir = lookupPath;
+  while (dir !== path.dirname(dir)) {
+    dir = path.dirname(dir);
+    if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) return dir;
+  }
+
+  return dir;
 }
