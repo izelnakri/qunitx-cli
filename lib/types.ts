@@ -5,6 +5,7 @@ import type { Buffer } from 'node:buffer';
 import type { BuildContext, Plugin as EsbuildPlugin } from 'esbuild';
 import type { SourceMapDecoder } from './utils/source-map-decoder.ts';
 import type { Reporter, ReporterName } from './reporter/types.ts';
+import type { QUnitSelector } from './utils/line-targets.ts';
 import type { FailedTestRecord } from './utils/failure-cache.ts';
 
 /**
@@ -196,6 +197,33 @@ export interface Config {
    * Falls back to running all tests on git failure or missing metafile cache.
    */
   changedSince?: string;
+  /**
+   * The test filter — `-t`, `--filter`, `-m` and `--module` are four spellings of this one field.
+   * Matched against `"Module: test name"` and passed through to `QUnit.config.filter` verbatim, so
+   * it carries QUnit's own semantics: case-insensitive substring, `/regex/`, `/regex/i` (regexes
+   * are case-SENSITIVE without the flag), or a leading `!` to invert. `QUnit.config.module` is
+   * deliberately unused: it is exact against the *joined* module path, so it can match neither a
+   * nested module by its own name nor a prefix. `-t '/^Cart(:| >)/'` is the exact-module recipe.
+   */
+  filter?: string;
+  /**
+   * `--search` / `-s` / `--print` / `-p`: list the tests the filter matches and exit without
+   * running them. A string is the expression to preview; `true` means the flag was given bare,
+   * in which case `filter` supplies the expression (and listing everything when it too is unset).
+   */
+  search?: string | true;
+  /**
+   * Line targets from `file.ts#34` / `file.ts:34` inputs, keyed by absolute path. Resolved
+   * against the file's test declarations into exact `_qunitSelectors` per group; the bare
+   * path still goes into `inputs`, so discovery is unaffected.
+   */
+  lineTargets?: Record<string, number[]>;
+  /**
+   * Exact test selections for this run, derived from `lineTargets`. Applied in the browser via
+   * `QUnit.config.testFilter`, which QUnit ANDs after `filter`/`module`. Per-group: each
+   * line-targeted file runs as its own group so untargeted files stay unfiltered.
+   */
+  _qunitSelectors?: QUnitSelector[];
   /** Mutable test-outcome counters updated as TAP events arrive. */
   COUNTER: Counter;
   /** Test files that failed on the previous run (drives re-run filtering). */

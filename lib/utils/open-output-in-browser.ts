@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { findChrome } from './find-chrome.ts';
+import { qunitFilterQuery } from './qunit-filter.ts';
 import type { Config } from '../types.ts';
 
 /**
@@ -12,10 +13,13 @@ import type { Config } from '../types.ts';
  */
 export async function openOutputInBrowser(config: Config): Promise<void> {
   try {
-    const outputFile = config.watch
-      ? `http://localhost:${config.port}`
-      : pathToFileURL(path.join(path.resolve(config.projectRoot, config.output), 'index.html'))
-          .href;
+    // The filter query rides along so the opened window shows the same tests the terminal ran.
+    // QUnit reads it from location.search, which file:// URLs carry just like http:// ones.
+    const outputFile =
+      (config.watch
+        ? `http://localhost:${config.port}`
+        : pathToFileURL(path.join(path.resolve(config.projectRoot, config.output), 'index.html'))
+            .href) + qunitFilterQuery(config);
 
     if (typeof config.open === 'string') {
       spawnDetached(config.open, [outputFile]);

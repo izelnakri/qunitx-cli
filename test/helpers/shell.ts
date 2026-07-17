@@ -90,12 +90,53 @@ const ENV_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
  * Also handles the QUNITX_BIN swap so release-package tests can replace `node cli.ts` with
  * the installed entry point without re-parsing the rest of the command.
  */
+/**
+ * Splits a command into argv tokens, honouring single and double quotes so a flag value may
+ * contain spaces (`-t 'outer first'`, `-m 'Outer > Inner'`) — commands here are spawned
+ * without a shell, so nothing else would group those words.
+ *
+ * Quotes only group; there is no backslash escaping, which keeps Windows paths
+ * (`D:\some\fixture.ts`) intact. An empty quoted string yields an empty token.
+ */
+function tokenize(command: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let quote: string | null = null;
+  let quoted = false;
+
+  for (const char of command) {
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        current += char;
+      }
+    } else if (char === "'" || char === '"') {
+      quote = char;
+      quoted = true;
+    } else if (/\s/.test(char)) {
+      if (current || quoted) {
+        tokens.push(current);
+        current = '';
+        quoted = false;
+      }
+    } else {
+      current += char;
+    }
+  }
+  if (current || quoted) {
+    tokens.push(current);
+  }
+
+  return tokens;
+}
+
 function parseCommand(command: string): {
   bin: string;
   args: string[];
   env: Record<string, string>;
 } {
-  const tokens = command.split(/\s+/).filter(Boolean);
+  const tokens = tokenize(command);
   // Boundary between leading env assignments and the bin+args tail. -1 from findIndex means
   // every token was an assignment — let `rest` be empty so the spawn surfaces ENOENT itself.
   const splitAt = tokens.findIndex((t) => !ENV_ASSIGNMENT_RE.test(t));

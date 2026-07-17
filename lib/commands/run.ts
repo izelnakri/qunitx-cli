@@ -9,6 +9,7 @@ import {
 } from '../setup/web-server.ts';
 import { openOutputInBrowser } from '../utils/open-output-in-browser.ts';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { normalize } from 'node:path';
 import { availableParallelism } from 'node:os';
 // node:timers returns Timer objects with .unref()/.ref() in both Node and Deno.
@@ -41,6 +42,9 @@ import {
   resolveOnlyFailedFiles,
 } from '../utils/failure-cache.ts';
 import { writeCoverageReport } from '../coverage/report.ts';
+import { isFilteredRun, describeFilter } from '../utils/qunit-filter.ts';
+import { resolveLineTargets } from '../utils/line-targets.ts';
+import type { QUnitSelector } from '../utils/line-targets.ts';
 import type { Config, CachedContent } from '../types.ts';
 
 // Playwright navigation timeout for headed watch-mode reloads (not test execution).
@@ -104,6 +108,12 @@ export async function run(config: Config): Promise<void> {
   ]);
 
   if (config.watch) {
+    // Line targets scope the whole watch session, so they have to narrow fsTree BEFORE the
+    // bundle below is built from it — see applyWatchLineTargets. Guarded so the common path
+    // keeps starting esbuild without an extra await.
+    if (config.lineTargets && Object.keys(config.lineTargets).length > 0) {
+      await applyWatchLineTargets(config);
+    }
     // WATCH MODE: single browser, all test files bundled together.
     // The HTTP server stays alive so the user can browse http://localhost:PORT
     // and see all tests running in a single QUnit view.
@@ -291,8 +301,24 @@ export async function run(config: Config): Promise<void> {
       }
       return;
     }
-    const groupCount = Math.min(allFiles.length, availableParallelism());
-    const { groups, weights } = await splitIntoGroups(allFiles, groupCount, timings ?? {});
+    // Line-targeted files run as their own single-file groups, each carrying its own selectors.
+    // A group is one page with one QUnit config, so this is what lets `a.ts#34 b.ts` mean "the
+    // one test in a.ts, all of b.ts" — a shared page could only express one filter for both.
+    const targeted = await resolveLineTargetGroups(config, allFiles);
+    const untargeted = allFiles.filter((file) => !targeted.some((group) => group.file === file));
+    const untargetedGroupCount = Math.max(
+      1,
+      Math.min(untargeted.length, availableParallelism() - targeted.length),
+    );
+    const { groups: untargetedGroups, weights } = untargeted.length
+      ? await splitIntoGroups(untargeted, untargetedGroupCount, timings ?? {})
+      : { groups: [] as string[][], weights: new Map<string, number>() };
+    const groups = [...targeted.map((group) => [group.file]), ...untargetedGroups];
+    const groupSelectors = [
+      ...targeted.map((group) => group.selectors),
+      ...untargetedGroups.map(() => undefined),
+    ];
+    const groupCount = groups.length;
 
     // Shared COUNTER so TAP test numbers are globally sequential across all groups.
     config.COUNTER = {
@@ -325,6 +351,7 @@ export async function run(config: Config): Promise<void> {
       // register tests with the same module/test names — the dedup key is
       // intra-group.)
       _testEndCounts: new Map<string, number>(),
+      _qunitSelectors: groupSelectors[i],
       fsTree: Object.fromEntries(groupFiles.map((filePath) => [filePath, config.fsTree[filePath]])),
       // Single group keeps the root output dir for backward-compatible file paths.
       output: groupCount === 1 ? config.output : `${config.output}/group-${i}`,
@@ -480,7 +507,7 @@ export async function run(config: Config): Promise<void> {
       }),
     );
 
-    const exitCode = groupResults.reduce(
+    let exitCode = groupResults.reduce(
       (code, { status, reason }) => {
         if (status !== 'rejected') return code;
         console.error(reason);
@@ -489,34 +516,49 @@ export async function run(config: Config): Promise<void> {
       config.COUNTER.failCount > 0 ? 1 : 0,
     );
 
-    process.exitCode = exitCode;
-
     if (config.COUNTER.testCount === 0 && exitCode === 0) {
-      const fileWord = allFiles.length === 1 ? 'file' : 'files';
-      console.log(
-        `# Warning: 0 tests registered — no QUnit test cases found in ${allFiles.length} ${fileWord}`,
-      );
+      if (isFilteredRun(config)) {
+        // A filter matching nothing is a typo, not a green run — every neighbouring runner
+        // fails here, and passing CI on a mistyped -t is the worst outcome available.
+        console.log(`# No tests matched ${describeFilter(config)}`);
+        exitCode = 1;
+      } else {
+        const fileWord = allFiles.length === 1 ? 'file' : 'files';
+        console.log(
+          `# Warning: 0 tests registered — no QUnit test cases found in ${allFiles.length} ${fileWord}`,
+        );
+      }
     }
+
+    // Set after the zero-match block above, which can flip exitCode to 1 for a filter that
+    // matched nothing.
+    process.exitCode = exitCode;
 
     await reportRunEnd(config, { durationMs: TIME_COUNTER.stop() });
 
     if (config.coverage) await writeCoverageReport(config, allFiles);
 
+    // A test-level filter (-t/-m/line target) makes both caches lie: a file that ran 1 of its
+    // 30 tests records ~1/30th of its wall time, which mis-packs every future full run, and its
+    // failure set is only the matched subset. File-level narrowing (--only-failed/--changed) is
+    // fine — those still run whole files.
+    const filteredRun = isFilteredRun(config);
     const fileTimes = computeFileTimes(groups, weights, wallTimes);
-    persistTimings(fileTimes, config.projectRoot).catch(
-      (err: Error) =>
-        config.debug && process.stderr.write(`# [qunitx] persistTimings: ${err.message}\n`),
-    );
+    if (!filteredRun) {
+      persistTimings(fileTimes, config.projectRoot).catch(
+        (err: Error) =>
+          config.debug && process.stderr.write(`# [qunitx] persistTimings: ${err.message}\n`),
+      );
+    }
     // Persist this run's failures for the next `--only-failed`. An empty set (all green) is
     // written too, so a passing re-run clears the cache. Awaited on the exit path below (unlike
     // timings, which tolerate loss) so a slow filesystem can't lose the cache to process.exit.
-    const failureCacheWrite = writeFailureCache(
-      config.projectRoot,
-      buildFailureCache(config),
-    ).catch(
-      (err: Error) =>
-        config.debug && process.stderr.write(`# [qunitx] writeFailureCache: ${err.message}\n`),
-    );
+    const failureCacheWrite = filteredRun
+      ? null
+      : writeFailureCache(config.projectRoot, buildFailureCache(config)).catch(
+          (err: Error) =>
+            config.debug && process.stderr.write(`# [qunitx] writeFailureCache: ${err.message}\n`),
+        );
     if (config.debug) printFileTimings(fileTimes, config.projectRoot);
 
     if (config.after) {
@@ -706,6 +748,68 @@ function printFileTimings(fileTimes: Map<string, number>, projectRoot: string): 
 // LPT (Longest Processing Time first) bin-packing: sort files by estimated time descending,
 // then assign each to the group with the smallest current total. Uses cached per-file timings
 // when available; falls back to file size scaled by msPerByte for unknown files.
+/**
+ * Watch-mode line targets: narrow fsTree to the targeted files and apply their selectors for the
+ * whole session.
+ *
+ * Watch is one page with one QUnit config, so a page-global selector set would filter every OTHER
+ * file's tests down to nothing on the next save — the per-file scoping concurrent mode gets from
+ * one-group-per-file has nowhere to live here. Narrowing fsTree keeps the selectors true for
+ * everything loaded, at the cost of dropping untargeted inputs; those are named rather than
+ * silently watched-but-never-run. `qa` clears the selectors to run everything still watched.
+ */
+async function applyWatchLineTargets(config: Config): Promise<void> {
+  const allFiles = Object.keys(config.fsTree);
+  const targeted = await resolveLineTargetGroups(config, allFiles);
+  if (targeted.length === 0) return;
+
+  const targetedFiles = new Set(targeted.map((group) => group.file));
+  const dropped = allFiles.filter((file) => !targetedFiles.has(file));
+  config.fsTree = Object.fromEntries([...targetedFiles].map((file) => [file, config.fsTree[file]]));
+  config._qunitSelectors = targeted.flatMap((group) => group.selectors);
+  if (dropped.length > 0) {
+    console.log(
+      '#',
+      blue(
+        `qunitx: --watch with a line target runs only the targeted file${targetedFiles.size === 1 ? '' : 's'} — ${dropped.length} other file${dropped.length === 1 ? '' : 's'} excluded from this session`,
+      ),
+    );
+  }
+  console.log('#', blue(`qunitx: press "qa" to run every test in the watched file(s)`));
+}
+
+/**
+ * Resolves each `file#34` input into the selectors for that file, dropping targets whose file is
+ * no longer in the run (a glob, `--changed` or `--only-failed` may have filtered it out) and
+ * those that resolved to nothing — both fall back to running the file whole, which is what a
+ * null `selectors` means. Every warning is surfaced; a line target that quietly did not narrow
+ * is worse than one that says so.
+ */
+async function resolveLineTargetGroups(
+  config: Config,
+  allFiles: string[],
+): Promise<Array<{ file: string; selectors: QUnitSelector[] }>> {
+  const entries = Object.entries(config.lineTargets ?? {}).filter(([file]) =>
+    allFiles.includes(file),
+  );
+  const resolved = await Promise.all(
+    entries.map(async ([file, lines]) => {
+      const { selectors, warnings } = await resolveLineTargets(
+        file,
+        lines,
+        // Forward slashes in the warning regardless of OS — it echoes the `path#line` the user
+        // typed, and they typed '/'. path.relative yields '\' on Windows.
+        path.relative(config.projectRoot, file).replaceAll('\\', '/'),
+      );
+      warnings.forEach((warning) => console.log('#', blue(`qunitx: ${warning}`)));
+
+      return selectors ? { file, selectors } : null;
+    }),
+  );
+
+  return resolved.filter((group) => group !== null);
+}
+
 async function splitIntoGroups(
   files: string[],
   groupCount: number,

@@ -15,6 +15,9 @@ export function setupKeyboardEvents(
   listenToKeyboardKey('qq', () => abortBrowserQUnit(config, connections));
   listenToKeyboardKey('qa', () => {
     abortBrowserQUnit(config, connections);
+    // "run all" means all: drop the line-target selections that scoped this session. -t/-m stay
+    // — those are a standing instruction about which tests to run, not a starting point.
+    config._qunitSelectors = undefined;
     runTestsInBrowser(config, cachedContent, connections);
   });
   listenToKeyboardKey('qf', () => {

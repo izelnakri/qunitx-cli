@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { daemonSocketPath, daemonInfoPath } from '../../utils/daemon-socket-path.ts';
 import { CLEANUP_GRACE_MS } from '../../utils/close-with-grace.ts';
+import { tokenizeArgs } from '../../utils/tokenize-args.ts';
 import { attachLineParser, probeSocket } from './socket-utils.ts';
 import type { Request, ResponseChunk } from './protocol.ts';
 
@@ -157,10 +158,20 @@ export async function runViaDaemon(argv: string[]): Promise<number> {
 function isDaemonEligible(): boolean {
   if (process.env.QUNITX_NO_DAEMON) return false;
   if (process.env.CI && !process.env.QUNITX_DAEMON) return false;
-  for (const arg of process.argv) {
-    if (arg === '--no-daemon') return false;
-    if (arg === '--watch' || arg === '-w') return false;
-    if (arg === '--open' || arg === '-o' || arg.startsWith('--open=')) return false;
+  // Reuse the parser's own tokenizer so "how much does a -t/-m value swallow" is decided in one
+  // place: a query value or positional input can never be mistaken here for a --watch/--open flag.
+  for (const token of tokenizeArgs(process.argv.slice(2))) {
+    // --search/--print never touches a browser, so routing it through the daemon is pure overhead.
+    if (token.kind === 'query') {
+      if (token.key === 'list') return false;
+      continue;
+    }
+    if (token.kind !== 'flag') continue;
+    if (token.raw === '--no-daemon') return false;
+    if (token.raw === '--watch' || token.raw === '-w') return false;
+    if (token.raw === '--open' || token.raw === '-o' || token.raw.startsWith('--open=')) {
+      return false;
+    }
   }
   return true;
 }
