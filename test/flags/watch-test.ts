@@ -19,6 +19,20 @@ module('--watch flag tests', { concurrency: true }, () => {
     assert.includes(stdout, '"ql"');
   });
 
+  // Regression: a glob input (`test/**/!(x).ts`) reaches the watcher as a raw glob string, which
+  // is not a real filesystem path, so fs.watch threw ENOENT on it and crashed the whole run —
+  // even though the initial (non-watch) build had resolved the glob fine. The fix collapses each
+  // lookup path to its deepest existing directory before watching.
+  test('--watch accepts a glob input without crashing on fs.watch ENOENT', async (assert) => {
+    const stdout = await shellWatch("node cli.ts 'test/fixtures/**/!(plugin-tests).ts' --watch", {
+      until: (buf) => buf.includes('Press "qq"'),
+    });
+
+    assert.includes(stdout, 'Watching files...', 'the watcher started');
+    assert.notIncludes(stdout, 'ENOENT');
+    assert.notIncludes(stdout, "watch '");
+  });
+
   // Regression test: shellWatch was releasing the semaphore permit immediately after sending
   // SIGTERM, before the CLI process had fully exited. This allowed the next test to acquire
   // the permit and launch a new Chrome while the previous Chrome was still shutting down —
