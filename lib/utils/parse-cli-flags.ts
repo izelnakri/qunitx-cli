@@ -35,6 +35,8 @@ interface ParsedFlags {
   /** `--search`/`--print` mode: the expression to preview, or `true` to list everything. */
   search?: string | true;
   lineTargets?: Record<string, number[]>;
+  /** Absolute paths mentioned WITHOUT a line target — whole-file requests that supersede a line target. */
+  _wholeInputPaths?: string[];
 }
 
 /**
@@ -215,6 +217,12 @@ function addInput(result: Flags, projectRoot: string, arg: string): void {
   if (line !== null) {
     result.lineTargets = result.lineTargets ?? {};
     result.lineTargets[absolutePath] = (result.lineTargets[absolutePath] ?? []).concat(line);
+  } else {
+    // A bare mention (no `#line`) means "run this whole file". Recorded so a line target on the
+    // same path — from `a.ts a.ts#34` — is superseded like any other broader input (see config.ts).
+    // Tracked separately because `inputs` is a Set: the bare and line-target mentions collapse to
+    // one entry, losing the fact that a whole-file mention was made.
+    (result._wholeInputPaths ??= []).push(absolutePath);
   }
   result.inputs.add(absolutePath);
 }
