@@ -15,13 +15,30 @@ import type { Config, FSTree } from '../types.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
 
 /**
+ * Options for assembling a config without a CLI invocation behind it.
+ * `argv` supplies the flag tokens (defaulting to this process's argv); `overrides` is applied
+ * last and wins over everything, which is how the JS API passes already-typed options rather
+ * than round-tripping them through argv strings.
+ */
+export interface SetupConfigOptions {
+  /** Flag tokens to parse, in CLI form. Defaults to this process's argv. */
+  argv?: string[];
+  /** Directory to resolve the project root from. Defaults to the current working directory. */
+  cwd?: string;
+  /** Typed config values applied last, winning over defaults, `package.json` and `argv`. */
+  overrides?: Partial<Config>;
+}
+
+/**
  * Builds the merged qunitx config from package.json settings and CLI flags.
  * `package.json#qunitx.plugins` entries are dynamic-imported into esbuild plugin objects.
+ *
+ * Precedence, lowest to highest: defaults → `package.json#qunitx` → `argv` flags → `overrides`.
  * @returns {Promise<object>}
  */
-export async function setupConfig(): Promise<Config> {
-  const projectRoot = await findProjectRoot();
-  const cliConfigFlags = parseCliFlags(projectRoot);
+export async function setupConfig(options: SetupConfigOptions = {}): Promise<Config> {
+  const projectRoot = await findProjectRoot(options.cwd, options.overrides?._embedded);
+  const cliConfigFlags = parseCliFlags(projectRoot, options.argv);
   const projectPackageJSON = await readConfigFromPackageJSON(projectRoot);
   const { plugins: rawPlugins, ...userQunitx } =
     (projectPackageJSON.qunitx as Partial<Config> & {
@@ -30,12 +47,17 @@ export async function setupConfig(): Promise<Config> {
   // Kick off plugin resolution before the rest of the config is assembled so dynamic-import
   // latency overlaps with fsTree I/O. For projects with no plugins this is a free no-op.
   const pluginsPromise = resolvePlugins(rawPlugins, projectRoot);
-  const inputs = cliConfigFlags.inputs.concat(readInputsFromPackageJSON(projectPackageJSON));
+  // Explicit `inputs` in overrides replace rather than extend the discovered set: an API caller
+  // naming files means "run exactly these", not "these plus whatever package.json lists".
+  const overrides = options.overrides ?? {};
+  const inputs =
+    overrides.inputs ?? cliConfigFlags.inputs.concat(readInputsFromPackageJSON(projectPackageJSON));
   const config = {
     ...defaultProjectConfigValues,
     htmlPaths: [] as string[],
     ...userQunitx,
     ...cliConfigFlags,
+    ...overrides,
     projectRoot,
     inputs,
     testFileLookupPaths: setupTestFilePaths(inputs),

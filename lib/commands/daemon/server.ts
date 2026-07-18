@@ -10,7 +10,7 @@ import { parseDaemonIdleTimeout } from '../../utils/parse-daemon-idle-timeout.ts
 import { attachLineParser } from './socket-utils.ts';
 import { setupConfig } from '../../setup/config.ts';
 import { launchBrowser } from '../../setup/browser.ts';
-import { DaemonRunError } from '../run/tests-in-browser.ts';
+import { RunCompleted } from '../run/tests-in-browser.ts';
 import { run } from '../run.ts';
 import type { Request, ResponseChunk, RunRequest, DaemonInfo } from './protocol.ts';
 import type { Browser } from 'playwright-core';
@@ -191,17 +191,10 @@ export async function runDaemonServer(): Promise<void> {
     process.stderr.write = forward;
   }
 
-  // setupConfig reads process.argv directly; the daemon's actual argv is `daemon _serve`
-  // which would be parsed as test paths. Strip it for the startup config — we only need
-  // the browser type here. Per-run argv comes from the client via runOnce.
-  const argvSnapshot = process.argv;
-  process.argv = [argvSnapshot[0], argvSnapshot[1] ?? 'cli.ts'];
-  let baseConfig;
-  try {
-    baseConfig = await setupConfig();
-  } finally {
-    process.argv = argvSnapshot;
-  }
+  // The daemon's own argv is `daemon _serve`, which would be parsed as test paths — pass an
+  // empty flag list instead. We only need the browser type here; per-run argv comes from the
+  // client via runOnce.
+  const baseConfig = await setupConfig({ argv: [] });
   baseConfig._daemonMode = true;
   baseConfig.watch = false;
   baseConfig.open = false;
@@ -657,7 +650,7 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
 /**
  * Performs one test run inside the daemon by delegating to `run()` — the same code
  * path local non-watch invocations use, but with `_daemonMode` set so it reuses the
- * daemon's persistent browser and throws `DaemonRunError` instead of `process.exit`.
+ * daemon's persistent browser and throws `RunCompleted` instead of `process.exit`.
  * Concurrent group orchestration, timing-cache persistence, and after-hook all come
  * for free from the shared run pipeline.
  */
@@ -672,18 +665,10 @@ async function runOnce(
   for (const [key, value] of Object.entries(env)) {
     if (value !== undefined) process.env[key] = value;
   }
-  const argvSnapshot = process.argv;
-  process.argv = ['node', argvSnapshot[1] ?? 'cli.ts', ...argv];
-
-  let config: Config;
-  try {
-    config = await setupConfig();
-  } finally {
-    process.argv = argvSnapshot;
-  }
+  const config: Config = await setupConfig({ argv });
 
   // _daemonBrowser tells run() to reuse the persistent browser; _daemonMode tells
-  // it to throw DaemonRunError instead of calling process.exit at the end;
+  // it to throw RunCompleted instead of calling process.exit at the end;
   // _daemonEsbuildCache hands buildTestBundle the persistent incremental-context
   // slot so the warm module graph survives across runs. watch/open are forced off
   // — those modes don't make sense inside a daemon run.
@@ -698,11 +683,11 @@ async function runOnce(
 
   try {
     await run(config);
-    // run() throws DaemonRunError on success in daemon mode; reaching here means it
+    // run() throws RunCompleted on success in daemon mode; reaching here means it
     // returned without exiting — fall back on the counter.
     return config.COUNTER.failCount > 0 ? 1 : 0;
   } catch (err) {
-    if (err instanceof DaemonRunError) return err.exitCode;
+    if (err instanceof RunCompleted) return err.exitCode;
     throw err;
   } finally {
     // Restore env: drop keys added during the run, restore changed values.
