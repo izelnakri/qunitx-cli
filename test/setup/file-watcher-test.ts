@@ -10,9 +10,34 @@ import {
   handleWatchEvent,
   rescanDirectoryForDelta,
   readFileStable,
+  toWatchableRoot,
 } from '../../lib/setup/file-watcher.ts';
 import '../helpers/custom-asserts.ts';
 import type { Config, FSTree } from '../../lib/types.ts';
+
+module('Setup | toWatchableRoot', { concurrency: true }, () => {
+  test('a real directory or file is returned unchanged', (assert) => {
+    assert.equal(toWatchableRoot(process.cwd()), process.cwd());
+    const self = path.join(process.cwd(), 'test/setup/file-watcher-test.ts');
+    assert.equal(toWatchableRoot(self), self);
+  });
+
+  test('a glob collapses to its deepest existing ancestor directory', (assert) => {
+    assert.equal(
+      toWatchableRoot(path.join(process.cwd(), 'test/setup/**/!(x).ts')),
+      path.join(process.cwd(), 'test/setup'),
+    );
+  });
+
+  test('a path whose whole chain is missing floors at cwd, never the filesystem root', (assert) => {
+    // Unreachable for real cwd-joined inputs, but fs.watch on a root would recursively watch the
+    // entire disk — so the degenerate case must floor at cwd.
+    const root = path.parse(process.cwd()).root;
+    const result = toWatchableRoot(path.join(root, 'no-such-dir-xyz', 'deeper', '**', '*.ts'));
+    assert.equal(result, process.cwd());
+    assert.notEqual(result, root);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // readFileStable — the Windows write-race fix

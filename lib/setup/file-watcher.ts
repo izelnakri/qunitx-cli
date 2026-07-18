@@ -696,13 +696,18 @@ function colorEvent(event: string): unknown {
  * as-is; a glob is walked up to the deepest ancestor directory that exists — its base dir — which
  * fs.watch can watch recursively (`test/x/!(plugin).ts` collapses to `test/x`).
  */
-function toWatchableRoot(lookupPath: string): string {
+export function toWatchableRoot(lookupPath: string): string {
   if (fs.existsSync(lookupPath)) return lookupPath;
   let dir = lookupPath;
   while (dir !== path.dirname(dir)) {
     dir = path.dirname(dir);
-    if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) return dir;
+    if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+      // Only reachable when a path's whole chain is missing (never for real cwd-joined inputs) and
+      // the sole existing ancestor is the filesystem root. Floor at cwd rather than hand fs.watch a
+      // root, which would recursively watch the entire disk.
+      return dir === path.parse(dir).root ? process.cwd() : dir;
+    }
   }
 
-  return dir;
+  return process.cwd();
 }
