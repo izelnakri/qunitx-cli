@@ -2,12 +2,29 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseTestDeclarations } from '../utils/parse-test-declarations.ts';
 import { matchesQUnitFilter, qunitFullName } from '../utils/qunit-filter-match.ts';
+import { selectorsFromScan } from '../utils/line-targets.ts';
 import { blue, yellow } from '../utils/color.ts';
-import type { TestDeclaration } from '../utils/parse-test-declarations.ts';
+import type { TestDeclaration, DeclarationScan } from '../utils/parse-test-declarations.ts';
+import type { QUnitSelector } from '../utils/line-targets.ts';
 import type { Config } from '../types.ts';
+
+/** One scanned file: its parsed declarations (null when unparseable) and the tests derived from them. */
+interface ScannedFile {
+  file: string;
+  displayPath: string;
+  scan: DeclarationScan | null;
+  tests: FoundTest[];
+  computed: number;
+}
 
 /** One test found by the static scan, named exactly as QUnit would name it. */
 interface FoundTest {
+  /** Absolute path of the file it was declared in — used to apply that file's line targets. */
+  file: string;
+  /** Module path, ' > '-joined; '' for a top-level test. */
+  module: string;
+  /** The test's own name. */
+  testName: string;
   /** `"Module > Sub: test name"` — the string a filter matches against. */
   fullName: string;
   /** Where it is declared, `path#line`, ready to paste back as a line target. */
@@ -15,11 +32,14 @@ interface FoundTest {
 }
 
 /**
- * `--search` / `-s` / `--print` / `-p`: list the tests a filter matches, without running them.
+ * `--search` / `-s` / `--print` / `-p` / `--preview`: list the tests the current selection matches,
+ * without running them.
  *
  * The listing comes from the same static declaration scanner `file#line` targets use — no browser,
  * no bundle, no test execution — and matching goes through a port of QUnit's own filter that is
  * differential-tested against a real run, so the preview reflects what an actual run would select.
+ * Every axis of the real run is honoured: the `-t`/`-m` expression, and `file#line` line targets
+ * (resolved per file, exactly as a real run scopes each group).
  *
  * The trade-off of scanning instead of executing: a test whose name is computed
  * (``test(`case ${i}`)``) has no name until the browser runs it, so it cannot be listed. Those are
@@ -32,21 +52,30 @@ export async function searchTests(config: Config): Promise<number> {
   // neither, an undefined filter matches everything and the command lists the whole suite.
   const filter = typeof config.search === 'string' ? config.search : config.filter;
   const files = Object.keys(config.fsTree);
-  const scans = await Promise.all(files.map((file) => scanFile(file, config.projectRoot)));
+  const scanned = await Promise.all(files.map((file) => scanFile(file, config.projectRoot)));
 
   const found: FoundTest[] = [];
+  const warnings: string[] = [];
   let computed = 0;
   let unparseable = 0;
-  for (const scan of scans) {
-    if (scan === null) {
-      unparseable++;
-      continue;
+  // Resolve each file's `#34` line targets from the scan already in hand — mirroring a real run's
+  // per-file scoping, without reading or transforming any file a second time.
+  const lineSelectors: FileSelectors = new Map();
+  for (const record of scanned) {
+    found.push(...record.tests);
+    computed += record.computed;
+    if (record.scan === null) unparseable++;
+    const lines = config.lineTargets?.[record.file];
+    if (lines && record.scan) {
+      const resolved = selectorsFromScan(record.scan, lines, record.displayPath);
+      lineSelectors.set(record.file, resolved);
+      warnings.push(...resolved.warnings);
     }
-    found.push(...scan.tests);
-    computed += scan.computed;
   }
 
-  const matches = found.filter((test) => matchesQUnitFilter(filter, test.fullName));
+  const matches = found.filter(
+    (test) => matchesQUnitFilter(filter, test.fullName) && matchesLineTargets(test, lineSelectors),
+  );
   const width = Math.max(0, ...matches.map((test) => test.fullName.length));
   for (const test of matches) {
     process.stdout.write(`${test.fullName.padEnd(width)}  ${blue(test.location)}\n`);
@@ -57,6 +86,9 @@ export async function searchTests(config: Config): Promise<number> {
       `${filter ? ` match ${JSON.stringify(filter)}` : ''}` +
       ` in ${files.length} file${files.length === 1 ? '' : 's'}\n`,
   );
+  for (const warning of warnings) {
+    process.stdout.write(yellow(`# qunitx: ${warning}\n`));
+  }
   if (computed > 0) {
     // Deliberately "declaration", not "test": one `test(`case ${i}`)` inside a loop is a single
     // declaration that becomes N tests at runtime, and the scan cannot know N.
@@ -78,18 +110,35 @@ export async function searchTests(config: Config): Promise<number> {
 
 export { searchTests as default };
 
-/** Scans one file into QUnit-named tests, or null when it cannot be parsed. */
-async function scanFile(
-  file: string,
-  projectRoot: string,
-): Promise<{ tests: FoundTest[]; computed: number } | null> {
-  const source = await fs.readFile(file, 'utf8').catch(() => null);
-  if (source === null) return null;
+/** Per-file resolved line targets. `selectors: null` means "run the whole file" (no restriction). */
+type FileSelectors = Map<string, { selectors: QUnitSelector[] | null; warnings: string[] }>;
 
-  const scan = await parseTestDeclarations(source, file);
-  if (!scan) return null;
+/**
+ * True when a test survives its file's line targets. A file with no targets, or one whose targets
+ * degraded to "run the whole file" (`selectors: null`), imposes no restriction. Otherwise the test
+ * must match a selector — the same membership the browser applies via `QUnit.config.testFilter`.
+ */
+function matchesLineTargets(test: FoundTest, lineSelectors: FileSelectors): boolean {
+  const resolved = lineSelectors.get(test.file);
+  if (!resolved || resolved.selectors === null) return true;
 
+  return resolved.selectors.some((selector) =>
+    selector.test === undefined
+      ? test.module === selector.module || test.module.startsWith(`${selector.module} > `)
+      : test.module === selector.module && test.testName === selector.test,
+  );
+}
+
+/**
+ * Scans one file once: its parsed declarations (kept so line targets can reuse them) and the
+ * listable tests derived from them. `scan` is null when the file cannot be read or parsed.
+ */
+async function scanFile(file: string, projectRoot: string): Promise<ScannedFile> {
   const displayPath = path.relative(projectRoot, file).replaceAll('\\', '/');
+  const source = await fs.readFile(file, 'utf8').catch(() => null);
+  const scan = source === null ? null : await parseTestDeclarations(source, file);
+  if (!scan) return { file, displayPath, scan: null, tests: [], computed: 0 };
+
   const tests: FoundTest[] = [];
   let computed = 0;
   scan.declarations.forEach((declaration) => {
@@ -101,12 +150,15 @@ async function scanFile(
     const modulePath =
       declaration.parent === null ? '' : modulePathOf(scan.declarations, declaration.parent);
     tests.push({
+      file,
+      module: modulePath,
+      testName: declaration.name,
       fullName: qunitFullName(modulePath, declaration.name),
       location: `${displayPath}#${declaration.startLine}`,
     });
   });
 
-  return { tests, computed };
+  return { file, displayPath, scan, tests, computed };
 }
 
 /** Walks up `parent` links to build QUnit's ' > '-joined module name. */

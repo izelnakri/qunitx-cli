@@ -8,6 +8,10 @@ import shell, { shellFails, spawnCapture } from '../helpers/shell.ts';
 const NESTED = 'test/fixtures/nested-module-tests.ts';
 const CWD = process.cwd();
 
+// Look declarations up by name so fixture edits (imports/blank lines) don't break the assertions.
+const NESTED_SRC = (await fs.readFile(NESTED, 'utf8')).split('\n');
+const lineOf = (needle: string) => NESTED_SRC.findIndex((line) => line.includes(needle)) + 1;
+
 module('--search / --print', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('lists every test in QUnit registration format with a pasteable location', async (assert, tm) => {
     const result = await shell(`node cli.ts ${NESTED} --print`, { ...moduleMetadata, ...tm });
@@ -16,8 +20,26 @@ module('--search / --print', { concurrency: true }, (_hooks, moduleMetadata) => 
     // a `file#line` you can paste straight back in as a line target.
     assert.includes(result.stdout, 'Outer: outer first');
     assert.includes(result.stdout, 'Outer > Inner: inner only');
-    assert.includes(result.stdout, `${NESTED}#8`);
+    assert.includes(result.stdout, `${NESTED}#${lineOf("test('outer first'")}`);
     assert.includes(result.stdout, '4 of 4 tests');
+  });
+
+  test('a file#line target scopes the preview exactly as a real run would', async (assert, tm) => {
+    // The gap this closes: --print used to ignore line targets and list the whole file. It now
+    // resolves them like a run — a test line lists one test, a module line lists the group.
+    const test$ = await shell(`node cli.ts ${NESTED}#${lineOf("test('outer first'")} --print`, {
+      ...moduleMetadata,
+      ...tm,
+    });
+    assert.includes(test$.stdout, 'Outer: outer first');
+    assert.includes(test$.stdout, '1 of 4 tests');
+
+    const group$ = await shell(`node cli.ts ${NESTED}#${lineOf("module('Outer'")} --print`, {
+      ...moduleMetadata,
+      ...tm,
+    });
+    assert.includes(group$.stdout, '3 of 4 tests');
+    assert.notIncludes(group$.stdout, 'separate one');
   });
 
   test('runs no tests at all — no TAP, no browser', async (assert, tm) => {
