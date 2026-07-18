@@ -202,25 +202,34 @@ module('filtered runs and the persistent caches', { concurrency: true }, () => {
     await fs.mkdir(`${project}/tmp`, { recursive: true });
     // A package.json is what makes this a project: findProjectRoot walks up until it finds one,
     // so without it both caches would resolve to the repo's own tmp/ and race the whole suite.
+    // A self-contained test file (no external imports) keeps this decoupled from the shared
+    // fixtures — the test only needs *some* tests to run, filtered and unfiltered.
     await Promise.all([
       fs.symlink(`${CWD}/node_modules`, `${project}/node_modules`).catch(() => {}),
       fs.writeFile(
         `${project}/package.json`,
         JSON.stringify({ name: id, version: '0.0.1', type: 'module' }),
       ),
-      fs.copyFile(NESTED, `${project}/nested-module-tests.ts`),
+      fs.writeFile(
+        `${project}/cache-test.ts`,
+        `import { module, test } from 'qunitx';\n` +
+          `module('Cache', function () {\n` +
+          `  test('kept', function (assert) { assert.ok(true); });\n` +
+          `  test('other', function (assert) { assert.ok(true); });\n` +
+          `});\n`,
+      ),
     ]);
 
     try {
       // An unfiltered run establishes both caches...
-      await runInProject(project, 'nested-module-tests.ts');
+      await runInProject(project, 'cache-test.ts');
       const timingsBefore = await fs.readFile(`${project}/tmp/test-timings.json`, 'utf8');
       const failuresBefore = await fs.readFile(`${project}/tmp/.qunitx-last-failures.json`, 'utf8');
 
       // ...and a filtered run must leave both exactly as they were. It sees only a subset of
       // each file's tests: its wall time would mis-pack every future run's groups, and its
       // failure set would silently shrink what the next --only-failed re-runs.
-      await runInProject(project, `nested-module-tests.ts -t 'outer first'`);
+      await runInProject(project, `cache-test.ts -t 'kept'`);
 
       assert.equal(
         await fs.readFile(`${project}/tmp/test-timings.json`, 'utf8'),
