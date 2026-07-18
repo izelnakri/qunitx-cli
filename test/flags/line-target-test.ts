@@ -1,5 +1,7 @@
 import { module, test } from 'qunitx';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, writeFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import '../helpers/custom-asserts.ts';
 import shell, { shellWatch } from '../helpers/shell.ts';
 
@@ -120,6 +122,34 @@ module('file#line targeting', { concurrency: true }, (_hooks, moduleMetadata) =>
     });
 
     assert.tapResult(result, { testCount: 1 });
+  });
+
+  test('a broader input supersedes a line target on a file it already includes whole', async (assert, tm) => {
+    // `dir file#N` where the dir contains the file: the dir is a "run everything here" gesture, so
+    // it wins and the file runs whole — the line target would otherwise silently run fewer tests
+    // than asked. Announced, not dropped silently. Checked via --print (static, no browser).
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'qunitx-supersede-'));
+    await writeFile(
+      path.join(dir, 'x-test.ts'),
+      `import { module, test } from 'qunitx';\n` +
+        `module('X', function () {\n` +
+        `  test('x1', function (assert) { assert.ok(true); });\n` +
+        `  test('x2', function (assert) { assert.ok(true); });\n` +
+        `});\n`,
+    );
+    try {
+      const out = await shell(`node cli.ts ${dir} ${dir}/x-test.ts#3 --print`, {
+        ...moduleMetadata,
+        ...tm,
+      });
+
+      assert.includes(out.stdout, 'X: x1');
+      assert.includes(out.stdout, 'X: x2', 'the whole file runs, not just line 3');
+      assert.includes(out.stdout, '2 of 2 tests');
+      assert.includes(out.stdout, 'line target ignored');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

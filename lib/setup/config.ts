@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
+import path, { matchesGlob } from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
+import { blue } from '../utils/color.ts';
 import { defaultProjectConfigValues } from './default-project-config-values.ts';
 import { findProjectRoot } from '../utils/find-project-root.ts';
 import { buildFSTree } from './fs-tree.ts';
@@ -60,6 +62,8 @@ export async function setupConfig(): Promise<Config> {
     pluginsPromise,
   ]);
 
+  pruneSupersededLineTargets(config as Config);
+
   // --changed / --since: filter fsTree to test files whose transitive deps
   // include a changed file. Watch mode skips this — watch is for fast feedback
   // on every save, not "what does my working tree affect" semantics.
@@ -83,6 +87,43 @@ export async function setupConfig(): Promise<Config> {
 }
 
 export { setupConfig as default };
+
+/**
+ * Drops a `file#34` line target when another input already includes that file whole — a directory
+ * or glob that covers it. A broad input is a "run everything under here" gesture, so letting a
+ * coincidental line target silently shrink one of its files would run FEWER tests than the human
+ * asked for. The broader input wins (the file runs whole); the superseded target is announced
+ * rather than dropped silently. A file named only by its own `#line` keeps it — nothing else
+ * covers it.
+ */
+function pruneSupersededLineTargets(config: Config): void {
+  const lineTargets = config.lineTargets;
+  if (!lineTargets) return;
+
+  for (const file of Object.keys(lineTargets)) {
+    const coveredBy = config.inputs.find((input) => input !== file && coversFileWhole(input, file));
+    if (!coveredBy) continue;
+    const rel = path.relative(config.projectRoot, file).replaceAll('\\', '/');
+    console.log(
+      '#',
+      blue(
+        `qunitx: ${rel}#${lineTargets[file].join(',')} line target ignored — a broader input runs the whole file`,
+      ),
+    );
+    delete lineTargets[file];
+  }
+
+  if (Object.keys(lineTargets).length === 0) delete config.lineTargets;
+}
+
+/** True when `input` (a directory or glob) includes `file` as a whole, not via a line target. */
+function coversFileWhole(input: string, file: string): boolean {
+  // Directory: file sits underneath it. Glob: file matches the pattern.
+  return (
+    file.startsWith(input.endsWith(path.sep) ? input : `${input}${path.sep}`) ||
+    matchesGlob(file, input)
+  );
+}
 
 async function readConfigFromPackageJSON(projectRoot: string) {
   const packageJSON = await fs.readFile(`${projectRoot}/package.json`);
