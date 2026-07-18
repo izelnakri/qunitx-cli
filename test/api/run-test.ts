@@ -31,13 +31,13 @@ async function runApi(options: Parameters<typeof run>[0] = {}) {
  * to its host's streams is only observable from outside: patching `process.stdout` in-process
  * would also swallow the test runner's own reporter output.
  */
-async function outputOf(source: string) {
+async function outputOf(source: string, hostEnv: NodeJS.ProcessEnv = {}, hostArgv = '') {
   const scriptPath = `tmp/api-driver-${randomUUID()}.mjs`;
   await fs.writeFile(scriptPath, `import { run } from '${API_ENTRY}';\n${source}`);
   const permit = await acquireBrowser();
   try {
-    return await spawnCapture(`node ${scriptPath}`, {
-      env: { ...process.env, QUNITX_NO_DAEMON: '1' },
+    return await spawnCapture(`node ${scriptPath}${hostArgv ? ` ${hostArgv}` : ''}`, {
+      env: { ...process.env, QUNITX_NO_DAEMON: '1', ...hostEnv },
     });
   } finally {
     permit.release();
@@ -118,6 +118,25 @@ module('JS API: run()', { concurrency: true }, () => {
     assert.equal(silent.stdout, '');
     assert.equal(silent.stderr, '');
     assert.equal(silent.code, 0);
+  });
+
+  test('stays silent even when the host process has perf tracing switched on', async (assert) => {
+    // Perf tracing is gated on `--trace-perf` in argv and on QUNITX_TRACE_PERF, which CI sets
+    // permanently on the Windows-Deno lane as a hang diagnostic. Neither belongs to the
+    // library: a host that traces itself has not asked an embedded run to narrate its
+    // internals into the host's own stderr.
+    const traced = await outputOf(
+      `
+      const result = await run({ files: ['${PASSING}'], output: 'tmp/api-traced-${randomUUID()}' });
+      if (!result.ok) throw new Error('expected a passing run');
+    `,
+      { QUNITX_TRACE_PERF: '1' },
+      '--trace-perf',
+    );
+
+    assert.equal(traced.stdout, '');
+    assert.equal(traced.stderr, '');
+    assert.equal(traced.code, 0);
   });
 
   test('an explicit reporter opts back into the CLI output', async (assert) => {
