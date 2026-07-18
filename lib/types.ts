@@ -256,7 +256,7 @@ export interface Config {
   _groupMode?: boolean;
   /**
    * `true` when running inside the persistent daemon process. Disables `process.exit`
-   * paths in the run pipeline (replaced with `DaemonRunError` throws), suppresses the
+   * paths in the run pipeline (replaced with `RunCompleted` throws), suppresses the
    * per-WS-connection TAP version 13 header, and prevents the daemon's shared browser
    * from being closed at the end of a run.
    */
@@ -285,6 +285,28 @@ export interface Config {
    * context, killing residual scripts and the previous run's WebSocket client).
    */
   _daemonPageSlot?: { page: import('playwright-core').Page | null };
+  /**
+   * `true` when the run is driven by the JS API rather than the CLI. Every place the pipeline
+   * would end the process instead throws `RunCompleted` carrying the exit code, and the
+   * ambient effects a library must not have — `process.exitCode`, the SIGTERM handler,
+   * raw-mode stdin — are skipped. Unlike `_daemonMode`, the run still owns and closes its
+   * own browser and server.
+   */
+  _embedded?: boolean;
+  /**
+   * Every HTTP/WS server opened by an embedded run, so the JS API's `stop()` can broadcast an
+   * abort to the browser regardless of which path created the server (watch, shared-group, or
+   * per-group). Shared by reference across group configs, like `COUNTER`.
+   */
+  _embeddedServers?: Set<HTTPServer>;
+  /**
+   * Tears down an embedded watch session: stops the file watchers and closes the browser and
+   * server. Populated by `run()` once the watchers are armed; invoked by the API's
+   * `session.close()`. Absent for non-watch embedded runs, which unwind on their own.
+   */
+  _embeddedTeardown?: () => Promise<void>;
+  /** Notifies an embedded watch session that a file change triggered a rerun. */
+  _embeddedOnChange?: (file: string) => void;
   /** Index within the concurrent group array; set when a shared HTTP server is used. */
   _groupId?: number;
   /** Current lifecycle phase of the test run. */

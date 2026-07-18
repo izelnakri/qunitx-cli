@@ -5,13 +5,16 @@ import path from 'node:path';
 import { red } from './color.ts';
 
 /**
- * Dynamically imports `modulePath` and calls its default export with `params`; exits with code 1 on error.
+ * Dynamically imports `modulePath` and calls its default export with `params`. A throwing hook
+ * exits with code 1 on the CLI; when `embedded` is set it rethrows instead, so the JS API can
+ * reject rather than take its host process down with it.
  * @returns {Promise<void>}
  */
 export async function runUserModule(
   modulePath: string,
   params: unknown,
   scriptPosition: string,
+  embedded = false,
 ): Promise<void> {
   const { url, cleanup } = await resolveImportTarget(modulePath);
   try {
@@ -24,6 +27,7 @@ export async function runUserModule(
           : null;
     }
   } catch (error) {
+    if (embedded) throw error;
     console.log('#', red(`QUnitX ${scriptPosition} script failed:`));
     console.trace(error);
     console.error(error);

@@ -9,7 +9,7 @@ import type { FSTree } from '../types.ts';
  */
 export async function buildFSTree(
   fileAbsolutePaths: string[],
-  config: { extensions?: string[] } = {},
+  config: { extensions?: string[]; _embedded?: boolean } = {},
 ): Promise<FSTree> {
   const targetExtensions = config.extensions || defaultProjectConfigValues.extensions;
   const fsTree = {};
@@ -39,6 +39,9 @@ export async function buildFSTree(
           }
         }
       } catch (error) {
+        // An unreadable input is fatal either way, but an embedded run must surface it as a
+        // rejected promise its caller can catch rather than killing the host process.
+        if (config._embedded) throw error;
         console.error(error);
 
         return process.exit(1);
