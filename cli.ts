@@ -7,10 +7,16 @@ import './lib/utils/enable-compile-cache.ts';
 // env is already set or no sidecar is present (npm / source / Node SEA paths).
 import './lib/utils/find-sidecar-esbuild.ts';
 import process from 'node:process';
-import { shutdownPrelaunch } from './lib/utils/chrome-prelaunch.ts';
+import { shutdownPrelaunch, startPrelaunch } from './lib/utils/chrome-prelaunch.ts';
 import pkg from './package.json' with { type: 'json' };
 
 process.title = 'qunitx';
+
+// Opt in to Chrome pre-launch before any heavy dynamic import below, so Chrome spawns at
+// ~t=5ms and is CDP-ready by the time playwright-core finishes loading. Explicit rather
+// than a module-eval side effect so importing this dep graph as a library never spawns
+// a browser off the host process's argv.
+startPrelaunch();
 
 // Command-module imports are dynamic so the daemon-routed-run path doesn't
 // load `help.ts`, `init.ts`, `generate.ts`, or `setup/config.ts` (and its
