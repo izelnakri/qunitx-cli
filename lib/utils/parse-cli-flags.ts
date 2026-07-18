@@ -109,7 +109,15 @@ function applyFlag(result: Flags, arg: string): void {
   } else if (arg.startsWith('--output')) {
     result.output = arg.split('=')[1];
   } else if (arg.startsWith('--port')) {
-    result.port = Number(arg.split('=')[1]);
+    const raw = arg.split('=')[1];
+    const value = Number(raw);
+    // Fail fast like the other value flags: a bare `--port` (Number(undefined) === NaN) or an
+    // out-of-range value would otherwise reach the bind step as a NaN/invalid port.
+    if (!Number.isInteger(value) || value < 0 || value > 65535) {
+      console.error(`Invalid --port value: "${raw ?? ''}". Expected --port=<0-65535>.`);
+      process.exit(1);
+    }
+    result.port = value;
     result.portExplicit = true;
   } else if (arg.startsWith('--extensions')) {
     const value = arg.split('=')[1];
