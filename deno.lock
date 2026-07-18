@@ -3,6 +3,7 @@
   "specifiers": {
     "jsr:@std/fmt@*": "1.0.9",
     "jsr:@std/fmt@1": "1.0.9",
+    "npm:@types/node@^24.10.1": "24.13.3",
     "npm:@types/ws@*": "8.18.1",
     "npm:esbuild@*": "0.28.1",
     "npm:esbuild@~0.28.1": "0.28.1",
@@ -176,8 +177,8 @@
     "@jridgewell/sourcemap-codec@1.5.5": {
       "integrity": "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="
     },
-    "@types/node@25.6.0": {
-      "integrity": "sha512-+qIYRKdNYJwY3vRCZMdJbPLJAtGjQBudzZzdzwQYkEPQd+PJGixUL5QfvCLDaULoLv+RhT3LDkwEfKaAkgSmNQ==",
+    "@types/node@24.13.3": {
+      "integrity": "sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==",
       "dependencies": [
         "undici-types"
       ]
@@ -485,8 +486,8 @@
       ],
       "bin": true
     },
-    "undici-types@7.19.2": {
-      "integrity": "sha512-qYVnV5OEm2AW8cJMCpdV20CDyaN3g0AjDlOGf1OW4iaDEx8MwdtChUp4zu4H0VP3nDRF/8RKWH+IPp9uW0YGZg=="
+    "undici-types@7.18.2": {
+      "integrity": "sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w=="
     },
     "vue@3.5.39_typescript@7.0.2": {
       "integrity": "sha512-xmZCYabFGcirU8r0fTuvl/LICc1OU620rnqepaJDL/a141ZigkG7AyaxQLdqJ02ZRYzWe6YPaDHeQx7MfknQfA==",
@@ -514,6 +515,7 @@
     ],
     "packageJson": {
       "dependencies": [
+        "npm:@types/node@^24.10.1",
         "npm:esbuild@~0.28.1",
         "npm:js-yaml@^5.2.1",
         "npm:playwright-core@1.61.1",
