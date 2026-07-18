@@ -32,10 +32,11 @@ output to the terminal.
 - `--timeout` controls the maximum ms to wait for the full suite to finish
 - `--port` defaults to 1234 and auto-increments if taken; fails fast if an explicit port is unavailable
 - `--browser` flag to run tests in Chromium, Firefox, or WebKit
-- `--reporter` picks the stdout format: `tap` (default), `spec`, `dot`, or `github` (annotates failures on the PR diff)
+- `--reporter` picks the stdout format: `tap` (default), `spec`, `dot`, `github` (annotates failures on the PR diff), or `none`
 - `--junit` writes a JUnit XML report for CI dashboards, alongside the normal terminal output
 - `--coverage` reports V8 line coverage (terminal summary, plus optional `lcov` and `html` reports)
 - `--version` / `-v` prints the installed version
+- JS/TS API (`import { run, watch, search } from 'qunitx-cli'`) for running tests from code — see [JS API](#js-api)
 - Optional daemon mode (`qunitx daemon start`) keeps Chrome and the esbuild context warm across runs — roughly halves the wall-clock time of repeated invocations
 - Docker image for zero-install CI usage
 
@@ -415,7 +416,7 @@ Options:
   --search, -s        List the tests the filter matches, then exit without running them
   --print, -p         Same flag as --search
   --preview           Same flag as --search
-  --reporter, -r      stdout format: tap, spec, dot, github
+  --reporter, -r      stdout format: tap, spec, dot, github, none
   --console           Alias for --debug
   --debug             Print the server URL; pipe browser console to stdout
   --timeout=<ms>      Max ms to wait for the suite to finish  [default: 20000]
@@ -427,7 +428,7 @@ Options:
   --open=<binary>     Open output in a specific browser binary (e.g. brave, google-chrome-lts)
   --port=<n>          HTTP server port (auto-selects a free port if taken)
   --browser=<name>    Browser engine: chromium (default), firefox, or webkit
-  --reporter=<name>   Stdout format: tap, spec, dot, github  [default: tap]
+  --reporter=<name>   Stdout format: tap, spec, dot, github, none  [default: tap]
   --junit[=<path>]    Also write a JUnit XML report  [default: <output>/junit.xml]
   --coverage[=fmts]   Collect V8 line coverage (chromium only). fmts: lcov,html (comma-separated)
   --no-daemon         Don't use the daemon for this run — skips a running daemon and prevents QUNITX_DAEMON auto-spawn
@@ -437,6 +438,76 @@ Subcommands:
   qunitx init                             Bootstrap qunitx config + base HTML in this project
   qunitx new <testFileName>               Create a new qunitx test file
 ```
+
+## JS API
+
+Everything the CLI does is available from JavaScript and TypeScript, fully typed.
+
+```ts
+import { run } from 'qunitx-cli';
+
+const result = await run({ files: ['test/**/*.ts'] });
+
+result.ok; // false when anything failed
+result.counts; // { total, passed, failed, skipped, todo }
+result.failures; // failing tests, with resolved stacks and source files
+```
+
+The API never exits your process, never touches `process.exitCode`, never installs signal
+handlers, and prints nothing unless you ask for a `reporter`. The browser, server, and esbuild
+context are always torn down before the call settles.
+
+### Streaming a run
+
+`run()` returns a handle that is both awaitable and an event emitter, so progress reporting
+does not need a different call:
+
+```ts
+const handle = run({ files: ['test/'] });
+
+handle.on('testEnd', (test) => progressBar.tick(test.fullName));
+handle.on('runEnd', (result) => console.log(`${result.counts.failed} failing`));
+
+const result = await handle;
+await handle.stop(); // cancels, then tears everything down
+```
+
+`run()` also accepts an `AbortSignal` via `signal`.
+
+### Watching
+
+```ts
+const session = await watch({ files: ['test/'] });
+
+session.on('change', (files) => console.log(`${files.length} changed`));
+session.on('runEnd', (result) => notify(result));
+
+await session.close();
+```
+
+`watch()` resolves once the first run has finished and the watchers are armed;
+`session.lastResult` always holds the most recent run.
+
+### Listing tests without running them
+
+`search()` is the API behind `--search`: a static scan of test declarations, so it is fast
+enough to call interactively.
+
+```ts
+const tests = await search({ files: ['test/'], filter: 'Cart' });
+// [{ name, module, fullName, file, line }, ...]
+```
+
+### Options
+
+`files` accepts the same inputs as the CLI, including globs and `file.ts#34` line targets.
+All three functions share `files`, `cwd`, `browser`, `filter`, `extensions`, `htmlPaths`,
+`output`, `timeout`, `port`, `plugins`, `reporter`, and `debug`; `run()` adds `failFast`,
+`onlyFailed`, `changedSince`, `coverage`, `coverageFormats`, `junit`, and `signal`.
+
+Options default to your `package.json#qunitx` settings, so the API and the CLI agree on
+configuration. `reporter` is the one exception — it defaults to `none`, because a library
+should not write to its host's stdout uninvited.
 
 ## JUnit reports
 
