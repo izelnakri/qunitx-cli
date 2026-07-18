@@ -40,15 +40,20 @@ interface ParsedFlags {
 }
 
 /**
- * Parses `process.argv` into a qunitx flag object (`inputs`, `debug`, `watch`, `failFast`, `timeout`, `output`, `port`, `before`, `after`).
+ * Parses CLI arguments into a qunitx flag object (`inputs`, `debug`, `watch`, `failFast`,
+ * `timeout`, `output`, `port`, `before`, `after`). `args` defaults to this process's argv,
+ * but the JS API and the daemon pass their own — neither has qunitx's argv in `process.argv`.
  * @returns {object}
  */
-export function parseCliFlags(projectRoot: string): ParsedFlags {
+export function parseCliFlags(
+  projectRoot: string,
+  args: string[] = process.argv.slice(2),
+): ParsedFlags {
   const providedFlags = { inputs: new Set<string>() } as ParsedFlags & { inputs: Set<string> };
   // The tokenizer owns how many argv entries a query flag swallows (see tokenize-args.ts); this
   // loop only interprets the resulting tokens. Query values and inputs are their own token kinds,
   // so the flag chain below never has to guess whether a bare word is a value or a path.
-  for (const token of tokenizeArgs(process.argv.slice(2))) {
+  for (const token of tokenizeArgs(args)) {
     if (token.kind === 'query') {
       applyQuery(providedFlags, token);
     } else if (token.kind === 'input') {

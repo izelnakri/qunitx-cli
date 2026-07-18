@@ -2,15 +2,25 @@
 // Must be first: ESM evaluates dependencies post-order, so the cache is
 // turned on before chrome-prelaunch.ts and the rest of the dep graph compile.
 import './lib/utils/enable-compile-cache.ts';
+// Must run before chrome-prelaunch.ts and browser.ts evaluate, so `--trace-perf` still
+// captures their module-eval milestones. Only the CLI opts in; the JS API leaves tracing
+// off so an embedded run never writes to its host's stderr.
+import './lib/utils/enable-perf-tracing.ts';
 // Must run before the esbuild import inside run.ts: side-effect module that points
 // `ESBUILD_BINARY_PATH` at a sidecar esbuild adjacent to the binary. No-op when the
 // env is already set or no sidecar is present (npm / source / Node SEA paths).
 import './lib/utils/find-sidecar-esbuild.ts';
 import process from 'node:process';
-import { shutdownPrelaunch } from './lib/utils/chrome-prelaunch.ts';
+import { shutdownPrelaunch, startPrelaunch } from './lib/utils/chrome-prelaunch.ts';
 import pkg from './package.json' with { type: 'json' };
 
 process.title = 'qunitx';
+
+// Opt in to Chrome pre-launch before any heavy dynamic import below, so Chrome spawns at
+// ~t=5ms and is CDP-ready by the time playwright-core finishes loading. Explicit rather
+// than a module-eval side effect so importing this dep graph as a library never spawns
+// a browser off the host process's argv.
+startPrelaunch();
 
 // Command-module imports are dynamic so the daemon-routed-run path doesn't
 // load `help.ts`, `init.ts`, `generate.ts`, or `setup/config.ts` (and its

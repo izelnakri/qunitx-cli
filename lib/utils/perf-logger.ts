@@ -12,17 +12,34 @@
  * dozens of cli invocations via shell helpers, set the env var once at the job
  * level and every cli child inherits it.
  *
- * All perfLog() calls are zero-overhead no-ops when tracing is disabled — the
- * gates are read once at module load time, no per-call argument evaluation.
+ * Tracing is OFF until `enablePerfTracing()` is called, and only the CLI calls it —
+ * via the side-effect import at the top of `cli.ts`, which runs before the modules
+ * that trace their own evaluation. Reading argv and the environment at module load
+ * instead would make the decision for anyone who merely imports this dep graph: an
+ * embedded run inside a host that traces itself would narrate qunitx's internals
+ * into that host's stderr, which it never asked for. Same reason `startPrelaunch()`
+ * is explicit rather than a module-eval side effect.
+ *
+ * All perfLog() calls stay zero-overhead no-ops while tracing is disabled — one
+ * boolean check, no per-call argument evaluation.
  */
 
-const isPerfTracing =
-  process.argv.includes('--trace-perf') || Boolean(process.env.QUNITX_TRACE_PERF);
-
-const processStart = isPerfTracing ? Date.now() : 0;
+let isPerfTracing = false;
+let processStart = 0;
 
 /**
- * Writes a timestamped perf trace line to stderr when --trace-perf is active.
+ * Turns perf tracing on when `argv` or the environment asks for it. Called once by `cli.ts`;
+ * the JS API deliberately never calls it, so an embedded run is silent regardless of how the
+ * host process was invoked.
+ * @param {string[]} argv
+ */
+export function enablePerfTracing(argv: string[] = process.argv): void {
+  isPerfTracing = argv.includes('--trace-perf') || Boolean(process.env.QUNITX_TRACE_PERF);
+  if (isPerfTracing) processStart = Date.now();
+}
+
+/**
+ * Writes a timestamped perf trace line to stderr when tracing is active.
  * @param {string} label
  * @param {...*} details
  */

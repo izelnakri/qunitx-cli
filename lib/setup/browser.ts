@@ -2,7 +2,7 @@ import { setupWebServer } from './web-server.ts';
 import { bindServerToPort } from './bind-server-to-port.ts';
 import { findChrome } from '../utils/find-chrome.ts';
 import { CHROMIUM_ARGS } from '../utils/chromium-args.ts';
-import { prelaunchPromise, shutdownPrelaunch } from '../utils/chrome-prelaunch.ts';
+import { prelaunchedChrome, shutdownPrelaunch } from '../utils/chrome-prelaunch.ts';
 import { perfLog } from '../utils/perf-logger.ts';
 import type { Browser } from 'playwright-core';
 import type { HTTPServer } from '../servers/web.ts';
@@ -35,7 +35,7 @@ export async function launchBrowser(config: Config, skipPrelaunch = false): Prom
     const waitStart = Date.now();
     const [playwrightCore, prelaunch] = await Promise.all([
       playwrightCorePromise,
-      skipPrelaunch ? Promise.resolve(null) : prelaunchPromise,
+      skipPrelaunch ? Promise.resolve(null) : prelaunchedChrome(),
     ]);
     perfLog(
       `browser.js: playwright-core + prelaunch resolved in ${Date.now() - waitStart}ms, prelaunch:`,
@@ -195,8 +195,12 @@ export async function setupBrowser(
     const type = msg.type();
     // Always surface warnings and errors so CI logs capture browser-side failures
     // without requiring --debug. Other log levels are debug-only to avoid noise.
+    // Warnings and errors are always surfaced on the CLI so CI logs capture browser-side
+    // failures without --debug. Embedded runs stay silent unless they asked for diagnostics:
+    // the failures themselves arrive through the run's results, and a library must not write
+    // to its host's streams uninvited.
     const alwaysShow = type === 'warning' || type === 'error';
-    if (!alwaysShow && !config.debug) return;
+    if (!config.debug && (config._embedded || !alwaysShow)) return;
     // Track each handler promise so callers can await all pending BiDi round-trips
     // before closing the browser/page. Without this, Firefox BiDi delivers console
     // events asynchronously after QUnit done, and arg.evaluate() round-trips fail
@@ -213,9 +217,14 @@ export async function setupBrowser(
     handler.finally(() => config._pendingConsoleHandlers?.delete(handler));
   });
   page.on('pageerror', (error) => {
-    console.error(error.toString());
+    if (!config._embedded || config.debug) console.error(error.toString());
     config.COUNTER.failCount++;
   });
+
+  // Embedded runs need a handle on every server they opened so `handle.stop()` can reach the
+  // browser-side QUnit run. The Set lives on the parent config and is shared by reference with
+  // the group configs spread off it, so one registry covers every concurrent group.
+  config._embeddedServers?.add(server);
 
   return { server, browser, page };
 }

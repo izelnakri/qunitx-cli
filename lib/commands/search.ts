@@ -18,7 +18,7 @@ interface ScannedFile {
 }
 
 /** One test found by the static scan, named exactly as QUnit would name it. */
-interface FoundTest {
+export interface FoundTest {
   /** Absolute path of the file it was declared in — used to apply that file's line targets. */
   file: string;
   /** Module path, ' > '-joined; '' for a top-level test. */
@@ -48,34 +48,8 @@ interface FoundTest {
  * @returns the process exit code: 0 when something matched, 1 when nothing did (as `grep` does).
  */
 export async function searchTests(config: Config): Promise<number> {
-  // A bare --search/-p has no expression of its own, so it previews whatever -t/-m set; with
-  // neither, an undefined filter matches everything and the command lists the whole suite.
-  const filter = typeof config.search === 'string' ? config.search : config.filter;
-  const files = Object.keys(config.fsTree);
-  const scanned = await Promise.all(files.map((file) => scanFile(file, config.projectRoot)));
-
-  const found: FoundTest[] = [];
-  const warnings: string[] = [];
-  let computed = 0;
-  let unparseable = 0;
-  // Resolve each file's `#34` line targets from the scan already in hand — mirroring a real run's
-  // per-file scoping, without reading or transforming any file a second time.
-  const lineSelectors: FileSelectors = new Map();
-  for (const record of scanned) {
-    found.push(...record.tests);
-    computed += record.computed;
-    if (record.scan === null) unparseable++;
-    const lines = config.lineTargets?.[record.file];
-    if (lines && record.scan) {
-      const resolved = selectorsFromScan(record.scan, lines, record.displayPath);
-      lineSelectors.set(record.file, resolved);
-      warnings.push(...resolved.warnings);
-    }
-  }
-
-  const matches = found.filter(
-    (test) => matchesQUnitFilter(filter, test.fullName) && matchesLineTargets(test, lineSelectors),
-  );
+  const { filter, files, found, matches, warnings, computed, unparseable } =
+    await findTests(config);
   const width = Math.max(0, ...matches.map((test) => test.fullName.length));
   for (const test of matches) {
     process.stdout.write(`${test.fullName.padEnd(width)}  ${blue(test.location)}\n`);
@@ -109,6 +83,62 @@ export async function searchTests(config: Config): Promise<number> {
 }
 
 export { searchTests as default };
+
+/** The outcome of a static test scan: what was found, and what matched the current selection. */
+export interface TestScanResult {
+  /** The filter expression the scan matched against, if any. */
+  filter: string | undefined;
+  /** Absolute paths of the files scanned. */
+  files: string[];
+  /** Every test declaration the scan could name. */
+  found: FoundTest[];
+  /** The subset of `found` that the filter and line targets select. */
+  matches: FoundTest[];
+  /** Line-target resolution warnings, ready to display. */
+  warnings: string[];
+  /** Declarations whose names are computed at runtime and so cannot be listed. */
+  computed: number;
+  /** Files the parser could not read. */
+  unparseable: number;
+}
+
+/**
+ * Scans the selected files for test declarations and applies the current filter and line
+ * targets — the shared core behind both `--search` and the JS API's `search()`, so the two
+ * can never disagree about what a selection means.
+ */
+export async function findTests(config: Config): Promise<TestScanResult> {
+  // A bare --search/-p has no expression of its own, so it previews whatever -t/-m set; with
+  // neither, an undefined filter matches everything and the command lists the whole suite.
+  const filter = typeof config.search === 'string' ? config.search : config.filter;
+  const files = Object.keys(config.fsTree);
+  const scanned = await Promise.all(files.map((file) => scanFile(file, config.projectRoot)));
+
+  const found: FoundTest[] = [];
+  const warnings: string[] = [];
+  let computed = 0;
+  let unparseable = 0;
+  // Resolve each file's `#34` line targets from the scan already in hand — mirroring a real run's
+  // per-file scoping, without reading or transforming any file a second time.
+  const lineSelectors: FileSelectors = new Map();
+  for (const record of scanned) {
+    found.push(...record.tests);
+    computed += record.computed;
+    if (record.scan === null) unparseable++;
+    const lines = config.lineTargets?.[record.file];
+    if (lines && record.scan) {
+      const resolved = selectorsFromScan(record.scan, lines, record.displayPath);
+      lineSelectors.set(record.file, resolved);
+      warnings.push(...resolved.warnings);
+    }
+  }
+
+  const matches = found.filter(
+    (test) => matchesQUnitFilter(filter, test.fullName) && matchesLineTargets(test, lineSelectors),
+  );
+
+  return { filter, files, found, matches, warnings, computed, unparseable };
+}
 
 /** Per-file resolved line targets. `selectors: null` means "run the whole file" (no restriction). */
 type FileSelectors = Map<string, { selectors: QUnitSelector[] | null; warnings: string[] }>;

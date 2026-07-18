@@ -22,7 +22,7 @@ import {
   buildTestBundle,
   buildAllGroupBundles,
   flushConsoleHandlers,
-  DaemonRunError,
+  RunCompleted,
 } from './run/tests-in-browser.ts';
 import { setupFileWatchers } from '../setup/file-watcher.ts';
 import { getChangedFsTree } from '../setup/get-changed-fs-tree.ts';
@@ -136,7 +136,9 @@ export async function run(config: Config): Promise<void> {
       writeOutputStaticFiles(config, cachedContent),
     ]);
     config.webServer = connections.server;
-    setupKeyboardEvents(config, cachedContent, connections);
+    // Keyboard shortcuts put stdin in raw mode and exit the process on Ctrl-C — a terminal
+    // affordance, not a library one. Embedded watch sessions drive reruns through the API.
+    if (!config._embedded) setupKeyboardEvents(config, cachedContent, connections);
 
     // Explicitly close the HTTP server on SIGTERM before the process exits. This ensures
     // the port is reclaimed by application code (not as a side effect of OS process cleanup),
@@ -146,9 +148,14 @@ export async function run(config: Config): Promise<void> {
     // Note: on Windows child.kill('SIGTERM') calls TerminateProcess() so this handler never
     // runs there — but TerminateProcess() is fully synchronous so the race doesn't exist on
     // Windows anyway. Exit with 143 (128 + SIGTERM) to preserve the conventional exit code.
-    process.once('SIGTERM', () => {
-      closeWithGrace([connections.server.close()]).finally(() => process.exit(EXIT_CODE_SIGTERM));
-    });
+    // Embedded watch sessions skip this: installing a process-wide signal handler that exits
+    // is exactly the kind of ambient effect a library must not have. `session.close()` is the
+    // API's teardown, and the host owns its own signal handling.
+    if (!config._embedded) {
+      process.once('SIGTERM', () => {
+        closeWithGrace([connections.server.close()]).finally(() => process.exit(EXIT_CODE_SIGTERM));
+      });
+    }
 
     // In headed watch mode (bare --open + --watch), chrome-prelaunch.ts launches Chrome
     // without --headless=new so the Playwright-controlled window IS the visible browser.
@@ -162,7 +169,7 @@ export async function run(config: Config): Promise<void> {
     }
 
     if (config.before) {
-      await runUserModule(`${process.cwd()}/${config.before}`, config, 'before');
+      await runUserModule(`${process.cwd()}/${config.before}`, config, 'before', config._embedded);
     }
 
     // A run-narrowing flag (--only-failed / --changed / --since) scopes only the FIRST run in
@@ -227,11 +234,12 @@ export async function run(config: Config): Promise<void> {
     }
 
     if (config.watch) {
-      const { ready: watcherReady } = setupFileWatchers(
+      const { ready: watcherReady, killFileWatchers } = setupFileWatchers(
         config.testFileLookupPaths,
         config,
         async (event, file) => {
           if (event === 'addDir') return;
+          config._embeddedOnChange?.(file);
           if (['change', 'unlink', 'unlinkDir'].includes(event)) {
             // Ignore `change` events for files not yet in fsTree: fs.watch fires `change`
             // before `rename` (→ `add`) when a file is first created. The `add` event
@@ -277,9 +285,19 @@ export async function run(config: Config): Promise<void> {
         },
       );
       await watcherReady;
+      // The CLI ends a watch session by exiting the process, so it never needed to unwind one.
+      // An embedded session does: `session.close()` calls this to stop the watchers and close
+      // the browser and server it opened.
+      if (config._embedded) {
+        config._embeddedTeardown = async () => {
+          killFileWatchers();
+          await closeWithGrace([connections.server?.close(), connections.browser?.close()]);
+        };
+      }
     }
 
-    logWatcherAndKeyboardShortcutInfo(config, connections.server);
+    // The banner advertises keyboard shortcuts, which embedded sessions do not install.
+    if (!config._embedded) logWatcherAndKeyboardShortcutInfo(config, connections.server);
   } else {
     // CONCURRENT MODE: split test files across N groups = availableParallelism().
     // All group bundles are built while Chrome is starting up, so esbuild time
@@ -289,14 +307,15 @@ export async function run(config: Config): Promise<void> {
     // Empty fsTree (e.g. --changed filtered out every test, or the inputs
     // matched no files): emit a clean TAP plan and exit 0. The downstream
     // group/build pipeline assumes ≥1 file and would crash on undefined
-    // groupConfigs[0]. In daemon mode, throw DaemonRunError so the daemon's
+    // groupConfigs[0]. In daemon mode, throw RunCompleted so the daemon's
     // run handler closes the run cleanly and stays alive for the next call.
     if (allFiles.length === 0) {
       reportRunStart(config, { fileCount: 0, groupCount: 0 });
-      if (config._daemonMode) throw new DaemonRunError(0);
+      if (config._daemonMode) throw new RunCompleted(0);
       if (!config.watch) {
         const browser = config._daemonBrowser ? null : await browserPromise!;
         await closeWithGrace([browser?.close(), shutdownPrelaunch()]);
+        if (config._embedded) throw new RunCompleted(0);
         return process.exit(0);
       }
       return;
@@ -474,7 +493,12 @@ export async function run(config: Config): Promise<void> {
           groupConfig.webServer = connections.server;
 
           if (config.before) {
-            await runUserModule(`${process.cwd()}/${config.before}`, groupConfig, 'before');
+            await runUserModule(
+              `${process.cwd()}/${config.before}`,
+              groupConfig,
+              'before',
+              config._embedded,
+            );
           }
 
           try {
@@ -531,8 +555,9 @@ export async function run(config: Config): Promise<void> {
     }
 
     // Set after the zero-match block above, which can flip exitCode to 1 for a filter that
-    // matched nothing.
-    process.exitCode = exitCode;
+    // matched nothing. Embedded runs leave the host's exit code alone — the caller gets the
+    // code on the returned result and decides what it means for their process.
+    if (!config._embedded) process.exitCode = exitCode;
 
     await reportRunEnd(config, { durationMs: TIME_COUNTER.stop() });
 
@@ -562,11 +587,16 @@ export async function run(config: Config): Promise<void> {
     if (config.debug) printFileTimings(fileTimes, config.projectRoot);
 
     if (config.after) {
-      await runUserModule(`${process.cwd()}/${config.after}`, config.COUNTER, 'after');
+      await runUserModule(
+        `${process.cwd()}/${config.after}`,
+        config.COUNTER,
+        'after',
+        config._embedded,
+      );
     }
 
     // Daemon mode: close the per-run shared server (if any) but never the browser
-    // (the daemon owns it across runs). Throw DaemonRunError so the daemon's run
+    // (the daemon owns it across runs). Throw RunCompleted so the daemon's run
     // handler captures the exit code instead of hitting process.exit.
     if (config._daemonMode) {
       clearInterval(keepAlive);
@@ -578,7 +608,31 @@ export async function run(config: Config): Promise<void> {
               config.debug && process.stderr.write(`# [qunitx] server.close: ${err.message}\n`),
           ),
       ]);
-      throw new DaemonRunError(exitCode);
+      throw new RunCompleted(exitCode);
+    }
+
+    // Embedded (JS API): same teardown as the CLI path below, minus the stdout flush (the
+    // host process keeps running) and the process.exit. The browser IS closed here — unlike
+    // daemon mode, an embedded run launched its own and owns it.
+    if (config._embedded) {
+      await closeWithGrace([
+        failureCacheWrite,
+        sharedServer
+          ?.close()
+          .catch(
+            (err: Error) =>
+              config.debug && process.stderr.write(`# [qunitx] server.close: ${err.message}\n`),
+          ),
+        browser
+          .close()
+          .catch(
+            (err: Error) =>
+              config.debug && process.stderr.write(`# [qunitx] browser.close: ${err.message}\n`),
+          ),
+        shutdownPrelaunch(),
+      ]);
+      clearInterval(keepAlive);
+      throw new RunCompleted(exitCode);
     }
 
     // First-time discoverability nudge for the daemon — only on local-mode runs that

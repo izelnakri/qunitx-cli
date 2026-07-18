@@ -14,6 +14,8 @@ const STDOUT_REPORTERS: Record<ReporterName, new () => Reporter> = {
   spec: SpecReporter,
   dot: DotReporter,
   github: GithubReporter,
+  // Every Reporter method is optional, so "write nothing" is the empty implementation.
+  none: class NoneReporter {},
 };
 
 /**

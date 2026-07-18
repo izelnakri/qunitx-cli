@@ -117,7 +117,7 @@ interface FailedTestDetails {
  * assertion's stack to its first user frame. Returns an absolute path, or `null` when no user
  * frame resolves. Mirrors the resolution `TAPDisplayTestResult` uses for the TAP `at:` field.
  */
-function attributeFailureFile(
+export function attributeFailureFile(
   assertions: FailedTestDetails['assertions'],
   decoder: SourceMapDecoder | null | undefined,
   projectRoot: string,

@@ -482,18 +482,22 @@ export function handleWatchEvent(
 
   mutateFSTree(config.fsTree, event, filePath);
 
-  console.log(
-    '#',
-    magenta().bold('=================================================================='),
-  );
-  const displayPath = filePath.startsWith(config.projectRoot)
-    ? filePath.slice(config.projectRoot.length)
-    : filePath;
-  console.log('#', colorEvent(event), displayPath);
-  console.log(
-    '#',
-    magenta().bold('=================================================================='),
-  );
+  // The change banner is a terminal affordance; embedded sessions get the same information
+  // as a `change` event instead, and must not write to their host's stdout.
+  if (!config._embedded) {
+    console.log(
+      '#',
+      magenta().bold('=================================================================='),
+    );
+    const displayPath = filePath.startsWith(config.projectRoot)
+      ? filePath.slice(config.projectRoot.length)
+      : filePath;
+    console.log('#', colorEvent(event), displayPath);
+    console.log(
+      '#',
+      magenta().bold('=================================================================='),
+    );
+  }
 
   if (event === 'add') recordJustAdded(config, filePath);
 

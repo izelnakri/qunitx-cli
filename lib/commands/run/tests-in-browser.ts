@@ -382,7 +382,12 @@ export async function runTestsInBrowser(
       if (config.coverage) await writeCoverageReport(config, allTestFilePaths);
 
       if (config.after) {
-        await runUserModule(`${process.cwd()}/${config.after}`, config.COUNTER, 'after');
+        await runUserModule(
+          `${process.cwd()}/${config.after}`,
+          config.COUNTER,
+          'after',
+          config._embedded,
+        );
       }
 
       if (!config.watch) {
@@ -391,20 +396,24 @@ export async function runTestsInBrowser(
         // must not close them here. Throw instead so the daemon's run handler
         // captures the exit code and keeps the process alive for the next run.
         if (config._daemonMode) {
-          throw new DaemonRunError(config.COUNTER.failCount > 0 ? 1 : 0);
+          throw new RunCompleted(config.COUNTER.failCount > 0 ? 1 : 0);
         }
         await closeWithGrace([
           connections.server?.close(),
           connections.browser?.close(),
           shutdownPrelaunch(),
         ]);
-        return process.exit(config.COUNTER.failCount > 0 ? 1 : 0);
+        const exitCode = config.COUNTER.failCount > 0 ? 1 : 0;
+        // Embedded (JS API): resources are torn down exactly as for the CLI above — only the
+        // process.exit is replaced, since the API must hand control back to its host.
+        if (config._embedded) throw new RunCompleted(exitCode);
+        return process.exit(exitCode);
       }
     }
   } catch (error) {
-    // DaemonRunError signals normal completion in daemon mode (replaces process.exit);
+    // RunCompleted signals normal completion in daemon mode (replaces process.exit);
     // pass it through unchanged so the daemon's run handler can capture the exit code.
-    if (error instanceof DaemonRunError) throw error;
+    if (error instanceof RunCompleted) throw error;
     cachedContent._activeRebuild = null;
     config.lastFailedTestFiles = config.lastRanTestFiles;
     const exception = new BundleError(error);
@@ -647,17 +656,17 @@ export async function buildAllGroupBundles(
 }
 
 /**
- * Thrown in daemon mode in place of `process.exit(code)` so the caller (the daemon
- * server's run handler) can capture the exit code, restore stdout interception, and
- * keep the daemon process alive for the next run.
+ * Thrown in place of `process.exit(code)` whenever the run does not own the process: inside
+ * the daemon (which must stay alive for the next run) and inside the JS API (which must never
+ * exit its host). The caller captures the exit code and resumes control.
  */
-export class DaemonRunError extends Error {
-  /** The exit code that the run would have passed to `process.exit()` outside of daemon mode. */
+export class RunCompleted extends Error {
+  /** The exit code the run would have passed to `process.exit()` if it owned the process. */
   exitCode: number;
-  /** Constructs a DaemonRunError carrying the run's exit code. */
+  /** Constructs a RunCompleted carrying the run's exit code. */
   constructor(exitCode: number) {
-    super(`daemon run finished with exit code ${exitCode}`);
-    this.name = 'DaemonRunError';
+    super(`run finished with exit code ${exitCode}`);
+    this.name = 'RunCompleted';
     this.exitCode = exitCode;
   }
 }
@@ -830,7 +839,7 @@ async function runTestInsideHTMLFile(
   // startupMs / 80s testsJsMs / 25s per-test timer — a 60s hang is the exact window where
   // the test runner's 60s SIGTERM beats the daemon's 'done' message, leaving the client
   // with code=null instead of an exit code. Catch-block diagnostics then fire as for any
-  // other timeout, and (in daemon mode) failOnNonWatchMode throws DaemonRunError so the
+  // other timeout, and (in daemon mode) failOnNonWatchMode throws RunCompleted so the
   // daemon writes 'done' to its socket fast.
   page.on('close', resolveTestRace);
 
@@ -982,6 +991,7 @@ async function runTestInsideHTMLFile(
       config._groupMode,
       config._pendingConsoleHandlers,
       config._daemonMode,
+      config._embedded,
     );
   } else if (QUNIT_RESULT.totalTests === 0) {
     // QUnit ran but no tests were registered (or QUnit was not present in the bundle).
@@ -1000,6 +1010,7 @@ async function runTestInsideHTMLFile(
       config._groupMode,
       config._pendingConsoleHandlers,
       config._daemonMode,
+      config._embedded,
     );
   } else if (QUNIT_RESULT.failedTests > config.COUNTER.failCount) {
     // Safety net: browser tracked failures that WebSocket events never delivered to Node.js
@@ -1014,6 +1025,7 @@ async function failOnNonWatchMode(
   groupMode: boolean = false,
   pendingHandlers?: Set<Promise<void>> | null,
   daemonMode: boolean = false,
+  embedded: boolean = false,
 ): Promise<void> {
   if (watchMode) return;
   if (groupMode) {
@@ -1023,13 +1035,14 @@ async function failOnNonWatchMode(
   await flushConsoleHandlers(pendingHandlers, connections.page);
   if (daemonMode) {
     // Daemon owns browser/server lifetimes — throw so its run handler captures the code.
-    throw new DaemonRunError(1);
+    throw new RunCompleted(1);
   }
   await closeWithGrace([
     connections.server?.close(),
     connections.browser?.close(),
     shutdownPrelaunch(),
   ]);
+  if (embedded) throw new RunCompleted(1);
   process.exit(1);
 }
 
