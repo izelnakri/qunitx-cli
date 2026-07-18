@@ -219,6 +219,12 @@ export interface Config {
    */
   lineTargets?: Record<string, number[]>;
   /**
+   * Absolute paths mentioned on the command line WITHOUT a line target — i.e. whole-file requests.
+   * A directory or glob already supersedes a line target it covers; this additionally catches the
+   * exact-same-path case (`a.ts a.ts#34`), which `inputs` cannot because its Set collapses the two.
+   */
+  _wholeInputPaths?: string[];
+  /**
    * Exact test selections for this run, derived from `lineTargets`. Applied in the browser via
    * `QUnit.config.testFilter`, which QUnit ANDs after `filter`/`module`. Per-group: each
    * line-targeted file runs as its own group so untargeted files stay unfiltered.

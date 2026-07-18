@@ -151,6 +151,18 @@ module('file#line targeting', { concurrency: true }, (_hooks, moduleMetadata) =>
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  test('the same file given both whole and line-targeted runs whole', async (assert, tm) => {
+    // `a.ts a.ts#34` — the two mentions collapse in the input Set, so this exact-path case is
+    // caught via the parser's whole-input tracking, not the directory/glob coverage check.
+    const out = await shell(`node cli.ts ${NESTED} ${NESTED}#${OUTER_FIRST} --print`, {
+      ...moduleMetadata,
+      ...tm,
+    });
+
+    assert.includes(out.stdout, '4 of 4 tests', 'the whole file wins over the line target');
+    assert.includes(out.stdout, 'line target ignored');
+  });
 });
 
 module('file#line targeting in watch mode', { concurrency: true }, () => {

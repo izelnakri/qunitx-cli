@@ -99,9 +99,13 @@ export { setupConfig as default };
 function pruneSupersededLineTargets(config: Config): void {
   const lineTargets = config.lineTargets;
   if (!lineTargets) return;
+  // Only whole-file mentions supersede — a directory, a glob, or the same path given bare
+  // (`a.ts a.ts#34`). A path present ONLY as a line target is not in this list, so it keeps its
+  // target.
+  const wholeInputs = config._wholeInputPaths ?? [];
 
   for (const file of Object.keys(lineTargets)) {
-    const coveredBy = config.inputs.find((input) => input !== file && coversFileWhole(input, file));
+    const coveredBy = wholeInputs.find((input) => coversFileWhole(input, file));
     if (!coveredBy) continue;
     const rel = path.relative(config.projectRoot, file).replaceAll('\\', '/');
     console.log(
@@ -116,10 +120,10 @@ function pruneSupersededLineTargets(config: Config): void {
   if (Object.keys(lineTargets).length === 0) delete config.lineTargets;
 }
 
-/** True when `input` (a directory or glob) includes `file` as a whole, not via a line target. */
+/** True when a whole-file input includes `file`: the same path, a directory above it, or a glob. */
 function coversFileWhole(input: string, file: string): boolean {
-  // Directory: file sits underneath it. Glob: file matches the pattern.
   return (
+    input === file ||
     file.startsWith(input.endsWith(path.sep) ? input : `${input}${path.sep}`) ||
     matchesGlob(file, input)
   );
