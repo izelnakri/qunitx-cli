@@ -73,7 +73,7 @@ export async function setupConfig(): Promise<Config> {
 
   // Built last: reporter selection reads the fully-merged flags. One instance per run, shared
   // by every concurrent group via the group-config spread in run.ts.
-  (config as Config)._reporters = createReporters(config as Config);
+  (config as Config).state.reporters = createReporters(config as Config);
 
   return config as Config;
 }
