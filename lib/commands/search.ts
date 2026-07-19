@@ -54,17 +54,15 @@ export async function searchTests(config: Config): Promise<number> {
   const files = Object.keys(config.fsTree);
   const scanned = await Promise.all(files.map((file) => scanFile(file, config.projectRoot)));
 
-  const found: FoundTest[] = [];
-  const warnings: string[] = [];
-  let computed = 0;
-  let unparseable = 0;
+  const found = scanned.flatMap((record) => record.tests);
+  const computed = scanned.reduce((sum, record) => sum + record.computed, 0);
+  const unparseable = scanned.filter((record) => record.scan === null).length;
+
   // Resolve each file's `#34` line targets from the scan already in hand — mirroring a real run's
   // per-file scoping, without reading or transforming any file a second time.
   const lineSelectors: FileSelectors = new Map();
+  const warnings: string[] = [];
   for (const record of scanned) {
-    found.push(...record.tests);
-    computed += record.computed;
-    if (record.scan === null) unparseable++;
     const lines = config.lineTargets?.[record.file];
     if (lines && record.scan) {
       const resolved = selectorsFromScan(record.scan, lines, record.displayPath);
@@ -139,24 +137,30 @@ async function scanFile(file: string, projectRoot: string): Promise<ScannedFile>
   const scan = source === null ? null : await parseTestDeclarations(source, file);
   if (!scan) return { file, displayPath, scan: null, tests: [], computed: 0 };
 
-  const tests: FoundTest[] = [];
-  let computed = 0;
-  scan.declarations.forEach((declaration) => {
-    if (declaration.kind !== 'test') return;
-    if (declaration.name === null) {
-      computed++;
-      return;
-    }
-    const modulePath =
-      declaration.parent === null ? '' : modulePathOf(scan.declarations, declaration.parent);
-    tests.push({
-      file,
-      module: modulePath,
-      testName: declaration.name,
-      fullName: qunitFullName(modulePath, declaration.name),
-      location: `${displayPath}#${declaration.startLine}`,
-    });
-  });
+  // One pass over the declarations: collect the listable tests and count the computed (null-named)
+  // ones. A single fold — no throwaway filter arrays, and `name` narrows to string after the guard,
+  // so no non-null assertions.
+  const { tests, computed } = scan.declarations.reduce(
+    (acc, declaration) => {
+      if (declaration.kind !== 'test') return acc;
+      if (declaration.name === null) {
+        acc.computed++;
+        return acc;
+      }
+      const module =
+        declaration.parent === null ? '' : modulePathOf(scan.declarations, declaration.parent);
+      acc.tests.push({
+        file,
+        module,
+        testName: declaration.name,
+        fullName: qunitFullName(module, declaration.name),
+        location: `${displayPath}#${declaration.startLine}`,
+      });
+
+      return acc;
+    },
+    { tests: [] as FoundTest[], computed: 0 },
+  );
 
   return { file, displayPath, scan, tests, computed };
 }
