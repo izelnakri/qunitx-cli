@@ -337,8 +337,11 @@ export interface Config {
   _builtContentHash?: Record<string, string>;
   /** In-flight console handler promises; awaited before browser/page close so Firefox BiDi round-trips complete. */
   _pendingConsoleHandlers?: Set<Promise<void>> | null;
-  /** Web server instance injected during integration tests. */
-  webServer?: unknown;
+  /**
+   * The run's HTTP server, exposed purely as `--before` / `--after` hook surface — qunitx itself
+   * never reads it back. Hooks use it to register extra routes (mock APIs) before tests start.
+   */
+  webServer?: HTTPServer;
   /** Decoded inline source map for the active test bundle; used to resolve stack frames to original sources. */
   _sourceMapDecoder?: SourceMapDecoder | null;
   /**
