@@ -1,9 +1,9 @@
 import net from 'node:net';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { daemonSocketPath, daemonInfoPath } from '../../utils/daemon-socket-path.ts';
+import { daemonSocketPath, daemonInfoPath } from './socket-path.ts';
 import { CLEANUP_GRACE_MS } from '../../utils/close-with-grace.ts';
-import { tokenizeArgs } from '../../utils/tokenize-args.ts';
+import { tokenizeArgs } from '../../args/tokenize-args.ts';
 import { attachLineParser, probeSocket } from './socket-utils.ts';
 import type { Request, ResponseChunk } from './protocol.ts';
 

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
-import { killProcessGroup } from './kill-process-group.ts';
-import { cleanupBrowserDir } from './cleanup-browser-dir.ts';
+import { killProcessGroup } from '../utils/kill-process-group.ts';
+import { cleanupBrowserDir } from './cleanup-dir.ts';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';

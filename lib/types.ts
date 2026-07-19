@@ -5,7 +5,7 @@ import type { Buffer } from 'node:buffer';
 import type { BuildContext, Plugin as EsbuildPlugin } from 'esbuild';
 import type { SourceMapDecoder } from './utils/source-map-decoder.ts';
 import type { Reporter, ReporterName } from './reporter/types.ts';
-import type { QUnitSelector } from './utils/line-targets.ts';
+import type { QUnitSelector } from './selection/line-targets.ts';
 import type { FailedTestRecord } from './utils/failure-cache.ts';
 
 /**

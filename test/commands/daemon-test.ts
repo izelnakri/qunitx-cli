@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import nodeFs, { existsSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { daemonSocketPath, daemonInfoPath } from '../../lib/utils/daemon-socket-path.ts';
+import { daemonSocketPath, daemonInfoPath } from '../../lib/commands/daemon/socket-path.ts';
 import { shutdownDaemon } from '../../lib/commands/daemon/client.ts';
 import { spawnCapture, type CapturedError, type CapturedResult } from '../helpers/shell.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
@@ -697,7 +697,7 @@ module('Commands | Daemon | idle timeout', { concurrency: true }, () => {
   // Integration coverage focuses on the three distinct daemon behaviors the env var
   // can drive — short timeout shuts down, "false" stays alive, invalid value warns
   // and still starts. Parser semantics (units, fractions, edge cases) are exhausted
-  // in test/utils/parse-daemon-idle-timeout-test.ts; we don't re-test them through
+  // in test/commands/daemon/parse-idle-timeout-test.ts; we don't re-test them through
   // process spawns here.
 
   daemonTest(

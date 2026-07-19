@@ -1,5 +1,5 @@
 import { setupBrowser, launchBrowser } from '../setup/browser.ts';
-import { shutdownPrelaunch } from '../utils/chrome-prelaunch.ts';
+import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { HTTPServer } from '../servers/web.ts';
 import { bindServerToPort } from '../setup/bind-server-to-port.ts';
 import {
@@ -35,16 +35,16 @@ import { reportRunStart, reportRunEnd } from '../reporter/index.ts';
 import { readTemplate } from '../utils/read-template.ts';
 import { isCustomTemplate } from '../utils/html.ts';
 import { closeWithGrace } from '../utils/close-with-grace.ts';
-import { maybePrintDaemonHint } from '../utils/daemon-hint.ts';
+import { maybePrintDaemonHint } from './daemon/hint.ts';
 import {
   writeFailureCache,
   buildFailureCache,
   resolveOnlyFailedFiles,
 } from '../utils/failure-cache.ts';
 import { writeCoverageReport } from '../coverage/report.ts';
-import { isFilteredRun, describeFilter } from '../utils/qunit-filter.ts';
-import { resolveLineTargets } from '../utils/line-targets.ts';
-import type { QUnitSelector } from '../utils/line-targets.ts';
+import { isFilteredRun, describeFilter } from '../selection/qunit-filter.ts';
+import { resolveLineTargets } from '../selection/line-targets.ts';
+import type { QUnitSelector } from '../selection/line-targets.ts';
 import type { Config, CachedContent } from '../types.ts';
 
 // Playwright navigation timeout for headed watch-mode reloads (not test execution).

@@ -3,8 +3,8 @@ import fs, { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { blue, magenta } from '../../utils/color.ts';
-import { daemonInfoPath, daemonSocketPath, daemonDir } from '../../utils/daemon-socket-path.ts';
-import { parseDaemonIdleTimeout } from '../../utils/parse-daemon-idle-timeout.ts';
+import { daemonInfoPath, daemonSocketPath, daemonDir } from './socket-path.ts';
+import { parseDaemonIdleTimeout } from './parse-idle-timeout.ts';
 import { pingDaemon, shutdownDaemon } from './client.ts';
 import pkg from '../../../package.json' with { type: 'json' };
 

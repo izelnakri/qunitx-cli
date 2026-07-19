@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import path from 'node:path';
-import parseCliFlags from '../../lib/utils/parse-cli-flags.ts';
+import parseCliFlags from '../../lib/args/parse-cli-flags.ts';
 
 const PROJECT_ROOT = '/some/project';
 

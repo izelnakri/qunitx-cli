@@ -1,8 +1,8 @@
 import { setupWebServer } from './web-server.ts';
 import { bindServerToPort } from './bind-server-to-port.ts';
-import { findChrome } from '../utils/find-chrome.ts';
-import { CHROMIUM_ARGS } from '../utils/chromium-args.ts';
-import { prelaunchPromise, shutdownPrelaunch } from '../utils/chrome-prelaunch.ts';
+import { findChrome } from '../chrome/find.ts';
+import { CHROMIUM_ARGS } from '../chrome/args.ts';
+import { prelaunchPromise, shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { perfLog } from '../utils/perf-logger.ts';
 import type { Browser } from 'playwright-core';
 import type { HTTPServer } from '../servers/web.ts';

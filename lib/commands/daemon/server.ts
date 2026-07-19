@@ -5,8 +5,8 @@ import path from 'node:path';
 // See lib/commands/run.ts: node:timers returns the unref-capable Timer object
 // in both Node and Deno; the bare setTimeout global in Deno is the Web variant.
 import { setTimeout, clearTimeout } from 'node:timers';
-import { daemonSocketPath, daemonInfoPath, daemonDir } from '../../utils/daemon-socket-path.ts';
-import { parseDaemonIdleTimeout } from '../../utils/parse-daemon-idle-timeout.ts';
+import { daemonSocketPath, daemonInfoPath, daemonDir } from './socket-path.ts';
+import { parseDaemonIdleTimeout } from './parse-idle-timeout.ts';
 import { attachLineParser } from './socket-utils.ts';
 import { setupConfig } from '../../setup/config.ts';
 import { launchBrowser } from '../../setup/browser.ts';

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import esbuild from 'esbuild';
-import { parseSourceMap } from './source-map-decoder.ts';
-import type { SourceMapDecoder } from './source-map-decoder.ts';
+import { parseSourceMap } from '../utils/source-map-decoder.ts';
+import type { SourceMapDecoder } from '../utils/source-map-decoder.ts';
 
 /** A `test(...)` or `module(...)` call found in a test file, in 1-based source lines. */
 export interface TestDeclaration {
