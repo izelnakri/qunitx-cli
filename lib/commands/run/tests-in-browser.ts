@@ -250,7 +250,7 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
  */
 export async function runTestsInBrowser(
   config: Config,
-  cachedContent: CachedContent = {} as CachedContent,
+  cachedContent: CachedContent,
   connections: Connections,
   targetTestFilesToFilter?: string[],
 ): Promise<Connections | undefined> {
