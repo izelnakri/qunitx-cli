@@ -13,7 +13,7 @@ import { collectCoverage } from '../../coverage/collect.ts';
 import { writeCoverageReport } from '../../coverage/report.ts';
 import { writeMetafileCache } from '../../utils/metafile-cache.ts';
 import { writeFailureCache, buildFailureCache } from '../../utils/failure-cache.ts';
-import { isFilteredRun, qunitFilterQuery } from '../../selection/qunit-filter.ts';
+import { isFilteredRun, qunitFilterQuery } from '../../selection/filter-query.ts';
 import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
 import type { AffectedMetafile } from '../../utils/get-changed-files.ts';
 import type { Page } from 'playwright-core';

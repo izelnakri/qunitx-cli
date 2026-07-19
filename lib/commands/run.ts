@@ -42,7 +42,7 @@ import {
   resolveOnlyFailedFiles,
 } from '../utils/failure-cache.ts';
 import { writeCoverageReport } from '../coverage/report.ts';
-import { isFilteredRun, describeFilter } from '../selection/qunit-filter.ts';
+import { isFilteredRun, describeFilter } from '../selection/filter-query.ts';
 import { resolveLineTargets } from '../selection/line-targets.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
 import type { Config, CachedContent } from '../types.ts';

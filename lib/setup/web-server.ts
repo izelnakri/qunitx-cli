@@ -5,7 +5,7 @@ import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-h
 import { injectScript } from '../utils/html.ts';
 import { reportRunStart, reportTestEnd } from '../reporter/index.ts';
 import { recordFailedTest } from '../utils/failure-cache.ts';
-import { isFilteredRun } from '../selection/qunit-filter.ts';
+import { isFilteredRun } from '../selection/filter-query.ts';
 import { blue } from '../utils/color.ts';
 import { HTTPServer, MIME_TYPES } from '../servers/web.ts';
 import { createReconnectingSocket } from './ws-client.js';
