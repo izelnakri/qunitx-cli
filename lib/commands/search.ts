@@ -10,11 +10,20 @@ import type { Config } from '../types.ts';
 
 /** One scanned file: its parsed declarations (null when unparseable) and the tests derived from them. */
 interface ScannedFile {
+  /** Absolute path of the file. */
   file: string;
+  /** Project-relative path with forward slashes — what the listing prints. */
   displayPath: string;
+  /** The parsed declarations, kept so line targets reuse them; null when the file could not be read or parsed. */
   scan: DeclarationScan | null;
+  /** The listable tests: every declaration whose name is a literal. */
   tests: FoundTest[];
-  computed: number;
+  /**
+   * How many test declarations in this file have a name computed at runtime
+   * (``test(`case ${i}`)``). Their names do not exist until the browser runs them, so they cannot
+   * be listed — they are counted here and reported, rather than silently omitted.
+   */
+  computedNames: number;
 }
 
 /** One test found by the static scan, named exactly as QUnit would name it. */
@@ -32,7 +41,7 @@ interface FoundTest {
 }
 
 /**
- * `--search` / `-s` / `--print` / `-p` / `--preview`: list the tests the current selection matches,
+ * `--search` / `-s` / `--print` / `--preview`: list the tests the current selection matches,
  * without running them.
  *
  * The listing comes from the same static declaration scanner `file#line` targets use — no browser,
@@ -55,14 +64,14 @@ export async function searchTests(config: Config): Promise<number> {
   const scanned = await Promise.all(files.map((file) => scanFile(file, config.projectRoot)));
 
   const found = scanned.flatMap((record) => record.tests);
-  const computed = scanned.reduce((sum, record) => sum + record.computed, 0);
+  const computedNames = scanned.reduce((sum, record) => sum + record.computedNames, 0);
   const unparseable = scanned.filter((record) => record.scan === null).length;
   // Parsed fine, yet contributed nothing. Usually the file simply has no tests, but it is also how
   // a declarator reached through a local alias (`const t = QUnit.test`) looks — the scan resolves
   // declarators from the qunitx import and the QUnit global only, so it cannot follow one. Saying
   // so keeps the count honest instead of quietly under-reporting.
   const silent = scanned.filter(
-    (record) => record.scan !== null && record.tests.length === 0 && record.computed === 0,
+    (record) => record.scan !== null && record.tests.length === 0 && record.computedNames === 0,
   ).length;
 
   // Resolve each file's `#34` line targets from the scan already in hand — mirroring a real run's
@@ -81,10 +90,13 @@ export async function searchTests(config: Config): Promise<number> {
   const matches = found.filter(
     (test) => matchesQUnitFilter(filter, test.fullName) && matchesLineTargets(test, lineSelectors),
   );
-  const width = Math.max(0, ...matches.map((test) => test.fullName.length));
-  for (const test of matches) {
-    process.stdout.write(`${test.fullName.padEnd(width)}  ${blue(test.location)}\n`);
-  }
+  // Folded rather than `Math.max(0, ...matches.map(…))`: the spread passes one argument per match,
+  // which throws RangeError once a suite is large enough, and the map allocates an array to throw
+  // away. One write rather than one per line — a big listing is thousands of syscalls otherwise.
+  const width = matches.reduce((widest, test) => Math.max(widest, test.fullName.length), 0);
+  process.stdout.write(
+    matches.map((test) => `${test.fullName.padEnd(width)}  ${blue(test.location)}\n`).join(''),
+  );
 
   process.stdout.write(
     `\n${matches.length} of ${found.length} test${found.length === 1 ? '' : 's'}` +
@@ -94,12 +106,12 @@ export async function searchTests(config: Config): Promise<number> {
   for (const warning of warnings) {
     process.stdout.write(yellow(`# qunitx: ${warning}\n`));
   }
-  if (computed > 0) {
+  if (computedNames > 0) {
     // Deliberately "declaration", not "test": one `test(`case ${i}`)` inside a loop is a single
     // declaration that becomes N tests at runtime, and the scan cannot know N.
     process.stdout.write(
       yellow(
-        `# ${computed} test declaration${computed === 1 ? '' : 's'} named at runtime ` +
+        `# ${computedNames} test declaration${computedNames === 1 ? '' : 's'} named at runtime ` +
           `(e.g. test(\`case \${i}\`)) cannot be listed without running — they may still match.\n`,
       ),
     );
@@ -150,16 +162,16 @@ async function scanFile(file: string, projectRoot: string): Promise<ScannedFile>
   const displayPath = path.relative(projectRoot, file).replaceAll('\\', '/');
   const source = await fs.readFile(file, 'utf8').catch(() => null);
   const scan = source === null ? null : await parseTestDeclarations(source, file);
-  if (!scan) return { file, displayPath, scan: null, tests: [], computed: 0 };
+  if (!scan) return { file, displayPath, scan: null, tests: [], computedNames: 0 };
 
   // One pass over the declarations: collect the listable tests and count the computed (null-named)
   // ones. A single fold — no throwaway filter arrays, and `name` narrows to string after the guard,
   // so no non-null assertions.
-  const { tests, computed } = scan.declarations.reduce(
+  const { tests, computedNames } = scan.declarations.reduce(
     (acc, declaration) => {
       if (declaration.kind !== 'test') return acc;
       if (declaration.name === null) {
-        acc.computed++;
+        acc.computedNames++;
         return acc;
       }
       const module =
@@ -174,10 +186,10 @@ async function scanFile(file: string, projectRoot: string): Promise<ScannedFile>
 
       return acc;
     },
-    { tests: [] as FoundTest[], computed: 0 },
+    { tests: [] as FoundTest[], computedNames: 0 },
   );
 
-  return { file, displayPath, scan, tests, computed };
+  return { file, displayPath, scan, tests, computedNames };
 }
 
 /** Walks up `parent` links to build QUnit's ' > '-joined module name. */

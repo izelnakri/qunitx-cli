@@ -120,15 +120,11 @@ export { resolveLineTargets as default };
  * deepest declaration: a test's range always starts after the module that contains it.
  */
 function innermostAt(declarations: TestDeclaration[], line: number): number | null {
-  let best: number | null = null;
-  declarations.forEach((declaration, index) => {
-    if (line < declaration.startLine || line > declaration.endLine) return;
-    if (best === null || declaration.startLine >= declarations[best].startLine) {
-      best = index;
-    }
-  });
+  return declarations.reduce<number | null>((best, declaration, index) => {
+    if (line < declaration.startLine || line > declaration.endLine) return best;
 
-  return best;
+    return best === null || declaration.startLine >= declarations[best].startLine ? index : best;
+  }, null);
 }
 
 /** Walks up `parent` links to build QUnit's ' > '-joined module name. */
