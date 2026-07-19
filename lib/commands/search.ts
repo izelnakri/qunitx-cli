@@ -182,13 +182,10 @@ async function scanFile(file: string, projectRoot: string): Promise<ScannedFile>
 
 /** Walks up `parent` links to build QUnit's ' > '-joined module name. */
 function modulePathOf(declarations: TestDeclaration[], index: number): string {
-  const names: string[] = [];
-  let current: number | null = index;
-  while (current !== null) {
-    const declaration: TestDeclaration = declarations[current];
-    names.unshift(declaration.name ?? '');
-    current = declaration.parent;
-  }
+  // Recursing to the outermost module first yields the names already in order, so there is no
+  // reversing to reason about. Depth is module nesting (a handful), not input size.
+  const ancestry = (at: number | null): string[] =>
+    at === null ? [] : [...ancestry(declarations[at].parent), declarations[at].name ?? ''];
 
-  return names.join(' > ');
+  return ancestry(index).join(' > ');
 }

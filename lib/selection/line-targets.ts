@@ -133,14 +133,11 @@ function innermostAt(declarations: TestDeclaration[], line: number): number | nu
 
 /** Walks up `parent` links to build QUnit's ' > '-joined module name. */
 function modulePath(declarations: TestDeclaration[], index: number): string {
-  const names: string[] = [];
-  let current: number | null = index;
-  while (current !== null) {
-    const declaration: TestDeclaration = declarations[current];
-    // A computed module name breaks the path; '' keeps the join honest rather than inventing one.
-    names.unshift(declaration.name ?? '');
-    current = declaration.parent;
-  }
+  // Recursing to the outermost module first yields the names already in order, so there is no
+  // reversing to reason about. Depth is module nesting (a handful), not input size.
+  // A computed module name breaks the path; '' keeps the join honest rather than inventing one.
+  const ancestry = (at: number | null): string[] =>
+    at === null ? [] : [...ancestry(declarations[at].parent), declarations[at].name ?? ''];
 
-  return names.join(' > ');
+  return ancestry(index).join(' > ');
 }
