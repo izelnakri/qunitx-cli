@@ -23,6 +23,18 @@ module('--port flag tests for browser mode', { concurrency: true }, (_hooks, mod
     assert.tapResult(result, { testCount: 3 });
   });
 
+  test('-p=<port> is the short alias for --port', async (assert, testMetadata) => {
+    const { number: port, release } = await findFreePort();
+    await release();
+    const result = await shell(`node cli.ts test/fixtures/passing-tests.js -p=${port} --debug`, {
+      ...moduleMetadata,
+      ...testMetadata,
+    });
+
+    assert.tapResult(result, { testCount: 3 });
+    assert.includes(result.stdout, `:${port}`, 'the server bound to the -p port');
+  });
+
   test('--port flag combined with --debug shows the correct port in the server URL', async (assert, testMetadata) => {
     const { number: port, release } = await findFreePort();
     await release();

@@ -65,14 +65,23 @@ module('Utils | tokenizeArgs | query flags', { concurrency: true }, () => {
     );
   });
 
-  test('-s/--search/-p/--print are spellings of the search action', (assert) => {
-    const spellings = ['-s', '--search', '-p', '--print'].map(
+  test('-s/--search/--print/--preview are spellings of the search action', (assert) => {
+    const spellings = ['-s', '--search', '--print', '--preview'].map(
       (flag) => tokenizeArgs([flag, 'Cart'])[0],
     );
     assert.deepEqual(
       spellings,
       Array(4).fill({ kind: 'query', action: 'list', value: 'Cart', greedy: true }),
     );
+  });
+
+  test('-p is NOT a search spelling — it is a plain flag (the --port short alias)', (assert) => {
+    assert.deepEqual(tokenizeArgs(['-p=8080']), [{ kind: 'flag', raw: '-p=8080' }]);
+    // `-p 8080` therefore does not greedily swallow 8080 as a query value; 8080 is a positional.
+    assert.deepEqual(tokenizeArgs(['-p', '8080']), [
+      { kind: 'flag', raw: '-p' },
+      { kind: 'input', raw: '8080' },
+    ]);
   });
 
   test('a bare --print yields a null value (list everything)', (assert) => {

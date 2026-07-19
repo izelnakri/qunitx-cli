@@ -24,7 +24,7 @@ const isRunCommand = Boolean(cmd) && !NON_RUN_COMMANDS.has(cmd) && !isDaemonCont
 // user-data-dir behind. Not spawning at all is both the fix and the fast path.
 // A deliberately local argv scan rather than the shared tokenizer: this module is statically
 // imported first so Chrome spawns at ~t=5ms, and it stays free of avoidable imports.
-const SEARCH_FLAG = /^(-s|--search|-p|--print|--preview)(=|$)/;
+const SEARCH_FLAG = /^(-s|--search|--print|--preview)(=|$)/;
 const { browserFromArgv, openFromArgv, watchFromArgv, searchFromArgv } = process.argv.reduce(
   (flags, arg) => {
     if (arg.startsWith('--browser=')) flags.browserFromArgv = arg.slice(10);

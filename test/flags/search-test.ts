@@ -83,13 +83,13 @@ module('--search / --print', { concurrency: true }, (_hooks, moduleMetadata) => 
 
   test('all four spellings list the same thing', async (assert, tm) => {
     const outputs = await Promise.all(
-      ['--search=inner', '-s=inner', '--print=inner', '-p=inner'].map(async (flag) => {
+      ['--search=inner', '-s=inner', '--print=inner', '--preview=inner'].map(async (flag) => {
         const result = await shell(`node cli.ts ${NESTED} ${flag}`, { ...moduleMetadata, ...tm });
         return result.stdout;
       }),
     );
 
-    assert.equal(new Set(outputs).size, 1, '--search, -s, --print and -p are one flag');
+    assert.equal(new Set(outputs).size, 1, '--search, -s, --print and --preview are one flag');
   });
 
   test('the preview matches what an actual run selects', async (assert, tm) => {
