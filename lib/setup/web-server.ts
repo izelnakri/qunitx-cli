@@ -98,17 +98,20 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
           process.stderr.write(`# [qunitx] writeFile ${filePath}: ${err.message}\n`),
       );
 
-  config._wsConnectionCount = 0;
+  config.state.group.wsConnectionCount = 0;
   server.wss.on('connection', function connection(socket) {
-    config._wsConnectionCount = (config._wsConnectionCount ?? 0) + 1;
+    config.state.group.wsConnectionCount = (config.state.group.wsConnectionCount ?? 0) + 1;
     // A second WS connection is expected in watch/--open mode — the user opening http://localhost:PORT
     // in their own browser (the watch banner invites it) or a headed reload — so warning there is
     // noise. In a plain single run (e.g. CI) the lone headless page must connect exactly once, so a
     // duplicate is the real tell for the 2× testEnd flake (WS retry race). --debug forces it on for
     // investigating a watch-mode double-connect.
-    if (config._wsConnectionCount > 1 && (config.debug || !(config.watch || config.open))) {
+    if (
+      config.state.group.wsConnectionCount > 1 &&
+      (config.debug || !(config.watch || config.open))
+    ) {
       diagWrite(
-        `# [qunitx][diag] wss accepted connection #${config._wsConnectionCount} — ` +
+        `# [qunitx][diag] wss accepted connection #${config.state.group.wsConnectionCount} — ` +
           `single-group runs should see exactly one WS connection per run. ` +
           `Multiple connections from one page are the prime suspect for the 2× testEnd flake ` +
           `(WS retry race in the injected runtime).\n`,
@@ -121,10 +124,10 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         // WebSocket socket opened — test bundle is still compiling in the background.
         // Signal Node.js so it can flip wsConnected for accurate TIMEOUT diagnostics
         // without resetting the per-test timer (that happens on 'connection' below).
-        config._phase = 'loading';
+        config.state.group.phase = 'loading';
         config.state.group.signals.onWsOpen?.();
       } else if (event === 'connection') {
-        config._phase = 'running';
+        config.state.group.phase = 'running';
         // Dedup map reset is owned by runTestsInBrowser (alongside the counter
         // reset), NOT this WS handler. Resetting on every 'connection' was
         // the bug that broke no-html-test in CI run 26042614416: a stale
@@ -133,10 +136,10 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         // is now reset only at the same lifecycle boundary as the counter.
         // Group and daemon runs emit run-start once up front in run.ts; only the watch/single
         // path announces per browser connection (each rerun opens a fresh one).
-        if (!config._groupMode && !config.state.daemon) {
+        if (!config.state.group.groupMode && !config.state.daemon) {
           reportRunStart(config, { fileCount: null, groupCount: null });
         }
-        if (config.debug && config._groupMode) debugGroupHeader(config);
+        if (config.debug && config.state.group.groupMode) debugGroupHeader(config);
         config.state.group.signals.resetTestTimeout?.();
       } else if (event === 'testEnd' && !abort) {
         // Server-side enforcement of "QUnit fires testEnd exactly once per
@@ -149,19 +152,19 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         // current run is dropped with a loud warning so the underlying
         // browser/runtime bug stays visible while the counter stays correct.
         const fullName = details.fullName.join(' | ');
-        const count = (config._testEndCounts?.get(fullName) ?? 0) + 1;
-        config._testEndCounts?.set(fullName, count);
+        const count = (config.state.group.testEndCounts?.get(fullName) ?? 0) + 1;
+        config.state.group.testEndCounts?.set(fullName, count);
         if (count > 1) {
           diagWrite(
             `# [qunitx] WARNING: duplicate testEnd ignored for "${fullName}" — ` +
               `browser/Playwright fired the event twice in one run. ` +
-              `Counter not incremented; see Config._testEndCounts for details.\n`,
+              `Counter not incremented; see Config.state.group.testEndCounts for details.\n`,
           );
           return;
         }
 
         if (details.status === 'failed') {
-          config.lastFailedTestFiles = config.lastRanTestFiles;
+          config.state.group.lastFailedFiles = config.state.group.ranFiles;
           recordFailedTest(config, details);
         }
 
@@ -175,11 +178,11 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
       } else if (event === 'done') {
         // Signal test completion. TCP ordering guarantees all testEnd messages
         // preceding this on the same connection are already processed by Node.js.
-        config._phase = 'done';
+        config.state.group.phase = 'done';
         // Store the browser-side QUNIT_RESULT so runTestInsideHTMLFile can read it
         // without a page.evaluate() CDP round-trip after testRaceResult resolves.
-        config._lastQUnitResult = qunitResult ?? null;
-        if (config.debug && config._groupMode) {
+        config.state.group.lastQUnitResult = qunitResult ?? null;
+        if (config.debug && config.state.group.groupMode) {
           process.stdout.write(
             `# group done: ${details.passed} passed, ${details.failed} failed (${details.runtime}ms)\n`,
           );
@@ -206,7 +209,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         // Resolve testRaceResult from Node.js directly — the WS may not be open yet
         // when this script executes on CI (Chrome can fetch tests.js before the WS
         // handshake completes), making the browser-side readyState guard unreliable.
-        config._lastQUnitResult = {
+        config.state.group.lastQUnitResult = {
           totalTests: 0,
           finishedTests: 0,
           failedTests: 0,
@@ -293,7 +296,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
       // Build error HTML has no tests.js script tag, so the /tests.js route never fires.
       // Resolve testRaceResult from Node.js directly when a parallel build was in-flight.
       if (cachedContent._activeRebuild) {
-        config._lastQUnitResult = {
+        config.state.group.lastQUnitResult = {
           totalTests: 0,
           finishedTests: 0,
           failedTests: 0,
@@ -699,8 +702,8 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
   const socketToGroupId = new WeakMap<object, number>();
   // Diagnostic: count distinct WS connections seen by THIS shared-server handler
   // for each groupConfig. > 1 per group is suspicious in single-test runs;
-  // see setupWebServer's _wsConnectionCount comment for full rationale.
-  for (const gc of groupConfigs) gc._wsConnectionCount = 0;
+  // see setupWebServer's wsConnectionCount comment for full rationale.
+  for (const gc of groupConfigs) gc.state.group.wsConnectionCount = 0;
 
   server.wss.on('connection', function connection(socket) {
     socket.on('message', function message(data) {
@@ -712,10 +715,10 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
         socketToGroupId.set(socket, groupId);
         const config = groupConfigs[resolvedGroupId];
         if (config) {
-          config._wsConnectionCount = (config._wsConnectionCount ?? 0) + 1;
-          if (config._wsConnectionCount > 1) {
+          config.state.group.wsConnectionCount = (config.state.group.wsConnectionCount ?? 0) + 1;
+          if (config.state.group.wsConnectionCount > 1) {
             process.stderr.write(
-              `# [qunitx][diag] group ${resolvedGroupId} accepted WS connection #${config._wsConnectionCount} — ` +
+              `# [qunitx][diag] group ${resolvedGroupId} accepted WS connection #${config.state.group.wsConnectionCount} — ` +
                 `WS retry race in the injected runtime is the prime suspect.\n`,
             );
           }
@@ -726,10 +729,10 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
       if (!config) return;
 
       if (event === 'wsOpen') {
-        config._phase = 'loading';
+        config.state.group.phase = 'loading';
         config.state.group.signals.onWsOpen?.();
       } else if (event === 'connection') {
-        config._phase = 'running';
+        config.state.group.phase = 'running';
         // Dedup map reset owned by run.ts at groupConfig construction (see
         // setupWebServer for the equivalent rationale); not reset here.
         if (config.debug) debugGroupHeader(config);
@@ -737,8 +740,8 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
       } else if (event === 'testEnd' && !abort) {
         // Server-side enforcement; see setupWebServer for full rationale.
         const fullName = details.fullName.join(' | ');
-        const count = (config._testEndCounts?.get(fullName) ?? 0) + 1;
-        config._testEndCounts?.set(fullName, count);
+        const count = (config.state.group.testEndCounts?.get(fullName) ?? 0) + 1;
+        config.state.group.testEndCounts?.set(fullName, count);
         if (count > 1) {
           diagWrite(
             `# [qunitx] WARNING: group ${resolvedGroupId} duplicate testEnd ignored for "${fullName}" — ` +
@@ -747,7 +750,7 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
           return;
         }
         if (details.status === 'failed') {
-          config.lastFailedTestFiles = config.lastRanTestFiles;
+          config.state.group.lastFailedFiles = config.state.group.ranFiles;
           recordFailedTest(config, details);
         }
         if (config.debug && details.runtime > config.timeout * 0.8) {
@@ -758,8 +761,8 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
         config.state.group.signals.resetTestTimeout?.();
         reportTestEnd(config, details);
       } else if (event === 'done') {
-        config._phase = 'done';
-        config._lastQUnitResult = qunitResult ?? null;
+        config.state.group.phase = 'done';
+        config.state.group.lastQUnitResult = qunitResult ?? null;
         if (config.debug) {
           process.stdout.write(
             `# group done: ${details.passed} passed, ${details.failed} failed (${details.runtime}ms)\n`,
@@ -863,12 +866,12 @@ function replaceAssetPaths(html: string, htmlPath: string, projectRoot: string):
  * filter/module, so -t/-m still compose.
  */
 function qunitSelectorPreconfig(config: Config): string {
-  if (!config._qunitSelectors?.length) {
+  if (!config.state.group.selectors?.length) {
     return '';
   }
 
   return `window.QUnit = { config: { testFilter: (function () {
-      const selectors = ${JSON.stringify(config._qunitSelectors)};
+      const selectors = ${JSON.stringify(config.state.group.selectors)};
       return function (testInfo) {
         return selectors.some(function (selector) {
           // No 'test' key means the target was a module: take it and everything nested under it.

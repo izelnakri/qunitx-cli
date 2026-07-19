@@ -26,7 +26,7 @@ export async function applyWatchLineTargets(config: Config): Promise<void> {
   const targetedPaths = new Set(targets.map((target) => target.file));
   const dropped = allFiles.filter((file) => !targetedPaths.has(file));
   config.fsTree = Object.fromEntries([...targetedPaths].map((file) => [file, config.fsTree[file]]));
-  config._qunitSelectors = targets.flatMap((target) => target.selectors);
+  config.state.group.selectors = targets.flatMap((target) => target.selectors);
   if (dropped.length > 0) {
     console.log(
       '#',

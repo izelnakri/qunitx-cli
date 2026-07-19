@@ -46,7 +46,7 @@ export class SpecReporter implements Reporter {
     // Header, result and failure block in one write — this runs per test, and a split write
     // lets a concurrent group's line land between a test and its own failure detail.
     const block = formatFailureBlock(
-      failedAssertions(details, config._sourceMapDecoder, config.projectRoot),
+      failedAssertions(details, config.state.group.sourceMapDecoder, config.projectRoot),
     );
     process.stdout.write(header + line + (block ? indentString(block, 4) : ''));
     // Remember the headline for the end-of-run recap so a failure buried thousands of lines

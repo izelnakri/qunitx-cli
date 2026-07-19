@@ -28,8 +28,11 @@ function makeConfig(decoder: SourceMapDecoder, collector: CoverageFileMap): Conf
   return {
     projectRoot: '/proj/tmp',
     output: 'tmp',
-    _sourceMapDecoder: decoder,
-    state: { results: { ...newRunState().results, coverage: collector } },
+    state: {
+      ...newRunState(),
+      results: { ...newRunState().results, coverage: collector },
+      group: { ...newRunState().group, sourceMapDecoder: decoder },
+    },
   } as unknown as Config;
 }
 

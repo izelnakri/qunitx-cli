@@ -191,7 +191,7 @@ export async function setupBrowser(
     });
   }
 
-  config._pendingConsoleHandlers = new Set();
+  config.state.group.pendingConsoleHandlers = new Set();
   page.on('console', (msg) => {
     const type = msg.type();
     // Always surface warnings and errors so CI logs capture browser-side failures
@@ -210,8 +210,8 @@ export async function setupBrowser(
         console.log(msg.text());
       }
     })();
-    config._pendingConsoleHandlers!.add(handler);
-    handler.finally(() => config._pendingConsoleHandlers?.delete(handler));
+    config.state.group.pendingConsoleHandlers!.add(handler);
+    handler.finally(() => config.state.group.pendingConsoleHandlers?.delete(handler));
   });
   page.on('pageerror', (error) => {
     console.error(error.toString());

@@ -45,7 +45,7 @@ export class DotReporter implements Reporter {
     this.#failures.push({
       name: details.fullName.join(' | '),
       block: formatFailureBlock(
-        failedAssertions(details, config._sourceMapDecoder, config.projectRoot),
+        failedAssertions(details, config.state.group.sourceMapDecoder, config.projectRoot),
       ),
     });
   }

@@ -34,7 +34,7 @@ interface V8ScriptCoverage {
  * node_modules sources are dropped here (test entry files are dropped later, in the report layer).
  */
 export async function collectCoverage(config: Config, entries: V8ScriptCoverage[]): Promise<void> {
-  const decoder = config._sourceMapDecoder;
+  const decoder = config.state.group.sourceMapDecoder;
   const collector = config.state.results.coverage;
   if (!decoder || !collector) return;
 

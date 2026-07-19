@@ -1,7 +1,7 @@
 import path from 'node:path';
 import type { Config } from '../types.ts';
 
-type FilterConfig = Pick<Config, 'filter' | 'lineTargets' | '_qunitSelectors'>;
+type FilterConfig = Pick<Config, 'filter' | 'lineTargets' | 'state'>;
 
 /**
  * True when this run selects a subset of the tests *inside* the files it loads.
@@ -16,7 +16,7 @@ type FilterConfig = Pick<Config, 'filter' | 'lineTargets' | '_qunitSelectors'>;
 export function isFilteredRun(config: FilterConfig): boolean {
   return Boolean(
     config.filter ||
-    config._qunitSelectors?.length ||
+    config.state.group.selectors?.length ||
     (config.lineTargets && Object.keys(config.lineTargets).length),
   );
 }

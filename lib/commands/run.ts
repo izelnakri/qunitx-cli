@@ -364,28 +364,20 @@ async function runConcurrentMode(
   // every group then adds into these same objects: TAP numbers stay globally sequential, failures
   // land in one set, and the coverage report covers the whole run rather than one group's slice.
   resetRunResults(config.state.results, !!config.coverage);
-  config.lastRanTestFiles = allFiles;
+  config.state.group.ranFiles = allFiles;
 
   const groupConfigs = groups.map(({ files, selectors }, i) => ({
     ...config,
-    // Per-group dedup map for the testEnd handler — see
-    // Config._testEndCounts. Each group's counter bucket is shared via the
-    // parent `config`, but the dedup state is per-group so a duplicate
-    // testEnd in group A doesn't accidentally suppress the legitimate first
-    // testEnd of the same name in group B. (Two groups CAN legitimately
-    // share a fullName when they bundle different files that happen to
-    // register tests with the same module/test names — the dedup key is
-    // intra-group.)
-    _testEndCounts: new Map<string, number>(),
-    _qunitSelectors: selectors,
     fsTree: Object.fromEntries(files.map((filePath) => [filePath, config.fsTree[filePath]])),
     // Single group keeps the root output dir for backward-compatible file paths.
     output: groupCount === 1 ? config.output : `${config.output}/group-${i}`,
     // Everything else on `state` is deliberately shared by reference (see RunState); only
-    // `group` is replaced, so each group gets its own signals rather than racing on one set.
-    state: { ...config.state, group: newGroupState() },
-    _groupMode: true,
-    _phase: 'bundling' as Config['_phase'],
+    // `group` is replaced. That gives each group its own signals, phase, selectors and testEnd
+    // dedup map — the last one matters because two groups can legitimately share a test
+    // fullName when they bundle different files registering the same module/test names, so
+    // deduping has to be intra-group or group B's first testEnd would be dropped as group A's
+    // duplicate.
+    state: { ...config.state, group: { ...newGroupState(i, selectors), groupMode: true } },
   }));
   const groupCachedContents = groups.map(() => ({ ...cachedContent }));
 
@@ -456,7 +448,7 @@ async function runConcurrentMode(
           );
           reject(
             new Error(
-              `Group ${i} timed out after ${GROUP_TIMEOUT_MS / 1000}s in phase '${groupConfig._phase ?? 'unknown'}'\n  Files: ${files.join(', ')}`,
+              `Group ${i} timed out after ${GROUP_TIMEOUT_MS / 1000}s in phase '${groupConfig.state.group.phase ?? 'unknown'}'\n  Files: ${files.join(', ')}`,
             ),
           );
         }, GROUP_TIMEOUT_MS);
@@ -465,7 +457,7 @@ async function runConcurrentMode(
 
       const startMs = Date.now();
       const work = (async () => {
-        groupConfig._phase = 'connecting';
+        groupConfig.state.group.phase = 'connecting';
         const connectWork = setupBrowser(
           groupConfig,
           groupCachedContents[i],
@@ -501,7 +493,10 @@ async function runConcurrentMode(
         try {
           await runTestsInBrowser(groupConfig, groupCachedContents[i], connections);
         } finally {
-          await flushConsoleHandlers(groupConfig._pendingConsoleHandlers, connections.page);
+          await flushConsoleHandlers(
+            groupConfig.state.group.pendingConsoleHandlers,
+            connections.page,
+          );
           // Daemon single-group fast path: stash the page on the slot for the next run instead
           // of closing it (saves ~70-130ms of newPage cost per warm run). Mid-page state is
           // dropped by the next run's page.goto(testUrl), which destroys the JS context.
