@@ -23,6 +23,7 @@ import {
   flushConsoleHandlers,
   DaemonRunError,
 } from './run/tests-in-browser.ts';
+import { clearCachedBundles } from './run/cached-bundles.ts';
 import { setupFileWatchers } from '../setup/file-watcher.ts';
 import { getChangedFsTree } from '../setup/get-changed-fs-tree.ts';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
@@ -254,10 +255,10 @@ async function runWatchMode(config: Config, cachedContent: CachedContent): Promi
           // before `rename` (→ `add`) when a file is first created. The `add` event
           // will follow and trigger the correct filtered re-run.
           if (event === 'change' && !(file in config.fsTree)) return;
-          // Clear the cached bundle so the next full re-run rebuilds without the deleted file.
+          // Clear the cached bundles so the next re-run rebuilds without the deleted file.
           // `change` events can fire while a file is being rewritten, so a filtered bundle
           // may catch the file in a transient empty/partial state and produce a broken rerun.
-          cachedContent.allTestCode = null;
+          clearCachedBundles(cachedContent);
           if (config.debug) {
             console.log(
               `# Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
