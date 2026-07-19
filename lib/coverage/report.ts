@@ -36,7 +36,7 @@ const ARTIFACTS = [
  * test entry paths) are excluded so the report reflects the code under test, not the tests.
  */
 export async function writeCoverageReport(config: Config, testFiles: string[]): Promise<void> {
-  const collector = config._coverageCollector;
+  const collector = config.state.results.coverage;
   if (!collector || collector.size === 0) {
     process.stdout.write(
       '# Coverage: no coverable sources found (bundle mapped only to node_modules / test files)\n',

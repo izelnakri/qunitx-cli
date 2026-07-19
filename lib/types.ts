@@ -152,10 +152,25 @@ export interface RunState {
   results: RunResults;
 }
 
-/** Outcome totals accumulated across every group of a single run. */
+/**
+ * Outcome totals and failure bookkeeping accumulated across every group of a single run.
+ * Every field here is mutated in place — see {@link RunState} for why replacement is unsafe.
+ */
 export interface RunResults {
   /** Running test-outcome counts, mutated in place as TAP events arrive. */
   counter: Counter;
+  /**
+   * Absolute paths of test files with ≥1 failure in the current run, attributed per-test via
+   * source maps. Every group adds into this one set; persisted to the failure cache at run end.
+   */
+  failedFiles: Set<string>;
+  /** Per-test metadata for the current run's failures; accumulated alongside `failedFiles`. */
+  failedTests: FailedTestRecord[];
+  /**
+   * Accumulator for per-source line coverage when `coverage` is enabled; `null` when it is off.
+   * Reassigned only by `resetRunResults` (a fresh Map per run), never by a group.
+   */
+  coverage: CoverageFileMap | null;
 }
 
 /**
@@ -277,14 +292,6 @@ export interface Config {
   lastFailedTestFiles: string[] | null;
   /** Test files executed on the previous run. */
   lastRanTestFiles: string[] | null;
-  /**
-   * Absolute paths of test files with ≥1 failure in the current run, attributed per-test via
-   * source maps. Shared by reference across group configs (like the run counter) so all groups
-   * accumulate into one set; reset at the start of each run. Persisted to the failure cache.
-   */
-  _failedTestFiles?: Set<string>;
-  /** Per-test metadata for the current run's failures; shared and reset alongside `_failedTestFiles`. */
-  _failedTests?: FailedTestRecord[];
   /** Resolves when the browser signals that the test run is complete. */
   _testRunDone: (() => void) | null;
   /** Resets the inactivity timeout; called on each TAP progress event. */
@@ -388,12 +395,6 @@ export interface Config {
    * reporter sees the whole run rather than one group's slice.
    */
   _reporters?: Reporter[];
-  /**
-   * Accumulator for per-source line coverage when `coverage` is enabled. Shared across all
-   * concurrent groups (set once on the parent config before the group configs are spread off
-   * it). `null`/absent when coverage is off.
-   */
-  _coverageCollector?: CoverageFileMap | null;
 }
 
 /**

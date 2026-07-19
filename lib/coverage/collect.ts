@@ -29,13 +29,13 @@ interface V8ScriptCoverage {
 }
 
 /**
- * Merges one page's `stopJSCoverage()` result into `config._coverageCollector`. No-op unless
+ * Merges one page's `stopJSCoverage()` result into `config.state.results.coverage`. No-op unless
  * coverage is enabled and a source-map decoder is present. Only the test bundle is attributed;
  * node_modules sources are dropped here (test entry files are dropped later, in the report layer).
  */
 export async function collectCoverage(config: Config, entries: V8ScriptCoverage[]): Promise<void> {
   const decoder = config._sourceMapDecoder;
-  const collector = config._coverageCollector;
+  const collector = config.state.results.coverage;
   if (!decoder || !collector) return;
 
   for (const entry of entries) {
