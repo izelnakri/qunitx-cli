@@ -346,10 +346,6 @@ function makeConfig(testFiles: string[], watch = false): Config {
     state: newRunState(),
     lastFailedTestFiles: null,
     lastRanTestFiles: null,
-    _testRunDone: null,
-    _resetTestTimeout: null,
-    _onWsOpen: null,
-    _onTestsJsServed: null,
   } as unknown as Config;
 }
 

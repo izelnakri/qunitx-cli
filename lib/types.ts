@@ -166,6 +166,32 @@ export interface RunState {
   groupCount: number;
   /** File-watcher build bookkeeping. Only meaningful in watch mode, where there is one group. */
   watch: WatchState;
+  /**
+   * State for **this** group only. The group spread replaces this object (everything else in
+   * `RunState` is shared by reference), so it is the one place per-group slots may live.
+   */
+  group: GroupState;
+}
+
+/** State scoped to a single concurrent group — one fresh object per group of a run. */
+export interface GroupState {
+  /** Callbacks the run pipeline waits on, resolved as the browser reaches each milestone. */
+  signals: RunSignals;
+}
+
+/**
+ * One-shot callbacks wiring the browser's progress back into the run pipeline. Each is installed
+ * by the code that awaits it and fired by the web server as the corresponding event arrives.
+ */
+export interface RunSignals {
+  /** Resolves when the browser signals that the test run is complete. */
+  testRunDone: (() => void) | null;
+  /** Resets the inactivity timeout; called on each TAP progress event. */
+  resetTestTimeout: (() => void) | null;
+  /** Resolves when the WebSocket connection from the browser page is established. */
+  onWsOpen: (() => void) | null;
+  /** Resolves when the test bundle JS has been served to the browser at least once. */
+  onTestsJsServed: (() => void) | null;
 }
 
 /**
@@ -349,14 +375,6 @@ export interface Config {
   lastFailedTestFiles: string[] | null;
   /** Test files executed on the previous run. */
   lastRanTestFiles: string[] | null;
-  /** Resolves when the browser signals that the test run is complete. */
-  _testRunDone: (() => void) | null;
-  /** Resets the inactivity timeout; called on each TAP progress event. */
-  _resetTestTimeout: (() => void) | null;
-  /** Resolves when the WebSocket connection from the browser page is established. */
-  _onWsOpen: (() => void) | null;
-  /** Resolves when the test bundle JS has been served to the browser at least once. */
-  _onTestsJsServed: (() => void) | null;
   /** `true` while running a grouped (multi-file) test invocation. */
   _groupMode?: boolean;
   /** Current lifecycle phase of the test run. */

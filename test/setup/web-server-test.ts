@@ -129,7 +129,7 @@ module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
       ws.send(testEnd);
       ws.send(testEnd); // duplicate — the bug we defend against
       const done = new Promise<void>((resolve) => {
-        config._testRunDone = resolve;
+        config.state.group.signals.testRunDone = resolve;
       });
       ws.send(
         JSON.stringify({
@@ -166,7 +166,7 @@ module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
       });
       ws1.send(sameTestEnd);
       const done1 = new Promise<void>((resolve) => {
-        config._testRunDone = resolve;
+        config.state.group.signals.testRunDone = resolve;
       });
       ws1.send(
         JSON.stringify({
@@ -193,7 +193,7 @@ module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
       ws2.send(JSON.stringify({ event: 'connection' }));
       ws2.send(sameTestEnd); // stale arrival from previous run
       const done2 = new Promise<void>((resolve) => {
-        config._testRunDone = resolve;
+        config.state.group.signals.testRunDone = resolve;
       });
       ws2.send(
         JSON.stringify({
@@ -390,10 +390,6 @@ function makeConfig(): Config {
     state: newRunState(),
     lastFailedTestFiles: null,
     lastRanTestFiles: null,
-    _testRunDone: null,
-    _resetTestTimeout: null,
-    _onWsOpen: null,
-    _onTestsJsServed: null,
   } as unknown as Config;
 }
 

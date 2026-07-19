@@ -43,10 +43,6 @@ export async function setupConfig(): Promise<Config> {
     lastFailedTestFiles: null as string[] | null,
     lastRanTestFiles: null as string[] | null,
     state: newRunState(),
-    _testRunDone: null as (() => void) | null,
-    _resetTestTimeout: null as (() => void) | null,
-    _onWsOpen: null as (() => void) | null,
-    _onTestsJsServed: null as (() => void) | null,
   };
   config.htmlPaths = normalizeHTMLPaths(config.projectRoot, config.htmlPaths);
   [config.fsTree, config.plugins] = await Promise.all([

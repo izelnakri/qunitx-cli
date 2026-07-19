@@ -1,4 +1,4 @@
-import type { Counter, RunResults, RunState } from '../types.ts';
+import type { Counter, GroupState, RunResults, RunState } from '../types.ts';
 import type { Page } from 'playwright-core';
 
 /**
@@ -28,10 +28,26 @@ function newCounter(): Counter {
   };
 }
 
+/**
+ * Fresh per-group state. One per concurrent group; the group spread in `runConcurrentMode`
+ * replaces `state.group` with this so groups never share the slots inside it.
+ */
+export function newGroupState(): GroupState {
+  return {
+    signals: {
+      testRunDone: null,
+      resetTestTimeout: null,
+      onWsOpen: null,
+      onTestsJsServed: null,
+    },
+  };
+}
+
 /** Fresh run state for a single `qunitx` invocation. Built once per run in `setupConfig()`. */
 export function newRunState(): RunState {
   return {
     daemon: null,
+    group: newGroupState(),
     groupCount: 1,
     reporters: [],
     watch: {

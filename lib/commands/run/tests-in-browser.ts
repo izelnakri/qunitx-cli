@@ -787,7 +787,7 @@ async function runTestInsideHTMLFile(
   let QUNIT_RESULT;
   let targetError;
   let timeoutHandle;
-  // wsConnected is set by config._onWsOpen when Chrome's WS socket opens (< 1s after navigation,
+  // wsConnected is set by config.state.group.signals.onWsOpen when Chrome's WS socket opens (< 1s after navigation,
   // before test bundle compilation finishes). Distinguishes "WS never opened" from "WS opened
   // but tests.js compiled too slowly" — both appear as TIMEOUT but have different root causes.
   let wsConnected = false;
@@ -798,8 +798,8 @@ async function runTestInsideHTMLFile(
   let coverageStarted = false;
 
   // Single promise driven by the WS handler:
-  //   config._testRunDone()      → tests finished normally
-  //   config._resetTestTimeout() → reset idle timer; fires as timeout if silent for config.timeout ms
+  //   config.state.group.signals.testRunDone()      → tests finished normally
+  //   config.state.group.signals.resetTestTimeout() → reset idle timer; fires as timeout if silent for config.timeout ms
   // This replaces waitForFunction (CDP polling), which raced against WS testEnd messages
   // under load: CDP could win and trigger cleanup before Node.js processed the pending messages.
   //
@@ -807,7 +807,7 @@ async function runTestInsideHTMLFile(
   // the initial timer directly — its budget is 3× config.timeout as a safety net for extreme
   // CPU starvation. In normal runs Chrome's WS 'open' fires in < 1s (tests.js compiles in
   // a background thread), so this budget is almost never fully consumed. Once 'connection'
-  // (QUnit.begin) arrives, _resetTestTimeout() switches to the tighter per-test budget.
+  // (QUnit.begin) arrives, resetTestTimeout() switches to the tighter per-test budget.
   // Hoisted out of the try/catch so the page-close listener registered below shares the
   // same handler reference for the matching page.off() in finally.
   let resolveTestRace!: () => void;
@@ -835,15 +835,15 @@ async function runTestInsideHTMLFile(
     // never expire before navigation can complete — they are floored at navMs so that small
     // per-test timeouts (e.g. --timeout=500 for testing the timeout feature) don't starve
     // Chrome's launch sequence, which is a platform characteristic unrelated to test duration.
-    // Once QUnit.begin fires, _resetTestTimeout switches to the per-test budget
+    // Once QUnit.begin fires, resetTestTimeout switches to the per-test budget
     // (config.timeout + TEST_STALL_BUFFER_MS): QUnit handles the timeout itself at config.timeout
     // ms; the extra buffer is a server-side safety net for completely frozen browsers.
     const navMs = Math.max(config.timeout + NAV_GRACE_MS, MIN_NAV_MS);
     const startupMs = Math.max(config.timeout * STARTUP_TIMEOUT_FACTOR, navMs);
     const testsJsMs = Math.max(config.timeout * TESTS_JS_TIMEOUT_FACTOR, navMs);
 
-    config._testRunDone = resolveTestRace;
-    config._onWsOpen = () => {
+    config.state.group.signals.testRunDone = resolveTestRace;
+    config.state.group.signals.onWsOpen = () => {
       wsConnected = true;
       // WS open means Chrome is alive and executing scripts. Reset the timer
       // so tests.js gets a full fresh budget to compile/execute and dispatch
@@ -855,16 +855,16 @@ async function runTestInsideHTMLFile(
       clearTimeout(timeoutHandle);
       timeoutHandle = setTimeout(resolveTestRace, startupMs);
     };
-    config._onTestsJsServed = () => {
+    config.state.group.signals.onTestsJsServed = () => {
       // tests.js was fetched by Chrome — V8 is about to start (or has started)
       // compiling it. Give Chrome a fresh 4× budget from this moment so that
       // slow V8 compilation under CI load does not race against the WS-open timer.
-      // This fires after _onWsOpen (inline runtime script runs first, then async
+      // This fires after onWsOpen (inline runtime script runs first, then async
       // tests.js is fetched), so it extends the effective budget beyond 3×.
       clearTimeout(timeoutHandle);
       timeoutHandle = setTimeout(resolveTestRace, testsJsMs);
     };
-    config._resetTestTimeout = () => {
+    config.state.group.signals.resetTestTimeout = () => {
       wsConnected = true;
       clearTimeout(timeoutHandle);
       // Use config.timeout + TEST_STALL_BUFFER_MS rather than config.timeout alone.
@@ -901,7 +901,7 @@ async function runTestInsideHTMLFile(
     // firing DOMContentLoaded can stall for several seconds when many Chrome instances compete for
     // cores. 'commit' returns as soon as the server has started sending the HTTP response headers,
     // independent of Chrome's render-thread CPU time. The WS 'wsOpen' event then provides the
-    // real signal that Chrome is executing scripts (triggering a timer reset via _onWsOpen).
+    // real signal that Chrome is executing scripts (triggering a timer reset via onWsOpen).
     //
     // page.goto(same_url) can silently trigger a same-document navigation shortcut in Chrome —
     // not a true reload, so old scripts and the WebSocket from the previous run remain alive.
@@ -917,7 +917,7 @@ async function runTestInsideHTMLFile(
     // Initial wait uses startupMs (≥ 15s) as a safety net for extreme CPU starvation (e.g. many
     // concurrent Chrome instances on a 2-core CI runner). This covers the time until the WS
     // 'wsOpen' event fires (the inline runtime script is tiny, so WS opens quickly in < 1s
-    // normally). Once 'wsOpen' arrives, _onWsOpen() resets this timer to a fresh startupMs budget,
+    // normally). Once 'wsOpen' arrives, onWsOpen() resets this timer to a fresh startupMs budget,
     // giving tests.js a full window to compile/execute and dispatch 'qunitx:tests-ready'.
     // WS 'connection' (QUnit.begin) then resets to the tighter config.timeout per-test budget.
     clearTimeout(timeoutHandle);
@@ -936,10 +936,10 @@ async function runTestInsideHTMLFile(
   } finally {
     clearTimeout(timeoutHandle);
     page.off('close', resolveTestRace);
-    config._onWsOpen = null;
-    config._onTestsJsServed = null;
-    config._resetTestTimeout = null;
-    config._testRunDone = null;
+    config.state.group.signals.onWsOpen = null;
+    config.state.group.signals.onTestsJsServed = null;
+    config.state.group.signals.resetTestTimeout = null;
+    config.state.group.signals.testRunDone = null;
     config._lastQUnitResult = null;
     // Collect coverage before the caller closes the page. stopJSCoverage returns the V8 ranges
     // + bundle source for every script; collectCoverage keeps only the test bundle and maps it
