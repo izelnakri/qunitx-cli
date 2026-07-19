@@ -34,6 +34,15 @@ export function newRunState(): RunState {
     daemon: null,
     groupCount: 1,
     reporters: [],
+    watch: {
+      building: false,
+      pendingBuildTrigger: null,
+      justAddedFiles: new Set(),
+      lastBuildEndMs: 0,
+      lastBuildErrored: false,
+      builtContentHash: {},
+      justAddedAt: new Map(),
+    },
     results: {
       counter: newCounter(),
       failedFiles: new Set(),

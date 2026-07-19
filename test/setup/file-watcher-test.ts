@@ -3,7 +3,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 
-const sha1 = (content: string) => createHash('sha1').update(content).digest('hex');
 import {
   setupFileWatchers,
   mutateFSTree,
@@ -13,7 +12,28 @@ import {
   toWatchableRoot,
 } from '../../lib/setup/file-watcher.ts';
 import '../helpers/custom-asserts.ts';
-import type { Config, FSTree } from '../../lib/types.ts';
+import { newRunState } from '../../lib/setup/run-state.ts';
+import type { Config, FSTree, RunState } from '../../lib/types.ts';
+
+const sha1 = (content: string) => createHash('sha1').update(content).digest('hex');
+
+// Ad-hoc test configs omit most of Config; attach default run state so the watcher's state.watch
+// bookkeeping is always present. Attached in place rather than copied so successive calls share
+// one state object and the test can assert on what the watcher accumulated. Cases that need
+// seeded values pass their own via watchState().
+const asConfig = (config: object): Config => {
+  const withState = config as Config;
+  withState.state ??= newRunState();
+  return withState;
+};
+
+// Fresh run state with the watcher's build bookkeeping overridden. These tests drive
+// handleWatchEvent directly, so they seed the slots a real run would have accumulated.
+const watchState = (overrides: Partial<RunState['watch']> = {}): RunState => {
+  const state = newRunState();
+  Object.assign(state.watch, overrides);
+  return state;
+};
 
 module('Setup | toWatchableRoot', { concurrency: true }, () => {
   test('a real directory or file is returned unchanged', (assert) => {
@@ -216,11 +236,11 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
     assert.equal(trackCalls(config, 'change', '/project/styles/app.css').length, 0);
   });
 
-  test('event while _building is active queues a pending trigger instead of calling onEventFunc', (assert) => {
+  test('event while a build is active queues a pending trigger instead of calling onEventFunc', (assert) => {
     const config = {
       fsTree: { '/project/test/foo.js': null },
       projectRoot: '/project',
-      _building: true,
+      state: watchState({ building: true }),
     };
     assert.equal(trackCalls(config, 'change', '/project/test/foo.js').length, 0);
   });
@@ -232,11 +252,10 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
     const config = {
       fsTree: { '/project/test/new.ts': null },
       projectRoot: '/project',
-      _building: true,
-      _justAddedFiles: new Set(['/project/test/new.ts']),
+      state: watchState({ building: true, justAddedFiles: new Set(['/project/test/new.ts']) }),
     };
     assert.equal(trackCalls(config, 'change', '/project/test/new.ts').length, 0);
-    assert.notOk(config._pendingBuildTrigger, 'no pending trigger queued');
+    assert.notOk(config.state.watch.pendingBuildTrigger, 'no pending trigger queued');
   });
 
   test('second add while building tracks the file so its spurious change is filtered', (assert) => {
@@ -245,17 +264,23 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
     const config = {
       fsTree: { '/project/test/first.ts': null },
       projectRoot: '/project',
-      _building: true,
-      _justAddedFiles: new Set(['/project/test/first.ts']),
+      state: watchState({ building: true, justAddedFiles: new Set(['/project/test/first.ts']) }),
     };
 
     trackCalls(config, 'add', '/project/test/second.ts');
-    assert.ok(config._justAddedFiles?.has('/project/test/second.ts'), 'tracked in _justAddedFiles');
-    assert.ok(config._pendingBuildTrigger, 'pending trigger set');
+    assert.ok(
+      config.state.watch.justAddedFiles?.has('/project/test/second.ts'),
+      'tracked in justAddedFiles',
+    );
+    assert.ok(config.state.watch.pendingBuildTrigger, 'pending trigger set');
 
-    const pendingTrigger = config._pendingBuildTrigger;
+    const pendingTrigger = config.state.watch.pendingBuildTrigger;
     trackCalls(config, 'change', '/project/test/second.ts');
-    assert.equal(config._pendingBuildTrigger, pendingTrigger, 'pending trigger not overwritten');
+    assert.equal(
+      config.state.watch.pendingBuildTrigger,
+      pendingTrigger,
+      'pending trigger not overwritten',
+    );
   });
 
   test('custom extension .mjs triggers onEventFunc', (assert) => {
@@ -269,49 +294,49 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
     assert.equal(trackCalls(config, 'add', '/project/test/new.js', ['mjs']).length, 0);
   });
 
-  test('_lastBuildEndMs is set after an async build completes', async (assert) => {
+  test('lastBuildEndMs is set after an async build completes', async (assert) => {
     const config = { fsTree: { '/project/test/foo.js': null }, projectRoot: '/project' };
     const done = handleWatchEvent(
-      config as Config,
+      asConfig(config),
       ['js', 'ts'],
       'change',
       '/project/test/foo.js',
       () => new Promise<void>((resolve) => setTimeout(resolve, 10)),
       null,
     );
-    assert.notOk(config._lastBuildEndMs, 'not set while in progress');
-    assert.equal(config._building, true);
+    assert.notOk(config.state.watch.lastBuildEndMs, 'not set while in progress');
+    assert.equal(config.state.watch.building, true);
     await done;
-    assert.equal(config._building, false);
-    assert.ok(config._lastBuildEndMs <= Date.now(), 'set to a valid timestamp');
+    assert.equal(config.state.watch.building, false);
+    assert.ok(config.state.watch.lastBuildEndMs <= Date.now(), 'set to a valid timestamp');
   });
 
-  test('_lastBuildEndMs is set even when the build throws', async (assert) => {
+  test('lastBuildEndMs is set even when the build throws', async (assert) => {
     const config = { fsTree: { '/project/test/foo.js': null }, projectRoot: '/project' };
     await handleWatchEvent(
-      config as Config,
+      asConfig(config),
       ['js', 'ts'],
       'change',
       '/project/test/foo.js',
       () => Promise.reject(new Error('simulated failure')),
       null,
     );
-    assert.equal(config._building, false);
-    assert.ok(config._lastBuildEndMs);
+    assert.equal(config.state.watch.building, false);
+    assert.ok(config.state.watch.lastBuildEndMs);
   });
 
-  test('_lastBuildEndMs is NOT set when onEventFunc returns synchronously', async (assert) => {
+  test('lastBuildEndMs is NOT set when onEventFunc returns synchronously', async (assert) => {
     const config = { fsTree: { '/project/test/foo.js': null }, projectRoot: '/project' };
     await handleWatchEvent(
-      config as Config,
+      asConfig(config),
       ['js', 'ts'],
       'change',
       '/project/test/foo.js',
       () => undefined,
       null,
     );
-    assert.notOk(config._lastBuildEndMs);
-    assert.equal(config._building, false);
+    assert.notOk(config.state.watch.lastBuildEndMs);
+    assert.equal(config.state.watch.building, false);
   });
 
   test('CHANGED: log shows the full absolute path for files outside projectRoot', (assert) => {
@@ -337,7 +362,7 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
     const config = { fsTree: { '/project/test/foo.js': null }, projectRoot: '/project' };
     const calls: Array<[string, string]> = [];
     await handleWatchEvent(
-      config as Config,
+      asConfig(config),
       ['js', 'ts'],
       'change',
       '/project/test/foo.js',
@@ -361,10 +386,10 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
       return Promise.resolve();
     };
 
-    await handleWatchEvent(config as Config, ['ts'], 'add', '/project/test/new.ts', onEvent, null);
+    await handleWatchEvent(asConfig(config), ['ts'], 'add', '/project/test/new.ts', onEvent, null);
     // Spurious change immediately after the add's build completes (Windows behaviour).
     await handleWatchEvent(
-      config as Config,
+      asConfig(config),
       ['ts'],
       'change',
       '/project/test/new.ts',
@@ -379,31 +404,31 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
     );
   });
 
-  test('_lastBuildEndMs advances on each successive build', async (assert) => {
+  test('lastBuildEndMs advances on each successive build', async (assert) => {
     const config = { fsTree: { '/project/test/foo.js': null }, projectRoot: '/project' };
     const asyncBuild = () => new Promise<void>((resolve) => setTimeout(resolve, 10));
 
     await handleWatchEvent(
-      config as Config,
+      asConfig(config),
       ['js', 'ts'],
       'change',
       '/project/test/foo.js',
       asyncBuild,
       null,
     );
-    const firstEndMs = config._lastBuildEndMs;
+    const firstEndMs = config.state.watch.lastBuildEndMs;
     assert.ok(firstEndMs);
 
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
     await handleWatchEvent(
-      config as Config,
+      asConfig(config),
       ['js', 'ts'],
       'change',
       '/project/test/foo.js',
       asyncBuild,
       null,
     );
-    assert.ok(config._lastBuildEndMs > firstEndMs);
+    assert.ok(config.state.watch.lastBuildEndMs > firstEndMs);
   });
 
   test('a failed build drops the file content-hash baseline so a revert to built content re-fires', async (assert) => {
@@ -415,22 +440,27 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
     const config = {
       fsTree: { [file]: null },
       projectRoot: '/project',
-      _builtContentHash: { [file]: sha1('valid content') },
-      _lastBuildErrored: false,
+      state: watchState({
+        builtContentHash: { [file]: sha1('valid content') },
+        lastBuildErrored: false,
+      }),
     };
     // buildTestBundle sets _lastBuildErrored = true on an esbuild failure (see tests-in-browser.ts).
     await handleWatchEvent(
-      config as Config,
+      asConfig(config),
       ['ts'],
       'change',
       file,
       () => {
-        config._lastBuildErrored = true;
+        config.state.watch.lastBuildErrored = true;
         return Promise.resolve();
       },
       null,
     );
-    assert.notOk(config._builtContentHash[file], 'baseline dropped after a failed build');
+    assert.notOk(
+      config.state.watch.builtContentHash[file],
+      'baseline dropped after a failed build',
+    );
   });
 
   test('a clean build keeps the file content-hash baseline (no spurious re-fire)', async (assert) => {
@@ -438,21 +468,27 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
     const config = {
       fsTree: { [file]: null },
       projectRoot: '/project',
-      _builtContentHash: { [file]: sha1('built content') },
-      _lastBuildErrored: false,
+      state: watchState({
+        builtContentHash: { [file]: sha1('built content') },
+        lastBuildErrored: false,
+      }),
     };
     await handleWatchEvent(
-      config as Config,
+      asConfig(config),
       ['ts'],
       'change',
       file,
       () => {
-        config._lastBuildErrored = false;
+        config.state.watch.lastBuildErrored = false;
         return Promise.resolve();
       },
       null,
     );
-    assert.equal(config._builtContentHash[file], sha1('built content'), 'baseline preserved');
+    assert.equal(
+      config.state.watch.builtContentHash[file],
+      sha1('built content'),
+      'baseline preserved',
+    );
   });
 });
 
@@ -461,16 +497,16 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
 // ---------------------------------------------------------------------------
 
 module('Setup | setupFileWatchers', { concurrency: true }, () => {
-  test('seeds config._lastBuildEndMs at startup so the rescan has a baseline', async (assert) => {
+  test('seeds config.state.watch.lastBuildEndMs at startup so the rescan has a baseline', async (assert) => {
     // The initial build runs from run.ts directly (not through handleWatchEvent), so without
-    // this seed _lastBuildEndMs would stay undefined after a failed initial build — and the
-    // macOS rescan could not distinguish stale from genuinely-modified files. Locking the
-    // seed in here protects against future refactors that move the assignment elsewhere.
-    const config = {
+    // this seed lastBuildEndMs would stay 0 after a failed initial build — and the macOS
+    // rescan could not distinguish stale from genuinely-modified files. Locking the seed in
+    // here protects against future refactors that move the assignment elsewhere.
+    const config = asConfig({
       fsTree: {},
       projectRoot: process.cwd(),
       extensions: ['ts'],
-    } as unknown as Config;
+    });
     const before = Date.now();
     const { killFileWatchers, ready } = setupFileWatchers(
       [], // empty lookup paths — no actual fs.watch handles created
@@ -480,27 +516,30 @@ module('Setup | setupFileWatchers', { concurrency: true }, () => {
     );
     try {
       await ready;
-      assert.ok(typeof config._lastBuildEndMs === 'number', 'set to a number');
-      assert.ok(config._lastBuildEndMs! >= before, '>= the moment setupFileWatchers was called');
-      assert.ok(config._lastBuildEndMs! <= Date.now(), '<= the moment we observed it');
+      assert.ok(typeof config.state.watch.lastBuildEndMs === 'number', 'set to a number');
+      assert.ok(
+        config.state.watch.lastBuildEndMs! >= before,
+        '>= the moment setupFileWatchers was called',
+      );
+      assert.ok(config.state.watch.lastBuildEndMs! <= Date.now(), '<= the moment we observed it');
     } finally {
       killFileWatchers();
     }
   });
 
-  test('preserves an already-set config._lastBuildEndMs', async (assert) => {
+  test('preserves an already-set config.state.watch.lastBuildEndMs', async (assert) => {
     // Defensive: if a caller has already seeded the timestamp (e.g. a rebuild happened
     // before the watcher was reinitialized), setupFileWatchers must not clobber it.
     const config = {
       fsTree: {},
       projectRoot: process.cwd(),
       extensions: ['ts'],
-      _lastBuildEndMs: 12345,
+      state: watchState({ lastBuildEndMs: 12345 }),
     } as unknown as Config;
     const { killFileWatchers, ready } = setupFileWatchers([], config, () => {}, null);
     try {
       await ready;
-      assert.equal(config._lastBuildEndMs, 12345, 'pre-existing value preserved');
+      assert.equal(config.state.watch.lastBuildEndMs, 12345, 'pre-existing value preserved');
     } finally {
       killFileWatchers();
     }
@@ -523,7 +562,7 @@ module('Setup | setupFileWatchers', { concurrency: true }, () => {
 
     const { killFileWatchers, ready } = setupFileWatchers(
       [tmpFile], // file path, not a directory — the case that triggered the bug
-      config as unknown as Config,
+      asConfig(config),
       (event, file) => {
         seen.push({ event, file });
         resolve();
@@ -584,7 +623,7 @@ module('Setup | setupFileWatchers', { concurrency: true }, () => {
 
     const { killFileWatchers, ready } = setupFileWatchers(
       [tmpDir],
-      config as unknown as Config,
+      asConfig(config),
       async (_event, file) => {
         seen.push(await fs.readFile(file, 'utf8'));
         onFirstEvent();
@@ -639,7 +678,7 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
 
     await rescanDirectoryForDelta(
       dir,
-      config as Config,
+      asConfig(config),
       ['ts', 'js'],
       (ev, f) => events.push({ event: ev, file: f }),
       null,
@@ -668,7 +707,7 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
 
     await rescanDirectoryForDelta(
       dir,
-      config as Config,
+      asConfig(config),
       ['ts', 'js'],
       (ev, f) => events.push({ event: ev, file: f }),
       null,
@@ -697,14 +736,16 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
     const config: Partial<Config> & { fsTree: FSTree } = {
       fsTree: { [tracked]: null },
       projectRoot: dir,
-      _lastBuildEndMs: Date.now(),
-      _builtContentHash: { [tracked]: sha1('before') },
+      state: watchState({
+        lastBuildEndMs: Date.now(),
+        builtContentHash: { [tracked]: sha1('before') },
+      }),
     };
     const events: Array<{ event: string; file: string }> = [];
 
     await rescanDirectoryForDelta(
       dir,
-      config as Config,
+      asConfig(config),
       ['ts', 'js'],
       (ev, f) => events.push({ event: ev, file: f }),
       null,
@@ -714,7 +755,11 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
       assert.equal(events.length, 1, 'exactly one event fires');
       assert.equal(events[0].event, 'change', 'event is a change, not add or unlink');
       assert.equal(events[0].file, tracked);
-      assert.equal(config._builtContentHash![tracked], sha1('after'), 'baseline advanced');
+      assert.equal(
+        config.state.watch.builtContentHash![tracked],
+        sha1('after'),
+        'baseline advanced',
+      );
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
@@ -732,14 +777,16 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
     const config: Partial<Config> & { fsTree: FSTree } = {
       fsTree: { [tracked]: null },
       projectRoot: dir,
-      _lastBuildEndMs: Date.now(),
-      _builtContentHash: { [tracked]: sha1('content') },
+      state: watchState({
+        lastBuildEndMs: Date.now(),
+        builtContentHash: { [tracked]: sha1('content') },
+      }),
     };
     const events: Array<{ event: string; file: string }> = [];
 
     await rescanDirectoryForDelta(
       dir,
-      config as Config,
+      asConfig(config),
       ['ts', 'js'],
       (ev, f) => events.push({ event: ev, file: f }),
       null,
@@ -773,14 +820,16 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
       projectRoot: dir,
       // A slow (webkit) build ended AFTER this write, so its mtime predates the build end —
       // exactly the case the old mtime gate dropped.
-      _lastBuildEndMs: mtimeMs + 1000,
-      _builtContentHash: { [tracked]: sha1('built content') },
+      state: watchState({
+        lastBuildEndMs: mtimeMs + 1000,
+        builtContentHash: { [tracked]: sha1('built content') },
+      }),
     };
     const events: Array<{ event: string; file: string }> = [];
 
     await rescanDirectoryForDelta(
       dir,
-      config as Config,
+      asConfig(config),
       ['ts', 'js'],
       (ev, f) => events.push({ event: ev, file: f }),
       null,
@@ -789,7 +838,11 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
     try {
       assert.equal(events.length, 1, 'the differing final content fires despite identical mtime');
       assert.equal(events[0].event, 'change');
-      assert.equal(config._builtContentHash![tracked], sha1('final content'), 'baseline advanced');
+      assert.equal(
+        config.state.watch.builtContentHash![tracked],
+        sha1('final content'),
+        'baseline advanced',
+      );
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
@@ -810,7 +863,7 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
 
     await rescanDirectoryForDelta(
       dir,
-      config as Config,
+      asConfig(config),
       ['ts', 'js'],
       (ev, f) => events.push({ event: ev, file: f }),
       null,
@@ -837,7 +890,7 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
 
     await rescanDirectoryForDelta(
       dir,
-      config as Config,
+      asConfig(config),
       ['ts'],
       (ev, f) => events.push({ event: ev, file: f }),
       null,
@@ -863,7 +916,7 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
 
     await rescanDirectoryForDelta(
       dir,
-      config as Config,
+      asConfig(config),
       ['ts'],
       (ev, f) => events.push({ event: ev, file: f }),
       null,
@@ -896,7 +949,7 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
 
     await rescanDirectoryForDelta(
       dir,
-      config as Config,
+      asConfig(config),
       ['ts', 'js'],
       (ev, f) => events.push({ event: ev, file: f }),
       null,
@@ -931,7 +984,7 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
 
     await rescanDirectoryForDelta(
       dir,
-      config as Config,
+      asConfig(config),
       ['ts'],
       (ev, f) => events.push({ event: ev, file: f }),
       null,
@@ -979,7 +1032,7 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
 
     await rescanDirectoryForDelta(
       dir,
-      config as Config,
+      asConfig(config),
       ['ts', 'js'],
       (ev, f) => events.push({ event: ev, file: f }),
       null,
@@ -1005,7 +1058,7 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
 
     await rescanDirectoryForDelta(
       '/tmp/nonexistent-dir-that-does-not-exist-qunitx',
-      config as Config,
+      asConfig(config),
       ['ts'],
       (ev, f) => events.push({ event: ev, file: f }),
       null,
@@ -1016,10 +1069,12 @@ module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
 });
 
 // Calls handleWatchEvent synchronously and returns the collected (event, path) pairs.
+// Supplies default run state so cases that don't care about build bookkeeping can pass a bare
+// `{ fsTree, projectRoot }`; cases that do pass their own via watchState().
 function trackCalls(config: object, event: string, filePath: string, ext = ['js', 'ts']) {
   const calls: Array<{ event: string; path: string }> = [];
   handleWatchEvent(
-    config as Config,
+    asConfig(config),
     ext,
     event,
     filePath,
