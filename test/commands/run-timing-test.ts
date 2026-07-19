@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { readTimingCache, computeFileTimes } from '../../lib/commands/run.ts';
+import { readTimingCache, computeFileTimes } from '../../lib/commands/run/timings.ts';
 
 const CWD = process.cwd();
 
