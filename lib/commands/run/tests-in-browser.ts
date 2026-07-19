@@ -17,7 +17,7 @@ import { isFilteredRun, qunitFilterQuery } from '../../selection/filter-query.ts
 import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
 import type { AffectedMetafile } from '../../utils/get-changed-files.ts';
 import type { Page } from 'playwright-core';
-import type { Config, CachedContent, Connections } from '../../types.ts';
+import type { Config, CachedContent, Connections, EsbuildCache } from '../../types.ts';
 import type { HTTPServer } from '../../servers/web.ts';
 
 /**
@@ -755,11 +755,11 @@ function buildWithOverlayfsRetry(
 // the file-set changes (different `fileKey`), the old context is disposed and replaced.
 // Storage holder is whichever object owns the live cache: the per-process CachedContent in
 // watch mode, or the daemon's persistent state slot via `config._daemonEsbuildCache` in
-// daemon mode. Both expose the same `_esbuildContext` / `_esbuildContextKey` field shape.
+// daemon mode — both are an EsbuildCache.
 async function buildIncrementally(
   options: esbuild.BuildOptions,
   fileKey: string,
-  cache: { _esbuildContext?: esbuild.BuildContext | null; _esbuildContextKey?: string },
+  cache: EsbuildCache,
   needsDisk: boolean,
 ): Promise<{ js: Buffer; metafile?: AffectedMetafile }> {
   const buildOpts: esbuild.BuildOptions = { ...options, write: false };
