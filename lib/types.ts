@@ -285,8 +285,6 @@ export interface Config {
    * context, killing residual scripts and the previous run's WebSocket client).
    */
   _daemonPageSlot?: { page: import('playwright-core').Page | null };
-  /** Index within the concurrent group array; set when a shared HTTP server is used. */
-  _groupId?: number;
   /** Current lifecycle phase of the test run. */
   _phase?: 'bundling' | 'connecting' | 'loading' | 'running' | 'done';
   /**
