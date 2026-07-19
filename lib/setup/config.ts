@@ -40,8 +40,6 @@ export async function setupConfig(): Promise<Config> {
     projectRoot,
     inputs,
     testFileLookupPaths: setupTestFilePaths(inputs),
-    lastFailedTestFiles: null as string[] | null,
-    lastRanTestFiles: null as string[] | null,
     state: newRunState(),
   };
   config.htmlPaths = normalizeHTMLPaths(config.projectRoot, config.htmlPaths);

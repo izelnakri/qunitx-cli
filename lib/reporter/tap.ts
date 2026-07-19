@@ -36,7 +36,7 @@ export class TapReporter implements Reporter {
     // matches what every other reporter already does.
     const failures =
       details.status === 'failed'
-        ? failedAssertions(details, config._sourceMapDecoder, config.projectRoot)
+        ? failedAssertions(details, config.state.group.sourceMapDecoder, config.projectRoot)
         : [];
     TAPDisplayTestResult(config.state.results.counter.testCount, details, failures);
   }

@@ -91,13 +91,13 @@ export function recordFailedTest(config: Config, details: FailedTestDetails): vo
   if (!results) return;
   const file = attributeFailureFile(
     details.assertions,
-    config._sourceMapDecoder,
+    config.state.group.sourceMapDecoder,
     config.projectRoot,
   );
-  if (file && config.lastRanTestFiles?.includes(file)) {
+  if (file && config.state.group.ranFiles?.includes(file)) {
     results.failedFiles.add(file);
   } else {
-    config.lastRanTestFiles?.forEach((ranFile) => results.failedFiles.add(ranFile));
+    config.state.group.ranFiles?.forEach((ranFile) => results.failedFiles.add(ranFile));
   }
   results.failedTests.push({
     file: file ? relativize(file, config.projectRoot) : null,

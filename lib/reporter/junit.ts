@@ -66,7 +66,11 @@ export function toJUnitCase(config: Config, details: TestDetails): JUnitCase {
 
   if (status !== 'failed') return testCase;
 
-  const failures = failedAssertions(details, config._sourceMapDecoder, config.projectRoot);
+  const failures = failedAssertions(
+    details,
+    config.state.group.sourceMapDecoder,
+    config.projectRoot,
+  );
   if (failures.length === 0) {
     // Failed status with no failing assertion recorded (e.g. an uncaught error mid-test).
     testCase.failureMessage = 'Test failed';

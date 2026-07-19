@@ -223,7 +223,7 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
       ),
     ]);
     cachedContent.allTestCode = allTestCode;
-    config._sourceMapDecoder = extractInlineSourceMap(allTestCode, outDir);
+    config.state.group.sourceMapDecoder = extractInlineSourceMap(allTestCode, outDir);
     // Persist metafile for the next --changed run. Best-effort; cache miss
     // on subsequent reads degrades to "run all tests."
     if (metafile) void writeMetafileCache(projectRoot, process.cwd(), metafile);
@@ -258,7 +258,7 @@ export async function runTestsInBrowser(
   const runHasFilter = !!targetTestFilesToFilter;
 
   // In group mode the counter is shared across all groups and managed by run.js.
-  if (!config._groupMode) {
+  if (!config.state.group.groupMode) {
     // Clears the counter, failure sets and coverage for this run (watch/single-group path);
     // group mode resets them once on the parent config in run.ts before the shared spread.
     // In place, not replaced: see resetRunResults — group configs share this object.
@@ -270,9 +270,9 @@ export async function runTestsInBrowser(
     // `connection` for the next run got counted spuriously because the dedup
     // map had been wiped. Tying the reset to the counter reset is the single
     // source of truth for "this is a fresh run, drop old tracking state."
-    config._testEndCounts = new Map();
+    config.state.group.testEndCounts = new Map();
   }
-  config.lastRanTestFiles = targetTestFilesToFilter || allTestFilePaths;
+  config.state.group.ranFiles = targetTestFilesToFilter || allTestFilePaths;
 
   try {
     // In watch mode, run.js fires buildTestBundle before setupBrowser completes and stores
@@ -305,7 +305,10 @@ export async function runTestsInBrowser(
         outputPath,
         config,
       );
-      config._sourceMapDecoder = extractInlineSourceMap(cachedContent.filteredTestCode, outDir);
+      config.state.group.sourceMapDecoder = extractInlineSourceMap(
+        cachedContent.filteredTestCode,
+        outDir,
+      );
     }
 
     const TIME_COUNTER = timeCounter();
@@ -337,7 +340,7 @@ export async function runTestsInBrowser(
     const TIME_TAKEN = TIME_COUNTER.stop();
 
     // In group mode the parent orchestrator handles the final summary, after hook, and exit.
-    if (!config._groupMode) {
+    if (!config.state.group.groupMode) {
       if (
         config.state.results.counter.testCount === 0 &&
         cachedContent.pageOverride?.kind !== 'build-error'
@@ -378,7 +381,7 @@ export async function runTestsInBrowser(
       }
 
       if (!config.watch) {
-        await flushConsoleHandlers(config._pendingConsoleHandlers, connections.page);
+        await flushConsoleHandlers(config.state.group.pendingConsoleHandlers, connections.page);
         // Daemon mode: the daemon owns the browser and server lifetimes, so we
         // must not close them here. Throw instead so the daemon's run handler
         // captures the exit code and keeps the process alive for the next run.
@@ -398,7 +401,7 @@ export async function runTestsInBrowser(
     // pass it through unchanged so the daemon's run handler can capture the exit code.
     if (error instanceof DaemonRunError) throw error;
     cachedContent._activeRebuild = null;
-    config.lastFailedTestFiles = config.lastRanTestFiles;
+    config.state.group.lastFailedFiles = config.state.group.ranFiles;
     const exception = new BundleError(error);
 
     // buildTestBundle's own catch sets the build-error override for full-bundle failures before rethrowing.
@@ -602,7 +605,7 @@ export async function buildAllGroupBundles(
         );
         if (!isMap) {
           cachedContent.allTestCode = Buffer.from(outputFile.contents);
-          config._sourceMapDecoder = extractInlineSourceMap(
+          config.state.group.sourceMapDecoder = extractInlineSourceMap(
             cachedContent.allTestCode,
             esbuildOutdir,
           );
@@ -927,8 +930,9 @@ async function runTestInsideHTMLFile(
 
     // Prefer the QUNIT_RESULT piggy-backed on the WS 'done' message — zero extra latency.
     // Fall back to page.evaluate() only when the run timed out without a WS 'done' arriving
-    // (config._lastQUnitResult is null), so we still get partial results for diagnostics.
-    QUNIT_RESULT = config._lastQUnitResult ?? (await page.evaluate(() => window.QUNIT_RESULT));
+    // (config.state.group.lastQUnitResult is null), so we still get partial results for diagnostics.
+    QUNIT_RESULT =
+      config.state.group.lastQUnitResult ?? (await page.evaluate(() => window.QUNIT_RESULT));
   } catch (error) {
     targetError = error;
     console.log(error);
@@ -940,10 +944,10 @@ async function runTestInsideHTMLFile(
     config.state.group.signals.onTestsJsServed = null;
     config.state.group.signals.resetTestTimeout = null;
     config.state.group.signals.testRunDone = null;
-    config._lastQUnitResult = null;
+    config.state.group.lastQUnitResult = null;
     // Collect coverage before the caller closes the page. stopJSCoverage returns the V8 ranges
     // + bundle source for every script; collectCoverage keeps only the test bundle and maps it
-    // back to original sources via config._sourceMapDecoder, merging into the shared collector.
+    // back to original sources via config.state.group.sourceMapDecoder, merging into the shared collector.
     if (coverageStarted) {
       const entries = await page.coverage.stopJSCoverage().catch(() => []);
       try {
@@ -968,8 +972,8 @@ async function runTestInsideHTMLFile(
     await failOnNonWatchMode(
       config.watch,
       { server, browser, page },
-      config._groupMode,
-      config._pendingConsoleHandlers,
+      config.state.group.groupMode,
+      config.state.group.pendingConsoleHandlers,
       !!config.state.daemon,
     );
   } else if (QUNIT_RESULT.totalTests === 0) {
@@ -986,8 +990,8 @@ async function runTestInsideHTMLFile(
     await failOnNonWatchMode(
       config.watch,
       { server, browser, page },
-      config._groupMode,
-      config._pendingConsoleHandlers,
+      config.state.group.groupMode,
+      config.state.group.pendingConsoleHandlers,
       !!config.state.daemon,
     );
   } else if (QUNIT_RESULT.failedTests > config.state.results.counter.failCount) {

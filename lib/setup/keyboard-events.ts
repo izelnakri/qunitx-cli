@@ -17,22 +17,22 @@ export function setupKeyboardEvents(
     abortBrowserQUnit(config, connections);
     // "run all" means all: drop the line-target selections that scoped this session. -t/-m stay
     // — those are a standing instruction about which tests to run, not a starting point.
-    config._qunitSelectors = undefined;
+    config.state.group.selectors = undefined;
     runTestsInBrowser(config, cachedContent, connections);
   });
   listenToKeyboardKey('qf', () => {
     abortBrowserQUnit(config, connections);
 
-    if (!config.lastFailedTestFiles) {
+    if (!config.state.group.lastFailedFiles) {
       console.log('#', blue(`QUnitX: No tests failed so far, so repeating the last test run`));
-      return runTestsInBrowser(config, cachedContent, connections, config.lastRanTestFiles);
+      return runTestsInBrowser(config, cachedContent, connections, config.state.group.ranFiles);
     }
 
-    runTestsInBrowser(config, cachedContent, connections, config.lastFailedTestFiles);
+    runTestsInBrowser(config, cachedContent, connections, config.state.group.lastFailedFiles);
   });
   listenToKeyboardKey('ql', () => {
     abortBrowserQUnit(config, connections);
-    runTestsInBrowser(config, cachedContent, connections, config.lastRanTestFiles);
+    runTestsInBrowser(config, cachedContent, connections, config.state.group.ranFiles);
   });
 }
 

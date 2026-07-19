@@ -97,7 +97,7 @@ module('Setup | web-server | header links to /', { concurrency: true }, () => {
 //      macOS-deno webkit): plugins-test reports pass=2 for a 1-test
 //      fixture because the browser ships duplicate testEnd events via
 //      paths we can't trace from the server side (WS retry race +
-//      sub-resource preload race). The dedup map in Config._testEndCounts
+//      sub-resource preload race). The dedup map in Config.state.group.testEndCounts
 //      drops the second arrival of any fullName.
 //
 //   2. The no-html-test regression (CI run 26042614416): when the dedup
@@ -114,7 +114,7 @@ module('Setup | web-server | header links to /', { concurrency: true }, () => {
 module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
   test('duplicate testEnd in one run increments the counter exactly once', async (assert) => {
     const config = makeConfig();
-    config._testEndCounts = new Map(); // run.ts / runTestsInBrowser ordinarily seeds this
+    config.state.group.testEndCounts = new Map(); // run.ts / runTestsInBrowser ordinarily seeds this
     const server = setupWebServer(config, makeCachedContent());
     await server.listen(0);
     const port = (server._server.address() as { port: number }).port;
@@ -152,7 +152,7 @@ module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
 
   test('stale testEnd arriving after the next-run connection is dropped (no-html regression)', async (assert) => {
     const config = makeConfig();
-    config._testEndCounts = new Map();
+    config.state.group.testEndCounts = new Map();
     const server = setupWebServer(config, makeCachedContent());
     await server.listen(0);
     const port = (server._server.address() as { port: number }).port;
@@ -185,8 +185,8 @@ module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
       // (Without the run-tied reset, the map is wiped on 'connection' and
       // the stale event leaks into the new run's count — the original bug.)
       config.state.results.counter.testCount = 0;
-      // NOTE: deliberately do NOT reset config._testEndCounts here. In real
-      // code, runTestsInBrowser would reset both the counter and _testEndCounts
+      // NOTE: deliberately do NOT reset config.state.group.testEndCounts here. In real
+      // code, runTestsInBrowser would reset both the counter and testEndCounts
       // together; this test is verifying that the WS handler does not
       // ALSO reset the map (which would re-admit the stale event).
       const ws2 = await openWebSocket(port);
@@ -388,8 +388,6 @@ function makeConfig(): Config {
     fsTree: {},
     debug: false,
     state: newRunState(),
-    lastFailedTestFiles: null,
-    lastRanTestFiles: null,
   } as unknown as Config;
 }
 

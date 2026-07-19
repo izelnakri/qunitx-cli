@@ -175,8 +175,62 @@ export interface RunState {
 
 /** State scoped to a single concurrent group — one fresh object per group of a run. */
 export interface GroupState {
+  /** Index within the run's group array; `0` for watch and single-group runs. */
+  index: number;
+  /** `true` while running as one of several concurrent groups. */
+  groupMode: boolean;
   /** Callbacks the run pipeline waits on, resolved as the browser reaches each milestone. */
   signals: RunSignals;
+  /** Current lifecycle phase of this group's run. */
+  phase: 'bundling' | 'connecting' | 'loading' | 'running' | 'done';
+  /**
+   * Exact test selections for this group, derived from `lineTargets`. Applied in the browser via
+   * `QUnit.config.testFilter`, which QUnit ANDs after `filter`/`module`. Per-group: each
+   * line-targeted file runs as its own group so untargeted files stay unfiltered.
+   */
+  selectors: QUnitSelector[] | undefined;
+  /**
+   * Test files this group actually ran. Failure attribution falls back to this when a failing
+   * assertion's stack can't be resolved to one file — scoped per group so an unattributable
+   * failure blames only the files that group ran, not the whole invocation.
+   *
+   * Watch mode runs exactly one group, so this doubles as the `ql` rerun target there.
+   */
+  ranFiles: string[] | null;
+  /** Files treated as failed for the `qf` rerun shortcut. Watch mode only, hence single-group. */
+  lastFailedFiles: string[] | null;
+  /**
+   * Tracks `testEnd` arrivals per test fullName in this group's run. Reset in lockstep with the
+   * run counter — explicitly NOT on every WS 'connection' event, which was the bug that broke
+   * no-html-test in CI run 26042614416.
+   *
+   * The WS testEnd handler enforces "QUnit fires testEnd exactly once per registered test per
+   * run" by checking this map before incrementing the counter: a second arrival of the same
+   * fullName is dropped with a `# [qunitx] WARNING: duplicate testEnd ignored ...` line on
+   * stderr+stdout so the underlying browser/runtime bug stays visible while pass counts stay
+   * correct. Per-group because two groups can legitimately share a fullName when they bundle
+   * different files registering the same module/test names — the dedup key is intra-group.
+   */
+  testEndCounts: Map<string, number>;
+  /**
+   * Diagnostic-only: how many distinct WS connections this group's wss handler has accepted.
+   * Reset per `setupWebServer` call. > 1 means the browser opened multiple WebSocket connections
+   * within one run — the prime suspect for the 2× test-execution flake (WS retry path in the
+   * injected runtime).
+   */
+  wsConnectionCount: number;
+  /** QUNIT_RESULT delivered via the WS 'done' message; avoids a page.evaluate() CDP round-trip. */
+  lastQUnitResult: {
+    totalTests: number;
+    finishedTests: number;
+    failedTests: number;
+    currentTest: string | null;
+  } | null;
+  /** In-flight console handler promises; awaited before browser/page close so Firefox BiDi
+   * round-trips complete. */
+  pendingConsoleHandlers: Set<Promise<void>> | null;
+  /** Decoded inline source map for this group's bundle; resolves stack frames to original sources. */
+  sourceMapDecoder: SourceMapDecoder | null;
 }
 
 /**
@@ -366,60 +420,10 @@ export interface Config {
    */
   _wholeInputPaths?: string[];
   /**
-   * Exact test selections for this run, derived from `lineTargets`. Applied in the browser via
-   * `QUnit.config.testFilter`, which QUnit ANDs after `filter`/`module`. Per-group: each
-   * line-targeted file runs as its own group so untargeted files stay unfiltered.
-   */
-  _qunitSelectors?: QUnitSelector[];
-  /** Test files that failed on the previous run (drives re-run filtering). */
-  lastFailedTestFiles: string[] | null;
-  /** Test files executed on the previous run. */
-  lastRanTestFiles: string[] | null;
-  /** `true` while running a grouped (multi-file) test invocation. */
-  _groupMode?: boolean;
-  /** Current lifecycle phase of the test run. */
-  _phase?: 'bundling' | 'connecting' | 'loading' | 'running' | 'done';
-  /**
-   * Tracks `testEnd` arrivals per test fullName in the current run. Reset in
-   * `runTestsInBrowser` (single-group) and at groupConfig construction
-   * (multi-group) — explicitly NOT on every WS 'connection' event, which
-   * was the bug that broke no-html-test in CI run 26042614416. Lifetime is
-   * tied to counter lifetime so the two stay consistent.
-   *
-   * The WS testEnd handler enforces "QUnit fires testEnd exactly once per
-   * registered test per run" by checking this map before incrementing
-   * the counter: a second arrival of the same fullName is dropped with a
-   * `# [qunitx] WARNING: duplicate testEnd ignored ...` line on stderr+stdout
-   * so the underlying browser/runtime bug stays visible while pass counts
-   * stay correct. Needed because the 2× flake (CI runs 26046813154 +
-   * 26077472287 on macOS-deno webkit) ships duplicate testEnd events via
-   * paths we can't fully trace from outside the browser.
-   */
-  _testEndCounts?: Map<string, number>;
-  /**
-   * Diagnostic-only: counts how many distinct WS connections have been
-   * accepted by the current run's wss handler. Reset on every fresh server
-   * setup (per setupWebServer call). > 1 indicates the browser opened
-   * multiple WebSocket connections within a single run — the prime suspect
-   * for the 2× test-execution flake (WS retry path in the injected runtime).
-   */
-  _wsConnectionCount?: number;
-  /** QUNIT_RESULT delivered via the WS 'done' message; avoids a page.evaluate() CDP round-trip. */
-  _lastQUnitResult?: {
-    totalTests: number;
-    finishedTests: number;
-    failedTests: number;
-    currentTest: string | null;
-  } | null;
-  /** In-flight console handler promises; awaited before browser/page close so Firefox BiDi round-trips complete. */
-  _pendingConsoleHandlers?: Set<Promise<void>> | null;
-  /**
    * The run's HTTP server, exposed purely as `--before` / `--after` hook surface — qunitx itself
    * never reads it back. Hooks use it to register extra routes (mock APIs) before tests start.
    */
   webServer?: HTTPServer;
-  /** Decoded inline source map for the active test bundle; used to resolve stack frames to original sources. */
-  _sourceMapDecoder?: SourceMapDecoder | null;
 }
 
 /**

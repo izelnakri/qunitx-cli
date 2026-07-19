@@ -1,4 +1,5 @@
 import type { Counter, GroupState, RunResults, RunState } from '../types.ts';
+import type { QUnitSelector } from '../selection/line-targets.ts';
 import type { Page } from 'playwright-core';
 
 /**
@@ -32,14 +33,25 @@ function newCounter(): Counter {
  * Fresh per-group state. One per concurrent group; the group spread in `runConcurrentMode`
  * replaces `state.group` with this so groups never share the slots inside it.
  */
-export function newGroupState(): GroupState {
+export function newGroupState(index = 0, selectors?: QUnitSelector[]): GroupState {
   return {
+    index,
+    groupMode: false,
     signals: {
       testRunDone: null,
       resetTestTimeout: null,
       onWsOpen: null,
       onTestsJsServed: null,
     },
+    phase: 'bundling',
+    selectors,
+    ranFiles: null,
+    lastFailedFiles: null,
+    testEndCounts: new Map(),
+    wsConnectionCount: 0,
+    lastQUnitResult: null,
+    pendingConsoleHandlers: null,
+    sourceMapDecoder: null,
   };
 }
 

@@ -344,8 +344,6 @@ function makeConfig(testFiles: string[], watch = false): Config {
     fsTree: Object.fromEntries(testFiles.map((f) => [f, null])),
     watch,
     state: newRunState(),
-    lastFailedTestFiles: null,
-    lastRanTestFiles: null,
   } as unknown as Config;
 }
 

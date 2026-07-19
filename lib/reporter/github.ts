@@ -31,7 +31,7 @@ export class GithubReporter implements Reporter {
     // them at their exact line. Emitted as one write so the block can't be split apart.
     const title = details.fullName.join(' | ');
     process.stdout.write(
-      failedAssertions(details, config._sourceMapDecoder, config.projectRoot)
+      failedAssertions(details, config.state.group.sourceMapDecoder, config.projectRoot)
         .map((failure) => `${annotation(title, failure)}\n`)
         .join(''),
     );
