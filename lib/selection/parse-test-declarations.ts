@@ -154,89 +154,112 @@ interface Token {
 }
 
 /**
+ * A mutable cursor threaded through the readers below. Each reader advances `pos` (and `line`, for
+ * spans that cross newlines) in place and returns just its token value — no per-token tuple to
+ * allocate or destructure, and every reader has one shape: consume from the scanner, return the
+ * value (or nothing, for spans that are discarded).
+ */
+interface Scanner {
+  code: string;
+  pos: number;
+  line: number;
+}
+
+/**
  * Lexes the transform output far enough to find call expressions: identifiers, punctuation and
  * string literals, with comments / template literals / regex literals consumed and discarded.
  * Template literals collapse to a single 'other' token, so `test(\`x ${i}\`)` reads as a call with
  * a non-literal name rather than a literal one.
+ *
+ * The body is a flat dispatch table: match the token kind on the first character, then hand off to
+ * the matching reader. `line` is captured up front — a token records where it *starts*, which holds
+ * even when its reader spans several lines.
  */
 function tokenize(code: string): Token[] {
   const tokens: Token[] = [];
-  let line = 1;
-  let index = 0;
+  const scanner: Scanner = { code, pos: 0, line: 1 };
 
-  while (index < code.length) {
-    const char = code[index];
+  while (scanner.pos < code.length) {
+    const char = code[scanner.pos];
+    const line = scanner.line;
 
     if (char === '\n') {
-      line++;
-      index++;
+      scanner.line++;
+      scanner.pos++;
     } else if (char === ' ' || char === '\t' || char === '\r') {
-      index++;
-    } else if (char === '/' && code[index + 1] === '/') {
-      while (index < code.length && code[index] !== '\n') index++;
-    } else if (char === '/' && code[index + 1] === '*') {
-      index += 2;
-      while (index < code.length && !(code[index] === '*' && code[index + 1] === '/')) {
-        if (code[index] === '\n') line++;
-        index++;
-      }
-      index += 2;
+      scanner.pos++;
+    } else if (char === '/' && code[scanner.pos + 1] === '/') {
+      skipLineComment(scanner);
+    } else if (char === '/' && code[scanner.pos + 1] === '*') {
+      skipBlockComment(scanner);
     } else if (char === '"' || char === "'") {
-      const startLine = line;
-      const [value, next] = readString(code, index);
-      index = next;
-      tokens.push({ type: 'string', value, line: startLine });
+      tokens.push({ type: 'string', value: readString(scanner), line });
     } else if (char === '`') {
-      const startLine = line;
-      const [hasSubstitution, next, lines] = readTemplate(code, index);
-      const raw = code.slice(index + 1, next - 1);
-      line += lines;
-      index = next;
-      // A template with no ${} is as literal as a quoted string.
+      // readTemplate returns null for a template with a ${}; a substitution-free one is as literal
+      // as a quoted string.
+      const raw = readTemplate(scanner);
       tokens.push(
-        hasSubstitution
-          ? { type: 'other', value: '`', line: startLine }
-          : { type: 'string', value: raw, line: startLine },
+        raw === null ? { type: 'other', value: '`', line } : { type: 'string', value: raw, line },
       );
     } else if (char === '/' && regexAllowedAfter(tokens)) {
-      const [next, lines] = readRegex(code, index);
-      line += lines;
-      index = next;
+      readRegex(scanner);
       tokens.push({ type: 'other', value: '/', line });
     } else if (isIdentStart(char)) {
-      let end = index;
-      while (end < code.length && isIdentPart(code[end])) end++;
-      tokens.push({ type: 'ident', value: code.slice(index, end), line });
-      index = end;
+      tokens.push({ type: 'ident', value: readIdentifier(scanner), line });
     } else if (char >= '0' && char <= '9') {
-      let end = index;
-      while (end < code.length && /[0-9a-fA-FxXoObBnN._]/.test(code[end])) end++;
-      tokens.push({ type: 'other', value: code.slice(index, end), line });
-      index = end;
+      tokens.push({ type: 'other', value: readNumber(scanner), line });
     } else {
       tokens.push({ type: 'punct', value: char, line });
-      index++;
+      scanner.pos++;
     }
   }
 
   return tokens;
 }
 
-function readString(code: string, start: number): [value: string, next: number] {
-  const quote = code[start];
+/** Consumes a `// …` line comment up to (not including) the newline, which the caller counts. */
+function skipLineComment(scanner: Scanner): void {
+  const { code } = scanner;
+  let pos = scanner.pos;
+  while (pos < code.length && code[pos] !== '\n') pos++;
+  scanner.pos = pos;
+}
+
+/** Consumes a block comment, counting the newlines inside it. */
+function skipBlockComment(scanner: Scanner): void {
+  const { code } = scanner;
+  let pos = scanner.pos + 2;
+  let line = scanner.line;
+  while (pos < code.length && !(code[pos] === '*' && code[pos + 1] === '/')) {
+    if (code[pos] === '\n') line++;
+    pos++;
+  }
+  scanner.pos = pos + 2;
+  scanner.line = line;
+}
+
+function readString(scanner: Scanner): string {
+  const { code } = scanner;
+  const quote = code[scanner.pos];
   let value = '';
-  let index = start + 1;
-  while (index < code.length && code[index] !== quote) {
-    if (code[index] === '\\') {
-      value += unescape(code[index + 1]);
-      index += 2;
+  let pos = scanner.pos + 1;
+  let line = scanner.line;
+  while (pos < code.length && code[pos] !== quote) {
+    if (code[pos] === '\\') {
+      // A line continuation ('a\<newline>') swallows a real newline; count it so `line` stays in
+      // sync for later declarations. Rare in esbuild output, but the guard is free.
+      if (code[pos + 1] === '\n') line++;
+      value += unescape(code[pos + 1]);
+      pos += 2;
     } else {
-      value += code[index];
-      index++;
+      value += code[pos];
+      pos++;
     }
   }
+  scanner.pos = pos + 1;
+  scanner.line = line;
 
-  return [value, index + 1];
+  return value;
 }
 
 function unescape(char: string): string {
@@ -247,65 +270,92 @@ function unescape(char: string): string {
   return char;
 }
 
-/** Walks a template literal, tracking `${}` nesting so a nested `` ` `` or `}` cannot end it early. */
-function readTemplate(
-  code: string,
-  start: number,
-): [hasSubstitution: boolean, next: number, lines: number] {
-  let index = start + 1;
-  let lines = 0;
+/**
+ * Walks a template literal, tracking `${}` nesting so a nested backtick or `}` cannot end it early.
+ * Returns the raw text of a substitution-free template, or null when it contains a `${}`. Unlike the
+ * other readers it mutates the scanner directly (no `pos`/`line` locals) so the recursive
+ * nested-template call composes without threading state back and forth by hand.
+ */
+function readTemplate(scanner: Scanner): string | null {
+  const { code } = scanner;
+  const start = scanner.pos;
+  scanner.pos++;
   let hasSubstitution = false;
-  while (index < code.length && code[index] !== '`') {
-    if (code[index] === '\\') {
-      index += 2;
-    } else if (code[index] === '$' && code[index + 1] === '{') {
+  while (scanner.pos < code.length && code[scanner.pos] !== '`') {
+    if (code[scanner.pos] === '\\') {
+      scanner.pos += 2;
+    } else if (code[scanner.pos] === '$' && code[scanner.pos + 1] === '{') {
       hasSubstitution = true;
-      index += 2;
+      scanner.pos += 2;
       let depth = 1;
-      while (index < code.length && depth > 0) {
-        if (code[index] === '\n') lines++;
-        else if (code[index] === '{') depth++;
-        else if (code[index] === '}') depth--;
-        else if (code[index] === '`') {
-          const [, next, nestedLines] = readTemplate(code, index);
-          lines += nestedLines;
-          index = next;
+      while (scanner.pos < code.length && depth > 0) {
+        const char = code[scanner.pos];
+        if (char === '\n') scanner.line++;
+        else if (char === '{') depth++;
+        else if (char === '}') depth--;
+        else if (char === '`') {
+          readTemplate(scanner);
           continue;
         }
-        index++;
+        scanner.pos++;
       }
     } else {
-      if (code[index] === '\n') lines++;
-      index++;
+      if (code[scanner.pos] === '\n') scanner.line++;
+      scanner.pos++;
     }
   }
+  const raw = code.slice(start + 1, scanner.pos);
+  scanner.pos++;
 
-  return [hasSubstitution, index + 1, lines];
+  return hasSubstitution ? null : raw;
 }
 
-function readRegex(code: string, start: number): [next: number, lines: number] {
-  let index = start + 1;
+/** Consumes a regex literal, including its `[…]` classes (a `/` inside a class does not end it). */
+function readRegex(scanner: Scanner): void {
+  const { code } = scanner;
+  let pos = scanner.pos + 1;
   let inClass = false;
-  while (index < code.length) {
-    const char = code[index];
+  while (pos < code.length) {
+    const char = code[pos];
     if (char === '\\') {
-      index += 2;
+      pos += 2;
       continue;
     } else if (char === '[') {
       inClass = true;
     } else if (char === ']') {
       inClass = false;
     } else if (char === '/' && !inClass) {
-      index++;
+      pos++;
       break;
     } else if (char === '\n') {
       break;
     }
-    index++;
+    pos++;
   }
-  while (index < code.length && /[a-z]/.test(code[index])) index++;
+  while (pos < code.length && /[a-z]/.test(code[pos])) pos++;
+  scanner.pos = pos;
+}
 
-  return [index, 0];
+/** Reads an identifier run (`[A-Za-z0-9_$]` after a valid start char). */
+function readIdentifier(scanner: Scanner): string {
+  const { code } = scanner;
+  const start = scanner.pos;
+  let pos = start;
+  while (pos < code.length && isIdentPart(code[pos])) pos++;
+  scanner.pos = pos;
+
+  return code.slice(start, pos);
+}
+
+/** Reads a numeric literal run — the digits are irrelevant, only that it is one 'other' token. */
+function readNumber(scanner: Scanner): string {
+  const { code } = scanner;
+  const start = scanner.pos;
+  let pos = start;
+  while (pos < code.length && /[0-9a-fA-FxXoObBnN._]/.test(code[pos])) pos++;
+  scanner.pos = pos;
+
+  return code.slice(start, pos);
 }
 
 /**
