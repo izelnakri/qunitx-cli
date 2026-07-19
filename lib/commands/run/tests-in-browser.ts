@@ -198,8 +198,7 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
     footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
   };
 
-  cachedContent._buildError = null;
-  cachedContent._noTestsWarning = null;
+  cachedContent.pageOverride = null;
 
   // Cache holder: daemon's persistent state slot for daemon-mode runs (so the
   // incremental context survives across runs); the per-process cachedContent for
@@ -230,16 +229,14 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
     config._lastBuildErrored = false;
   } catch (error) {
     config._lastBuildErrored = true;
-    cachedContent._buildError = {
-      type: deriveBuildErrorType(error),
-      formatted: formatBuildErrors(error),
-    };
+    const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
+    cachedContent.pageOverride = { kind: 'build-error', error: buildError };
     // Always write index.html immediately: in non-watch mode the server route for '/' is only
     // reached on success (build errors in the group setup bypass runTestsInBrowser entirely),
     // and in watch mode the Playwright page is headless so it never navigates to trigger the
     // route — the --open user browser reloads via WebSocket 'refresh' and does it instead,
     // but that's async and user-dependent. Writing here guarantees the file is always current.
-    await fs.writeFile(path.join(outDir, 'index.html'), buildErrorHTML(cachedContent._buildError));
+    await fs.writeFile(path.join(outDir, 'index.html'), buildErrorHTML(buildError));
     throw error;
   }
 }
@@ -338,12 +335,11 @@ export async function runTestsInBrowser(
       await cachedContent._activeRebuild.catch(() => {});
       cachedContent._activeRebuild = null;
       if (!cachedContent.allTestCode) {
+        const override = cachedContent.pageOverride;
         config.watch &&
-          cachedContent._buildError &&
+          override?.kind === 'build-error' &&
           console.log(
-            `# esbuild Bundle Error: ${cachedContent._buildError.formatted}`
-              .split('\n')
-              .join('\n# '),
+            `# esbuild Bundle Error: ${override.error.formatted}`.split('\n').join('\n# '),
           );
         return connections;
       }
@@ -353,11 +349,11 @@ export async function runTestsInBrowser(
 
     // In group mode the parent orchestrator handles the final summary, after hook, and exit.
     if (!config._groupMode) {
-      if (config.COUNTER.testCount === 0 && !cachedContent._buildError) {
+      if (config.COUNTER.testCount === 0 && cachedContent.pageOverride?.kind !== 'build-error') {
         const displayFiles = allTestFilePaths.map((f) =>
           f.startsWith(`${projectRoot}/`) ? f.slice(projectRoot.length + 1) : f,
         );
-        cachedContent._noTestsWarning = displayFiles;
+        cachedContent.pageOverride = { kind: 'no-tests', files: displayFiles };
         const fileWord = allTestFilePaths.length === 1 ? 'file' : 'files';
         console.log(
           `# Warning: 0 tests registered — no QUnit test cases found in ${allTestFilePaths.length} ${fileWord}`,
@@ -409,20 +405,18 @@ export async function runTestsInBrowser(
     config.lastFailedTestFiles = config.lastRanTestFiles;
     const exception = new BundleError(error);
 
-    // buildTestBundle's own catch sets _buildError for full-bundle failures before rethrowing.
+    // buildTestBundle's own catch sets the build-error override for full-bundle failures before rethrowing.
     // Set it here as a fallback for buildFilteredTests failures, which arrive after
-    // buildTestBundle already cleared _buildError on success. Only apply for esbuild errors
+    // buildTestBundle already cleared it on success. Only apply for esbuild errors
     // (those carry .errors[]) — navigation/timeout errors from runTestInsideHTMLFile should
     // not be classified as build errors.
-    if (!cachedContent._buildError && (error as { errors?: unknown[] }).errors?.length) {
-      cachedContent._buildError = {
-        type: deriveBuildErrorType(error),
-        formatted: formatBuildErrors(error),
-      };
-      fs.writeFile(
-        path.join(outDir, 'qunitx.html'),
-        buildErrorHTML(cachedContent._buildError),
-      ).catch(
+    if (
+      cachedContent.pageOverride?.kind !== 'build-error' &&
+      (error as { errors?: unknown[] }).errors?.length
+    ) {
+      const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
+      cachedContent.pageOverride = { kind: 'build-error', error: buildError };
+      fs.writeFile(path.join(outDir, 'qunitx.html'), buildErrorHTML(buildError)).catch(
         (err: Error) =>
           config.debug &&
           process.stderr.write(`# [qunitx] writeFile qunitx.html: ${err.message}\n`),
@@ -486,8 +480,7 @@ export async function buildAllGroupBundles(
   groupCachedContents: CachedContent[],
 ): Promise<void> {
   groupCachedContents.forEach((cachedContent) => {
-    cachedContent._buildError = null;
-    cachedContent._noTestsWarning = null;
+    cachedContent.pageOverride = null;
   });
 
   const { projectRoot, debug, browser } = groupConfigs[0];
@@ -630,7 +623,7 @@ export async function buildAllGroupBundles(
     const errorHtml = buildErrorHTML(buildError);
     await Promise.all(
       activeGroups.map((group) => {
-        group.cachedContent._buildError = buildError;
+        group.cachedContent.pageOverride = { kind: 'build-error', error: buildError };
         return fs
           .writeFile(
             path.join(path.resolve(group.config.projectRoot, group.config.output), 'index.html'),
