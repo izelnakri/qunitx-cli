@@ -92,6 +92,28 @@ module('--search / --print', { concurrency: true }, (_hooks, moduleMetadata) => 
     assert.equal(new Set(outputs).size, 1, '--search, -s, --print and --preview are one flag');
   });
 
+  test('a file whose declarator is a local alias is reported, not silently dropped', async (assert, tm) => {
+    // `var t = QUnit.test` is invisible to the static scan (declarators resolve from the qunitx
+    // import and the QUnit global only). Previously such a file just vanished from the count; the
+    // listing must say it saw nothing rather than under-report.
+    const dir = await fs.mkdtemp(path.join(CWD, 'tmp', 'qunitx-alias-'));
+    await fs.writeFile(
+      path.join(dir, 'alias-test.ts'),
+      `import QUnit from 'qunitx';\n` +
+        `var t = QUnit.test;\n` +
+        `t('hidden by alias', function (assert) { assert.ok(true); });\n`,
+    );
+    try {
+      const result = await shellFails(`node cli.ts ${dir} --print`, { ...moduleMetadata, ...tm });
+
+      assert.includes(result.stdout, '0 of 0 tests');
+      assert.includes(result.stdout, 'declared no tests the scan could see');
+      assert.includes(result.stdout, 'local alias');
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test('the preview matches what an actual run selects', async (assert, tm) => {
     // The whole promise of --search: what it lists is what -t would run. A drifting matcher would
     // make the preview a lie, so this pins them together end to end.
