@@ -698,16 +698,22 @@ function colorEvent(event: string): unknown {
  */
 export function toWatchableRoot(lookupPath: string): string {
   if (fs.existsSync(lookupPath)) return lookupPath;
-  let dir = lookupPath;
-  while (dir !== path.dirname(dir)) {
-    dir = path.dirname(dir);
-    if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+
+  // "Try the parent, else its parent" — recursion says that directly, where the loop had to step up
+  // and test in separate statements. It stops at the first hit exactly as the loop did, so the
+  // syscall count is unchanged and no ancestor list is materialised. Depth is path segments.
+  const deepestExisting = (dir: string): string => {
+    const parent = path.dirname(dir);
+    if (parent === dir) return process.cwd();
+    if (fs.existsSync(parent) && fs.statSync(parent).isDirectory()) {
       // Only reachable when a path's whole chain is missing (never for real cwd-joined inputs) and
       // the sole existing ancestor is the filesystem root. Floor at cwd rather than hand fs.watch a
       // root, which would recursively watch the entire disk.
-      return dir === path.parse(dir).root ? process.cwd() : dir;
+      return parent === path.parse(parent).root ? process.cwd() : parent;
     }
-  }
 
-  return process.cwd();
+    return deepestExisting(parent);
+  };
+
+  return deepestExisting(lookupPath);
 }
