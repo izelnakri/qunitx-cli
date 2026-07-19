@@ -15,6 +15,7 @@ function newCounter(): Counter {
 /** Fresh run state for a single `qunitx` invocation. Built once per run in `setupConfig()`. */
 export function newRunState(): RunState {
   return {
+    reporters: [],
     results: {
       counter: newCounter(),
       failedFiles: new Set(),

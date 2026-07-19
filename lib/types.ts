@@ -150,6 +150,11 @@ export type CoverageFileMap = Map<string, FileCoverage>;
 export interface RunState {
   /** Whole-run accumulators, shared by reference across every concurrent group. */
   results: RunResults;
+  /**
+   * Active reporter instances for this run, built by `createReporters` in `setupConfig`.
+   * One set for the whole run, so a stateful reporter sees every group rather than one slice.
+   */
+  reporters: Reporter[];
 }
 
 /**
@@ -389,12 +394,6 @@ export interface Config {
   webServer?: HTTPServer;
   /** Decoded inline source map for the active test bundle; used to resolve stack frames to original sources. */
   _sourceMapDecoder?: SourceMapDecoder | null;
-  /**
-   * Active reporter instances for this run, built by `createReporters` in `setupConfig`.
-   * Shared by reference across all concurrent groups (same as the run counter), so a stateful
-   * reporter sees the whole run rather than one group's slice.
-   */
-  _reporters?: Reporter[];
 }
 
 /**

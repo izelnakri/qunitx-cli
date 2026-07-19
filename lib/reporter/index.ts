@@ -30,7 +30,7 @@ export function createReporters(config: Config): Reporter[] {
 
 /** Emits run start to every active reporter. In watch mode this fires once per rerun. */
 export function reportRunStart(config: Config, info: RunStartInfo): void {
-  config._reporters?.forEach((reporter) => reporter.onRunStart?.(config, info));
+  config.state.reporters.forEach((reporter) => reporter.onRunStart?.(config, info));
 }
 
 /**
@@ -40,12 +40,12 @@ export function reportRunStart(config: Config, info: RunStartInfo): void {
  */
 export function reportTestEnd(config: Config, details: TestDetails): void {
   updateCounter(config.state.results.counter, details);
-  config._reporters?.forEach((reporter) => reporter.onTestEnd?.(config, details));
+  config.state.reporters.forEach((reporter) => reporter.onTestEnd?.(config, details));
 }
 
 /** Emits run end to every active reporter, awaiting any that flush asynchronously. */
 export async function reportRunEnd(config: Config, info: RunEndInfo): Promise<void> {
-  for (const reporter of config._reporters ?? []) {
+  for (const reporter of config.state.reporters) {
     await reporter.onRunEnd?.(config, info);
   }
 }

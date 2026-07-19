@@ -22,7 +22,7 @@ export type ReporterName = (typeof REPORTERS)[number];
  * repeats per rerun, so stateful reporters must reset in `onRunStart`.
  *
  * Concurrency: one reporter instance is shared across all concurrent groups (the group
- * configs are spread off the parent config, so `_reporters` is the same array). `onTestEnd`
+ * configs are spread off the parent config, so `state.reporters` is the same array). `onTestEnd`
  * therefore arrives interleaved across groups.
  */
 export interface Reporter {
