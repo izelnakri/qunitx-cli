@@ -164,6 +164,36 @@ export interface RunState {
   daemon: DaemonState | null;
   /** Number of concurrent groups in this run; 1 for watch and single-group runs. */
   groupCount: number;
+  /** File-watcher build bookkeeping. Only meaningful in watch mode, where there is one group. */
+  watch: WatchState;
+}
+
+/**
+ * Build bookkeeping owned by the file watcher, used to decide whether a filesystem event
+ * should dispatch a rebuild. Watch mode runs exactly one group, so nothing here is contended.
+ */
+export interface WatchState {
+  /** `true` while esbuild is actively compiling. */
+  building: boolean;
+  /** Queued build-trigger callback; fires once the in-progress build completes. */
+  pendingBuildTrigger: (() => void) | null;
+  /** File paths added since the last build, used to decide whether a rebuild is needed. */
+  justAddedFiles: Set<string>;
+  /** Timestamp (ms) of the most recent *successful* build, used for debounce logic. `0` before
+   * the first build. */
+  lastBuildEndMs: number;
+  /** `true` if the most recent build ended in an esbuild error. Keeps `lastBuildEndMs` pinned to
+   * the last good build so a fix arriving after the error is never suppressed. Written by every
+   * run, but only ever read in watch mode. */
+  lastBuildErrored: boolean;
+  /** Per-file content hash of what was last dispatched to a build. Both the fs.watch change
+   * handler and the macOS/Deno rescan compare against this instead of mtime — mtime has
+   * 1-second resolution on some filesystems (macOS/HFS+), so rapid same-second writes with
+   * different content are indistinguishable by mtime; the hash catches them and drops echoes. */
+  builtContentHash: Record<string, string>;
+  /** `filePath → ms` of when each file was last processed as an 'add', so a 'change' echo
+   * arriving inside ADD_SUPPRESS_WINDOW_MS can be suppressed. */
+  justAddedAt: Map<string, number>;
 }
 
 /** The daemon's persistent, cross-run handles, lent to a single run via {@link RunState.daemon}. */
@@ -363,22 +393,6 @@ export interface Config {
     failedTests: number;
     currentTest: string | null;
   } | null;
-  /** `true` while esbuild is actively compiling. */
-  _building?: boolean;
-  /** Queued build-trigger callback; fires once the in-progress build completes. */
-  _pendingBuildTrigger?: (() => void) | null;
-  /** File paths added since the last build, used to decide whether a rebuild is needed. */
-  _justAddedFiles?: Set<string>;
-  /** Timestamp (ms) of the most recent *successful* build, used for debounce logic. */
-  _lastBuildEndMs?: number;
-  /** `true` if the most recent build ended in an esbuild error. Keeps `_lastBuildEndMs`
-   * pinned to the last good build so a fix arriving after the error is never suppressed. */
-  _lastBuildErrored?: boolean;
-  /** Per-file content hash of what was last dispatched to a build. Both the fs.watch change
-   * handler and the macOS/Deno rescan compare against this instead of mtime — mtime has
-   * 1-second resolution on some filesystems (macOS/HFS+), so rapid same-second writes with
-   * different content are indistinguishable by mtime; the hash catches them and drops echoes. */
-  _builtContentHash?: Record<string, string>;
   /** In-flight console handler promises; awaited before browser/page close so Firefox BiDi round-trips complete. */
   _pendingConsoleHandlers?: Set<Promise<void>> | null;
   /**

@@ -227,9 +227,9 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
     // Persist metafile for the next --changed run. Best-effort; cache miss
     // on subsequent reads degrades to "run all tests."
     if (metafile) void writeMetafileCache(projectRoot, process.cwd(), metafile);
-    config._lastBuildErrored = false;
+    config.state.watch.lastBuildErrored = false;
   } catch (error) {
-    config._lastBuildErrored = true;
+    config.state.watch.lastBuildErrored = true;
     const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
     cachedContent.pageOverride = { kind: 'build-error', error: buildError };
     // Always write index.html immediately: in non-watch mode the server route for '/' is only

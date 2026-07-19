@@ -52,20 +52,10 @@ const MAX_STABILITY_ATTEMPTS = 10;
 // Windows fs.watch (ReadDirectoryChangesW) fires both a `rename` (→ classified as 'add')
 // AND one or more spurious `change` events for a single fs.writeFile of a new file. The
 // trailing 'change' arrives after the add's filtered-rebuild has completed, so the existing
-// `_building` gate doesn't catch it — it ends up triggering a redundant FULL rebuild that
+// `building` gate doesn't catch it — it ends up triggering a redundant FULL rebuild that
 // races the filtered one. Suppressing 'change' for files added within this window kills the
 // race without affecting genuine post-add edits (rare and >> 1s apart in practice).
 const ADD_SUPPRESS_WINDOW_MS = 1_000;
-// Per-Config map of `filePath → ms timestamp` recording when each file was last processed
-// as an 'add'. Module-scoped (not on Config) since it is purely watcher-internal state;
-// the WeakMap entries are GC'd with the Config they belong to.
-const justAddedAt: WeakMap<Config, Map<string, number>> = new WeakMap();
-
-function recordJustAdded(config: Config, filePath: string): void {
-  let map = justAddedAt.get(config);
-  if (!map) justAddedAt.set(config, (map = new Map()));
-  map.set(filePath, Date.now());
-}
 
 // Dispatch a 'change' build ONLY when the file's CONTENT actually differs from what was last
 // built. mtime alone is unreliable: macOS/HFS+ reports 1-second mtime resolution, so a burst
@@ -73,7 +63,7 @@ function recordJustAdded(config: Config, filePath: string): void {
 // which let the final write of the burst go untested (a 120s watch hang on macOS/webkit).
 // Hashing the content is authoritative: an overlayfs/kernel echo hashes identically and is
 // dropped, while a genuine change — even one that lands during a slow (webkit) build — is
-// always caught. config._builtContentHash is shared by the fs.watch change handler and the
+// always caught. builtContentHash is shared by the fs.watch change handler and the
 // rescan safety-net, so whichever dispatches first records the hash and the other won't re-fire.
 /**
  * Reads a file, re-reading until two reads spaced `STABILITY_GAP_MS` apart return byte-identical
@@ -111,7 +101,7 @@ async function dispatchIfContentChanged(
   } catch {
     return; // file vanished mid-read — the unlink/rename passes handle removal
   }
-  const hashes = (config._builtContentHash ??= {});
+  const hashes = config.state.watch.builtContentHash;
   if (hash === hashes[filePath]) return;
   hashes[filePath] = hash;
   handleWatchEvent(config, extensions, 'change', filePath, onEventFunc, onFinishFunc);
@@ -136,9 +126,9 @@ export function setupFileWatchers(
   const extensions = config.extensions || defaultProjectConfigValues.extensions;
   // Seed the build-end timestamp so the macOS rescan has a baseline for detecting modifies
   // fs.watch may have dropped. The initial build does not flow through handleWatchEvent (it
-  // runs directly from run.ts), so on a failed initial build _lastBuildEndMs would otherwise
-  // stay undefined and the rescan could not distinguish stale files from genuine modifications.
-  config._lastBuildEndMs ??= Date.now();
+  // runs directly from run.ts), so on a failed initial build lastBuildEndMs would otherwise
+  // stay 0 and the rescan could not distinguish stale files from genuine modifications.
+  config.state.watch.lastBuildEndMs ||= Date.now();
   // Seed the content-hash baseline for already-tracked files so the first rescan tick doesn't
   // rebuild every file: an unchanged file hashes identically to its seed and is skipped, while a
   // genuine post-startup modification — even a same-second one mtime can't see — hashes
@@ -146,8 +136,8 @@ export function setupFileWatchers(
   // is gated on this promise below, so no change event is processed until seeding completes. That
   // ordering is load-bearing: without it, a seed read that lands after the first user write would
   // capture the already-changed content and then miss that change (it hashes identically to the
-  // seed) — which was the hang. `??=` never clobbers a hash a build already recorded.
-  const builtContentHash = (config._builtContentHash ??= {});
+  // seed) — which was the hang. Seeding never clobbers a hash a build already recorded.
+  const builtContentHash = config.state.watch.builtContentHash;
   const seedPromise = Promise.all(
     Object.keys(config.fsTree).map(async (filePath) => {
       try {
@@ -469,13 +459,17 @@ export function handleWatchEvent(
 
   // Spurious 'change' fires after 'add' when inotify flushes content after rename.
   // Ignore it while the add's build is running so it doesn't queue a redundant full re-run.
-  if (event === 'change' && config._building && config._justAddedFiles?.has(filePath))
+  if (
+    event === 'change' &&
+    config.state.watch.building &&
+    config.state.watch.justAddedFiles.has(filePath)
+  )
     return Promise.resolve();
 
   // Same race, post-build: Windows fs.watch fires a trailing 'change' AFTER the add's
-  // build completes, which the `_building` gate above misses. See ADD_SUPPRESS_WINDOW_MS.
+  // build completes, which the `building` gate above misses. See ADD_SUPPRESS_WINDOW_MS.
   if (event === 'change') {
-    const addedAt = justAddedAt.get(config)?.get(filePath);
+    const addedAt = config.state.watch.justAddedAt.get(filePath);
     if (addedAt !== undefined && Date.now() - addedAt < ADD_SUPPRESS_WINDOW_MS)
       return Promise.resolve();
   }
@@ -495,24 +489,24 @@ export function handleWatchEvent(
     magenta().bold('=================================================================='),
   );
 
-  if (event === 'add') recordJustAdded(config, filePath);
+  if (event === 'add') config.state.watch.justAddedAt.set(filePath, Date.now());
 
-  if (config._building) {
+  if (config.state.watch.building) {
     // Queue this event so it fires immediately after the current build finishes (last-write-wins).
     // Track added files so their spurious post-add change events are also filtered above.
-    if (event === 'add') config._justAddedFiles?.add(filePath);
-    config._pendingBuildTrigger = () =>
+    if (event === 'add') config.state.watch.justAddedFiles.add(filePath);
+    config.state.watch.pendingBuildTrigger = () =>
       handleWatchEvent(config, extensions, event, filePath, onEventFunc, onFinishFunc);
     return Promise.resolve();
   }
 
-  config._building = true;
-  config._justAddedFiles = event === 'add' ? new Set([filePath]) : new Set();
+  config.state.watch.building = true;
+  config.state.watch.justAddedFiles = event === 'add' ? new Set([filePath]) : new Set();
 
   const result = onEventFunc(event, filePath);
 
   if (!(result instanceof Promise)) {
-    config._building = false;
+    config.state.watch.building = false;
     return Promise.resolve();
   }
 
@@ -520,25 +514,25 @@ export function handleWatchEvent(
     .then(() => onFinishFunc?.(filePath, event))
     .catch((error) => console.error('#', red('Build error:'), error.message || error))
     .finally(() => {
-      config._building = false;
+      config.state.watch.building = false;
       // Only advance the "last successful build" timestamp on a clean build. A failed
       // build (esbuild bundle error) leaves no successfully-built content, so keeping the
       // timestamp pinned to the last good build means the echo-suppression below (and the
       // rescan path) won't fence out the user's fix — which on coarse-mtime filesystems
       // (CI overlayfs) can land in the same/earlier second as the failed build's end and
       // otherwise gets dropped, hanging watch mode on the error until an unrelated change.
-      if (!config._lastBuildErrored) {
-        config._lastBuildEndMs = Date.now();
-      } else if (config._builtContentHash) {
+      if (!config.state.watch.lastBuildErrored) {
+        config.state.watch.lastBuildEndMs = Date.now();
+      } else {
         // A failed build leaves the bundle broken, so the content-hash baseline is stale: drop this
         // file's entry so the fix re-fires even when it reverts to the last successfully-built
         // content (identical hash). Otherwise a build-error → revert cycle hangs on macOS, where
         // the error's write can arrive as an fs.watch 'rename' that never advanced the baseline.
-        delete config._builtContentHash[filePath];
+        delete config.state.watch.builtContentHash[filePath];
       }
-      if (config._pendingBuildTrigger) {
-        const trigger = config._pendingBuildTrigger;
-        config._pendingBuildTrigger = null;
+      if (config.state.watch.pendingBuildTrigger) {
+        const trigger = config.state.watch.pendingBuildTrigger;
+        config.state.watch.pendingBuildTrigger = null;
         trigger();
       }
     });
@@ -549,7 +543,7 @@ export function handleWatchEvent(
  * between the directory contents and `config.fsTree`. Used as a 1 s safety-net poll on macOS
  * where FSEvents can drop events under load — additions and removals are recovered from the
  * directory listing, and modifications are recovered by re-stat'ing every tracked file and
- * firing `change` whenever its mtime is newer than `config._lastBuildEndMs` (the moment the
+ * firing `change` whenever its mtime is newer than `config.state.watch.lastBuildEndMs` (the moment the
  * last build saw the file). The seed for that baseline is set in {@link setupFileWatchers}.
  */
 export async function rescanDirectoryForDelta(
@@ -581,7 +575,7 @@ export async function rescanDirectoryForDelta(
       if (!(entryPath in config.fsTree)) {
         if (entry.isSymbolicLink()) trackSymlinkFn?.(entryPath);
         handleWatchEvent(config, extensions, 'add', entryPath, onEventFunc, onFinishFunc);
-      } else if (config._lastBuildEndMs) {
+      } else if (config.state.watch.lastBuildEndMs) {
         trackedToRecheck.push(entryPath);
       }
     }
@@ -591,7 +585,7 @@ export async function rescanDirectoryForDelta(
     // 1-second mtime resolution, so a write in the same second as the last build must still be
     // considered. The hash (in dispatchIfContentChanged) is what actually distinguishes a new
     // write from an untouched file, so pre-existing files are never spuriously rebuilt.
-    const buildEndMs = config._lastBuildEndMs ?? 0;
+    const buildEndMs = config.state.watch.lastBuildEndMs;
     await Promise.all(
       trackedToRecheck.map(async (filePath) => {
         try {
