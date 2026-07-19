@@ -24,7 +24,7 @@ import {
   DaemonRunError,
 } from './run/tests-in-browser.ts';
 import { clearCachedBundles } from './run/cached-bundles.ts';
-import { resetRunResults, reusablePageSlot } from '../setup/run-state.ts';
+import { newGroupState, resetRunResults, reusablePageSlot } from '../setup/run-state.ts';
 import { setupFileWatchers } from '../setup/file-watcher.ts';
 import { getChangedFsTree } from '../setup/get-changed-fs-tree.ts';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
@@ -381,6 +381,9 @@ async function runConcurrentMode(
     fsTree: Object.fromEntries(files.map((filePath) => [filePath, config.fsTree[filePath]])),
     // Single group keeps the root output dir for backward-compatible file paths.
     output: groupCount === 1 ? config.output : `${config.output}/group-${i}`,
+    // Everything else on `state` is deliberately shared by reference (see RunState); only
+    // `group` is replaced, so each group gets its own signals rather than racing on one set.
+    state: { ...config.state, group: newGroupState() },
     _groupMode: true,
     _phase: 'bundling' as Config['_phase'],
   }));

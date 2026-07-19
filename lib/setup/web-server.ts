@@ -122,7 +122,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         // Signal Node.js so it can flip wsConnected for accurate TIMEOUT diagnostics
         // without resetting the per-test timer (that happens on 'connection' below).
         config._phase = 'loading';
-        config._onWsOpen?.();
+        config.state.group.signals.onWsOpen?.();
       } else if (event === 'connection') {
         config._phase = 'running';
         // Dedup map reset is owned by runTestsInBrowser (alongside the counter
@@ -137,7 +137,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
           reportRunStart(config, { fileCount: null, groupCount: null });
         }
         if (config.debug && config._groupMode) debugGroupHeader(config);
-        config._resetTestTimeout?.();
+        config.state.group.signals.resetTestTimeout?.();
       } else if (event === 'testEnd' && !abort) {
         // Server-side enforcement of "QUnit fires testEnd exactly once per
         // registered test per run." The 2× flake (CI runs 26046813154 and
@@ -170,7 +170,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
             `# SLOW (${details.runtime.toFixed(0)}ms / ${config.timeout}ms timeout): ${details.fullName.join(' | ')}\n`,
           );
         }
-        config._resetTestTimeout?.();
+        config.state.group.signals.resetTestTimeout?.();
         reportTestEnd(config, details);
       } else if (event === 'done') {
         // Signal test completion. TCP ordering guarantees all testEnd messages
@@ -184,9 +184,9 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
             `# group done: ${details.passed} passed, ${details.failed} failed (${details.runtime}ms)\n`,
           );
         }
-        if (typeof config._testRunDone === 'function') {
-          config._testRunDone();
-          config._testRunDone = null;
+        if (typeof config.state.group.signals.testRunDone === 'function') {
+          config.state.group.signals.testRunDone();
+          config.state.group.signals.testRunDone = null;
         }
       }
     });
@@ -212,8 +212,8 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
           failedTests: 0,
           currentTest: null,
         };
-        config._testRunDone?.();
-        config._testRunDone = null;
+        config.state.group.signals.testRunDone?.();
+        config.state.group.signals.testRunDone = null;
         res.writeHead(200, {
           'Content-Type': 'application/javascript',
           'Cache-Control': 'no-store',
@@ -238,7 +238,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
     }
     // Signal Node.js that Chrome has fetched the bundle. Resets the idle timer so Chrome
     // gets a fresh budget to compile and execute tests.js — decoupled from WS open time.
-    config._onTestsJsServed?.();
+    config.state.group.signals.onTestsJsServed?.();
     res.writeHead(200, {
       'Content-Type': 'application/javascript',
       'Cache-Control': 'no-store',
@@ -271,7 +271,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         'console.error("[qunitx] /filtered-tests.js requested before bundle was built — filteredTestCode is null");',
       );
     }
-    config._onTestsJsServed?.();
+    config.state.group.signals.onTestsJsServed?.();
     res.writeHead(200, {
       'Content-Type': 'application/javascript',
       'Cache-Control': 'no-store',
@@ -299,8 +299,8 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
           failedTests: 0,
           currentTest: null,
         };
-        config._testRunDone?.();
-        config._testRunDone = null;
+        config.state.group.signals.testRunDone?.();
+        config.state.group.signals.testRunDone = null;
       }
       return saveHTML(
         path.join(path.resolve(config.projectRoot, config.output), 'index.html'),
@@ -669,7 +669,7 @@ export function registerGroupRoutes(
         'console.error("[qunitx] /tests.js requested before bundle was built — allTestCode is null");',
       );
     }
-    groupConfig._onTestsJsServed?.();
+    groupConfig.state.group.signals.onTestsJsServed?.();
     res.writeHead(200, {
       'Content-Type': 'application/javascript',
       'Cache-Control': 'no-store',
@@ -727,13 +727,13 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
 
       if (event === 'wsOpen') {
         config._phase = 'loading';
-        config._onWsOpen?.();
+        config.state.group.signals.onWsOpen?.();
       } else if (event === 'connection') {
         config._phase = 'running';
         // Dedup map reset owned by run.ts at groupConfig construction (see
         // setupWebServer for the equivalent rationale); not reset here.
         if (config.debug) debugGroupHeader(config);
-        config._resetTestTimeout?.();
+        config.state.group.signals.resetTestTimeout?.();
       } else if (event === 'testEnd' && !abort) {
         // Server-side enforcement; see setupWebServer for full rationale.
         const fullName = details.fullName.join(' | ');
@@ -755,7 +755,7 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
             `# SLOW (${details.runtime.toFixed(0)}ms / ${config.timeout}ms timeout): ${details.fullName.join(' | ')}\n`,
           );
         }
-        config._resetTestTimeout?.();
+        config.state.group.signals.resetTestTimeout?.();
         reportTestEnd(config, details);
       } else if (event === 'done') {
         config._phase = 'done';
@@ -765,9 +765,9 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
             `# group done: ${details.passed} passed, ${details.failed} failed (${details.runtime}ms)\n`,
           );
         }
-        if (typeof config._testRunDone === 'function') {
-          config._testRunDone();
-          config._testRunDone = null;
+        if (typeof config.state.group.signals.testRunDone === 'function') {
+          config.state.group.signals.testRunDone();
+          config.state.group.signals.testRunDone = null;
         }
       }
     });
