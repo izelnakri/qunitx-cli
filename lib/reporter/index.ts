@@ -20,7 +20,7 @@ const STDOUT_REPORTERS: Record<ReporterName, new () => Reporter> = {
  * Reporter wiring. `config.reporter` selects exactly one stdout reporter; artifact
  * reporters (JUnit) are additive and stack on top. Built once per run in `setupConfig` and
  * shared by every concurrent group — the group configs are spread off the parent config, so
- * they all reference this same array (the same way `COUNTER` is shared).
+ * they all reference this same array (the same way the run counter is shared).
  */
 export function createReporters(config: Config): Reporter[] {
   // Exactly one stdout reporter, plus any additive artifact reporters. A plain run is a
@@ -39,7 +39,7 @@ export function reportRunStart(config: Config, info: RunStartInfo): void {
  * correct regardless of how many reporters are attached.
  */
 export function reportTestEnd(config: Config, details: TestDetails): void {
-  updateCounter(config.COUNTER, details);
+  updateCounter(config.state.results.counter, details);
   config._reporters?.forEach((reporter) => reporter.onTestEnd?.(config, details));
 }
 

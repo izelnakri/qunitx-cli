@@ -28,9 +28,9 @@ export type ReporterName = (typeof REPORTERS)[number];
 export interface Reporter {
   /** Called once before any test output. In watch mode, once per rerun. */
   onRunStart?(config: Config, info: RunStartInfo): void;
-  /** Called once per test, after `COUNTER` has already been updated for this test. */
+  /** Called once per test, after `counter` has already been updated for this test. */
   onTestEnd?(config: Config, details: TestDetails): void;
-  /** Called once when the run finishes, with the final counts on `config.COUNTER`. */
+  /** Called once when the run finishes, with the final counts on `config.state.results.counter`. */
   onRunEnd?(config: Config, info: RunEndInfo): void | Promise<void>;
 }
 
@@ -76,7 +76,7 @@ export interface RunStartInfo {
   groupCount: number | null;
 }
 
-/** Final run info; the counts themselves live on `config.COUNTER`. */
+/** Final run info; the counts themselves live on `config.state.results.counter`. */
 export interface RunEndInfo {
   /** Wall-clock duration of the run in milliseconds. */
   durationMs: number;
@@ -85,23 +85,23 @@ export interface RunEndInfo {
 /**
  * Applies one `testEnd` to the run's counters. Kept separate from any reporter so the
  * numbers are identical no matter which reporter (or how many) is active — the exit code
- * and the TAP plan both read `COUNTER`, so it must be updated exactly once per test.
+ * and the TAP plan both read `counter`, so it must be updated exactly once per test.
  */
-export function updateCounter(COUNTER: Counter, details: TestDetails): void {
-  COUNTER.testCount++;
+export function updateCounter(counter: Counter, details: TestDetails): void {
+  counter.testCount++;
 
   if (details.status === 'skipped') {
-    COUNTER.skipCount++;
+    counter.skipCount++;
   } else if (details.status === 'todo') {
-    COUNTER.todoCount = (COUNTER.todoCount ?? 0) + 1;
+    counter.todoCount = (counter.todoCount ?? 0) + 1;
   } else if (details.status === 'failed') {
-    COUNTER.failCount++;
+    counter.failCount++;
     (details.assertions ?? []).forEach((assertion) => {
       if (!assertion.passed && assertion.todo === false) {
-        COUNTER.errorCount = (COUNTER.errorCount ?? 0) + 1;
+        counter.errorCount = (counter.errorCount ?? 0) + 1;
       }
     });
   } else if (details.status === 'passed') {
-    COUNTER.passCount++;
+    counter.passCount++;
   }
 }

@@ -15,6 +15,7 @@ import { writeMetafileCache } from '../../utils/metafile-cache.ts';
 import { writeFailureCache, buildFailureCache } from '../../utils/failure-cache.ts';
 import { isFilteredRun, qunitFilterQuery } from '../../selection/filter-query.ts';
 import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
+import { resetRunResults } from '../../setup/run-state.ts';
 import type { AffectedMetafile } from '../../utils/get-changed-files.ts';
 import type { Page } from 'playwright-core';
 import type { Config, CachedContent, Connections, EsbuildCache } from '../../types.ts';
@@ -256,22 +257,16 @@ export async function runTestsInBrowser(
   const allTestFilePaths = Object.keys(config.fsTree);
   const runHasFilter = !!targetTestFilesToFilter;
 
-  // In group mode the COUNTER is shared across all groups and managed by run.js.
+  // In group mode the counter is shared across all groups and managed by run.js.
   if (!config._groupMode) {
-    config.COUNTER = {
-      testCount: 0,
-      failCount: 0,
-      skipCount: 0,
-      todoCount: 0,
-      passCount: 0,
-      errorCount: 0,
-    };
-    // Reset the per-run testEnd dedup map in lockstep with COUNTER so the two
+    // In place, not replaced: see resetRunResults — group configs share this object.
+    resetRunResults(config.state.results);
+    // Reset the per-run testEnd dedup map in lockstep with the counter so the two
     // share the same lifetime. WS handler ONLY checks the map — it does not
     // reset on 'connection' events. That avoids the watch-rerun regression
     // from CI run 26042614416 where a stale testEnd arriving just after
     // `connection` for the next run got counted spuriously because the dedup
-    // map had been wiped. Tying the reset to COUNTER reset is the single
+    // map had been wiped. Tying the reset to the counter reset is the single
     // source of truth for "this is a fresh run, drop old tracking state."
     config._testEndCounts = new Map();
     // Fresh failure-cache accumulators for this run (watch/single-group path). Group mode
@@ -279,7 +274,7 @@ export async function runTestsInBrowser(
     config._failedTestFiles = new Set();
     config._failedTests = [];
     // Fresh reporter/coverage accumulators per run in single/watch mode (group mode owns
-    // these on the parent config in run.ts). Reset in lockstep with COUNTER so a watch
+    // these on the parent config in run.ts). Reset in lockstep with the counter so a watch
     // rerun reports only that run's cases and coverage, not an accumulation across reruns.
     config._coverageCollector = config.coverage ? new Map() : null;
   }
@@ -349,7 +344,10 @@ export async function runTestsInBrowser(
 
     // In group mode the parent orchestrator handles the final summary, after hook, and exit.
     if (!config._groupMode) {
-      if (config.COUNTER.testCount === 0 && cachedContent.pageOverride?.kind !== 'build-error') {
+      if (
+        config.state.results.counter.testCount === 0 &&
+        cachedContent.pageOverride?.kind !== 'build-error'
+      ) {
         const displayFiles = allTestFilePaths.map((f) =>
           f.startsWith(`${projectRoot}/`) ? f.slice(projectRoot.length + 1) : f,
         );
@@ -378,7 +376,11 @@ export async function runTestsInBrowser(
       if (config.coverage) await writeCoverageReport(config, allTestFilePaths);
 
       if (config.after) {
-        await runUserModule(`${process.cwd()}/${config.after}`, config.COUNTER, 'after');
+        await runUserModule(
+          `${process.cwd()}/${config.after}`,
+          config.state.results.counter,
+          'after',
+        );
       }
 
       if (!config.watch) {
@@ -387,14 +389,14 @@ export async function runTestsInBrowser(
         // must not close them here. Throw instead so the daemon's run handler
         // captures the exit code and keeps the process alive for the next run.
         if (config._daemonMode) {
-          throw new DaemonRunError(config.COUNTER.failCount > 0 ? 1 : 0);
+          throw new DaemonRunError(config.state.results.counter.failCount > 0 ? 1 : 0);
         }
         await closeWithGrace([
           connections.server?.close(),
           connections.browser?.close(),
           shutdownPrelaunch(),
         ]);
-        return process.exit(config.COUNTER.failCount > 0 ? 1 : 0);
+        return process.exit(config.state.results.counter.failCount > 0 ? 1 : 0);
       }
     }
   } catch (error) {
@@ -994,10 +996,10 @@ async function runTestInsideHTMLFile(
       config._pendingConsoleHandlers,
       config._daemonMode,
     );
-  } else if (QUNIT_RESULT.failedTests > config.COUNTER.failCount) {
+  } else if (QUNIT_RESULT.failedTests > config.state.results.counter.failCount) {
     // Safety net: browser tracked failures that WebSocket events never delivered to Node.js
     // (e.g. WS connection dropped mid-run). Reconcile so the exit code is always correct.
-    config.COUNTER.failCount = QUNIT_RESULT.failedTests;
+    config.state.results.counter.failCount = QUNIT_RESULT.failedTests;
   }
 }
 

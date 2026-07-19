@@ -8,6 +8,7 @@ import {
   formatBuildErrors,
 } from '../../lib/commands/run/tests-in-browser.ts';
 import { buildErrorHTML, buildNoTestsHTML } from '../../lib/setup/web-server.ts';
+import { newRunState } from '../../lib/setup/run-state.ts';
 import type { Config, CachedContent } from '../../lib/types.ts';
 
 const CWD = process.cwd();
@@ -327,14 +328,7 @@ function makeConfig(testFiles: string[], watch = false): Config {
     testFileLookupPaths: [],
     fsTree: Object.fromEntries(testFiles.map((f) => [f, null])),
     watch,
-    COUNTER: {
-      testCount: 0,
-      failCount: 0,
-      skipCount: 0,
-      todoCount: 0,
-      passCount: 0,
-      errorCount: 0,
-    },
+    state: newRunState(),
     lastFailedTestFiles: null,
     lastRanTestFiles: null,
     _testRunDone: null,

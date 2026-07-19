@@ -6,7 +6,7 @@ import type { Config } from '../types.ts';
 
 /**
  * The default reporter: streams TAP version 13 to stdout. Stateless — every number it
- * prints comes from `config.COUNTER`, which the dispatcher updates before `onTestEnd`.
+ * prints comes from `config.state.results.counter`, which the dispatcher updates before `onTestEnd`.
  */
 export class TapReporter implements Reporter {
   /** Emits the TAP version header, plus the run banner as a `#` comment. */
@@ -38,11 +38,11 @@ export class TapReporter implements Reporter {
       details.status === 'failed'
         ? failedAssertions(details, config._sourceMapDecoder, config.projectRoot)
         : [];
-    TAPDisplayTestResult(config.COUNTER.testCount, details, failures);
+    TAPDisplayTestResult(config.state.results.counter.testCount, details, failures);
   }
 
   /** Emits the TAP plan line and the run summary. */
   onRunEnd(config: Config, info: RunEndInfo): void {
-    TAPDisplayFinalResult(config.COUNTER, info.durationMs);
+    TAPDisplayFinalResult(config.state.results.counter, info.durationMs);
   }
 }

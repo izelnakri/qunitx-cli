@@ -125,12 +125,12 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         config._onWsOpen?.();
       } else if (event === 'connection') {
         config._phase = 'running';
-        // Dedup map reset is owned by runTestsInBrowser (alongside COUNTER
+        // Dedup map reset is owned by runTestsInBrowser (alongside the counter
         // reset), NOT this WS handler. Resetting on every 'connection' was
         // the bug that broke no-html-test in CI run 26042614416: a stale
         // testEnd arriving just after `connection` for a watch rerun got
         // counted spuriously because the dedup map had been wiped. The map
-        // is now reset only at the same lifecycle boundary as COUNTER.
+        // is now reset only at the same lifecycle boundary as the counter.
         // Group and daemon runs emit run-start once up front in run.ts; only the watch/single
         // path announces per browser connection (each rerun opens a fresh one).
         if (!config._groupMode && !config._daemonMode) {
@@ -147,7 +147,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         // macOS / Deno-compiled binary). Dedup makes the contract explicit
         // and load-bearing: the second arrival of any fullName in the
         // current run is dropped with a loud warning so the underlying
-        // browser/runtime bug stays visible while COUNTER stays correct.
+        // browser/runtime bug stays visible while the counter stays correct.
         const fullName = details.fullName.join(' | ');
         const count = (config._testEndCounts?.get(fullName) ?? 0) + 1;
         config._testEndCounts?.set(fullName, count);
@@ -888,7 +888,7 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
     ${qunitSelectorPreconfig(config)}
     // Idempotency guard: if this runtime script ran in this Window already, do not
     // re-arm Promise.all + QUnit listeners. CI run 26046813154 (job 76573047617)
-    // captured COUNTER = 2 * expected with the diagnostic firing
+    // captured counter = 2 * expected with the diagnostic firing
     // "wss accepted connection #2" — TWO WS connections AND every test re-fired
     // testEnd. The only shape that produces both at once is the IIFE running
     // twice in one page: each invocation registers its own setupWebSocket and

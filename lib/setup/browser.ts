@@ -214,7 +214,7 @@ export async function setupBrowser(
   });
   page.on('pageerror', (error) => {
     console.error(error.toString());
-    config.COUNTER.failCount++;
+    config.state.results.counter.failCount++;
   });
 
   return { server, browser, page };

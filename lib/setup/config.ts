@@ -11,6 +11,7 @@ import { getChangedFsTree } from './get-changed-fs-tree.ts';
 import { parseCliFlags } from '../args/parse-cli-flags.ts';
 import { resolveOnlyFailedFiles, type FailedTestRecord } from '../utils/failure-cache.ts';
 import { createReporters } from '../reporter/index.ts';
+import { newRunState } from './run-state.ts';
 import type { Config, FSTree } from '../types.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
 
@@ -43,14 +44,7 @@ export async function setupConfig(): Promise<Config> {
     lastRanTestFiles: null as string[] | null,
     _failedTestFiles: new Set<string>(),
     _failedTests: [] as FailedTestRecord[],
-    COUNTER: {
-      testCount: 0,
-      failCount: 0,
-      skipCount: 0,
-      todoCount: 0,
-      passCount: 0,
-      errorCount: 0,
-    },
+    state: newRunState(),
     _testRunDone: null as (() => void) | null,
     _resetTestTimeout: null as (() => void) | null,
     _onWsOpen: null as (() => void) | null,

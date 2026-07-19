@@ -1,6 +1,7 @@
 import { module, test } from 'qunitx';
 import { DotReporter } from '../../lib/reporter/dot.ts';
 import { updateCounter } from '../../lib/reporter/types.ts';
+import { newRunState } from '../../lib/setup/run-state.ts';
 import type { TestDetails } from '../../lib/reporter/types.ts';
 import type { Config } from '../../lib/types.ts';
 import '../helpers/custom-asserts.ts';
@@ -11,19 +12,12 @@ const makeConfig = (): Config =>
   ({
     projectRoot: '/proj',
     reporter: 'dot',
-    COUNTER: {
-      testCount: 0,
-      failCount: 0,
-      skipCount: 0,
-      todoCount: 0,
-      passCount: 0,
-      errorCount: 0,
-    },
+    state: newRunState(),
   }) as unknown as Config;
 
 const feed = (reporter: DotReporter, config: Config, details: TestDetails): string =>
   captureStdout(() => {
-    updateCounter(config.COUNTER, details);
+    updateCounter(config.state.results.counter, details);
     reporter.onTestEnd(config, details);
   });
 
