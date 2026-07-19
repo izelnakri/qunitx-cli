@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { daemonSocketPath, daemonInfoPath } from './socket-path.ts';
 import { CLEANUP_GRACE_MS } from '../../utils/close-with-grace.ts';
 import { tokenizeArgs } from '../../args/tokenize-args.ts';
-import { attachLineParser, probeSocket } from './socket-utils.ts';
+import { attachLineParser, probeSocket } from './socket-io.ts';
 import type { Request, ResponseChunk } from './protocol.ts';
 
 const CONNECT_TIMEOUT_MS = 1_000;

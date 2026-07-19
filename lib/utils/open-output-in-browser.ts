@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { findChrome } from '../chrome/find.ts';
-import { qunitFilterQuery } from '../selection/qunit-filter.ts';
+import { qunitFilterQuery } from '../selection/filter-query.ts';
 import type { Config } from '../types.ts';
 
 /**

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { setTimeout, clearTimeout } from 'node:timers';
 import { daemonSocketPath, daemonInfoPath, daemonDir } from './socket-path.ts';
 import { parseDaemonIdleTimeout } from './parse-idle-timeout.ts';
-import { attachLineParser } from './socket-utils.ts';
+import { attachLineParser } from './socket-io.ts';
 import { setupConfig } from '../../setup/config.ts';
 import { launchBrowser } from '../../setup/browser.ts';
 import { DaemonRunError } from '../run/tests-in-browser.ts';
