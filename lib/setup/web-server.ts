@@ -133,7 +133,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         // is now reset only at the same lifecycle boundary as the counter.
         // Group and daemon runs emit run-start once up front in run.ts; only the watch/single
         // path announces per browser connection (each rerun opens a fresh one).
-        if (!config._groupMode && !config._daemonMode) {
+        if (!config._groupMode && !config.state.daemon) {
           reportRunStart(config, { fileCount: null, groupCount: null });
         }
         if (config.debug && config._groupMode) debugGroupHeader(config);

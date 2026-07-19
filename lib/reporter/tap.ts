@@ -16,7 +16,7 @@ export class TapReporter implements Reporter {
     // report at that point.
     if (info.fileCount === null) return;
 
-    const daemon = config._daemonMode ? ' (daemon)' : '';
+    const daemon = config.state.daemon ? ' (daemon)' : '';
     if (info.fileCount === 0) {
       // No test files matched (e.g. --changed filtered everything out): emit a complete,
       // valid TAP document — header plus an empty plan — so parsers see a clean zero run.

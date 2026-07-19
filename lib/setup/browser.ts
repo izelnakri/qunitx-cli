@@ -4,6 +4,7 @@ import { findChrome } from '../chrome/find.ts';
 import { CHROMIUM_ARGS } from '../chrome/args.ts';
 import { prelaunchPromise, shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { perfLog } from '../utils/perf-logger.ts';
+import { reusablePageSlot } from './run-state.ts';
 import type { Browser } from 'playwright-core';
 import type { HTTPServer } from '../servers/web.ts';
 import type { Config, CachedContent, Connections } from '../types.ts';
@@ -129,7 +130,7 @@ export async function setupBrowser(
   // browser context died (Playwright marks the page closed when the browser
   // disconnects). Browser-crash recovery in server.ts nulls the slot too, so
   // this is a belt-and-braces check.
-  const slot = config._daemonPageSlot;
+  const slot = reusablePageSlot(config.state);
   const slotPage = slot?.page && !slot.page.isClosed() ? slot.page : null;
   if (slotPage) {
     slotPage.removeAllListeners('console');
