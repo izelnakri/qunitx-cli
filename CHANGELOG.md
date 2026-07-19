@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.30.0] - 2026-07-19
+[`v0.28.0...v0.30.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.28.0...v0.30.0)
+
+### Bug Fixes
+- Watch a glob input's base dir instead of the raw pattern — 2026-07-17 by [@izelnakri](https://github.com/izelnakri) ([`38cc346`](https://github.com/izelnakri/qunitx-cli/commit/38cc34637296985d68d288a69bdfe38563069fca))
+- Validate --port instead of proceeding with NaN — 2026-07-18 by [@izelnakri](https://github.com/izelnakri) ([`33eeb02`](https://github.com/izelnakri/qunitx-cli/commit/33eeb02358494dd9d7d19851b985fb9f7b4927f8))
+- Never hand fs.watch a filesystem root — 2026-07-18 by [@izelnakri](https://github.com/izelnakri) ([`86ac51e`](https://github.com/izelnakri/qunitx-cli/commit/86ac51e461d3133819e0b15f3cfacd7bd9792f6a))
+- Report files the scan saw no tests in — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`9355d1e`](https://github.com/izelnakri/qunitx-cli/commit/9355d1e2136108ec8a892f5044b9d15bf9a8917e))
+
+### Documentation
+- Document the Token kinds; rename 'other' -> 'opaque' — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`fe81ae3`](https://github.com/izelnakri/qunitx-cli/commit/fe81ae3a0a50f530fb05d5c79979cfe986bbbdad))
+
+### Features
+- Select tests by name, module, or line — 2026-07-17 by [@izelnakri](https://github.com/izelnakri) ([`59e8dc0`](https://github.com/izelnakri/qunitx-cli/commit/59e8dc0f38c0107a773602d674c6edddb53648fb))
+- List matching tests with --search/--print/--preview — 2026-07-17 by [@izelnakri](https://github.com/izelnakri) ([`eb23e95`](https://github.com/izelnakri/qunitx-cli/commit/eb23e959ae504e857ce0c59a127f8abe9a7d8fa7))
+- Honor file#line targets in --search/--print — 2026-07-18 by [@izelnakri](https://github.com/izelnakri) ([`c54c64d`](https://github.com/izelnakri/qunitx-cli/commit/c54c64de9a4d212ec2987e933fca488e3cc238fc))
+- A broader input supersedes a line target on a file it covers — 2026-07-18 by [@izelnakri](https://github.com/izelnakri) ([`f69903b`](https://github.com/izelnakri/qunitx-cli/commit/f69903b7568b72d0d2d6527d2a94a5fe3763af52))
+- Supersede a line target when the same file is also given whole — 2026-07-18 by [@izelnakri](https://github.com/izelnakri) ([`2e47845`](https://github.com/izelnakri/qunitx-cli/commit/2e4784590710ffa40a03c75945af1203c3572a95))
+- Make -p the short alias for --port, not --print — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`243313b`](https://github.com/izelnakri/qunitx-cli/commit/243313b1f41c518d2614eb14ae6e9c39c23ec8d0))
+
+### Performance
+- Set-based membership + input-ordered line-target warnings — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`205a5a0`](https://github.com/izelnakri/qunitx-cli/commit/205a5a0c72fde646882b738cf209f72cd7393255))
+- Fold the column width; batch the listing write — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`2c382d4`](https://github.com/izelnakri/qunitx-cli/commit/2c382d4dfbcc8e42b529a850b286abe1f4d14db7))
+
+### Refactoring
+- Group utils into args/, selection/, chrome/, daemon/ — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`9f629b2`](https://github.com/izelnakri/qunitx-cli/commit/9f629b2c9e5a6b1d8eeb436acaa073e1fb2a1c9e))
+- Compute the =-suffix once in applyFlag — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`0f8cc8a`](https://github.com/izelnakri/qunitx-cli/commit/0f8cc8aa9b73fdc8a392b573be1bb6f3b79979bc))
+- Thread a Scanner through the lexer readers — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`2a9d289`](https://github.com/izelnakri/qunitx-cli/commit/2a9d289bddc7b1a7d427aaf134de15c0af161c19))
+- Fold scanFile's declaration pass; functional accumulators — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`3ac53e2`](https://github.com/izelnakri/qunitx-cli/commit/3ac53e26f14b4d3045b10e3316a3802227dd9e50))
+- Zip group files and selectors into one array — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`3798085`](https://github.com/izelnakri/qunitx-cli/commit/3798085b9191ed89710a9db17966870b43acb298))
+- Disambiguate "group" in the line-target grouping code — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`f676e47`](https://github.com/izelnakri/qunitx-cli/commit/f676e475c5376136b9fdbfb1d5262eed710c09f5))
+- Name the QUnit declarator resolution explicitly — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`dd70ff3`](https://github.com/izelnakri/qunitx-cli/commit/dd70ff305c6b4eb61848c4d7d965c5f1b386190a))
+- Name the filter files for what they do — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`6053f50`](https://github.com/izelnakri/qunitx-cli/commit/6053f50682baa409938bdd38818d94091e254665))
+- Split run() into runWatchMode and runConcurrentMode — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`32c4455`](https://github.com/izelnakri/qunitx-cli/commit/32c44557b4c7484a6ec55ca95ac2e87e9990a750))
+- Move timing and grouping helpers into run/ modules — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`c7ba3bc`](https://github.com/izelnakri/qunitx-cli/commit/c7ba3bc229f1781f47d9fcf75bd2eb2cc95802d2))
+- Build the module path by recursion, not unshift — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`f02c5a3`](https://github.com/izelnakri/qunitx-cli/commit/f02c5a326bd6bb761e66a61793fb7a9cebce79c7))
+- Walk to the watchable root by recursion, not a loop — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`703aa9c`](https://github.com/izelnakri/qunitx-cli/commit/703aa9c70259518ba2c9226507311cdd2e9548e1))
+
 ## [0.28.0] - 2026-07-16
 [`v0.27.1...v0.28.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.27.1...v0.28.0)
 
