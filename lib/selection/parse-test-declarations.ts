@@ -147,9 +147,27 @@ function mapLine(
   return null;
 }
 
+/**
+ * One lexed token. The four kinds exist only to answer what collectDeclarations asks: "is this a
+ * callee name?", "is this a `.` or `(`?", "is this a literal name?", and — for the regex-vs-divide
+ * rule — "did an expression just end?".
+ */
 interface Token {
-  type: 'ident' | 'punct' | 'string' | 'other';
+  /**
+   * - `ident`  — an identifier run, INCLUDING keywords (`test`, `QUnit`, `import`, `return`);
+   *              matched against the resolved declarator names and REGEX_PRECEDING_KEYWORDS.
+   * - `punct`  — exactly one punctuation character, never merged, so paren depth and member
+   *              access can be matched by exact `value` comparison (`.`, `(`, `)`).
+   * - `string` — a string literal's COOKED value, or a template with no `${}`. The only kind a
+   *              declaration name can be read from.
+   * - `opaque` — consumed but deliberately not modelled: a number, a regex literal, or a template
+   *              WITH a `${}`. Its `value` is a sentinel (the digits, `/`, a backtick), not
+   *              content. Like `string` it ENDS an expression, so a following `/` is division.
+   */
+  type: 'ident' | 'punct' | 'string' | 'opaque';
+  /** The token text — cooked for `string`, raw or a sentinel otherwise. */
   value: string;
+  /** 1-based line in the TRANSFORMED output; mapped back to source lines by mapLine(). */
   line: number;
 }
 
@@ -168,7 +186,7 @@ interface Scanner {
 /**
  * Lexes the transform output far enough to find call expressions: identifiers, punctuation and
  * string literals, with comments / template literals / regex literals consumed and discarded.
- * Template literals collapse to a single 'other' token, so `test(\`x ${i}\`)` reads as a call with
+ * Template literals collapse to a single 'opaque' token, so `test(\`x ${i}\`)` reads as a call with
  * a non-literal name rather than a literal one.
  *
  * The body is a flat dispatch table: match the token kind on the first character, then hand off to
@@ -199,15 +217,15 @@ function tokenize(code: string): Token[] {
       // as a quoted string.
       const raw = readTemplate(scanner);
       tokens.push(
-        raw === null ? { type: 'other', value: '`', line } : { type: 'string', value: raw, line },
+        raw === null ? { type: 'opaque', value: '`', line } : { type: 'string', value: raw, line },
       );
     } else if (char === '/' && regexAllowedAfter(tokens)) {
       readRegex(scanner);
-      tokens.push({ type: 'other', value: '/', line });
+      tokens.push({ type: 'opaque', value: '/', line });
     } else if (isIdentStart(char)) {
       tokens.push({ type: 'ident', value: readIdentifier(scanner), line });
     } else if (char >= '0' && char <= '9') {
-      tokens.push({ type: 'other', value: readNumber(scanner), line });
+      tokens.push({ type: 'opaque', value: readNumber(scanner), line });
     } else {
       tokens.push({ type: 'punct', value: char, line });
       scanner.pos++;
@@ -347,7 +365,7 @@ function readIdentifier(scanner: Scanner): string {
   return code.slice(start, pos);
 }
 
-/** Reads a numeric literal run — the digits are irrelevant, only that it is one 'other' token. */
+/** Reads a numeric literal run — the digits are irrelevant, only that it is one 'opaque' token. */
 function readNumber(scanner: Scanner): string {
   const { code } = scanner;
   const start = scanner.pos;
@@ -365,7 +383,7 @@ function readNumber(scanner: Scanner): string {
 function regexAllowedAfter(tokens: Token[]): boolean {
   const previous = tokens.at(-1);
   if (!previous) return true;
-  else if (previous.type === 'string' || previous.type === 'other') return false;
+  else if (previous.type === 'string' || previous.type === 'opaque') return false;
   else if (previous.type === 'ident') return REGEX_PRECEDING_KEYWORDS.has(previous.value);
   else if (previous.type === 'punct') return !')]}'.includes(previous.value);
 
