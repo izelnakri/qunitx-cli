@@ -72,33 +72,34 @@ export async function resolveOnlyFailedFiles(
 export function buildFailureCache(config: Config): FailureCache {
   return {
     browser: config.browser,
-    files: Array.from(config._failedTestFiles ?? []),
-    tests: config._failedTests ?? [],
+    files: Array.from(config.state.results.failedFiles ?? []),
+    tests: config.state.results.failedTests ?? [],
   };
 }
 
 /**
- * Records a failed `testEnd` into the shared per-run slots (`_failedTestFiles` / `_failedTests`)
+ * Records a failed `testEnd` into the shared per-run slots (`state.results.failedFiles` / `failedTests`)
  * used to build the persistent cache. The failing file is attributed via source-map resolution
  * of the first failing assertion's stack; when that can't be resolved to one of the run's test
  * files (timeouts, no stack, a frame in a shared helper), the whole run/group set is added so a
  * failure is never dropped from `--only-failed`.
  *
- * No-op when `_failedTestFiles` is absent (unit-test configs that don't initialize the slots).
+ * No-op when the state slots are absent (unit-test configs built without run state).
  */
 export function recordFailedTest(config: Config, details: FailedTestDetails): void {
-  if (!config._failedTestFiles) return;
+  const results = config.state?.results;
+  if (!results) return;
   const file = attributeFailureFile(
     details.assertions,
     config._sourceMapDecoder,
     config.projectRoot,
   );
   if (file && config.lastRanTestFiles?.includes(file)) {
-    config._failedTestFiles.add(file);
+    results.failedFiles.add(file);
   } else {
-    config.lastRanTestFiles?.forEach((ranFile) => config._failedTestFiles!.add(ranFile));
+    config.lastRanTestFiles?.forEach((ranFile) => results.failedFiles.add(ranFile));
   }
-  config._failedTests?.push({
+  results.failedTests.push({
     file: file ? relativize(file, config.projectRoot) : null,
     module: details.fullName.slice(0, -1).join(' > '),
     testName: details.fullName.at(-1) ?? '',

@@ -259,8 +259,10 @@ export async function runTestsInBrowser(
 
   // In group mode the counter is shared across all groups and managed by run.js.
   if (!config._groupMode) {
+    // Clears the counter, failure sets and coverage for this run (watch/single-group path);
+    // group mode resets them once on the parent config in run.ts before the shared spread.
     // In place, not replaced: see resetRunResults — group configs share this object.
-    resetRunResults(config.state.results);
+    resetRunResults(config.state.results, !!config.coverage);
     // Reset the per-run testEnd dedup map in lockstep with the counter so the two
     // share the same lifetime. WS handler ONLY checks the map — it does not
     // reset on 'connection' events. That avoids the watch-rerun regression
@@ -269,14 +271,6 @@ export async function runTestsInBrowser(
     // map had been wiped. Tying the reset to the counter reset is the single
     // source of truth for "this is a fresh run, drop old tracking state."
     config._testEndCounts = new Map();
-    // Fresh failure-cache accumulators for this run (watch/single-group path). Group mode
-    // resets these once on the parent config in run.ts before the shared spread.
-    config._failedTestFiles = new Set();
-    config._failedTests = [];
-    // Fresh reporter/coverage accumulators per run in single/watch mode (group mode owns
-    // these on the parent config in run.ts). Reset in lockstep with the counter so a watch
-    // rerun reports only that run's cases and coverage, not an accumulation across reruns.
-    config._coverageCollector = config.coverage ? new Map() : null;
   }
   config.lastRanTestFiles = targetTestFilesToFilter || allTestFilePaths;
 

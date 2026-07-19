@@ -1,6 +1,7 @@
 import { module, test } from 'qunitx';
 import { collectCoverage } from '../../lib/coverage/collect.ts';
 import { buildRows, buildLcov } from '../../lib/coverage/report.ts';
+import { newRunState } from '../../lib/setup/run-state.ts';
 import type { SourceMapDecoder } from '../../lib/utils/source-map-decoder.ts';
 import type { Config, CoverageFileMap } from '../../lib/types.ts';
 
@@ -28,7 +29,7 @@ function makeConfig(decoder: SourceMapDecoder, collector: CoverageFileMap): Conf
     projectRoot: '/proj/tmp',
     output: 'tmp',
     _sourceMapDecoder: decoder,
-    _coverageCollector: collector,
+    state: { results: { ...newRunState().results, coverage: collector } },
   } as unknown as Config;
 }
 

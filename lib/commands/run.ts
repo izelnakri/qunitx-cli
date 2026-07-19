@@ -355,20 +355,12 @@ async function runConcurrentMode(
   ];
   const groupCount = groups.length;
 
-  // Shared counter so TAP test numbers are globally sequential across all groups. Cleared in
-  // place — the group configs below share this object by reference, so replacing it here would
-  // leave each group counting into a different object.
-  resetRunResults(config.state.results);
+  // All run accumulators — counter, failure sets, coverage — are cleared here, on the parent,
+  // BEFORE the group configs are spread off it below. The spread copies `state` by reference, so
+  // every group then adds into these same objects: TAP numbers stay globally sequential, failures
+  // land in one set, and the coverage report covers the whole run rather than one group's slice.
+  resetRunResults(config.state.results, !!config.coverage);
   config.lastRanTestFiles = allFiles;
-  // Fresh failure-cache accumulators, shared by reference into every group config below (like
-  // the counter) so all groups add into one set. Reset here so a run never inherits stale failures.
-  config._failedTestFiles = new Set();
-  config._failedTests = [];
-
-  // Shared reporter/coverage accumulators. Set on the parent config BEFORE the group
-  // configs are spread off it, so every group pushes into the same collector and the
-  // final report covers the whole run (mirrors how the counter is shared above).
-  config._coverageCollector = config.coverage ? new Map() : null;
 
   const groupConfigs = groups.map(({ files, selectors }, i) => ({
     ...config,

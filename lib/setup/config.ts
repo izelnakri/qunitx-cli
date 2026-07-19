@@ -9,7 +9,7 @@ import { buildFSTree } from './fs-tree.ts';
 import { setupTestFilePaths } from './test-file-paths.ts';
 import { getChangedFsTree } from './get-changed-fs-tree.ts';
 import { parseCliFlags } from '../args/parse-cli-flags.ts';
-import { resolveOnlyFailedFiles, type FailedTestRecord } from '../utils/failure-cache.ts';
+import { resolveOnlyFailedFiles } from '../utils/failure-cache.ts';
 import { createReporters } from '../reporter/index.ts';
 import { newRunState } from './run-state.ts';
 import type { Config, FSTree } from '../types.ts';
@@ -42,8 +42,6 @@ export async function setupConfig(): Promise<Config> {
     testFileLookupPaths: setupTestFilePaths(inputs),
     lastFailedTestFiles: null as string[] | null,
     lastRanTestFiles: null as string[] | null,
-    _failedTestFiles: new Set<string>(),
-    _failedTests: [] as FailedTestRecord[],
     state: newRunState(),
     _testRunDone: null as (() => void) | null,
     _resetTestTimeout: null as (() => void) | null,
