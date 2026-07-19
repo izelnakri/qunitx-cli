@@ -86,7 +86,7 @@ export async function parseTestDeclarations(
   }
 
   const tokens = tokenize(transformed.code);
-  const { declarations, hasOnly } = collectDeclarations(tokens);
+  const { declarations, hasOnly } = collectQUnitDeclarations(tokens);
 
   // Generated → source. A declaration's callee line maps to where the user wrote it; the closing
   // paren's line also carries the last body statement, so the closer is the highest of the two.
@@ -148,7 +148,7 @@ function mapLine(
 }
 
 /**
- * One lexed token. The four kinds exist only to answer what collectDeclarations asks: "is this a
+ * One lexed token. The four kinds exist only to answer what collectQUnitDeclarations asks: "is this a
  * callee name?", "is this a `.` or `(`?", "is this a literal name?", and — for the regex-vs-divide
  * rule — "did an expression just end?".
  */
@@ -399,12 +399,12 @@ function isIdentPart(char: string): boolean {
 }
 
 /**
- * Resolves which local identifiers are qunitx declarators, then walks the token stream for calls
- * on them. Binding to the `qunitx` import (rather than matching the bare names) keeps a project's
- * own `skip()` or `module()` helper from being mistaken for a test declaration.
+ * Walks the token stream for calls on the resolved qunitx declarators — `test(…)`, `module(…)`,
+ * `QUnit.test.skip(…)` and friends. Only calls on names bound to qunitx count, so a project's own
+ * `skip()` or `module()` helper is never mistaken for a test declaration.
  */
-function collectDeclarations(tokens: Token[]): DeclarationScan {
-  const { tests, modules, namespaces } = resolveDeclaratorNames(tokens);
+function collectQUnitDeclarations(tokens: Token[]): DeclarationScan {
+  const { tests, modules, namespaces } = resolveQUnitDeclarators(tokens);
   const declarations: TestDeclaration[] = [];
   let hasOnly = false;
 
@@ -474,42 +474,98 @@ function findMatchingParen(tokens: Token[], openAt: number): number {
   return -1;
 }
 
+/** The local names that refer to qunitx's declarators in one file. */
+interface QUnitDeclarators {
+  /** Local name → which qunitx export it is (`test`, `only`, `skip`, `todo`). */
+  tests: Map<string, string>;
+  /** Local names bound to qunitx's `module`. */
+  modules: Set<string>;
+  /** Local names bound to the whole namespace (`QUnit.test(…)`), plus the `QUnit` global. */
+  namespaces: Set<string>;
+}
+
+/** One name a qunitx import clause brings into scope. */
+interface DeclaratorBinding {
+  /** The name used in this file, after any `as` alias. */
+  local: string;
+  /** The qunitx export it points at (`test`, `module`, …); the whole module for a namespace. */
+  imported: string;
+  /** True for `import QUnit from` / `import * as Q from` — a binding for the whole namespace. */
+  namespace: boolean;
+}
+
 /**
  * Reads `import … from 'qunitx'` to learn the local name of each declarator, honouring aliases.
  * `QUnit` is always treated as a namespace: it is a global when QUnit is loaded via a script tag.
+ *
+ * Binding to the import (rather than matching bare names) is what keeps a project's own `skip()`
+ * or `module()` helper from being mistaken for a qunitx declarator.
  */
-function resolveDeclaratorNames(tokens: Token[]): {
-  tests: Map<string, string>;
-  modules: Set<string>;
-  namespaces: Set<string>;
-} {
-  const tests = new Map<string, string>();
-  const modules = new Set<string>();
-  const namespaces = new Set<string>(['QUnit']);
+function resolveQUnitDeclarators(tokens: Token[]): QUnitDeclarators {
+  return qunitxImportClauses(tokens)
+    .flatMap((clause) => clauseBindings(tokens, clause))
+    .reduce<QUnitDeclarators>(
+      (declarators, { local, imported, namespace }) => {
+        if (namespace) {
+          declarators.namespaces.add(local);
+        } else if (imported === 'module') {
+          declarators.modules.add(local);
+        } else if (isTestMember(imported)) {
+          declarators.tests.set(local, imported);
+        }
+
+        return declarators;
+      },
+      { tests: new Map(), modules: new Set(), namespaces: new Set(['QUnit']) },
+    );
+}
+
+/**
+ * Token ranges `[afterImport, beforeFrom)` of every `import … from 'qunitx'` clause. The scan for
+ * `from` starts at the `import` rather than using findIndex, which would rescan the whole prefix.
+ */
+function qunitxImportClauses(tokens: Token[]): Array<[start: number, end: number]> {
+  const clauses: Array<[number, number]> = [];
 
   for (let i = 0; i < tokens.length; i++) {
-    if (tokens[i].value !== 'import' || tokens[i].type !== 'ident') continue;
-    const clauseEnd = tokens.findIndex((token, index) => index > i && token.value === 'from');
-    if (clauseEnd === -1 || tokens[clauseEnd + 1]?.value !== 'qunitx') continue;
-
-    for (let j = i + 1; j < clauseEnd; j++) {
-      const token = tokens[j];
-      if (token.type !== 'ident') continue;
-      if (token.value === 'as') continue;
-      // `import QUnit from 'qunitx'` / `import * as QUnit from 'qunitx'` — a namespace binding is
-      // the only ident not preceded by `{` or `,` inside the clause.
-      const insideBraces = tokens.slice(i + 1, j).some((t) => t.value === '{');
-      const local = tokens[j + 1]?.value === 'as' ? tokens[j + 2].value : token.value;
-      if (!insideBraces) {
-        namespaces.add(local);
-      } else if (token.value === 'module') {
-        modules.add(local);
-      } else if (isTestMember(token.value)) {
-        tests.set(local, token.value);
+    if (tokens[i].type !== 'ident' || tokens[i].value !== 'import') continue;
+    let from = -1;
+    for (let j = i + 1; j < tokens.length; j++) {
+      if (tokens[j].type === 'ident' && tokens[j].value === 'from') {
+        from = j;
+        break;
       }
-      if (tokens[j + 1]?.value === 'as') j += 2;
+    }
+    if (from === -1) break;
+    if (tokens[from + 1]?.value === 'qunitx') clauses.push([i + 1, from]);
+    i = from;
+  }
+
+  return clauses;
+}
+
+/**
+ * The bindings one clause introduces. `insideBraces` is carried along the walk: a namespace binding
+ * is the only identifier that appears before the clause's `{`.
+ */
+function clauseBindings(tokens: Token[], [start, end]: [number, number]): DeclaratorBinding[] {
+  const bindings: DeclaratorBinding[] = [];
+  let insideBraces = false;
+
+  for (let i = start; i < end; i++) {
+    const token = tokens[i];
+    if (token.value === '{') {
+      insideBraces = true;
+    } else if (token.type === 'ident' && token.value !== 'as') {
+      const aliased = tokens[i + 1]?.value === 'as';
+      bindings.push({
+        local: aliased ? tokens[i + 2].value : token.value,
+        imported: token.value,
+        namespace: !insideBraces,
+      });
+      if (aliased) i += 2;
     }
   }
 
-  return { tests, modules, namespaces };
+  return bindings;
 }
