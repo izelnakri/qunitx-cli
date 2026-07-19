@@ -304,20 +304,22 @@ export async function run(config: Config): Promise<void> {
     // Line-targeted files run as their own single-file groups, each carrying its own selectors.
     // A group is one page with one QUnit config, so this is what lets `a.ts#34 b.ts` mean "the
     // one test in a.ts, all of b.ts" — a shared page could only express one filter for both.
-    const targeted = await resolveLineTargetGroups(config, allFiles);
-    const targetedFiles = new Set(targeted.map((group) => group.file));
-    const untargeted = allFiles.filter((file) => !targetedFiles.has(file));
+    const targets = await resolveTargetedFiles(config, allFiles);
+    const targetedPaths = new Set(targets.map((target) => target.file));
+    const untargetedFiles = allFiles.filter((file) => !targetedPaths.has(file));
+    // Each targeted file already occupies a page of its own, so the untargeted files spread across
+    // whatever cores are left — never more groups than files, never fewer than one.
     const untargetedGroupCount = Math.max(
       1,
-      Math.min(untargeted.length, availableParallelism() - targeted.length),
+      Math.min(untargetedFiles.length, availableParallelism() - targets.length),
     );
-    const { groups: untargetedGroups, weights } = untargeted.length
-      ? await splitIntoGroups(untargeted, untargetedGroupCount, timings ?? {})
+    const { groups: untargetedGroups, weights } = untargetedFiles.length
+      ? await splitIntoGroups(untargetedFiles, untargetedGroupCount, timings ?? {})
       : { groups: [] as string[][], weights: new Map<string, number>() };
     // One entry per group: the files it bundles and the selectors that scope it
     // (undefined = no line targets, run those files whole).
     const groups: Array<{ files: string[]; selectors: QUnitSelector[] | undefined }> = [
-      ...targeted.map((group) => ({ files: [group.file], selectors: group.selectors })),
+      ...targets.map((target) => ({ files: [target.file], selectors: target.selectors })),
       ...untargetedGroups.map((files) => ({ files, selectors: undefined })),
     ];
     const groupCount = groups.length;
@@ -766,22 +768,28 @@ function printFileTimings(fileTimes: Map<string, number>, projectRoot: string): 
  */
 async function applyWatchLineTargets(config: Config): Promise<void> {
   const allFiles = Object.keys(config.fsTree);
-  const targeted = await resolveLineTargetGroups(config, allFiles);
-  if (targeted.length === 0) return;
+  const targets = await resolveTargetedFiles(config, allFiles);
+  if (targets.length === 0) return;
 
-  const targetedFiles = new Set(targeted.map((group) => group.file));
-  const dropped = allFiles.filter((file) => !targetedFiles.has(file));
-  config.fsTree = Object.fromEntries([...targetedFiles].map((file) => [file, config.fsTree[file]]));
-  config._qunitSelectors = targeted.flatMap((group) => group.selectors);
+  const targetedPaths = new Set(targets.map((target) => target.file));
+  const dropped = allFiles.filter((file) => !targetedPaths.has(file));
+  config.fsTree = Object.fromEntries([...targetedPaths].map((file) => [file, config.fsTree[file]]));
+  config._qunitSelectors = targets.flatMap((target) => target.selectors);
   if (dropped.length > 0) {
     console.log(
       '#',
       blue(
-        `qunitx: --watch with a line target runs only the targeted file${targetedFiles.size === 1 ? '' : 's'} — ${dropped.length} other file${dropped.length === 1 ? '' : 's'} excluded from this session`,
+        `qunitx: --watch with a line target runs only the targeted file${targetedPaths.size === 1 ? '' : 's'} — ${dropped.length} other file${dropped.length === 1 ? '' : 's'} excluded from this session`,
       ),
     );
   }
   console.log('#', blue(`qunitx: press "qa" to run every test in the watched file(s)`));
+}
+
+/** A file whose run is narrowed by `file#34` targets, with the selectors that scope it. */
+interface TargetedFile {
+  file: string;
+  selectors: QUnitSelector[];
 }
 
 /**
@@ -791,10 +799,7 @@ async function applyWatchLineTargets(config: Config): Promise<void> {
  * null `selectors` means. Every warning is surfaced; a line target that quietly did not narrow
  * is worse than one that says so.
  */
-async function resolveLineTargetGroups(
-  config: Config,
-  allFiles: string[],
-): Promise<Array<{ file: string; selectors: QUnitSelector[] }>> {
+async function resolveTargetedFiles(config: Config, allFiles: string[]): Promise<TargetedFile[]> {
   const present = new Set(allFiles);
   const entries = Object.entries(config.lineTargets ?? {}).filter(([file]) => present.has(file));
   const resolved = await Promise.all(
@@ -815,8 +820,10 @@ async function resolveLineTargetGroups(
     entry.warnings.forEach((warning) => console.log('#', blue(`qunitx: ${warning}`)));
   });
 
+  // Null selectors mean the target degraded to "run the whole file" — there is nothing to scope,
+  // so it is not a targeted file and falls through to the untargeted pool.
   return resolved
-    .filter((entry) => entry.selectors)
+    .filter((entry) => entry.selectors !== null)
     .map(({ file, selectors }) => ({ file, selectors: selectors! }));
 }
 
