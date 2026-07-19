@@ -58,6 +58,24 @@ module('Utils | parseTestDeclarations | basics', { concurrency: true }, () => {
     );
   });
 
+  test('records test.each (QUnit 2.16+ data-driven tests)', async (assert) => {
+    assert.equal(
+      await rows(
+        `import { test } from 'qunitx';\ntest.each('cases', [1, 2], function (assert, data) {\n  assert.ok(data);\n});\n`,
+      ),
+      `test "cases" 2-4 p=null`,
+    );
+  });
+
+  test('records QUnit.test.each through the namespace', async (assert) => {
+    assert.equal(
+      await rows(
+        `import QUnit from 'qunitx';\nQUnit.test.each('cases', [1, 2], function (assert, data) {\n  assert.ok(data);\n});\n`,
+      ),
+      `test "cases" 2-4 p=null`,
+    );
+  });
+
   test('records bare only/skip/todo named imports', async (assert) => {
     const result = await scan(
       `import { only, skip, todo } from 'qunitx';\nonly('o', function () {});\nskip('s', function () {});\ntodo('t', function () {});\n`,
@@ -73,6 +91,11 @@ module('Utils | parseTestDeclarations | basics', { concurrency: true }, () => {
   test('hasOnly is false without only()', async (assert) => {
     const result = await scan(`import { test } from 'qunitx';\ntest('a', function () {});\n`);
     assert.false(result!.hasOnly);
+  });
+
+  test('test.only sets hasOnly via the member form', async (assert) => {
+    const result = await scan(`import { test } from 'qunitx';\ntest.only('a', function () {});\n`);
+    assert.true(result!.hasOnly, 'a member .only gates the run the same as a bare only()');
   });
 
   test('resolves aliased imports', async (assert) => {
@@ -134,6 +157,13 @@ module('Utils | parseTestDeclarations | names', { concurrency: true }, () => {
     );
   });
 
+  test('a double-quoted name is read as a literal', async (assert) => {
+    assert.equal(
+      await rows(`import { test } from 'qunitx';\ntest("a b", function () {});\n`),
+      `test "a b" 2-2 p=null`,
+    );
+  });
+
   test('an options object between name and callback does not shift the name', async (assert) => {
     assert.equal(
       await rows(
@@ -185,6 +215,18 @@ module('Utils | parseTestDeclarations | lexing hazards', { concurrency: true }, 
     assert.equal(
       await rows(
         `import { test } from 'qunitx';\ntest('real', function (assert) {\n  const r = 10 / 2 / 5;\n  assert.ok(r);\n});\n`,
+      ),
+      `test "real" 2-5 p=null`,
+    );
+  });
+
+  test('a regex following a keyword (return /.../) is lexed as a regex, not division', async (assert) => {
+    // `return /test\(/` — read as division, the `(` inside would unbalance the parens and swallow
+    // the closing `)` of test('real', …), corrupting the line range. This exercises the
+    // keyword-preceded-regex branch (REGEX_PRECEDING_KEYWORDS).
+    assert.equal(
+      await rows(
+        `import { test } from 'qunitx';\ntest('real', function (assert) {\n  const re = (function () { return /test\\(/; })();\n  assert.ok(re);\n});\n`,
       ),
       `test "real" 2-5 p=null`,
     );
