@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { resolveLineTargets } from '../../lib/utils/line-targets.ts';
+import { resolveLineTargets } from '../../lib/selection/line-targets.ts';
 
 //  1 import { module, test } from 'qunitx';
 //  2 (blank)

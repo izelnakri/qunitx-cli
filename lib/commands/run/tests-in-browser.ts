@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { blue } from '../../utils/color.ts';
-import { shutdownPrelaunch } from '../../utils/chrome-prelaunch.ts';
+import { shutdownPrelaunch } from '../../chrome/prelaunch.ts';
 import { closeWithGrace } from '../../utils/close-with-grace.ts';
 import esbuild from 'esbuild';
 import { timeCounter } from '../../utils/time-counter.ts';
@@ -13,7 +13,7 @@ import { collectCoverage } from '../../coverage/collect.ts';
 import { writeCoverageReport } from '../../coverage/report.ts';
 import { writeMetafileCache } from '../../utils/metafile-cache.ts';
 import { writeFailureCache, buildFailureCache } from '../../utils/failure-cache.ts';
-import { isFilteredRun, qunitFilterQuery } from '../../utils/qunit-filter.ts';
+import { isFilteredRun, qunitFilterQuery } from '../../selection/qunit-filter.ts';
 import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
 import type { AffectedMetafile } from '../../utils/get-changed-files.ts';
 import type { Page } from 'playwright-core';

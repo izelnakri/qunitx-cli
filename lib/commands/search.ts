@@ -1,11 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { parseTestDeclarations } from '../utils/parse-test-declarations.ts';
-import { matchesQUnitFilter, qunitFullName } from '../utils/qunit-filter-match.ts';
-import { selectorsFromScan } from '../utils/line-targets.ts';
+import { parseTestDeclarations } from '../selection/parse-test-declarations.ts';
+import { matchesQUnitFilter, qunitFullName } from '../selection/qunit-filter-match.ts';
+import { selectorsFromScan } from '../selection/line-targets.ts';
 import { blue, yellow } from '../utils/color.ts';
-import type { TestDeclaration, DeclarationScan } from '../utils/parse-test-declarations.ts';
-import type { QUnitSelector } from '../utils/line-targets.ts';
+import type { TestDeclaration, DeclarationScan } from '../selection/parse-test-declarations.ts';
+import type { QUnitSelector } from '../selection/line-targets.ts';
 import type { Config } from '../types.ts';
 
 /** One scanned file: its parsed declarations (null when unparseable) and the tests derived from them. */

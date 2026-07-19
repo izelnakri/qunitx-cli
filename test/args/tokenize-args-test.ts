@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { tokenizeArgs } from '../../lib/utils/tokenize-args.ts';
+import { tokenizeArgs } from '../../lib/args/tokenize-args.ts';
 
 module('Utils | tokenizeArgs | flags and inputs', { concurrency: true }, () => {
   test('a plain flag passes through verbatim', (assert) => {

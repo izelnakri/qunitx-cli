@@ -2,8 +2,8 @@ import { module, test } from 'qunitx';
 import {
   parseDaemonIdleTimeout,
   DEFAULT_DAEMON_IDLE_TIMEOUT_MS,
-} from '../../lib/utils/parse-daemon-idle-timeout.ts';
-import '../helpers/custom-asserts.ts';
+} from '../../../lib/commands/daemon/parse-idle-timeout.ts';
+import '../../helpers/custom-asserts.ts';
 
 const MIN = 60_000;
 const HOUR = 3_600_000;

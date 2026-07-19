@@ -3,8 +3,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { shouldShowDaemonHint, maybePrintDaemonHint } from '../../lib/utils/daemon-hint.ts';
-import '../helpers/custom-asserts.ts';
+import { shouldShowDaemonHint, maybePrintDaemonHint } from '../../../lib/commands/daemon/hint.ts';
+import '../../helpers/custom-asserts.ts';
 
 interface BaseCtx {
   durationMs: number;

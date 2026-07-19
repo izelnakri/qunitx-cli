@@ -1,10 +1,10 @@
 import { existsSync } from 'node:fs';
-import { findChrome } from './find-chrome.ts';
-import { preLaunchChrome } from './pre-launch-chrome.ts';
-import { killProcessGroup } from './kill-process-group.ts';
-import { CHROMIUM_ARGS } from './chromium-args.ts';
-import { perfLog } from './perf-logger.ts';
-import { daemonInfoPath } from './daemon-socket-path.ts';
+import { findChrome } from './find.ts';
+import { preLaunchChrome } from './spawn.ts';
+import { killProcessGroup } from '../utils/kill-process-group.ts';
+import { CHROMIUM_ARGS } from './args.ts';
+import { perfLog } from '../utils/perf-logger.ts';
+import { daemonInfoPath } from '../commands/daemon/socket-path.ts';
 
 // This module is statically imported by cli.ts so its module-level code runs
 // at the very start of the process — before the IIFE, before playwright-core loads.

@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { parseTestDeclarations } from '../../lib/utils/parse-test-declarations.ts';
+import { parseTestDeclarations } from '../../lib/selection/parse-test-declarations.ts';
 
 // filePath only picks the esbuild loader and names the sourcemap, so these can be fictional.
 const TS = '/project/some-test.ts';

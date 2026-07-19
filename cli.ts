@@ -7,7 +7,7 @@ import './lib/utils/enable-compile-cache.ts';
 // env is already set or no sidecar is present (npm / source / Node SEA paths).
 import './lib/utils/find-sidecar-esbuild.ts';
 import process from 'node:process';
-import { shutdownPrelaunch } from './lib/utils/chrome-prelaunch.ts';
+import { shutdownPrelaunch } from './lib/chrome/prelaunch.ts';
 import pkg from './package.json' with { type: 'json' };
 
 process.title = 'qunitx';
