@@ -57,6 +57,13 @@ export async function searchTests(config: Config): Promise<number> {
   const found = scanned.flatMap((record) => record.tests);
   const computed = scanned.reduce((sum, record) => sum + record.computed, 0);
   const unparseable = scanned.filter((record) => record.scan === null).length;
+  // Parsed fine, yet contributed nothing. Usually the file simply has no tests, but it is also how
+  // a declarator reached through a local alias (`const t = QUnit.test`) looks — the scan resolves
+  // declarators from the qunitx import and the QUnit global only, so it cannot follow one. Saying
+  // so keeps the count honest instead of quietly under-reporting.
+  const silent = scanned.filter(
+    (record) => record.scan !== null && record.tests.length === 0 && record.computed === 0,
+  ).length;
 
   // Resolve each file's `#34` line targets from the scan already in hand — mirroring a real run's
   // per-file scoping, without reading or transforming any file a second time.
@@ -100,6 +107,14 @@ export async function searchTests(config: Config): Promise<number> {
   if (unparseable > 0) {
     process.stdout.write(
       yellow(`# ${unparseable} file${unparseable === 1 ? '' : 's'} could not be parsed.\n`),
+    );
+  }
+  if (silent > 0) {
+    process.stdout.write(
+      yellow(
+        `# ${silent} file${silent === 1 ? '' : 's'} declared no tests the scan could see — a ` +
+          `declarator reached through a local alias (const t = QUnit.test) is invisible to it.\n`,
+      ),
     );
   }
 
