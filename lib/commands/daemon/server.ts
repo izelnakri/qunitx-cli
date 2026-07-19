@@ -14,7 +14,7 @@ import { DaemonRunError } from '../run/tests-in-browser.ts';
 import { run } from '../run.ts';
 import type { Request, ResponseChunk, RunRequest, DaemonInfo } from './protocol.ts';
 import type { Browser } from 'playwright-core';
-import type { Config, EsbuildCache } from '../../types.ts';
+import type { Config, EsbuildCache, DaemonState as DaemonRunHandles } from '../../types.ts';
 
 // Daemon idle window: after the last run finishes, the daemon shuts itself down.
 // Default 30 minutes; override with `QUNITX_DAEMON_IDLE_TIMEOUT` (see
@@ -147,7 +147,7 @@ interface DaemonState {
    * `setupBrowser` reuses `slot.page` (when connected) instead of `newPage()`.
    * Closed on daemon shutdown; cleared (set to null) when the page disconnects.
    */
-  pageSlot: NonNullable<Config['_daemonPageSlot']>;
+  pageSlot: DaemonRunHandles['pageSlot'];
 }
 
 /**
@@ -202,7 +202,9 @@ export async function runDaemonServer(): Promise<void> {
   } finally {
     process.argv = argvSnapshot;
   }
-  baseConfig._daemonMode = true;
+  // baseConfig is only ever handed to launchBrowser (initial launch + crash recovery), never
+  // to run() — so it needs no daemon handles. watch/open still matter: launchBrowser derives
+  // `headless` from them.
   baseConfig.watch = false;
   baseConfig.open = false;
 
@@ -656,7 +658,7 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
 
 /**
  * Performs one test run inside the daemon by delegating to `run()` — the same code
- * path local non-watch invocations use, but with `_daemonMode` set so it reuses the
+ * path local non-watch invocations use, but with state.daemon set so it reuses the
  * daemon's persistent browser and throws `DaemonRunError` instead of `process.exit`.
  * Concurrent group orchestration, timing-cache persistence, and after-hook all come
  * for free from the shared run pipeline.
@@ -682,17 +684,18 @@ async function runOnce(
     process.argv = argvSnapshot;
   }
 
-  // _daemonBrowser tells run() to reuse the persistent browser; _daemonMode tells
-  // it to throw DaemonRunError instead of calling process.exit at the end;
-  // _daemonEsbuildCache hands buildTestBundle the persistent incremental-context
-  // slot so the warm module graph survives across runs. watch/open are forced off
-  // — those modes don't make sense inside a daemon run.
-  config._daemonMode = true;
-  // state.browser is non-null here — runOnce only fires from handleRun after
-  // awaitBrowser has resolved (and recoverBrowser, if it ran, reassigned it).
-  config._daemonBrowser = state.browser!;
-  config._daemonEsbuildCache = state.esbuildCache;
-  config._daemonPageSlot = state.pageSlot;
+  // Lending the daemon's persistent handles to this run also marks it as a daemon run:
+  // a non-null state.daemon makes run() reuse the browser rather than launching one, throw
+  // DaemonRunError instead of calling process.exit, and leave the browser open at the end.
+  // watch/open are forced off — those modes don't make sense inside a daemon run.
+  //
+  // state.browser is non-null here — runOnce only fires from handleRun after awaitBrowser
+  // has resolved (and recoverBrowser, if it ran, reassigned it).
+  config.state.daemon = {
+    browser: state.browser!,
+    esbuildCache: state.esbuildCache,
+    pageSlot: state.pageSlot,
+  };
   config.watch = false;
   config.open = false;
 

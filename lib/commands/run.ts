@@ -24,7 +24,7 @@ import {
   DaemonRunError,
 } from './run/tests-in-browser.ts';
 import { clearCachedBundles } from './run/cached-bundles.ts';
-import { resetRunResults } from '../setup/run-state.ts';
+import { resetRunResults, reusablePageSlot } from '../setup/run-state.ts';
 import { setupFileWatchers } from '../setup/file-watcher.ts';
 import { getChangedFsTree } from '../setup/get-changed-fs-tree.ts';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
@@ -102,8 +102,9 @@ export async function run(config: Config): Promise<void> {
   // Chrome is typically fully connected by the time buildCachedContent + splitIntoGroups resolve.
   // Daemon mode reuses its persistent browser; non-watch local runs launch their own;
   // watch mode defers launch until setupBrowser inside the watch path.
-  const browserPromise = config._daemonBrowser
-    ? Promise.resolve(config._daemonBrowser)
+  const daemonBrowser = config.state.daemon?.browser;
+  const browserPromise = daemonBrowser
+    ? Promise.resolve(daemonBrowser)
     : config.watch
       ? null
       : launchBrowser(config);
@@ -324,10 +325,11 @@ async function runConcurrentMode(
   // run handler closes the run cleanly and stays alive for the next call.
   if (allFiles.length === 0) {
     reportRunStart(config, { fileCount: 0, groupCount: 0 });
-    if (config._daemonMode) throw new DaemonRunError(0);
+    if (config.state.daemon) throw new DaemonRunError(0);
     if (!config.watch) {
-      const browser = config._daemonBrowser ? null : await browserPromise!;
-      await closeWithGrace([browser?.close(), shutdownPrelaunch()]);
+      // Daemon runs threw above, so this is always a browser this run owns and must close.
+      const browser = await browserPromise!;
+      await closeWithGrace([browser.close(), shutdownPrelaunch()]);
       return process.exit(0);
     }
     return;
@@ -354,6 +356,8 @@ async function runConcurrentMode(
     ...untargetedGroups.map((files) => ({ files, selectors: undefined })),
   ];
   const groupCount = groups.length;
+  // Shared with every group config below; reusablePageSlot() reads it to decide page reuse.
+  config.state.groupCount = groupCount;
 
   // All run accumulators — counter, failure sets, coverage — are cleared here, on the parent,
   // BEFORE the group configs are spread off it below. The spread copies `state` by reference, so
@@ -377,12 +381,6 @@ async function runConcurrentMode(
     fsTree: Object.fromEntries(files.map((filePath) => [filePath, config.fsTree[filePath]])),
     // Single group keeps the root output dir for backward-compatible file paths.
     output: groupCount === 1 ? config.output : `${config.output}/group-${i}`,
-    // Page reuse is single-group only: in concurrent group mode group 0 would
-    // otherwise drain `slot.page` (setupBrowser consumes it) without re-stashing
-    // (cleanup's `groupCount === 1` guard rejects), leaving the slot empty for
-    // the next single-file run. Withhold the slot here so the warm page survives
-    // a transient multi-file invocation untouched.
-    _daemonPageSlot: groupCount === 1 ? config._daemonPageSlot : undefined,
     _groupMode: true,
     _phase: 'bundling' as Config['_phase'],
   }));
@@ -474,7 +472,7 @@ async function runConcurrentMode(
         // Daemon runs reuse a persistent browser; bound the connect so a handle that
         // died just after the pre-run probe fails fast here (recovered next run) instead
         // of wedging until GROUP_TIMEOUT. See DAEMON_CONNECT_TIMEOUT_MS.
-        const connections = config._daemonMode
+        const connections = config.state.daemon
           ? await Promise.race([
               connectWork,
               new Promise<never>((_, reject) => {
@@ -501,17 +499,14 @@ async function runConcurrentMode(
           await runTestsInBrowser(groupConfig, groupCachedContents[i], connections);
         } finally {
           await flushConsoleHandlers(groupConfig._pendingConsoleHandlers, connections.page);
-          // Daemon single-group fast path: stash the page on the slot for the
-          // next run instead of closing it (saves ~70-130ms of newPage cost
-          // per warm run). Mid-page state is dropped by the next run's
-          // page.goto(testUrl), which destroys the JS context. Group mode
-          // (groupCount > 1) and any disconnected page fall through to close.
-          const reusePage =
-            groupCount === 1 &&
-            groupConfig._daemonPageSlot &&
-            connections.page &&
-            !connections.page.isClosed();
-          if (reusePage) groupConfig._daemonPageSlot!.page = connections.page;
+          // Daemon single-group fast path: stash the page on the slot for the next run instead
+          // of closing it (saves ~70-130ms of newPage cost per warm run). Mid-page state is
+          // dropped by the next run's page.goto(testUrl), which destroys the JS context.
+          // reusablePageSlot() withholds the slot outside single-group daemon runs, and a
+          // disconnected page falls through to close.
+          const pageSlot = reusablePageSlot(groupConfig.state);
+          const reusePage = pageSlot && connections.page && !connections.page.isClosed();
+          if (reusePage) pageSlot.page = connections.page;
           // Per-group cleanup, bounded so a deadlocked page.close (Firefox/WebKit under
           // load) cannot wedge Promise.allSettled forever. The shared server is closed
           // in the final cleanup pass below, not here.
@@ -592,7 +587,7 @@ async function runConcurrentMode(
   // Daemon mode: close the per-run shared server (if any) but never the browser
   // (the daemon owns it across runs). Throw DaemonRunError so the daemon's run
   // handler captures the exit code instead of hitting process.exit.
-  if (config._daemonMode) {
+  if (config.state.daemon) {
     clearInterval(keepAlive);
     await closeWithGrace([
       sharedServer

@@ -155,6 +155,28 @@ export interface RunState {
    * One set for the whole run, so a stateful reporter sees every group rather than one slice.
    */
   reporters: Reporter[];
+  /**
+   * Non-null exactly when this run is executing inside the persistent daemon process — it is
+   * the daemon-mode flag as well as the handles. Daemon runs throw `DaemonRunError` instead of
+   * calling `process.exit`, suppress the per-connection TAP header, and leave the shared browser
+   * open at the end of the run.
+   */
+  daemon: DaemonState | null;
+  /** Number of concurrent groups in this run; 1 for watch and single-group runs. */
+  groupCount: number;
+}
+
+/** The daemon's persistent, cross-run handles, lent to a single run via {@link RunState.daemon}. */
+export interface DaemonState {
+  /** The daemon's Browser. `run()` reuses it instead of launching, and does not close it. */
+  browser: Browser;
+  /** Persistent incremental-context slot, keeping the module graph warm across daemon runs. */
+  esbuildCache: EsbuildCache;
+  /**
+   * Persistent Page slot, reused across runs to save a `newPage()` (~70-130ms). Read through
+   * `reusablePageSlot()`, never directly — reuse is only valid for single-group runs.
+   */
+  pageSlot: { page: Page | null };
 }
 
 /**
@@ -307,34 +329,6 @@ export interface Config {
   _onTestsJsServed: (() => void) | null;
   /** `true` while running a grouped (multi-file) test invocation. */
   _groupMode?: boolean;
-  /**
-   * `true` when running inside the persistent daemon process. Disables `process.exit`
-   * paths in the run pipeline (replaced with `DaemonRunError` throws), suppresses the
-   * per-WS-connection TAP version 13 header, and prevents the daemon's shared browser
-   * from being closed at the end of a run.
-   */
-  _daemonMode?: boolean;
-  /**
-   * The daemon's persistent Browser instance. When set, `run()` reuses it instead of
-   * calling `launchBrowser()`, and skips closing it at the end of the run. The daemon
-   * passes its own browser here so concurrent group runs share one warm Chrome.
-   */
-  _daemonBrowser?: import('playwright-core').Browser;
-  /**
-   * The daemon's persistent esbuild incremental-context slot. Single source of truth
-   * for the warm module graph across daemon runs; replaced (dispose+recreate) when
-   * `bundleCacheKey()` changes — same correctness behavior as the cache-less path.
-   */
-  _daemonEsbuildCache?: EsbuildCache;
-  /**
-   * The daemon's persistent Page slot for single-group runs. When `slot.page` is
-   * set and connected, `setupBrowser` reuses it instead of `browser.newPage()`,
-   * saving ~70-130ms per warm run. The cleanup hook in `run()` re-stashes the page
-   * here when the run completes healthily; mid-page state is dropped by the next
-   * run's `page.goto(testUrl)` (cross-document navigation destroys the old JS
-   * context, killing residual scripts and the previous run's WebSocket client).
-   */
-  _daemonPageSlot?: { page: import('playwright-core').Page | null };
   /** Current lifecycle phase of the test run. */
   _phase?: 'bundling' | 'connecting' | 'loading' | 'running' | 'done';
   /**

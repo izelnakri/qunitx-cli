@@ -204,12 +204,12 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
   // Cache holder: daemon's persistent state slot for daemon-mode runs (so the
   // incremental context survives across runs); the per-process cachedContent for
   // watch mode (lives for the life of the watch process).
-  const cacheHolder = config._daemonEsbuildCache ?? cachedContent;
+  const cacheHolder = config.state.daemon?.esbuildCache ?? cachedContent;
   const fileKey = bundleCacheKey(buildOptions, allTestFilePaths);
 
   try {
     const [{ js: allTestCode, metafile }] = await Promise.all([
-      config.watch || config._daemonMode
+      config.watch || config.state.daemon
         ? buildIncrementally(buildOptions, fileKey, cacheHolder, needsDisk)
         : buildWithOverlayfsRetry(buildOptions, needsDisk),
       Promise.all(
@@ -382,7 +382,7 @@ export async function runTestsInBrowser(
         // Daemon mode: the daemon owns the browser and server lifetimes, so we
         // must not close them here. Throw instead so the daemon's run handler
         // captures the exit code and keeps the process alive for the next run.
-        if (config._daemonMode) {
+        if (config.state.daemon) {
           throw new DaemonRunError(config.state.results.counter.failCount > 0 ? 1 : 0);
         }
         await closeWithGrace([
@@ -743,7 +743,7 @@ function buildWithOverlayfsRetry(
 // ~80% off rebuild time vs a fresh esbuild.build() call. The cache is single-source: when
 // the file-set changes (different `fileKey`), the old context is disposed and replaced.
 // Storage holder is whichever object owns the live cache: the per-process CachedContent in
-// watch mode, or the daemon's persistent state slot via `config._daemonEsbuildCache` in
+// watch mode, or the daemon's persistent state slot via `config.state.daemon?.esbuildCache` in
 // daemon mode — both are an EsbuildCache.
 async function buildIncrementally(
   options: esbuild.BuildOptions,
@@ -970,7 +970,7 @@ async function runTestInsideHTMLFile(
       { server, browser, page },
       config._groupMode,
       config._pendingConsoleHandlers,
-      config._daemonMode,
+      !!config.state.daemon,
     );
   } else if (QUNIT_RESULT.totalTests === 0) {
     // QUnit ran but no tests were registered (or QUnit was not present in the bundle).
@@ -988,7 +988,7 @@ async function runTestInsideHTMLFile(
       { server, browser, page },
       config._groupMode,
       config._pendingConsoleHandlers,
-      config._daemonMode,
+      !!config.state.daemon,
     );
   } else if (QUNIT_RESULT.failedTests > config.state.results.counter.failCount) {
     // Safety net: browser tracked failures that WebSocket events never delivered to Node.js
