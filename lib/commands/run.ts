@@ -305,7 +305,8 @@ export async function run(config: Config): Promise<void> {
     // A group is one page with one QUnit config, so this is what lets `a.ts#34 b.ts` mean "the
     // one test in a.ts, all of b.ts" — a shared page could only express one filter for both.
     const targeted = await resolveLineTargetGroups(config, allFiles);
-    const untargeted = allFiles.filter((file) => !targeted.some((group) => group.file === file));
+    const targetedFiles = new Set(targeted.map((group) => group.file));
+    const untargeted = allFiles.filter((file) => !targetedFiles.has(file));
     const untargetedGroupCount = Math.max(
       1,
       Math.min(untargeted.length, availableParallelism() - targeted.length),
@@ -789,9 +790,8 @@ async function resolveLineTargetGroups(
   config: Config,
   allFiles: string[],
 ): Promise<Array<{ file: string; selectors: QUnitSelector[] }>> {
-  const entries = Object.entries(config.lineTargets ?? {}).filter(([file]) =>
-    allFiles.includes(file),
-  );
+  const present = new Set(allFiles);
+  const entries = Object.entries(config.lineTargets ?? {}).filter(([file]) => present.has(file));
   const resolved = await Promise.all(
     entries.map(async ([file, lines]) => {
       const { selectors, warnings } = await resolveLineTargets(
@@ -801,13 +801,18 @@ async function resolveLineTargetGroups(
         // typed, and they typed '/'. path.relative yields '\' on Windows.
         path.relative(config.projectRoot, file).replaceAll('\\', '/'),
       );
-      warnings.forEach((warning) => console.log('#', blue(`qunitx: ${warning}`)));
 
-      return selectors ? { file, selectors } : null;
+      return { file, selectors, warnings };
     }),
   );
+  // Logged after the parallel resolve so warnings print in input order, not resolution order.
+  resolved.forEach((entry) => {
+    entry.warnings.forEach((warning) => console.log('#', blue(`qunitx: ${warning}`)));
+  });
 
-  return resolved.filter((group) => group !== null);
+  return resolved
+    .filter((entry) => entry.selectors)
+    .map(({ file, selectors }) => ({ file, selectors: selectors! }));
 }
 
 async function splitIntoGroups(
