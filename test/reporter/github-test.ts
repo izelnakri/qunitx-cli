@@ -1,6 +1,7 @@
 import { module, test } from 'qunitx';
 import { GithubReporter, annotation } from '../../lib/reporter/github.ts';
 import { updateCounter } from '../../lib/reporter/types.ts';
+import { newRunState } from '../../lib/setup/run-state.ts';
 import type { FailureInfo } from '../../lib/reporter/failure.ts';
 import type { TestDetails } from '../../lib/reporter/types.ts';
 import type { Config } from '../../lib/types.ts';
@@ -11,14 +12,7 @@ const makeConfig = (): Config =>
   ({
     projectRoot: '/proj',
     reporter: 'github',
-    COUNTER: {
-      testCount: 0,
-      failCount: 0,
-      skipCount: 0,
-      todoCount: 0,
-      passCount: 0,
-      errorCount: 0,
-    },
+    state: newRunState(),
   }) as unknown as Config;
 
 const failure = (overrides: Partial<FailureInfo> = {}): FailureInfo => ({
@@ -91,7 +85,7 @@ module('reporters | github annotation', { concurrency: true }, () => {
 module('reporters | GithubReporter', { concurrency: true }, () => {
   const feed = (reporter: GithubReporter, config: Config, details: TestDetails): string =>
     captureStdout(() => {
-      updateCounter(config.COUNTER, details);
+      updateCounter(config.state.results.counter, details);
       reporter.onTestEnd(config, details);
     });
 

@@ -24,6 +24,7 @@ import {
   DaemonRunError,
 } from './run/tests-in-browser.ts';
 import { clearCachedBundles } from './run/cached-bundles.ts';
+import { resetRunResults } from '../setup/run-state.ts';
 import { setupFileWatchers } from '../setup/file-watcher.ts';
 import { getChangedFsTree } from '../setup/get-changed-fs-tree.ts';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
@@ -354,30 +355,25 @@ async function runConcurrentMode(
   ];
   const groupCount = groups.length;
 
-  // Shared COUNTER so TAP test numbers are globally sequential across all groups.
-  config.COUNTER = {
-    testCount: 0,
-    failCount: 0,
-    skipCount: 0,
-    todoCount: 0,
-    passCount: 0,
-    errorCount: 0,
-  };
+  // Shared counter so TAP test numbers are globally sequential across all groups. Cleared in
+  // place — the group configs below share this object by reference, so replacing it here would
+  // leave each group counting into a different object.
+  resetRunResults(config.state.results);
   config.lastRanTestFiles = allFiles;
   // Fresh failure-cache accumulators, shared by reference into every group config below (like
-  // COUNTER) so all groups add into one set. Reset here so a run never inherits stale failures.
+  // the counter) so all groups add into one set. Reset here so a run never inherits stale failures.
   config._failedTestFiles = new Set();
   config._failedTests = [];
 
   // Shared reporter/coverage accumulators. Set on the parent config BEFORE the group
   // configs are spread off it, so every group pushes into the same collector and the
-  // final report covers the whole run (mirrors how COUNTER is shared above).
+  // final report covers the whole run (mirrors how the counter is shared above).
   config._coverageCollector = config.coverage ? new Map() : null;
 
   const groupConfigs = groups.map(({ files, selectors }, i) => ({
     ...config,
     // Per-group dedup map for the testEnd handler — see
-    // Config._testEndCounts. Each group's COUNTER bucket is shared via the
+    // Config._testEndCounts. Each group's counter bucket is shared via the
     // parent `config`, but the dedup state is per-group so a duplicate
     // testEnd in group A doesn't accidentally suppress the legitimate first
     // testEnd of the same name in group B. (Two groups CAN legitimately
@@ -545,10 +541,10 @@ async function runConcurrentMode(
       console.error(reason);
       return 1;
     },
-    config.COUNTER.failCount > 0 ? 1 : 0,
+    config.state.results.counter.failCount > 0 ? 1 : 0,
   );
 
-  if (config.COUNTER.testCount === 0 && exitCode === 0) {
+  if (config.state.results.counter.testCount === 0 && exitCode === 0) {
     if (isFilteredRun(config)) {
       // A filter matching nothing is a typo, not a green run — every neighbouring runner
       // fails here, and passing CI on a mistyped -t is the worst outcome available.
@@ -598,7 +594,7 @@ async function runConcurrentMode(
   if (config.debug) printFileTimings(fileTimes, config.projectRoot);
 
   if (config.after) {
-    await runUserModule(`${process.cwd()}/${config.after}`, config.COUNTER, 'after');
+    await runUserModule(`${process.cwd()}/${config.after}`, config.state.results.counter, 'after');
   }
 
   // Daemon mode: close the per-run shared server (if any) but never the browser

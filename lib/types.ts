@@ -140,11 +140,32 @@ export interface FileCoverage {
 export type CoverageFileMap = Map<string, FileCoverage>;
 
 /**
+ * Mutable state for one test run, kept separate from the resolved settings on {@link Config}.
+ *
+ * Organized by **sharing lifetime**. Concurrent groups are spread off the parent config with a
+ * shallow `{...config}`, which copies `state` by reference — so everything reachable from here is
+ * shared across all groups of a run. Accumulators are therefore mutated in place, never
+ * reassigned: replacing one would silently detach the group configs from the parent's object.
+ */
+export interface RunState {
+  /** Whole-run accumulators, shared by reference across every concurrent group. */
+  results: RunResults;
+}
+
+/** Outcome totals accumulated across every group of a single run. */
+export interface RunResults {
+  /** Running test-outcome counts, mutated in place as TAP events arrive. */
+  counter: Counter;
+}
+
+/**
  * Full resolved qunitx configuration for a single run, merging `package.json` settings,
  * CLI flags, and runtime state. Most fields are read-only after `setupConfig()` resolves;
  * underscore-prefixed fields are mutable runtime slots populated during the run lifecycle.
  */
 export interface Config {
+  /** Mutable state for this run; see {@link RunState} for the sharing rules. */
+  state: RunState;
   /** Directory where the compiled test bundle and output HTML are written (default: `'tmp'`). */
   output: string;
   /** Maximum milliseconds to wait for the full test suite before timing out (default: `20000`). */
@@ -252,15 +273,13 @@ export interface Config {
    * line-targeted file runs as its own group so untargeted files stay unfiltered.
    */
   _qunitSelectors?: QUnitSelector[];
-  /** Mutable test-outcome counters updated as TAP events arrive. */
-  COUNTER: Counter;
   /** Test files that failed on the previous run (drives re-run filtering). */
   lastFailedTestFiles: string[] | null;
   /** Test files executed on the previous run. */
   lastRanTestFiles: string[] | null;
   /**
    * Absolute paths of test files with ≥1 failure in the current run, attributed per-test via
-   * source maps. Shared by reference across group configs (like `COUNTER`) so all groups
+   * source maps. Shared by reference across group configs (like the run counter) so all groups
    * accumulate into one set; reset at the start of each run. Persisted to the failure cache.
    */
   _failedTestFiles?: Set<string>;
@@ -311,11 +330,11 @@ export interface Config {
    * `runTestsInBrowser` (single-group) and at groupConfig construction
    * (multi-group) — explicitly NOT on every WS 'connection' event, which
    * was the bug that broke no-html-test in CI run 26042614416. Lifetime is
-   * tied to COUNTER lifetime so the two stay consistent.
+   * tied to counter lifetime so the two stay consistent.
    *
    * The WS testEnd handler enforces "QUnit fires testEnd exactly once per
    * registered test per run" by checking this map before incrementing
-   * COUNTER: a second arrival of the same fullName is dropped with a
+   * the counter: a second arrival of the same fullName is dropped with a
    * `# [qunitx] WARNING: duplicate testEnd ignored ...` line on stderr+stdout
    * so the underlying browser/runtime bug stays visible while pass counts
    * stay correct. Needed because the 2× flake (CI runs 26046813154 +
@@ -365,7 +384,7 @@ export interface Config {
   _sourceMapDecoder?: SourceMapDecoder | null;
   /**
    * Active reporter instances for this run, built by `createReporters` in `setupConfig`.
-   * Shared by reference across all concurrent groups (same as `COUNTER`), so a stateful
+   * Shared by reference across all concurrent groups (same as the run counter), so a stateful
    * reporter sees the whole run rather than one group's slice.
    */
   _reporters?: Reporter[];

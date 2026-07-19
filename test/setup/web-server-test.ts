@@ -12,6 +12,7 @@ import {
   buildNoTestsHTML,
 } from '../../lib/setup/web-server.ts';
 import '../helpers/custom-asserts.ts';
+import { newRunState } from '../../lib/setup/run-state.ts';
 import type { Config, CachedContent } from '../../lib/types.ts';
 
 const CWD = process.cwd();
@@ -74,7 +75,7 @@ module('Setup | web-server | header links to /', { concurrency: true }, () => {
 // Injected runtime script — idempotency under double-execution.
 //
 // Regression test for the 2× test-execution flake (CI run 26046813154 / job
-// 76573047617: COUNTER = 2 * expected and the diagnostic from commit fe786a7
+// 76573047617: counter = 2 * expected and the diagnostic from commit fe786a7
 // fired "wss accepted connection #2"). Root cause: the runtime IIFE ran twice
 // in one page load (under a sub-resource preload race observed intermittently
 // on Chromium + slow CI), each invocation registered its own
@@ -103,7 +104,7 @@ module('Setup | web-server | header links to /', { concurrency: true }, () => {
 //      map was reset on every WS 'connection' event, a stale testEnd
 //      arriving just after the next-run's `connection` got counted
 //      spuriously because the map had been wiped. Tying the reset to
-//      COUNTER reset (runTestsInBrowser / groupConfig construction)
+//      counter reset (runTestsInBrowser / groupConfig construction)
 //      keeps the two state lifetimes locked together.
 //
 // Both must hold simultaneously: duplicate suppression within one run AND
@@ -111,7 +112,7 @@ module('Setup | web-server | header links to /', { concurrency: true }, () => {
 // ---------------------------------------------------------------------------
 
 module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
-  test('duplicate testEnd in one run increments COUNTER exactly once', async (assert) => {
+  test('duplicate testEnd in one run increments the counter exactly once', async (assert) => {
     const config = makeConfig();
     config._testEndCounts = new Map(); // run.ts / runTestsInBrowser ordinarily seeds this
     const server = setupWebServer(config, makeCachedContent());
@@ -139,7 +140,11 @@ module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
       );
       await done;
       ws.close();
-      assert.equal(config.COUNTER.testCount, 1, 'second testEnd is dropped (COUNTER stays at 1)');
+      assert.equal(
+        config.state.results.counter.testCount,
+        1,
+        'second testEnd is dropped (counter stays at 1)',
+      );
     } finally {
       await server.close();
     }
@@ -171,7 +176,7 @@ module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
         }),
       );
       await done1;
-      assert.equal(config.COUNTER.testCount, 1, 'first run counter = 1');
+      assert.equal(config.state.results.counter.testCount, 1, 'first run counter = 1');
 
       // Simulate watch-rerun lifecycle: runTestsInBrowser reset for the next
       // run. WS connection from this new run arrives, then a STALE testEnd
@@ -179,9 +184,9 @@ module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
       // because the dedup map remembers the previous run's name.
       // (Without the run-tied reset, the map is wiped on 'connection' and
       // the stale event leaks into the new run's count — the original bug.)
-      config.COUNTER.testCount = 0;
+      config.state.results.counter.testCount = 0;
       // NOTE: deliberately do NOT reset config._testEndCounts here. In real
-      // code, runTestsInBrowser would reset both COUNTER and _testEndCounts
+      // code, runTestsInBrowser would reset both the counter and _testEndCounts
       // together; this test is verifying that the WS handler does not
       // ALSO reset the map (which would re-admit the stale event).
       const ws2 = await openWebSocket(port);
@@ -200,7 +205,7 @@ module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
       await done2;
       ws2.close();
       assert.equal(
-        config.COUNTER.testCount,
+        config.state.results.counter.testCount,
         0,
         'stale testEnd from previous run is dropped (counter stays at 0)',
       );
@@ -382,14 +387,7 @@ function makeConfig(): Config {
     testFileLookupPaths: [],
     fsTree: {},
     debug: false,
-    COUNTER: {
-      testCount: 0,
-      failCount: 0,
-      skipCount: 0,
-      todoCount: 0,
-      passCount: 0,
-      errorCount: 0,
-    },
+    state: newRunState(),
     lastFailedTestFiles: null,
     lastRanTestFiles: null,
     _testRunDone: null,

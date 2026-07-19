@@ -52,7 +52,7 @@ export class DotReporter implements Reporter {
 
   /** Closes the matrix line, then prints the counts and every buffered failure. */
   onRunEnd(config: Config, info: RunEndInfo): void {
-    const { passCount, failCount, skipCount, todoCount } = config.COUNTER;
+    const { passCount, failCount, skipCount, todoCount } = config.state.results.counter;
     // Zero counts stay off the summary — "0 failing" is noise on a green run.
     const counts = [
       `\n  ${green(`${passCount} passing`)} (${info.durationMs}ms)`,

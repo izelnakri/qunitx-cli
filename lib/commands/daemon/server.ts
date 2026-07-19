@@ -700,7 +700,7 @@ async function runOnce(
     await run(config);
     // run() throws DaemonRunError on success in daemon mode; reaching here means it
     // returned without exiting — fall back on the counter.
-    return config.COUNTER.failCount > 0 ? 1 : 0;
+    return config.state.results.counter.failCount > 0 ? 1 : 0;
   } catch (err) {
     if (err instanceof DaemonRunError) return err.exitCode;
     throw err;
