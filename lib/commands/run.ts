@@ -314,10 +314,11 @@ export async function run(config: Config): Promise<void> {
     const { groups: untargetedGroups, weights } = untargeted.length
       ? await splitIntoGroups(untargeted, untargetedGroupCount, timings ?? {})
       : { groups: [] as string[][], weights: new Map<string, number>() };
-    const groups = [...targeted.map((group) => [group.file]), ...untargetedGroups];
-    const groupSelectors = [
-      ...targeted.map((group) => group.selectors),
-      ...untargetedGroups.map(() => undefined),
+    // One entry per group: the files it bundles and the selectors that scope it
+    // (undefined = no line targets, run those files whole).
+    const groups: Array<{ files: string[]; selectors: QUnitSelector[] | undefined }> = [
+      ...targeted.map((group) => ({ files: [group.file], selectors: group.selectors })),
+      ...untargetedGroups.map((files) => ({ files, selectors: undefined })),
     ];
     const groupCount = groups.length;
 
@@ -341,7 +342,7 @@ export async function run(config: Config): Promise<void> {
     // final report covers the whole run (mirrors how COUNTER is shared above).
     config._coverageCollector = config.coverage ? new Map() : null;
 
-    const groupConfigs = groups.map((groupFiles, i) => ({
+    const groupConfigs = groups.map(({ files, selectors }, i) => ({
       ...config,
       // Per-group dedup map for the testEnd handler — see
       // Config._testEndCounts. Each group's COUNTER bucket is shared via the
@@ -352,8 +353,8 @@ export async function run(config: Config): Promise<void> {
       // register tests with the same module/test names — the dedup key is
       // intra-group.)
       _testEndCounts: new Map<string, number>(),
-      _qunitSelectors: groupSelectors[i],
-      fsTree: Object.fromEntries(groupFiles.map((filePath) => [filePath, config.fsTree[filePath]])),
+      _qunitSelectors: selectors,
+      fsTree: Object.fromEntries(files.map((filePath) => [filePath, config.fsTree[filePath]])),
       // Single group keeps the root output dir for backward-compatible file paths.
       output: groupCount === 1 ? config.output : `${config.output}/group-${i}`,
       // Page reuse is single-group only: in concurrent group mode group 0 would
@@ -544,7 +545,11 @@ export async function run(config: Config): Promise<void> {
     // failure set is only the matched subset. File-level narrowing (--only-failed/--changed) is
     // fine — those still run whole files.
     const filteredRun = isFilteredRun(config);
-    const fileTimes = computeFileTimes(groups, weights, wallTimes);
+    const fileTimes = computeFileTimes(
+      groups.map((group) => group.files),
+      weights,
+      wallTimes,
+    );
     if (!filteredRun) {
       persistTimings(fileTimes, config.projectRoot).catch(
         (err: Error) =>
