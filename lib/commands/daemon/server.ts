@@ -14,7 +14,7 @@ import { DaemonRunError } from '../run/tests-in-browser.ts';
 import { run } from '../run.ts';
 import type { Request, ResponseChunk, RunRequest, DaemonInfo } from './protocol.ts';
 import type { Browser } from 'playwright-core';
-import type { Config } from '../../types.ts';
+import type { Config, EsbuildCache } from '../../types.ts';
 
 // Daemon idle window: after the last run finishes, the daemon shuts itself down.
 // Default 30 minutes; override with `QUNITX_DAEMON_IDLE_TIMEOUT` (see
@@ -141,7 +141,7 @@ interface DaemonState {
    * Single-source esbuild incremental-context cache, persisted across daemon runs.
    * Mutated by reference inside `buildIncrementally`; disposed on daemon shutdown.
    */
-  esbuildCache: NonNullable<Config['_daemonEsbuildCache']>;
+  esbuildCache: EsbuildCache;
   /**
    * Single-source Page slot for single-group daemon runs. Lives across runs;
    * `setupBrowser` reuses `slot.page` (when connected) instead of `newPage()`.

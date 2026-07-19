@@ -34,10 +34,23 @@ export interface Counter {
 export type FSTree = Record<string, null>;
 
 /**
+ * A slot holding esbuild's incremental build context plus the key it was built for.
+ * Two lifetimes share this shape: the per-process one on {@link CachedContent} (watch mode)
+ * and the daemon's persistent one, which survives across runs. `buildIncrementally` takes
+ * either — it disposes and recreates the context whenever the key changes.
+ */
+export interface EsbuildCache {
+  /** Live esbuild incremental context, or `null`/absent before the first build. */
+  _esbuildContext?: BuildContext | null;
+  /** Cache key for `_esbuildContext`: `allTestFilePaths.join('\0')`. Invalidated when files change. */
+  _esbuildContextKey?: string;
+}
+
+/**
  * Holds esbuild bundle output and associated HTML file metadata,
  * cached between watch-mode rebuilds to avoid redundant work.
  */
-export interface CachedContent {
+export interface CachedContent extends EsbuildCache {
   /** Full test bundle source, or `null` before the first build completes. */
   allTestCode: Buffer | string | null;
   /** Bundle filtered to files that failed on the previous run (used by re-run mode). */
@@ -52,10 +65,6 @@ export interface CachedContent {
   staticHTMLs: Record<string, string>;
   /** HTML pages whose bundle content is injected at request time, keyed by server-relative path. */
   dynamicContentHTMLs: Record<string, string>;
-  /** Live esbuild incremental context, kept warm between watch-mode rebuilds. */
-  _esbuildContext?: BuildContext | null;
-  /** Cache key for `_esbuildContext`: `allTestFilePaths.join('\0')`. Invalidated when files change. */
-  _esbuildContextKey?: string;
   /**
    * In-flight build promise started by `run.ts` before Chrome setup completes (initial run)
    * or before `runTestsInBrowser` is called (reruns), so esbuild races navigation.
@@ -272,10 +281,7 @@ export interface Config {
    * for the warm module graph across daemon runs; replaced (dispose+recreate) when
    * `bundleCacheKey()` changes — same correctness behavior as the cache-less path.
    */
-  _daemonEsbuildCache?: {
-    _esbuildContext?: import('esbuild').BuildContext | null;
-    _esbuildContextKey?: string;
-  };
+  _daemonEsbuildCache?: EsbuildCache;
   /**
    * The daemon's persistent Page slot for single-group runs. When `slot.page` is
    * set and connected, `setupBrowser` reuses it instead of `browser.newPage()`,
