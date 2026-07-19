@@ -281,12 +281,13 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
   });
 
   server.get('/', async (_req, res) => {
-    // buildTestBundle clears _buildError only after its first await (fs.mkdir), so a stale
+    // buildTestBundle clears pageOverride only after its first await (fs.mkdir), so a stale
     // error from the previous run can persist into the next run's navigation window.
     // Awaiting _activeRebuild here ensures we act on the settled build state, not stale state.
     await cachedContent._activeRebuild?.catch(() => {});
-    if (cachedContent._buildError) {
-      const htmlContent = buildErrorHTML(cachedContent._buildError);
+    const override = cachedContent.pageOverride;
+    if (override?.kind === 'build-error') {
+      const htmlContent = buildErrorHTML(override.error);
       res.writeHead(200, HTML_HEADERS);
       res.end(htmlContent);
       // Build error HTML has no tests.js script tag, so the /tests.js route never fires.
@@ -306,9 +307,9 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         htmlContent,
       );
     }
-    if (cachedContent._noTestsWarning) {
+    if (override?.kind === 'no-tests') {
       res.writeHead(200, HTML_HEADERS);
-      return res.end(buildNoTestsHTML(cachedContent._noTestsWarning));
+      return res.end(buildNoTestsHTML(override.files));
     }
     res.writeHead(200, HTML_HEADERS);
     res.end(mainIndexHTML);
@@ -319,8 +320,9 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
   });
 
   server.get('/qunitx.html', (_req, res) => {
-    if (cachedContent._buildError) {
-      const htmlContent = buildErrorHTML(cachedContent._buildError);
+    const override = cachedContent.pageOverride;
+    if (override?.kind === 'build-error') {
+      const htmlContent = buildErrorHTML(override.error);
       res.writeHead(200, HTML_HEADERS);
       res.end(htmlContent);
       return saveHTML(
@@ -328,9 +330,9 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
         htmlContent,
       );
     }
-    if (cachedContent._noTestsWarning) {
+    if (override?.kind === 'no-tests') {
       res.writeHead(200, HTML_HEADERS);
-      return res.end(buildNoTestsHTML(cachedContent._noTestsWarning));
+      return res.end(buildNoTestsHTML(override.files));
     }
     res.writeHead(200, HTML_HEADERS);
     res.end(mainQunitxHTML);
@@ -642,13 +644,14 @@ export function registerGroupRoutes(
       );
 
   server.get(`/group-${groupId}/`, (_req, res) => {
-    if (groupCachedContent._buildError) {
+    const override = groupCachedContent.pageOverride;
+    if (override?.kind === 'build-error') {
       res.writeHead(200, HTML_HEADERS);
-      return res.end(buildErrorHTML(groupCachedContent._buildError));
+      return res.end(buildErrorHTML(override.error));
     }
-    if (groupCachedContent._noTestsWarning) {
+    if (override?.kind === 'no-tests') {
       res.writeHead(200, HTML_HEADERS);
-      return res.end(buildNoTestsHTML(groupCachedContent._noTestsWarning));
+      return res.end(buildNoTestsHTML(override.files));
     }
     res.writeHead(200, HTML_HEADERS);
     res.end(mainGroupHTML);

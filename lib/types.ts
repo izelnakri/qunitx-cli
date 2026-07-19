@@ -78,18 +78,31 @@ export interface CachedContent extends EsbuildCache {
    */
   _activeRebuild?: Promise<void> | null;
   /**
-   * Set when the last esbuild run failed (watch mode only). The web server's `/` route serves
-   * an error page instead of the normal test HTML, and the Playwright page is navigated there.
+   * Replaces the normal test page for this run, or `null` when the run renders tests as usual.
+   * The web server's `/` route serves the override and the Playwright page is navigated there.
    * Cleared at the start of every new build attempt.
    */
-  _buildError?: { type: string; formatted: string } | null;
-  /**
-   * Set when all test runs completed with 0 registered QUnit tests. Contains the display paths
-   * of the test files (relative to projectRoot when possible). The web server's `/` route serves
-   * a warning page. Cleared at the start of every new build attempt.
-   */
-  _noTestsWarning?: string[] | null;
+  pageOverride?: PageOverride | null;
 }
+
+/** An esbuild failure, captured for display on the run's error page. */
+export interface BuildError {
+  /** Short error class used as the page heading (e.g. `'Build Error'`). */
+  type: string;
+  /** Pre-formatted esbuild message block. */
+  formatted: string;
+}
+
+/**
+ * Why a run is showing something other than its tests: the last esbuild run failed, or every
+ * test file compiled but registered 0 QUnit tests (`files` holds their display paths).
+ *
+ * A single slot rather than two: both conditions can be live at once (a run that registers no
+ * tests and then throws), and every reader has always checked the build error first — so
+ * last-write-wins on one slot reproduces that precedence, with the throw overwriting the warning.
+ */
+export type PageOverride =
+  { kind: 'build-error'; error: BuildError } | { kind: 'no-tests'; files: string[] };
 
 /**
  * One collected JUnit `<testcase>` — accumulated per `testEnd` and serialized into

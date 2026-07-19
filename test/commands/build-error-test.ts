@@ -234,11 +234,11 @@ module('Setup | buildNoTestsHTML', { concurrency: true }, () => {
 });
 
 // ---------------------------------------------------------------------------
-// buildTestBundle — _buildError lifecycle
+// buildTestBundle — pageOverride lifecycle
 // ---------------------------------------------------------------------------
 
-module('Commands | buildTestBundle | _buildError lifecycle', { concurrency: true }, () => {
-  test('sets _buildError with type and formatted string when esbuild fails', async (assert) => {
+module('Commands | buildTestBundle | pageOverride lifecycle', { concurrency: true }, () => {
+  test('sets a build-error override with type and formatted string when esbuild fails', async (assert) => {
     const tmpFile = `${CWD}/tmp/syntax-error-${randomUUID()}.ts`;
     await fs.mkdir(`${CWD}/tmp`, { recursive: true });
     await fs.writeFile(tmpFile, 'const x = {{{INVALID}}};');
@@ -249,24 +249,29 @@ module('Commands | buildTestBundle | _buildError lifecycle', { concurrency: true
         buildTestBundle(config, cached),
         'buildTestBundle rejects on build failure',
       );
-      assert.ok(cached._buildError, '_buildError is set');
-      assert.equal(typeof cached._buildError?.type, 'string', 'type is a string');
-      assert.ok((cached._buildError?.type?.length ?? 0) > 0, 'type is non-empty');
-      assert.equal(typeof cached._buildError?.formatted, 'string', 'formatted is a string');
-      assert.ok((cached._buildError?.formatted?.length ?? 0) > 0, 'formatted is non-empty');
+      const override = cached.pageOverride;
+      assert.equal(override?.kind, 'build-error', 'a build-error override is set');
+      const error = override?.kind === 'build-error' ? override.error : null;
+      assert.equal(typeof error?.type, 'string', 'type is a string');
+      assert.ok((error?.type?.length ?? 0) > 0, 'type is non-empty');
+      assert.equal(typeof error?.formatted, 'string', 'formatted is a string');
+      assert.ok((error?.formatted?.length ?? 0) > 0, 'formatted is non-empty');
     } finally {
       await fs.rm(tmpFile, { force: true });
       await fs.rm(`${CWD}/${config.output}`, { force: true, recursive: true });
     }
   });
 
-  test('clears _buildError to null after a successful build', async (assert) => {
+  test('clears the override to null after a successful build', async (assert) => {
     const config = makeConfig([`${CWD}/test/helpers/passing-tests.ts`]);
     const cached = makeCachedContent();
-    cached._buildError = { type: 'Build Error', formatted: 'stale error from previous run' };
+    cached.pageOverride = {
+      kind: 'build-error',
+      error: { type: 'Build Error', formatted: 'stale error from previous run' },
+    };
     try {
       await buildTestBundle(config, cached);
-      assert.strictEqual(cached._buildError, null, '_buildError cleared on success');
+      assert.strictEqual(cached.pageOverride, null, 'pageOverride cleared on success');
     } finally {
       await fs.rm(`${CWD}/${config.output}`, { force: true, recursive: true });
     }
