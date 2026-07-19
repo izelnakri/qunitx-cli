@@ -68,6 +68,12 @@ module('Setup | parseCliFlags | --port', { concurrency: true }, () => {
     assert.strictEqual(flags.portExplicit, true);
   });
 
+  test('-p=<n> is the short alias for --port', (assert) => {
+    const flags = withArgv(['-p=5678'], () => parseCliFlags(PROJECT_ROOT));
+    assert.strictEqual(flags.port, 5678);
+    assert.strictEqual(flags.portExplicit, true);
+  });
+
   test('--port is undefined (not 1234) when not provided — default comes from default-project-config-values', (assert) => {
     const flags = withArgv([], () => parseCliFlags(PROJECT_ROOT));
     assert.strictEqual(flags.port, undefined, 'parseCliFlags yields no port when flag is absent');
@@ -339,10 +345,10 @@ module(
 
 module('Setup | parseCliFlags | --search / --print', { concurrency: true }, () => {
   test('all search spellings set search', (assert) => {
-    const values = ['-s=Cart', '--search=Cart', '-p=Cart', '--print=Cart', '--preview=Cart'].map(
+    const values = ['-s=Cart', '--search=Cart', '--print=Cart', '--preview=Cart'].map(
       (arg) => withArgv([arg], () => parseCliFlags(PROJECT_ROOT)).search,
     );
-    assert.deepEqual(values, ['Cart', 'Cart', 'Cart', 'Cart', 'Cart']);
+    assert.deepEqual(values, ['Cart', 'Cart', 'Cart', 'Cart']);
   });
 
   test('a bare --print sets search to true (list everything)', (assert) => {

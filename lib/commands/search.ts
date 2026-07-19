@@ -48,7 +48,7 @@ interface FoundTest {
  * @returns the process exit code: 0 when something matched, 1 when nothing did (as `grep` does).
  */
 export async function searchTests(config: Config): Promise<number> {
-  // A bare --search/-p has no expression of its own, so it previews whatever -t/-m set; with
+  // A bare --search/--print has no expression of its own, so it previews whatever -t/-m set; with
   // neither, an undefined filter matches everything and the command lists the whole suite.
   const filter = typeof config.search === 'string' ? config.search : config.filter;
   const files = Object.keys(config.fsTree);

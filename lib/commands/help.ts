@@ -26,10 +26,10 @@ ${color('--output')} : folder to distribute built qunitx html and js that a webs
 ${color('--failFast')} : run the target file or folders with immediate abort if a single test fails
 ${color('--only-failed')} : re-run only the test files that failed on the previous run (short: ${color('-f')}, alias: ${color('--failed')})
 ${color('--filter')} : run only tests whose ${color('"Module: test name"')} matches; substring, ${color('/regex/')}, ${color('/regex/i')}, or ${color('!')} to invert (spellings: ${color('-t')}, ${color('-m')}, ${color('-n')}, ${color('--module')})
-${color('--search')} : list the tests the filter matches and exit, without running them (spellings: ${color('-s')}, ${color('-p')}, ${color('--print')}, ${color('--preview')})
+${color('--search')} : list the tests the filter matches and exit, without running them (spellings: ${color('-s')}, ${color('--print')}, ${color('--preview')})
   values may be unquoted and multi-word, up to the next flag (${color('qunitx test/ -m Cart checkout')}); put file targets before the filter, or after ${color('--')}
   substring is case-insensitive; a regex is case-sensitive unless you add ${color('/i')}. For one module and not its lookalikes: ${color("-t '/^Cart(:| >)/'")}
-${color('--port')} : HTTP server port (auto-selects a free port if the given port is taken)[default: 1234]
+${color('--port')} : HTTP server port (auto-selects a free port if the given port is taken)[default: 1234] (short: ${color('-p')})
 ${color('--extensions')} : comma-separated file extensions to track for discovery and watch-mode rebuilds[default: js,ts,jsx,tsx]
 ${color('--browser')} : browser engine to run tests in: chromium, firefox, webkit[default: chromium]
 ${color('--reporter')} : stdout format: tap, spec, dot, github[default: tap] (short: ${color('-r')})

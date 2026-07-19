@@ -112,12 +112,15 @@ function applyFlag(result: Flags, arg: string): void {
     result.timeout = Number(value) || FALLBACK_TIMEOUT_MS;
   } else if (arg.startsWith('--output')) {
     result.output = value;
-  } else if (arg.startsWith('--port')) {
+  } else if (arg.startsWith('--port') || arg === '-p' || arg.startsWith('-p=')) {
+    // `--port` (short: `-p`); value is glued (`-p=8080`) like every non-query value flag.
     const port = Number(value);
     // Fail fast like the other value flags: a bare `--port` (Number(undefined) === NaN) or an
     // out-of-range value would otherwise reach the bind step as a NaN/invalid port.
     if (!Number.isInteger(port) || port < 0 || port > 65535) {
-      console.error(`Invalid --port value: "${value ?? ''}". Expected --port=<0-65535>.`);
+      console.error(
+        `Invalid --port value: "${value ?? ''}". Expected --port=<0-65535> (short: -p).`,
+      );
       process.exit(1);
     }
     result.port = port;

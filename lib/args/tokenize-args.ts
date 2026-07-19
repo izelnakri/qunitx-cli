@@ -12,7 +12,8 @@
  * `config.module` could. Reach for `-t '/^Cart(:| >)/'` when you need exactly one module and not
  * its similarly-named siblings. `-n` is a fourth short alias (mnemonic: by name).
  *
- * `--search`/`-s`/`--print`/`-p`/`--preview` are the same idea for the "list, don't run" mode.
+ * `--search`/`-s`/`--print`/`--preview` are the same idea for the "list, don't run" mode. (`-p` is
+ * not among them — it is the short alias for `--port`.)
  *
  * A Map, not a plain object: a positional input literally named `__proto__` or `constructor`
  * would resolve to a truthy value on an object's prototype and be misread as a query flag.
@@ -25,7 +26,6 @@ const QUERY_FLAG_ACTION = new Map<string, 'run' | 'list'>([
   ['-n', 'run'],
   ['-s', 'list'],
   ['--search', 'list'],
-  ['-p', 'list'],
   ['--print', 'list'],
   ['--preview', 'list'],
 ]);

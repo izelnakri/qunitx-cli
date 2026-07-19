@@ -24,13 +24,13 @@ output to the terminal.
 - `--failFast` stops the run after the first failing test
 - `--only-failed` / `-f` re-runs only the test files that failed on the previous run (cached in `tmp/.qunitx-last-failures.json`)
 - `--filter` / `-t` / `--module` / `-m` / `-n` — one test filter, five spellings, matched against `"Module: test name"`: substring, `/regex/`, `/regex/i`, or `!` to invert
-- `--search` / `-s` / `--print` / `-p` / `--preview` lists the tests a filter matches and exits, without running them (no browser — instant)
+- `--search` / `-s` / `--print` / `--preview` lists the tests a filter matches and exits, without running them (no browser — instant)
 - `file.ts#34` / `file.ts:34` runs just the test at that line — or the whole module, when the line is a `module(...)`
 - `--debug` prints the local server URL and pipes browser console to stdout
 - `--open` / `-o` opens the test output in the same browser the tests run in as soon as the bundle is ready; `--open=brave` opens in a specific binary instead
 - `--before` / `--after` hook scripts for server setup and teardown
 - `--timeout` controls the maximum ms to wait for the full suite to finish
-- `--port` defaults to 1234 and auto-increments if taken; fails fast if an explicit port is unavailable
+- `--port` / `-p` defaults to 1234 and auto-increments if taken; fails fast if an explicit port is unavailable
 - `--browser` flag to run tests in Chromium, Firefox, or WebKit
 - `--reporter` picks the stdout format: `tap` (default), `spec`, `dot`, or `github` (annotates failures on the PR diff)
 - `--junit` writes a JUnit XML report for CI dashboards, alongside the normal terminal output
@@ -413,7 +413,7 @@ Options:
   --filter, -t        Run only tests matching "Module: test name"  (substring, /regex/, !invert)
   --module, -m, -n    Same flag as --filter — one matcher, several spellings
   --search, -s        List the tests the filter matches, then exit without running them
-  --print, -p         Same flag as --search
+  --print             Same flag as --search
   --preview           Same flag as --search
   --reporter, -r      stdout format: tap, spec, dot, github
   --console           Alias for --debug
@@ -425,7 +425,7 @@ Options:
   --after=<file>      Script to run (and optionally await) after tests finish
   --open, -o          Open output in the test browser as soon as the bundle is ready
   --open=<binary>     Open output in a specific browser binary (e.g. brave, google-chrome-lts)
-  --port=<n>          HTTP server port (auto-selects a free port if taken)
+  --port=<n>, -p=<n>  HTTP server port (auto-selects a free port if taken)
   --browser=<name>    Browser engine: chromium (default), firefox, or webkit
   --reporter=<name>   Stdout format: tap, spec, dot, github  [default: tap]
   --junit[=<path>]    Also write a JUnit XML report  [default: <output>/junit.xml]
