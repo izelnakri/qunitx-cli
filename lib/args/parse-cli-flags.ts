@@ -91,38 +91,38 @@ type Flags = ParsedFlags & { inputs: Set<string> };
  * matching chain, unchanged — the tokenizer only lifted `-t`/`-m` and positional inputs out of it.
  */
 function applyFlag(result: Flags, arg: string): void {
+  // Every value flag reads the same `=`-suffix, so split once here. A bare boolean flag has no
+  // suffix (value === undefined) and falls back to true via parseBoolean.
+  const value = arg.split('=')[1];
   if (arg.startsWith('--debug') || arg.startsWith('--console')) {
     // --console is an alias for --debug: pipe the browser console to stdout.
-    result.debug = parseBoolean(arg.split('=')[1]);
+    result.debug = parseBoolean(value);
   } else if (arg === '-w' || arg.startsWith('-w=') || arg.startsWith('--watch')) {
-    result.watch = parseBoolean(arg.split('=')[1]);
+    result.watch = parseBoolean(value);
   } else if (arg === '-o' || arg.startsWith('-o=') || arg.startsWith('--open')) {
-    const value = arg.split('=')[1];
     result.open =
       value === undefined || value === 'true' ? true : value === 'false' ? false : value;
   } else if (arg.startsWith('--failfast') || arg.startsWith('--failFast')) {
-    result.failFast = parseBoolean(arg.split('=')[1]);
+    result.failFast = parseBoolean(value);
   } else if (arg === '-f' || arg.startsWith('--only-failed') || arg.startsWith('--failed')) {
     // Re-run only the test files that failed on the previous run (from the persistent
     // tmp/.qunitx-last-failures.json cache).
-    result.onlyFailed = parseBoolean(arg.split('=')[1]);
+    result.onlyFailed = parseBoolean(value);
   } else if (arg.startsWith('--timeout')) {
-    result.timeout = Number(arg.split('=')[1]) || FALLBACK_TIMEOUT_MS;
+    result.timeout = Number(value) || FALLBACK_TIMEOUT_MS;
   } else if (arg.startsWith('--output')) {
-    result.output = arg.split('=')[1];
+    result.output = value;
   } else if (arg.startsWith('--port')) {
-    const raw = arg.split('=')[1];
-    const value = Number(raw);
+    const port = Number(value);
     // Fail fast like the other value flags: a bare `--port` (Number(undefined) === NaN) or an
     // out-of-range value would otherwise reach the bind step as a NaN/invalid port.
-    if (!Number.isInteger(value) || value < 0 || value > 65535) {
-      console.error(`Invalid --port value: "${raw ?? ''}". Expected --port=<0-65535>.`);
+    if (!Number.isInteger(port) || port < 0 || port > 65535) {
+      console.error(`Invalid --port value: "${value ?? ''}". Expected --port=<0-65535>.`);
       process.exit(1);
     }
-    result.port = value;
+    result.port = port;
     result.portExplicit = true;
   } else if (arg.startsWith('--extensions')) {
-    const value = arg.split('=')[1];
     if (!value) {
       console.error(`Invalid --extensions value: empty. Expected --extensions=js,ts.`);
       process.exit(1);
@@ -132,7 +132,6 @@ function applyFlag(result: Flags, arg: string): void {
       .map((extension) => extension.trim())
       .filter(Boolean);
   } else if (arg.startsWith('--browser')) {
-    const value = arg.split('=')[1];
     if (!['chromium', 'firefox', 'webkit'].includes(value)) {
       console.error(
         `Invalid --browser value: "${value}". Must be one of: chromium, firefox, webkit`,
@@ -141,24 +140,22 @@ function applyFlag(result: Flags, arg: string): void {
     }
     result.browser = value as 'chromium' | 'firefox' | 'webkit';
   } else if (arg.startsWith('--before')) {
-    result.before = parseModule(arg.split('=')[1]);
+    result.before = parseModule(value);
   } else if (arg.startsWith('--after')) {
-    result.after = parseModule(arg.split('=')[1]);
+    result.after = parseModule(value);
   } else if (arg === '--changed') {
     // Shorthand for --since=HEAD: "what tests does my working tree affect since the last commit?"
     result.changedSince = 'HEAD';
   } else if (arg.startsWith('--since')) {
-    const ref = arg.split('=')[1];
-    if (!ref) {
+    if (!value) {
       console.error(`Invalid --since value: empty. Expected --since=<git-ref>.`);
       process.exit(1);
     }
-    result.changedSince = ref;
+    result.changedSince = value;
   } else if (arg.startsWith('--reporter') || arg === '-r' || arg.startsWith('-r=')) {
     // `--reporter` (short: `-r`) selects the single stdout format. Artifacts (--junit, --coverage)
     // are separate additive flags, so `--reporter=dot --junit` is a coherent combination. Value is
     // glued (`-r=spec`) like every non-query value flag.
-    const value = arg.split('=')[1];
     if (!value || !REPORTERS.includes(value as ReporterName)) {
       console.error(
         `Invalid --reporter value: "${value ?? ''}". Must be one of: ${REPORTERS.join(', ')}`,
@@ -168,12 +165,10 @@ function applyFlag(result: Flags, arg: string): void {
     result.reporter = value as ReporterName;
   } else if (arg.startsWith('--junit')) {
     // Bare `--junit` writes <output>/junit.xml; `--junit=<path>` overrides the destination.
-    const value = arg.split('=')[1];
     result.junit = value ? value : true;
   } else if (arg.startsWith('--coverage')) {
     // `--coverage` → terminal summary only. `--coverage=lcov,html` → also write those files.
     // `text` is an explicit alias for the always-on terminal summary, never an extra format.
-    const value = arg.split('=')[1];
     const formats = value
       ? value
           .split(',')
