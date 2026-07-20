@@ -45,7 +45,7 @@ export function newGroupState(index = 0, selectors?: QUnitSelector[]): GroupStat
     },
     phase: 'bundling',
     selectors,
-    ranFiles: null,
+    lastRanFiles: null,
     lastFailedFiles: null,
     testEndCounts: new Map(),
     wsConnectionCount: 0,

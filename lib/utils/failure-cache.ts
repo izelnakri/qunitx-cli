@@ -94,10 +94,10 @@ export function recordFailedTest(config: Config, details: FailedTestDetails): vo
     config.state.group.sourceMapDecoder,
     config.projectRoot,
   );
-  if (file && config.state.group.ranFiles?.includes(file)) {
+  if (file && config.state.group.lastRanFiles?.includes(file)) {
     results.failedFiles.add(file);
   } else {
-    config.state.group.ranFiles?.forEach((ranFile) => results.failedFiles.add(ranFile));
+    config.state.group.lastRanFiles?.forEach((ranFile) => results.failedFiles.add(ranFile));
   }
   results.failedTests.push({
     file: file ? relativize(file, config.projectRoot) : null,

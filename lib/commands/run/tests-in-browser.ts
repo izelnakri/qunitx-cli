@@ -280,7 +280,7 @@ export async function runTestsInBrowser(
     // source of truth for "this is a fresh run, drop old tracking state."
     config.state.group.testEndCounts = new Map();
   }
-  config.state.group.ranFiles = targetTestFilesToFilter || allTestFilePaths;
+  config.state.group.lastRanFiles = targetTestFilesToFilter || allTestFilePaths;
 
   try {
     // In watch mode, run.js fires buildTestBundle before setupBrowser completes and stores
@@ -406,7 +406,7 @@ export async function runTestsInBrowser(
     // pass it through unchanged so the daemon's run handler can capture the exit code.
     if (error instanceof DaemonRunError) throw error;
     build.activeRebuild = null;
-    config.state.group.lastFailedFiles = config.state.group.ranFiles;
+    config.state.group.lastFailedFiles = config.state.group.lastRanFiles;
     const exception = new BundleError(error);
 
     // buildTestBundle's own catch sets the build-error fallback for full-bundle failures before rethrowing.
@@ -416,7 +416,7 @@ export async function runTestsInBrowser(
     // not be classified as build errors.
     if (
       build.fallbackPage?.kind !== 'build-error' &&
-      (error as { errors?: unknown[] }).errors?.length
+      (error as { errors?: EsbuildMessage[] }).errors?.length
     ) {
       const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
       build.fallbackPage = { kind: 'build-error', error: buildError };
