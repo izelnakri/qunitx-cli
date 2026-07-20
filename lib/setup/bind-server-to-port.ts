@@ -20,6 +20,8 @@ const EXPLICIT_PORT_RETRY_DELAY_MS = 50;
 export async function bindServerToPort(
   server: HTTPServer,
   config: { port: number; portExplicit?: boolean },
+  // Injectable so the retry loop is unit-testable without paying real wall-clock delays.
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 ): Promise<HTTPServer> {
   let port = config.port;
   let attempt = 0;
@@ -35,7 +37,7 @@ export async function bindServerToPort(
       if (config.portExplicit) {
         if (attempt >= EXPLICIT_PORT_RETRIES) throw err;
         attempt++;
-        await new Promise<void>((resolve) => setTimeout(resolve, EXPLICIT_PORT_RETRY_DELAY_MS));
+        await sleep(EXPLICIT_PORT_RETRY_DELAY_MS);
       } else {
         port++;
       }

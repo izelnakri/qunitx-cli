@@ -76,21 +76,11 @@ module('--port flag tests for browser mode', { concurrency: true }, (_hooks, mod
     assert.ok(await portIsFree(boundPort), 'port is released after the process exits');
   });
 
-  test('recovers when explicit port is transiently occupied (TOCTOU retry)', async (assert, testMetadata) => {
-    // Simulate a TOCTOU race: another process grabbed the port just after findFreePort()
-    // released it. The CLI must retry and claim the port once the transient holder releases.
-    const { number: port, release } = await findFreePort();
-    // Hold the port — don't release yet. The CLI will hit EADDRINUSE on first bind attempt.
-    setTimeout(() => release(), 30);
-
-    const result = await shell(`node cli.ts test/fixtures/passing-tests.js --port=${port}`, {
-      ...moduleMetadata,
-      ...testMetadata,
-    });
-
-    assert.passingTestCaseFor(result, { moduleName: '{{moduleName}}' });
-    assert.tapResult(result, { testCount: 3 });
-  });
+  // The transient-occupation TOCTOU retry is covered deterministically in
+  // test/setup/bind-server-to-port-test.ts. It cannot be an integration test: it needs a real
+  // port to be briefly held and then reclaimed by the CLI, but under the 16-worker parallel suite
+  // another worker grabs the released port in that window, so the CLI legitimately fails to bind
+  // and the test flakes (CI run 29783893187). Widening the retry budget would only mask it.
 
   test('fails with a clear error when --port is explicitly taken', async (assert, testMetadata) => {
     // Skip on Windows + deno-compiled binary: the binary's net.Server.listen()
