@@ -36,7 +36,7 @@ module('Commands | buildTestBundle | non-watch mode', { concurrency: true }, () 
     await buildTestBundle(config);
 
     assert.strictEqual(
-      cached._esbuildContext,
+      cached.context,
       undefined,
       'no incremental context is created in non-watch mode',
     );
@@ -63,11 +63,11 @@ module(
       try {
         await buildTestBundle(config);
 
-        assert.ok(cached._esbuildContext, 'esbuild context is created');
+        assert.ok(cached.context, 'esbuild context is created');
         // Parse the key rather than substring-checking — the JSON encoding escapes
         // backslashes on Windows, which makes substring assertions implicitly
         // platform-specific. The contract is "files are encoded in the key".
-        const parsedKey = JSON.parse(cached._esbuildContextKey ?? '{}') as { files?: string[] };
+        const parsedKey = JSON.parse(cached.contextKey ?? '{}') as { files?: string[] };
         assert.ok(
           parsedKey.files?.includes(FILE_A),
           'context key encodes the single test file path',
@@ -88,13 +88,13 @@ module(
 
       try {
         await buildTestBundle(config);
-        const firstContext = cached._esbuildContext;
+        const firstContext = cached.context;
 
         // Second call with the same config — fileKey is identical, context should be reused.
         await buildTestBundle(config);
 
         assert.strictEqual(
-          cached._esbuildContext,
+          cached.context,
           firstContext,
           'context object is the same reference on the second build',
         );
@@ -110,7 +110,7 @@ module(
 
       try {
         await buildTestBundle(config);
-        const firstContext = cached._esbuildContext;
+        const firstContext = cached.context;
 
         // Simulate adding a file: the fileKey changes → context is invalidated. Same config, so
         // the same build state holds the warm context across both builds.
@@ -119,11 +119,11 @@ module(
         await buildTestBundle(config);
 
         assert.notStrictEqual(
-          cached._esbuildContext,
+          cached.context,
           firstContext,
           'a new context is created when the file set changes',
         );
-        const newKey = JSON.parse(cached._esbuildContextKey ?? '{}') as { files?: string[] };
+        const newKey = JSON.parse(cached.contextKey ?? '{}') as { files?: string[] };
         assert.ok(
           newKey.files?.includes(FILE_A) && newKey.files?.includes(FILE_B),
           'context key encodes both files',
@@ -349,9 +349,9 @@ function makeConfig(testFiles: string[], watch = false): Config {
 
 // Dispose any live esbuild context so the service can be cleaned up after each test.
 async function disposeCached(cached: BuildState): Promise<void> {
-  if (cached._esbuildContext) {
-    await cached._esbuildContext.dispose().catch(() => {});
-    cached._esbuildContext = null;
+  if (cached.context) {
+    await cached.context.dispose().catch(() => {});
+    cached.context = null;
   }
 }
 

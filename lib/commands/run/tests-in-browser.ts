@@ -139,11 +139,11 @@ export function bundleCacheKey(opts: esbuild.BuildOptions, files: string[]): str
 }
 
 /**
- * Pre-builds the esbuild bundle for all test files and caches the result in `cachedContent`.
+ * Pre-builds the esbuild bundle for all test files and caches the result in the group's build state.
  * @returns {Promise<void>}
  */
 export async function buildTestBundle(config: Config): Promise<void> {
-  const cachedContent = config.state.group.build;
+  const build = config.state.group.build;
   const { projectRoot, output } = config;
   const allTestFilePaths = Object.keys(config.fsTree);
 
@@ -200,12 +200,12 @@ export async function buildTestBundle(config: Config): Promise<void> {
     footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
   };
 
-  cachedContent.pageOverride = null;
+  build.pageOverride = null;
 
   // Cache holder: daemon's persistent state slot for daemon-mode runs (so the
-  // incremental context survives across runs); the per-process cachedContent for
+  // incremental context survives across runs); the per-group build state for
   // watch mode (lives for the life of the watch process).
-  const cacheHolder = config.state.daemon?.esbuildCache ?? cachedContent;
+  const cacheHolder = config.state.daemon?.esbuildCache ?? build;
   const fileKey = bundleCacheKey(buildOptions, allTestFilePaths);
 
   try {
@@ -214,7 +214,7 @@ export async function buildTestBundle(config: Config): Promise<void> {
         ? buildIncrementally(buildOptions, fileKey, cacheHolder, needsDisk)
         : buildWithOverlayfsRetry(buildOptions, needsDisk),
       Promise.all(
-        cachedContent.htmlPathsToRunTests.map(async (htmlPath) => {
+        build.htmlPathsToRunTests.map(async (htmlPath) => {
           const targetPath = path.join(outDir, htmlPath);
           if (htmlPath !== '/') {
             await fs.rm(targetPath, { force: true, recursive: true });
@@ -223,16 +223,16 @@ export async function buildTestBundle(config: Config): Promise<void> {
         }),
       ),
     ]);
-    cachedContent.allTestCode = allTestCode;
+    build.allTestCode = allTestCode;
     config.state.group.sourceMapDecoder = extractInlineSourceMap(allTestCode, outDir);
     // Persist metafile for the next --changed run. Best-effort; cache miss
     // on subsequent reads degrades to "run all tests."
     if (metafile) void writeMetafileCache(projectRoot, process.cwd(), metafile);
-    cachedContent.lastBuildErrored = false;
+    build.lastBuildErrored = false;
   } catch (error) {
-    cachedContent.lastBuildErrored = true;
+    build.lastBuildErrored = true;
     const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
-    cachedContent.pageOverride = { kind: 'build-error', error: buildError };
+    build.pageOverride = { kind: 'build-error', error: buildError };
     // Always write index.html immediately: in non-watch mode the server route for '/' is only
     // reached on success (build errors in the group setup bypass runTestsInBrowser entirely),
     // and in watch mode the Playwright page is headless so it never navigates to trigger the
@@ -252,7 +252,7 @@ export async function runTestsInBrowser(
   connections: Connections,
   targetTestFilesToFilter?: string[],
 ): Promise<Connections | undefined> {
-  const cachedContent = config.state.group.build;
+  const build = config.state.group.build;
   const { projectRoot, output } = config;
   const outDir = path.resolve(projectRoot, output);
   const allTestFilePaths = Object.keys(config.fsTree);
@@ -277,17 +277,17 @@ export async function runTestsInBrowser(
 
   try {
     // In watch mode, run.js fires buildTestBundle before setupBrowser completes and stores
-    // the promise on _preBuildPromise so esbuild races Chrome setup. Always clear it here so
+    // the promise on preBuildPromise so esbuild races Chrome setup. Always clear it here so
     // watch-mode re-runs always call buildTestBundle fresh — if we skip the await below (because
     // allTestCode is already set from a race win by esbuild), a stale resolved promise would
     // otherwise be consumed by the next re-run instead of triggering a real rebuild.
-    const preBuildPromise = cachedContent._preBuildPromise;
-    cachedContent._preBuildPromise = null;
-    if (!cachedContent.allTestCode) {
+    const preBuildPromise = build.preBuildPromise;
+    build.preBuildPromise = null;
+    if (!build.allTestCode) {
       if (preBuildPromise) {
         // Build was kicked off before navigation — let it race Chrome. The /tests.js route
-        // awaits _activeRebuild before serving, so Chrome gets the bundle when ready.
-        cachedContent._activeRebuild = preBuildPromise;
+        // awaits activeRebuild before serving, so Chrome gets the bundle when ready.
+        build.activeRebuild = preBuildPromise;
       } else {
         await buildTestBundle(config);
       }
@@ -295,21 +295,18 @@ export async function runTestsInBrowser(
 
     // buildTestBundle bails early when fsTree is empty (spurious unlink race on overlayfs).
     // Don't navigate the browser — the pending-trigger mechanism will fire a correct rebuild.
-    if (!cachedContent.allTestCode && !cachedContent._activeRebuild) {
+    if (!build.allTestCode && !build.activeRebuild) {
       return connections;
     }
 
     if (runHasFilter) {
       const outputPath = path.join(outDir, 'filtered-tests.js');
-      cachedContent.filteredTestCode = await buildFilteredTests(
+      build.filteredTestCode = await buildFilteredTests(
         targetTestFilesToFilter,
         outputPath,
         config,
       );
-      config.state.group.sourceMapDecoder = extractInlineSourceMap(
-        cachedContent.filteredTestCode,
-        outDir,
-      );
+      config.state.group.sourceMapDecoder = extractInlineSourceMap(build.filteredTestCode, outDir);
     }
 
     const TIME_COUNTER = timeCounter();
@@ -318,17 +315,17 @@ export async function runTestsInBrowser(
       await runTestInsideHTMLFile('/qunitx.html', connections, config);
     } else {
       await Promise.all(
-        cachedContent.htmlPathsToRunTests.map((htmlPath) =>
+        build.htmlPathsToRunTests.map((htmlPath) =>
           runTestInsideHTMLFile(htmlPath, connections, config),
         ),
       );
     }
 
-    if (cachedContent._activeRebuild) {
-      await cachedContent._activeRebuild.catch(() => {});
-      cachedContent._activeRebuild = null;
-      if (!cachedContent.allTestCode) {
-        const override = cachedContent.pageOverride;
+    if (build.activeRebuild) {
+      await build.activeRebuild.catch(() => {});
+      build.activeRebuild = null;
+      if (!build.allTestCode) {
+        const override = build.pageOverride;
         config.watch &&
           override?.kind === 'build-error' &&
           console.log(
@@ -344,12 +341,12 @@ export async function runTestsInBrowser(
     if (!config.state.group.groupMode) {
       if (
         config.state.results.counter.testCount === 0 &&
-        cachedContent.pageOverride?.kind !== 'build-error'
+        build.pageOverride?.kind !== 'build-error'
       ) {
         const displayFiles = allTestFilePaths.map((f) =>
           f.startsWith(`${projectRoot}/`) ? f.slice(projectRoot.length + 1) : f,
         );
-        cachedContent.pageOverride = { kind: 'no-tests', files: displayFiles };
+        build.pageOverride = { kind: 'no-tests', files: displayFiles };
         const fileWord = allTestFilePaths.length === 1 ? 'file' : 'files';
         console.log(
           `# Warning: 0 tests registered — no QUnit test cases found in ${allTestFilePaths.length} ${fileWord}`,
@@ -401,7 +398,7 @@ export async function runTestsInBrowser(
     // DaemonRunError signals normal completion in daemon mode (replaces process.exit);
     // pass it through unchanged so the daemon's run handler can capture the exit code.
     if (error instanceof DaemonRunError) throw error;
-    cachedContent._activeRebuild = null;
+    build.activeRebuild = null;
     config.state.group.lastFailedFiles = config.state.group.ranFiles;
     const exception = new BundleError(error);
 
@@ -411,11 +408,11 @@ export async function runTestsInBrowser(
     // (those carry .errors[]) — navigation/timeout errors from runTestInsideHTMLFile should
     // not be classified as build errors.
     if (
-      cachedContent.pageOverride?.kind !== 'build-error' &&
+      build.pageOverride?.kind !== 'build-error' &&
       (error as { errors?: unknown[] }).errors?.length
     ) {
       const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
-      cachedContent.pageOverride = { kind: 'build-error', error: buildError };
+      build.pageOverride = { kind: 'build-error', error: buildError };
       fs.writeFile(path.join(outDir, 'qunitx.html'), buildErrorHTML(buildError)).catch(
         (err: Error) =>
           config.debug &&
@@ -491,7 +488,7 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
         acc.push({
           groupIndex,
           config: groupConfig,
-          cachedContent: groupConfig.state.group.build,
+          build: groupConfig.state.group.build,
           files,
         });
       return acc;
@@ -499,7 +496,7 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
     [] as Array<{
       groupIndex: number;
       config: Config;
-      cachedContent: BuildState;
+      build: BuildState;
       files: string[];
     }>,
   );
@@ -596,15 +593,15 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
         if (!match) return Promise.resolve();
         const slotIndex = parseInt(match[1]);
         const isMap = Boolean(match[2]);
-        const { config, cachedContent } = activeGroups[slotIndex];
+        const { config, build } = activeGroups[slotIndex];
         const destPath = path.join(
           path.resolve(config.projectRoot, config.output),
           'tests.js' + (isMap ? '.map' : ''),
         );
         if (!isMap) {
-          cachedContent.allTestCode = Buffer.from(outputFile.contents);
+          build.allTestCode = Buffer.from(outputFile.contents);
           config.state.group.sourceMapDecoder = extractInlineSourceMap(
-            cachedContent.allTestCode,
+            build.allTestCode,
             esbuildOutdir,
           );
         }
@@ -620,7 +617,7 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
     const errorHtml = buildErrorHTML(buildError);
     await Promise.all(
       activeGroups.map((group) => {
-        group.cachedContent.pageOverride = { kind: 'build-error', error: buildError };
+        group.build.pageOverride = { kind: 'build-error', error: buildError };
         return fs
           .writeFile(
             path.join(path.resolve(group.config.projectRoot, group.config.output), 'index.html'),
@@ -754,13 +751,13 @@ async function buildIncrementally(
 ): Promise<{ js: Buffer; metafile?: AffectedMetafile }> {
   const buildOpts: esbuild.BuildOptions = { ...options, write: false };
 
-  if (!cache._esbuildContext || cache._esbuildContextKey !== fileKey) {
-    cache._esbuildContext?.dispose().catch(() => {});
-    cache._esbuildContext = await esbuild.context(buildOpts);
-    cache._esbuildContextKey = fileKey;
+  if (!cache.context || cache.contextKey !== fileKey) {
+    cache.context?.dispose().catch(() => {});
+    cache.context = await esbuild.context(buildOpts);
+    cache.contextKey = fileKey;
   }
 
-  const ctx = cache._esbuildContext!;
+  const ctx = cache.context!;
   return runWithOverlayfsRetry(async () => {
     const result = await ctx.rebuild();
     const jsFile = result.outputFiles!.find((f) => !f.path.endsWith('.map'))!;

@@ -246,7 +246,7 @@ export async function runDaemonServer(): Promise<void> {
     lockPath,
     consecutiveCrashes: 0,
     listenSucceeded: false,
-    esbuildCache: { _esbuildContext: null },
+    esbuildCache: { context: null },
     pageSlot: { page: null },
   };
 
@@ -362,7 +362,7 @@ export async function shutdownDaemon(
     // browser may be null if the launch hadn't settled within the grace window
     // (or never started at all); the chrome-prelaunch exit hook handles that.
     browser?.close().catch(() => {}),
-    state.esbuildCache._esbuildContext?.dispose().catch(() => {}),
+    state.esbuildCache.context?.dispose().catch(() => {}),
   ]);
   // Best-effort cleanup of the per-cwd daemon dir created in runDaemonServer. rmdir refuses
   // non-empty dirs (we swallow the ENOTEMPTY) so a concurrent sibling that re-created files inside

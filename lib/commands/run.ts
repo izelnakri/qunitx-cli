@@ -128,7 +128,7 @@ export async function run(config: Config): Promise<void> {
  * keyboard shortcuts, so this returns with the process still alive.
  */
 async function runWatchMode(config: Config): Promise<void> {
-  const cachedContent = config.state.group.build;
+  const build = config.state.group.build;
   // Line targets scope the whole watch session, so they have to narrow fsTree BEFORE the
   // bundle below is built from it — see applyWatchLineTargets. Guarded so the common path
   // keeps starting esbuild without an extra await.
@@ -150,7 +150,7 @@ async function runWatchMode(config: Config): Promise<void> {
   // its own try/catch, so the rejection is handled — but only after setupBrowser resolves.
   const preBuildPromise = buildTestBundle(config);
   preBuildPromise.catch(() => {});
-  cachedContent._preBuildPromise = preBuildPromise;
+  build.preBuildPromise = preBuildPromise;
 
   const [connections] = await Promise.all([
     setupBrowser(config),
@@ -238,7 +238,7 @@ async function runWatchMode(config: Config): Promise<void> {
   // - No-tests warning: page.goto WAS called (the page loaded normal QUnit HTML with 0 tests),
   //   but the no-tests override is set only AFTER runTestInsideHTMLFile returns, so we must
   //   re-navigate so the route handler can now serve the warning page.
-  if (isHeadedWatchMode && cachedContent.pageOverride) {
+  if (isHeadedWatchMode && build.pageOverride) {
     await connections.page
       .goto(`http://localhost:${config.port}/`, {
         waitUntil: 'commit',
@@ -261,7 +261,7 @@ async function runWatchMode(config: Config): Promise<void> {
           // Clear the cached bundles so the next re-run rebuilds without the deleted file.
           // `change` events can fire while a file is being rewritten, so a filtered bundle
           // may catch the file in a transient empty/partial state and produce a broken rerun.
-          clearCachedBundles(cachedContent);
+          clearCachedBundles(build);
           if (config.debug) {
             console.log(
               `# Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
@@ -269,10 +269,10 @@ async function runWatchMode(config: Config): Promise<void> {
           }
           // Kick off rebuild immediately so it races Chrome navigation (same pattern as the
           // initial watch-mode build). runTestsInBrowser picks up the promise from
-          // _preBuildPromise and sets _activeRebuild so /tests.js can await it.
+          // preBuildPromise and sets activeRebuild so /tests.js can await it.
           const rebuildPromise = buildTestBundle(config);
           rebuildPromise.catch(() => {});
-          cachedContent._preBuildPromise = rebuildPromise;
+          build.preBuildPromise = rebuildPromise;
           return await runTestsInBrowser(config, connections);
         }
         if (config.debug) {
@@ -287,7 +287,7 @@ async function runWatchMode(config: Config): Promise<void> {
         // In headed watch mode the Playwright page IS the visible browser (navigator.webdriver=true
         // means it ignores the WS 'refresh' message). Navigate it directly after a build error
         // or a 0-tests warning so it shows the correct HTML rather than stale test results.
-        if (isHeadedWatchMode && cachedContent.pageOverride) {
+        if (isHeadedWatchMode && build.pageOverride) {
           await connections.page
             .goto(`http://localhost:${config.port}/`, {
               waitUntil: 'commit',
@@ -313,7 +313,7 @@ async function runConcurrentMode(
   timings: Record<string, number> | null,
   browserPromise: ReturnType<typeof launchBrowser> | null,
 ): Promise<void> {
-  const cachedContent = config.state.group.build;
+  const build = config.state.group.build;
   // CONCURRENT MODE: split test files across N groups = availableParallelism().
   // All group bundles are built while Chrome is starting up, so esbuild time
   // is hidden behind the ~1.2s Chrome launch. Each group then gets its own
@@ -387,7 +387,7 @@ async function runConcurrentMode(
         // starts from that list and the shared-server branch below rewrites it to /group-{i}/.
         build: {
           ...newGroupState().build,
-          htmlPathsToRunTests: [...cachedContent.htmlPathsToRunTests],
+          htmlPathsToRunTests: [...build.htmlPathsToRunTests],
         },
       },
     },
@@ -396,9 +396,7 @@ async function runConcurrentMode(
   // One shared HTTPServer for all groups (routed by /group-{i}/ prefix) when using the
   // default '/' HTML path. Falls back to per-group servers for custom HTML templates.
   const sharedServer =
-    groupCount > 1 &&
-    cachedContent.htmlPathsToRunTests[0] === '/' &&
-    cachedContent.htmlPathsToRunTests.length === 1
+    groupCount > 1 && build.htmlPathsToRunTests[0] === '/' && build.htmlPathsToRunTests.length === 1
       ? (() => {
           const s = new HTTPServer();
           setupGroupWSHandler(s, groupConfigs);
