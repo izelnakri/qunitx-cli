@@ -6,6 +6,7 @@ import { exec as execCb, spawn } from 'node:child_process';
 // crashes on .unref().
 import { setTimeout, clearTimeout } from 'node:timers';
 import { promisify } from 'node:util';
+import { rmRetry } from '../helpers/rm-retry.ts';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import '../helpers/custom-asserts.ts';
@@ -52,17 +53,6 @@ module('Input | custom html', { concurrency: true }, () => {
     }
   });
 });
-
-// On Windows, fs.watch holds directory handles briefly after process exit — retry on EBUSY.
-async function rmRetry(dir: string, attemptsLeft = 5, delayMs = 300): Promise<void> {
-  try {
-    await fs.rm(dir, { recursive: true, force: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EBUSY' || attemptsLeft <= 1) throw error;
-    await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-    await rmRetry(dir, attemptsLeft - 1, delayMs + 300);
-  }
-}
 
 async function makeCustomHTMLProject() {
   const id = randomUUID();
