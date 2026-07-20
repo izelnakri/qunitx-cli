@@ -4,6 +4,7 @@ import { cleanupBrowserDir } from './cleanup-dir.ts';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import type { Socket } from 'node:net';
 import type { EarlyChrome } from '../types.ts';
 
 const CDP_URL_REGEX = /DevTools listening on (ws:\/\/[^\s]+)/;
@@ -67,7 +68,7 @@ export async function preLaunchChrome(
       proc.unref();
       // A piped child stdio stream is a net.Socket at runtime, but ChildProcess types it as the
       // narrower Readable, which declares no unref().
-      (proc.stderr as unknown as { unref(): void }).unref();
+      (proc.stderr as Socket).unref();
 
       resolve({
         proc,
