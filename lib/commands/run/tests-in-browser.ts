@@ -1047,14 +1047,21 @@ interface EsbuildMessage {
  * still prints a coverage section — an empty one, with exit 0 — which reads as "your code is
  * uncovered" when the truth is "coverage never started". That silence turned a functional
  * break into what looked like a flake once already.
+ *
+ * `log` is injectable so tests can assert on the warning without patching global stdout —
+ * console.log bypasses process.stdout.write under Deno, so capturing it is not portable.
  */
-export async function armJSCoverage(page: Page, config: Config): Promise<boolean> {
+export async function armJSCoverage(
+  page: Page,
+  config: Config,
+  log: (...args: unknown[]) => void = console.log,
+): Promise<boolean> {
   if (!config.coverage || (config.browser ?? 'chromium') !== 'chromium') return false;
   try {
     await page.coverage.startJSCoverage({ resetOnNavigation: false });
     return true;
   } catch (error) {
-    console.log(
+    log(
       '#',
       yellow(
         `Warning: --coverage could not be started on this page, so the report will be empty: ${
