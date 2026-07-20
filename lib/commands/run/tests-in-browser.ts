@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { blue } from '../../utils/color.ts';
+import { blue, yellow } from '../../utils/color.ts';
 import { shutdownPrelaunch } from '../../chrome/prelaunch.ts';
 import { closeWithGrace } from '../../utils/close-with-grace.ts';
 import esbuild from 'esbuild';
@@ -878,17 +878,7 @@ async function runTestInsideHTMLFile(
       timeoutHandle = setTimeout(resolveTestRace, config.timeout + TEST_STALL_BUFFER_MS);
     };
 
-    // Arm V8 coverage before navigation. resetOnNavigation:false keeps the collected data
-    // across the goto/reload below so the bundle's execution is captured (Playwright's
-    // page.coverage is Chromium-only; config.coverage is already gated to chromium in run.ts).
-    if (config.coverage && (config.browser ?? 'chromium') === 'chromium') {
-      await page.coverage
-        .startJSCoverage({ resetOnNavigation: false })
-        .then(() => {
-          coverageStarted = true;
-        })
-        .catch(() => {});
-    }
+    coverageStarted = await armJSCoverage(page, config);
 
     const targetUrl = `http://localhost:${config.port}${filePath}${qunitFilterQuery(config)}`;
     const navOptions = { timeout: navMs, waitUntil: 'commit' as const };
@@ -1045,4 +1035,33 @@ interface EsbuildMessage {
   text: string;
   location: { file: string; line: number; column: number; length: number; lineText: string } | null;
   notes: Array<{ text: string }>;
+}
+
+/**
+ * Arms V8 line coverage on the page before navigation, returning whether it started.
+ * `resetOnNavigation: false` keeps the data across the goto below, so the bundle's execution
+ * is captured. Chromium-only — `run.ts` already disables coverage for firefox/webkit, and
+ * `page.coverage` exists only on chromium pages.
+ *
+ * A failure is announced rather than swallowed. Without arming, the run still finishes and
+ * still prints a coverage section — an empty one, with exit 0 — which reads as "your code is
+ * uncovered" when the truth is "coverage never started". That silence turned a functional
+ * break into what looked like a flake once already.
+ */
+export async function armJSCoverage(page: Page, config: Config): Promise<boolean> {
+  if (!config.coverage || (config.browser ?? 'chromium') !== 'chromium') return false;
+  try {
+    await page.coverage.startJSCoverage({ resetOnNavigation: false });
+    return true;
+  } catch (error) {
+    console.log(
+      '#',
+      yellow(
+        `Warning: --coverage could not be started on this page, so the report will be empty: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      ),
+    );
+    return false;
+  }
 }
