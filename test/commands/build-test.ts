@@ -176,7 +176,7 @@ module('Commands | buildTestBundle | jsx automatic runtime', { concurrency: true
     try {
       await buildTestBundle(config);
       const bundle = (cached.allTestCode as Buffer).toString('utf8');
-      assert.strictEqual(cached.pageOverride, null, 'no build error');
+      assert.strictEqual(cached.fallbackPage, null, 'no build error');
       assert.ok(bundle.includes('react/jsx-runtime'), 'bundle pulls in react/jsx-runtime');
     } finally {
       await fs.rm(tmpFile, { force: true });
@@ -197,7 +197,7 @@ module('Commands | buildTestBundle | jsx automatic runtime', { concurrency: true
     try {
       await buildTestBundle(config);
       const bundle = (cached.allTestCode as Buffer).toString('utf8');
-      assert.strictEqual(cached.pageOverride, null, 'no build error');
+      assert.strictEqual(cached.fallbackPage, null, 'no build error');
       assert.ok(bundle.includes('vue/jsx-runtime'), 'bundle pulls in vue/jsx-runtime');
       assert.notOk(
         bundle.includes('react/jsx-runtime'),
@@ -221,7 +221,7 @@ module('Commands | buildTestBundle | jsx automatic runtime', { concurrency: true
     try {
       await buildTestBundle(config);
       const bundle = (cached.allTestCode as Buffer).toString('utf8');
-      assert.strictEqual(cached.pageOverride, null, 'no build error');
+      assert.strictEqual(cached.fallbackPage, null, 'no build error');
       assert.ok(bundle.includes('react/jsx-runtime'), '.jsx is parsed and JSX is transformed');
     } finally {
       await fs.rm(tmpFile, { force: true });
@@ -244,7 +244,7 @@ module('Commands | buildTestBundle | jsx automatic runtime', { concurrency: true
     try {
       await buildTestBundle(config);
       const bundle = (cached.allTestCode as Buffer).toString('utf8');
-      assert.strictEqual(cached.pageOverride, null, 'no build error');
+      assert.strictEqual(cached.fallbackPage, null, 'no build error');
       assert.notOk(
         bundle.includes('jsx-runtime'),
         'no jsx-runtime import injected for plain TS files',
@@ -286,7 +286,7 @@ module('Commands | buildTestBundle | esbuild plugins', { concurrency: true }, ()
     try {
       await buildTestBundle(config);
       const bundle = (cached.allTestCode as Buffer).toString('utf8');
-      assert.strictEqual(cached.pageOverride, null, 'no build error');
+      assert.strictEqual(cached.fallbackPage, null, 'no build error');
       assert.equal(setupCalls, 1, 'plugin setup() invoked exactly once');
       assert.ok(
         bundle.includes(`'hi'`) || bundle.includes(`"hi"`),
@@ -306,7 +306,7 @@ module('Commands | buildTestBundle | nodePaths resolution', { concurrency: true 
     // walk ensures qunitx can still be resolved from any node_modules on the ancestor chain
     // of process.cwd(). os.tmpdir() is used (not hardcoded /tmp) so the test is portable to
     // Windows, where /tmp resolves to a non-existent D:\tmp.
-    // Note: an unused import is tree-shaken by esbuild, so we check pageOverride (no resolution
+    // Note: an unused import is tree-shaken by esbuild, so we check fallbackPage (no resolution
     // error) rather than bundle size.
     const tmpFile = path.join(os.tmpdir(), `qunitx-nodepaths-${randomUUID()}.ts`);
     await fs.writeFile(tmpFile, `import { module, test } from 'qunitx';\n`);
@@ -316,7 +316,7 @@ module('Commands | buildTestBundle | nodePaths resolution', { concurrency: true 
       await buildTestBundle(config);
       assert.ok(cached.allTestCode !== null, 'allTestCode is populated');
       assert.strictEqual(
-        cached.pageOverride,
+        cached.fallbackPage,
         null,
         'no build error — qunitx resolved via nodePaths',
       );

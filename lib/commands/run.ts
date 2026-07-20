@@ -241,9 +241,9 @@ async function runWatchMode(config: Config): Promise<void> {
   // - Build error: page.goto was never called (runTestInsideHTMLFile bailed before navigation),
   //   so the page is still at about:blank.
   // - No-tests warning: page.goto WAS called (the page loaded normal QUnit HTML with 0 tests),
-  //   but the no-tests override is set only AFTER runTestInsideHTMLFile returns, so we must
+  //   but the no-tests fallback page is set only AFTER runTestInsideHTMLFile returns, so we must
   //   re-navigate so the route handler can now serve the warning page.
-  if (isHeadedWatchMode && build.pageOverride) {
+  if (isHeadedWatchMode && build.fallbackPage) {
     await connections.page
       .goto(`http://localhost:${config.port}/`, {
         waitUntil: 'commit',
@@ -292,7 +292,7 @@ async function runWatchMode(config: Config): Promise<void> {
         // In headed watch mode the Playwright page IS the visible browser (navigator.webdriver=true
         // means it ignores the WS 'refresh' message). Navigate it directly after a build error
         // or a 0-tests warning so it shows the correct HTML rather than stale test results.
-        if (isHeadedWatchMode && build.pageOverride) {
+        if (isHeadedWatchMode && build.fallbackPage) {
           await connections.page
             .goto(`http://localhost:${config.port}/`, {
               waitUntil: 'commit',

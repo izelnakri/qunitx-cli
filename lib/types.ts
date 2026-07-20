@@ -72,10 +72,10 @@ export interface BuildState extends EsbuildCache {
   activeRebuild?: Promise<void> | null;
   /**
    * Replaces the normal test page for this run, or `null` when the run renders tests as usual.
-   * The web server's `/` route serves the override and the Playwright page is navigated there.
+   * The web server's `/` route serves this page and the Playwright page is navigated there.
    * Cleared at the start of every new build attempt.
    */
-  pageOverride?: PageOverride | null;
+  fallbackPage?: FallbackPage | null;
   /**
    * `true` if the most recent build ended in an esbuild error. Keeps `state.watch.lastBuildEndMs`
    * pinned to the last good build so a fix arriving after the error is never suppressed. Written
@@ -115,7 +115,7 @@ export interface BuildError {
  * tests and then throws), and every reader has always checked the build error first — so
  * last-write-wins on one slot reproduces that precedence, with the throw overwriting the warning.
  */
-export type PageOverride =
+export type FallbackPage =
   { kind: 'build-error'; error: BuildError } | { kind: 'no-tests'; files: string[] };
 
 /**

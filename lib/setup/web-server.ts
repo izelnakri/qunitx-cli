@@ -285,13 +285,13 @@ export function setupWebServer(config: Config): HTTPServer {
   });
 
   server.get('/', async (_req, res) => {
-    // buildTestBundle clears pageOverride only after its first await (fs.mkdir), so a stale
+    // buildTestBundle clears fallbackPage only after its first await (fs.mkdir), so a stale
     // error from the previous run can persist into the next run's navigation window.
     // Awaiting activeRebuild here ensures we act on the settled build state, not stale state.
     await build.activeRebuild?.catch(() => {});
-    const override = build.pageOverride;
-    if (override?.kind === 'build-error') {
-      const htmlContent = buildErrorHTML(override.error);
+    const fallback = build.fallbackPage;
+    if (fallback?.kind === 'build-error') {
+      const htmlContent = buildErrorHTML(fallback.error);
       res.writeHead(200, HTML_HEADERS);
       res.end(htmlContent);
       // Build error HTML has no tests.js script tag, so the /tests.js route never fires.
@@ -311,9 +311,9 @@ export function setupWebServer(config: Config): HTTPServer {
         htmlContent,
       );
     }
-    if (override?.kind === 'no-tests') {
+    if (fallback?.kind === 'no-tests') {
       res.writeHead(200, HTML_HEADERS);
-      return res.end(buildNoTestsHTML(override.files));
+      return res.end(buildNoTestsHTML(fallback.files));
     }
     res.writeHead(200, HTML_HEADERS);
     res.end(mainIndexHTML);
@@ -324,9 +324,9 @@ export function setupWebServer(config: Config): HTTPServer {
   });
 
   server.get('/qunitx.html', (_req, res) => {
-    const override = build.pageOverride;
-    if (override?.kind === 'build-error') {
-      const htmlContent = buildErrorHTML(override.error);
+    const fallback = build.fallbackPage;
+    if (fallback?.kind === 'build-error') {
+      const htmlContent = buildErrorHTML(fallback.error);
       res.writeHead(200, HTML_HEADERS);
       res.end(htmlContent);
       return saveHTML(
@@ -334,9 +334,9 @@ export function setupWebServer(config: Config): HTTPServer {
         htmlContent,
       );
     }
-    if (override?.kind === 'no-tests') {
+    if (fallback?.kind === 'no-tests') {
       res.writeHead(200, HTML_HEADERS);
-      return res.end(buildNoTestsHTML(override.files));
+      return res.end(buildNoTestsHTML(fallback.files));
     }
     res.writeHead(200, HTML_HEADERS);
     res.end(mainQunitxHTML);
@@ -644,14 +644,14 @@ export function registerGroupRoutes(server: HTTPServer, groupConfig: Config): vo
       );
 
   server.get(`/group-${groupId}/`, (_req, res) => {
-    const override = groupConfig.state.group.build.pageOverride;
-    if (override?.kind === 'build-error') {
+    const fallback = groupConfig.state.group.build.fallbackPage;
+    if (fallback?.kind === 'build-error') {
       res.writeHead(200, HTML_HEADERS);
-      return res.end(buildErrorHTML(override.error));
+      return res.end(buildErrorHTML(fallback.error));
     }
-    if (override?.kind === 'no-tests') {
+    if (fallback?.kind === 'no-tests') {
       res.writeHead(200, HTML_HEADERS);
-      return res.end(buildNoTestsHTML(override.files));
+      return res.end(buildNoTestsHTML(fallback.files));
     }
     res.writeHead(200, HTML_HEADERS);
     res.end(mainGroupHTML);

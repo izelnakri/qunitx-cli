@@ -200,7 +200,7 @@ export async function buildTestBundle(config: Config): Promise<void> {
     footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
   };
 
-  build.pageOverride = null;
+  build.fallbackPage = null;
 
   // Cache holder: daemon's persistent state slot for daemon-mode runs (so the
   // incremental context survives across runs); the per-group build state for
@@ -232,7 +232,7 @@ export async function buildTestBundle(config: Config): Promise<void> {
   } catch (error) {
     build.lastBuildErrored = true;
     const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
-    build.pageOverride = { kind: 'build-error', error: buildError };
+    build.fallbackPage = { kind: 'build-error', error: buildError };
     // Always write index.html immediately: in non-watch mode the server route for '/' is only
     // reached on success (build errors in the group setup bypass runTestsInBrowser entirely),
     // and in watch mode the Playwright page is headless so it never navigates to trigger the
@@ -325,11 +325,11 @@ export async function runTestsInBrowser(
       await build.activeRebuild.catch(() => {});
       build.activeRebuild = null;
       if (!build.allTestCode) {
-        const override = build.pageOverride;
+        const fallback = build.fallbackPage;
         config.watch &&
-          override?.kind === 'build-error' &&
+          fallback?.kind === 'build-error' &&
           console.log(
-            `# esbuild Bundle Error: ${override.error.formatted}`.split('\n').join('\n# '),
+            `# esbuild Bundle Error: ${fallback.error.formatted}`.split('\n').join('\n# '),
           );
         return connections;
       }
@@ -341,12 +341,12 @@ export async function runTestsInBrowser(
     if (!config.state.group.groupMode) {
       if (
         config.state.results.counter.testCount === 0 &&
-        build.pageOverride?.kind !== 'build-error'
+        build.fallbackPage?.kind !== 'build-error'
       ) {
         const displayFiles = allTestFilePaths.map((f) =>
           f.startsWith(`${projectRoot}/`) ? f.slice(projectRoot.length + 1) : f,
         );
-        build.pageOverride = { kind: 'no-tests', files: displayFiles };
+        build.fallbackPage = { kind: 'no-tests', files: displayFiles };
         const fileWord = allTestFilePaths.length === 1 ? 'file' : 'files';
         console.log(
           `# Warning: 0 tests registered — no QUnit test cases found in ${allTestFilePaths.length} ${fileWord}`,
@@ -402,17 +402,17 @@ export async function runTestsInBrowser(
     config.state.group.lastFailedFiles = config.state.group.ranFiles;
     const exception = new BundleError(error);
 
-    // buildTestBundle's own catch sets the build-error override for full-bundle failures before rethrowing.
+    // buildTestBundle's own catch sets the build-error fallback for full-bundle failures before rethrowing.
     // Set it here as a fallback for buildFilteredTests failures, which arrive after
     // buildTestBundle already cleared it on success. Only apply for esbuild errors
     // (those carry .errors[]) — navigation/timeout errors from runTestInsideHTMLFile should
     // not be classified as build errors.
     if (
-      build.pageOverride?.kind !== 'build-error' &&
+      build.fallbackPage?.kind !== 'build-error' &&
       (error as { errors?: unknown[] }).errors?.length
     ) {
       const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
-      build.pageOverride = { kind: 'build-error', error: buildError };
+      build.fallbackPage = { kind: 'build-error', error: buildError };
       fs.writeFile(path.join(outDir, 'qunitx.html'), buildErrorHTML(buildError)).catch(
         (err: Error) =>
           config.debug &&
@@ -474,7 +474,7 @@ export async function flushConsoleHandlers(
  */
 export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void> {
   groupConfigs.forEach((groupConfig) => {
-    groupConfig.state.group.build.pageOverride = null;
+    groupConfig.state.group.build.fallbackPage = null;
   });
 
   const { projectRoot, debug, browser } = groupConfigs[0];
@@ -617,7 +617,7 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
     const errorHtml = buildErrorHTML(buildError);
     await Promise.all(
       activeGroups.map((group) => {
-        group.build.pageOverride = { kind: 'build-error', error: buildError };
+        group.build.fallbackPage = { kind: 'build-error', error: buildError };
         return fs
           .writeFile(
             path.join(path.resolve(group.config.projectRoot, group.config.output), 'index.html'),
