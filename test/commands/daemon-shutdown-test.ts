@@ -37,7 +37,7 @@ function fakeState(
     browser: null,
     browserReady,
     pageSlot: { page: null },
-    esbuildCache: { _esbuildContext: null },
+    esbuildCache: { context: null },
     listenSucceeded,
     ...paths,
   } as unknown as DaemonStateArg;

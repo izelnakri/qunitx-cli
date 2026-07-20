@@ -69,7 +69,7 @@ const NOT_FOUND_HTML = `<!DOCTYPE html>
  * @returns {object}
  */
 export function setupWebServer(config: Config): HTTPServer {
-  const cachedContent = config.state.group.build;
+  const build = config.state.group.build;
   const STATIC_FILES_PATH = path.resolve(config.projectRoot, config.output);
   const consumerQunitCssCandidate = resolveConsumerQunitCssCandidate(config.projectRoot);
   const server = new HTTPServer();
@@ -204,9 +204,9 @@ export function setupWebServer(config: Config): HTTPServer {
     // In watch-mode reruns, build and navigation race in parallel. Hold the response until
     // esbuild settles. On build failure, send a WS done signal with 0 tests so the test
     // race resolves immediately rather than waiting for the startup timeout.
-    if (cachedContent._activeRebuild) {
-      await cachedContent._activeRebuild.catch(() => {});
-      if (!cachedContent.allTestCode) {
+    if (build.activeRebuild) {
+      await build.activeRebuild.catch(() => {});
+      if (!build.allTestCode) {
         // Resolve testRaceResult from Node.js directly — the WS may not be open yet
         // when this script executes on CI (Chrome can fetch tests.js before the WS
         // handshake completes), making the browser-side readyState guard unreliable.
@@ -225,7 +225,7 @@ export function setupWebServer(config: Config): HTTPServer {
         return void res.end();
       }
     }
-    const bytes = cachedContent.allTestCode?.length ?? null;
+    const bytes = build.allTestCode?.length ?? null;
     config.debug &&
       process.stdout.write(
         `# [HTTPServer] GET /tests.js → ${bytes !== null ? `${bytes} bytes` : 'NOT READY (allTestCode is null)'}\n`,
@@ -248,7 +248,7 @@ export function setupWebServer(config: Config): HTTPServer {
       'Cache-Control': 'no-store',
       'Content-Length': bytes,
     });
-    res.end(cachedContent.allTestCode);
+    res.end(build.allTestCode);
   });
 
   // Serve qunit.css preferring the consumer's installed qunitx, falling back to the CLI's embedded
@@ -264,7 +264,7 @@ export function setupWebServer(config: Config): HTTPServer {
   });
 
   server.get('/filtered-tests.js', (_req, res) => {
-    const bytes = cachedContent.filteredTestCode?.length ?? null;
+    const bytes = build.filteredTestCode?.length ?? null;
     config.debug &&
       process.stdout.write(
         `# [HTTPServer] GET /filtered-tests.js → ${bytes !== null ? `${bytes} bytes` : 'NOT READY (filteredTestCode is null)'}\n`,
@@ -281,22 +281,22 @@ export function setupWebServer(config: Config): HTTPServer {
       'Cache-Control': 'no-store',
       'Content-Length': bytes,
     });
-    res.end(cachedContent.filteredTestCode);
+    res.end(build.filteredTestCode);
   });
 
   server.get('/', async (_req, res) => {
     // buildTestBundle clears pageOverride only after its first await (fs.mkdir), so a stale
     // error from the previous run can persist into the next run's navigation window.
-    // Awaiting _activeRebuild here ensures we act on the settled build state, not stale state.
-    await cachedContent._activeRebuild?.catch(() => {});
-    const override = cachedContent.pageOverride;
+    // Awaiting activeRebuild here ensures we act on the settled build state, not stale state.
+    await build.activeRebuild?.catch(() => {});
+    const override = build.pageOverride;
     if (override?.kind === 'build-error') {
       const htmlContent = buildErrorHTML(override.error);
       res.writeHead(200, HTML_HEADERS);
       res.end(htmlContent);
       // Build error HTML has no tests.js script tag, so the /tests.js route never fires.
       // Resolve testRaceResult from Node.js directly when a parallel build was in-flight.
-      if (cachedContent._activeRebuild) {
+      if (build.activeRebuild) {
         config.state.group.lastQUnitResult = {
           totalTests: 0,
           finishedTests: 0,
@@ -324,7 +324,7 @@ export function setupWebServer(config: Config): HTTPServer {
   });
 
   server.get('/qunitx.html', (_req, res) => {
-    const override = cachedContent.pageOverride;
+    const override = build.pageOverride;
     if (override?.kind === 'build-error') {
       const htmlContent = buildErrorHTML(override.error);
       res.writeHead(200, HTML_HEADERS);

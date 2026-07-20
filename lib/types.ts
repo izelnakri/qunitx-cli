@@ -41,9 +41,9 @@ export type FSTree = Record<string, null>;
  */
 export interface EsbuildCache {
   /** Live esbuild incremental context, or `null`/absent before the first build. */
-  _esbuildContext?: BuildContext | null;
-  /** Cache key for `_esbuildContext`: `allTestFilePaths.join('\0')`. Invalidated when files change. */
-  _esbuildContextKey?: string;
+  context?: BuildContext | null;
+  /** Cache key for `context`: `allTestFilePaths.join('\0')`. Invalidated when files change. */
+  contextKey?: string;
 }
 
 /**
@@ -63,13 +63,13 @@ export interface BuildState extends EsbuildCache {
    * or before `runTestsInBrowser` is called (reruns), so esbuild races navigation.
    * Consumed and cleared by the first `runTestsInBrowser()` call.
    */
-  _preBuildPromise?: Promise<void> | null;
+  preBuildPromise?: Promise<void> | null;
   /**
    * Set when a parallel rebuild is in-flight during a watch-mode rerun. The `/tests.js`
    * route awaits this before serving, so Chrome can navigate concurrently while esbuild
    * finishes. Cleared by `runTestsInBrowser` after the build settles.
    */
-  _activeRebuild?: Promise<void> | null;
+  activeRebuild?: Promise<void> | null;
   /**
    * Replaces the normal test page for this run, or `null` when the run renders tests as usual.
    * The web server's `/` route serves the override and the Playwright page is navigated there.
