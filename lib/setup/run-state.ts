@@ -62,6 +62,12 @@ export function newRunState(): RunState {
     group: newGroupState(),
     groupCount: 1,
     reporters: [],
+    htmlAssets: {
+      assets: new Set(),
+      mainHTML: { filePath: null, html: null },
+      staticHTMLs: {},
+      dynamicContentHTMLs: {},
+    },
     watch: {
       building: false,
       pendingBuildTrigger: null,

@@ -73,8 +73,8 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
   const consumerQunitCssCandidate = resolveConsumerQunitCssCandidate(config.projectRoot);
   const server = new HTTPServer();
   const mainHTMLWithReplacedAssets = replaceAssetPaths(
-    cachedContent.mainHTML.html,
-    cachedContent.mainHTML.filePath,
+    config.state.htmlAssets.mainHTML.html,
+    config.state.htmlAssets.mainHTML.filePath,
     config.projectRoot,
   );
   // Cache the runtime script and both normal HTML responses — stable for this server's lifetime.
@@ -347,7 +347,7 @@ export function setupWebServer(config: Config, cachedContent: CachedContent): HT
 
   server.get('/*', (req, res) => {
     const possibleDynamicHTML =
-      cachedContent.dynamicContentHTMLs[`${config.projectRoot}${req.path}`];
+      config.state.htmlAssets.dynamicContentHTMLs[`${config.projectRoot}${req.path}`];
     if (possibleDynamicHTML) {
       const htmlContent = escapeAndInjectTestsToHTML(
         possibleDynamicHTML,
@@ -627,8 +627,8 @@ export function registerGroupRoutes(
 ): void {
   const consumerQunitCssCandidate = resolveConsumerQunitCssCandidate(groupConfig.projectRoot);
   const mainHTMLWithReplacedAssets = replaceAssetPaths(
-    groupCachedContent.mainHTML.html!,
-    groupCachedContent.mainHTML.filePath!,
+    groupConfig.state.htmlAssets.mainHTML.html!,
+    groupConfig.state.htmlAssets.mainHTML.filePath!,
     groupConfig.projectRoot,
   );
   const runtimeScript = testRuntimeToInject(groupConfig, groupId);

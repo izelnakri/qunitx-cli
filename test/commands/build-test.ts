@@ -350,12 +350,8 @@ function makeConfig(testFiles: string[], watch = false): Config {
 function makeCachedContent(): CachedContent {
   return {
     allTestCode: null,
-    assets: new Set(),
     // '/' path skips the inner rm/mkdir in buildTestBundle — keeps tests self-contained.
     htmlPathsToRunTests: ['/'],
-    mainHTML: { filePath: null, html: null },
-    staticHTMLs: {},
-    dynamicContentHTMLs: {},
   };
 }
 

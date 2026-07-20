@@ -55,16 +55,8 @@ export interface CachedContent extends EsbuildCache {
   allTestCode: Buffer | string | null;
   /** Bundle filtered to files that failed on the previous run (used by re-run mode). */
   filteredTestCode?: Buffer | string;
-  /** Asset paths (scripts, stylesheets) discovered inside the user's HTML fixture. */
-  assets: Set<string>;
   /** Absolute paths of every HTML file that will be opened in the browser to run tests. */
   htmlPathsToRunTests: string[];
-  /** The primary HTML page: its path on disk and its resolved content. */
-  mainHTML: { filePath: string | null; html: string | null };
-  /** Static HTML pages served verbatim, keyed by their server-relative path. */
-  staticHTMLs: Record<string, string>;
-  /** HTML pages whose bundle content is injected at request time, keyed by server-relative path. */
-  dynamicContentHTMLs: Record<string, string>;
   /**
    * In-flight build promise started by `run.ts` before Chrome setup completes (initial run)
    * or before `runTestsInBrowser` is called (reruns), so esbuild races navigation.
@@ -83,6 +75,21 @@ export interface CachedContent extends EsbuildCache {
    * Cleared at the start of every new build attempt.
    */
   pageOverride?: PageOverride | null;
+}
+
+/**
+ * The run's resolved HTML fixtures and the assets they reference. Populated once by
+ * `buildCachedContent` and not written again, so every concurrent group can share one copy.
+ */
+export interface HtmlAssets {
+  /** Asset paths (scripts, stylesheets) discovered inside the user's HTML fixture. */
+  assets: Set<string>;
+  /** The primary HTML page: its path on disk and its resolved content. */
+  mainHTML: { filePath: string | null; html: string | null };
+  /** Static HTML pages served verbatim, keyed by their server-relative path. */
+  staticHTMLs: Record<string, string>;
+  /** HTML pages whose bundle content is injected at request time, keyed by server-relative path. */
+  dynamicContentHTMLs: Record<string, string>;
 }
 
 /** An esbuild failure, captured for display on the run's error page. */
@@ -166,6 +173,11 @@ export interface RunState {
   groupCount: number;
   /** File-watcher build bookkeeping. Only meaningful in watch mode, where there is one group. */
   watch: WatchState;
+  /**
+   * HTML fixtures and their referenced assets, resolved once by `buildCachedContent` before any
+   * group config is spread off. Frozen from that point on, so all groups share one copy.
+   */
+  htmlAssets: HtmlAssets;
   /**
    * State for **this** group only. The group spread replaces this object (everything else in
    * `RunState` is shared by reference), so it is the one place per-group slots may live.
