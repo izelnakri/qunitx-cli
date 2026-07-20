@@ -1,4 +1,4 @@
-import type { Counter, GroupState, RunResults, RunState } from '../types.ts';
+import type { BuildState, Counter, GroupState, RunResults, RunState } from '../types.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
 import type { Page } from 'playwright-core';
 
@@ -103,4 +103,16 @@ export function resetRunResults(results: RunResults, coverageEnabled: boolean): 
   results.failedFiles.clear();
   results.failedTests.length = 0;
   results.coverage = coverageEnabled ? new Map() : null;
+}
+
+/**
+ * Invalidates a group's compiled bundles so the next run rebuilds them from disk.
+ *
+ * Both go together: `/tests.js` serves `allTestCode` and `/filtered-tests.js` serves
+ * `filteredTestCode` verbatim, so clearing only the full bundle leaves a stale filtered one
+ * servable — and a watch-mode delete would then rerun tests from a file that no longer exists.
+ */
+export function clearBuildBundles(build: BuildState): void {
+  build.allTestCode = null;
+  build.filteredTestCode = undefined;
 }
