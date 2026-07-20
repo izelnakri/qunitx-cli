@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.31.0] - 2026-07-20
+[`v0.30.0...v0.31.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.30.0...v0.31.0)
+
+### Bug Fixes
+- Clear filteredTestCode alongside allTestCode — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`b6a7b00`](https://github.com/izelnakri/qunitx-cli/commit/b6a7b00f0268eaa357356cb9c69a1a2ff09b0dfe))
+- Stop Windows teardown racing a still-live child process — 2026-07-20 by [@izelnakri](https://github.com/izelnakri) ([`892ea0c`](https://github.com/izelnakri/qunitx-cli/commit/892ea0cf9e1288ecfc3a9987529d2d1d5cdde378))
+- Clear the type errors accumulated in lib/ — 2026-07-20 by [@izelnakri](https://github.com/izelnakri) ([`8d36934`](https://github.com/izelnakri/qunitx-cli/commit/8d36934e5978b5554dd56474b1e125d14a3d7924))
+- Announce a failed coverage arm instead of swallowing it — 2026-07-20 by [@izelnakri](https://github.com/izelnakri) ([`8477739`](https://github.com/izelnakri/qunitx-cli/commit/84777397d7dd5dd7a5e5d235027f975d817f9dbf))
+- Assert the coverage warning via an injected logger, not stdout — 2026-07-20 by [@izelnakri](https://github.com/izelnakri) ([`e9b706f`](https://github.com/izelnakri/qunitx-cli/commit/e9b706feb38147564e68fd07fabd6e30578f3b8a))
+- Reconcile tests the WebSocket stream finished but never delivered — 2026-07-20 by [@izelnakri](https://github.com/izelnakri) ([`5d2de27`](https://github.com/izelnakri/qunitx-cli/commit/5d2de276db9cf0a633e33bfa80b14069d7b14594))
+
+### Documentation
+- Encode the sharing invariant; drop the last Config underscore — 2026-07-20 by [@izelnakri](https://github.com/izelnakri) ([`b7f8d9e`](https://github.com/izelnakri/qunitx-cli/commit/b7f8d9ed6f98d63de3f692742e53fb199d4bef49))
+
+### Performance
+- Claim Chrome's blank page instead of opening a second one — 2026-07-20 by [@izelnakri](https://github.com/izelnakri) ([`e02a6dc`](https://github.com/izelnakri/qunitx-cli/commit/e02a6dcedb23271e0a22a0bf305c90094ba2e5ed))
+- Sweep /proc for stragglers only when rm actually fails — 2026-07-20 by [@izelnakri](https://github.com/izelnakri) ([`a3df9ca`](https://github.com/izelnakri/qunitx-cli/commit/a3df9ca608c1b6aa0c52d4f5bd059e4af427d3d6))
+- Claim Chrome's blank page on runs that can safely use it — 2026-07-20 by [@izelnakri](https://github.com/izelnakri) ([`36eff1c`](https://github.com/izelnakri/qunitx-cli/commit/36eff1c799794c561578d55e45f7df1af754e9a0))
+
+### Refactoring
+- Drop the unused _groupId slot — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`43e26e5`](https://github.com/izelnakri/qunitx-cli/commit/43e26e5eb0e06f9a0d404278b13cf59947e47e57))
+- Drop the dead `{} as CachedContent` default — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`0237d97`](https://github.com/izelnakri/qunitx-cli/commit/0237d975ac3e7e4ba6d9b1997764f6d88922794b))
+- Type webServer as HTTPServer instead of unknown — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`89e5484`](https://github.com/izelnakri/qunitx-cli/commit/89e54848f4d7d95345aca42333e0561ec2da0412))
+- Share one EsbuildCache type between daemon and group slots — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`0c0d409`](https://github.com/izelnakri/qunitx-cli/commit/0c0d409cd55cdfda47d7fe6309999b064c814267))
+- Merge _buildError and _noTestsWarning into one pageOverride — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`efed8e6`](https://github.com/izelnakri/qunitx-cli/commit/efed8e661584b4d17488eafc3ee7e2160077fa3a))
+- Move COUNTER to state.results.counter — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`1c33b36`](https://github.com/izelnakri/qunitx-cli/commit/1c33b361f36ea94bc2cbf662a73e996e7b36a0ee))
+- Move failure/coverage accumulators to state.results — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`0e18af2`](https://github.com/izelnakri/qunitx-cli/commit/0e18af2e397e854297bbe24d03d870a8a912b249))
+- Move _reporters to state.reporters — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`2badba4`](https://github.com/izelnakri/qunitx-cli/commit/2badba4cbc18afe30fc209cef0c83189d15292bf))
+- Group the daemon slots under state.daemon — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`4d3b72a`](https://github.com/izelnakri/qunitx-cli/commit/4d3b72a28a4ec5e9915b5840222c6b17ee9c2e16))
+- Group the file-watcher bookkeeping under state.watch — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`5e70c1f`](https://github.com/izelnakri/qunitx-cli/commit/5e70c1f42d1ba61e3802d0a980a1989845783c9f))
+- Group the four run signals under state.group.signals — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`7aaa694`](https://github.com/izelnakri/qunitx-cli/commit/7aaa694223cf51ae7d96757d743b4914b00c0b3b))
+- Group the per-group diagnostics under state.group — 2026-07-19 by [@izelnakri](https://github.com/izelnakri) ([`6a63c90`](https://github.com/izelnakri/qunitx-cli/commit/6a63c907d0b96fc1ae4af64d810331b4658e87a3))
+- Split the frozen html assets into shared state.htmlAssets — 2026-07-20 by [@izelnakri](https://github.com/izelnakri) ([`497a35a`](https://github.com/izelnakri/qunitx-cli/commit/497a35a240094338afdef4d3845fd081f179e458))
+- Fold CachedContent into state.group.build — 2026-07-20 by [@izelnakri](https://github.com/izelnakri) ([`0aa556a`](https://github.com/izelnakri/qunitx-cli/commit/0aa556a849d1b322da4719197024ecd84fe4ea72))
+- Drop the underscore prefixes from the build state — 2026-07-20 by [@izelnakri](https://github.com/izelnakri) ([`3fe7d5d`](https://github.com/izelnakri/qunitx-cli/commit/3fe7d5d716b17ead1cccd9c2e162e12781438fbd))
+- Cast proc.stderr to Socket instead of an ad-hoc shape — 2026-07-20 by [@izelnakri](https://github.com/izelnakri) ([`4679048`](https://github.com/izelnakri/qunitx-cli/commit/467904868c3ea6c7248e49ba2fa08403da65380b))
+- Move clearBuildBundles into run-state, delete the one-fn module — 2026-07-20 by [@izelnakri](https://github.com/izelnakri) ([`2b55a78`](https://github.com/izelnakri/qunitx-cli/commit/2b55a7832d60fac5bb90146256a922c10f73cb5a))
+- Rename pageOverride -> fallbackPage — 2026-07-20 by [@izelnakri](https://github.com/izelnakri) ([`13459f4`](https://github.com/izelnakri/qunitx-cli/commit/13459f4fb3b9c01cda369a94832b9b588b6d157c))
+- Rename group.ranFiles to lastRanFiles; type the esbuild errors cast — 2026-07-20 by [@izelnakri](https://github.com/izelnakri) ([`9eca867`](https://github.com/izelnakri/qunitx-cli/commit/9eca8677a4b7cea5a2a93004547f11eabe4cc6e8))
+
 ## [0.30.0] - 2026-07-19
 [`v0.28.0...v0.30.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.28.0...v0.30.0)
 
