@@ -156,10 +156,19 @@ export type CoverageFileMap = Map<string, FileCoverage>;
 /**
  * Mutable state for one test run, kept separate from the resolved settings on {@link Config}.
  *
- * Organized by **sharing lifetime**. Concurrent groups are spread off the parent config with a
- * shallow `{...config}`, which copies `state` by reference — so everything reachable from here is
- * shared across all groups of a run. Accumulators are therefore mutated in place, never
- * reassigned: replacing one would silently detach the group configs from the parent's object.
+ * Organized by **sharing lifetime**, and that organization is the invariant to preserve:
+ *
+ * - **Every field except `group` is shared by reference across all concurrent groups.** Groups are
+ *   spread off the parent with a shallow `{...config}`, which copies `state` by reference. So the
+ *   counter, failure sets, coverage collector and reporters are one set of objects for the whole
+ *   run — which is what makes TAP numbering globally sequential and the coverage report whole.
+ * - **`group` is replaced per group.** It is the only place a per-group slot may live; anything
+ *   added elsewhere silently becomes shared.
+ *
+ * The consequence for shared fields is that they must be **mutated in place, never reassigned** —
+ * see `resetRunResults`. Assigning a fresh object on one config detaches it from the others and
+ * splits the run's totals, which no type can catch. Fields of a shared object may be reassigned
+ * freely (`results.coverage = new Map()`); it is the object itself that must survive.
  */
 export interface RunState {
   /** Whole-run accumulators, shared by reference across every concurrent group. */
@@ -435,7 +444,7 @@ export interface Config {
    * A directory or glob already supersedes a line target it covers; this additionally catches the
    * exact-same-path case (`a.ts a.ts#34`), which `inputs` cannot because its Set collapses the two.
    */
-  _wholeInputPaths?: string[];
+  wholeInputPaths?: string[];
   /**
    * The run's HTTP server, exposed purely as `--before` / `--after` hook surface — qunitx itself
    * never reads it back. Hooks use it to register extra routes (mock APIs) before tests start.
