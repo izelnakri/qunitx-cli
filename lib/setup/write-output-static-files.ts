@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { CachedContent } from '../types.ts';
+import type { HtmlAssets } from '../types.ts';
 
 /**
  * Copies static HTML files and referenced assets from the project into the configured output directory.
@@ -8,19 +8,16 @@ import type { CachedContent } from '../types.ts';
  */
 export async function writeOutputStaticFiles(
   { projectRoot, output }: { projectRoot: string; output: string },
-  cachedContent: CachedContent,
+  htmlAssets: HtmlAssets,
 ): Promise<void> {
-  const staticHTMLPromises = Object.keys(cachedContent.staticHTMLs).map(async (staticHTMLKey) => {
+  const staticHTMLPromises = Object.keys(htmlAssets.staticHTMLs).map(async (staticHTMLKey) => {
     const htmlRelativePath = path.relative(projectRoot, staticHTMLKey);
 
     const outDir = path.resolve(projectRoot, output);
     await ensureFolderExists(path.join(outDir, htmlRelativePath));
-    await fs.writeFile(
-      path.join(outDir, htmlRelativePath),
-      cachedContent.staticHTMLs[staticHTMLKey],
-    );
+    await fs.writeFile(path.join(outDir, htmlRelativePath), htmlAssets.staticHTMLs[staticHTMLKey]);
   });
-  const assetPromises = Array.from(cachedContent.assets).map(async (assetAbsolutePath) => {
+  const assetPromises = Array.from(htmlAssets.assets).map(async (assetAbsolutePath) => {
     // When the asset lives outside projectRoot — pnpm/yarn workspaces with a
     // hoisted `node_modules`, npm-link'd dev deps, or test fixtures that
     // symlink `node_modules` — `path.relative` returns leading `..` segments.

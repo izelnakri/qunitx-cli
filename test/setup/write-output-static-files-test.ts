@@ -3,19 +3,16 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { module, test } from 'qunitx';
 import { writeOutputStaticFiles } from '../../lib/setup/write-output-static-files.ts';
-import type { CachedContent } from '../../lib/types.ts';
+import type { HtmlAssets } from '../../lib/types.ts';
 
-// Build the minimal CachedContent shape writeOutputStaticFiles touches: just the
-// two collections it iterates over. The other fields are run-state slots the
-// function doesn't read here.
-function cachedContentFor(opts: {
+// The two collections writeOutputStaticFiles iterates over; the rest of HtmlAssets is
+// resolved HTML this function never reads.
+function htmlAssetsFor(opts: {
   staticHTMLs?: Record<string, string>;
   assets?: string[];
-}): CachedContent {
+}): HtmlAssets {
   return {
-    allTestCode: null,
     assets: new Set(opts.assets ?? []),
-    htmlPathsToRunTests: [],
     mainHTML: { filePath: null, html: null },
     staticHTMLs: opts.staticHTMLs ?? {},
     dynamicContentHTMLs: {},
@@ -36,7 +33,7 @@ module('Setup | writeOutputStaticFiles', { concurrency: true }, () => {
 
     await writeOutputStaticFiles(
       { projectRoot, output: 'tmp/out' },
-      cachedContentFor({ assets: [asset] }),
+      htmlAssetsFor({ assets: [asset] }),
     );
 
     const dest = path.join(
@@ -72,7 +69,7 @@ module('Setup | writeOutputStaticFiles', { concurrency: true }, () => {
 
     await writeOutputStaticFiles(
       { projectRoot, output: 'tmp/run-X/group-0' },
-      cachedContentFor({ assets: [asset] }),
+      htmlAssetsFor({ assets: [asset] }),
     );
 
     const dest = path.join(projectRoot, 'tmp/run-X/group-0/node_modules/qunitx/vendor/qunit.css');
@@ -104,11 +101,11 @@ module('Setup | writeOutputStaticFiles', { concurrency: true }, () => {
     await Promise.all([
       writeOutputStaticFiles(
         { projectRoot, output: 'tmp/run-X/group-0' },
-        cachedContentFor({ assets: [asset] }),
+        htmlAssetsFor({ assets: [asset] }),
       ),
       writeOutputStaticFiles(
         { projectRoot, output: 'tmp/run-X/group-1' },
-        cachedContentFor({ assets: [asset] }),
+        htmlAssetsFor({ assets: [asset] }),
       ),
     ]);
 

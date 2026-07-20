@@ -52,7 +52,7 @@ import {
 } from './run/timings.ts';
 import { applyWatchLineTargets, resolveTargetedFiles, splitIntoGroups } from './run/grouping.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
-import type { Config, CachedContent } from '../types.ts';
+import type { Config, CachedContent, HtmlAssets } from '../types.ts';
 
 // Playwright navigation timeout for headed watch-mode reloads (not test execution).
 const WATCH_NAV_TIMEOUT_MS = 5_000;
@@ -153,7 +153,7 @@ async function runWatchMode(config: Config, cachedContent: CachedContent): Promi
 
   const [connections] = await Promise.all([
     setupBrowser(config, cachedContent),
-    writeOutputStaticFiles(config, cachedContent),
+    writeOutputStaticFiles(config, config.state.htmlAssets),
   ]);
   config.webServer = connections.server;
   setupKeyboardEvents(config, cachedContent, connections);
@@ -414,7 +414,7 @@ async function runConcurrentMode(
       groupCount > 1
         ? buildAllGroupBundles(groupConfigs, groupCachedContents)
         : buildTestBundle(groupConfigs[0], groupCachedContents[0]),
-      Promise.all(groupConfigs.map((gc, i) => writeOutputStaticFiles(gc, groupCachedContents[i]))),
+      Promise.all(groupConfigs.map((gc) => writeOutputStaticFiles(gc, gc.state.htmlAssets))),
     ]),
   ]);
 
@@ -653,6 +653,7 @@ async function buildCachedContent(config: Config, htmlPaths: string[]): Promise<
   const htmlBuffers = await Promise.all(
     config.htmlPaths.map((htmlPath) => fs.readFile(htmlPath).catch(() => null)),
   );
+  const htmlAssets = config.state.htmlAssets;
   const cachedContent = htmlPaths.reduce(
     (result, _htmlPath, index) => {
       const buffer = htmlBuffers[index];
@@ -661,7 +662,7 @@ async function buildCachedContent(config: Config, htmlPaths: string[]): Promise<
       const html = buffer.toString();
 
       if (isCustomTemplate(html)) {
-        result.dynamicContentHTMLs[filePath] = html;
+        htmlAssets.dynamicContentHTMLs[filePath] = html;
         result.htmlPathsToRunTests.push(filePath.replace(config.projectRoot, ''));
       } else {
         console.log(
@@ -670,22 +671,20 @@ async function buildCachedContent(config: Config, htmlPaths: string[]): Promise<
             `WARNING: Static html file with no {{qunitxScript}} or handlebars-style tokens detected. Therefore ignoring ${filePath}`,
           ),
         );
-        result.staticHTMLs[filePath] = html;
+        htmlAssets.staticHTMLs[filePath] = html;
       }
 
       findInternalAssetsFromHTML(html).forEach((key) => {
-        result.assets.add(normalizeInternalAssetPathFromHTML(config.projectRoot, key, filePath));
+        htmlAssets.assets.add(
+          normalizeInternalAssetPathFromHTML(config.projectRoot, key, filePath),
+        );
       });
 
       return result;
     },
     {
       allTestCode: null,
-      assets: new Set(),
       htmlPathsToRunTests: [],
-      mainHTML: { filePath: null, html: null },
-      staticHTMLs: {},
-      dynamicContentHTMLs: {},
     },
   );
 
@@ -693,28 +692,25 @@ async function buildCachedContent(config: Config, htmlPaths: string[]): Promise<
     cachedContent.htmlPathsToRunTests = ['/'];
   }
 
-  return addCachedContentMainHTML(config.projectRoot, cachedContent);
+  await resolveMainHTML(config.projectRoot, htmlAssets);
+  return cachedContent;
 }
 
-async function addCachedContentMainHTML(
-  projectRoot: string,
-  cachedContent: CachedContent,
-): Promise<CachedContent> {
-  const mainHTMLPath = Object.keys(cachedContent.dynamicContentHTMLs)[0];
+/** Picks the page the test runtime is injected into, falling back to the bundled template. */
+async function resolveMainHTML(projectRoot: string, htmlAssets: HtmlAssets): Promise<void> {
+  const mainHTMLPath = Object.keys(htmlAssets.dynamicContentHTMLs)[0];
   if (mainHTMLPath) {
-    cachedContent.mainHTML = {
+    htmlAssets.mainHTML = {
       filePath: mainHTMLPath,
-      html: cachedContent.dynamicContentHTMLs[mainHTMLPath],
+      html: htmlAssets.dynamicContentHTMLs[mainHTMLPath],
     };
   } else {
     const html = await readTemplate('setup/tests.hbs');
-    cachedContent.mainHTML = { filePath: `${projectRoot}/test/tests.html`, html };
+    htmlAssets.mainHTML = { filePath: `${projectRoot}/test/tests.html`, html };
     // qunit.css (linked by the template) is served by the web server from the CLI's own embedded
     // copy — see the /node_modules/qunitx/vendor/qunit.css route in web-server.ts. It is no longer
     // copied out of the consumer's node_modules, so projects need not install `qunitx`.
   }
-
-  return cachedContent;
 }
 
 function logWatcherAndKeyboardShortcutInfo(config: Config, _server: unknown): void {

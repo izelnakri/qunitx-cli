@@ -387,19 +387,23 @@ function makeConfig(): Config {
     testFileLookupPaths: [],
     fsTree: {},
     debug: false,
-    state: newRunState(),
+    state: mainHTMLState(),
   } as unknown as Config;
 }
 
 function makeCachedContent(): CachedContent {
-  return {
-    allTestCode: null,
-    assets: new Set(),
-    htmlPathsToRunTests: ['/'],
-    mainHTML: { filePath: `${CWD}/test.html`, html: '<html><body>{{qunitxScript}}</body></html>' },
-    staticHTMLs: {},
-    dynamicContentHTMLs: {},
+  return { allTestCode: null, htmlPathsToRunTests: ['/'] };
+}
+
+// The web server injects the test runtime into state.htmlAssets.mainHTML, so a served-HTML
+// test needs a resolved main page the same way buildCachedContent would have left one.
+function mainHTMLState() {
+  const state = newRunState();
+  state.htmlAssets.mainHTML = {
+    filePath: `${CWD}/test.html`,
+    html: '<html><body>{{qunitxScript}}</body></html>',
   };
+  return state;
 }
 
 function get(

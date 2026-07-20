@@ -10,11 +10,7 @@ function makeCachedContent(): CachedContent {
   return {
     allTestCode: 'ALL',
     filteredTestCode: 'FILTERED',
-    assets: new Set(),
     htmlPathsToRunTests: ['/'],
-    mainHTML: { filePath: null, html: null },
-    staticHTMLs: {},
-    dynamicContentHTMLs: {},
   };
 }
 
@@ -34,11 +30,9 @@ module('Commands | run | clearCachedBundles', { concurrency: true }, () => {
 
   test('leaves the surrounding build metadata intact', (assert) => {
     const cachedContent = makeCachedContent();
-    cachedContent.assets.add('/app.css');
 
     clearCachedBundles(cachedContent);
 
-    assert.deepEqual([...cachedContent.assets], ['/app.css'], 'discovered assets survive');
     assert.deepEqual(cachedContent.htmlPathsToRunTests, ['/'], 'html run paths survive');
   });
 
