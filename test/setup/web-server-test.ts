@@ -13,7 +13,7 @@ import {
 } from '../../lib/setup/web-server.ts';
 import '../helpers/custom-asserts.ts';
 import { newRunState } from '../../lib/setup/run-state.ts';
-import type { Config, CachedContent } from '../../lib/types.ts';
+import type { Config } from '../../lib/types.ts';
 
 const CWD = process.cwd();
 
@@ -23,7 +23,7 @@ const CWD = process.cwd();
 
 module('Setup | web-server | static file 404', { concurrency: true }, () => {
   test('serves NOT_FOUND_HTML for HTML-accepting requests to missing paths', async (assert) => {
-    const server = setupWebServer(makeConfig(), makeCachedContent());
+    const server = setupWebServer(makeConfig());
     await server.listen(0);
     const port = (server._server.address() as { port: number }).port;
     try {
@@ -36,7 +36,7 @@ module('Setup | web-server | static file 404', { concurrency: true }, () => {
   });
 
   test('serves empty body for non-HTML requests to missing paths', async (assert) => {
-    const server = setupWebServer(makeConfig(), makeCachedContent());
+    const server = setupWebServer(makeConfig());
     await server.listen(0);
     const port = (server._server.address() as { port: number }).port;
     try {
@@ -115,7 +115,7 @@ module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
   test('duplicate testEnd in one run increments the counter exactly once', async (assert) => {
     const config = makeConfig();
     config.state.group.testEndCounts = new Map(); // run.ts / runTestsInBrowser ordinarily seeds this
-    const server = setupWebServer(config, makeCachedContent());
+    const server = setupWebServer(config);
     await server.listen(0);
     const port = (server._server.address() as { port: number }).port;
     try {
@@ -153,7 +153,7 @@ module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
   test('stale testEnd arriving after the next-run connection is dropped (no-html regression)', async (assert) => {
     const config = makeConfig();
     config.state.group.testEndCounts = new Map();
-    const server = setupWebServer(config, makeCachedContent());
+    const server = setupWebServer(config);
     await server.listen(0);
     const port = (server._server.address() as { port: number }).port;
     try {
@@ -229,7 +229,7 @@ module('Setup | web-server | runtime IIFE idempotency', { concurrency: true }, (
   test('a second invocation in the same Window opens exactly one WebSocket', async (assert) => {
     // Fetch the actual served HTML so the test exercises the runtime script
     // produced by testRuntimeToInject(), not a hand-typed copy.
-    const server = setupWebServer(makeConfig(), makeCachedContent());
+    const server = setupWebServer(makeConfig());
     await server.listen(0);
     const port = (server._server.address() as { port: number }).port;
     let runtimeJs: string;
@@ -311,7 +311,7 @@ module('Setup | web-server | runtime IIFE idempotency', { concurrency: true }, (
 
 module('Setup | web-server | qunit.css resolution', { concurrency: true }, () => {
   async function fetchCss(projectRoot: string): Promise<{ status: number; body: string }> {
-    const server = setupWebServer({ ...makeConfig(), projectRoot } as Config, makeCachedContent());
+    const server = setupWebServer({ ...makeConfig(), projectRoot } as Config);
     await server.listen(0);
     const port = (server._server.address() as { port: number }).port;
     try {
@@ -391,14 +391,11 @@ function makeConfig(): Config {
   } as unknown as Config;
 }
 
-function makeCachedContent(): CachedContent {
-  return { allTestCode: null, htmlPathsToRunTests: ['/'] };
-}
-
 // The web server injects the test runtime into state.htmlAssets.mainHTML, so a served-HTML
 // test needs a resolved main page the same way buildCachedContent would have left one.
 function mainHTMLState() {
   const state = newRunState();
+  state.group.build.htmlPathsToRunTests = ['/'];
   state.htmlAssets.mainHTML = {
     filePath: `${CWD}/test.html`,
     html: '<html><body>{{qunitxScript}}</body></html>',

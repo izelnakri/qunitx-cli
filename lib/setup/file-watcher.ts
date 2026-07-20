@@ -521,7 +521,7 @@ export function handleWatchEvent(
       // rescan path) won't fence out the user's fix — which on coarse-mtime filesystems
       // (CI overlayfs) can land in the same/earlier second as the failed build's end and
       // otherwise gets dropped, hanging watch mode on the error until an unrelated change.
-      if (!config.state.watch.lastBuildErrored) {
+      if (!config.state.group.build.lastBuildErrored) {
         config.state.watch.lastBuildEndMs = Date.now();
       } else {
         // A failed build leaves the bundle broken, so the content-hash baseline is stale: drop this

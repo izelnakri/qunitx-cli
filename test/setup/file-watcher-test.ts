@@ -433,26 +433,23 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
 
   test('a failed build drops the file content-hash baseline so a revert to built content re-fires', async (assert) => {
     // Regression (120s macOS watch hang): a build-error write can arrive as an fs.watch 'rename'
-    // that fires the rebuild without advancing _builtContentHash. Reverting the file to its last
+    // that fires the rebuild without advancing builtContentHash. Reverting the file to its last
     // successfully-built content then hashes identically to the stale baseline and is suppressed as
     // a no-op, so watch mode never re-runs the fix. The build-error branch must drop the entry.
     const file = '/project/test/foo.ts';
     const config = {
       fsTree: { [file]: null },
       projectRoot: '/project',
-      state: watchState({
-        builtContentHash: { [file]: sha1('valid content') },
-        lastBuildErrored: false,
-      }),
+      state: watchState({ builtContentHash: { [file]: sha1('valid content') } }),
     };
-    // buildTestBundle sets _lastBuildErrored = true on an esbuild failure (see tests-in-browser.ts).
+    // buildTestBundle sets build.lastBuildErrored on an esbuild failure (see tests-in-browser.ts).
     await handleWatchEvent(
       asConfig(config),
       ['ts'],
       'change',
       file,
       () => {
-        config.state.watch.lastBuildErrored = true;
+        config.state.group.build.lastBuildErrored = true;
         return Promise.resolve();
       },
       null,
@@ -468,10 +465,7 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
     const config = {
       fsTree: { [file]: null },
       projectRoot: '/project',
-      state: watchState({
-        builtContentHash: { [file]: sha1('built content') },
-        lastBuildErrored: false,
-      }),
+      state: watchState({ builtContentHash: { [file]: sha1('built content') } }),
     };
     await handleWatchEvent(
       asConfig(config),
@@ -479,7 +473,7 @@ module('Setup | handleWatchEvent', { concurrency: true }, () => {
       'change',
       file,
       () => {
-        config.state.watch.lastBuildErrored = false;
+        config.state.group.build.lastBuildErrored = false;
         return Promise.resolve();
       },
       null,

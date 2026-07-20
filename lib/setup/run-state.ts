@@ -52,6 +52,11 @@ export function newGroupState(index = 0, selectors?: QUnitSelector[]): GroupStat
     lastQUnitResult: null,
     pendingConsoleHandlers: null,
     sourceMapDecoder: null,
+    build: {
+      allTestCode: null,
+      htmlPathsToRunTests: [],
+      lastBuildErrored: false,
+    },
   };
 }
 
@@ -73,7 +78,6 @@ export function newRunState(): RunState {
       pendingBuildTrigger: null,
       justAddedFiles: new Set(),
       lastBuildEndMs: 0,
-      lastBuildErrored: false,
       builtContentHash: {},
       justAddedAt: new Map(),
     },

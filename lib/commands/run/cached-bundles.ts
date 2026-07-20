@@ -1,4 +1,4 @@
-import type { CachedContent } from '../../types.ts';
+import type { BuildState } from '../../types.ts';
 
 /**
  * Drops both cached bundles so the next re-run rebuilds from disk.
@@ -7,7 +7,7 @@ import type { CachedContent } from '../../types.ts';
  * `filteredTestCode` verbatim, so clearing only the former leaves a stale filtered bundle
  * servable — and a watch-mode delete would rerun tests from a file that no longer exists.
  */
-export function clearCachedBundles(cachedContent: CachedContent): void {
-  cachedContent.allTestCode = null;
-  cachedContent.filteredTestCode = undefined;
+export function clearCachedBundles(build: BuildState): void {
+  build.allTestCode = null;
+  build.filteredTestCode = undefined;
 }

@@ -10,7 +10,7 @@ import { blue } from '../utils/color.ts';
 import { HTTPServer, MIME_TYPES } from '../servers/web.ts';
 import { createReconnectingSocket } from './ws-client.js';
 import { readTemplate } from '../utils/read-template.ts';
-import type { Config, CachedContent } from '../types.ts';
+import type { Config } from '../types.ts';
 
 const fsPromise = fs.promises;
 
@@ -68,7 +68,8 @@ const NOT_FOUND_HTML = `<!DOCTYPE html>
  * Creates and returns an HTTPServer with routes for the test HTML, filtered test page, and static assets, plus a WebSocket handler that streams TAP events.
  * @returns {object}
  */
-export function setupWebServer(config: Config, cachedContent: CachedContent): HTTPServer {
+export function setupWebServer(config: Config): HTTPServer {
+  const cachedContent = config.state.group.build;
   const STATIC_FILES_PATH = path.resolve(config.projectRoot, config.output);
   const consumerQunitCssCandidate = resolveConsumerQunitCssCandidate(config.projectRoot);
   const server = new HTTPServer();
@@ -619,12 +620,8 @@ export function buildErrorHTML(buildError: { type: string; formatted: string }):
  * Registers HTML and JS bundle routes for one concurrent group on a shared HTTPServer.
  * Routes: `GET /group-${groupId}/` and `GET /group-${groupId}/tests.js`.
  */
-export function registerGroupRoutes(
-  server: HTTPServer,
-  groupConfig: Config,
-  groupCachedContent: CachedContent,
-  groupId: number,
-): void {
+export function registerGroupRoutes(server: HTTPServer, groupConfig: Config): void {
+  const groupId = groupConfig.state.group.index;
   const consumerQunitCssCandidate = resolveConsumerQunitCssCandidate(groupConfig.projectRoot);
   const mainHTMLWithReplacedAssets = replaceAssetPaths(
     groupConfig.state.htmlAssets.mainHTML.html!,
@@ -647,7 +644,7 @@ export function registerGroupRoutes(
       );
 
   server.get(`/group-${groupId}/`, (_req, res) => {
-    const override = groupCachedContent.pageOverride;
+    const override = groupConfig.state.group.build.pageOverride;
     if (override?.kind === 'build-error') {
       res.writeHead(200, HTML_HEADERS);
       return res.end(buildErrorHTML(override.error));
@@ -665,7 +662,7 @@ export function registerGroupRoutes(
   });
 
   server.get(`/group-${groupId}/tests.js`, (_req, res) => {
-    const bytes = groupCachedContent.allTestCode?.length ?? null;
+    const bytes = groupConfig.state.group.build.allTestCode?.length ?? null;
     if (bytes === null) {
       res.writeHead(503, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
       return res.end(
@@ -678,7 +675,7 @@ export function registerGroupRoutes(
       'Cache-Control': 'no-store',
       'Content-Length': bytes,
     });
-    res.end(groupCachedContent.allTestCode);
+    res.end(groupConfig.state.group.build.allTestCode);
   });
 
   // Group pages resolve the template's qunit.css link to /group-N/node_modules/qunitx/vendor/

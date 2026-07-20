@@ -5,7 +5,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { buildTestBundle, bundleCacheKey } from '../../lib/commands/run/tests-in-browser.ts';
 import { newRunState } from '../../lib/setup/run-state.ts';
-import type { Config, CachedContent } from '../../lib/types.ts';
+import type { BuildState, Config } from '../../lib/types.ts';
 
 const CWD = process.cwd();
 
@@ -18,9 +18,9 @@ const FILE_B = `${CWD}/test/helpers/failing-tests.ts`;
 module('Commands | buildTestBundle | non-watch mode', { concurrency: true }, () => {
   test('produces a non-empty bundle', async (assert) => {
     const config = makeConfig([FILE_A]);
-    const cached = makeCachedContent();
+    const cached = config.state.group.build;
 
-    await buildTestBundle(config, cached);
+    await buildTestBundle(config);
 
     assert.ok(cached.allTestCode, 'allTestCode is populated');
     assert.ok(
@@ -31,9 +31,9 @@ module('Commands | buildTestBundle | non-watch mode', { concurrency: true }, () 
 
   test('does not create an esbuild context — fresh build only', async (assert) => {
     const config = makeConfig([FILE_A]);
-    const cached = makeCachedContent();
+    const cached = config.state.group.build;
 
-    await buildTestBundle(config, cached);
+    await buildTestBundle(config);
 
     assert.strictEqual(
       cached._esbuildContext,
@@ -44,9 +44,9 @@ module('Commands | buildTestBundle | non-watch mode', { concurrency: true }, () 
 
   test('skips build and logs when fsTree is empty', async (assert) => {
     const config = makeConfig([]);
-    const cached = makeCachedContent();
+    const cached = config.state.group.build;
 
-    await buildTestBundle(config, cached);
+    await buildTestBundle(config);
 
     assert.strictEqual(cached.allTestCode, null, 'allTestCode remains null for empty fsTree');
   });
@@ -58,10 +58,10 @@ module(
   () => {
     test('creates an esbuild context on the first build', async (assert) => {
       const config = makeConfig([FILE_A], true);
-      const cached = makeCachedContent();
+      const cached = config.state.group.build;
 
       try {
-        await buildTestBundle(config, cached);
+        await buildTestBundle(config);
 
         assert.ok(cached._esbuildContext, 'esbuild context is created');
         // Parse the key rather than substring-checking — the JSON encoding escapes
@@ -84,14 +84,14 @@ module(
 
     test('reuses the same context object across rebuilds when the file set is unchanged', async (assert) => {
       const config = makeConfig([FILE_A], true);
-      const cached = makeCachedContent();
+      const cached = config.state.group.build;
 
       try {
-        await buildTestBundle(config, cached);
+        await buildTestBundle(config);
         const firstContext = cached._esbuildContext;
 
         // Second call with the same config — fileKey is identical, context should be reused.
-        await buildTestBundle(config, cached);
+        await buildTestBundle(config);
 
         assert.strictEqual(
           cached._esbuildContext,
@@ -105,18 +105,18 @@ module(
     });
 
     test('replaces the context when the set of test files changes', async (assert) => {
-      const config1 = makeConfig([FILE_A], true);
-      const cached = makeCachedContent();
+      const config = makeConfig([FILE_A], true);
+      const cached = config.state.group.build;
 
       try {
-        await buildTestBundle(config1, cached);
+        await buildTestBundle(config);
         const firstContext = cached._esbuildContext;
 
-        // Simulate adding a file: the fileKey changes → context is invalidated.
-        const config2 = makeConfig([FILE_A, FILE_B], true);
-        config2.output = config1.output; // reuse same output dir
+        // Simulate adding a file: the fileKey changes → context is invalidated. Same config, so
+        // the same build state holds the warm context across both builds.
+        config.fsTree[FILE_B] = null;
 
-        await buildTestBundle(config2, cached);
+        await buildTestBundle(config);
 
         assert.notStrictEqual(
           cached._esbuildContext,
@@ -136,18 +136,18 @@ module(
     test('incremental rebuild produces the same bundle content as a fresh build', async (assert) => {
       // Build fresh (non-watch) to get a reference bundle.
       const freshConfig = makeConfig([FILE_A], false);
-      const freshCached = makeCachedContent();
-      await buildTestBundle(freshConfig, freshCached);
+      const freshCached = freshConfig.state.group.build;
+      await buildTestBundle(freshConfig);
       const freshBundle = freshCached.allTestCode as Buffer;
 
       // Build twice in watch mode; the second call uses the warm context.
       const watchConfig = makeConfig([FILE_A], true);
       watchConfig.output = `tmp/build-test-${randomUUID()}`;
-      const watchCached = makeCachedContent();
+      const watchCached = watchConfig.state.group.build;
 
       try {
-        await buildTestBundle(watchConfig, watchCached);
-        await buildTestBundle(watchConfig, watchCached);
+        await buildTestBundle(watchConfig);
+        await buildTestBundle(watchConfig);
         const incrementalBundle = watchCached.allTestCode as Buffer;
 
         // Both must produce a real bundle. We compare lengths rather than byte-for-byte
@@ -172,9 +172,9 @@ module('Commands | buildTestBundle | jsx automatic runtime', { concurrency: true
         `module('jsx', () => { test('renders', (a) => { const el = <div>x</div>; a.ok(el); }); });\n`,
     );
     const config = makeConfig([tmpFile]);
-    const cached = makeCachedContent();
+    const cached = config.state.group.build;
     try {
-      await buildTestBundle(config, cached);
+      await buildTestBundle(config);
       const bundle = (cached.allTestCode as Buffer).toString('utf8');
       assert.strictEqual(cached.pageOverride, null, 'no build error');
       assert.ok(bundle.includes('react/jsx-runtime'), 'bundle pulls in react/jsx-runtime');
@@ -193,9 +193,9 @@ module('Commands | buildTestBundle | jsx automatic runtime', { concurrency: true
         `module('jsx', () => { test('renders', (a) => { const el = <div>x</div>; a.ok(el); }); });\n`,
     );
     const config = makeConfig([tmpFile]);
-    const cached = makeCachedContent();
+    const cached = config.state.group.build;
     try {
-      await buildTestBundle(config, cached);
+      await buildTestBundle(config);
       const bundle = (cached.allTestCode as Buffer).toString('utf8');
       assert.strictEqual(cached.pageOverride, null, 'no build error');
       assert.ok(bundle.includes('vue/jsx-runtime'), 'bundle pulls in vue/jsx-runtime');
@@ -217,9 +217,9 @@ module('Commands | buildTestBundle | jsx automatic runtime', { concurrency: true
         `module('jsx', () => { test('renders', (a) => { const el = <span>y</span>; a.ok(el); }); });\n`,
     );
     const config = makeConfig([tmpFile]);
-    const cached = makeCachedContent();
+    const cached = config.state.group.build;
     try {
-      await buildTestBundle(config, cached);
+      await buildTestBundle(config);
       const bundle = (cached.allTestCode as Buffer).toString('utf8');
       assert.strictEqual(cached.pageOverride, null, 'no build error');
       assert.ok(bundle.includes('react/jsx-runtime'), '.jsx is parsed and JSX is transformed');
@@ -240,9 +240,9 @@ module('Commands | buildTestBundle | jsx automatic runtime', { concurrency: true
         `module('plain ts', () => { test('runs', (a) => { a.ok(true); }); });\n`,
     );
     const config = makeConfig([tmpFile]);
-    const cached = makeCachedContent();
+    const cached = config.state.group.build;
     try {
-      await buildTestBundle(config, cached);
+      await buildTestBundle(config);
       const bundle = (cached.allTestCode as Buffer).toString('utf8');
       assert.strictEqual(cached.pageOverride, null, 'no build error');
       assert.notOk(
@@ -282,9 +282,9 @@ module('Commands | buildTestBundle | esbuild plugins', { concurrency: true }, ()
     };
     const config = makeConfig([tmpFile]);
     config.plugins = [virtualGreetingPlugin];
-    const cached = makeCachedContent();
+    const cached = config.state.group.build;
     try {
-      await buildTestBundle(config, cached);
+      await buildTestBundle(config);
       const bundle = (cached.allTestCode as Buffer).toString('utf8');
       assert.strictEqual(cached.pageOverride, null, 'no build error');
       assert.equal(setupCalls, 1, 'plugin setup() invoked exactly once');
@@ -311,9 +311,9 @@ module('Commands | buildTestBundle | nodePaths resolution', { concurrency: true 
     const tmpFile = path.join(os.tmpdir(), `qunitx-nodepaths-${randomUUID()}.ts`);
     await fs.writeFile(tmpFile, `import { module, test } from 'qunitx';\n`);
     const config = makeConfig([tmpFile]);
-    const cached = makeCachedContent();
+    const cached = config.state.group.build;
     try {
-      await buildTestBundle(config, cached);
+      await buildTestBundle(config);
       assert.ok(cached.allTestCode !== null, 'allTestCode is populated');
       assert.strictEqual(
         cached.pageOverride,
@@ -347,16 +347,8 @@ function makeConfig(testFiles: string[], watch = false): Config {
   } as unknown as Config;
 }
 
-function makeCachedContent(): CachedContent {
-  return {
-    allTestCode: null,
-    // '/' path skips the inner rm/mkdir in buildTestBundle — keeps tests self-contained.
-    htmlPathsToRunTests: ['/'],
-  };
-}
-
 // Dispose any live esbuild context so the service can be cleaned up after each test.
-async function disposeCached(cached: CachedContent): Promise<void> {
+async function disposeCached(cached: BuildState): Promise<void> {
   if (cached._esbuildContext) {
     await cached._esbuildContext.dispose().catch(() => {});
     cached._esbuildContext = null;
