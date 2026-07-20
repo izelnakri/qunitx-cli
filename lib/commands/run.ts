@@ -23,8 +23,13 @@ import {
   flushConsoleHandlers,
   DaemonRunError,
 } from './run/tests-in-browser.ts';
-import { clearCachedBundles } from './run/cached-bundles.ts';
-import { newGroupState, resetRunResults, reusablePageSlot } from '../setup/run-state.ts';
+
+import {
+  clearBuildBundles,
+  newGroupState,
+  resetRunResults,
+  reusablePageSlot,
+} from '../setup/run-state.ts';
 import { setupFileWatchers } from '../setup/file-watcher.ts';
 import { getChangedFsTree } from '../setup/get-changed-fs-tree.ts';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
@@ -261,7 +266,7 @@ async function runWatchMode(config: Config): Promise<void> {
           // Clear the cached bundles so the next re-run rebuilds without the deleted file.
           // `change` events can fire while a file is being rewritten, so a filtered bundle
           // may catch the file in a transient empty/partial state and produce a broken rerun.
-          clearCachedBundles(build);
+          clearBuildBundles(build);
           if (config.debug) {
             console.log(
               `# Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,

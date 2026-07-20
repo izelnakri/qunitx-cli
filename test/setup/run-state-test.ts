@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
-import { clearCachedBundles } from '../../../lib/commands/run/cached-bundles.ts';
-import type { BuildState } from '../../../lib/types.ts';
+import { clearBuildBundles } from '../../lib/setup/run-state.ts';
+import type { BuildState } from '../../lib/types.ts';
 
 // Regression coverage for a stale filtered bundle surviving a watch-mode delete. The watcher
 // used to clear only `allTestCode`, so `/filtered-tests.js` kept serving a bundle built from
@@ -15,11 +15,11 @@ function makeBuildState(): BuildState {
   };
 }
 
-module('Commands | run | clearCachedBundles', { concurrency: true }, () => {
+module('Setup | run-state | clearBuildBundles', { concurrency: true }, () => {
   test('clears the filtered bundle alongside the full one', (assert) => {
     const build = makeBuildState();
 
-    clearCachedBundles(build);
+    clearBuildBundles(build);
 
     assert.equal(build.allTestCode, null, 'allTestCode is dropped');
     assert.equal(
@@ -32,16 +32,16 @@ module('Commands | run | clearCachedBundles', { concurrency: true }, () => {
   test('leaves the surrounding build metadata intact', (assert) => {
     const build = makeBuildState();
 
-    clearCachedBundles(build);
+    clearBuildBundles(build);
 
     assert.deepEqual(build.htmlPathsToRunTests, ['/'], 'html run paths survive');
   });
 
-  test('is idempotent on an already-cleared cache', (assert) => {
+  test('is idempotent on already-cleared bundles', (assert) => {
     const build = makeBuildState();
 
-    clearCachedBundles(build);
-    clearCachedBundles(build);
+    clearBuildBundles(build);
+    clearBuildBundles(build);
 
     assert.equal(build.allTestCode, null, 'stays cleared');
     assert.equal(build.filteredTestCode, undefined, 'stays cleared');
