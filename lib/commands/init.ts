@@ -8,7 +8,7 @@ import { readTemplate } from '../utils/read-template.ts';
 /** Bootstraps a new qunitx project: writes the test HTML template, updates package.json, and optionally writes tsconfig.json. */
 export async function initializeProject() {
   const projectRoot = await findProjectRoot();
-  const oldPackageJSON = JSON.parse(await fs.readFile(`${projectRoot}/package.json`));
+  const oldPackageJSON = JSON.parse(await fs.readFile(`${projectRoot}/package.json`, 'utf8'));
   const existingQunitx = oldPackageJSON.qunitx || {};
   const cliHtmlPaths = process.argv.slice(2).filter((arg) => arg.endsWith('.html'));
   const config = Object.assign({}, defaultProjectConfigValues, existingQunitx, {
@@ -43,10 +43,9 @@ async function writeTestsHTML(
           targetDirectory,
           path.join(path.resolve(projectRoot, config.output), 'tests.js'),
         );
-        const testHTMLTemplate = testHTMLTemplateBuffer.replace(
-          '{{applicationName}}',
-          oldPackageJSON.name,
-        );
+        const testHTMLTemplate = testHTMLTemplateBuffer
+          .toString()
+          .replace('{{applicationName}}', String(oldPackageJSON.name));
 
         await fs.mkdir(targetDirectory, { recursive: true });
         await fs.writeFile(targetPath, testHTMLTemplate);

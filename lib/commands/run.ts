@@ -524,9 +524,10 @@ async function runConcurrentMode(
   );
 
   let exitCode = groupResults.reduce(
-    (code, { status, reason }) => {
-      if (status !== 'rejected') return code;
-      console.error(reason);
+    (code, result) => {
+      // `reason` only exists on the rejected arm of the union, so narrow before reading it.
+      if (result.status !== 'rejected') return code;
+      console.error(result.reason);
       return 1;
     },
     config.state.results.counter.failCount > 0 ? 1 : 0,

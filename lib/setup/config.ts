@@ -41,14 +41,18 @@ export async function setupConfig(): Promise<Config> {
     inputs,
     testFileLookupPaths: setupTestFilePaths(inputs),
     state: newRunState(),
-  };
+    // Asserted rather than inferred because fsTree and plugins are filled in by the awaits
+    // below — the literal is deliberately partial, and the function's contract is that a
+    // complete Config is only guaranteed at the return. The later `as Config` casts this
+    // function used to repeat are now redundant.
+  } as Config;
   config.htmlPaths = normalizeHTMLPaths(config.projectRoot, config.htmlPaths);
   [config.fsTree, config.plugins] = await Promise.all([
     buildFSTree(config.testFileLookupPaths, config),
     pluginsPromise,
   ]);
 
-  pruneSupersededLineTargets(config as Config);
+  pruneSupersededLineTargets(config);
 
   // --changed / --since: filter fsTree to test files whose transitive deps
   // include a changed file. Watch mode skips this — watch is for fast feedback
@@ -62,14 +66,14 @@ export async function setupConfig(): Promise<Config> {
   // `qa` and file-save reruns still see every file) and only the INITIAL run is scoped to the
   // failures. See applyOnlyFailedFilter for the no-targets vs. scoped-targets behavior.
   if (config.onlyFailed && !config.watch) {
-    config.fsTree = await applyOnlyFailedFilter(config as Config);
+    config.fsTree = await applyOnlyFailedFilter(config);
   }
 
   // Built last: reporter selection reads the fully-merged flags. One instance per run, shared
   // by every concurrent group via the group-config spread in run.ts.
-  (config as Config).state.reporters = createReporters(config as Config);
+  config.state.reporters = createReporters(config);
 
-  return config as Config;
+  return config;
 }
 
 export { setupConfig as default };

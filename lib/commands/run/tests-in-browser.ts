@@ -18,7 +18,7 @@ import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
 import { resetRunResults } from '../../setup/run-state.ts';
 import type { AffectedMetafile } from '../../utils/get-changed-files.ts';
 import type { Page } from 'playwright-core';
-import type { BuildState, Config, Connections, EsbuildCache } from '../../types.ts';
+import type { BuildState, Config, Connections, EsbuildCache, QUnitResult } from '../../types.ts';
 import type { HTTPServer } from '../../servers/web.ts';
 
 /**
@@ -250,7 +250,7 @@ export async function buildTestBundle(config: Config): Promise<void> {
 export async function runTestsInBrowser(
   config: Config,
   connections: Connections,
-  targetTestFilesToFilter?: string[],
+  targetTestFilesToFilter?: string[] | null,
 ): Promise<Connections | undefined> {
   const build = config.state.group.build;
   const { projectRoot, output } = config;
@@ -782,9 +782,9 @@ async function runTestInsideHTMLFile(
   { page, server, browser }: Connections,
   config: Config,
 ): Promise<void> {
-  let QUNIT_RESULT;
-  let targetError;
-  let timeoutHandle;
+  let QUNIT_RESULT: QUnitResult | null | undefined;
+  let targetError: unknown;
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   // wsConnected is set by config.state.group.signals.onWsOpen when Chrome's WS socket opens (< 1s after navigation,
   // before test bundle compilation finishes). Distinguishes "WS never opened" from "WS opened
   // but tests.js compiled too slowly" — both appear as TIMEOUT but have different root causes.
@@ -927,7 +927,8 @@ async function runTestInsideHTMLFile(
     // Fall back to page.evaluate() only when the run timed out without a WS 'done' arriving
     // (config.state.group.lastQUnitResult is null), so we still get partial results for diagnostics.
     QUNIT_RESULT =
-      config.state.group.lastQUnitResult ?? (await page.evaluate(() => window.QUNIT_RESULT));
+      config.state.group.lastQUnitResult ??
+      (await page.evaluate(() => (globalThis as { QUNIT_RESULT?: QUnitResult }).QUNIT_RESULT));
   } catch (error) {
     targetError = error;
     console.log(error);
@@ -1033,7 +1034,7 @@ function toEsbuildImportPath(filePath: string): string {
 
 class BundleError extends Error {
   constructor(message: unknown) {
-    super(message);
+    super(String(message));
     this.name = 'BundleError';
     this.message = `esbuild Bundle Error: ${message}`.split('\n').join('\n# ');
   }
