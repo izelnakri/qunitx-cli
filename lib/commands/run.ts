@@ -370,7 +370,7 @@ async function runConcurrentMode(
   // every group then adds into these same objects: TAP numbers stay globally sequential, failures
   // land in one set, and the coverage report covers the whole run rather than one group's slice.
   resetRunResults(config.state.results, !!config.coverage);
-  config.state.group.ranFiles = allFiles;
+  config.state.group.lastRanFiles = allFiles;
 
   const groupConfigs = groups.map(({ files, selectors }, i) => ({
     ...config,

@@ -165,7 +165,7 @@ export function setupWebServer(config: Config): HTTPServer {
         }
 
         if (details.status === 'failed') {
-          config.state.group.lastFailedFiles = config.state.group.ranFiles;
+          config.state.group.lastFailedFiles = config.state.group.lastRanFiles;
           recordFailedTest(config, details);
         }
 
@@ -747,7 +747,7 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
           return;
         }
         if (details.status === 'failed') {
-          config.state.group.lastFailedFiles = config.state.group.ranFiles;
+          config.state.group.lastFailedFiles = config.state.group.lastRanFiles;
           recordFailedTest(config, details);
         }
         if (config.debug && details.runtime > config.timeout * 0.8) {

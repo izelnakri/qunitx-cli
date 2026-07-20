@@ -230,13 +230,14 @@ export interface GroupState {
    */
   selectors: QUnitSelector[] | undefined;
   /**
-   * Test files this group actually ran. Failure attribution falls back to this when a failing
-   * assertion's stack can't be resolved to one file — scoped per group so an unattributable
-   * failure blames only the files that group ran, not the whole invocation.
+   * Test files this group ran on the last run. Failure attribution falls back to this when a
+   * failing assertion's stack can't be resolved to one file — scoped per group so an
+   * unattributable failure blames only the files that group ran, not the whole invocation.
    *
-   * Watch mode runs exactly one group, so this doubles as the `ql` rerun target there.
+   * Watch mode runs exactly one group, so this doubles as the `ql` rerun target there. Named to
+   * pair with {@link lastFailedFiles}.
    */
-  ranFiles: string[] | null;
+  lastRanFiles: string[] | null;
   /** Files treated as failed for the `qf` rerun shortcut. Watch mode only, hence single-group. */
   lastFailedFiles: string[] | null;
   /**

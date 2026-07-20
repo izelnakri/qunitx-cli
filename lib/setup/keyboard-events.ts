@@ -21,14 +21,14 @@ export function setupKeyboardEvents(config: Config, connections: Connections): v
 
     if (!config.state.group.lastFailedFiles) {
       console.log('#', blue(`QUnitX: No tests failed so far, so repeating the last test run`));
-      return runTestsInBrowser(config, connections, config.state.group.ranFiles);
+      return runTestsInBrowser(config, connections, config.state.group.lastRanFiles);
     }
 
     runTestsInBrowser(config, connections, config.state.group.lastFailedFiles);
   });
   listenToKeyboardKey('ql', () => {
     abortBrowserQUnit(config, connections);
-    runTestsInBrowser(config, connections, config.state.group.ranFiles);
+    runTestsInBrowser(config, connections, config.state.group.lastRanFiles);
   });
 }
 
