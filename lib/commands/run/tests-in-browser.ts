@@ -18,7 +18,14 @@ import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
 import { resetRunResults } from '../../setup/run-state.ts';
 import type { AffectedMetafile } from '../../utils/get-changed-files.ts';
 import type { Page } from 'playwright-core';
-import type { BuildState, Config, Connections, EsbuildCache, QUnitResult } from '../../types.ts';
+import type {
+  BuildState,
+  Config,
+  Connections,
+  Counter,
+  EsbuildCache,
+  QUnitResult,
+} from '../../types.ts';
 import type { HTTPServer } from '../../servers/web.ts';
 
 /**
@@ -980,11 +987,55 @@ async function runTestInsideHTMLFile(
       config.state.group.pendingConsoleHandlers,
       !!config.state.daemon,
     );
+  } else if (config.state.groupCount === 1) {
+    // Every registered test finished. The WebSocket testEnd stream is the only channel that
+    // feeds the counter, and under load (a CPU-starved CI runner, a dropped or duplicated
+    // connection) some events never arrive — so the counter can read fewer tests than the
+    // browser actually ran. Left unreconciled that surfaces as a silent, empty, exit-0 run:
+    // a file with tests reporting "0 tests registered" and passing. QUnit's in-page tally is
+    // authoritative, so trust it. Single-group only: the shared counter is this run's own
+    // count here; with several concurrent groups it aggregates all of them, so one group's
+    // tally cannot safely rewrite it (the multi-group failure safety net below still applies).
+    const undelivered = reconcileUndeliveredResults(config.state.results.counter, QUNIT_RESULT);
+    if (undelivered > 0) {
+      const warning =
+        `# [qunitx] WARNING: ${undelivered} test result(s) finished in the browser but never ` +
+        `reached the runner — the WebSocket stream under-delivered (CPU-starved runner or a ` +
+        `dropped connection). Reconciled from QUnit's own tally so the summary and exit code ` +
+        `are correct; re-run to get the per-test lines back.\n`;
+      process.stdout.write(warning);
+      process.stderr.write(warning);
+    }
   } else if (QUNIT_RESULT.failedTests > config.state.results.counter.failCount) {
-    // Safety net: browser tracked failures that WebSocket events never delivered to Node.js
-    // (e.g. WS connection dropped mid-run). Reconcile so the exit code is always correct.
+    // Multi-group safety net: the shared counter aggregates every group, so we cannot rewrite
+    // its total from one group's tally — but a failure the WS stream dropped must still count,
+    // and only bumping failCount up is always safe. Keeps the exit code correct.
     config.state.results.counter.failCount = QUNIT_RESULT.failedTests;
   }
+}
+
+/**
+ * Reconciles the Node-side counter with QUnit's authoritative in-page tally after a run finishes,
+ * for a single-group run. Returns how many finished results the WebSocket stream failed to deliver
+ * (0 on a clean run).
+ *
+ * QUnit is the source of truth for what ran; the testEnd stream is only the transport. A failure
+ * the stream dropped must still count (existing safety net), and when the browser finished more
+ * tests than the runner received, the remainder ran too — so trust QUnit's total rather than
+ * report the run as empty. Passes are derived as the remainder after the counts we did receive,
+ * which is exact for the common all-passing loss and best-effort if a skip/todo was also dropped.
+ */
+export function reconcileUndeliveredResults(counter: Counter, result: QUnitResult): number {
+  if (result.failedTests > counter.failCount) counter.failCount = result.failedTests;
+  const undelivered = Math.max(0, result.finishedTests - counter.testCount);
+  if (undelivered > 0) counter.testCount = result.finishedTests;
+  // pass = total − fail − skip − todo holds by construction after updateCounter, so recomputing
+  // is a no-op on a clean run and keeps the three consistent after either correction above.
+  counter.passCount = Math.max(
+    0,
+    counter.testCount - counter.failCount - counter.skipCount - counter.todoCount,
+  );
+  return undelivered;
 }
 
 async function failOnNonWatchMode(
