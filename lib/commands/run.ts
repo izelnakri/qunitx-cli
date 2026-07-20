@@ -52,7 +52,7 @@ import {
 } from './run/timings.ts';
 import { applyWatchLineTargets, resolveTargetedFiles, splitIntoGroups } from './run/grouping.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
-import type { Config, CachedContent, HtmlAssets } from '../types.ts';
+import type { Config, HtmlAssets } from '../types.ts';
 
 // Playwright navigation timeout for headed watch-mode reloads (not test execution).
 const WATCH_NAV_TIMEOUT_MS = 5_000;
@@ -95,11 +95,11 @@ export async function run(config: Config): Promise<void> {
     config.coverage = false;
   }
 
-  // Kick off all I/O that doesn't need cachedContent in parallel with buildCachedContent:
+  // Kick off all I/O that doesn't need the HTML fixtures in parallel with resolveHtmlFixtures:
   //   launchBrowser: CDP connect to pre-launched Chrome (~30-50ms)
   //   readTimingCache: reads tmp/test-timings.json (~2ms)
-  //   buildCachedContent: reads HTML template from disk (~5-10ms)
-  // Chrome is typically fully connected by the time buildCachedContent + splitIntoGroups resolve.
+  //   resolveHtmlFixtures: reads HTML template from disk (~5-10ms)
+  // Chrome is typically fully connected by the time resolveHtmlFixtures + splitIntoGroups resolve.
   // Daemon mode reuses its persistent browser; non-watch local runs launch their own;
   // watch mode defers launch until setupBrowser inside the watch path.
   const daemonBrowser = config.state.daemon?.browser;
@@ -108,17 +108,17 @@ export async function run(config: Config): Promise<void> {
     : config.watch
       ? null
       : launchBrowser(config);
-  const [cachedContent, timings] = await Promise.all([
-    buildCachedContent(config, config.htmlPaths),
+  const [, timings] = await Promise.all([
+    resolveHtmlFixtures(config),
     config.watch
       ? Promise.resolve(null as Record<string, number> | null)
       : readTimingCache(config.projectRoot),
   ]);
 
   if (config.watch) {
-    await runWatchMode(config, cachedContent);
+    await runWatchMode(config);
   } else {
-    await runConcurrentMode(config, cachedContent, timings, browserPromise);
+    await runConcurrentMode(config, timings, browserPromise);
   }
 }
 
@@ -127,7 +127,8 @@ export async function run(config: Config): Promise<void> {
  * that stays up so the QUnit view can be kept open. Reruns are driven by the file watcher and the
  * keyboard shortcuts, so this returns with the process still alive.
  */
-async function runWatchMode(config: Config, cachedContent: CachedContent): Promise<void> {
+async function runWatchMode(config: Config): Promise<void> {
+  const cachedContent = config.state.group.build;
   // Line targets scope the whole watch session, so they have to narrow fsTree BEFORE the
   // bundle below is built from it — see applyWatchLineTargets. Guarded so the common path
   // keeps starting esbuild without an extra await.
@@ -140,23 +141,23 @@ async function runWatchMode(config: Config, cachedContent: CachedContent): Promi
   //
   // Start esbuild immediately so it races Chrome setup: Chrome connect + newPage (~150ms)
   // and esbuild (~300–600ms) have no mutual dependency until page.goto() fires inside
-  // runTestsInBrowser. The promise is stored on cachedContent so runTestsInBrowser can
+  // runTestsInBrowser. The promise is stored on the group's build state so runTestsInBrowser can
   // await it inside its own try/catch — errors surface as BundleErrors there, keeping
   // the watcher alive exactly as they would for a normal watch-mode build failure.
   // Suppress unhandled rejection: esbuild can fail (syntax error, missing file) before
   // setupBrowser completes. Without .catch(), Node.js detects the rejection during the
   // Promise.all window and crashes the process. runTestsInBrowser awaits this promise inside
   // its own try/catch, so the rejection is handled — but only after setupBrowser resolves.
-  const preBuildPromise = buildTestBundle(config, cachedContent);
+  const preBuildPromise = buildTestBundle(config);
   preBuildPromise.catch(() => {});
   cachedContent._preBuildPromise = preBuildPromise;
 
   const [connections] = await Promise.all([
-    setupBrowser(config, cachedContent),
+    setupBrowser(config),
     writeOutputStaticFiles(config, config.state.htmlAssets),
   ]);
   config.webServer = connections.server;
-  setupKeyboardEvents(config, cachedContent, connections);
+  setupKeyboardEvents(config, connections);
 
   // Explicitly close the HTTP server on SIGTERM before the process exits. This ensures
   // the port is reclaimed by application code (not as a side effect of OS process cleanup),
@@ -224,7 +225,7 @@ async function runWatchMode(config: Config, cachedContent: CachedContent): Promi
   }
 
   try {
-    await runTestsInBrowser(config, cachedContent, connections, initialFilter);
+    await runTestsInBrowser(config, connections, initialFilter);
   } catch (error) {
     await closeWithGrace([connections.server?.close(), connections.browser?.close()]);
     throw error;
@@ -269,17 +270,17 @@ async function runWatchMode(config: Config, cachedContent: CachedContent): Promi
           // Kick off rebuild immediately so it races Chrome navigation (same pattern as the
           // initial watch-mode build). runTestsInBrowser picks up the promise from
           // _preBuildPromise and sets _activeRebuild so /tests.js can await it.
-          const rebuildPromise = buildTestBundle(config, cachedContent);
+          const rebuildPromise = buildTestBundle(config);
           rebuildPromise.catch(() => {});
           cachedContent._preBuildPromise = rebuildPromise;
-          return await runTestsInBrowser(config, cachedContent, connections);
+          return await runTestsInBrowser(config, connections);
         }
         if (config.debug) {
           console.log(
             `# Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
           );
         }
-        await runTestsInBrowser(config, cachedContent, connections, [file]);
+        await runTestsInBrowser(config, connections, [file]);
       },
       async (_path, _event) => {
         connections.server.publish('refresh');
@@ -309,10 +310,10 @@ async function runWatchMode(config: Config, cachedContent: CachedContent): Promi
  */
 async function runConcurrentMode(
   config: Config,
-  cachedContent: CachedContent,
   timings: Record<string, number> | null,
   browserPromise: ReturnType<typeof launchBrowser> | null,
 ): Promise<void> {
+  const cachedContent = config.state.group.build;
   // CONCURRENT MODE: split test files across N groups = availableParallelism().
   // All group bundles are built while Chrome is starting up, so esbuild time
   // is hidden behind the ~1.2s Chrome launch. Each group then gets its own
@@ -377,9 +378,20 @@ async function runConcurrentMode(
     // fullName when they bundle different files registering the same module/test names, so
     // deduping has to be intra-group or group B's first testEnd would be dropped as group A's
     // duplicate.
-    state: { ...config.state, group: { ...newGroupState(i, selectors), groupMode: true } },
+    state: {
+      ...config.state,
+      group: {
+        ...newGroupState(i, selectors),
+        groupMode: true,
+        // The parent resolved these from the HTML fixtures before any group existed; each group
+        // starts from that list and the shared-server branch below rewrites it to /group-{i}/.
+        build: {
+          ...newGroupState().build,
+          htmlPathsToRunTests: [...cachedContent.htmlPathsToRunTests],
+        },
+      },
+    },
   }));
-  const groupCachedContents = groups.map(() => ({ ...cachedContent }));
 
   // One shared HTTPServer for all groups (routed by /group-{i}/ prefix) when using the
   // default '/' HTML path. Falls back to per-group servers for custom HTML templates.
@@ -390,7 +402,7 @@ async function runConcurrentMode(
       ? (() => {
           const s = new HTTPServer();
           setupGroupWSHandler(s, groupConfigs);
-          groupConfigs.forEach((gc, i) => registerGroupRoutes(s, gc, groupCachedContents[i], i));
+          groupConfigs.forEach((gc) => registerGroupRoutes(s, gc));
           registerSharedStaticHandler(s, groupConfigs);
           return s;
         })()
@@ -406,14 +418,12 @@ async function runConcurrentMode(
       ? bindServerToPort(sharedServer, config).then(() =>
           groupConfigs.forEach((gc, i) => {
             gc.port = config.port;
-            groupCachedContents[i].htmlPathsToRunTests = [`/group-${i}/`];
+            gc.state.group.build.htmlPathsToRunTests = [`/group-${i}/`];
           }),
         )
       : Promise.resolve(),
     Promise.all([
-      groupCount > 1
-        ? buildAllGroupBundles(groupConfigs, groupCachedContents)
-        : buildTestBundle(groupConfigs[0], groupCachedContents[0]),
+      groupCount > 1 ? buildAllGroupBundles(groupConfigs) : buildTestBundle(groupConfigs[0]),
       Promise.all(groupConfigs.map((gc) => writeOutputStaticFiles(gc, gc.state.htmlAssets))),
     ]),
   ]);
@@ -458,12 +468,7 @@ async function runConcurrentMode(
       const startMs = Date.now();
       const work = (async () => {
         groupConfig.state.group.phase = 'connecting';
-        const connectWork = setupBrowser(
-          groupConfig,
-          groupCachedContents[i],
-          browser,
-          sharedServer,
-        );
+        const connectWork = setupBrowser(groupConfig, browser, sharedServer);
         // Daemon runs reuse a persistent browser; bound the connect so a handle that
         // died just after the pre-run probe fails fast here (recovered next run) instead
         // of wedging until GROUP_TIMEOUT. See DAEMON_CONNECT_TIMEOUT_MS.
@@ -491,7 +496,7 @@ async function runConcurrentMode(
         }
 
         try {
-          await runTestsInBrowser(groupConfig, groupCachedContents[i], connections);
+          await runTestsInBrowser(groupConfig, connections);
         } finally {
           await flushConsoleHandlers(
             groupConfig.state.group.pendingConsoleHandlers,
@@ -643,57 +648,48 @@ async function runConcurrentMode(
 export { run as default };
 
 /**
- * Reads each HTML fixture file referenced by the config, classifies them as
- * dynamic (have qunitx tokens, get bundle-injection at request time) or static,
- * collects internal asset paths, and resolves the main HTML to inject the test
- * runtime into. Returns the populated `CachedContent` consumed by `run()` and
- * the daemon's `runOnce()`.
+ * Reads each HTML fixture file referenced by the config, classifies them as dynamic (have qunitx
+ * tokens, get bundle-injection at request time) or static, collects internal asset paths, and
+ * resolves the main HTML the test runtime is injected into. Populates `state.htmlAssets` and the
+ * run's `htmlPathsToRunTests`; both are read by `run()` and the daemon's `runOnce()`.
  */
-async function buildCachedContent(config: Config, htmlPaths: string[]): Promise<CachedContent> {
+async function resolveHtmlFixtures(config: Config): Promise<void> {
   const htmlBuffers = await Promise.all(
     config.htmlPaths.map((htmlPath) => fs.readFile(htmlPath).catch(() => null)),
   );
   const htmlAssets = config.state.htmlAssets;
-  const cachedContent = htmlPaths.reduce(
-    (result, _htmlPath, index) => {
-      const buffer = htmlBuffers[index];
-      if (buffer === null) return result;
-      const filePath = config.htmlPaths[index];
-      const html = buffer.toString();
+  const build = config.state.group.build;
+  config.htmlPaths.reduce((result, _htmlPath, index) => {
+    const buffer = htmlBuffers[index];
+    if (buffer === null) return result;
+    const filePath = config.htmlPaths[index];
+    const html = buffer.toString();
 
-      if (isCustomTemplate(html)) {
-        htmlAssets.dynamicContentHTMLs[filePath] = html;
-        result.htmlPathsToRunTests.push(filePath.replace(config.projectRoot, ''));
-      } else {
-        console.log(
-          '#',
-          yellow(
-            `WARNING: Static html file with no {{qunitxScript}} or handlebars-style tokens detected. Therefore ignoring ${filePath}`,
-          ),
-        );
-        htmlAssets.staticHTMLs[filePath] = html;
-      }
+    if (isCustomTemplate(html)) {
+      htmlAssets.dynamicContentHTMLs[filePath] = html;
+      result.htmlPathsToRunTests.push(filePath.replace(config.projectRoot, ''));
+    } else {
+      console.log(
+        '#',
+        yellow(
+          `WARNING: Static html file with no {{qunitxScript}} or handlebars-style tokens detected. Therefore ignoring ${filePath}`,
+        ),
+      );
+      htmlAssets.staticHTMLs[filePath] = html;
+    }
 
-      findInternalAssetsFromHTML(html).forEach((key) => {
-        htmlAssets.assets.add(
-          normalizeInternalAssetPathFromHTML(config.projectRoot, key, filePath),
-        );
-      });
+    findInternalAssetsFromHTML(html).forEach((key) => {
+      htmlAssets.assets.add(normalizeInternalAssetPathFromHTML(config.projectRoot, key, filePath));
+    });
 
-      return result;
-    },
-    {
-      allTestCode: null,
-      htmlPathsToRunTests: [],
-    },
-  );
+    return result;
+  }, build);
 
-  if (cachedContent.htmlPathsToRunTests.length === 0) {
-    cachedContent.htmlPathsToRunTests = ['/'];
+  if (build.htmlPathsToRunTests.length === 0) {
+    build.htmlPathsToRunTests = ['/'];
   }
 
   await resolveMainHTML(config.projectRoot, htmlAssets);
-  return cachedContent;
 }
 
 /** Picks the page the test runtime is injected into, falling back to the bundled template. */

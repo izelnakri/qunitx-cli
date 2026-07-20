@@ -9,7 +9,7 @@ import {
 } from '../../lib/commands/run/tests-in-browser.ts';
 import { buildErrorHTML, buildNoTestsHTML } from '../../lib/setup/web-server.ts';
 import { newRunState } from '../../lib/setup/run-state.ts';
-import type { Config, CachedContent } from '../../lib/types.ts';
+import type { Config } from '../../lib/types.ts';
 
 const CWD = process.cwd();
 
@@ -244,12 +244,9 @@ module('Commands | buildTestBundle | pageOverride lifecycle', { concurrency: tru
     await fs.mkdir(`${CWD}/tmp`, { recursive: true });
     await fs.writeFile(tmpFile, 'const x = {{{INVALID}}};');
     const config = makeConfig([tmpFile]);
-    const cached = makeCachedContent();
+    const cached = config.state.group.build;
     try {
-      await assert.rejects(
-        buildTestBundle(config, cached),
-        'buildTestBundle rejects on build failure',
-      );
+      await assert.rejects(buildTestBundle(config), 'buildTestBundle rejects on build failure');
       const override = cached.pageOverride;
       assert.equal(override?.kind, 'build-error', 'a build-error override is set');
       const error = override?.kind === 'build-error' ? override.error : null;
@@ -265,13 +262,13 @@ module('Commands | buildTestBundle | pageOverride lifecycle', { concurrency: tru
 
   test('clears the override to null after a successful build', async (assert) => {
     const config = makeConfig([`${CWD}/test/helpers/passing-tests.ts`]);
-    const cached = makeCachedContent();
+    const cached = config.state.group.build;
     cached.pageOverride = {
       kind: 'build-error',
       error: { type: 'Build Error', formatted: 'stale error from previous run' },
     };
     try {
-      await buildTestBundle(config, cached);
+      await buildTestBundle(config);
       assert.strictEqual(cached.pageOverride, null, 'pageOverride cleared on success');
     } finally {
       await fs.rm(`${CWD}/${config.output}`, { force: true, recursive: true });
@@ -283,9 +280,8 @@ module('Commands | buildTestBundle | pageOverride lifecycle', { concurrency: tru
     await fs.mkdir(`${CWD}/tmp`, { recursive: true });
     await fs.writeFile(tmpFile, 'this is } invalid { syntax !!!');
     const config = makeConfig([tmpFile]); // watch = false
-    const cached = makeCachedContent();
     try {
-      await buildTestBundle(config, cached).catch(() => {});
+      await buildTestBundle(config).catch(() => {});
       const html = await fs.readFile(`${CWD}/${config.output}/index.html`, 'utf8');
       assert.ok(html.includes('<!DOCTYPE html>'), 'index.html is a full HTML document');
       assert.ok(html.includes('id="qunit-header"'), 'QUnit header element present');
@@ -302,9 +298,8 @@ module('Commands | buildTestBundle | pageOverride lifecycle', { concurrency: tru
     await fs.mkdir(`${CWD}/tmp`, { recursive: true });
     await fs.writeFile(tmpFile, 'this is } invalid { syntax !!!');
     const config = makeConfig([tmpFile], true); // watch = true
-    const cached = makeCachedContent();
     try {
-      await buildTestBundle(config, cached).catch(() => {});
+      await buildTestBundle(config).catch(() => {});
       const html = await fs.readFile(`${CWD}/${config.output}/index.html`, 'utf8');
       assert.ok(html.includes('<!DOCTYPE html>'), 'index.html written in watch mode too');
     } finally {
@@ -330,11 +325,4 @@ function makeConfig(testFiles: string[], watch = false): Config {
     watch,
     state: newRunState(),
   } as unknown as Config;
-}
-
-function makeCachedContent(): CachedContent {
-  return {
-    allTestCode: null,
-    htmlPathsToRunTests: ['/'],
-  };
 }

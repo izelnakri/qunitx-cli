@@ -18,7 +18,7 @@ import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
 import { resetRunResults } from '../../setup/run-state.ts';
 import type { AffectedMetafile } from '../../utils/get-changed-files.ts';
 import type { Page } from 'playwright-core';
-import type { Config, CachedContent, Connections, EsbuildCache } from '../../types.ts';
+import type { BuildState, Config, Connections, EsbuildCache } from '../../types.ts';
 import type { HTTPServer } from '../../servers/web.ts';
 
 /**
@@ -142,7 +142,8 @@ export function bundleCacheKey(opts: esbuild.BuildOptions, files: string[]): str
  * Pre-builds the esbuild bundle for all test files and caches the result in `cachedContent`.
  * @returns {Promise<void>}
  */
-export async function buildTestBundle(config: Config, cachedContent: CachedContent): Promise<void> {
+export async function buildTestBundle(config: Config): Promise<void> {
+  const cachedContent = config.state.group.build;
   const { projectRoot, output } = config;
   const allTestFilePaths = Object.keys(config.fsTree);
 
@@ -227,9 +228,9 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
     // Persist metafile for the next --changed run. Best-effort; cache miss
     // on subsequent reads degrades to "run all tests."
     if (metafile) void writeMetafileCache(projectRoot, process.cwd(), metafile);
-    config.state.watch.lastBuildErrored = false;
+    cachedContent.lastBuildErrored = false;
   } catch (error) {
-    config.state.watch.lastBuildErrored = true;
+    cachedContent.lastBuildErrored = true;
     const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
     cachedContent.pageOverride = { kind: 'build-error', error: buildError };
     // Always write index.html immediately: in non-watch mode the server route for '/' is only
@@ -248,10 +249,10 @@ export async function buildTestBundle(config: Config, cachedContent: CachedConte
  */
 export async function runTestsInBrowser(
   config: Config,
-  cachedContent: CachedContent,
   connections: Connections,
   targetTestFilesToFilter?: string[],
 ): Promise<Connections | undefined> {
+  const cachedContent = config.state.group.build;
   const { projectRoot, output } = config;
   const outDir = path.resolve(projectRoot, output);
   const allTestFilePaths = Object.keys(config.fsTree);
@@ -288,7 +289,7 @@ export async function runTestsInBrowser(
         // awaits _activeRebuild before serving, so Chrome gets the bundle when ready.
         cachedContent._activeRebuild = preBuildPromise;
       } else {
-        await buildTestBundle(config, cachedContent);
+        await buildTestBundle(config);
       }
     }
 
@@ -474,18 +475,15 @@ export async function flushConsoleHandlers(
  * Each group gets a virtual entry point via an esbuild plugin. Outputs land in memory
  * (write:false), then are written to each group's output directory in parallel.
  */
-export async function buildAllGroupBundles(
-  groupConfigs: Config[],
-  groupCachedContents: CachedContent[],
-): Promise<void> {
-  groupCachedContents.forEach((cachedContent) => {
-    cachedContent.pageOverride = null;
+export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void> {
+  groupConfigs.forEach((groupConfig) => {
+    groupConfig.state.group.build.pageOverride = null;
   });
 
   const { projectRoot, debug, browser } = groupConfigs[0];
 
   // Build each group's descriptor in one pass, skipping empty groups (overlayfs race).
-  // Their cachedContent.allTestCode stays null so runTestsInBrowser's early-return handles them.
+  // Their build.allTestCode stays null so runTestsInBrowser's early-return handles them.
   const activeGroups = groupConfigs.reduce(
     (acc, groupConfig, groupIndex) => {
       const files = Object.keys(groupConfig.fsTree);
@@ -493,7 +491,7 @@ export async function buildAllGroupBundles(
         acc.push({
           groupIndex,
           config: groupConfig,
-          cachedContent: groupCachedContents[groupIndex],
+          cachedContent: groupConfig.state.group.build,
           files,
         });
       return acc;
@@ -501,7 +499,7 @@ export async function buildAllGroupBundles(
     [] as Array<{
       groupIndex: number;
       config: Config;
-      cachedContent: CachedContent;
+      cachedContent: BuildState;
       files: string[];
     }>,
   );
@@ -745,7 +743,7 @@ function buildWithOverlayfsRetry(
 // context.rebuild() re-reads changed files but skips re-parsing unchanged modules, shaving
 // ~80% off rebuild time vs a fresh esbuild.build() call. The cache is single-source: when
 // the file-set changes (different `fileKey`), the old context is disposed and replaced.
-// Storage holder is whichever object owns the live cache: the per-process CachedContent in
+// Storage holder is whichever object owns the live cache: the per-group BuildState in
 // watch mode, or the daemon's persistent state slot via `config.state.daemon?.esbuildCache` in
 // daemon mode — both are an EsbuildCache.
 async function buildIncrementally(

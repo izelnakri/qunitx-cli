@@ -1,48 +1,49 @@
 import { module, test } from 'qunitx';
 import { clearCachedBundles } from '../../../lib/commands/run/cached-bundles.ts';
-import type { CachedContent } from '../../../lib/types.ts';
+import type { BuildState } from '../../../lib/types.ts';
 
 // Regression coverage for a stale filtered bundle surviving a watch-mode delete. The watcher
 // used to clear only `allTestCode`, so `/filtered-tests.js` kept serving a bundle built from
 // files that no longer existed — a rerun would execute tests from a deleted file.
 
-function makeCachedContent(): CachedContent {
+function makeBuildState(): BuildState {
   return {
     allTestCode: 'ALL',
     filteredTestCode: 'FILTERED',
     htmlPathsToRunTests: ['/'],
+    lastBuildErrored: false,
   };
 }
 
 module('Commands | run | clearCachedBundles', { concurrency: true }, () => {
   test('clears the filtered bundle alongside the full one', (assert) => {
-    const cachedContent = makeCachedContent();
+    const build = makeBuildState();
 
-    clearCachedBundles(cachedContent);
+    clearCachedBundles(build);
 
-    assert.equal(cachedContent.allTestCode, null, 'allTestCode is dropped');
+    assert.equal(build.allTestCode, null, 'allTestCode is dropped');
     assert.equal(
-      cachedContent.filteredTestCode,
+      build.filteredTestCode,
       undefined,
       'filteredTestCode is dropped too, so /filtered-tests.js cannot serve a stale bundle',
     );
   });
 
   test('leaves the surrounding build metadata intact', (assert) => {
-    const cachedContent = makeCachedContent();
+    const build = makeBuildState();
 
-    clearCachedBundles(cachedContent);
+    clearCachedBundles(build);
 
-    assert.deepEqual(cachedContent.htmlPathsToRunTests, ['/'], 'html run paths survive');
+    assert.deepEqual(build.htmlPathsToRunTests, ['/'], 'html run paths survive');
   });
 
   test('is idempotent on an already-cleared cache', (assert) => {
-    const cachedContent = makeCachedContent();
+    const build = makeBuildState();
 
-    clearCachedBundles(cachedContent);
-    clearCachedBundles(cachedContent);
+    clearCachedBundles(build);
+    clearCachedBundles(build);
 
-    assert.equal(cachedContent.allTestCode, null, 'stays cleared');
-    assert.equal(cachedContent.filteredTestCode, undefined, 'stays cleared');
+    assert.equal(build.allTestCode, null, 'stays cleared');
+    assert.equal(build.filteredTestCode, undefined, 'stays cleared');
   });
 });

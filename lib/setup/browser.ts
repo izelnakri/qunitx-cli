@@ -7,7 +7,7 @@ import { perfLog } from '../utils/perf-logger.ts';
 import { reusablePageSlot } from './run-state.ts';
 import type { Browser } from 'playwright-core';
 import type { HTTPServer } from '../servers/web.ts';
-import type { Config, CachedContent, Connections } from '../types.ts';
+import type { Config, Connections } from '../types.ts';
 
 // Playwright-core starts loading the moment run.js imports this module.
 // browser.js is intentionally the first import in run.js so playwright-core
@@ -117,7 +117,6 @@ export async function launchBrowser(config: Config, skipPrelaunch = false): Prom
  */
 export async function setupBrowser(
   config: Config,
-  cachedContent: CachedContent,
   existingBrowser: Browser | null = null,
   sharedServer: HTTPServer | null = null,
 ): Promise<Connections> {
@@ -146,7 +145,7 @@ export async function setupBrowser(
       return [sharedServer, existingBrowser!, newPage] as const;
     }
 
-    const newServer = setupWebServer(config, cachedContent);
+    const newServer = setupWebServer(config);
     perfLog(`browser.js: setupWebServer took ${Date.now() - setupStart}ms`);
 
     const activeBrowser = existingBrowser ?? (await launchBrowser(config));

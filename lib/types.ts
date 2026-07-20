@@ -35,7 +35,7 @@ export type FSTree = Record<string, null>;
 
 /**
  * A slot holding esbuild's incremental build context plus the key it was built for.
- * Two lifetimes share this shape: the per-process one on {@link CachedContent} (watch mode)
+ * Two lifetimes share this shape: the per-process one on {@link BuildState} (watch mode)
  * and the daemon's persistent one, which survives across runs. `buildIncrementally` takes
  * either — it disposes and recreates the context whenever the key changes.
  */
@@ -47,10 +47,11 @@ export interface EsbuildCache {
 }
 
 /**
- * Holds esbuild bundle output and associated HTML file metadata,
- * cached between watch-mode rebuilds to avoid redundant work.
+ * One group's esbuild output and in-flight build bookkeeping, kept warm between watch-mode
+ * rebuilds. Lives at `state.group.build`, so it shares the group's lifetime rather than being
+ * threaded alongside the config as a second, independently-passable bag.
  */
-export interface CachedContent extends EsbuildCache {
+export interface BuildState extends EsbuildCache {
   /** Full test bundle source, or `null` before the first build completes. */
   allTestCode: Buffer | string | null;
   /** Bundle filtered to files that failed on the previous run (used by re-run mode). */
@@ -75,6 +76,12 @@ export interface CachedContent extends EsbuildCache {
    * Cleared at the start of every new build attempt.
    */
   pageOverride?: PageOverride | null;
+  /**
+   * `true` if the most recent build ended in an esbuild error. Keeps `state.watch.lastBuildEndMs`
+   * pinned to the last good build so a fix arriving after the error is never suppressed. Written
+   * by every run, read only in watch mode.
+   */
+  lastBuildErrored: boolean;
 }
 
 /**
@@ -243,6 +250,8 @@ export interface GroupState {
   pendingConsoleHandlers: Set<Promise<void>> | null;
   /** Decoded inline source map for this group's bundle; resolves stack frames to original sources. */
   sourceMapDecoder: SourceMapDecoder | null;
+  /** This group's bundle output and build bookkeeping. */
+  build: BuildState;
 }
 
 /**
@@ -274,10 +283,6 @@ export interface WatchState {
   /** Timestamp (ms) of the most recent *successful* build, used for debounce logic. `0` before
    * the first build. */
   lastBuildEndMs: number;
-  /** `true` if the most recent build ended in an esbuild error. Keeps `lastBuildEndMs` pinned to
-   * the last good build so a fix arriving after the error is never suppressed. Written by every
-   * run, but only ever read in watch mode. */
-  lastBuildErrored: boolean;
   /** Per-file content hash of what was last dispatched to a build. Both the fs.watch change
    * handler and the macOS/Deno rescan compare against this instead of mtime — mtime has
    * 1-second resolution on some filesystems (macOS/HFS+), so rapid same-second writes with
