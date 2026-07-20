@@ -691,7 +691,7 @@ module('--watch re-run tests', { concurrency: true }, () => {
 
       // Poll until / serves the error HTML.
       // Race: a single fs.writeFile can produce two inotify events. The second queues as a
-      // pending-trigger rebuild that clears pageOverride = null at its start before re-setting
+      // pending-trigger rebuild that clears fallbackPage = null at its start before re-setting
       // it after the second failure. A single fetch right after 'esbuild Bundle Error:'
       // appears in stdout can land in that brief null window and receive normal HTML.
       const errorBody = await pollUntil(

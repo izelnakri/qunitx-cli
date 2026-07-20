@@ -235,11 +235,11 @@ module('Setup | buildNoTestsHTML', { concurrency: true }, () => {
 });
 
 // ---------------------------------------------------------------------------
-// buildTestBundle — pageOverride lifecycle
+// buildTestBundle — fallbackPage lifecycle
 // ---------------------------------------------------------------------------
 
-module('Commands | buildTestBundle | pageOverride lifecycle', { concurrency: true }, () => {
-  test('sets a build-error override with type and formatted string when esbuild fails', async (assert) => {
+module('Commands | buildTestBundle | fallbackPage lifecycle', { concurrency: true }, () => {
+  test('sets a build-error fallback with type and formatted string when esbuild fails', async (assert) => {
     const tmpFile = `${CWD}/tmp/syntax-error-${randomUUID()}.ts`;
     await fs.mkdir(`${CWD}/tmp`, { recursive: true });
     await fs.writeFile(tmpFile, 'const x = {{{INVALID}}};');
@@ -247,9 +247,9 @@ module('Commands | buildTestBundle | pageOverride lifecycle', { concurrency: tru
     const cached = config.state.group.build;
     try {
       await assert.rejects(buildTestBundle(config), 'buildTestBundle rejects on build failure');
-      const override = cached.pageOverride;
-      assert.equal(override?.kind, 'build-error', 'a build-error override is set');
-      const error = override?.kind === 'build-error' ? override.error : null;
+      const fallback = cached.fallbackPage;
+      assert.equal(fallback?.kind, 'build-error', 'a build-error fallback is set');
+      const error = fallback?.kind === 'build-error' ? fallback.error : null;
       assert.equal(typeof error?.type, 'string', 'type is a string');
       assert.ok((error?.type?.length ?? 0) > 0, 'type is non-empty');
       assert.equal(typeof error?.formatted, 'string', 'formatted is a string');
@@ -260,16 +260,16 @@ module('Commands | buildTestBundle | pageOverride lifecycle', { concurrency: tru
     }
   });
 
-  test('clears the override to null after a successful build', async (assert) => {
+  test('clears the fallback to null after a successful build', async (assert) => {
     const config = makeConfig([`${CWD}/test/helpers/passing-tests.ts`]);
     const cached = config.state.group.build;
-    cached.pageOverride = {
+    cached.fallbackPage = {
       kind: 'build-error',
       error: { type: 'Build Error', formatted: 'stale error from previous run' },
     };
     try {
       await buildTestBundle(config);
-      assert.strictEqual(cached.pageOverride, null, 'pageOverride cleared on success');
+      assert.strictEqual(cached.fallbackPage, null, 'fallbackPage cleared on success');
     } finally {
       await fs.rm(`${CWD}/${config.output}`, { force: true, recursive: true });
     }
