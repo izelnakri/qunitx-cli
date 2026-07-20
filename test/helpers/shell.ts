@@ -412,7 +412,15 @@ export async function terminateChild(child: ChildProcessWithoutNullStreams): Pro
     child.stdin.destroy();
     child.stdout.destroy();
     child.stderr.destroy();
-    await waitForClose(child, CHILD_EXIT_GRACE_MS);
+    // Honor the timeout the way the POSIX branch below does. This used to discard
+    // waitForClose's result and return as though the child had exited — so when the grace
+    // expired, callers proceeded to fs.rm() against a live process tree and hit EBUSY/EPERM
+    // on the directory its fs.watch handles were still holding. taskkill is re-issued because
+    // a tree walk that raced a still-spawning descendant (Chrome/Firefox helper) can miss it.
+    if (!(await waitForClose(child, CHILD_EXIT_GRACE_MS))) {
+      spawnSync('taskkill', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore' });
+      await waitForClose(child, CHILD_EXIT_GRACE_MS);
+    }
     child.unref();
     return;
   }
