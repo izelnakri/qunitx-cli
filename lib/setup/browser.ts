@@ -150,14 +150,23 @@ export async function setupBrowser(
 
     const activeBrowser = existingBrowser ?? (await launchBrowser(config));
     const pageStart = Date.now();
-    // In headed watch mode (bare --open + --watch), Chrome is pre-launched without --headless=new
-    // so it already has a blank default tab. Reuse that page instead of opening a new one —
-    // otherwise the user sees the blank startup tab AND the new Playwright tab simultaneously.
-    // For all other modes (headless, --open=<binary>, or non-watch), always create a fresh page.
-    const isHeadedWatchMode = config.open === true && config.watch;
+    // A browser we just launched already owns exactly one blank page, so claiming it skips the
+    // createBrowserContext + createTarget round-trips newPage() would spend (~150ms of a ~2s run).
+    //
+    // Single-group only, and never under the daemon:
+    //   * several concurrent groups share one browser, and each would claim the SAME blank page
+    //     — they must each open their own.
+    //   * the daemon's browser persists across runs, so its blank page belongs to whichever run
+    //     claimed it first; page reuse there goes through the slot above instead.
+    //
+    // This also covers headed watch mode (bare --open + --watch), where Chrome is pre-launched
+    // without --headless=new and the blank startup tab is visible: reusing it is what stops the
+    // user seeing the startup tab AND a second Playwright tab side by side. That mode is always
+    // single-group and never daemon, so it satisfies the guard by construction.
+    const canClaimBlankPage = config.state.groupCount === 1 && !config.state.daemon;
     const getPage = slotPage
       ? () => Promise.resolve(slotPage)
-      : isHeadedWatchMode
+      : canClaimBlankPage
         ? () => activeBrowser.contexts()[0]?.pages()[0] ?? activeBrowser.newPage()
         : () => activeBrowser.newPage();
     const [newPage] = await Promise.all([getPage(), bindServerToPort(newServer, config)]);
