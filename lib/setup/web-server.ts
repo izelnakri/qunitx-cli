@@ -74,7 +74,7 @@ export function setupWebServer(config: Config): HTTPServer {
   const consumerQunitCssCandidate = resolveConsumerQunitCssCandidate(config.projectRoot);
   const server = new HTTPServer();
   const mainHTMLWithReplacedAssets = replaceAssetPaths(
-    config.state.htmlAssets.mainHTML.html,
+    config.state.htmlAssets.mainHTML.html ?? '',
     config.state.htmlAssets.mainHTML.filePath,
     config.projectRoot,
   );
@@ -119,7 +119,7 @@ export function setupWebServer(config: Config): HTTPServer {
       );
     }
     socket.on('message', function message(data) {
-      const { event, details, qunitResult, abort } = JSON.parse(data);
+      const { event, details, qunitResult, abort } = JSON.parse(String(data));
 
       if (event === 'wsOpen') {
         // WebSocket socket opened — test bundle is still compiling in the background.
@@ -361,7 +361,7 @@ export function setupWebServer(config: Config): HTTPServer {
       return;
     }
 
-    const url = req.url;
+    const url = req.url ?? '/';
     const requestStartedAt = Date.now();
     const filePath = (
       url.endsWith('/') ? [STATIC_FILES_PATH, url, 'index.html'] : [STATIC_FILES_PATH, url]
@@ -704,7 +704,7 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
 
   server.wss.on('connection', function connection(socket) {
     socket.on('message', function message(data) {
-      const { event, groupId, details, qunitResult, abort } = JSON.parse(data);
+      const { event, groupId, details, qunitResult, abort } = JSON.parse(String(data));
 
       let resolvedGroupId = socketToGroupId.get(socket);
       if (event === 'wsOpen' && typeof groupId === 'number') {
@@ -837,9 +837,9 @@ function resolveConsumerQunitCssCandidate(projectRoot: string): string | null {
   }
 }
 
-function replaceAssetPaths(html: string, htmlPath: string, projectRoot: string): string {
+function replaceAssetPaths(html: string, htmlPath: string | null, projectRoot: string): string {
   const assetPaths = findInternalAssetsFromHTML(html);
-  const htmlDirectory = htmlPath.split('/').slice(0, -1).join('/');
+  const htmlDirectory = (htmlPath ?? '').split('/').slice(0, -1).join('/');
 
   return assetPaths.reduce((result, assetPath) => {
     const normalizedFullAbsolutePath = path.normalize(`${htmlDirectory}/${assetPath}`);

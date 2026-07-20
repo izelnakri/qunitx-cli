@@ -20,7 +20,9 @@ export function listenToKeyboardKey(
   stdin.resume();
   stdin.setEncoding('utf8');
   if (!listenerAdded) {
-    stdin.on('data', function (key) {
+    stdin.on('data', function (chunk) {
+      // setEncoding('utf8') above guarantees a string; the node types keep the Buffer union.
+      const key = String(chunk);
       if (key === '\u0003') {
         process.exit(); // so node process doesnt trap Control-C
       }

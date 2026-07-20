@@ -65,7 +65,9 @@ export async function preLaunchChrome(
       // Unref so Chrome + its stderr pipe don't keep the Node.js event loop alive
       // after tests finish. Chrome is killed explicitly via shutdown() or the exit handler.
       proc.unref();
-      proc.stderr.unref();
+      // A piped child stdio stream is a net.Socket at runtime, but ChildProcess types it as the
+      // narrower Readable, which declares no unref().
+      (proc.stderr as unknown as { unref(): void }).unref();
 
       resolve({
         proc,

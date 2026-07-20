@@ -201,6 +201,18 @@ export interface RunState {
   group: GroupState;
 }
 
+/** The run summary the browser-side runtime publishes on `window.QUNIT_RESULT`. */
+export interface QUnitResult {
+  /** Tests QUnit registered for this run. */
+  totalTests: number;
+  /** Tests that reached `testEnd`; short of `totalTests` means the run stalled. */
+  finishedTests: number;
+  /** Tests with at least one failing assertion. */
+  failedTests: number;
+  /** Name of the test in flight, or `null` when none is running — the stall diagnostic. */
+  currentTest: string | null;
+}
+
 /** State scoped to a single concurrent group — one fresh object per group of a run. */
 export interface GroupState {
   /** Index within the run's group array; `0` for watch and single-group runs. */
@@ -248,12 +260,7 @@ export interface GroupState {
    */
   wsConnectionCount: number;
   /** QUNIT_RESULT delivered via the WS 'done' message; avoids a page.evaluate() CDP round-trip. */
-  lastQUnitResult: {
-    totalTests: number;
-    finishedTests: number;
-    failedTests: number;
-    currentTest: string | null;
-  } | null;
+  lastQUnitResult: QUnitResult | null;
   /** In-flight console handler promises; awaited before browser/page close so Firefox BiDi
    * round-trips complete. */
   pendingConsoleHandlers: Set<Promise<void>> | null;

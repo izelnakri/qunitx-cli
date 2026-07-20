@@ -1,8 +1,8 @@
 import { blue, magenta } from '../utils/color.ts';
 import pkg from '../../package.json' with { type: 'json' };
 
-const highlight = (text) => magenta().bold(text);
-const color = (text) => blue(text);
+const highlight = (text: string) => magenta().bold(text);
+const color = (text: string) => blue(text);
 
 /** Prints qunitx-cli usage information to stdout. */
 export function displayHelpOutput() {

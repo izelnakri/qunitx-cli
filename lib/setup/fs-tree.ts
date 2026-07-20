@@ -12,7 +12,7 @@ export async function buildFSTree(
   config: { extensions?: string[] } = {},
 ): Promise<FSTree> {
   const targetExtensions = config.extensions || defaultProjectConfigValues.extensions;
-  const fsTree = {};
+  const fsTree: FSTree = {};
 
   await Promise.all(
     fileAbsolutePaths.map(async (fileAbsolutePath) => {

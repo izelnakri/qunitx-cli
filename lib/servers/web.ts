@@ -17,11 +17,17 @@ declare module 'node:http' {
 
 type NodeServerWithWSS = http.Server & { wss: WebSocketServer };
 
-/** Route handler function signature for registered GET/POST/etc. routes. */
+/**
+ * Route handler function signature for registered GET/POST/etc. routes.
+ *
+ * The return value is ignored — it is `unknown` only so handlers can `return res.end(...)` as a
+ * terse "respond and stop", which is the prevailing style in `setup/web-server.ts`. Narrowing
+ * this to `void` would reject every such handler.
+ */
 export type RouteHandler = (
   req: http.IncomingMessage,
   res: http.ServerResponse,
-) => void | Promise<void>;
+) => unknown | Promise<unknown>;
 /** Middleware function signature — call `next()` to continue the chain. */
 export type Middleware = (
   req: http.IncomingMessage,
