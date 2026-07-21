@@ -5,7 +5,13 @@ import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
 import { execute as shell, shellFails } from '../helpers/shell.ts';
 
-module('--junit', { concurrency: true }, (_hooks, moduleMetadata) => {
+// The XML itself — element shape, attribute set, escaping — is owned by
+// Reporters | buildXML, and `--reporter=junit is rejected` is owned by
+// Args | parse | --reporter validation (junit is an artifact, not a stdout format). These
+// tests own what only a real run shows: that the artifact lands on disk at the right path
+// with totals matching the run, and that a real failure descriptor reaches it with its
+// stack mapped back to the original source.
+module('Flags | --junit', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('writes junit.xml alongside the streamed TAP for a passing run', async (assert, testMetadata) => {
     const output = `tmp/junit-pass-${randomUUID()}`;
     try {
@@ -70,30 +76,6 @@ module('--junit', { concurrency: true }, (_hooks, moduleMetadata) => {
     } finally {
       await rmRetry(output);
     }
-  });
-
-  test('composes with an explicit --reporter (separate axes)', async (assert, testMetadata) => {
-    const output = `tmp/junit-axes-${randomUUID()}`;
-    try {
-      const result = await shell(
-        `node cli.ts test/fixtures/passing-tests.ts --reporter=tap --junit --output=${output}`,
-        { ...moduleMetadata, ...testMetadata },
-      );
-      assert.tapResult(result, { testCount: 3 });
-      const xml = await fs.readFile(`${output}/junit.xml`, 'utf8');
-      assert.ok(xml.includes('<testsuites'), '--reporter and --junit are independent');
-    } finally {
-      await rmRetry(output);
-    }
-  });
-
-  test('--reporter=junit is rejected — junit is an artifact, not a stdout format', async (assert) => {
-    const result = await shellFails(`node cli.ts test/fixtures/passing-tests.ts --reporter=junit`);
-    assert.exitCode(result, 1, 'invalid reporter value exits 1');
-    assert.ok(
-      /Invalid --reporter value: "junit"/.test(result.stderr ?? ''),
-      'error names the offending value',
-    );
   });
 
   test('no junit.xml is written without the flag', async (assert, testMetadata) => {

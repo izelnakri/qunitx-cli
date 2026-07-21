@@ -570,6 +570,40 @@ module('Args | parse | -r / --console aliases', { concurrency: true }, () => {
   });
 });
 
+module('Args | parse | --reporter validation', { concurrency: true }, () => {
+  test('accepts each of the four reporter names', (assert) => {
+    for (const name of ['tap', 'spec', 'dot', 'github']) {
+      assert.strictEqual(
+        withArgv([`--reporter=${name}`], () => Args.parse(PROJECT_ROOT)).reporter,
+        name,
+      );
+    }
+  });
+
+  test('an unknown value exits 1, naming both the value and the valid set', (assert) => {
+    const { exitCode, errors } = withExitCaptured(() =>
+      withArgv(['--reporter=nope'], () => Args.parse(PROJECT_ROOT)),
+    );
+
+    assert.strictEqual(exitCode, 1);
+    assert.ok(
+      /Invalid --reporter value: "nope"\. Must be one of: tap, spec, dot, github/.test(
+        errors.join('\n'),
+      ),
+      errors.join('\n'),
+    );
+  });
+
+  test('a bare --reporter is rejected rather than silently defaulting to tap', (assert) => {
+    const { exitCode, errors } = withExitCaptured(() =>
+      withArgv(['--reporter'], () => Args.parse(PROJECT_ROOT)),
+    );
+
+    assert.strictEqual(exitCode, 1);
+    assert.ok(/Invalid --reporter value: ""/.test(errors.join('\n')), errors.join('\n'));
+  });
+});
+
 function withArgv(args, fn) {
   const original = process.argv;
   process.argv = ['node', 'cli.ts', ...args];
@@ -578,4 +612,34 @@ function withArgv(args, fn) {
   } finally {
     process.argv = original;
   }
+}
+
+// Args.parse reports a bad flag value with console.error + process.exit(1) rather than by
+// throwing, so both have to be stubbed to observe it. The stubbed exit throws a sentinel so
+// the parse abandons the same way the real exit would, instead of running on with bad state.
+// Safe under { concurrency: true } for the same reason captureStdout is: everything here is
+// synchronous, so no sibling test can be scheduled while the stubs are installed.
+const EXITED = Symbol('exited');
+
+function withExitCaptured(fn) {
+  const originalExit = process.exit;
+  const originalError = console.error;
+  const errors = [];
+  let exitCode;
+
+  console.error = (...args) => errors.push(args.join(' '));
+  process.exit = (code) => {
+    exitCode = code;
+    throw EXITED;
+  };
+  try {
+    fn();
+  } catch (error) {
+    if (error !== EXITED) throw error;
+  } finally {
+    process.exit = originalExit;
+    console.error = originalError;
+  }
+
+  return { exitCode, errors };
 }
