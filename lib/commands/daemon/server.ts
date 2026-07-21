@@ -8,13 +8,17 @@ import { setTimeout, clearTimeout } from 'node:timers';
 import { daemonSocketPath, daemonInfoPath, daemonDir } from './socket-path.ts';
 import { parseDaemonIdleTimeout } from './parse-idle-timeout.ts';
 import { attachLineParser } from './socket-io.ts';
-import { setupConfig } from '../../setup/config.ts';
+import * as Config from '../../setup/config.ts';
 import * as Browser from '../../setup/browser.ts';
 import { DaemonRunError } from '../run/tests-in-browser.ts';
 import { run } from '../run.ts';
 import type { Request, ResponseChunk, RunRequest, DaemonInfo } from './protocol.ts';
 import type { Browser as PlaywrightBrowser } from 'playwright-core';
-import type { Config, EsbuildCache, DaemonState as DaemonRunHandles } from '../../types.ts';
+import type {
+  Config as ResolvedConfig,
+  EsbuildCache,
+  DaemonState as DaemonRunHandles,
+} from '../../types.ts';
 
 // Daemon idle window: after the last run finishes, the daemon shuts itself down.
 // Default 30 minutes; override with `QUNITX_DAEMON_IDLE_TIMEOUT` (see
@@ -115,7 +119,7 @@ interface DaemonState {
    */
   browserReady: Promise<PlaywrightBrowser>;
   /** Captured at startup; used to relaunch the browser on crash recovery. */
-  baseConfig: Config;
+  baseConfig: ResolvedConfig;
   cwd: string;
   startedAt: number;
   pkgMtime: number;
@@ -191,14 +195,14 @@ export async function runDaemonServer(): Promise<void> {
     process.stderr.write = forward;
   }
 
-  // setupConfig reads process.argv directly; the daemon's actual argv is `daemon _serve`
+  // Config.setup reads process.argv directly; the daemon's actual argv is `daemon _serve`
   // which would be parsed as test paths. Strip it for the startup config — we only need
   // the browser type here. Per-run argv comes from the client via runOnce.
   const argvSnapshot = process.argv;
   process.argv = [argvSnapshot[0], argvSnapshot[1] ?? 'cli.ts'];
   let baseConfig;
   try {
-    baseConfig = await setupConfig();
+    baseConfig = await Config.setup();
   } finally {
     process.argv = argvSnapshot;
   }
@@ -677,9 +681,9 @@ async function runOnce(
   const argvSnapshot = process.argv;
   process.argv = ['node', argvSnapshot[1] ?? 'cli.ts', ...argv];
 
-  let config: Config;
+  let config: ResolvedConfig;
   try {
-    config = await setupConfig();
+    config = await Config.setup();
   } finally {
     process.argv = argvSnapshot;
   }

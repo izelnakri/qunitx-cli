@@ -174,7 +174,7 @@ async function runWatchMode(config: Config): Promise<void> {
   }
 
   // A run-narrowing flag (--only-failed / --changed / --since) scopes only the FIRST run in
-  // watch mode. The full fsTree is left intact (setupConfig skips these filters in watch), so
+  // watch mode. The full fsTree is left intact (Config.setup skips these filters in watch), so
   // `qa` and file-save reruns still see every file; `qf` / `ql` cover the rest interactively.
   let initialFilter: string[] | undefined;
   if (config.onlyFailed) {

@@ -196,7 +196,7 @@ export async function buildTestBundle(config: Config): Promise<void> {
     jsx: 'automatic',
     plugins: [qunitxRuntimePlugin(), ...(config.plugins ?? [])],
     // Required for --changed/--since dep-graph filter on subsequent runs (cache
-    // populates here, reads in setupConfig). Inputs map carries the full reverse-dep
+    // populates here, reads in Config.setup). Inputs map carries the full reverse-dep
     // graph; output cost is negligible.
     metafile: true,
     // Signal the runtime that all test modules are registered. The runtime's maybeStart()

@@ -60,7 +60,7 @@ export function newGroup(index = 0, selectors?: QUnitSelector[]): GroupState {
   };
 }
 
-/** Fresh run state for a single `qunitx` invocation. Built once per run in `setupConfig()`. */
+/** Fresh run state for a single `qunitx` invocation. Built once per run in `Config.setup()`. */
 export function create(): RunState {
   return {
     daemon: null,
