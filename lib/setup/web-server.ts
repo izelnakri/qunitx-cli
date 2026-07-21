@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
 import { injectScript } from '../utils/html.ts';
 import { reportRunStart, reportTestEnd } from '../reporter/index.ts';
-import { recordFailedTest } from '../utils/failure-cache.ts';
+import * as FailureCache from '../utils/failure-cache.ts';
 import { isFilteredRun } from '../selection/filter-query.ts';
 import { blue } from '../utils/color.ts';
 import { HTTPServer, MIME_TYPES } from '../servers/web.ts';
@@ -166,7 +166,7 @@ export function setupWebServer(config: Config): HTTPServer {
 
         if (details.status === 'failed') {
           config.state.group.lastFailedFiles = config.state.group.lastRanFiles;
-          recordFailedTest(config, details);
+          FailureCache.record(config, details);
         }
 
         if (config.debug && details.runtime > config.timeout * 0.8) {
@@ -748,7 +748,7 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
         }
         if (details.status === 'failed') {
           config.state.group.lastFailedFiles = config.state.group.lastRanFiles;
-          recordFailedTest(config, details);
+          FailureCache.record(config, details);
         }
         if (config.debug && details.runtime > config.timeout * 0.8) {
           process.stdout.write(

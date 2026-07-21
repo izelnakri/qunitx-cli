@@ -12,7 +12,7 @@ import * as SourceMap from '../../utils/source-map.ts';
 import { collectCoverage } from '../../coverage/collect.ts';
 import { writeCoverageReport } from '../../coverage/report.ts';
 import * as MetafileCache from '../../utils/metafile-cache.ts';
-import { writeFailureCache, buildFailureCache } from '../../utils/failure-cache.ts';
+import * as FailureCache from '../../utils/failure-cache.ts';
 import { isFilteredRun, qunitFilterQuery } from '../../selection/filter-query.ts';
 import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
 import * as RunState from '../../setup/run-state.ts';
@@ -369,9 +369,9 @@ export async function runTestsInBrowser(
       // a file subset (runHasFilter) or to a test subset (-t/-m/line target) — so a scoped
       // re-run can't shrink the cache below the full known-failing set.
       if (!runHasFilter && !isFilteredRun(config)) {
-        writeFailureCache(config.projectRoot, buildFailureCache(config)).catch(
+        FailureCache.write(config.projectRoot, FailureCache.build(config)).catch(
           (err: Error) =>
-            config.debug && process.stderr.write(`# [qunitx] writeFailureCache: ${err.message}\n`),
+            config.debug && process.stderr.write(`# [qunitx] FailureCache.write: ${err.message}\n`),
         );
       }
 

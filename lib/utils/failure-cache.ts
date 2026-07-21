@@ -22,7 +22,7 @@ export interface FailedTestRecord {
 }
 
 /** On-disk shape of `tmp/.qunitx-last-failures.json`. */
-export interface FailureCache {
+export interface FailureCachePayload {
   /** Browser engine the failures were observed in. */
   browser: string;
   /** Absolute paths of test files that contained at least one failure — drives `--only-failed`. */
@@ -32,10 +32,10 @@ export interface FailureCache {
 }
 
 /** Reads the failure cache; returns `null` on a missing file or any parse/shape error. */
-export async function readFailureCache(projectRoot: string): Promise<FailureCache | null> {
+export async function read(projectRoot: string): Promise<FailureCachePayload | null> {
   try {
     const parsed = JSON.parse(await fs.readFile(path.join(projectRoot, CACHE_FILENAME), 'utf8'));
-    if (parsed && Array.isArray(parsed.files)) return parsed as FailureCache;
+    if (parsed && Array.isArray(parsed.files)) return parsed as FailureCachePayload;
     return null;
   } catch {
     return null;
@@ -43,7 +43,7 @@ export async function readFailureCache(projectRoot: string): Promise<FailureCach
 }
 
 /** Writes the failure cache. Best-effort; callers fire-and-forget like `persistTimings`. */
-export async function writeFailureCache(projectRoot: string, cache: FailureCache): Promise<void> {
+export async function write(projectRoot: string, cache: FailureCachePayload): Promise<void> {
   await fs.writeFile(path.join(projectRoot, CACHE_FILENAME), JSON.stringify(cache, null, 2));
 }
 
@@ -54,12 +54,12 @@ export async function writeFailureCache(projectRoot: string, cache: FailureCache
  * targets were given (so failures stay scoped to what the user asked for) or the full cached set
  * when no targets were provided. Shared by the non-watch fsTree filter and the watch initial run.
  */
-export async function resolveOnlyFailedFiles(
+export async function filesToRerun(
   projectRoot: string,
   hasInputTargets: boolean,
   fsTree: FSTree,
 ): Promise<string[] | null> {
-  const cache = await readFailureCache(projectRoot);
+  const cache = await read(projectRoot);
   if (!cache) return null;
   const scoped = hasInputTargets ? cache.files.filter((file) => file in fsTree) : cache.files;
   const existing: string[] = [];
@@ -70,7 +70,7 @@ export async function resolveOnlyFailedFiles(
 }
 
 /** Assembles the cache payload from the shared per-run failure slots on `config`. */
-export function buildFailureCache(config: Config): FailureCache {
+export function build(config: Config): FailureCachePayload {
   return {
     browser: config.browser,
     files: Array.from(config.state.results.failedFiles ?? []),
@@ -87,7 +87,7 @@ export function buildFailureCache(config: Config): FailureCache {
  *
  * No-op when the state slots are absent (unit-test configs built without run state).
  */
-export function recordFailedTest(config: Config, details: FailedTestDetails): void {
+export function record(config: Config, details: FailedTestDetails): void {
   const results = config.state?.results;
   if (!results) return;
   const file = attributeFailureFile(
@@ -106,8 +106,6 @@ export function recordFailedTest(config: Config, details: FailedTestDetails): vo
     testName: details.fullName.at(-1) ?? '',
   });
 }
-
-export { recordFailedTest as default };
 
 interface FailedTestDetails {
   fullName: string[];

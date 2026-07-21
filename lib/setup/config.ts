@@ -9,7 +9,7 @@ import { buildFSTree } from './fs-tree.ts';
 import { setupTestFilePaths } from './test-file-paths.ts';
 import { getChangedFsTree } from './get-changed-fs-tree.ts';
 import { parseCliFlags } from '../args/parse-cli-flags.ts';
-import { resolveOnlyFailedFiles } from '../utils/failure-cache.ts';
+import * as FailureCache from '../utils/failure-cache.ts';
 import { createReporters } from '../reporter/index.ts';
 import * as RunState from './run-state.ts';
 import type { Config, FSTree } from '../types.ts';
@@ -136,7 +136,7 @@ function normalizeHTMLPaths(projectRoot: string, htmlPaths: string[]): string[] 
  * or renamed since the failing run) are dropped. A missing cache falls back to running everything.
  */
 async function applyOnlyFailedFilter(config: Config): Promise<FSTree> {
-  const failed = await resolveOnlyFailedFiles(
+  const failed = await FailureCache.filesToRerun(
     config.projectRoot,
     config.inputs.length > 0,
     config.fsTree,
