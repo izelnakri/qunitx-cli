@@ -5,10 +5,10 @@ const UNIT_TO_MS: Record<string, number> = { ms: 1, s: 1_000, m: 60_000, h: 3_60
  * for typical edit/run/edit bursts, short enough that a forgotten daemon reclaims
  * resources without manual intervention.
  */
-export const DEFAULT_DAEMON_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+export const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
-/** Result of {@link parseDaemonIdleTimeout}: the resolved idle window plus an optional human-readable warning the caller should surface to the user. */
-export interface ParsedDaemonIdleTimeout {
+/** Result of {@link parseIdleTimeout}: the resolved idle window plus an optional human-readable warning the caller should surface to the user. */
+export interface ParsedIdleTimeout {
   /** Milliseconds. `Infinity` when the user opts out of auto-shutdown via `"false"`. */
   ms: number;
   /**
@@ -36,8 +36,8 @@ export interface ParsedDaemonIdleTimeout {
  *
  * Pure: no side effects, no env access — caller passes the raw value.
  */
-export function parseDaemonIdleTimeout(value: string | undefined): ParsedDaemonIdleTimeout {
-  if (!value) return { ms: DEFAULT_DAEMON_IDLE_TIMEOUT_MS, warning: null };
+export function parseIdleTimeout(value: string | undefined): ParsedIdleTimeout {
+  if (!value) return { ms: DEFAULT_IDLE_TIMEOUT_MS, warning: null };
   if (/^\s*false\s*$/i.test(value)) return { ms: Infinity, warning: null };
   const match = /^\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h)?\s*$/i.exec(value);
   if (!match) return invalid(value);
@@ -47,9 +47,9 @@ export function parseDaemonIdleTimeout(value: string | undefined): ParsedDaemonI
   return { ms: Math.round(n * UNIT_TO_MS[unit]), warning: null };
 }
 
-function invalid(value: string): ParsedDaemonIdleTimeout {
+function invalid(value: string): ParsedIdleTimeout {
   return {
-    ms: DEFAULT_DAEMON_IDLE_TIMEOUT_MS,
+    ms: DEFAULT_IDLE_TIMEOUT_MS,
     warning:
       `⚠ qunitx: QUNITX_DAEMON_IDLE_TIMEOUT=${JSON.stringify(value)} is not a valid duration; ` +
       `using 30-minute default. ` +
