@@ -40,12 +40,7 @@ import { maybePrintDaemonHint } from './daemon/hint.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
 import * as Coverage from '../coverage/index.ts';
 import { isFilteredRun, describeFilter } from '../selection/filter-query.ts';
-import {
-  readTimingCache,
-  computeFileTimes,
-  persistTimings,
-  printFileTimings,
-} from './run/timings.ts';
+import * as Timings from './run/timings.ts';
 import { applyWatchLineTargets, resolveTargetedFiles, splitIntoGroups } from './run/grouping.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
 import type { Config, HtmlAssets } from '../types.ts';
@@ -93,7 +88,7 @@ export async function run(config: Config): Promise<void> {
 
   // Kick off all I/O that doesn't need the HTML fixtures in parallel with resolveHtmlFixtures:
   //   launchBrowser: CDP connect to pre-launched Chrome (~30-50ms)
-  //   readTimingCache: reads tmp/test-timings.json (~2ms)
+  //   Timings.read: reads tmp/test-timings.json (~2ms)
   //   resolveHtmlFixtures: reads HTML template from disk (~5-10ms)
   // Chrome is typically fully connected by the time resolveHtmlFixtures + splitIntoGroups resolve.
   // Daemon mode reuses its persistent browser; non-watch local runs launch their own;
@@ -108,7 +103,7 @@ export async function run(config: Config): Promise<void> {
     resolveHtmlFixtures(config),
     config.watch
       ? Promise.resolve(null as Record<string, number> | null)
-      : readTimingCache(config.projectRoot),
+      : Timings.read(config.projectRoot),
   ]);
 
   if (config.watch) {
@@ -556,15 +551,15 @@ async function runConcurrentMode(
   // failure set is only the matched subset. File-level narrowing (--only-failed/--changed) is
   // fine — those still run whole files.
   const filteredRun = isFilteredRun(config);
-  const fileTimes = computeFileTimes(
+  const fileTimes = Timings.compute(
     groups.map((group) => group.files),
     weights,
     wallTimes,
   );
   if (!filteredRun) {
-    persistTimings(fileTimes, config.projectRoot).catch(
+    Timings.persist(fileTimes, config.projectRoot).catch(
       (err: Error) =>
-        config.debug && process.stderr.write(`# [qunitx] persistTimings: ${err.message}\n`),
+        config.debug && process.stderr.write(`# [qunitx] Timings.persist: ${err.message}\n`),
     );
   }
   // Persist this run's failures for the next `--only-failed`. An empty set (all green) is
@@ -576,7 +571,7 @@ async function runConcurrentMode(
         (err: Error) =>
           config.debug && process.stderr.write(`# [qunitx] FailureCache.write: ${err.message}\n`),
       );
-  if (config.debug) printFileTimings(fileTimes, config.projectRoot);
+  if (config.debug) Timings.print(fileTimes, config.projectRoot);
 
   if (config.after) {
     await runUserModule(`${process.cwd()}/${config.after}`, config.state.results.counter, 'after');
