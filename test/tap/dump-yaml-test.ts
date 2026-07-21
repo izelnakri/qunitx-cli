@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import { load } from 'js-yaml';
-import * as Tap from '../../lib/tap/index.ts';
+import * as TAP from '../../lib/tap/index.ts';
 import '../helpers/custom-asserts.ts';
 
 module('TAP | dumpYaml | primitives', { concurrency: true }, () => {
@@ -165,7 +165,7 @@ module('TAP | dumpYaml | arrays', { concurrency: true }, () => {
   });
 
   test('no trailing space before array block', (assert) => {
-    const out = Tap.dumpYaml({
+    const out = TAP.dumpYaml({
       name: 'x',
       actual: ['a'],
       expected: null,
@@ -185,7 +185,7 @@ module('TAP | dumpYaml | arrays', { concurrency: true }, () => {
   });
 
   test('no trailing space before array-of-objects block entries', (assert) => {
-    const out = Tap.dumpYaml({
+    const out = TAP.dumpYaml({
       name: 'x',
       actual: [{ key: 'val' }],
       expected: null,
@@ -215,7 +215,7 @@ module('TAP | dumpYaml | objects', { concurrency: true }, () => {
   });
 
   test('no trailing space before object block', (assert) => {
-    const out = Tap.dumpYaml({
+    const out = TAP.dumpYaml({
       name: 'x',
       actual: { k: 'v' },
       expected: null,
@@ -233,7 +233,7 @@ module('TAP | dumpYaml | objects', { concurrency: true }, () => {
 
 module('TAP | dumpYaml | full output structure', { concurrency: true }, () => {
   test('all 6 keys are present in output', (assert) => {
-    const out = Tap.dumpYaml({
+    const out = TAP.dumpYaml({
       name: 'Assertion #1',
       actual: false,
       expected: true,
@@ -251,7 +251,7 @@ module('TAP | dumpYaml | full output structure', { concurrency: true }, () => {
   });
 
   test('null actual and expected are kept in output', (assert) => {
-    const out = Tap.dumpYaml({
+    const out = TAP.dumpYaml({
       name: 'x',
       actual: null,
       expected: null,
@@ -265,7 +265,7 @@ module('TAP | dumpYaml | full output structure', { concurrency: true }, () => {
   });
 
   test('null message, stack, and at are omitted from output', (assert) => {
-    const out = Tap.dumpYaml({
+    const out = TAP.dumpYaml({
       name: 'x',
       actual: false,
       expected: true,
@@ -279,7 +279,7 @@ module('TAP | dumpYaml | full output structure', { concurrency: true }, () => {
   });
 
   test('output ends with a single newline', (assert) => {
-    const out = Tap.dumpYaml({
+    const out = TAP.dumpYaml({
       name: 'x',
       actual: 1,
       expected: 2,
@@ -294,7 +294,7 @@ module('TAP | dumpYaml | full output structure', { concurrency: true }, () => {
 
 // Roundtrip helper: our output must parse back to the same value via js-yaml
 function roundtrip(value) {
-  const out = Tap.dumpYaml({
+  const out = TAP.dumpYaml({
     name: 'x',
     actual: value,
     expected: null,

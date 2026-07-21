@@ -1,12 +1,12 @@
 import { module, test } from 'qunitx';
-import * as Tap from '../../lib/tap/index.ts';
+import * as TAP from '../../lib/tap/index.ts';
 import '../helpers/custom-asserts.ts';
 import { captureStdout } from '../helpers/capture-stdout.ts';
 
 module('TAP | displayFinalResult | output', { concurrency: true }, () => {
   test('emits plan line, all summary lines, and duration', (assert) => {
     const output = captureStdout(() => {
-      Tap.displayFinalResult(
+      TAP.displayFinalResult(
         { testCount: 5, passCount: 3, skipCount: 1, todoCount: 1, failCount: 1, errorCount: 1 },
         2345,
       );
@@ -22,7 +22,7 @@ module('TAP | displayFinalResult | output', { concurrency: true }, () => {
 
   test('output starts and ends with a blank line', (assert) => {
     const output = captureStdout(() => {
-      Tap.displayFinalResult(
+      TAP.displayFinalResult(
         { testCount: 1, passCount: 1, skipCount: 0, todoCount: 0, failCount: 0, errorCount: 0 },
         100,
       );
@@ -33,7 +33,7 @@ module('TAP | displayFinalResult | output', { concurrency: true }, () => {
 
   test('lines appear in the correct order', (assert) => {
     const output = captureStdout(() => {
-      Tap.displayFinalResult(
+      TAP.displayFinalResult(
         { testCount: 3, passCount: 2, skipCount: 0, todoCount: 0, failCount: 1, errorCount: 1 },
         500,
       );
@@ -49,7 +49,7 @@ module('TAP | displayFinalResult | output', { concurrency: true }, () => {
 
   test('all-passing run shows # fail 0', (assert) => {
     const output = captureStdout(() => {
-      Tap.displayFinalResult(
+      TAP.displayFinalResult(
         { testCount: 10, passCount: 10, skipCount: 0, todoCount: 0, failCount: 0, errorCount: 0 },
         1000,
       );
@@ -61,7 +61,7 @@ module('TAP | displayFinalResult | output', { concurrency: true }, () => {
 
   test('zero-test run emits plan "1..0"', (assert) => {
     const output = captureStdout(() => {
-      Tap.displayFinalResult(
+      TAP.displayFinalResult(
         { testCount: 0, passCount: 0, skipCount: 0, todoCount: 0, failCount: 0, errorCount: 0 },
         0,
       );

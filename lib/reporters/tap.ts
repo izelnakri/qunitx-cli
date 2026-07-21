@@ -1,4 +1,4 @@
-import * as Tap from '../tap/index.ts';
+import * as TAP from '../tap/index.ts';
 import { failedAssertions } from './failure.ts';
 import type { Reporter, RunStartInfo, RunEndInfo, TestDetails } from './types.ts';
 import type { Config } from '../types.ts';
@@ -7,7 +7,7 @@ import type { Config } from '../types.ts';
  * The default reporter: streams TAP version 13 to stdout. Stateless — every number it
  * prints comes from `config.state.results.counter`, which the dispatcher updates before `onTestEnd`.
  */
-export class TapReporter implements Reporter {
+export class TAPReporter implements Reporter {
   /** Emits the TAP version header, plus the run banner as a `#` comment. */
   onRunStart(config: Config, info: RunStartInfo): void {
     process.stdout.write('TAP version 13\n');
@@ -37,11 +37,11 @@ export class TapReporter implements Reporter {
       details.status === 'failed'
         ? failedAssertions(details, config.state.group.sourceMapDecoder, config.projectRoot)
         : [];
-    Tap.displayTestResult(config.state.results.counter.testCount, details, failures);
+    TAP.displayTestResult(config.state.results.counter.testCount, details, failures);
   }
 
   /** Emits the TAP plan line and the run summary. */
   onRunEnd(config: Config, info: RunEndInfo): void {
-    Tap.displayFinalResult(config.state.results.counter, info.durationMs);
+    TAP.displayFinalResult(config.state.results.counter, info.durationMs);
   }
 }
