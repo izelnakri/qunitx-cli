@@ -988,7 +988,10 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
           // waiting for the inactivity timeout. The runner treats totalTests === 0 as a
           // "no tests registered" warning (not a failure), so this gives a fast, clean result.
           window.QUNIT_RESULT = { totalTests: 0, finishedTests: 0, failedTests: 0, currentTest: null };
-          window.socket.send(JSON.stringify({ event: 'done', details: { passed: 0, failed: 0, runtime: 0 } }));
+          // Carry qunitResult so Node records a real 'done' (lastQUnitResult set). Without it,
+          // a no-QUnit file is indistinguishable from a timeout that never ran tests — both leave
+          // lastQUnitResult null — and the run would fail instead of reporting an empty file.
+          window.socket.send(JSON.stringify({ event: 'done', details: { passed: 0, failed: 0, runtime: 0 }, qunitResult: window.QUNIT_RESULT }));
         }
         return;
       }
