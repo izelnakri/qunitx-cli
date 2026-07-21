@@ -42,7 +42,7 @@ export async function read(projectRoot: string): Promise<FailureCachePayload | n
   }
 }
 
-/** Writes the failure cache. Best-effort; callers fire-and-forget like `persistTimings`. */
+/** Writes the failure cache. Best-effort; callers fire-and-forget like `Timings.persist`. */
 export async function write(projectRoot: string, cache: FailureCachePayload): Promise<void> {
   await fs.writeFile(path.join(projectRoot, CACHE_FILENAME), JSON.stringify(cache, null, 2));
 }
