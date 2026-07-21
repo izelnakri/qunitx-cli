@@ -7,7 +7,7 @@ import type { FSTree } from '../types.ts';
  * Resolves an array of file paths, directories, or glob patterns into a flat `{ absolutePath: null }` map.
  * @returns {Promise<object>}
  */
-export async function buildFSTree(
+export async function build(
   fileAbsolutePaths: string[],
   config: { extensions?: string[] } = {},
 ): Promise<FSTree> {
@@ -48,8 +48,6 @@ export async function buildFSTree(
 
   return fsTree;
 }
-
-export { buildFSTree as default };
 
 function isGlob(str: string): boolean {
   return /[*?{[]/.test(str);
