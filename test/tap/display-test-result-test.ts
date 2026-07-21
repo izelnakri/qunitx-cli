@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import TAPDisplayTestResult from '../../lib/tap/display-test-result.ts';
-import { failedAssertions } from '../../lib/reporter/failure.ts';
-import type { TestDetails } from '../../lib/reporter/types.ts';
+import { failedAssertions } from '../../lib/reporters/failure.ts';
+import type { TestDetails } from '../../lib/reporters/types.ts';
 import '../helpers/custom-asserts.ts';
 import { captureStdout } from '../helpers/capture-stdout.ts';
 

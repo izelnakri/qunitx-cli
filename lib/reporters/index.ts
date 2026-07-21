@@ -22,14 +22,14 @@ const STDOUT_REPORTERS: Record<ReporterName, new () => Reporter> = {
  * shared by every concurrent group — the group configs are spread off the parent config, so
  * they all reference this same array (the same way the run counter is shared).
  */
-export function createReporters(config: Config): Reporter[] {
+export function create(config: Config): Reporter[] {
   // Exactly one stdout reporter, plus any additive artifact reporters. A plain run is a
   // 1-element array; `--reporter=dot --junit` is 2 — one owning stdout, one owning the file.
   return [stdoutReporter(config), ...(config.junit ? [new JUnitReporter()] : [])];
 }
 
 /** Emits run start to every active reporter. In watch mode this fires once per rerun. */
-export function reportRunStart(config: Config, info: RunStartInfo): void {
+export function runStart(config: Config, info: RunStartInfo): void {
   config.state.reporters.forEach((reporter) => reporter.onRunStart?.(config, info));
 }
 
@@ -38,19 +38,17 @@ export function reportRunStart(config: Config, info: RunStartInfo): void {
  * The counter update happens here — exactly once, before any reporter runs — so counts stay
  * correct regardless of how many reporters are attached.
  */
-export function reportTestEnd(config: Config, details: TestDetails): void {
+export function testEnd(config: Config, details: TestDetails): void {
   updateCounter(config.state.results.counter, details);
   config.state.reporters.forEach((reporter) => reporter.onTestEnd?.(config, details));
 }
 
 /** Emits run end to every active reporter, awaiting any that flush asynchronously. */
-export async function reportRunEnd(config: Config, info: RunEndInfo): Promise<void> {
+export async function runEnd(config: Config, info: RunEndInfo): Promise<void> {
   for (const reporter of config.state.reporters) {
     await reporter.onRunEnd?.(config, info);
   }
 }
-
-export type { Reporter, RunStartInfo, RunEndInfo, TestDetails };
 
 // Exactly one stdout reporter per run. `--reporter` is validated in parse-cli-flags, so an
 // unknown value never reaches here; tap is the default and the fallback.

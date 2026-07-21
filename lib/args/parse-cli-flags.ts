@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { tokenizeArgs, type QueryToken } from './tokenize-args.ts';
-import { REPORTERS, type ReporterName } from '../reporter/types.ts';
+import { REPORTERS, type ReporterName } from '../reporters/types.ts';
 
 // Fallback when --timeout is passed with an unparseable or zero value.
 const FALLBACK_TIMEOUT_MS = 10_000;

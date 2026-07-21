@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
 import { injectScript } from '../utils/html.ts';
-import { reportRunStart, reportTestEnd } from '../reporter/index.ts';
+import * as Reporter from '../reporters/index.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
 import { isFilteredRun } from '../selection/filter-query.ts';
 import { blue } from '../utils/color.ts';
@@ -138,7 +138,7 @@ export function setupWebServer(config: Config): HTTPServer {
         // Group and daemon runs emit run-start once up front in run.ts; only the watch/single
         // path announces per browser connection (each rerun opens a fresh one).
         if (!config.state.group.groupMode && !config.state.daemon) {
-          reportRunStart(config, { fileCount: null, groupCount: null });
+          Reporter.runStart(config, { fileCount: null, groupCount: null });
         }
         if (config.debug && config.state.group.groupMode) debugGroupHeader(config);
         config.state.group.signals.resetTestTimeout?.();
@@ -175,7 +175,7 @@ export function setupWebServer(config: Config): HTTPServer {
           );
         }
         config.state.group.signals.resetTestTimeout?.();
-        reportTestEnd(config, details);
+        Reporter.testEnd(config, details);
       } else if (event === 'done') {
         // Signal test completion. TCP ordering guarantees all testEnd messages
         // preceding this on the same connection are already processed by Node.js.
@@ -756,7 +756,7 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
           );
         }
         config.state.group.signals.resetTestTimeout?.();
-        reportTestEnd(config, details);
+        Reporter.testEnd(config, details);
       } else if (event === 'done') {
         config.state.group.phase = 'done';
         config.state.group.lastQUnitResult = qunitResult ?? null;

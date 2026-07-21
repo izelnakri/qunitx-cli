@@ -4,7 +4,7 @@ import type { ChildProcess } from 'node:child_process';
 import type { Buffer } from 'node:buffer';
 import type { BuildContext, Plugin as EsbuildPlugin } from 'esbuild';
 import type { SourceMapDecoder } from './utils/source-map.ts';
-import type { Reporter, ReporterName } from './reporter/types.ts';
+import type { Reporter, ReporterName } from './reporters/types.ts';
 import type { QUnitSelector } from './selection/line-targets.ts';
 import type { FailedTestRecord } from './utils/failure-cache.ts';
 
@@ -174,7 +174,7 @@ export interface RunState {
   /** Whole-run accumulators, shared by reference across every concurrent group. */
   results: RunResults;
   /**
-   * Active reporter instances for this run, built by `createReporters` in `setupConfig`.
+   * Active reporter instances for this run, built by `Reporters.create` in `setupConfig`.
    * One set for the whole run, so a stateful reporter sees every group rather than one slice.
    */
   reporters: Reporter[];

@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { buildJUnitXML } from '../../lib/reporter/junit.ts';
+import { buildJUnitXML } from '../../lib/reporters/junit.ts';
 import type { JUnitCase } from '../../lib/types.ts';
 
 module('reporters | buildJUnitXML', { concurrency: true }, () => {
