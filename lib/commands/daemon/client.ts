@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { daemonSocketPath, daemonInfoPath } from './socket-path.ts';
 import { CLEANUP_GRACE_MS } from '../../utils/close-with-grace.ts';
-import { tokenizeArgs } from '../../args/tokenize-args.ts';
+import * as Args from '../../args/index.ts';
 import { attachLineParser, probeSocket } from './socket-io.ts';
 import type { Request, ResponseChunk } from './protocol.ts';
 
@@ -160,7 +160,7 @@ function isDaemonEligible(): boolean {
   if (process.env.CI && !process.env.QUNITX_DAEMON) return false;
   // Reuse the parser's own tokenizer so "how much does a -t/-m value swallow" is decided in one
   // place: a query value or positional input can never be mistaken here for a --watch/--open flag.
-  for (const token of tokenizeArgs(process.argv.slice(2))) {
+  for (const token of Args.tokenize(process.argv.slice(2))) {
     // --search/--print never touches a browser, so routing it through the daemon is pure overhead.
     if (token.kind === 'query') {
       if (token.action === 'list') return false;
