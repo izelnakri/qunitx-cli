@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseTestDeclarations } from '../selection/parse-test-declarations.ts';
-import { matchQUnitFilter, buildQUnitFullName } from '../selection/qunit-filter.ts';
+import { matchQUnitFilter, buildQUnitFullName } from '../selection/qunit-matcher.ts';
 import * as LineTargets from '../selection/line-targets.ts';
 import { blue, yellow } from '../utils/color.ts';
 import type { TestDeclaration, DeclarationScan } from '../selection/parse-test-declarations.ts';
