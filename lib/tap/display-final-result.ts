@@ -5,7 +5,7 @@ import type { Counter } from '../types.ts';
  * @returns {void}
  */
 
-export function TAPDisplayFinalResult(
+export function displayFinalResult(
   { testCount, passCount, skipCount, todoCount, failCount }: Counter,
   timeTaken: number,
 ): void {
@@ -19,5 +19,3 @@ export function TAPDisplayFinalResult(
   process.stdout.write(`# duration ${timeTaken}\n`);
   process.stdout.write('\n');
 }
-
-export { TAPDisplayFinalResult as default };
