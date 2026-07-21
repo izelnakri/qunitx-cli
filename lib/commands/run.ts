@@ -25,7 +25,7 @@ import * as FileWatcher from '../setup/file-watcher.ts';
 import { getChangedFsTree } from '../setup/get-changed-fs-tree.ts';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
 import { runUserModule } from '../utils/run-user-module.ts';
-import { setupKeyboardEvents } from '../setup/keyboard-events.ts';
+import * as KeyboardEvents from '../setup/keyboard-events.ts';
 import { writeOutputStaticFiles } from '../setup/write-output-static-files.ts';
 import { timeCounter } from '../utils/time-counter.ts';
 import * as Reporter from '../reporters/index.ts';
@@ -144,7 +144,7 @@ async function runWatchMode(config: Config): Promise<void> {
     writeOutputStaticFiles(config, config.state.htmlAssets),
   ]);
   config.webServer = connections.server;
-  setupKeyboardEvents(config, connections);
+  KeyboardEvents.setup(config, connections);
 
   // Explicitly close the HTTP server on SIGTERM before the process exits. This ensures
   // the port is reclaimed by application code (not as a side effect of OS process cleanup),

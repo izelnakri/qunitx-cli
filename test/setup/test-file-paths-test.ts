@@ -1,12 +1,12 @@
 import { module, test } from 'qunitx';
-import setupTestFilePaths from '../../lib/setup/test-file-paths.ts';
+import * as TestFilePaths from '../../lib/setup/test-file-paths.ts';
 
 module('Setup | glob(*) input tests | test-file-paths tests', { concurrency: true }, () => {
-  test('setupTestFilePaths() works correctly on different inputs', (assert) => {
+  test('TestFilePaths.setup() works correctly on different inputs', (assert) => {
     const projectRoot = '/home/izelnakri/Github/qunitx';
 
     assert.deepEqual(
-      setupTestFilePaths([
+      TestFilePaths.setup([
         `${projectRoot}/tmp`,
         `${projectRoot}/tmp/vendor`,
         `${projectRoot}/another/first/*`,
