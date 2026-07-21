@@ -24,17 +24,15 @@ export class JUnitReporter implements Reporter {
 
   /** Accumulates one `<testcase>`; the document is written once at run end. */
   onTestEnd(config: Config, details: TestDetails): void {
-    this.#cases.push(toJUnitCase(config, details));
+    this.#cases.push(toCase(config, details));
   }
 
   /** Serializes the accumulated cases and writes the XML document to disk. */
   async onRunEnd(config: Config, _info: RunEndInfo): Promise<void> {
-    const outputPath = junitOutputPath(config);
-    await fs.mkdir(path.dirname(outputPath), { recursive: true });
-    await fs.writeFile(outputPath, buildJUnitXML(this.#cases));
-    process.stdout.write(
-      `# wrote JUnit report to ${relativeToRoot(outputPath, config.projectRoot)}\n`,
-    );
+    const file = outputPath(config);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, buildXML(this.#cases));
+    process.stdout.write(`# wrote JUnit report to ${relativeToRoot(file, config.projectRoot)}\n`);
   }
 }
 
@@ -42,7 +40,7 @@ export class JUnitReporter implements Reporter {
  * Resolves where the JUnit document is written: `--junit=<path>` (relative to the project
  * root) when given a string, else `<output>/junit.xml`.
  */
-export function junitOutputPath(config: Config): string {
+export function outputPath(config: Config): string {
   return typeof config.junit === 'string'
     ? path.resolve(config.projectRoot, config.junit)
     : path.join(path.resolve(config.projectRoot, config.output), 'junit.xml');
@@ -52,7 +50,7 @@ export function junitOutputPath(config: Config): string {
  * Converts one `testEnd` into a JUnit `<testcase>`. Failing assertions are flattened into a
  * `failureDetail` with stacks resolved back to original sources (same as the TAP `at:` field).
  */
-export function toJUnitCase(config: Config, details: TestDetails): JUnitCase {
+export function toCase(config: Config, details: TestDetails): JUnitCase {
   const fullName = details.fullName;
   const name = fullName[fullName.length - 1] ?? fullName.join(' | ');
   const classname = fullName.slice(0, -1).join(' > ') || '(root)';
@@ -87,7 +85,7 @@ export function toJUnitCase(config: Config, details: TestDetails): JUnitCase {
 }
 
 /** Builds the full JUnit XML document string from a flat list of test cases. */
-export function buildJUnitXML(cases: JUnitCase[]): string {
+export function buildXML(cases: JUnitCase[]): string {
   // Map.groupBy keys by first appearance, so suites stay in the order their tests ran.
   const suites = Map.groupBy(cases, (testCase) => testCase.classname);
 

@@ -1,8 +1,8 @@
 import { module, test } from 'qunitx';
-import { buildJUnitXML } from '../../lib/reporters/junit.ts';
+import { buildXML } from '../../lib/reporters/junit.ts';
 import type { JUnitCase } from '../../lib/types.ts';
 
-module('reporters | buildJUnitXML', { concurrency: true }, () => {
+module('reporters | buildXML', { concurrency: true }, () => {
   const cases: JUnitCase[] = [
     { classname: 'Math', name: 'adds', time: 0.003, status: 'passed' },
     { classname: 'Math', name: 'divides', time: 0.5, status: 'passed' },
@@ -19,7 +19,7 @@ module('reporters | buildJUnitXML', { concurrency: true }, () => {
   ];
 
   test('emits an XML declaration and a testsuites root with rolled-up totals', (assert) => {
-    const xml = buildJUnitXML(cases);
+    const xml = buildXML(cases);
     assert.true(xml.startsWith('<?xml version="1.0" encoding="UTF-8"?>'), 'has XML declaration');
     assert.true(
       /<testsuites name="qunitx" tests="5" failures="1" skipped="2" time="0\.513">/.test(xml),
@@ -28,7 +28,7 @@ module('reporters | buildJUnitXML', { concurrency: true }, () => {
   });
 
   test('groups test cases into one testsuite per classname', (assert) => {
-    const xml = buildJUnitXML(cases);
+    const xml = buildXML(cases);
     assert.true(
       /<testsuite name="Math" tests="2" failures="0" skipped="0"/.test(xml),
       'Math suite',
@@ -40,7 +40,7 @@ module('reporters | buildJUnitXML', { concurrency: true }, () => {
   });
 
   test('passing cases are self-closing; failed cases carry a <failure>', (assert) => {
-    const xml = buildJUnitXML(cases);
+    const xml = buildXML(cases);
     assert.true(
       xml.includes('<testcase name="adds" classname="Math" time="0.003"/>'),
       'passing testcase is self-closing',
@@ -53,14 +53,12 @@ module('reporters | buildJUnitXML', { concurrency: true }, () => {
   });
 
   test('todo and skipped cases render a <skipped/> element', (assert) => {
-    const xml = buildJUnitXML(cases);
+    const xml = buildXML(cases);
     assert.equal((xml.match(/<skipped\/>/g) ?? []).length, 2, 'two skipped elements');
   });
 
   test('escapes XML metacharacters in names', (assert) => {
-    const xml = buildJUnitXML([
-      { classname: 'A & B', name: '<tag> "q"', time: 0, status: 'passed' },
-    ]);
+    const xml = buildXML([{ classname: 'A & B', name: '<tag> "q"', time: 0, status: 'passed' }]);
     assert.true(xml.includes('classname="A &amp; B"'), 'ampersand escaped in attribute');
     assert.true(
       xml.includes('name="&lt;tag&gt; &quot;q&quot;"'),
@@ -69,9 +67,7 @@ module('reporters | buildJUnitXML', { concurrency: true }, () => {
   });
 
   test('root classname fallback for single-element fullNames', (assert) => {
-    const xml = buildJUnitXML([
-      { classname: '(root)', name: 'top level', time: 0, status: 'passed' },
-    ]);
+    const xml = buildXML([{ classname: '(root)', name: 'top level', time: 0, status: 'passed' }]);
     assert.true(xml.includes('<testsuite name="(root)"'), 'root suite name used');
   });
 });
