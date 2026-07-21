@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { findChrome } from '../chrome/find-chrome.ts';
+import * as Chrome from '../chrome/index.ts';
 import { qunitFilterQuery } from '../selection/filter-query.ts';
 import type { Config } from '../types.ts';
 
@@ -38,7 +38,7 @@ export async function openOutputInBrowser(config: Config): Promise<void> {
     }
 
     const chromePath =
-      (await findChrome()) ?? (await import('playwright-core')).chromium.executablePath();
+      (await Chrome.find()) ?? (await import('playwright-core')).chromium.executablePath();
     if (chromePath) spawnDetached(chromePath, [outputFile]);
   } catch (err) {
     console.error('# Warning: --open could not launch browser:', err);

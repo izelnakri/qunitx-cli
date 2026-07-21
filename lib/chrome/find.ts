@@ -17,11 +17,11 @@ const PATH_DIRS = (process.env.PATH || '').split(delimiter).filter(Boolean);
  * with callers, but the resolution is synchronous.
  * @returns {Promise<string|null>}
  */
-export function findChrome(): Promise<string | null> {
+export function find(): Promise<string | null> {
   return Promise.resolve(findChromeSync());
 }
 
-export { findChrome as default };
+export { find as default };
 
 /**
  * Synchronously resolves the Chrome/Chromium executable path from `CHROME_BIN` or by probing
