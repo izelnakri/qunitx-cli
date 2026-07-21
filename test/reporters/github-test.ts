@@ -1,9 +1,9 @@
 import { module, test } from 'qunitx';
-import { GithubReporter, annotation } from '../../lib/reporter/github.ts';
-import { updateCounter } from '../../lib/reporter/types.ts';
+import { GithubReporter, annotation } from '../../lib/reporters/github.ts';
+import { updateCounter } from '../../lib/reporters/types.ts';
 import * as RunState from '../../lib/setup/run-state.ts';
-import type { FailureInfo } from '../../lib/reporter/failure.ts';
-import type { TestDetails } from '../../lib/reporter/types.ts';
+import type { FailureInfo } from '../../lib/reporters/failure.ts';
+import type { TestDetails } from '../../lib/reporters/types.ts';
 import type { Config } from '../../lib/types.ts';
 import '../helpers/custom-asserts.ts';
 import { captureStdout } from '../helpers/capture-stdout.ts';

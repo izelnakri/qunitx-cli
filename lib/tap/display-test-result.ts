@@ -1,7 +1,7 @@
 import { dumpYaml } from './dump-yaml.ts';
 import { indentString } from '../utils/indent-string.ts';
-import type { TestDetails } from '../reporter/types.ts';
-import type { FailureInfo } from '../reporter/failure.ts';
+import type { TestDetails } from '../reporters/types.ts';
+import type { FailureInfo } from '../reporters/failure.ts';
 
 // tape TAP output: ['operator', 'stack', 'at', 'expected', 'actual']
 // ava TAP output: ['message', 'name', 'at', 'assertion', 'values'] // Assertion #5, message

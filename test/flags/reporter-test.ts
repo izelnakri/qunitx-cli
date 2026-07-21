@@ -107,7 +107,7 @@ module('--reporter=spec', { concurrency: true }, (_hooks, moduleMetadata) => {
 // Firefox emits one from the bundle on every run, so the matrix line legitimately reads
 // `...[JavaScript Warning: …]`, and under load the dots can split across lines. That's inherent
 // to a one-char-per-test format (mocha/vitest included). Exact marks, per-status characters and
-// 72-column wrapping are pinned deterministically in test/reporter/dot-test.ts, which owns
+// 72-column wrapping are pinned deterministically in test/reporters/dot-test.ts, which owns
 // stdout and can assert them exactly.
 module('--reporter=dot', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('reports a run through the dot summary rather than TAP', async (assert, testMetadata) => {

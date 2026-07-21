@@ -1,8 +1,8 @@
 import { module, test } from 'qunitx';
-import { SpecReporter } from '../../lib/reporter/spec.ts';
-import { updateCounter } from '../../lib/reporter/types.ts';
+import { SpecReporter } from '../../lib/reporters/spec.ts';
+import { updateCounter } from '../../lib/reporters/types.ts';
 import * as RunState from '../../lib/setup/run-state.ts';
-import type { TestDetails } from '../../lib/reporter/types.ts';
+import type { TestDetails } from '../../lib/reporters/types.ts';
 import type { Config } from '../../lib/types.ts';
 import '../helpers/custom-asserts.ts';
 import { captureStdout } from '../helpers/capture-stdout.ts';
@@ -15,7 +15,7 @@ const makeConfig = (): Config =>
     state: RunState.create(),
   }) as unknown as Config;
 
-// Drives the reporter the way reportTestEnd does: counter first, then the reporter.
+// Drives the reporter the way Reporters.testEnd does: counter first, then the reporter.
 const feed = (reporter: SpecReporter, config: Config, details: TestDetails): string =>
   captureStdout(() => {
     updateCounter(config.state.results.counter, details);

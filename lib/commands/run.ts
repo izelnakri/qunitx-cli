@@ -32,7 +32,7 @@ import { runUserModule } from '../utils/run-user-module.ts';
 import { setupKeyboardEvents } from '../setup/keyboard-events.ts';
 import { writeOutputStaticFiles } from '../setup/write-output-static-files.ts';
 import { timeCounter } from '../utils/time-counter.ts';
-import { reportRunStart, reportRunEnd } from '../reporter/index.ts';
+import * as Reporter from '../reporters/index.ts';
 import { readTemplate } from '../utils/read-template.ts';
 import { isCustomTemplate } from '../utils/html.ts';
 import { closeWithGrace } from '../utils/close-with-grace.ts';
@@ -321,7 +321,7 @@ async function runConcurrentMode(
   // groupConfigs[0]. In daemon mode, throw DaemonRunError so the daemon's
   // run handler closes the run cleanly and stays alive for the next call.
   if (allFiles.length === 0) {
-    reportRunStart(config, { fileCount: 0, groupCount: 0 });
+    Reporter.runStart(config, { fileCount: 0, groupCount: 0 });
     if (config.state.daemon) throw new DaemonRunError(0);
     if (!config.watch) {
       // Daemon runs threw above, so this is always a browser this run owns and must close.
@@ -402,7 +402,7 @@ async function runConcurrentMode(
         })()
       : null;
 
-  reportRunStart(config, { fileCount: allFiles.length, groupCount });
+  Reporter.runStart(config, { fileCount: allFiles.length, groupCount });
 
   // Build all group bundles and write static files while the browser is starting up.
   // Bind the shared server's port in the same parallel window when active.
@@ -547,7 +547,7 @@ async function runConcurrentMode(
   // matched nothing.
   process.exitCode = exitCode;
 
-  await reportRunEnd(config, { durationMs: TIME_COUNTER.stop() });
+  await Reporter.runEnd(config, { durationMs: TIME_COUNTER.stop() });
 
   if (config.coverage) await writeCoverageReport(config, allFiles);
 

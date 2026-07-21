@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { extractStackAt, failedAssertions, parseAt } from '../../lib/reporter/failure.ts';
+import { extractStackAt, failedAssertions, parseAt } from '../../lib/reporters/failure.ts';
 
 module('reporters | extractStackAt', { concurrency: true }, () => {
   test('Chrome style: extracts clean URL without parens', (assert) => {
