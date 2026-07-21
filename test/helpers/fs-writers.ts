@@ -49,7 +49,9 @@ export function writeTestFile(folderName, testFileName, extension, templateBuffe
 export async function writeNestedTestFolder(): Promise<string> {
   const folderName = crypto.randomUUID();
   const base = `${process.cwd()}/tmp/${folderName}`;
-  const template = (await fs.readFile(`${process.cwd()}/test/fixtures/passing-tests.ts`)).toString();
+  const template = (
+    await fs.readFile(`${process.cwd()}/test/fixtures/passing-tests.ts`)
+  ).toString();
 
   await fs.mkdir(`${base}/subdir/deeper`, { recursive: true });
 
