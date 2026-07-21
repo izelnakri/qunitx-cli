@@ -27,7 +27,7 @@ import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-h
 import { runUserModule } from '../utils/run-user-module.ts';
 import * as KeyboardEvents from '../setup/keyboard-events.ts';
 import { writeOutputStaticFiles } from '../setup/write-output-static-files.ts';
-import { timeCounter } from '../utils/time-counter.ts';
+import * as TimeCounter from '../utils/time-counter.ts';
 import * as Reporter from '../reporters/index.ts';
 import { readTemplate } from '../utils/read-template.ts';
 import { isCustomTemplate } from '../utils/html.ts';
@@ -417,7 +417,7 @@ async function runConcurrentMode(
   if (config.open) {
     void openOutputInBrowser(config);
   }
-  const TIME_COUNTER = timeCounter();
+  const timer = TimeCounter.start();
   const wallTimes = new Map<number, number>();
 
   // 3-minute per-group deadline. Firefox/WebKit can hang indefinitely in any Playwright
@@ -538,7 +538,7 @@ async function runConcurrentMode(
   // matched nothing.
   process.exitCode = exitCode;
 
-  await Reporter.runEnd(config, { durationMs: TIME_COUNTER.stop() });
+  await Reporter.runEnd(config, { durationMs: timer.stop() });
 
   if (config.coverage) await Coverage.Report.write(config, allFiles);
 

@@ -4,7 +4,7 @@ import { blue, yellow } from '../../utils/color.ts';
 import { shutdownPrelaunch } from '../../chrome/prelaunch.ts';
 import { closeWithGrace } from '../../utils/close-with-grace.ts';
 import esbuild from 'esbuild';
-import { timeCounter } from '../../utils/time-counter.ts';
+import * as TimeCounter from '../../utils/time-counter.ts';
 import { runUserModule } from '../../utils/run-user-module.ts';
 import * as Reporter from '../../reporters/index.ts';
 import * as WebServer from '../../setup/web-server.ts';
@@ -315,7 +315,7 @@ export async function runTestsInBrowser(
       config.state.group.sourceMapDecoder = SourceMap.extractInline(build.filteredTestCode, outDir);
     }
 
-    const TIME_COUNTER = timeCounter();
+    const timer = TimeCounter.start();
 
     if (runHasFilter) {
       await runTestInsideHTMLFile('/qunitx.html', connections, config);
@@ -341,7 +341,7 @@ export async function runTestsInBrowser(
       }
     }
 
-    const TIME_TAKEN = TIME_COUNTER.stop();
+    const TIME_TAKEN = timer.stop();
 
     // In group mode the parent orchestrator handles the final summary, after hook, and exit.
     if (!config.state.group.groupMode) {
