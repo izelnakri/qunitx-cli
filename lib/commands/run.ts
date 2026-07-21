@@ -21,7 +21,7 @@ import {
 } from './run/tests-in-browser.ts';
 
 import * as RunState from '../setup/run-state.ts';
-import { setupFileWatchers } from '../setup/file-watcher.ts';
+import * as FileWatcher from '../setup/file-watcher.ts';
 import { getChangedFsTree } from '../setup/get-changed-fs-tree.ts';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
 import { runUserModule } from '../utils/run-user-module.ts';
@@ -235,7 +235,7 @@ async function runWatchMode(config: Config): Promise<void> {
   }
 
   if (config.watch) {
-    const { ready: watcherReady } = setupFileWatchers(
+    const { ready: watcherReady } = FileWatcher.setup(
       config.testFileLookupPaths,
       config,
       async (event, file) => {
