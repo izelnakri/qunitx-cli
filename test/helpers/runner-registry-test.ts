@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { joinRunnerRegistry, liveRunners } from '../helpers/runner-registry.ts';
+import { joinRunnerRegistry, liveRunners } from './runner-registry.ts';
 
 // Every test gets a private registry dir. The real one has this very runner registered in it,
 // so using the default would have the suite observe itself.
@@ -29,7 +29,7 @@ async function writeEntry(dir: string, pid: number): Promise<void> {
 
 const never = () => Promise.reject(new Error('onSolo must not run when another runner is live'));
 
-module('Setup | runner registry', { concurrency: true }, () => {
+module('Helpers | runner registry', { concurrency: true }, () => {
   test('a solo runner wipes tmp/ and registers itself', async (assert) => {
     const dir = registryDir();
     let wiped = 0;

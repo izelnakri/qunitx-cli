@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import net from 'node:net';
-import { createSemaphoreServer } from '../helpers/semaphore-server.ts';
+import { createSemaphoreServer } from './semaphore-server.ts';
 
 // Connects to the semaphore server, writes the request byte, and resolves once
 // the server replies 'ok'. Returns the socket so the caller can call .destroy()
@@ -50,7 +50,7 @@ function delay(ms: number): Promise<void> {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-module('Setup | SemaphoreServer', { concurrency: true }, () => {
+module('Helpers | SemaphoreServer', { concurrency: true }, () => {
   test('grants a slot immediately when under the concurrency limit', async (assert) => {
     const sem = await createSemaphoreServer(2);
     try {
