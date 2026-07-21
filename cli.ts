@@ -5,7 +5,7 @@ import './lib/utils/enable-compile-cache.ts';
 // Must run before the esbuild import inside run.ts: side-effect module that points
 // `ESBUILD_BINARY_PATH` at a sidecar esbuild adjacent to the binary. No-op when the
 // env is already set or no sidecar is present (npm / source / Node SEA paths).
-import './lib/utils/resolve-sidecar-esbuild.ts';
+import './lib/utils/find-sidecar-esbuild.ts';
 import process from 'node:process';
 import { shutdownPrelaunch } from './lib/chrome/prelaunch.ts';
 import pkg from './package.json' with { type: 'json' };

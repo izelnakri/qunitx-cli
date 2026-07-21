@@ -24,7 +24,7 @@ import { dirname, join } from 'node:path';
  * null if none is present. On Windows the `.exe` variant is preferred. Pure and
  * injectable so the lookup order is unit-testable without a real compiled binary.
  */
-export function resolveSidecarEsbuild(
+export function findSidecarEsbuild(
   execDir: string,
   platform: NodeJS.Platform = process.platform,
 ): string | null {
@@ -44,6 +44,6 @@ export function resolveSidecarEsbuild(
 // Side-effect on import: populate ESBUILD_BINARY_PATH from the sidecar unless it is
 // already set (including to an empty string, meaning "use esbuild's install default").
 if (!('ESBUILD_BINARY_PATH' in process.env)) {
-  const found = resolveSidecarEsbuild(dirname(process.execPath));
+  const found = findSidecarEsbuild(dirname(process.execPath));
   if (found) process.env.ESBUILD_BINARY_PATH = found;
 }
