@@ -186,7 +186,7 @@ function applyFlag(result: Flags, arg: string): void {
     result.coverage = true;
     result.coverageFormats = formats.filter((format) => format !== 'text');
   } else if (arg === '--trace-perf') {
-    // consumed by perf-logger.js at module load time, not stored in config
+    // consumed by perf-log.ts at module load time, not stored in config
   } else {
     console.warn(`# Warning: Unknown flag "${arg}" — ignored`);
   }
