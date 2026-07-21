@@ -30,7 +30,7 @@ export interface LineTargetResolution {
  * cannot be resolved degrades — to the enclosing module, or to the whole file — and says so,
  * rather than failing the run.
  */
-export async function resolveLineTargets(
+export async function resolve(
   filePath: string,
   lines: number[],
   displayPath: string = filePath,
@@ -112,8 +112,6 @@ export function selectorsFromScan(
 
   return { selectors, warnings };
 }
-
-export { resolveLineTargets as default };
 
 /**
  * The innermost declaration spanning `line`. Ties break toward the latest start, which is the

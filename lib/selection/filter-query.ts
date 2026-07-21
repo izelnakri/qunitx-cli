@@ -30,7 +30,7 @@ export function isFilteredRun(config: FilterConfig): boolean {
  * `location.search` at bundle-eval time — so a preconfig global would be clobbered.
  * Returns '' when no filter is set, leaving URLs byte-identical to before.
  */
-export function qunitFilterQuery(config: FilterConfig): string {
+export function buildQUnitFilterQuery(config: FilterConfig): string {
   if (!config.filter) {
     return '';
   }
@@ -43,7 +43,7 @@ export function qunitFilterQuery(config: FilterConfig): string {
 }
 
 /** Human-readable description of the active filters, for the "nothing matched" message. */
-export function describeFilter(config: FilterConfig): string {
+export function describeActiveFilters(config: FilterConfig): string {
   const parts: string[] = [];
   if (config.filter) {
     parts.push(`--filter=${config.filter}`);

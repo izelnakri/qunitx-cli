@@ -35,7 +35,7 @@ import { closeWithGrace } from '../utils/close-with-grace.ts';
 import * as Hint from './daemon/hint.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
 import * as Coverage from '../coverage/index.ts';
-import { isFilteredRun, describeFilter } from '../selection/filter-query.ts';
+import { isFilteredRun, describeActiveFilters } from '../selection/filter-query.ts';
 import * as Timings from './run/timings.ts';
 import { applyWatchLineTargets, resolveTargetedFiles, splitIntoGroups } from './run/grouping.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
@@ -524,7 +524,7 @@ async function runConcurrentMode(
     if (isFilteredRun(config)) {
       // A filter matching nothing is a typo, not a green run — every neighbouring runner
       // fails here, and passing CI on a mistyped -t is the worst outcome available.
-      console.log(`# No tests matched ${describeFilter(config)}`);
+      console.log(`# No tests matched ${describeActiveFilters(config)}`);
       exitCode = 1;
     } else {
       const fileWord = allFiles.length === 1 ? 'file' : 'files';
