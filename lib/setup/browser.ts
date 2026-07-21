@@ -1,7 +1,7 @@
 import * as WebServer from './web-server.ts';
 import { bindServerToPort } from './bind-server-to-port.ts';
-import { findChrome } from '../chrome/find.ts';
-import { CHROMIUM_ARGS } from '../chrome/args.ts';
+import { findChrome } from '../chrome/find-chrome.ts';
+import { CHROMIUM_ARGS } from '../chrome/chromium-args.ts';
 import { prelaunchPromise, shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { perfLog } from '../utils/perf-logger.ts';
 import * as RunState from './run-state.ts';

@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs';
-import { findChrome } from './find.ts';
-import { preLaunchChrome } from './spawn.ts';
+import { findChrome } from './find-chrome.ts';
+import { spawnChrome } from './spawn-chrome.ts';
 import { killProcessGroup } from '../utils/kill-process-group.ts';
-import { CHROMIUM_ARGS } from './args.ts';
+import { CHROMIUM_ARGS } from './chromium-args.ts';
 import { perfLog } from '../utils/perf-logger.ts';
 import * as Paths from '../commands/daemon/socket-path.ts';
 import type { ChromeHandle } from '../types.ts';
@@ -88,7 +88,7 @@ perfLog('chrome-prelaunch.ts: module evaluated');
 /**
  * Kills the pre-launched Chrome process and awaits its async temp-dir cleanup.
  * Must be called before process.exit() so the event loop is still alive and the
- * async rm() inside preLaunchChrome's close handler can run to completion.
+ * async rm() inside spawnChrome's close handler can run to completion.
  * Safe to call multiple times or when Chrome was never pre-launched (no-op).
  */
 export async function shutdownPrelaunch(): Promise<void> {
@@ -116,10 +116,10 @@ export const prelaunchPromise =
     ? findChrome()
         .then((chromePath) => {
           perfLog('chrome-prelaunch.ts: findChrome resolved', chromePath);
-          // onSpawn fires synchronously inside preLaunchChrome the instant Chrome is spawned,
+          // onSpawn fires synchronously inside spawnChrome the instant Chrome is spawned,
           // before the CDP-ready stderr match — so earlyChrome holds a fully-callable handle for
           // the entire process lifetime, including the spawn→CDP-ready gap.
-          return preLaunchChrome(chromePath, CHROMIUM_ARGS, !openWatchMode, (handle) => {
+          return spawnChrome(chromePath, CHROMIUM_ARGS, !openWatchMode, (handle) => {
             earlyChrome = handle;
           });
         })
