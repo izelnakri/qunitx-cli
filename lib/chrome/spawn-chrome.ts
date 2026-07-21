@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { killProcessGroup } from '../utils/kill-process-group.ts';
-import { cleanupBrowserDir } from './cleanup-dir.ts';
+import { cleanupBrowserDir } from './cleanup-browser-dir.ts';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,7 +14,7 @@ const CDP_URL_REGEX = /DevTools listening on (ws:\/\/[^\s]+)/;
  * CDP WebSocket endpoint appears on stderr. Returns null if Chrome is unavailable or fails
  * to start, so callers can fall back to playwright's normal `chromium.launch()`.
  */
-export async function preLaunchChrome(
+export async function spawnChrome(
   chromePath: string | null | undefined,
   args: string[],
   headless = true,
@@ -100,5 +100,3 @@ export async function preLaunchChrome(
     await cleanupBrowserDir(userDataDir);
   }
 }
-
-export { preLaunchChrome as default };
