@@ -29,7 +29,7 @@ const passing = (name: string, moduleName = 'Math'): TestDetails => ({
   assertions: [],
 });
 
-module('reporters | SpecReporter', { concurrency: true }, () => {
+module('Reporters | SpecReporter', { concurrency: true }, () => {
   test('prints a module header once, then indents its tests under it', (assert) => {
     const config = makeConfig();
     const reporter = new SpecReporter();
@@ -180,7 +180,7 @@ module('reporters | SpecReporter', { concurrency: true }, () => {
     );
   });
 
-  test('never emits TAP syntax', (assert) => {
+  test('emits only the indented spec tree — no TAP header, ok lines or plan', (assert) => {
     const config = makeConfig();
     const reporter = new SpecReporter();
     const output =

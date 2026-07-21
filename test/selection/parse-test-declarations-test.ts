@@ -18,7 +18,7 @@ async function rows(source: string, filePath = TS) {
     .join('\n');
 }
 
-module('Utils | parseTestDeclarations | basics', { concurrency: true }, () => {
+module('Selection | parseTestDeclarations | basics', { concurrency: true }, () => {
   test('finds a top-level test with its full line range', async (assert) => {
     assert.equal(
       await rows(
@@ -128,7 +128,7 @@ module('Utils | parseTestDeclarations | basics', { concurrency: true }, () => {
   });
 });
 
-module('Utils | parseTestDeclarations | names', { concurrency: true }, () => {
+module('Selection | parseTestDeclarations | names', { concurrency: true }, () => {
   test('a template literal with no substitution is a literal name', async (assert) => {
     assert.equal(
       await rows(`import { test } from 'qunitx';\ntest(\`a b\`, function () {});\n`),
@@ -174,7 +174,7 @@ module('Utils | parseTestDeclarations | names', { concurrency: true }, () => {
   });
 });
 
-module('Utils | parseTestDeclarations | lexing hazards', { concurrency: true }, () => {
+module('Selection | parseTestDeclarations | lexing hazards', { concurrency: true }, () => {
   test('a test( inside a line comment is not a declaration', async (assert) => {
     assert.equal(
       await rows(
@@ -263,7 +263,7 @@ module('Utils | parseTestDeclarations | lexing hazards', { concurrency: true }, 
   });
 });
 
-module('Utils | parseTestDeclarations | non-qunitx callees', { concurrency: true }, () => {
+module('Selection | parseTestDeclarations | non-qunitx callees', { concurrency: true }, () => {
   test("a project's own module/skip helpers are not test declarations", async (assert) => {
     // Declarators are resolved from the qunitx import, not by name, so a local helper that
     // happens to be called `module` or `skip` cannot be mistaken for one.
@@ -291,7 +291,7 @@ module('Utils | parseTestDeclarations | non-qunitx callees', { concurrency: true
   });
 });
 
-module('Utils | parseTestDeclarations | failure', { concurrency: true }, () => {
+module('Selection | parseTestDeclarations | failure', { concurrency: true }, () => {
   test('a file that cannot be parsed returns null', async (assert) => {
     assert.strictEqual(
       await scan(`import { test } from 'qunitx';\ntest('a', function () {\n  const = ;\n});\n`),

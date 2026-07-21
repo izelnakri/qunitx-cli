@@ -6,7 +6,7 @@ import WebSocket from 'ws';
 import { HTTPServer } from '../../lib/web/index.ts';
 import { bindServerToPort } from '../../lib/setup/bind-server-to-port.ts';
 
-module('Servers | bindServerToPort | port selection', { concurrency: true }, () => {
+module('Web | bindServerToPort | port selection', { concurrency: true }, () => {
   test('binds to the requested port when it is free', async (assert) => {
     const server = new HTTPServer();
     const blocker = await findFreePort();
@@ -51,7 +51,7 @@ module('Servers | bindServerToPort | port selection', { concurrency: true }, () 
   });
 });
 
-module('Servers | HTTPServer | query param routing', { concurrency: true }, () => {
+module('Web | HTTPServer | query param routing', { concurrency: true }, () => {
   test('GET / serves correctly without query params', async (assert) => {
     await withServer(async (port) => {
       const { statusCode, body } = await request(port, '/');
@@ -98,7 +98,7 @@ module('Servers | HTTPServer | query param routing', { concurrency: true }, () =
   });
 });
 
-module('Servers | HTTPServer | close()', { concurrency: true }, () => {
+module('Web | HTTPServer | close()', { concurrency: true }, () => {
   test('close() terminates all connected WebSocket clients', async (assert) => {
     const server = new HTTPServer();
     server.get('/', (_req, res) => res.end('ok'));

@@ -26,7 +26,7 @@ const failure = (overrides: Partial<FailureInfo> = {}): FailureInfo => ({
   ...overrides,
 });
 
-module('reporters | github annotation', { concurrency: true }, () => {
+module('Reporters | github annotation', { concurrency: true }, () => {
   test('emits ::error with file, line, col and title', (assert) => {
     const output = annotation('Math | adds', failure());
     assert.true(
@@ -82,7 +82,7 @@ module('reporters | github annotation', { concurrency: true }, () => {
   });
 });
 
-module('reporters | GithubReporter', { concurrency: true }, () => {
+module('Reporters | GithubReporter', { concurrency: true }, () => {
   const feed = (reporter: GithubReporter, config: Config, details: TestDetails): string =>
     captureStdout(() => {
       updateCounter(config.state.results.counter, details);

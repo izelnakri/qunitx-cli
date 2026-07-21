@@ -28,7 +28,7 @@ const watchState = (overrides: Partial<RunStateShape['watch']> = {}): RunStateSh
   return state;
 };
 
-module('Setup | toWatchableRoot', { concurrency: true }, () => {
+module('Setup | FileWatcher.toWatchableRoot', { concurrency: true }, () => {
   test('a real directory or file is returned unchanged', (assert) => {
     assert.equal(FileWatcher.toWatchableRoot(process.cwd()), process.cwd());
     const self = path.join(process.cwd(), 'test/setup/file-watcher-test.ts');
@@ -58,7 +58,7 @@ module('Setup | toWatchableRoot', { concurrency: true }, () => {
 // readFileStable — the Windows write-race fix
 // ---------------------------------------------------------------------------
 
-module('Setup | readFileStable', { concurrency: true }, () => {
+module('Setup | FileWatcher.readFileStable', { concurrency: true }, () => {
   // Reproduces the flake: on Windows fs.writeFile truncates then writes, and the 'change' event
   // can fire at truncate, so a single read catches the 0-byte window. The change handler hashed
   // that empty snapshot and rebuilt it — esbuild bundled a file with no test() calls, printing
@@ -119,7 +119,7 @@ module('Setup | readFileStable', { concurrency: true }, () => {
 // mutateFSTree
 // ---------------------------------------------------------------------------
 
-module('Setup | mutateFSTree', { concurrency: true }, () => {
+module('Setup | FileWatcher.mutateFSTree', { concurrency: true }, () => {
   test('add inserts path', (assert) => {
     const fsTree = {};
     FileWatcher.mutateFSTree(fsTree, 'add', '/project/test/foo.js');
@@ -164,7 +164,7 @@ module('Setup | mutateFSTree', { concurrency: true }, () => {
 // handleWatchEvent
 // ---------------------------------------------------------------------------
 
-module('Setup | handleWatchEvent', { concurrency: true }, () => {
+module('Setup | FileWatcher.handleWatchEvent', { concurrency: true }, () => {
   test('change event triggers onEventFunc', (assert) => {
     const config = { fsTree: { '/project/test/foo.js': null }, projectRoot: '/project' };
     assert.deepEqual(trackCalls(config, 'change', '/project/test/foo.js'), [
@@ -662,7 +662,7 @@ module('Setup | FileWatcher.setup', { concurrency: true }, () => {
 // rescanDirectoryForDelta
 // ---------------------------------------------------------------------------
 
-module('Setup | rescanDirectoryForDelta', { concurrency: true }, () => {
+module('Setup | FileWatcher.rescanDirectoryForDelta', { concurrency: true }, () => {
   test('fires add for a new regular file not yet in fsTree', async (assert) => {
     const dir = path.join(process.cwd(), `tmp/rescan-add-${randomUUID()}`);
     await fs.mkdir(dir, { recursive: true });

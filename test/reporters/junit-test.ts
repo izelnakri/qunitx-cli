@@ -2,7 +2,7 @@ import { module, test } from 'qunitx';
 import { buildXML } from '../../lib/reporters/junit.ts';
 import type { JUnitCase } from '../../lib/types.ts';
 
-module('reporters | buildXML', { concurrency: true }, () => {
+module('Reporters | buildXML', { concurrency: true }, () => {
   const cases: JUnitCase[] = [
     { classname: 'Math', name: 'adds', time: 0.003, status: 'passed' },
     { classname: 'Math', name: 'divides', time: 0.5, status: 'passed' },

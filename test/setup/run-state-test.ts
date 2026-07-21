@@ -15,7 +15,7 @@ function makeBuildState(): BuildState {
   };
 }
 
-module('Setup | run-state | RunState.clearBundles', { concurrency: true }, () => {
+module('Setup | RunState.clearBundles', { concurrency: true }, () => {
   test('clears the filtered bundle alongside the full one', (assert) => {
     const build = makeBuildState();
 

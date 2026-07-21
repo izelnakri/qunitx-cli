@@ -13,7 +13,7 @@ const ALL = [CART, COUPONS, SHOPPING, ITEM, CHECKOUT];
 
 const matched = (filter: string | undefined) => ALL.filter((n) => matchQUnitFilter(filter, n));
 
-module('Utils | buildQUnitFullName', { concurrency: true }, () => {
+module('Selection | buildQUnitFullName', { concurrency: true }, () => {
   test('joins module and test with ": "', (assert) => {
     assert.equal(buildQUnitFullName('Cart', 'adds item'), 'Cart: adds item');
   });
@@ -31,7 +31,7 @@ module('Utils | buildQUnitFullName', { concurrency: true }, () => {
   });
 });
 
-module('Utils | matchQUnitFilter | substring', { concurrency: true }, () => {
+module('Selection | matchQUnitFilter | substring', { concurrency: true }, () => {
   test('an absent or empty filter matches everything', (assert) => {
     assert.deepEqual(matched(undefined), ALL);
     assert.deepEqual(matched(''), ALL);
@@ -61,7 +61,7 @@ module('Utils | matchQUnitFilter | substring', { concurrency: true }, () => {
   });
 });
 
-module('Utils | matchQUnitFilter | regex', { concurrency: true }, () => {
+module('Selection | matchQUnitFilter | regex', { concurrency: true }, () => {
   test('a regex is case-SENSITIVE without the i flag', (assert) => {
     // The surprising one, verified against a real run: `-t /cart/` -> 0, `-t cart` -> 5.
     assert.deepEqual(matched('/cart/'), []);

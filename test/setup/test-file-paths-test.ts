@@ -1,8 +1,11 @@
 import { module, test } from 'qunitx';
 import * as TestFilePaths from '../../lib/setup/test-file-paths.ts';
 
-module('Setup | glob(*) input tests | test-file-paths tests', { concurrency: true }, () => {
-  test('TestFilePaths.setup() works correctly on different inputs', (assert) => {
+module('Setup | TestFilePaths.setup', { concurrency: true }, () => {
+  // Every dropped entry below is dropped because a broader sibling already covers it:
+  // tmp/vendor by tmp, vendor-*/files by vendor-*, tests/**/something/*-test.ts by
+  // tests/**/*.ts. The survivors are the widest inputs that between them cover the rest.
+  test('drops any input already covered by a broader sibling path or glob', (assert) => {
     const projectRoot = '/home/izelnakri/Github/qunitx';
 
     assert.deepEqual(

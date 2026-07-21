@@ -18,7 +18,7 @@ const SAMPLE: AffectedMetafile = {
   },
 };
 
-module('Utils | metafile-cache', { concurrency: true }, () => {
+module('Utils | MetafileCache', { concurrency: true }, () => {
   test('write then read round-trips esbuildCwd + metafile', async (assert) => {
     const root = await tempProjectRoot();
     await MetafileCache.write(root, '/some/cwd', SAMPLE);
@@ -80,7 +80,7 @@ module('Utils | metafile-cache', { concurrency: true }, () => {
 // cache yet", and silently runs every test file instead of the affected subset. That surfaced as
 // an intermittent CI failure of `--changed --watch scopes only the initial run`, worse under load
 // because a slower write widens the window. These pin the atomic-publish behaviour that fixes it.
-module('Utils | metafile-cache | atomic publish', { concurrency: true }, () => {
+module('Utils | MetafileCache | atomic publish', { concurrency: true }, () => {
   // Big enough that the write cannot plausibly complete between the calls below — an in-place
   // write is observably torn here (19/20 reads before the fix), so this needs no timing luck.
   const BIG: AffectedMetafile = {

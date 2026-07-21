@@ -16,7 +16,7 @@ const CWD = process.cwd();
 // Static file handler — 404 behaviour
 // ---------------------------------------------------------------------------
 
-module('Setup | web-server | static file 404', { concurrency: true }, () => {
+module('Setup | WebServer | static file 404', { concurrency: true }, () => {
   test('serves WebServer.NOT_FOUND_HTML for HTML-accepting requests to missing paths', async (assert) => {
     const server = WebServer.setup(makeConfig());
     await server.listen(0);
@@ -48,7 +48,7 @@ module('Setup | web-server | static file 404', { concurrency: true }, () => {
 // Header link — all three HTML builders link "qunitx" to "/"
 // ---------------------------------------------------------------------------
 
-module('Setup | web-server | header links to /', { concurrency: true }, () => {
+module('Setup | WebServer | header links to /', { concurrency: true }, () => {
   test('WebServer.NOT_FOUND_HTML header links to /', (assert) => {
     assert.ok(
       WebServer.NOT_FOUND_HTML.includes(
@@ -108,7 +108,7 @@ module('Setup | web-server | header links to /', { concurrency: true }, () => {
 // fresh accounting across legitimate reruns.
 // ---------------------------------------------------------------------------
 
-module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
+module('Setup | WebServer | WS testEnd dedup', { concurrency: true }, () => {
   test('duplicate testEnd in one run increments the counter exactly once', async (assert) => {
     const config = makeConfig();
     config.state.group.testEndCounts = new Map(); // run.ts / run ordinarily seeds this
@@ -222,7 +222,7 @@ async function openWebSocket(port: number): Promise<import('ws').WebSocket> {
   return ws;
 }
 
-module('Setup | web-server | runtime IIFE idempotency', { concurrency: true }, () => {
+module('Setup | WebServer | runtime IIFE idempotency', { concurrency: true }, () => {
   test('a second invocation in the same Window opens exactly one WebSocket', async (assert) => {
     // Fetch the actual served HTML so the test exercises the runtime script
     // produced by testRuntimeToInject(), not a hand-typed copy.
@@ -306,7 +306,7 @@ module('Setup | web-server | runtime IIFE idempotency', { concurrency: true }, (
 // qunit.css route — consumer's copy takes precedence over the CLI's embedded one
 // ---------------------------------------------------------------------------
 
-module('Setup | web-server | qunit.css resolution', { concurrency: true }, () => {
+module('Setup | WebServer | qunit.css resolution', { concurrency: true }, () => {
   async function fetchCss(projectRoot: string): Promise<{ status: number; body: string }> {
     const server = WebServer.setup({ ...makeConfig(), projectRoot } as Config);
     await server.listen(0);
