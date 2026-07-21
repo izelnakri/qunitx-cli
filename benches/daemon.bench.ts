@@ -16,7 +16,7 @@
  *   - daemon dispatch / IPC overhead (run-queue contention, NDJSON parser)
  *   - run.ts daemon path breakage (e.g. browser re-launched per run)
  *   - esbuild context cache-key bug (context recreated every iteration)
- *   - setupBrowser per-run cost (page + new HTTPServer + bind)
+ *   - Browser.setup per-run cost (page + new HTTPServer + bind)
  *
  * Compare against `cli: e2e run (1 passing test file)` in e2e.bench.ts —
  * daemon is expected to be 3-4× faster. A regression here that shrinks the
