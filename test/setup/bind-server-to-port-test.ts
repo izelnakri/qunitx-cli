@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import { bindServerToPort } from '../../lib/setup/bind-server-to-port.ts';
-import type { HTTPServer } from '../../lib/servers/web.ts';
+import type { HTTPServer } from '../../lib/web/index.ts';
 
 // The retry logic used to be covered only by a real-port integration test that held a port,
 // released it, and expected the CLI to reclaim it. Under the 16-worker parallel suite that port

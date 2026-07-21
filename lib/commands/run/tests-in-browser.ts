@@ -25,7 +25,7 @@ import type {
   EsbuildCache,
   QUnitResult,
 } from '../../types.ts';
-import type { HTTPServer } from '../../servers/web.ts';
+import type { HTTPServer } from '../../web/index.ts';
 
 /**
  * Returns all node_modules directories on the ancestor chain of `dir`,
