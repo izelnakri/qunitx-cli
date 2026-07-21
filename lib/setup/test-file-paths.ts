@@ -11,7 +11,7 @@ interface PathMeta {
  * Deduplicates a list of file, folder, and glob inputs so that more-specific paths covered by broader ones are removed.
  * @returns {string[]}
  */
-export function setupTestFilePaths(inputs: string[]): string[] {
+export function setup(inputs: string[]): string[] {
   const folders: PathMeta[] = [];
   const filesWithGlob: PathMeta[] = [];
   const filesWithoutGlob: PathMeta[] = [];
@@ -43,8 +43,6 @@ export function setupTestFilePaths(inputs: string[]): string[] {
 
   return dedupedFolders.concat(dedupedGlobFiles, dedupedPlainFiles).map((meta) => meta.input);
 }
-
-export { setupTestFilePaths as default };
 
 function pathIsFile(path: string): boolean {
   return path.includes('.', path.lastIndexOf('/') + 1);

@@ -6,7 +6,7 @@ import { blue } from '../utils/color.ts';
 import { defaultProjectConfigValues } from './default-project-config-values.ts';
 import { findProjectRoot } from '../utils/find-project-root.ts';
 import { buildFSTree } from './fs-tree.ts';
-import { setupTestFilePaths } from './test-file-paths.ts';
+import * as TestFilePaths from './test-file-paths.ts';
 import { getChangedFsTree } from './get-changed-fs-tree.ts';
 import * as Args from '../args/index.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
@@ -39,7 +39,7 @@ export async function setupConfig(): Promise<Config> {
     ...cliConfigFlags,
     projectRoot,
     inputs,
-    testFileLookupPaths: setupTestFilePaths(inputs),
+    testFileLookupPaths: TestFilePaths.setup(inputs),
     state: RunState.create(),
     // Asserted rather than inferred because fsTree and plugins are filled in by the awaits
     // below — the literal is deliberately partial, and the function's contract is that a
