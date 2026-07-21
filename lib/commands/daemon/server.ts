@@ -7,7 +7,7 @@ import path from 'node:path';
 import { setTimeout, clearTimeout } from 'node:timers';
 import * as Paths from './paths.ts';
 import { parseIdleTimeout } from './parse-idle-timeout.ts';
-import { attachLineParser } from './socket-io.ts';
+import * as Socket from './socket.ts';
 import * as Config from '../../setup/config.ts';
 import * as Browser from '../../setup/browser.ts';
 import { DaemonRunError } from '../run/tests-in-browser.ts';
@@ -422,7 +422,7 @@ function handleConnection(socket: net.Socket, state: DaemonState): void {
   socket.on('close', () => state.pendingClients.delete(socket));
   // Without this handler, EPIPE from the client disconnecting crashes the daemon.
   socket.on('error', () => {});
-  attachLineParser<Request>(socket, (req) => void dispatch(req, socket, state));
+  Socket.readMessages<Request>(socket, (req) => void dispatch(req, socket, state));
 }
 
 async function dispatch(req: Request, socket: net.Socket, state: DaemonState): Promise<void> {
