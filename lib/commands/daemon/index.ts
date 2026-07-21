@@ -3,7 +3,7 @@ import fs, { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { blue, magenta } from '../../utils/color.ts';
-import * as Paths from './socket-path.ts';
+import * as Paths from './paths.ts';
 import { parseDaemonIdleTimeout } from './parse-idle-timeout.ts';
 import * as Client from './client.ts';
 import pkg from '../../../package.json' with { type: 'json' };
