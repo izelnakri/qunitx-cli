@@ -3,19 +3,19 @@
  * With large test suites these functions are called thousands of times, so
  * per-call cost compounds directly into total wall-clock output time.
  */
-import * as Tap from "../lib/tap/index.ts";
+import * as TAP from "../lib/tap/index.ts";
 import { updateCounter } from "../lib/reporters/types.ts";
 import { failedAssertions } from "../lib/reporters/failure.ts";
 
-// Mirrors what a real run does per test (reportTestEnd -> TapReporter.onTestEnd): count it,
-// resolve any failures, then render. Tap.displayTestResult is a pure formatter now, so calling
+// Mirrors what a real run does per test (reportTestEnd -> TAPReporter.onTestEnd): count it,
+// resolve any failures, then render. TAP.displayTestResult is a pure formatter now, so calling
 // it alone would measure less work than the runner actually performs.
 const displayTestResult = (
   counter: Parameters<typeof updateCounter>[0],
   details: Parameters<typeof failedAssertions>[0],
 ) => {
   updateCounter(counter, details);
-  Tap.displayTestResult(counter.testCount, details, failedAssertions(details));
+  TAP.displayTestResult(counter.testCount, details, failedAssertions(details));
 };
 
 // Suppress all output once at module level — patching inside each
@@ -83,7 +83,7 @@ Deno.bench("tap: display 100 mixed results", {
 Deno.bench("tap: display final result summary", {
   group: "tap",
 }, () => {
-  Tap.displayFinalResult(
+  TAP.displayFinalResult(
     { testCount: 100, passCount: 80, skipCount: 5, todoCount: 5, failCount: 10, errorCount: 10 },
     1234,
   );
