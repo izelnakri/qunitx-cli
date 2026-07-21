@@ -1,54 +1,54 @@
 import { module, test } from 'qunitx';
-import { tokenizeArgs } from '../../lib/args/tokenize-args.ts';
+import * as Args from '../../lib/args/index.ts';
 
-module('Utils | tokenizeArgs | flags and inputs', { concurrency: true }, () => {
+module('Args | tokenize | flags and inputs', { concurrency: true }, () => {
   test('a plain flag passes through verbatim', (assert) => {
-    assert.deepEqual(tokenizeArgs(['--watch']), [{ kind: 'flag', raw: '--watch' }]);
+    assert.deepEqual(Args.tokenize(['--watch']), [{ kind: 'flag', raw: '--watch' }]);
   });
 
   test('a flag with a glued value keeps it on raw', (assert) => {
-    assert.deepEqual(tokenizeArgs(['--timeout=5000']), [{ kind: 'flag', raw: '--timeout=5000' }]);
+    assert.deepEqual(Args.tokenize(['--timeout=5000']), [{ kind: 'flag', raw: '--timeout=5000' }]);
   });
 
   test('a positional entry is an input', (assert) => {
-    assert.deepEqual(tokenizeArgs(['test/foo.ts']), [{ kind: 'input', raw: 'test/foo.ts' }]);
+    assert.deepEqual(Args.tokenize(['test/foo.ts']), [{ kind: 'input', raw: 'test/foo.ts' }]);
   });
 
   test('a lone dash is an input, not a flag', (assert) => {
-    assert.deepEqual(tokenizeArgs(['-']), [{ kind: 'input', raw: '-' }]);
+    assert.deepEqual(Args.tokenize(['-']), [{ kind: 'input', raw: '-' }]);
   });
 
   test('an input named like an Object prototype key is not misread as a query flag', (assert) => {
     // Regression: the flag lookup used to be a plain object, so `__proto__`/`constructor` resolved
     // to a truthy prototype value and were classified as query flags. A Map has no such keys.
-    assert.deepEqual(tokenizeArgs(['constructor', '__proto__']), [
+    assert.deepEqual(Args.tokenize(['constructor', '__proto__']), [
       { kind: 'input', raw: 'constructor' },
       { kind: 'input', raw: '__proto__' },
     ]);
   });
 });
 
-module('Utils | tokenizeArgs | query flags', { concurrency: true }, () => {
+module('Args | tokenize | query flags', { concurrency: true }, () => {
   test('a glued value is a single non-greedy token', (assert) => {
-    assert.deepEqual(tokenizeArgs(['--filter=adds']), [
+    assert.deepEqual(Args.tokenize(['--filter=adds']), [
       { kind: 'query', action: 'run', value: 'adds', greedy: false },
     ]);
   });
 
   test('-t=value keeps everything after the first = (regex with its own =)', (assert) => {
-    assert.deepEqual(tokenizeArgs(['-t=/a=b/i']), [
+    assert.deepEqual(Args.tokenize(['-t=/a=b/i']), [
       { kind: 'query', action: 'run', value: '/a=b/i', greedy: false },
     ]);
   });
 
   test('a bare -t greedily joins following words into the value', (assert) => {
-    assert.deepEqual(tokenizeArgs(['-t', 'Some', 'Module', 'loading', 'tests']), [
+    assert.deepEqual(Args.tokenize(['-t', 'Some', 'Module', 'loading', 'tests']), [
       { kind: 'query', action: 'run', value: 'Some Module loading tests', greedy: true },
     ]);
   });
 
   test('greedy consumption stops at the next flag', (assert) => {
-    assert.deepEqual(tokenizeArgs(['-m', 'Some', 'Module', '--junit', '--reporter=spec']), [
+    assert.deepEqual(Args.tokenize(['-m', 'Some', 'Module', '--junit', '--reporter=spec']), [
       { kind: 'query', action: 'run', value: 'Some Module', greedy: true },
       { kind: 'flag', raw: '--junit' },
       { kind: 'flag', raw: '--reporter=spec' },
@@ -57,7 +57,7 @@ module('Utils | tokenizeArgs | query flags', { concurrency: true }, () => {
 
   test('-m/--module are spellings of the same filter action as -t/--filter', (assert) => {
     const spellings = ['-t', '--filter', '-m', '--module'].map(
-      (flag) => tokenizeArgs([flag, 'Cart'])[0],
+      (flag) => Args.tokenize([flag, 'Cart'])[0],
     );
     assert.deepEqual(
       spellings,
@@ -67,7 +67,7 @@ module('Utils | tokenizeArgs | query flags', { concurrency: true }, () => {
 
   test('-s/--search/--print/--preview are spellings of the search action', (assert) => {
     const spellings = ['-s', '--search', '--print', '--preview'].map(
-      (flag) => tokenizeArgs([flag, 'Cart'])[0],
+      (flag) => Args.tokenize([flag, 'Cart'])[0],
     );
     assert.deepEqual(
       spellings,
@@ -76,34 +76,34 @@ module('Utils | tokenizeArgs | query flags', { concurrency: true }, () => {
   });
 
   test('-p is NOT a search spelling — it is a plain flag (the --port short alias)', (assert) => {
-    assert.deepEqual(tokenizeArgs(['-p=8080']), [{ kind: 'flag', raw: '-p=8080' }]);
+    assert.deepEqual(Args.tokenize(['-p=8080']), [{ kind: 'flag', raw: '-p=8080' }]);
     // `-p 8080` therefore does not greedily swallow 8080 as a query value; 8080 is a positional.
-    assert.deepEqual(tokenizeArgs(['-p', '8080']), [
+    assert.deepEqual(Args.tokenize(['-p', '8080']), [
       { kind: 'flag', raw: '-p' },
       { kind: 'input', raw: '8080' },
     ]);
   });
 
   test('a bare --print yields a null value (list everything)', (assert) => {
-    assert.deepEqual(tokenizeArgs(['--print']), [
+    assert.deepEqual(Args.tokenize(['--print']), [
       { kind: 'query', action: 'list', value: null, greedy: true },
     ]);
   });
 
   test('an inverted single-word filter is captured (! is not a flag)', (assert) => {
-    assert.deepEqual(tokenizeArgs(['-t', '!slow']), [
+    assert.deepEqual(Args.tokenize(['-t', '!slow']), [
       { kind: 'query', action: 'run', value: '!slow', greedy: true },
     ]);
   });
 
   test('a bare -t with nothing after it yields a null value', (assert) => {
-    assert.deepEqual(tokenizeArgs(['-t']), [
+    assert.deepEqual(Args.tokenize(['-t']), [
       { kind: 'query', action: 'run', value: null, greedy: true },
     ]);
   });
 
   test('a bare -t immediately before another flag yields a null value', (assert) => {
-    assert.deepEqual(tokenizeArgs(['-t', '--watch']), [
+    assert.deepEqual(Args.tokenize(['-t', '--watch']), [
       { kind: 'query', action: 'run', value: null, greedy: true },
       { kind: 'flag', raw: '--watch' },
     ]);
@@ -112,23 +112,23 @@ module('Utils | tokenizeArgs | query flags', { concurrency: true }, () => {
   test('two query flags in a row each take their own value', (assert) => {
     // -m and -t are the same action now, so the parser resolves the clash (last wins + a warning);
     // the tokenizer's job is only to keep the two values apart.
-    assert.deepEqual(tokenizeArgs(['-m', 'Cart', '-t', 'adds to cart']), [
+    assert.deepEqual(Args.tokenize(['-m', 'Cart', '-t', 'adds to cart']), [
       { kind: 'query', action: 'run', value: 'Cart', greedy: true },
       { kind: 'query', action: 'run', value: 'adds to cart', greedy: true },
     ]);
   });
 
   test('a filter and a search expression are separate actions', (assert) => {
-    assert.deepEqual(tokenizeArgs(['-t', 'Cart', '-s', 'Coupons']), [
+    assert.deepEqual(Args.tokenize(['-t', 'Cart', '-s', 'Coupons']), [
       { kind: 'query', action: 'run', value: 'Cart', greedy: true },
       { kind: 'query', action: 'list', value: 'Coupons', greedy: true },
     ]);
   });
 });
 
-module('Utils | tokenizeArgs | ordering and --', { concurrency: true }, () => {
+module('Args | tokenize | ordering and --', { concurrency: true }, () => {
   test('inputs before a query flag stay inputs; the value is everything after', (assert) => {
-    assert.deepEqual(tokenizeArgs(['test/a', 'test/b', '-m', 'Some Module']), [
+    assert.deepEqual(Args.tokenize(['test/a', 'test/b', '-m', 'Some Module']), [
       { kind: 'input', raw: 'test/a' },
       { kind: 'input', raw: 'test/b' },
       { kind: 'query', action: 'run', value: 'Some Module', greedy: true },
@@ -138,13 +138,13 @@ module('Utils | tokenizeArgs | ordering and --', { concurrency: true }, () => {
   test('a bare query flag swallows following inputs (the ordering footgun)', (assert) => {
     // This is the documented cost of greedy parsing: `test/foo` lands in the value. `--` or
     // putting targets first is the escape hatch, exercised below.
-    assert.deepEqual(tokenizeArgs(['-t', 'foo', 'test/foo']), [
+    assert.deepEqual(Args.tokenize(['-t', 'foo', 'test/foo']), [
       { kind: 'query', action: 'run', value: 'foo test/foo', greedy: true },
     ]);
   });
 
   test('-- ends option parsing: everything after is an input', (assert) => {
-    assert.deepEqual(tokenizeArgs(['-t', 'foo', '--', 'test/foo', '--weird']), [
+    assert.deepEqual(Args.tokenize(['-t', 'foo', '--', 'test/foo', '--weird']), [
       { kind: 'query', action: 'run', value: 'foo', greedy: true },
       { kind: 'input', raw: 'test/foo' },
       { kind: 'input', raw: '--weird' },
@@ -152,7 +152,7 @@ module('Utils | tokenizeArgs | ordering and --', { concurrency: true }, () => {
   });
 
   test('greedy consumption halts at -- without swallowing it', (assert) => {
-    assert.deepEqual(tokenizeArgs(['-m', 'Cart', '--', 'test/']), [
+    assert.deepEqual(Args.tokenize(['-m', 'Cart', '--', 'test/']), [
       { kind: 'query', action: 'run', value: 'Cart', greedy: true },
       { kind: 'input', raw: 'test/' },
     ]);
