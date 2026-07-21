@@ -1,6 +1,6 @@
 import { getChangedFiles } from '../utils/get-changed-files.ts';
 import { getChangedFilePathsInGitSince } from '../utils/get-changed-file-paths-in-git-since.ts';
-import { readMetafileCache } from '../utils/metafile-cache.ts';
+import * as MetafileCache from '../utils/metafile-cache.ts';
 import type { FSTree } from '../types.ts';
 
 /**
@@ -26,7 +26,7 @@ export async function getChangedFsTree(
   const testFiles = Object.keys(fsTree);
   if (testFiles.length === 0) return fsTree;
 
-  const cache = await readMetafileCache(projectRoot);
+  const cache = await MetafileCache.read(projectRoot);
   if (!cache) {
     process.stdout.write(
       `# --changed: no metafile cache yet — running all ${testFiles.length} test files (cache populates on this run)\n`,

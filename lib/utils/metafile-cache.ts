@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import path from 'node:path';
+import nodePath from 'node:path';
 import { createHash } from 'node:crypto';
 import type { AffectedMetafile } from './get-changed-files.ts';
 
@@ -35,9 +35,9 @@ let writeSequence = 0;
  * to distinct files. 12 hex chars is far below collision risk for the scale of
  * "projects on one machine."
  */
-export function metafileCachePath(projectRoot: string): string {
+export function path(projectRoot: string): string {
   const tag = createHash('sha1').update(projectRoot).digest('hex').slice(0, 12);
-  return path.join(projectRoot, 'node_modules', '.cache', 'qunitx', tag, CACHE_FILE);
+  return nodePath.join(projectRoot, 'node_modules', '.cache', 'qunitx', tag, CACHE_FILE);
 }
 
 /**
@@ -54,15 +54,15 @@ export function metafileCachePath(projectRoot: string): string {
  * concurrent writers (two runs sharing a checkout) and a process killed mid-write safe: the
  * worst case is a leftover temp file, never a corrupt cache.
  */
-export async function writeMetafileCache(
+export async function write(
   projectRoot: string,
   esbuildCwd: string,
   metafile: AffectedMetafile,
 ): Promise<void> {
-  const file = metafileCachePath(projectRoot);
+  const file = path(projectRoot);
   const tmpFile = `${file}.${process.pid}-${++writeSequence}.tmp`;
   try {
-    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.mkdir(nodePath.dirname(file), { recursive: true });
     await fs.writeFile(
       tmpFile,
       JSON.stringify({ esbuildCwd, metafile } satisfies MetafileCachePayload),
@@ -75,9 +75,9 @@ export async function writeMetafileCache(
 }
 
 /** Reads the cached metafile. Returns `null` on miss or corruption. */
-export async function readMetafileCache(projectRoot: string): Promise<MetafileCachePayload | null> {
+export async function read(projectRoot: string): Promise<MetafileCachePayload | null> {
   try {
-    const raw = await fs.readFile(metafileCachePath(projectRoot), 'utf8');
+    const raw = await fs.readFile(path(projectRoot), 'utf8');
     const parsed = JSON.parse(raw) as MetafileCachePayload;
     if (typeof parsed?.esbuildCwd !== 'string' || !parsed.metafile?.inputs) return null;
     return parsed;
