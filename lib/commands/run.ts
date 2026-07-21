@@ -2,11 +2,7 @@ import * as Browser from '../setup/browser.ts';
 import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { HTTPServer } from '../servers/web.ts';
 import { bindServerToPort } from '../setup/bind-server-to-port.ts';
-import {
-  registerGroupRoutes,
-  setupGroupWSHandler,
-  registerSharedStaticHandler,
-} from '../setup/web-server.ts';
+import * as WebServer from '../setup/web-server.ts';
 import { openOutputInBrowser } from '../utils/open-output-in-browser.ts';
 import fs from 'node:fs/promises';
 import { normalize } from 'node:path';
@@ -390,9 +386,9 @@ async function runConcurrentMode(
     groupCount > 1 && build.htmlPathsToRunTests[0] === '/' && build.htmlPathsToRunTests.length === 1
       ? (() => {
           const s = new HTTPServer();
-          setupGroupWSHandler(s, groupConfigs);
-          groupConfigs.forEach((gc) => registerGroupRoutes(s, gc));
-          registerSharedStaticHandler(s, groupConfigs);
+          WebServer.setupGroupWSHandler(s, groupConfigs);
+          groupConfigs.forEach((gc) => WebServer.registerGroupRoutes(s, gc));
+          WebServer.registerSharedStaticHandler(s, groupConfigs);
           return s;
         })()
       : null;

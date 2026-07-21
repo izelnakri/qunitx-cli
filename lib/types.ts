@@ -255,7 +255,7 @@ export interface GroupState {
   testEndCounts: Map<string, number>;
   /**
    * Diagnostic-only: how many distinct WS connections this group's wss handler has accepted.
-   * Reset per `setupWebServer` call. > 1 means the browser opened multiple WebSocket connections
+   * Reset per `WebServer.setup` call. > 1 means the browser opened multiple WebSocket connections
    * within one run — the prime suspect for the 2× test-execution flake (WS retry path in the
    * injected runtime).
    */

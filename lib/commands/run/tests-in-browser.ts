@@ -7,7 +7,7 @@ import esbuild from 'esbuild';
 import { timeCounter } from '../../utils/time-counter.ts';
 import { runUserModule } from '../../utils/run-user-module.ts';
 import * as Reporter from '../../reporters/index.ts';
-import { buildErrorHTML, buildNoTestsHTML } from '../../setup/web-server.ts';
+import * as WebServer from '../../setup/web-server.ts';
 import * as SourceMap from '../../utils/source-map.ts';
 import * as Coverage from '../../coverage/index.ts';
 import * as MetafileCache from '../../utils/metafile-cache.ts';
@@ -244,7 +244,7 @@ export async function buildTestBundle(config: Config): Promise<void> {
     // and in watch mode the Playwright page is headless so it never navigates to trigger the
     // route — the --open user browser reloads via WebSocket 'refresh' and does it instead,
     // but that's async and user-dependent. Writing here guarantees the file is always current.
-    await fs.writeFile(path.join(outDir, 'index.html'), buildErrorHTML(buildError));
+    await fs.writeFile(path.join(outDir, 'index.html'), WebServer.buildErrorHTML(buildError));
     throw error;
   }
 }
@@ -357,9 +357,10 @@ export async function runTestsInBrowser(
         console.log(
           `# Warning: 0 tests registered — no QUnit test cases found in ${allTestFilePaths.length} ${fileWord}`,
         );
-        fs.writeFile(path.join(outDir, 'index.html'), buildNoTestsHTML(displayFiles)).catch(
-          () => {},
-        );
+        fs.writeFile(
+          path.join(outDir, 'index.html'),
+          WebServer.buildNoTestsHTML(displayFiles),
+        ).catch(() => {});
       }
 
       await Reporter.runEnd(config, { durationMs: TIME_TAKEN });
@@ -419,7 +420,7 @@ export async function runTestsInBrowser(
     ) {
       const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
       build.fallbackPage = { kind: 'build-error', error: buildError };
-      fs.writeFile(path.join(outDir, 'qunitx.html'), buildErrorHTML(buildError)).catch(
+      fs.writeFile(path.join(outDir, 'qunitx.html'), WebServer.buildErrorHTML(buildError)).catch(
         (err: Error) =>
           config.debug &&
           process.stderr.write(`# [qunitx] writeFile qunitx.html: ${err.message}\n`),
@@ -620,7 +621,7 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
     }
   } catch (error) {
     const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
-    const errorHtml = buildErrorHTML(buildError);
+    const errorHtml = WebServer.buildErrorHTML(buildError);
     await Promise.all(
       activeGroups.map((group) => {
         group.build.fallbackPage = { kind: 'build-error', error: buildError };
