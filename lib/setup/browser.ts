@@ -1,7 +1,6 @@
 import * as WebServer from './web-server.ts';
 import { bindServerToPort } from './bind-server-to-port.ts';
-import { findChrome } from '../chrome/find-chrome.ts';
-import { CHROMIUM_ARGS } from '../chrome/chromium-args.ts';
+import * as Chrome from '../chrome/index.ts';
 import { prelaunchPromise, shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { perfLog } from '../utils/perf-log.ts';
 import * as RunState from './run-state.ts';
@@ -69,9 +68,9 @@ export async function launch(config: Config, skipPrelaunch = false): Promise<Bro
     // (Google Chrome for Testing) is not used here because playwright-core unconditionally adds
     // --enable-unsafe-swiftshader, which crashes the ARM64 Chrome renderer on macOS CI VMs.
     // chromium-headless-shell is purpose-built for this and does not have that issue.
-    const executablePath = process.platform !== 'darwin' ? await findChrome() : null;
+    const executablePath = process.platform !== 'darwin' ? await Chrome.find() : null;
     const launchOptions: Parameters<typeof playwrightCore.chromium.launch>[0] = {
-      args: CHROMIUM_ARGS,
+      args: Chrome.CHROMIUM_ARGS,
       headless: true,
       // Disable Playwright's async SIGTERM/SIGHUP handlers. When the CLI is killed by an
       // external signal (e.g. exec() timeout in tests), those handlers start an async browser

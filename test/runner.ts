@@ -25,7 +25,7 @@ import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import createSemaphoreServer from './helpers/semaphore-server.ts';
 import { killProcessGroup } from '../lib/utils/kill-process-group.ts';
-import { cleanupBrowserDir } from '../lib/chrome/cleanup-browser-dir.ts';
+import * as Chrome from '../lib/chrome/index.ts';
 import { PER_TEST_TIMEOUT_MS } from './helpers/per-test-timeout.ts';
 import { joinRunnerRegistry } from './helpers/runner-registry.ts';
 
@@ -514,7 +514,7 @@ async function sweepOrphanedChrome(): Promise<void> {
     // cleanupBrowserDir kills any surviving FD-holders and retries rm() for up to 5s,
     // using rm() as the synchronisation point — correct even when zombie processes are
     // present (kill(pid, 0) succeeds for zombies but rm() does not).
-    await Promise.all(chromeDirs.map((dir) => cleanupBrowserDir(path.join(tmpDir, dir))));
+    await Promise.all(chromeDirs.map((dir) => Chrome.cleanupDir(path.join(tmpDir, dir))));
   } catch {
     /* best effort — never block suite exit */
   }

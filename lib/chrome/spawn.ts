@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process';
+import { spawn as spawnProcess } from 'node:child_process';
 import { killProcessGroup } from '../utils/kill-process-group.ts';
-import { cleanupBrowserDir } from './cleanup-browser-dir.ts';
+import { cleanupDir } from './cleanup-dir.ts';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,7 +14,7 @@ const CDP_URL_REGEX = /DevTools listening on (ws:\/\/[^\s]+)/;
  * CDP WebSocket endpoint appears on stderr. Returns null if Chrome is unavailable or fails
  * to start, so callers can fall back to playwright's normal `chromium.launch()`.
  */
-export async function spawnChrome(
+export async function spawn(
   chromePath: string | null | undefined,
   args: string[],
   headless = true,
@@ -24,7 +24,7 @@ export async function spawnChrome(
 
   const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'qunitx-chrome-'));
   const headlessArgs = headless ? ['--headless=new'] : [];
-  const proc = spawn(
+  const proc = spawnProcess(
     chromePath,
     ['--remote-debugging-port=0', `--user-data-dir=${userDataDir}`, ...headlessArgs, ...args],
     // detached: true puts Chrome in its own process group (PGID = proc.pid).
@@ -41,7 +41,7 @@ export async function spawnChrome(
   onSpawn?.({ proc, shutdown });
 
   // userDataDir is cleaned exactly once. On a dead-on-arrival Chrome the `close` handler below
-  // rm()s it; on a normal run shutdown()'s cleanupBrowserDir() does. Both use rm({ force: true }),
+  // rm()s it; on a normal run shutdown()'s cleanupDir() does. Both use rm({ force: true }),
   // so if shutdown() is now called in the pre-CDP window as well, the second removal is a no-op.
   let cdpConnected = false;
 
@@ -85,7 +85,7 @@ export async function spawnChrome(
   // event loop makes the exitCode check and once('close') registration atomic — no event
   // can fire between them.
   //
-  // We skip any intermediate rm() attempt and go straight to cleanupBrowserDir, which uses
+  // We skip any intermediate rm() attempt and go straight to cleanupDir, which uses
   // rm() itself as the synchronisation point (retry until success, not until process-table
   // cleanup). A PGID poll loop would stall indefinitely on zombie early Chrome children
   // (same PGID as Chrome main, awaiting init reaping): kill(-pgid, 0) succeeds for zombies
@@ -96,6 +96,6 @@ export async function spawnChrome(
       killProcessGroup(proc.pid!);
       await new Promise<void>((resolve) => proc.once('close', resolve));
     }
-    await cleanupBrowserDir(userDataDir);
+    await cleanupDir(userDataDir);
   }
 }
