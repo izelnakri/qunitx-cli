@@ -29,7 +29,7 @@ perfLog('browser.js: playwright-core import started');
  * prelaunch is a one-shot startup optimization and recovery needs a fresh browser.
  * @returns {Promise<object>}
  */
-export async function launchBrowser(config: Config, skipPrelaunch = false): Promise<Browser> {
+export async function launch(config: Config, skipPrelaunch = false): Promise<Browser> {
   const browserName = config.browser || 'chromium';
 
   if (browserName === 'chromium') {
@@ -115,7 +115,7 @@ export async function launchBrowser(config: Config, skipPrelaunch = false): Prom
  * Launches a Playwright browser (or reuses an existing one), starts the web server, and returns the page/server/browser connection object.
  * @returns {Promise<{server: object, browser: object, page: object}>}
  */
-export async function setupBrowser(
+export async function setup(
   config: Config,
   existingBrowser: Browser | null = null,
   sharedServer: HTTPServer | null = null,
@@ -148,7 +148,7 @@ export async function setupBrowser(
     const newServer = setupWebServer(config);
     perfLog(`browser.js: setupWebServer took ${Date.now() - setupStart}ms`);
 
-    const activeBrowser = existingBrowser ?? (await launchBrowser(config));
+    const activeBrowser = existingBrowser ?? (await launch(config));
     const pageStart = Date.now();
     // In headed watch mode (bare --open + --watch), Chrome is pre-launched without --headless=new
     // so it already has a blank default tab. Reuse that page instead of opening a new one —
@@ -219,5 +219,3 @@ export async function setupBrowser(
 
   return { server, browser, page };
 }
-
-export { setupBrowser as default };
