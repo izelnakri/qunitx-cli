@@ -3,8 +3,7 @@ import fs from 'node:fs/promises';
 import { rmRetry } from '../helpers/rm-retry.ts';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
-import { execute as shell, shellFails, spawnCapture } from '../helpers/shell.ts';
-import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
+import { execute as shell, shellFails } from '../helpers/shell.ts';
 
 const NESTED = 'test/fixtures/nested-module-tests.ts';
 const CWD = process.cwd();
@@ -248,16 +247,6 @@ module('filtered runs and the persistent caches', { concurrency: true }, () => {
   });
 });
 
-// The default `shell` export has no cwd option, so cwd-scoped runs go through spawnCapture
-// directly — which means hand-rolling the --output flag and the browser permit it would add.
-async function runInProject(cwd: string, args: string) {
-  const permit = await acquireBrowser();
-  try {
-    return await spawnCapture(`node ${CWD}/cli.ts ${args} --output=tmp/run-${randomUUID()}`, {
-      env: { ...process.env, FORCE_COLOR: '0' },
-      cwd,
-    });
-  } finally {
-    permit.release();
-  }
+function runInProject(cwd: string, args: string) {
+  return shell(`node ${CWD}/cli.ts ${args}`, { cwd });
 }

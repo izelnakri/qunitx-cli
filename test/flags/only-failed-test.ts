@@ -3,8 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
-import { spawnCapture, shellWatch } from '../helpers/shell.ts';
-import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
+import { shellFails, shellWatch } from '../helpers/shell.ts';
 
 const CWD = process.cwd();
 
@@ -153,25 +152,13 @@ async function writeWithMkdir(filePath: string, content: string): Promise<void> 
   await fs.writeFile(filePath, content);
 }
 
-// spawnCapture takes cwd directly so qunitx resolves the project's package.json + tests (not
-// qunitx-cli's). Auto-output keeps parallel runs from clobbering one another. The failure cache
-// lives at the project's literal tmp/.qunitx-last-failures.json — independent of --output.
-// spawnCapture rejects on a non-zero exit; failing test runs are expected here, so we catch and
-// return the rejected CapturedError — it carries the same { code, stdout } shape the asserts read
-// (the shellFails pattern, but with cwd support that shellFails/execute don't forward).
-async function runCli(project: OnlyFailedProject, args: string) {
-  const id = crypto.randomUUID();
-  const permit = await acquireBrowser();
-  try {
-    return await spawnCapture(`node ${CWD}/cli.ts ${args} --output=tmp/run-${id}`, {
-      env: { ...process.env, FORCE_COLOR: '0' },
-      cwd: project.cwd,
-    });
-  } catch (error) {
-    return error as Awaited<ReturnType<typeof spawnCapture>>;
-  } finally {
-    permit.release();
-  }
+// cwd puts the run inside the project so qunitx resolves its package.json + tests, not
+// qunitx-cli's. The failure cache lives at the project's literal
+// tmp/.qunitx-last-failures.json — independent of --output. shellFails rather than shell
+// because failing runs are the point here, and it returns the CapturedError with the same
+// { code, stdout } shape the asserts read.
+function runCli(project: OnlyFailedProject, args: string) {
+  return shellFails(`node ${CWD}/cli.ts ${args}`, { cwd: project.cwd });
 }
 
 async function readCache(project: OnlyFailedProject): Promise<{ files: string[] } | null> {

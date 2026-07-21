@@ -4,8 +4,7 @@ import crypto from 'node:crypto';
 import { runGit } from '../../lib/utils/get-changed-file-paths-in-git-since.ts';
 import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
-import { spawnCapture, shellWatch } from '../helpers/shell.ts';
-import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
+import { execute as shell, shellWatch } from '../helpers/shell.ts';
 import * as MetafileCache from '../../lib/utils/metafile-cache.ts';
 
 const CWD = process.cwd();
@@ -67,21 +66,10 @@ async function writeWithMkdir(filePath: string, content: string): Promise<void> 
   await fs.writeFile(filePath, content);
 }
 
-// Default `shell` doesn't forward cwd, and these tests must run inside their
-// per-project directory so qunitx finds their package.json + test files (not
-// qunitx-cli's). spawnCapture takes cwd directly. Auto-output keeps parallel
-// runs from clobbering one another.
-async function runCli(project: ChangedProject, args: string) {
-  const id = crypto.randomUUID();
-  const permit = await acquireBrowser();
-  try {
-    return await spawnCapture(`node ${CWD}/cli.ts ${args} --output=tmp/run-${id}`, {
-      env: { ...process.env, FORCE_COLOR: '0' },
-      cwd: project.cwd,
-    });
-  } finally {
-    permit.release();
-  }
+// These tests must run inside their per-project directory so qunitx finds their
+// package.json + test files, not qunitx-cli's.
+function runCli(project: ChangedProject, args: string) {
+  return shell(`node ${CWD}/cli.ts ${args}`, { cwd: project.cwd });
 }
 
 module('--changed flag', { concurrency: true }, () => {
