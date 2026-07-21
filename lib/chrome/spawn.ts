@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { Socket } from 'node:net';
-import type { EarlyChrome } from '../types.ts';
+import type { ChromeHandle, EarlyChrome } from '../types.ts';
 
 const CDP_URL_REGEX = /DevTools listening on (ws:\/\/[^\s]+)/;
 
@@ -18,7 +18,7 @@ export async function preLaunchChrome(
   chromePath: string | null | undefined,
   args: string[],
   headless = true,
-  onSpawn?: (proc: import('node:child_process').ChildProcess) => void,
+  onSpawn?: (handle: ChromeHandle) => void,
 ): Promise<EarlyChrome | null> {
   if (!chromePath) return null;
 
@@ -33,17 +33,16 @@ export async function preLaunchChrome(
     // subprocesses from accumulating inotify watches across test runs.
     { stdio: ['ignore', 'ignore', 'pipe'], detached: true },
   );
-  // Notify the caller of the spawned proc synchronously, BEFORE the CDP-ready
-  // wait below resolves. The caller (chrome-prelaunch.ts) uses this to track
-  // the Chrome PID immediately so its process.on('exit') fallback can SIGKILL
-  // Chrome even if the process exits while CDP is still negotiating —
-  // important for the daemon's decoupled-launch path where the daemon can
-  // shut down with Chrome still mid-launch and otherwise leak the process.
-  onSpawn?.(proc);
+  // Hand the caller a full handle — proc AND shutdown — synchronously, BEFORE the CDP-ready
+  // wait below resolves. `shutdown` is a hoisted declaration closing over just `proc` and
+  // `userDataDir`, so it is fully callable this early. The caller (chrome-prelaunch.ts) stores
+  // it so both its process.on('exit') reaper and shutdownPrelaunch() can act on a Chrome that
+  // dies while CDP is still negotiating — the decoupled-launch daemon path, or any early crash.
+  onSpawn?.({ proc, shutdown });
 
-  // Cleanup runs exactly one path: rm() here when Chrome never connected (shutdown() won't
-  // be called), or cleanupBrowserDir() in shutdown() when it did. The cdpConnected flag
-  // ensures only one path ever touches userDataDir.
+  // userDataDir is cleaned exactly once. On a dead-on-arrival Chrome the `close` handler below
+  // rm()s it; on a normal run shutdown()'s cleanupBrowserDir() does. Both use rm({ force: true }),
+  // so if shutdown() is now called in the pre-CDP window as well, the second removal is a no-op.
   let cdpConnected = false;
 
   proc.on('close', () => {

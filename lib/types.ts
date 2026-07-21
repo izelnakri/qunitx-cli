@@ -477,11 +477,21 @@ export interface Connections {
  * A Chrome process started via CDP pre-launch before `playwright-core` has loaded.
  * Stored in a module-level promise in `chrome-prelaunch.ts` and consumed by `browser.ts`.
  */
-export interface EarlyChrome {
+/**
+ * Handles to a pre-launched Chrome, available **synchronously** the moment it is spawned —
+ * before the CDP endpoint is known. Enough to reap the process and its temp dir, which is all
+ * the `process.on('exit')` safety net and `shutdownPrelaunch()` need.
+ */
+export interface ChromeHandle {
   /** The spawned Chrome child process. */
   proc: ChildProcess;
+  /** Kills Chrome and awaits async temp-dir cleanup. Safe to call before CDP is ready, and
+   * idempotent with Chrome's own dead-on-arrival cleanup. Call before `process.exit()`. */
+  shutdown: () => Promise<void>;
+}
+
+/** A {@link ChromeHandle} plus the CDP endpoint, resolved once Chrome is listening. */
+export interface EarlyChrome extends ChromeHandle {
   /** The `ws://` URL exposed by Chrome's CDP remote debugging endpoint. */
   cdpEndpoint: string;
-  /** Kills Chrome and awaits async temp-dir cleanup. Call before `process.exit()`. */
-  shutdown: () => Promise<void>;
 }
