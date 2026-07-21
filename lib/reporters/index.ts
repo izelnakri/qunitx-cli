@@ -50,7 +50,7 @@ export async function runEnd(config: Config, info: RunEndInfo): Promise<void> {
   }
 }
 
-// Exactly one stdout reporter per run. `--reporter` is validated in parse-cli-flags, so an
+// Exactly one stdout reporter per run. `--reporter` is validated in Args.parse, so an
 // unknown value never reaches here; tap is the default and the fallback.
 function stdoutReporter(config: Config): Reporter {
   return new (STDOUT_REPORTERS[config.reporter ?? 'tap'] ?? TapReporter)();
