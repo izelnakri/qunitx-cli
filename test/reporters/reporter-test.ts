@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { updateCounter } from '../../lib/reporter/types.ts';
+import { updateCounter } from '../../lib/reporters/types.ts';
 import type { Counter } from '../../lib/types.ts';
 
 // updateCounter owns all counter math, split out of the TAP formatter so the numbers are

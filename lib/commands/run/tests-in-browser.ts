@@ -6,7 +6,7 @@ import { closeWithGrace } from '../../utils/close-with-grace.ts';
 import esbuild from 'esbuild';
 import { timeCounter } from '../../utils/time-counter.ts';
 import { runUserModule } from '../../utils/run-user-module.ts';
-import { reportRunEnd } from '../../reporter/index.ts';
+import * as Reporter from '../../reporters/index.ts';
 import { buildErrorHTML, buildNoTestsHTML } from '../../setup/web-server.ts';
 import * as SourceMap from '../../utils/source-map.ts';
 import { collectCoverage } from '../../coverage/collect.ts';
@@ -363,7 +363,7 @@ export async function runTestsInBrowser(
         );
       }
 
-      await reportRunEnd(config, { durationMs: TIME_TAKEN });
+      await Reporter.runEnd(config, { durationMs: TIME_TAKEN });
 
       // Persist failures for the next `--only-failed`. Skip partial reruns — whether scoped to
       // a file subset (runHasFilter) or to a test subset (-t/-m/line target) — so a scoped

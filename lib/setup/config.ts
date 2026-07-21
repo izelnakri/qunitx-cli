@@ -10,7 +10,7 @@ import { setupTestFilePaths } from './test-file-paths.ts';
 import { getChangedFsTree } from './get-changed-fs-tree.ts';
 import { parseCliFlags } from '../args/parse-cli-flags.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
-import { createReporters } from '../reporter/index.ts';
+import * as Reporter from '../reporters/index.ts';
 import * as RunState from './run-state.ts';
 import type { Config, FSTree } from '../types.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
@@ -71,7 +71,7 @@ export async function setupConfig(): Promise<Config> {
 
   // Built last: reporter selection reads the fully-merged flags. One instance per run, shared
   // by every concurrent group via the group-config spread in run.ts.
-  config.state.reporters = createReporters(config);
+  config.state.reporters = Reporter.create(config);
 
   return config;
 }

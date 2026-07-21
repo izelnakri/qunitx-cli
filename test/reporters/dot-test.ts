@@ -1,8 +1,8 @@
 import { module, test } from 'qunitx';
-import { DotReporter } from '../../lib/reporter/dot.ts';
-import { updateCounter } from '../../lib/reporter/types.ts';
+import { DotReporter } from '../../lib/reporters/dot.ts';
+import { updateCounter } from '../../lib/reporters/types.ts';
 import * as RunState from '../../lib/setup/run-state.ts';
-import type { TestDetails } from '../../lib/reporter/types.ts';
+import type { TestDetails } from '../../lib/reporters/types.ts';
 import type { Config } from '../../lib/types.ts';
 import '../helpers/custom-asserts.ts';
 import { captureStdout } from '../helpers/capture-stdout.ts';
