@@ -12,7 +12,7 @@ import path from 'node:path';
  *
  * `platform` is parameterized for testability; it defaults to `process.platform`.
  */
-export function daemonSocketPath(
+export function socket(
   cwd: string = process.cwd(),
   platform: NodeJS.Platform = process.platform,
 ): string {
@@ -27,7 +27,7 @@ export function daemonSocketPath(
  *
  * Why a subdirectory instead of files directly under os.tmpdir():
  * the client's `waitForFile` (see lib/commands/daemon/index.ts) calls
- * `fs.watch(path.dirname(daemonInfoPath()))` to detect daemon-readiness.
+ * `fs.watch(path.dirname(info()))` to detect daemon-readiness.
  * On Windows, `fs.watch` on `os.tmpdir()` itself crashes the process with
  * `Assertion failed: !_wcsnicmp(filename, dir, dirlen), file src\win\fs-event.c, line 72`
  * (libuv exit code 3221226505 / STATUS_STACK_BUFFER_OVERRUN) when concurrent
@@ -38,7 +38,7 @@ export function daemonSocketPath(
  * Giving the daemon its own small private directory keeps watch traffic to
  * events the watcher actually cares about and sidesteps the libuv wart.
  */
-export function daemonDir(cwd: string = process.cwd()): string {
+export function dir(cwd: string = process.cwd()): string {
   return path.join(os.tmpdir(), `qunitx-daemon-${cwdHash(cwd)}`);
 }
 
@@ -48,11 +48,11 @@ export function daemonDir(cwd: string = process.cwd()): string {
  * an IPC roundtrip, and serves as the cross-platform "is a daemon present?" sentinel
  * since Windows named pipes are not visible on the regular filesystem.
  *
- * Lives inside `daemonDir(cwd)` rather than directly under os.tmpdir() — see
- * `daemonDir` for the Windows-fs.watch crash this avoids.
+ * Lives inside `dir(cwd)` rather than directly under os.tmpdir() — see
+ * `dir` for the Windows-fs.watch crash this avoids.
  */
-export function daemonInfoPath(cwd: string = process.cwd()): string {
-  return path.join(daemonDir(cwd), 'info.json');
+export function info(cwd: string = process.cwd()): string {
+  return path.join(dir(cwd), 'info.json');
 }
 
 // Socket path is derived from the cwd hash so each project gets its own daemon.

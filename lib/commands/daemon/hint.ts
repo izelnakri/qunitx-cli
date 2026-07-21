@@ -25,7 +25,7 @@ export interface HintContext {
   isTTY?: boolean;
 }
 
-/** Side-effect injection points for `maybePrintDaemonHint` — testing seams. */
+/** Side-effect injection points for `maybePrint` — testing seams. */
 export interface PrintOpts {
   /** Sentinel-file path (defaults to `~/.cache/qunitx/hint-shown`). */
   sentinelPath?: string;
@@ -38,7 +38,7 @@ export interface PrintOpts {
  * opt-outs, watch / daemon modes (own browser lifecycle), CI (auto-bypassed),
  * the fast-run threshold, and TTY presence. No filesystem access.
  */
-export function shouldShowDaemonHint(ctx: HintContext): boolean {
+export function shouldShow(ctx: HintContext): boolean {
   const env = ctx.env ?? process.env;
   if (ctx.watch) return false;
   if (ctx.daemonMode) return false;
@@ -58,8 +58,8 @@ export function shouldShowDaemonHint(ctx: HintContext): boolean {
  * shouldn't be nagged. All filesystem I/O is best-effort: a sentinel-write
  * failure just means the hint shows again on the next eligible run.
  */
-export async function maybePrintDaemonHint(ctx: HintContext, opts: PrintOpts = {}): Promise<void> {
-  if (!shouldShowDaemonHint(ctx)) return;
+export async function maybePrint(ctx: HintContext, opts: PrintOpts = {}): Promise<void> {
+  if (!shouldShow(ctx)) return;
   const sentinel = opts.sentinelPath ?? DEFAULT_SENTINEL;
   try {
     await fs.access(sentinel);

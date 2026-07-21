@@ -4,8 +4,8 @@ import fs from 'node:fs/promises';
 import nodeFs, { existsSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { daemonSocketPath, daemonInfoPath } from '../../lib/commands/daemon/socket-path.ts';
-import { shutdownDaemon } from '../../lib/commands/daemon/client.ts';
+import * as Paths from '../../lib/commands/daemon/socket-path.ts';
+import * as Client from '../../lib/commands/daemon/client.ts';
 import { spawnCapture, type CapturedError, type CapturedResult } from '../helpers/shell.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 import '../helpers/custom-asserts.ts';
@@ -53,7 +53,7 @@ async function makeDaemonProject(): Promise<DaemonProject> {
       JSON.stringify({ name: id, version: '0.0.1', type: 'module' }),
     ),
   ]);
-  return { cwd, socketPath: daemonSocketPath(cwd), infoPath: daemonInfoPath(cwd) };
+  return { cwd, socketPath: Paths.socket(cwd), infoPath: Paths.info(cwd) };
 }
 
 // Spawn via shared helper so QUNITX_BIN is honored: when scripts/test-release.sh sets
@@ -91,13 +91,13 @@ const cli = async (
 };
 
 async function ensureDaemonStopped(project: DaemonProject): Promise<void> {
-  // Cleanup helper: call the lib's shutdownDaemon directly instead of spawning
+  // Cleanup helper: call the lib's Client.shutdown directly instead of spawning
   // `node cli.ts daemon stop`. Saves ~600 ms per call (cli.ts compile + Node
   // startup) × ~60 calls per suite. The CLI stop path is exercised explicitly
   // by the lifecycle tests below, so we don't need to re-cover it here.
-  // shutdownDaemon reads the pid, sends shutdown via socket, waits for pid exit;
+  // Client.shutdown reads the pid, sends shutdown via socket, waits for pid exit;
   // it returns false (no throw) when no daemon is running.
-  await shutdownDaemon(project.cwd).catch(() => {});
+  await Client.shutdown(project.cwd).catch(() => {});
   // Defensive: drop stale files that a crashed daemon may have left behind
   // (e.g. SIGKILL'd before the shutdown handler could unlink them).
   await Promise.all([

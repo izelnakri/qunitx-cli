@@ -32,7 +32,7 @@ import * as Reporter from '../reporters/index.ts';
 import { readTemplate } from '../utils/read-template.ts';
 import { isCustomTemplate } from '../utils/html.ts';
 import { closeWithGrace } from '../utils/close-with-grace.ts';
-import { maybePrintDaemonHint } from './daemon/hint.ts';
+import * as Hint from './daemon/hint.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
 import * as Coverage from '../coverage/index.ts';
 import { isFilteredRun, describeFilter } from '../selection/filter-query.ts';
@@ -592,7 +592,7 @@ async function runConcurrentMode(
   // First-time discoverability nudge for the daemon — only on local-mode runs that
   // took long enough to actually benefit. shouldShowDaemonHint() handles the rest of
   // the suppression matrix (CI / env opt-outs / TTY / sentinel).
-  await maybePrintDaemonHint({ durationMs: process.uptime() * 1000 });
+  await Hint.maybePrint({ durationMs: process.uptime() * 1000 });
 
   // Flush stdout, shut down Chrome cleanly, then exit.
   // keepAlive holds the event loop open until this callback fires, at which point

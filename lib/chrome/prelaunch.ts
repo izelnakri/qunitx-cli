@@ -4,7 +4,7 @@ import { preLaunchChrome } from './spawn.ts';
 import { killProcessGroup } from '../utils/kill-process-group.ts';
 import { CHROMIUM_ARGS } from './args.ts';
 import { perfLog } from '../utils/perf-logger.ts';
-import { daemonInfoPath } from '../commands/daemon/socket-path.ts';
+import * as Paths from '../commands/daemon/socket-path.ts';
 import type { ChromeHandle } from '../types.ts';
 
 // This module is statically imported by cli.ts so its module-level code runs
@@ -58,7 +58,7 @@ const isDaemonClientRun =
   // Check the info file rather than the socket path: on Windows the socket is a named
   // pipe (\\.\pipe\...), which existsSync cannot see. The info file is always a regular
   // file in os.tmpdir() and is created/removed in lockstep with the daemon's lifetime.
-  (Boolean(process.env.QUNITX_DAEMON) || existsSync(daemonInfoPath()));
+  (Boolean(process.env.QUNITX_DAEMON) || existsSync(Paths.info()));
 // With --open --watch, Chrome is left alive after qunitx exits so the visible browser window persists.
 // With --open alone, qunitx exits after tests complete; the detached browser is opened separately.
 const openWatchMode = openFromArgv && watchFromArgv;
