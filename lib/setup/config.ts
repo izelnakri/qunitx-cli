@@ -11,7 +11,7 @@ import { getChangedFsTree } from './get-changed-fs-tree.ts';
 import { parseCliFlags } from '../args/parse-cli-flags.ts';
 import { resolveOnlyFailedFiles } from '../utils/failure-cache.ts';
 import { createReporters } from '../reporter/index.ts';
-import { newRunState } from './run-state.ts';
+import * as RunState from './run-state.ts';
 import type { Config, FSTree } from '../types.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
 
@@ -40,7 +40,7 @@ export async function setupConfig(): Promise<Config> {
     projectRoot,
     inputs,
     testFileLookupPaths: setupTestFilePaths(inputs),
-    state: newRunState(),
+    state: RunState.create(),
     // Asserted rather than inferred because fsTree and plugins are filled in by the awaits
     // below — the literal is deliberately partial, and the function's contract is that a
     // complete Config is only guaranteed at the return. The later `as Config` casts this

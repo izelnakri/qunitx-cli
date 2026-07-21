@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import { GithubReporter, annotation } from '../../lib/reporter/github.ts';
 import { updateCounter } from '../../lib/reporter/types.ts';
-import { newRunState } from '../../lib/setup/run-state.ts';
+import * as RunState from '../../lib/setup/run-state.ts';
 import type { FailureInfo } from '../../lib/reporter/failure.ts';
 import type { TestDetails } from '../../lib/reporter/types.ts';
 import type { Config } from '../../lib/types.ts';
@@ -12,7 +12,7 @@ const makeConfig = (): Config =>
   ({
     projectRoot: '/proj',
     reporter: 'github',
-    state: newRunState(),
+    state: RunState.create(),
   }) as unknown as Config;
 
 const failure = (overrides: Partial<FailureInfo> = {}): FailureInfo => ({

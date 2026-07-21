@@ -33,7 +33,7 @@ function newCounter(): Counter {
  * Fresh per-group state. One per concurrent group; the group spread in `runConcurrentMode`
  * replaces `state.group` with this so groups never share the slots inside it.
  */
-export function newGroupState(index = 0, selectors?: QUnitSelector[]): GroupState {
+export function newGroup(index = 0, selectors?: QUnitSelector[]): GroupState {
   return {
     index,
     groupMode: false,
@@ -61,10 +61,10 @@ export function newGroupState(index = 0, selectors?: QUnitSelector[]): GroupStat
 }
 
 /** Fresh run state for a single `qunitx` invocation. Built once per run in `setupConfig()`. */
-export function newRunState(): RunState {
+export function create(): RunState {
   return {
     daemon: null,
-    group: newGroupState(),
+    group: newGroup(),
     groupCount: 1,
     reporters: [],
     htmlAssets: {
@@ -98,7 +98,7 @@ export function newRunState(): RunState {
  * the others and split the run's totals across several objects. Assigning `results.coverage` is
  * safe for the same reason — it mutates a field of the shared object rather than replacing it.
  */
-export function resetRunResults(results: RunResults, coverageEnabled: boolean): void {
+export function reset(results: RunResults, coverageEnabled: boolean): void {
   Object.assign(results.counter, newCounter());
   results.failedFiles.clear();
   results.failedTests.length = 0;
@@ -112,7 +112,7 @@ export function resetRunResults(results: RunResults, coverageEnabled: boolean): 
  * `filteredTestCode` verbatim, so clearing only the full bundle leaves a stale filtered one
  * servable — and a watch-mode delete would then rerun tests from a file that no longer exists.
  */
-export function clearBuildBundles(build: BuildState): void {
+export function clearBundles(build: BuildState): void {
   build.allTestCode = null;
   build.filteredTestCode = undefined;
 }

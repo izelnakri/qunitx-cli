@@ -166,7 +166,7 @@ export type CoverageFileMap = Map<string, FileCoverage>;
  *   added elsewhere silently becomes shared.
  *
  * The consequence for shared fields is that they must be **mutated in place, never reassigned** —
- * see `resetRunResults`. Assigning a fresh object on one config detaches it from the others and
+ * see `RunState.reset`. Assigning a fresh object on one config detaches it from the others and
  * splits the run's totals, which no type can catch. Fields of a shared object may be reassigned
  * freely (`results.coverage = new Map()`); it is the object itself that must survive.
  */
@@ -195,7 +195,7 @@ export interface RunState {
    */
   htmlAssets: HtmlAssets;
   /**
-   * State for **this** group only. The group spread replaces this object (everything else in
+   * RunState for **this** group only. The group spread replaces this object (everything else in
    * `RunState` is shared by reference), so it is the one place per-group slots may live.
    */
   group: GroupState;
@@ -213,7 +213,7 @@ export interface QUnitResult {
   currentTest: string | null;
 }
 
-/** State scoped to a single concurrent group — one fresh object per group of a run. */
+/** RunState scoped to a single concurrent group — one fresh object per group of a run. */
 export interface GroupState {
   /** Index within the run's group array; `0` for watch and single-group runs. */
   index: number;
@@ -318,7 +318,7 @@ export interface DaemonState {
   esbuildCache: EsbuildCache;
   /**
    * Persistent Page slot, reused across runs to save a `newPage()` (~70-130ms). Read through
-   * `reusablePageSlot()`, never directly — reuse is only valid for single-group runs.
+   * `RunState.reusablePageSlot()`, never directly — reuse is only valid for single-group runs.
    */
   pageSlot: { page: Page | null };
 }
@@ -339,7 +339,7 @@ export interface RunResults {
   failedTests: FailedTestRecord[];
   /**
    * Accumulator for per-source line coverage when `coverage` is enabled; `null` when it is off.
-   * Reassigned only by `resetRunResults` (a fresh Map per run), never by a group.
+   * Reassigned only by `RunState.reset` (a fresh Map per run), never by a group.
    */
   coverage: CoverageFileMap | null;
 }

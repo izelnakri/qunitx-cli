@@ -12,8 +12,8 @@ import {
   toWatchableRoot,
 } from '../../lib/setup/file-watcher.ts';
 import '../helpers/custom-asserts.ts';
-import { newRunState } from '../../lib/setup/run-state.ts';
-import type { Config, FSTree, RunState } from '../../lib/types.ts';
+import * as RunState from '../../lib/setup/run-state.ts';
+import type { Config, FSTree, RunState as RunStateShape } from '../../lib/types.ts';
 
 const sha1 = (content: string) => createHash('sha1').update(content).digest('hex');
 
@@ -23,14 +23,14 @@ const sha1 = (content: string) => createHash('sha1').update(content).digest('hex
 // seeded values pass their own via watchState().
 const asConfig = (config: object): Config => {
   const withState = config as Config;
-  withState.state ??= newRunState();
+  withState.state ??= RunState.create();
   return withState;
 };
 
 // Fresh run state with the watcher's build bookkeeping overridden. These tests drive
 // handleWatchEvent directly, so they seed the slots a real run would have accumulated.
-const watchState = (overrides: Partial<RunState['watch']> = {}): RunState => {
-  const state = newRunState();
+const watchState = (overrides: Partial<RunStateShape['watch']> = {}): RunStateShape => {
+  const state = RunState.create();
   Object.assign(state.watch, overrides);
   return state;
 };

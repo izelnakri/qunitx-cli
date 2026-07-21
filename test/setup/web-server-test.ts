@@ -12,7 +12,7 @@ import {
   buildNoTestsHTML,
 } from '../../lib/setup/web-server.ts';
 import '../helpers/custom-asserts.ts';
-import { newRunState } from '../../lib/setup/run-state.ts';
+import * as RunState from '../../lib/setup/run-state.ts';
 import type { Config } from '../../lib/types.ts';
 
 const CWD = process.cwd();
@@ -394,7 +394,7 @@ function makeConfig(): Config {
 // The web server injects the test runtime into state.htmlAssets.mainHTML, so a served-HTML
 // test needs a resolved main page the same way buildCachedContent would have left one.
 function mainHTMLState() {
-  const state = newRunState();
+  const state = RunState.create();
   state.group.build.htmlPathsToRunTests = ['/'];
   state.htmlAssets.mainHTML = {
     filePath: `${CWD}/test.html`,
