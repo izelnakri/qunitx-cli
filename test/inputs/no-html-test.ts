@@ -1,13 +1,8 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
-import { exec, spawn } from 'node:child_process';
-import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
-import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
-import { terminateChild } from '../helpers/shell.ts';
-
-const execAsync = promisify(exec);
+import { execute as shell, shellWatch } from '../helpers/shell.ts';
 
 // Absolute path to cli.ts so we can invoke it from a different working directory.
 const CLI = `${process.cwd()}/cli.ts`;
@@ -25,22 +20,9 @@ module(
         makeMinimalProject({ withHtmlPaths: true }),
       ]);
 
-      const [permitA, permitB] = await Promise.all([acquireBrowser(), acquireBrowser()]);
       const [resultA, resultB] = await Promise.all([
-        execAsync(
-          `node ${CLI} tests/passing-tests.ts --output=${process.cwd()}/tmp/run-${randomUUID()}`,
-          {
-            cwd: projectA.dir,
-            timeout: 60000,
-          },
-        ).finally(() => permitA.release()),
-        execAsync(
-          `node ${CLI} tests/passing-tests.ts --output=${process.cwd()}/tmp/run-${randomUUID()}`,
-          {
-            cwd: projectB.dir,
-            timeout: 60000,
-          },
-        ).finally(() => permitB.release()),
+        shell(`node ${CLI} tests/passing-tests.ts`, { cwd: projectA.dir }),
+        shell(`node ${CLI} tests/passing-tests.ts`, { cwd: projectB.dir }),
       ]);
 
       // Scenario A: no htmlPaths configured (qunitx init never run)
@@ -62,8 +44,8 @@ module(
       ]);
 
       const [stdoutA, stdoutB] = await Promise.all([
-        runWatch(projectA.dir, projectA.id),
-        runWatch(projectB.dir, projectB.id),
+        runWatch(projectA.dir),
+        runWatch(projectB.dir),
       ]);
 
       // Scenario A: no htmlPaths configured
@@ -118,42 +100,9 @@ async function makeMinimalProject({ withHtmlPaths }: { withHtmlPaths: boolean })
   return { dir, id };
 }
 
-// Mirrors STARTUP_TIMEOUT_FACTOR * config.timeout in lib/commands/run/tests-in-browser.ts
-// (9 * 20s = 180s) plus a 30s buffer for Browser.setup + bundle + page.goto + the
-// `Press "qq"` ready-marker print. See custom-html-test.ts for the original
-// observation under firefox + macOS-deno.
-const WATCH_READY_TIMEOUT_MS = 210_000;
-
-async function runWatch(dir: string, _id: string) {
-  const outputDir = `${process.cwd()}/tmp/run-${randomUUID()}`;
-  const permit = await acquireBrowser();
-  const child = spawn(
-    process.execPath,
-    [CLI, 'tests/passing-tests.ts', '--watch', `--output=${outputDir}`],
-    { cwd: dir },
-  );
-
-  try {
-    return await new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`watch mode timed out after ${WATCH_READY_TIMEOUT_MS}ms`)),
-        WATCH_READY_TIMEOUT_MS,
-      );
-      let buf = '';
-      child.stdout.on('data', (chunk: Buffer) => {
-        buf += chunk.toString();
-        if (buf.includes('Press "qq"')) {
-          clearTimeout(timer);
-          resolve(buf);
-        }
-      });
-      // Drain stderr so a noisy cli (diagnostic warnings) can't fill the OS
-      // pipe and stall. Plain .resume() is unreliable under Deno compat.
-      child.stderr.on('data', () => {});
-      child.on('error', reject);
-    });
-  } finally {
-    await terminateChild(child);
-    permit.release();
-  }
+function runWatch(dir: string): Promise<string> {
+  return shellWatch(`node ${CLI} tests/passing-tests.ts --watch`, {
+    cwd: dir,
+    until: (buf) => buf.includes('Press "qq"'),
+  });
 }
