@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { shouldShowDaemonHint, maybePrintDaemonHint } from '../../../lib/commands/daemon/hint.ts';
+import * as Hint from '../../../lib/commands/daemon/hint.ts';
 import '../../helpers/custom-asserts.ts';
 
 interface BaseCtx {
@@ -33,53 +33,53 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
-module('Utils | DaemonHint | shouldShowDaemonHint', { concurrency: true }, () => {
+module('Utils | DaemonHint | Hint.shouldShow', { concurrency: true }, () => {
   test('shows on slow non-CI TTY run with empty env', (assert) => {
-    assert.true(shouldShowDaemonHint(BASE_CTX));
+    assert.true(Hint.shouldShow(BASE_CTX));
   });
 
   test('suppresses when CI is set', (assert) => {
-    assert.false(shouldShowDaemonHint({ ...BASE_CTX, env: { CI: 'true' } }));
-    assert.false(shouldShowDaemonHint({ ...BASE_CTX, env: { CI: '1' } }));
+    assert.false(Hint.shouldShow({ ...BASE_CTX, env: { CI: 'true' } }));
+    assert.false(Hint.shouldShow({ ...BASE_CTX, env: { CI: '1' } }));
   });
 
   test('suppresses when QUNITX_DAEMON is set (already opted in)', (assert) => {
-    assert.false(shouldShowDaemonHint({ ...BASE_CTX, env: { QUNITX_DAEMON: '1' } }));
+    assert.false(Hint.shouldShow({ ...BASE_CTX, env: { QUNITX_DAEMON: '1' } }));
   });
 
   test('suppresses when QUNITX_NO_DAEMON is set (explicit opt-out)', (assert) => {
-    assert.false(shouldShowDaemonHint({ ...BASE_CTX, env: { QUNITX_NO_DAEMON: '1' } }));
+    assert.false(Hint.shouldShow({ ...BASE_CTX, env: { QUNITX_NO_DAEMON: '1' } }));
   });
 
   test('suppresses when QUNITX_HINT_SHOWN is set (per-session override)', (assert) => {
-    assert.false(shouldShowDaemonHint({ ...BASE_CTX, env: { QUNITX_HINT_SHOWN: '1' } }));
+    assert.false(Hint.shouldShow({ ...BASE_CTX, env: { QUNITX_HINT_SHOWN: '1' } }));
   });
 
   test('suppresses in --watch mode (own browser lifecycle)', (assert) => {
-    assert.false(shouldShowDaemonHint({ ...BASE_CTX, watch: true }));
+    assert.false(Hint.shouldShow({ ...BASE_CTX, watch: true }));
   });
 
   test('suppresses inside the daemon process itself', (assert) => {
-    assert.false(shouldShowDaemonHint({ ...BASE_CTX, daemonMode: true }));
+    assert.false(Hint.shouldShow({ ...BASE_CTX, daemonMode: true }));
   });
 
   test('threshold: shows at 500ms, suppresses at 499ms', (assert) => {
-    assert.false(shouldShowDaemonHint({ ...BASE_CTX, durationMs: 499 }));
-    assert.true(shouldShowDaemonHint({ ...BASE_CTX, durationMs: 500 }));
-    assert.true(shouldShowDaemonHint({ ...BASE_CTX, durationMs: 1_500 }));
+    assert.false(Hint.shouldShow({ ...BASE_CTX, durationMs: 499 }));
+    assert.true(Hint.shouldShow({ ...BASE_CTX, durationMs: 500 }));
+    assert.true(Hint.shouldShow({ ...BASE_CTX, durationMs: 1_500 }));
   });
 
   test('suppresses when stderr is not a TTY', (assert) => {
-    assert.false(shouldShowDaemonHint({ ...BASE_CTX, isTTY: false }));
+    assert.false(Hint.shouldShow({ ...BASE_CTX, isTTY: false }));
   });
 });
 
-module('Utils | DaemonHint | maybePrintDaemonHint', { concurrency: true }, () => {
+module('Utils | DaemonHint | Hint.maybePrint', { concurrency: true }, () => {
   test('writes hint and creates sentinel on first call', async (assert) => {
     const sentinel = tmpSentinel();
     const writes: string[] = [];
     try {
-      await maybePrintDaemonHint(BASE_CTX, {
+      await Hint.maybePrint(BASE_CTX, {
         sentinelPath: sentinel,
         write: (t) => writes.push(t),
       });
@@ -97,7 +97,7 @@ module('Utils | DaemonHint | maybePrintDaemonHint', { concurrency: true }, () =>
     try {
       await fs.writeFile(sentinel, 'pre-existing');
       const writes: string[] = [];
-      await maybePrintDaemonHint(BASE_CTX, {
+      await Hint.maybePrint(BASE_CTX, {
         sentinelPath: sentinel,
         write: (t) => writes.push(t),
       });
@@ -110,7 +110,7 @@ module('Utils | DaemonHint | maybePrintDaemonHint', { concurrency: true }, () =>
   test('skips print and sentinel creation when env disqualifies', async (assert) => {
     const sentinel = tmpSentinel();
     const writes: string[] = [];
-    await maybePrintDaemonHint(
+    await Hint.maybePrint(
       { ...BASE_CTX, env: { CI: 'true' } },
       { sentinelPath: sentinel, write: (t) => writes.push(t) },
     );
@@ -121,7 +121,7 @@ module('Utils | DaemonHint | maybePrintDaemonHint', { concurrency: true }, () =>
   test('skips print and sentinel creation when run is fast', async (assert) => {
     const sentinel = tmpSentinel();
     const writes: string[] = [];
-    await maybePrintDaemonHint(
+    await Hint.maybePrint(
       { ...BASE_CTX, durationMs: 200 },
       { sentinelPath: sentinel, write: (t) => writes.push(t) },
     );
@@ -134,8 +134,8 @@ module('Utils | DaemonHint | maybePrintDaemonHint', { concurrency: true }, () =>
     try {
       const writes: string[] = [];
       const opts = { sentinelPath: sentinel, write: (t: string) => writes.push(t) };
-      await maybePrintDaemonHint(BASE_CTX, opts);
-      await maybePrintDaemonHint(BASE_CTX, opts);
+      await Hint.maybePrint(BASE_CTX, opts);
+      await Hint.maybePrint(BASE_CTX, opts);
       assert.equal(writes.length, 1, 'only the first call printed');
     } finally {
       await fs.unlink(sentinel).catch(() => {});

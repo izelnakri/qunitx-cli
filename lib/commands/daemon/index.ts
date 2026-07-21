@@ -3,9 +3,9 @@ import fs, { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { blue, magenta } from '../../utils/color.ts';
-import { daemonInfoPath, daemonSocketPath, daemonDir } from './socket-path.ts';
+import * as Paths from './socket-path.ts';
 import { parseDaemonIdleTimeout } from './parse-idle-timeout.ts';
-import { pingDaemon, shutdownDaemon } from './client.ts';
+import * as Client from './client.ts';
 import pkg from '../../../package.json' with { type: 'json' };
 
 // Daemon startup chains: cli.ts import → Config.setup → Browser.launch (chromium
@@ -94,7 +94,7 @@ async function buildDaemonSpawn(): Promise<{ bin: string; args: string[] }> {
  * (or `--help` / `-h` / `help`) prints usage and exits 0; an unknown subcommand
  * prints usage to stderr and exits 1.
  */
-export function runDaemonCommand(): Promise<number> {
+export function runCommand(): Promise<number> {
   const sub = process.argv[3];
   if (sub === '_serve') return runServeMode();
   if (sub === 'start') return startDaemon();
@@ -107,9 +107,9 @@ export function runDaemonCommand(): Promise<number> {
 }
 
 async function runServeMode(): Promise<number> {
-  const { runDaemonServer } = await import('./server.ts');
-  await runDaemonServer();
-  // Unreachable: runDaemonServer enters an event loop that exits via shutdownDaemon.
+  const Server = await import('./server.ts');
+  await Server.serve();
+  // Unreachable: Server.serve enters an event loop that exits via Client.shutdown.
   return 0;
 }
 
@@ -184,10 +184,10 @@ function waitForFile(filePath: string, timeoutMs: number): Promise<boolean> {
  *
  * Two signals must both be true before we return success:
  *
- * 1. The info file exists at `daemonInfoPath()`. The daemon writes this *after*
+ * 1. The info file exists at `Paths.info()`. The daemon writes this *after*
  *    `listen()` resolves, so its presence is the first observable signal that
  *    startup is complete. We wait for it via `fs.watch` — event-driven, no polling.
- * 2. `pingDaemon()` returns a `pong`. Confirms the daemon is actually accepting
+ * 2. `Client.ping()` returns a `pong`. Confirms the daemon is actually accepting
  *    connections (rules out a stale info file from a crashed previous daemon).
  *
  * Either signal alone is insufficient: pong-only races the post-listen writeFile
@@ -206,7 +206,7 @@ async function spawnAndWaitForDaemon(): Promise<{ pid: number } | null> {
   // fs.watch to it. The daemon process also mkdir's it (idempotent), but that
   // happens after spawn → race window where fs.watch fires ENOENT. Doing it
   // here closes the race; recursive:true is safe across concurrent attempts.
-  await mkdir(daemonDir(), { recursive: true });
+  await mkdir(Paths.dir(), { recursive: true });
 
   // Detached so the daemon outlives the current shell. stdio: 'ignore' detaches all
   // pipes; daemon writes its own startup line to its stderr (now /dev/null analogue).
@@ -217,8 +217,8 @@ async function spawnAndWaitForDaemon(): Promise<{ pid: number } | null> {
     env: { ...process.env, QUNITX_DAEMON_CWD: process.cwd() },
   }).unref();
 
-  if (!(await waitForFile(daemonInfoPath(), SPAWN_TIMEOUT_MS))) return null;
-  const pong = await pingDaemon();
+  if (!(await waitForFile(Paths.info(), SPAWN_TIMEOUT_MS))) return null;
+  const pong = await Client.ping();
   return pong?.type === 'pong' ? { pid: pong.pid } : null;
 }
 
@@ -227,13 +227,13 @@ async function spawnAndWaitForDaemon(): Promise<{ pid: number } | null> {
  * already running or was successfully spawned; false on spawn timeout. Silent —
  * intended for the cli.ts auto-spawn path where the spawn is incidental to the run.
  */
-export async function ensureDaemonRunning(): Promise<boolean> {
-  if ((await pingDaemon())?.type === 'pong') return true;
+export async function ensureRunning(): Promise<boolean> {
+  if ((await Client.ping())?.type === 'pong') return true;
   return Boolean(await spawnAndWaitForDaemon());
 }
 
 async function startDaemon(): Promise<number> {
-  const existing = await pingDaemon();
+  const existing = await Client.ping();
   if (existing?.type === 'pong') {
     process.stdout.write(`Daemon already running (pid ${existing.pid})\n`);
     return 0;
@@ -248,13 +248,13 @@ async function startDaemon(): Promise<number> {
 }
 
 async function stopDaemon(): Promise<number> {
-  const stopped = await shutdownDaemon();
+  const stopped = await Client.shutdown();
   process.stdout.write(stopped ? 'Daemon stopped\n' : 'No daemon was running\n');
   return 0;
 }
 
 async function statusDaemon(): Promise<number> {
-  const pong = await pingDaemon();
+  const pong = await Client.ping();
   if (pong?.type !== 'pong') {
     process.stdout.write('No daemon running for this project\n');
     return 1;
@@ -266,7 +266,7 @@ async function statusDaemon(): Promise<number> {
       `  cwd:     ${pong.cwd}\n` +
       `  node:    ${pong.nodeVersion}\n` +
       `  uptime:  ${ageMin} min\n` +
-      `  socket:  ${daemonSocketPath(pong.cwd)}\n`,
+      `  socket:  ${Paths.socket(pong.cwd)}\n`,
   );
   return 0;
 }

@@ -1,18 +1,18 @@
 import { module, test } from 'qunitx';
-import { browserResponsive, BROWSER_PROBE_TIMEOUT_MS } from '../../lib/commands/daemon/server.ts';
+import * as Server from '../../lib/commands/daemon/server.ts';
 import '../helpers/custom-asserts.ts';
 
 // Regression coverage for the CI hang where a browser killed while the daemon was idle
 // still reported isConnected()===true (the CDP transport hadn't processed the close yet),
 // so a run proceeded against the dead handle and wedged in an unbounded newPage() until
-// the 180s GROUP_TIMEOUT. browserResponsive replaces that passive check with an active,
+// the 180s GROUP_TIMEOUT. Server.browserResponsive replaces that passive check with an active,
 // bounded CDP round-trip. These stubs prove the property deterministically without a real
 // Chrome: a stale isConnected + a CDP channel that never answers must resolve `false`
 // WITHIN the budget — never hang.
 
-type ProbeBrowser = Parameters<typeof browserResponsive>[0];
+type ProbeBrowser = Parameters<typeof Server.browserResponsive>[0];
 
-module('Commands | Daemon | browserResponsive', { concurrency: true }, () => {
+module('Commands | Daemon | Server.browserResponsive', { concurrency: true }, () => {
   test('disconnected browser → false immediately, no CDP round-trip', async (assert) => {
     let probed = false;
     const browser = {
@@ -23,7 +23,7 @@ module('Commands | Daemon | browserResponsive', { concurrency: true }, () => {
       },
     } as unknown as ProbeBrowser;
 
-    assert.strictEqual(await browserResponsive(browser, 'chromium'), false);
+    assert.strictEqual(await Server.browserResponsive(browser, 'chromium'), false);
     assert.notOk(probed, 'skips the CDP probe once isConnected() is already false');
   });
 
@@ -40,8 +40,8 @@ module('Commands | Daemon | browserResponsive', { concurrency: true }, () => {
         }),
     } as unknown as ProbeBrowser;
 
-    assert.strictEqual(await browserResponsive(browser, 'chromium'), true);
-    // detach is fire-and-forget inside browserResponsive; let its microtask flush.
+    assert.strictEqual(await Server.browserResponsive(browser, 'chromium'), true);
+    // detach is fire-and-forget inside Server.browserResponsive; let its microtask flush.
     await new Promise((r) => setTimeout(r, 0));
     assert.ok(detached, 'healthy probe session is detached so it does not leak across runs');
   });
@@ -66,7 +66,7 @@ module('Commands | Daemon | browserResponsive', { concurrency: true }, () => {
     } as unknown as ProbeBrowser;
 
     const start = Date.now();
-    const alive = await browserResponsive(browser, 'chromium', 20);
+    const alive = await Server.browserResponsive(browser, 'chromium', 20);
     const elapsed = Date.now() - start;
 
     assert.strictEqual(alive, false, 'a wedged CDP channel is treated as dead');
@@ -89,7 +89,7 @@ module('Commands | Daemon | browserResponsive', { concurrency: true }, () => {
 
     for (const name of ['firefox', 'webkit']) {
       assert.strictEqual(
-        await browserResponsive(browser, name),
+        await Server.browserResponsive(browser, name),
         true,
         `${name} → isConnected wins`,
       );
@@ -97,8 +97,11 @@ module('Commands | Daemon | browserResponsive', { concurrency: true }, () => {
     assert.notOk(probed, 'no CDP round-trip attempted for non-chromium browsers');
   });
 
-  test('BROWSER_PROBE_TIMEOUT_MS is well under the 180s GROUP_TIMEOUT backstop', (assert) => {
-    assert.ok(BROWSER_PROBE_TIMEOUT_MS > 0, 'positive budget');
-    assert.ok(BROWSER_PROBE_TIMEOUT_MS <= 5_000, 'surfaces a dead browser in seconds, not minutes');
+  test('Server.BROWSER_PROBE_TIMEOUT_MS is well under the 180s GROUP_TIMEOUT backstop', (assert) => {
+    assert.ok(Server.BROWSER_PROBE_TIMEOUT_MS > 0, 'positive budget');
+    assert.ok(
+      Server.BROWSER_PROBE_TIMEOUT_MS <= 5_000,
+      'surfaces a dead browser in seconds, not minutes',
+    );
   });
 });

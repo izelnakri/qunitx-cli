@@ -1,7 +1,7 @@
 import net from 'node:net';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { daemonSocketPath, daemonInfoPath } from './socket-path.ts';
+import * as Paths from './socket-path.ts';
 import { CLEANUP_GRACE_MS } from '../../utils/close-with-grace.ts';
 import * as Args from '../../args/index.ts';
 import { attachLineParser, probeSocket } from './socket-io.ts';
@@ -24,7 +24,7 @@ const SHUTDOWN_PID_WAIT_MS = CLEANUP_GRACE_MS;
 // follow-up `daemon start` snappy without burning CPU.
 const SHUTDOWN_PID_POLL_MS = 50;
 
-// daemonInfoPath() is the cross-platform "is a daemon present?" sentinel — checked
+// Paths.info() is the cross-platform "is a daemon present?" sentinel — checked
 // rather than the socket itself because on Windows named pipes (\\.\pipe\...) are
 // not visible to existsSync. The info file is created at startup and unlinked at
 // shutdown; stale files are caught downstream when tryConnect fails fast.
@@ -33,8 +33,8 @@ const SHUTDOWN_PID_POLL_MS = 50;
  * True iff a live daemon socket exists and the invocation can use it. The cli's
  * primary dispatch check.
  */
-export function shouldUseDaemon(): boolean {
-  return isDaemonEligible() && existsSync(daemonInfoPath());
+export function shouldUse(): boolean {
+  return isDaemonEligible() && existsSync(Paths.info());
 }
 
 /**
@@ -42,8 +42,8 @@ export function shouldUseDaemon(): boolean {
  * is daemon-eligible, and no daemon is running yet — meaning cli should spawn
  * one before dispatching the run.
  */
-export function shouldAutoSpawnDaemon(): boolean {
-  return Boolean(process.env.QUNITX_DAEMON) && isDaemonEligible() && !existsSync(daemonInfoPath());
+export function shouldAutoSpawn(): boolean {
+  return Boolean(process.env.QUNITX_DAEMON) && isDaemonEligible() && !existsSync(Paths.info());
 }
 
 /**
@@ -51,11 +51,11 @@ export function shouldAutoSpawnDaemon(): boolean {
  * on success; resolves `null` on any failure (no socket file, ECONNREFUSED, timeout).
  */
 export function tryConnect(cwd: string = process.cwd()): Promise<net.Socket | null> {
-  return probeSocket(daemonSocketPath(cwd), CONNECT_TIMEOUT_MS);
+  return probeSocket(Paths.socket(cwd), CONNECT_TIMEOUT_MS);
 }
 
 /** Sends a `ping` and resolves the daemon's `pong` response (or `null` on failure). */
-export async function pingDaemon(): Promise<ResponseChunk | null> {
+export async function ping(): Promise<ResponseChunk | null> {
   const socket = await tryConnect();
   if (!socket) return null;
   const result = new Promise<ResponseChunk | null>((resolve) => {
@@ -87,7 +87,7 @@ export async function pingDaemon(): Promise<ResponseChunk | null> {
  * Returns `true` if a daemon was reached and asked to stop, `false` if no daemon
  * was running.
  */
-export async function shutdownDaemon(cwd: string = process.cwd()): Promise<boolean> {
+export async function shutdown(cwd: string = process.cwd()): Promise<boolean> {
   const pid = await readDaemonPid(cwd);
 
   const socket = await tryConnect(cwd);
@@ -106,7 +106,7 @@ export async function shutdownDaemon(cwd: string = process.cwd()): Promise<boole
  * Forwards the user's Ctrl+C: client exits with 130; daemon abandons the run cleanly
  * when it sees the socket close (clientAlive=false stops further writes).
  */
-export async function runViaDaemon(argv: string[]): Promise<number> {
+export async function runVia(argv: string[]): Promise<number> {
   const socket = await tryConnect();
   if (!socket) throw new Error('daemon connect failed');
 
@@ -191,7 +191,7 @@ function awaitClose(socket: net.Socket): Promise<void> {
 
 async function readDaemonPid(cwd: string = process.cwd()): Promise<number | null> {
   try {
-    const info = JSON.parse(await fs.readFile(daemonInfoPath(cwd), 'utf8')) as { pid?: unknown };
+    const info = JSON.parse(await fs.readFile(Paths.info(cwd), 'utf8')) as { pid?: unknown };
     return typeof info.pid === 'number' ? info.pid : null;
   } catch {
     return null;

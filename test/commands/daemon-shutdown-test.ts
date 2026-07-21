@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { shutdownDaemon, removeLivenessFiles } from '../../lib/commands/daemon/server.ts';
+import * as Server from '../../lib/commands/daemon/server.ts';
 import '../helpers/custom-asserts.ts';
 
 // Regression for the flaky `a short QUNITX_DAEMON_IDLE_TIMEOUT ... self-exits` integration test
@@ -16,11 +16,11 @@ import '../helpers/custom-asserts.ts';
 // These tests pin the fix deterministically, with no real Chrome and no wall-clock threshold:
 // the info file must be gone while the browser launch is still pending.
 
-type DaemonStateArg = Parameters<typeof shutdownDaemon>[0];
+type DaemonStateArg = Parameters<typeof Server.shutdown>[0];
 
 // A daemon state with a browser launch that never settles on its own — stands in for a slow or
 // hung pre-launched Chrome. `settleBrowser` lets the test release it after asserting, so
-// shutdownDaemon can finish and call the injected exit instead of dangling on the 3 s grace.
+// Server.shutdown can finish and call the injected exit instead of dangling on the 3 s grace.
 function fakeState(
   paths: { socketPath: string; infoPath: string; lockPath: string },
   listenSucceeded = true,
@@ -77,16 +77,16 @@ module('Commands | Daemon | shutdown', { concurrency: true }, () => {
     const { state, settleBrowser } = fakeState(paths);
     let exited = false;
 
-    // Don't await: with the browser launch left pending, shutdownDaemon reaches the (bounded)
+    // Don't await: with the browser launch left pending, Server.shutdown reaches the (bounded)
     // browser grace and parks there. The fix removes the liveness files *before* that park, so
     // they must vanish while the browser is still pending. The 2 s budget is far below the 3 s
     // grace an unfixed daemon would wait, and far above the fs unlink's real cost — so it fails
     // cleanly on the old ordering without racing on the new one.
-    const done = shutdownDaemon(state, 'test', () => {
+    const done = Server.shutdown(state, 'test', () => {
       exited = true;
     });
 
-    // removeLivenessFiles unlinks the three markers concurrently (one Promise.all) with no
+    // Server.removeLivenessFiles unlinks the three markers concurrently (one Promise.all) with no
     // ordering guarantee, so poll for each rather than assuming that once info is gone the other
     // two are visibly gone too. They resolve out of order ~12% of the time, and on APFS/Deno the
     // on-disk visibility of the laggards trails info's — an `existsSync` here flaked on exactly
@@ -107,13 +107,13 @@ module('Commands | Daemon | shutdown', { concurrency: true }, () => {
     assert.ok(exited, 'exit() runs once the browser teardown completes');
   });
 
-  test('removeLivenessFiles keeps socket/info when the daemon never bound, always drops the lock', async (assert) => {
+  test('Server.removeLivenessFiles keeps socket/info when the daemon never bound, always drops the lock', async (assert) => {
     // A daemon that threw before listen() doesn't own socket/info — unlinking them would corrupt
     // whatever started in its place — but the lock is always ours to release.
     const paths = await tempPaths();
     const { state } = fakeState(paths, /* listenSucceeded */ false);
 
-    await removeLivenessFiles(state);
+    await Server.removeLivenessFiles(state);
 
     assert.ok(existsSync(paths.socketPath), 'socket kept: not ours when listen never succeeded');
     assert.ok(existsSync(paths.infoPath), 'info kept: not ours when listen never succeeded');

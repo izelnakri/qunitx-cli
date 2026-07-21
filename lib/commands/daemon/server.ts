@@ -5,7 +5,7 @@ import path from 'node:path';
 // See lib/commands/run.ts: node:timers returns the unref-capable Timer object
 // in both Node and Deno; the bare setTimeout global in Deno is the Web variant.
 import { setTimeout, clearTimeout } from 'node:timers';
-import { daemonSocketPath, daemonInfoPath, daemonDir } from './socket-path.ts';
+import * as Paths from './socket-path.ts';
 import { parseDaemonIdleTimeout } from './parse-idle-timeout.ts';
 import { attachLineParser } from './socket-io.ts';
 import * as Config from '../../setup/config.ts';
@@ -80,7 +80,7 @@ async function tryAcquireDaemonLock(lockPath: string): Promise<boolean> {
     return false;
   } finally {
     // Drop the second hardlink. On success the inode lives on via lockPath
-    // until shutdownDaemon unlinks it; on failure tmpPath was the only ref
+    // until shutdown unlinks it; on failure tmpPath was the only ref
     // and unlinking here reaps the inode.
     await unlink(tmpPath).catch(() => {});
   }
@@ -100,7 +100,7 @@ interface DaemonState {
    * (see `browserReady`) and again briefly during `recoverBrowser`. Run
    * handlers MUST go through `awaitBrowser(state)` rather than reading this
    * field directly — it's null until the first awaiting caller resolves it.
-   * The split lets `runDaemonServer` `listen()` and write the info file
+   * The split lets `run` `listen()` and write the info file
    * immediately, instead of blocking on Chrome launch. Under CI load Chrome
    * launch tail latencies regularly exceed 100 s; gating socket readiness
    * on Chrome would propagate that latency to every `daemon start`/`status`/
@@ -136,7 +136,7 @@ interface DaemonState {
   /** Reset to 0 after any run that left the browser connected. */
   consecutiveCrashes: number;
   /**
-   * `true` after `listen()` resolves. Gates file cleanup in `shutdownDaemon`: a
+   * `true` after `listen()` resolves. Gates file cleanup in `shutdown`: a
    * process whose `listen()` failed (concurrent-spawn EADDRINUSE) does not own the
    * socket or info file, so the loser must not unlink them — only the winner does.
    */
@@ -159,10 +159,10 @@ interface DaemonState {
  * `run` requests serially. Shuts down on SIGTERM/SIGINT, idle timeout, package.json
  * mutation, node version mismatch, or an explicit `shutdown` request.
  */
-export async function runDaemonServer(): Promise<void> {
+export async function serve(): Promise<void> {
   const cwd = process.cwd();
-  const socketPath = daemonSocketPath(cwd);
-  const infoPath = daemonInfoPath(cwd);
+  const socketPath = Paths.socket(cwd);
+  const infoPath = Paths.info(cwd);
   const lockPath = `${infoPath}.lock`;
 
   // Ensure the per-cwd daemon directory exists before tryAcquireDaemonLock
@@ -170,7 +170,7 @@ export async function runDaemonServer(): Promise<void> {
   // onto lockPath — both fail with ENOENT if the parent isn't there).
   // recursive:true is idempotent across the race: concurrent daemon attempts
   // each create-or-find the same dir; only one wins the lock below.
-  await mkdir(daemonDir(cwd), { recursive: true });
+  await mkdir(Paths.dir(cwd), { recursive: true });
 
   // Atomic race-resolution: whoever creates the lockfile is the sole daemon
   // for this cwd. Losers exit 0; their client poll finds the winner's info
@@ -254,19 +254,19 @@ export async function runDaemonServer(): Promise<void> {
     pageSlot: { page: null },
   };
 
-  const shutdown = (reason: string) => shutdownDaemon(state, reason);
-  process.on('SIGTERM', () => void shutdown('SIGTERM'));
-  process.on('SIGINT', () => void shutdown('SIGINT'));
+  const stop = (reason: string) => shutdown(state, reason);
+  process.on('SIGTERM', () => void stop('SIGTERM'));
+  process.on('SIGINT', () => void stop('SIGINT'));
   // Any unhandled rejection corrupts shared browser state — die so the next client respawns.
   process.on('unhandledRejection', (err) => {
     process.stderr.write(`# [qunitx daemon] unhandledRejection: ${err}\n`);
-    void shutdown('unhandledRejection');
+    void stop('unhandledRejection');
   });
 
   state.socketServer = net.createServer((socket) => handleConnection(socket, state));
   state.socketServer.on('error', (err) => {
     process.stderr.write(`# [qunitx daemon] server error: ${err.message}\n`);
-    void shutdown('server error');
+    void stop('server error');
   });
 
   // Lock guarantees we're the sole daemon for this cwd — any socket file at the
@@ -296,8 +296,8 @@ export async function runDaemonServer(): Promise<void> {
   process.stderr.write(`# [qunitx daemon] listening on ${socketPath} (pid ${process.pid})\n`);
 
   // Block forever. The socket server keeps the event loop alive; the daemon exits via
-  // process.exit() inside shutdownDaemon (signal, idle timeout, or shutdown request).
-  // Without this, runDaemonServer would resolve, runServeMode would return 0, and cli.ts
+  // process.exit() inside shutdown (signal, idle timeout, or shutdown request).
+  // Without this, run would resolve, runServeMode would return 0, and cli.ts
   // would call process.exit(0), killing the daemon as soon as it finished listening.
   return new Promise<void>(() => {});
 }
@@ -319,7 +319,7 @@ function listen(server: net.Server, socketPath: string): Promise<void> {
  * `exit` is injectable only so the shutdown ordering can be tested without killing the test
  * process; production always uses the default. See test/commands/daemon-shutdown-test.ts.
  */
-export async function shutdownDaemon(
+export async function shutdown(
   state: DaemonState,
   reason: string,
   exit: () => void = () => process.exit(0),
@@ -368,10 +368,10 @@ export async function shutdownDaemon(
     browser?.close().catch(() => {}),
     state.esbuildCache.context?.dispose().catch(() => {}),
   ]);
-  // Best-effort cleanup of the per-cwd daemon dir created in runDaemonServer. rmdir refuses
+  // Best-effort cleanup of the per-cwd daemon dir created in run. rmdir refuses
   // non-empty dirs (we swallow the ENOTEMPTY) so a concurrent sibling that re-created files inside
-  // is never trampled. socketPath lives outside daemonDir, so the dir is empty after the unlinks.
-  await rmdir(daemonDir(process.cwd())).catch(() => {});
+  // is never trampled. socketPath lives outside Paths.dir, so the dir is empty after the unlinks.
+  await rmdir(Paths.dir(process.cwd())).catch(() => {});
   exit();
 }
 
@@ -413,7 +413,7 @@ function resetIdleTimer(state: DaemonState): void {
   // unref so the timer itself doesn't keep the event loop alive — the socket server
   // is the only ref'd handle. When the timer fires, shutdown closes the server, the
   // loop drains, and the process exits cleanly.
-  state.idleTimer = setTimeout(() => void shutdownDaemon(state, 'idle timeout'), IDLE_TIMEOUT_MS);
+  state.idleTimer = setTimeout(() => void shutdown(state, 'idle timeout'), IDLE_TIMEOUT_MS);
   state.idleTimer.unref();
 }
 
@@ -437,7 +437,7 @@ async function dispatch(req: Request, socket: net.Socket, state: DaemonState): P
     socket.end();
   } else if (req.type === 'shutdown') {
     // Synchronously remove the info file before acking so its absence is a reliable
-    // "daemon is gone" signal at the moment the client returns. shutdownDaemon's
+    // "daemon is gone" signal at the moment the client returns. shutdown's
     // own async unlink is then a no-op (catch'd ENOENT).
     try {
       fs.unlinkSync(state.infoPath);
@@ -446,7 +446,7 @@ async function dispatch(req: Request, socket: net.Socket, state: DaemonState): P
     }
     writeChunk(socket, { type: 'done', exitCode: 0 });
     socket.end();
-    void shutdownDaemon(state, 'shutdown request');
+    void shutdown(state, 'shutdown request');
   } else if (req.type === 'run') {
     state.runQueue = state.runQueue.then(() => handleRun(req, socket, state));
     await state.runQueue;
@@ -500,21 +500,21 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
       message: `node version mismatch: daemon=${process.version} client=${req.nodeVersion}`,
     });
     socket.end();
-    return void shutdownDaemon(state, 'node version mismatch');
+    return void shutdown(state, 'node version mismatch');
   }
   // Detect package.json mutation: stale config means stale extensions/browser/timeout.
   const currentMtime = await readPkgMtime(state.cwd);
   if (currentMtime !== state.pkgMtime) {
     writeChunk(socket, { type: 'fatal', message: 'package.json changed; restarting daemon' });
     socket.end();
-    return void shutdownDaemon(state, 'package.json changed');
+    return void shutdown(state, 'package.json changed');
   }
 
   if (state.idleTimer) clearTimeout(state.idleTimer);
 
   // Two browser-readiness cases handled here:
   //   1. Initial launch in progress — `state.browser` is null until the decoupled
-  //      `browserReady` settles (see runDaemonServer comment). The first run
+  //      `browserReady` settles (see run comment). The first run
   //      after spawn awaits it here, paying the launch cost once.
   //   2. PlaywrightBrowser died while the daemon was idle — without recovery the run
   //      would hang inside Playwright's CDP send waiting for a response from
@@ -527,7 +527,7 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
       message: `browser launch failed: ${(err as Error).message ?? err}`,
     });
     socket.end();
-    return void shutdownDaemon(state, 'initial browser launch failed');
+    return void shutdown(state, 'initial browser launch failed');
   }
   // isConnected() is a point-in-time flag that lags a browser killed while the daemon
   // was idle — the CDP transport hasn't processed the socket/process close yet, and
@@ -628,7 +628,7 @@ export async function browserResponsive(
  */
 async function recoverBrowser(state: DaemonState): Promise<void> {
   if (++state.consecutiveCrashes > MAX_CONSECUTIVE_CRASHES) {
-    return void shutdownDaemon(state, `${state.consecutiveCrashes} consecutive browser crashes`);
+    return void shutdown(state, `${state.consecutiveCrashes} consecutive browser crashes`);
   }
   process.stderr.write(
     `# [qunitx daemon] browser crashed; relaunching (${state.consecutiveCrashes}/${MAX_CONSECUTIVE_CRASHES})\n`,
@@ -656,7 +656,7 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
   try {
     state.browser = await state.browserReady;
   } catch (err) {
-    void shutdownDaemon(state, `browser relaunch failed: ${(err as Error).message || err}`);
+    void shutdown(state, `browser relaunch failed: ${(err as Error).message || err}`);
   }
 }
 
