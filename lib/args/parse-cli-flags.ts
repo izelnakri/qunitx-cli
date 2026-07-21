@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { tokenizeArgs, type QueryToken } from './tokenize-args.ts';
+import { tokenize, type QueryToken } from './tokenize-args.ts';
 import { REPORTERS, type ReporterName } from '../reporters/types.ts';
 
 // Fallback when --timeout is passed with an unparseable or zero value.
@@ -43,12 +43,12 @@ interface ParsedFlags {
  * Parses `process.argv` into a qunitx flag object (`inputs`, `debug`, `watch`, `failFast`, `timeout`, `output`, `port`, `before`, `after`).
  * @returns {object}
  */
-export function parseCliFlags(projectRoot: string): ParsedFlags {
+export function parse(projectRoot: string): ParsedFlags {
   const providedFlags = { inputs: new Set<string>() } as ParsedFlags & { inputs: Set<string> };
   // The tokenizer owns how many argv entries a query flag swallows (see tokenize-args.ts); this
   // loop only interprets the resulting tokens. Query values and inputs are their own token kinds,
   // so the flag chain below never has to guess whether a bare word is a value or a path.
-  for (const token of tokenizeArgs(process.argv.slice(2))) {
+  for (const token of tokenize(process.argv.slice(2))) {
     if (token.kind === 'query') {
       applyQuery(providedFlags, token);
     } else if (token.kind === 'input') {
@@ -81,8 +81,6 @@ export function parseCliFlags(projectRoot: string): ParsedFlags {
 
   return { ...providedFlags, inputs: Array.from(providedFlags.inputs) };
 }
-
-export { parseCliFlags as default };
 
 type Flags = ParsedFlags & { inputs: Set<string> };
 

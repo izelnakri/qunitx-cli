@@ -1,6 +1,6 @@
 /**
  * The single left-to-right classification of a qunitx argv (already sliced past the node binary
- * and script path). Both `parseCliFlags` and the daemon's `isDaemonEligible` consume these tokens,
+ * and script path). Both `Args.parse` and the daemon's `isDaemonEligible` consume these tokens,
  * so the one thing they must agree on — how many argv entries a value flag swallows — is decided
  * here, in one place, and can never drift between the two scanners again.
  */
@@ -73,7 +73,7 @@ export type ArgToken = QueryToken | FlagToken | InputToken;
  * A `--` entry is the POSIX end-of-options marker: everything after it is a positional input, so
  * `-t a b -- test/foo` scopes the run to `test/foo` while keeping `"a b"` as the filter.
  */
-export function tokenizeArgs(args: string[]): ArgToken[] {
+export function tokenize(args: string[]): ArgToken[] {
   // The fold carries two bits of cross-entry state: `rest` (past the `--` marker, everything is a
   // positional input) and `greedy` (the bare query flag currently absorbing following words — held
   // by reference so its value grows in place, no rescan or post-pass join needed).
@@ -113,5 +113,3 @@ export function tokenizeArgs(args: string[]): ArgToken[] {
     { tokens: [], greedy: null, rest: false },
   ).tokens;
 }
-
-export { tokenizeArgs as default };

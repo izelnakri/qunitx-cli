@@ -8,7 +8,7 @@ import { findProjectRoot } from '../utils/find-project-root.ts';
 import { buildFSTree } from './fs-tree.ts';
 import { setupTestFilePaths } from './test-file-paths.ts';
 import { getChangedFsTree } from './get-changed-fs-tree.ts';
-import { parseCliFlags } from '../args/parse-cli-flags.ts';
+import * as Args from '../args/index.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
 import * as Reporter from '../reporters/index.ts';
 import * as RunState from './run-state.ts';
@@ -22,7 +22,7 @@ import type { Plugin as EsbuildPlugin } from 'esbuild';
  */
 export async function setupConfig(): Promise<Config> {
   const projectRoot = await findProjectRoot();
-  const cliConfigFlags = parseCliFlags(projectRoot);
+  const cliConfigFlags = Args.parse(projectRoot);
   const projectPackageJSON = await readConfigFromPackageJSON(projectRoot);
   const { plugins: rawPlugins, ...userQunitx } =
     (projectPackageJSON.qunitx as Partial<Config> & {
