@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { blue } from '../../utils/color.ts';
-import { resolveLineTargets } from '../../selection/line-targets.ts';
+import * as LineTargets from '../../selection/line-targets.ts';
 import type { QUnitSelector } from '../../selection/line-targets.ts';
 import type { Config } from '../../types.ts';
 
@@ -59,7 +59,7 @@ export async function resolveTargetedFiles(
   const entries = Object.entries(config.lineTargets ?? {}).filter(([file]) => present.has(file));
   const resolved = await Promise.all(
     entries.map(async ([file, lines]) => {
-      const { selectors, warnings } = await resolveLineTargets(
+      const { selectors, warnings } = await LineTargets.resolve(
         file,
         lines,
         // Forward slashes in the warning regardless of OS — it echoes the `path#line` the user

@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseTestDeclarations } from '../selection/parse-test-declarations.ts';
-import { matchesQUnitFilter, qunitFullName } from '../selection/filter-match.ts';
-import { selectorsFromScan } from '../selection/line-targets.ts';
+import { matchQUnitFilter, buildQUnitFullName } from '../selection/qunit-filter.ts';
+import * as LineTargets from '../selection/line-targets.ts';
 import { blue, yellow } from '../utils/color.ts';
 import type { TestDeclaration, DeclarationScan } from '../selection/parse-test-declarations.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
@@ -81,14 +81,14 @@ export async function run(config: Config): Promise<number> {
   for (const record of scanned) {
     const lines = config.lineTargets?.[record.file];
     if (lines && record.scan) {
-      const resolved = selectorsFromScan(record.scan, lines, record.displayPath);
+      const resolved = LineTargets.selectorsFromScan(record.scan, lines, record.displayPath);
       lineSelectors.set(record.file, resolved);
       warnings.push(...resolved.warnings);
     }
   }
 
   const matches = found.filter(
-    (test) => matchesQUnitFilter(filter, test.fullName) && matchesLineTargets(test, lineSelectors),
+    (test) => matchQUnitFilter(filter, test.fullName) && matchesLineTargets(test, lineSelectors),
   );
   // Folded rather than `Math.max(0, ...matches.map(…))`: the spread passes one argument per match,
   // which throws RangeError once a suite is large enough, and the map allocates an array to throw
@@ -178,7 +178,7 @@ async function scanFile(file: string, projectRoot: string): Promise<ScannedFile>
         file,
         module,
         testName: declaration.name,
-        fullName: qunitFullName(module, declaration.name),
+        fullName: buildQUnitFullName(module, declaration.name),
         location: `${displayPath}#${declaration.startLine}`,
       });
 
