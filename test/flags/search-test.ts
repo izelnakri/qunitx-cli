@@ -13,7 +13,11 @@ const CWD = process.cwd();
 const NESTED_SRC = (await fs.readFile(NESTED, 'utf8')).split('\n');
 const lineOf = (needle: string) => NESTED_SRC.findIndex((line) => line.includes(needle)) + 1;
 
-module('--search / --print', { concurrency: true }, (_hooks, moduleMetadata) => {
+// Which flag spellings map to `search` is Args | parse | --search / --print's job, and the
+// matching itself is Selection | matchQUnitFilter's. These tests own the listing: what it
+// prints, that it resolves line targets the way a run does, that it never reaches a browser,
+// and that what it previews is what -t actually selects.
+module('Flags | --search', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('lists every test in QUnit registration format with a pasteable location', async (assert, tm) => {
     const result = await shell(`node cli.ts ${NESTED} --print`, { ...moduleMetadata, ...tm });
 
@@ -23,6 +27,11 @@ module('--search / --print', { concurrency: true }, (_hooks, moduleMetadata) => 
     assert.includes(result.stdout, 'Outer > Inner: inner only');
     assert.includes(result.stdout, `${NESTED}#${lineOf("test('outer first'")}`);
     assert.includes(result.stdout, '4 of 4 tests');
+
+    // Listing is all it does — the run itself never happens, so no TAP reaches stdout.
+    assert.notIncludes(result.stdout, 'TAP version 13');
+    assert.notIncludes(result.stdout, 'ok 1');
+    assert.notIncludes(result.stdout, '1..');
   });
 
   test('a file#line target scopes the preview exactly as a real run would', async (assert, tm) => {
@@ -41,14 +50,6 @@ module('--search / --print', { concurrency: true }, (_hooks, moduleMetadata) => 
     });
     assert.includes(group$.stdout, '3 of 4 tests');
     assert.notIncludes(group$.stdout, 'separate one');
-  });
-
-  test('runs no tests at all — no TAP, no browser', async (assert, tm) => {
-    const result = await shell(`node cli.ts ${NESTED} --print`, { ...moduleMetadata, ...tm });
-
-    assert.notIncludes(result.stdout, 'TAP version 13');
-    assert.notIncludes(result.stdout, 'ok 1');
-    assert.notIncludes(result.stdout, '1..');
   });
 
   test('never pre-launches Chrome, so it leaks no user-data-dir', async (assert) => {
@@ -72,25 +73,6 @@ module('--search / --print', { concurrency: true }, (_hooks, moduleMetadata) => 
     } finally {
       await rmRetry(tmpdir);
     }
-  });
-
-  test('-s <expression> narrows the listing', async (assert, tm) => {
-    const result = await shell(`node cli.ts ${NESTED} -s inner`, { ...moduleMetadata, ...tm });
-
-    assert.includes(result.stdout, 'Outer > Inner: inner only');
-    assert.notIncludes(result.stdout, 'outer first');
-    assert.includes(result.stdout, '1 of 4 tests match "inner"');
-  });
-
-  test('all four spellings list the same thing', async (assert, tm) => {
-    const outputs = await Promise.all(
-      ['--search=inner', '-s=inner', '--print=inner', '--preview=inner'].map(async (flag) => {
-        const result = await shell(`node cli.ts ${NESTED} ${flag}`, { ...moduleMetadata, ...tm });
-        return result.stdout;
-      }),
-    );
-
-    assert.equal(new Set(outputs).size, 1, '--search, -s, --print and --preview are one flag');
   });
 
   test('a file whose declarator is a local alias is reported, not silently dropped', async (assert, tm) => {
@@ -118,10 +100,15 @@ module('--search / --print', { concurrency: true }, (_hooks, moduleMetadata) => 
   test('the preview matches what an actual run selects', async (assert, tm) => {
     // The whole promise of --search: what it lists is what -t would run. A drifting matcher would
     // make the preview a lie, so this pins them together end to end.
-    const preview = await shell(`node cli.ts ${NESTED} -s inner`, { ...moduleMetadata, ...tm });
-    const run = await shell(`node cli.ts ${NESTED} -t inner`, { ...moduleMetadata, ...tm });
+    const [preview, run] = await Promise.all([
+      shell(`node cli.ts ${NESTED} -s inner`, { ...moduleMetadata, ...tm }),
+      shell(`node cli.ts ${NESTED} -t inner`, { ...moduleMetadata, ...tm }),
+    ]);
 
-    assert.includes(preview.stdout, '1 of 4 tests match');
+    assert.includes(preview.stdout, 'Outer > Inner: inner only');
+    assert.notIncludes(preview.stdout, 'outer first');
+    assert.includes(preview.stdout, '1 of 4 tests match "inner"');
+
     assert.tapResult(run, { testCount: 1 });
     assert.includes(run.stdout, 'Outer | Inner | inner only');
   });
