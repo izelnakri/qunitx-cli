@@ -18,7 +18,7 @@ const CLEANUP_RETRY_MS = 50;
  *
  * Linux-only: falls back to a single best-effort rm() on other platforms.
  */
-export async function cleanupBrowserDir(dirPath: string): Promise<void> {
+export async function cleanupDir(dirPath: string): Promise<void> {
   if (process.platform !== 'linux') {
     await fs.rm(dirPath, { recursive: true, force: true }).catch(() => {});
     return;
