@@ -780,7 +780,7 @@ module('--watch re-run tests', { concurrency: true }, () => {
         const refreshCountAfterError = messages.filter((m) => m === 'refresh').length;
         assert.ok(refreshCountAfterError >= 1, 'refresh sent to WS client on build error');
 
-        // Fix the file. onFinishFunc fires after runTestsInBrowser returns (after '# duration'
+        // Fix the file. onFinishFunc fires after run returns (after '# duration'
         // appears). Wait reactively for one more refresh rather than sleeping.
         await fs.writeFile(testFile, testContent);
         await waitForRunComplete(session, 2, 're-run after fix');

@@ -240,7 +240,7 @@ export async function buildTestBundle(config: Config): Promise<void> {
     const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
     build.fallbackPage = { kind: 'build-error', error: buildError };
     // Always write index.html immediately: in non-watch mode the server route for '/' is only
-    // reached on success (build errors in the group setup bypass runTestsInBrowser entirely),
+    // reached on success (build errors in the group setup bypass run entirely),
     // and in watch mode the Playwright page is headless so it never navigates to trigger the
     // route — the --open user browser reloads via WebSocket 'refresh' and does it instead,
     // but that's async and user-dependent. Writing here guarantees the file is always current.
@@ -253,7 +253,7 @@ export async function buildTestBundle(config: Config): Promise<void> {
  * Runs the esbuild-bundled tests inside a Playwright-controlled browser page and streams TAP output.
  * @returns {Promise<object>}
  */
-export async function runTestsInBrowser(
+export async function run(
   config: Config,
   connections: Connections,
   targetTestFilesToFilter?: string[] | null,
@@ -487,7 +487,7 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
   const { projectRoot, debug, browser } = groupConfigs[0];
 
   // Build each group's descriptor in one pass, skipping empty groups (overlayfs race).
-  // Their build.allTestCode stays null so runTestsInBrowser's early-return handles them.
+  // Their build.allTestCode stays null so run's early-return handles them.
   const activeGroups = groupConfigs.reduce(
     (acc, groupConfig, groupIndex) => {
       const files = Object.keys(groupConfig.fsTree);
@@ -982,7 +982,7 @@ async function runTestInsideHTMLFile(
     await failRun();
   } else if (outcome.kind === 'empty') {
     // QUnit fired 'done' with zero registered tests — a genuinely empty file (e.g. a helper).
-    // Not a failure — handled at the runTestsInBrowser level as a warning.
+    // Not a failure — handled at the run level as a warning.
     return;
   } else if (outcome.kind === 'stalled') {
     if (targetError) console.log(targetError);

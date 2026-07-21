@@ -60,14 +60,14 @@ export interface BuildState extends EsbuildCache {
   htmlPathsToRunTests: string[];
   /**
    * In-flight build promise started by `run.ts` before Chrome setup completes (initial run)
-   * or before `runTestsInBrowser` is called (reruns), so esbuild races navigation.
-   * Consumed and cleared by the first `runTestsInBrowser()` call.
+   * or before `run` is called (reruns), so esbuild races navigation.
+   * Consumed and cleared by the first `run()` call.
    */
   preBuildPromise?: Promise<void> | null;
   /**
    * Set when a parallel rebuild is in-flight during a watch-mode rerun. The `/tests.js`
    * route awaits this before serving, so Chrome can navigate concurrently while esbuild
-   * finishes. Cleared by `runTestsInBrowser` after the build settles.
+   * finishes. Cleared by `run` after the build settles.
    */
   activeRebuild?: Promise<void> | null;
   /**
