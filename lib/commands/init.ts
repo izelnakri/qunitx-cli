@@ -6,7 +6,7 @@ import { defaultProjectConfigValues } from '../setup/default-project-config-valu
 import { readTemplate } from '../utils/read-template.ts';
 
 /** Bootstraps a new qunitx project: writes the test HTML template, updates package.json, and optionally writes tsconfig.json. */
-export async function initializeProject() {
+export async function run() {
   const projectRoot = await findProjectRoot();
   const oldPackageJSON = JSON.parse(await fs.readFile(`${projectRoot}/package.json`, 'utf8'));
   const existingQunitx = oldPackageJSON.qunitx || {};
@@ -22,8 +22,6 @@ export async function initializeProject() {
     writeTSConfigIfNeeded(projectRoot),
   ]);
 }
-
-export { initializeProject as default };
 
 async function writeTestsHTML(
   projectRoot: string,

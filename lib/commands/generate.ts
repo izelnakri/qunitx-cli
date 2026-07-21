@@ -9,7 +9,7 @@ import { convertToPascalCase } from '../utils/convert-to-pascal-case.ts';
  * Generates a new test file from the boilerplate template.
  * @returns {Promise<void>}
  */
-export async function generateTestFiles() {
+export async function run() {
   const projectRoot = await findProjectRoot();
   const moduleName = pathToModuleName(process.argv[3]);
   const path =
@@ -32,8 +32,6 @@ export async function generateTestFiles() {
 
   console.log(green(`${path} written`));
 }
-
-export { generateTestFiles as default };
 
 function pathToModuleName(filePath: string): string {
   const withoutExt = filePath.replace(/\.(js|ts)$/, '');
