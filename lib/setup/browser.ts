@@ -1,4 +1,4 @@
-import { setupWebServer } from './web-server.ts';
+import * as WebServer from './web-server.ts';
 import { bindServerToPort } from './bind-server-to-port.ts';
 import { findChrome } from '../chrome/find.ts';
 import { CHROMIUM_ARGS } from '../chrome/args.ts';
@@ -145,8 +145,8 @@ export async function setup(
       return [sharedServer, existingBrowser!, newPage] as const;
     }
 
-    const newServer = setupWebServer(config);
-    perfLog(`browser.js: setupWebServer took ${Date.now() - setupStart}ms`);
+    const newServer = WebServer.setup(config);
+    perfLog(`browser.js: WebServer.setup took ${Date.now() - setupStart}ms`);
 
     const activeBrowser = existingBrowser ?? (await launch(config));
     const pageStart = Date.now();
