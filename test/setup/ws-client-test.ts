@@ -47,7 +47,7 @@ function harness() {
   };
 }
 
-module('Setup | ws-client reconnect', { concurrency: true }, () => {
+module('Setup | WSClient | reconnect', { concurrency: true }, () => {
   test('a transient error before open does NOT open a second socket (the webkit flake)', (assert) => {
     const h = harness();
     h.connect();

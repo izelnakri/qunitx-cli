@@ -4,7 +4,7 @@ import type { Segment, SourceMapDecoder } from '../../lib/utils/source-map.ts';
 
 // ── readVLQ ───────────────────────────────────────────────────────────────────
 
-module('Utils | source-map | readVLQ', { concurrency: true }, () => {
+module('Utils | SourceMap | readVLQ', { concurrency: true }, () => {
   test('A encodes 0', (assert) => {
     const [value, nextPos] = SourceMap.readVLQ('A', 0);
     assert.strictEqual(value, 0);
@@ -84,7 +84,7 @@ module('Utils | source-map | readVLQ', { concurrency: true }, () => {
 
 // ── decodeMappings ────────────────────────────────────────────────────────────
 
-module('Utils | source-map | decodeMappings', { concurrency: true }, () => {
+module('Utils | SourceMap | decodeMappings', { concurrency: true }, () => {
   test('empty string produces no lines', (assert) => {
     const lines = SourceMap.decodeMappings('');
     assert.deepEqual(lines, [[]], 'one empty line for the empty string');
@@ -176,7 +176,7 @@ module('Utils | source-map | decodeMappings', { concurrency: true }, () => {
 
 // ── parse ─────────────────────────────────────────────────────────────
 
-module('Utils | source-map | parse', { concurrency: true }, () => {
+module('Utils | SourceMap | parse', { concurrency: true }, () => {
   test('parses sources array', (assert) => {
     const decoder = SourceMap.parse(
       JSON.stringify({ sources: ['../src/a.ts', '../src/b.ts'], mappings: 'AAAA' }),
@@ -236,7 +236,7 @@ module('Utils | source-map | parse', { concurrency: true }, () => {
 
 // ── extractInline ─────────────────────────────────────────────────────
 
-module('Utils | source-map | extractInline', { concurrency: true }, () => {
+module('Utils | SourceMap | extractInline', { concurrency: true }, () => {
   test('returns null for null bundle', (assert) => {
     assert.strictEqual(SourceMap.extractInline(null, '/out'), null);
   });
@@ -288,7 +288,7 @@ const LOOKUP_DECODER = makeDecoder(
   ['/project/test/my-test.ts', '/project/node_modules/qunitx/assert.ts'],
 );
 
-module('Utils | source-map | lookupPosition', { concurrency: true }, () => {
+module('Utils | SourceMap | lookupPosition', { concurrency: true }, () => {
   test('returns null for an out-of-range generated line', (assert) => {
     assert.strictEqual(SourceMap.lookupPosition(LOOKUP_DECODER, 99, 1), null);
   });
@@ -471,7 +471,7 @@ module('Utils | source-map | lookupPosition', { concurrency: true }, () => {
 
 // ── parseFrameLocation ─────────────────────────────────────────────────────────
 
-module('Utils | source-map | parseFrameLocation', { concurrency: true }, () => {
+module('Utils | SourceMap | parseFrameLocation', { concurrency: true }, () => {
   test('parses simple URL:LINE:COL', (assert) => {
     const r = SourceMap.parseFrameLocation('http://localhost:1234/tests.js:42:15');
     assert.deepEqual(r, { url: 'http://localhost:1234/tests.js', line: 42, col: 15 });
@@ -511,7 +511,7 @@ module('Utils | source-map | parseFrameLocation', { concurrency: true }, () => {
 
 // ── isBundleUrl ────────────────────────────────────────────────────────────────
 
-module('Utils | source-map | isBundleUrl', { concurrency: true }, () => {
+module('Utils | SourceMap | isBundleUrl', { concurrency: true }, () => {
   test('matches /tests.js', (assert) => {
     assert.true(SourceMap.isBundleUrl('http://localhost:1234/tests.js'));
   });
@@ -572,7 +572,7 @@ const FRAME_DECODER = makeDecoder(
   '/project/tmp',
 );
 
-module('Utils | source-map | resolveFrame', { concurrency: true }, () => {
+module('Utils | SourceMap | resolveFrame', { concurrency: true }, () => {
   test('resolves Chrome named frame from test bundle', (assert) => {
     const r = SourceMap.resolveFrame(
       '    at Object.equal (http://localhost:1234/tests.js:1:1)',
@@ -693,7 +693,7 @@ module('Utils | source-map | resolveFrame', { concurrency: true }, () => {
 
 // ── resolveStack ──────────────────────────────────────────────────────────────
 
-module('Utils | source-map | resolveStack', { concurrency: true }, () => {
+module('Utils | SourceMap | resolveStack', { concurrency: true }, () => {
   test('resolves all bundle frames and returns firstUserFrame', (assert) => {
     const stack = [
       '    at Object.equal (http://localhost:1234/tests.js:1:10)', // node_modules
@@ -914,7 +914,7 @@ function bundleWithInlineMap(mapJson: object): string {
 // `..` pops wholesale, yielding a *relative* path — which silently defeats the `/node_modules/`
 // and project-root prefix checks downstream. Windows shapes are simulated so this is provable
 // on any platform.
-module('Utils | source-map | Windows path handling', { concurrency: true }, () => {
+module('Utils | SourceMap | Windows path handling', { concurrency: true }, () => {
   const decoderFor = (outDir: string): SourceMapDecoder =>
     SourceMap.parse(
       JSON.stringify({

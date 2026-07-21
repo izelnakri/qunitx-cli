@@ -14,7 +14,7 @@ const newCounter = (): Counter => ({
   errorCount: 0,
 });
 
-module('reporters | updateCounter', { concurrency: true }, () => {
+module('Reporters | updateCounter', { concurrency: true }, () => {
   test('passed status increments testCount and passCount only', (assert) => {
     const counter = newCounter();
     updateCounter(counter, { status: 'passed', fullName: ['m', 't'], runtime: 1, assertions: [] });

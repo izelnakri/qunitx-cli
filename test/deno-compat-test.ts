@@ -161,7 +161,7 @@ module('Deno compat | template reading (read-template.ts)', () => {
 // `child.stderr.on('data', () => {})` drains in test/helpers/shell.ts#252 and the
 // spawnWatch helper, run this under the Deno lane — if it still passes, Deno now
 // pumps the pipe and the drains can go.
-module('Deno compat | child_process stderr must be drained (shell.ts#252)', () => {
+module('Deno compat | child_process stderr must be drained (shell.ts)', () => {
   test('a stderr flood does not stall stdout delivery when drained', async (assert) => {
     if (!IS_DENO) {
       assert.ok(true, 'skipped under Node — the OS pipe is pumped without an explicit drain');

@@ -55,7 +55,7 @@ const V8_ENTRIES = [
   },
 ];
 
-module('coverage | collect + report', { concurrency: true }, () => {
+module('Coverage | collect + report', { concurrency: true }, () => {
   test('attributes covered and missed original lines from V8 ranges', async (assert) => {
     const collector: CoverageFileMap = new Map();
     await Coverage.collect(makeConfig(makeDecoder(), collector), V8_ENTRIES);

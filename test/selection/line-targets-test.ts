@@ -56,7 +56,7 @@ async function withFile<T>(source: string, fn: (filePath: string) => Promise<T>)
 const resolve = (lines: number[], source = SOURCE) =>
   withFile(source, (filePath) => LineTargets.resolve(filePath, lines, 'a-test.ts'));
 
-module('Utils | LineTargets.resolve | tests', { concurrency: true }, () => {
+module('Selection | LineTargets.resolve | tests', { concurrency: true }, () => {
   test('a line on the test( line selects that test', async (assert) => {
     const { selectors } = await resolve([4]);
     assert.deepEqual(selectors, [{ module: 'Outer', test: 'first' }]);
@@ -83,7 +83,7 @@ module('Utils | LineTargets.resolve | tests', { concurrency: true }, () => {
   });
 });
 
-module('Utils | LineTargets.resolve | modules', { concurrency: true }, () => {
+module('Selection | LineTargets.resolve | modules', { concurrency: true }, () => {
   test('a line on a module( line selects the whole module', async (assert) => {
     const { selectors } = await resolve([3]);
     // No `test` key: the module and everything nested under it. Enumerating its tests instead
@@ -102,7 +102,7 @@ module('Utils | LineTargets.resolve | modules', { concurrency: true }, () => {
   });
 });
 
-module('Utils | LineTargets.resolve | degradation', { concurrency: true }, () => {
+module('Selection | LineTargets.resolve | degradation', { concurrency: true }, () => {
   test('a line outside every declaration runs the whole file with a warning', async (assert) => {
     const { selectors, warnings } = await resolve([1]);
     assert.strictEqual(selectors, null, 'null means run the file unfiltered');
@@ -183,7 +183,7 @@ module('Utils | LineTargets.resolve | degradation', { concurrency: true }, () =>
   });
 });
 
-module('Utils | LineTargets.resolve | multiple targets', { concurrency: true }, () => {
+module('Selection | LineTargets.resolve | multiple targets', { concurrency: true }, () => {
   test('several lines in one file union into several selectors', async (assert) => {
     const { selectors } = await resolve([5, 16]);
     assert.deepEqual(selectors, [

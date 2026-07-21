@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import { extractStackAt, failedAssertions, parseAt } from '../../lib/reporters/failure.ts';
 
-module('reporters | extractStackAt', { concurrency: true }, () => {
+module('Reporters | extractStackAt', { concurrency: true }, () => {
   test('Chrome style: extracts clean URL without parens', (assert) => {
     const stack =
       '    at Object.<anonymous> (http://localhost:1234/tests.js:42:15)\n    at test (http://localhost:1234/tests.js:10:3)';
@@ -32,7 +32,7 @@ module('reporters | extractStackAt', { concurrency: true }, () => {
   });
 });
 
-module('reporters | parseAt', { concurrency: true }, () => {
+module('Reporters | parseAt', { concurrency: true }, () => {
   test('splits path:line:col', (assert) => {
     assert.deepEqual(parseAt('src/app.ts:12:5'), { file: 'src/app.ts', line: 12, col: 5 });
   });
@@ -51,7 +51,7 @@ module('reporters | parseAt', { concurrency: true }, () => {
   });
 });
 
-module('reporters | failedAssertions', { concurrency: true }, () => {
+module('Reporters | failedAssertions', { concurrency: true }, () => {
   test('returns only genuine failures, with 1-based indexes matching assertion order', (assert) => {
     const failures = failedAssertions({
       status: 'failed',

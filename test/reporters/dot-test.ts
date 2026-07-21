@@ -35,7 +35,7 @@ const failing = (name = 'bad'): TestDetails => ({
   assertions: [{ passed: false, todo: false, actual: 1, expected: 2, message: 'nope' }],
 });
 
-module('reporters | DotReporter', { concurrency: true }, () => {
+module('Reporters | DotReporter', { concurrency: true }, () => {
   test('emits one character per test, by status', (assert) => {
     const config = makeConfig();
     const reporter = new DotReporter();
@@ -135,7 +135,7 @@ module('reporters | DotReporter', { concurrency: true }, () => {
     );
   });
 
-  test('never emits TAP syntax', (assert) => {
+  test('emits only status characters — no TAP header, ok lines or plan', (assert) => {
     const config = makeConfig();
     const reporter = new DotReporter();
     const output =
