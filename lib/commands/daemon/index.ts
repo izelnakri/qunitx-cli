@@ -94,7 +94,7 @@ async function buildDaemonSpawn(): Promise<{ bin: string; args: string[] }> {
  * (or `--help` / `-h` / `help`) prints usage and exits 0; an unknown subcommand
  * prints usage to stderr and exits 1.
  */
-export function runCommand(): Promise<number> {
+export function run(): Promise<number> {
   const sub = process.argv[3];
   if (sub === '_serve') return runServeMode();
   if (sub === 'start') return startDaemon();
