@@ -7,7 +7,7 @@ import type { Config, Connections } from '../types.ts';
  * Registers watch-mode keyboard shortcuts: `qq` to abort, `qa` to run all, `qf` for last failed, `ql` for last run.
  * @returns {void}
  */
-export function setupKeyboardEvents(config: Config, connections: Connections): void {
+export function setup(config: Config, connections: Connections): void {
   listenToKeyboardKey('qq', () => abortBrowserQUnit(config, connections));
   listenToKeyboardKey('qa', () => {
     abortBrowserQUnit(config, connections);
@@ -31,8 +31,6 @@ export function setupKeyboardEvents(config: Config, connections: Connections): v
     runTestsInBrowser(config, connections, config.state.group.lastRanFiles);
   });
 }
-
-export { setupKeyboardEvents as default };
 
 function abortBrowserQUnit(_config: Config, connections: Connections): void {
   connections.server.publish('abort');
