@@ -3,7 +3,7 @@ import type { Config, Counter } from '../types.ts';
 /**
  * Every stdout reporter `--reporter` accepts, in help/error-message order. Exactly one is
  * active per run — artifact outputs (`--junit`, `--coverage`) are separate additive flags.
- * This module is a leaf (type-only imports), so `parse-cli-flags` can validate against it
+ * This module is a leaf (type-only imports), so `Args.parse` can validate against it
  * without pulling the reporter implementations into the CLI's startup path.
  */
 export const REPORTERS = ['tap', 'spec', 'dot', 'github'] as const;
