@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { buildTestBundle, bundleCacheKey } from '../../lib/commands/run/tests-in-browser.ts';
-import { newRunState } from '../../lib/setup/run-state.ts';
+import * as RunState from '../../lib/setup/run-state.ts';
 import type { BuildState, Config } from '../../lib/types.ts';
 
 const CWD = process.cwd();
@@ -343,7 +343,7 @@ function makeConfig(testFiles: string[], watch = false): Config {
     testFileLookupPaths: [],
     fsTree: Object.fromEntries(testFiles.map((f) => [f, null])),
     watch,
-    state: newRunState(),
+    state: RunState.create(),
   } as unknown as Config;
 }
 

@@ -24,12 +24,7 @@ import {
   DaemonRunError,
 } from './run/tests-in-browser.ts';
 
-import {
-  clearBuildBundles,
-  newGroupState,
-  resetRunResults,
-  reusablePageSlot,
-} from '../setup/run-state.ts';
+import * as RunState from '../setup/run-state.ts';
 import { setupFileWatchers } from '../setup/file-watcher.ts';
 import { getChangedFsTree } from '../setup/get-changed-fs-tree.ts';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
@@ -266,7 +261,7 @@ async function runWatchMode(config: Config): Promise<void> {
           // Clear the cached bundles so the next re-run rebuilds without the deleted file.
           // `change` events can fire while a file is being rewritten, so a filtered bundle
           // may catch the file in a transient empty/partial state and produce a broken rerun.
-          clearBuildBundles(build);
+          RunState.clearBundles(build);
           if (config.debug) {
             console.log(
               `# Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
@@ -362,14 +357,14 @@ async function runConcurrentMode(
     ...untargetedGroups.map((files) => ({ files, selectors: undefined })),
   ];
   const groupCount = groups.length;
-  // Shared with every group config below; reusablePageSlot() reads it to decide page reuse.
+  // Shared with every group config below; RunState.reusablePageSlot() reads it to decide page reuse.
   config.state.groupCount = groupCount;
 
   // All run accumulators — counter, failure sets, coverage — are cleared here, on the parent,
   // BEFORE the group configs are spread off it below. The spread copies `state` by reference, so
   // every group then adds into these same objects: TAP numbers stay globally sequential, failures
   // land in one set, and the coverage report covers the whole run rather than one group's slice.
-  resetRunResults(config.state.results, !!config.coverage);
+  RunState.reset(config.state.results, !!config.coverage);
   config.state.group.lastRanFiles = allFiles;
 
   const groupConfigs = groups.map(({ files, selectors }, i) => ({
@@ -386,12 +381,12 @@ async function runConcurrentMode(
     state: {
       ...config.state,
       group: {
-        ...newGroupState(i, selectors),
+        ...RunState.newGroup(i, selectors),
         groupMode: true,
         // The parent resolved these from the HTML fixtures before any group existed; each group
         // starts from that list and the shared-server branch below rewrites it to /group-{i}/.
         build: {
-          ...newGroupState().build,
+          ...RunState.newGroup().build,
           htmlPathsToRunTests: [...build.htmlPathsToRunTests],
         },
       },
@@ -508,9 +503,9 @@ async function runConcurrentMode(
           // Daemon single-group fast path: stash the page on the slot for the next run instead
           // of closing it (saves ~70-130ms of newPage cost per warm run). Mid-page state is
           // dropped by the next run's page.goto(testUrl), which destroys the JS context.
-          // reusablePageSlot() withholds the slot outside single-group daemon runs, and a
+          // RunState.reusablePageSlot() withholds the slot outside single-group daemon runs, and a
           // disconnected page falls through to close.
-          const pageSlot = reusablePageSlot(groupConfig.state);
+          const pageSlot = RunState.reusablePageSlot(groupConfig.state);
           const reusePage = pageSlot && connections.page && !connections.page.isClosed();
           if (reusePage) pageSlot.page = connections.page;
           // Per-group cleanup, bounded so a deadlocked page.close (Firefox/WebKit under
