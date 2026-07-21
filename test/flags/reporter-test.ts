@@ -74,7 +74,7 @@ module('--reporter=spec', { concurrency: true }, (_hooks, moduleMetadata) => {
 
   test('skipped and todo tests are marked and counted', async (assert, testMetadata) => {
     const result = await shell(
-      `node cli.ts test/helpers/skip-todo-tests.ts --reporter=spec --output=tmp/spec-${randomUUID()}`,
+      `node cli.ts test/fixtures/skip-todo-tests.ts --reporter=spec --output=tmp/spec-${randomUUID()}`,
       { ...moduleMetadata, ...testMetadata },
     );
     assert.outputContains(result, {

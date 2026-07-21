@@ -5,7 +5,7 @@ import { execute as shell, shellFails } from '../helpers/shell.ts';
 module('--after script tests for browser mode', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('--after works when it doesnt need to be awaited', async (assert, testMetadata) => {
     const result = await shell(
-      'node cli.ts test/helpers/passing-tests.ts --after=test/helpers/after-script-basic.ts',
+      'node cli.ts test/fixtures/passing-tests.ts --after=test/fixtures/after-script-basic.ts',
       { ...moduleMetadata, ...testMetadata },
     );
 
@@ -16,7 +16,7 @@ module('--after script tests for browser mode', { concurrency: true }, (_hooks, 
 
   test('--after exits with code 1 and reports error when script throws', async (assert, testMetadata) => {
     const result = await shellFails(
-      'node cli.ts test/helpers/passing-tests.ts --after=test/helpers/hook-script-throws.ts',
+      'node cli.ts test/fixtures/passing-tests.ts --after=test/fixtures/hook-script-throws.ts',
       { ...moduleMetadata, ...testMetadata },
     );
 
@@ -26,7 +26,7 @@ module('--after script tests for browser mode', { concurrency: true }, (_hooks, 
 
   test('--after works when it needs to be awaited', async (assert, testMetadata) => {
     const result = await shell(
-      'node cli.ts test/helpers/passing-tests.ts --after=test/helpers/after-script-async.ts',
+      'node cli.ts test/fixtures/passing-tests.ts --after=test/fixtures/after-script-async.ts',
       { ...moduleMetadata, ...testMetadata },
     );
 

@@ -11,7 +11,7 @@ import { spawnCapture } from './shell.ts';
 // Use the literal token `node` — parseCommand swaps it for process.execPath internally.
 // `${process.execPath} ${FIXTURE}` would shell-fragment on Windows because
 // `C:\\Program Files\\nodejs\\node.exe` contains a space.
-const FIXTURE = path.join(process.cwd(), 'test/helpers/spawn-capture-fixture.js');
+const FIXTURE = path.join(process.cwd(), 'test/fixtures/spawn-capture-fixture.js');
 const cmd = (mode: string) => `node ${FIXTURE} ${mode}`;
 
 module('Helpers | spawnCapture | success path', { concurrency: true }, () => {

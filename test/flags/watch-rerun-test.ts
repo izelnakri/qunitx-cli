@@ -939,7 +939,7 @@ async function makeWatchProject(): Promise<{
   const testsDir = `${dir}/tests`;
   await fs.mkdir(testsDir, { recursive: true });
   const [template] = await Promise.all([
-    fs.readFile(`${process.cwd()}/test/helpers/passing-tests.ts`),
+    fs.readFile(`${process.cwd()}/test/fixtures/passing-tests.ts`),
     fs.symlink(`${process.cwd()}/node_modules`, `${dir}/node_modules`),
     fs.writeFile(
       `${dir}/package.json`,

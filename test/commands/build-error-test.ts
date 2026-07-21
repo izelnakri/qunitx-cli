@@ -261,7 +261,7 @@ module('Commands | buildTestBundle | fallbackPage lifecycle', { concurrency: tru
   });
 
   test('clears the fallback to null after a successful build', async (assert) => {
-    const config = makeConfig([`${CWD}/test/helpers/passing-tests.ts`]);
+    const config = makeConfig([`${CWD}/test/fixtures/passing-tests.ts`]);
     const cached = config.state.group.build;
     cached.fallbackPage = {
       kind: 'build-error',

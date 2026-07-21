@@ -12,8 +12,8 @@ const CWD = process.cwd();
 // Two real test-helper files that import from qunitx — used as representative
 // inputs so the resulting esbuild bundle contains real module-graph content
 // (qunitx + deps) rather than a trivial empty artifact.
-const FILE_A = `${CWD}/test/helpers/passing-tests.ts`;
-const FILE_B = `${CWD}/test/helpers/failing-tests.ts`;
+const FILE_A = `${CWD}/test/fixtures/passing-tests.ts`;
+const FILE_B = `${CWD}/test/fixtures/failing-tests.ts`;
 
 module('Commands | buildTestBundle | non-watch mode', { concurrency: true }, () => {
   test('produces a non-empty bundle', async (assert) => {

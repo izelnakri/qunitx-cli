@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 
-module('{{moduleName}} Passing Tests', function (hooks) {
+module('{{moduleName}} Passing Tests', function (_hooks) {
   test('assert true works', function (assert) {
     assert.expect(3);
     assert.ok(true);
@@ -12,7 +12,7 @@ module('{{moduleName}} Passing Tests', function (hooks) {
   test('async test finishes', async function (assert) {
     assert.expect(3);
 
-    const wait = new Promise((resolve, reject) => {
+    const wait = new Promise((resolve) => {
       setTimeout(() => {
         console.log('resolving async test');
         console.log({

@@ -22,8 +22,8 @@
     "build": "node scripts/build-cli.js",
     "bin": "chmod +x cli.ts && ./cli.ts",
     "prepublishOnly": "npm run build",
-    "format": "prettier --check \"lib/**/*.ts\" \"test/**/*.ts\" \"!test/helpers/passing-tests-dist.ts\" \"scripts/**/*.js\" \"bin/**/*.js\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
-    "format:fix": "prettier --write \"lib/**/*.ts\" \"test/**/*.ts\" \"!test/helpers/passing-tests-dist.ts\" \"scripts/**/*.js\" \"bin/**/*.js\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
+    "format": "prettier --check \"lib/**/*.ts\" \"test/**/*.ts\" \"!test/fixtures/passing-tests-dist.ts\" \"scripts/**/*.js\" \"bin/**/*.js\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
+    "format:fix": "prettier --write \"lib/**/*.ts\" \"test/**/*.ts\" \"!test/fixtures/passing-tests-dist.ts\" \"scripts/**/*.js\" \"bin/**/*.js\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
     "lint": "deno lint lib/ bin/ test/ scripts/ cli.ts",
     "typecheck": "deno check lib/ cli.ts",
     "lint:docs": "node scripts/lint-docs.js",
@@ -39,8 +39,8 @@
     "test:browser": "node test/runner.ts test/flags/*-test.ts test/inputs/*-test.ts",
     "test:browser:deno": "deno run -A test/runner.ts test/flags/*-test.ts test/inputs/*-test.ts",
     "test:release": "bash scripts/test-release.sh",
-    "test:sanity-first": "./cli.ts test/helpers/failing-tests.js test/helpers/failing-tests.ts",
-    "test:sanity-second": "./cli.ts test/helpers/passing-tests.js test/helpers/passing-tests.ts"
+    "test:sanity-first": "./cli.ts test/fixtures/failing-tests.js test/fixtures/failing-tests.ts",
+    "test:sanity-second": "./cli.ts test/fixtures/passing-tests.js test/fixtures/passing-tests.ts"
   },
   "engines": {
     "node": ">=24.0.0",

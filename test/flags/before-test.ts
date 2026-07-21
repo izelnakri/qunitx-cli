@@ -8,7 +8,7 @@ module(
   (_hooks, moduleMetadata) => {
     test('--before works when it doesnt need to be awaited', async (assert, testMetadata) => {
       const result = await shell(
-        'node cli.ts test/helpers/passing-tests.ts --before=test/helpers/before-script-basic.ts',
+        'node cli.ts test/fixtures/passing-tests.ts --before=test/fixtures/before-script-basic.ts',
         { ...moduleMetadata, ...testMetadata },
       );
 
@@ -19,7 +19,7 @@ module(
 
     test('--before exits with code 1 and reports error when script throws', async (assert, testMetadata) => {
       const result = await shellFails(
-        'node cli.ts test/helpers/passing-tests.ts --before=test/helpers/hook-script-throws.ts',
+        'node cli.ts test/fixtures/passing-tests.ts --before=test/fixtures/hook-script-throws.ts',
         { ...moduleMetadata, ...testMetadata },
       );
 
@@ -29,7 +29,7 @@ module(
 
     test('--before works it needs to be awaited', async (assert, testMetadata) => {
       const result = await shell(
-        'node cli.ts test/helpers/passing-tests.ts test/helpers/before-script-web-server-tests.ts --before=test/helpers/before-script-async.ts',
+        'node cli.ts test/fixtures/passing-tests.ts test/fixtures/before-script-web-server-tests.ts --before=test/fixtures/before-script-async.ts',
         { ...moduleMetadata, ...testMetadata },
       );
 
