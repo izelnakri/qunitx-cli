@@ -35,24 +35,23 @@ process.title = 'qunitx';
   } else if (cmd === 'init') {
     return await (await import('./lib/commands/init.ts')).initializeProject();
   } else if (cmd === 'daemon') {
-    const { runDaemonCommand } = await import('./lib/commands/daemon/index.ts');
-    process.exit(await runDaemonCommand());
+    const Daemon = await import('./lib/commands/daemon/index.ts');
+    process.exit(await Daemon.runCommand());
   }
 
   // Daemon-routed run: when a live daemon exists for this cwd (or QUNITX_DAEMON=1
   // opted into auto-spawn), dispatch the work over the Unix socket and stream TAP
   // back. Saves ~800ms by reusing the daemon's persistent Chrome and warm esbuild
   // context. Falls through on connect failure.
-  const { shouldUseDaemon, shouldAutoSpawnDaemon, runViaDaemon } =
-    await import('./lib/commands/daemon/client.ts');
-  let useDaemon = shouldUseDaemon();
-  if (!useDaemon && shouldAutoSpawnDaemon()) {
-    const { ensureDaemonRunning } = await import('./lib/commands/daemon/index.ts');
-    useDaemon = await ensureDaemonRunning();
+  const Client = await import('./lib/commands/daemon/client.ts');
+  let useDaemon = Client.shouldUse();
+  if (!useDaemon && Client.shouldAutoSpawn()) {
+    const { ensureRunning } = await import('./lib/commands/daemon/index.ts');
+    useDaemon = await ensureRunning();
   }
   if (useDaemon) {
     try {
-      const exitCode = await runViaDaemon(process.argv.slice(2));
+      const exitCode = await Client.runVia(process.argv.slice(2));
       process.stdout.write('', () => process.exit(exitCode));
       return;
     } catch {

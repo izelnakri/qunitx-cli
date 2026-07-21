@@ -1,4 +1,5 @@
 Use Coverage.collect and Coverage.Report.write as my examples
+Dynamic import question for import * as Module from "file";
 
 
 instead of kind: , it could be an instance call with new or .build() then I wont need deriveBuildErrorType and formatBuildErrors neither
