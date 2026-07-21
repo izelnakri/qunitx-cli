@@ -37,11 +37,7 @@ import { readTemplate } from '../utils/read-template.ts';
 import { isCustomTemplate } from '../utils/html.ts';
 import { closeWithGrace } from '../utils/close-with-grace.ts';
 import { maybePrintDaemonHint } from './daemon/hint.ts';
-import {
-  writeFailureCache,
-  buildFailureCache,
-  resolveOnlyFailedFiles,
-} from '../utils/failure-cache.ts';
+import * as FailureCache from '../utils/failure-cache.ts';
 import { writeCoverageReport } from '../coverage/report.ts';
 import { isFilteredRun, describeFilter } from '../selection/filter-query.ts';
 import {
@@ -191,7 +187,7 @@ async function runWatchMode(config: Config): Promise<void> {
   // `qa` and file-save reruns still see every file; `qf` / `ql` cover the rest interactively.
   let initialFilter: string[] | undefined;
   if (config.onlyFailed) {
-    const failed = await resolveOnlyFailedFiles(
+    const failed = await FailureCache.filesToRerun(
       config.projectRoot,
       config.inputs.length > 0,
       config.fsTree,
@@ -576,9 +572,9 @@ async function runConcurrentMode(
   // timings, which tolerate loss) so a slow filesystem can't lose the cache to process.exit.
   const failureCacheWrite = filteredRun
     ? null
-    : writeFailureCache(config.projectRoot, buildFailureCache(config)).catch(
+    : FailureCache.write(config.projectRoot, FailureCache.build(config)).catch(
         (err: Error) =>
-          config.debug && process.stderr.write(`# [qunitx] writeFailureCache: ${err.message}\n`),
+          config.debug && process.stderr.write(`# [qunitx] FailureCache.write: ${err.message}\n`),
       );
   if (config.debug) printFileTimings(fileTimes, config.projectRoot);
 
