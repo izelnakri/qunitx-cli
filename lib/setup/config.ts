@@ -5,14 +5,14 @@ import { pathToFileURL } from 'node:url';
 import { blue } from '../utils/color.ts';
 import { defaultProjectConfigValues } from './default-project-config-values.ts';
 import { findProjectRoot } from '../utils/find-project-root.ts';
-import { buildFSTree } from './fs-tree.ts';
+import * as FSTree from './fs-tree.ts';
 import * as TestFilePaths from './test-file-paths.ts';
 import { getChangedFsTree } from './get-changed-fs-tree.ts';
 import * as Args from '../args/index.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
 import * as Reporter from '../reporters/index.ts';
 import * as RunState from './run-state.ts';
-import type { Config, FSTree } from '../types.ts';
+import type { Config, FSTree as FSTreeShape } from '../types.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
 
 /**
@@ -48,7 +48,7 @@ export async function setupConfig(): Promise<Config> {
   } as Config;
   config.htmlPaths = normalizeHTMLPaths(config.projectRoot, config.htmlPaths);
   [config.fsTree, config.plugins] = await Promise.all([
-    buildFSTree(config.testFileLookupPaths, config),
+    FSTree.build(config.testFileLookupPaths, config),
     pluginsPromise,
   ]);
 
@@ -135,7 +135,7 @@ function normalizeHTMLPaths(projectRoot: string, htmlPaths: string[]): string[] 
  * fsTree so failures are scoped to what the user asked for. Files that no longer exist (deleted
  * or renamed since the failing run) are dropped. A missing cache falls back to running everything.
  */
-async function applyOnlyFailedFilter(config: Config): Promise<FSTree> {
+async function applyOnlyFailedFilter(config: Config): Promise<FSTreeShape> {
   const failed = await FailureCache.filesToRerun(
     config.projectRoot,
     config.inputs.length > 0,

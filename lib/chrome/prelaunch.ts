@@ -76,7 +76,7 @@ if (!openWatchMode) {
     const proc = earlyChrome?.proc;
     if (proc?.pid == null) return;
     // Last-resort kill: fires in edge cases where process.exit() is called without going
-    // through shutdownPrelaunch() (e.g. buildFSTree ENOENT, signal kills, daemon
+    // through shutdownPrelaunch() (e.g. FSTree.build ENOENT, signal kills, daemon
     // shutdown mid-launch). The normal path calls shutdownPrelaunch() first, so Chrome
     // is already dead here and this is a no-op. SIGKILL so Chrome cannot stall exit.
     killProcessGroup(proc.pid);
