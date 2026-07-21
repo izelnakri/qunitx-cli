@@ -5,7 +5,7 @@ const highlight = (text: string) => magenta().bold(text);
 const color = (text: string) => blue(text);
 
 /** Prints qunitx-cli usage information to stdout. */
-export function displayHelpOutput() {
+export function run() {
   const config = pkg;
 
   console.log(`${highlight('[qunitx v' + config.version + '] Usage:')} qunitx ${color('[targets] --$flags')}
@@ -56,5 +56,3 @@ ${color('QUNITX_BROWSER=...')}  : default browser engine when ${color('--browser
 ${color('QUNITX_DEBUG=1')}      : enables ${color('--debug')} for every run; per-invocation ${color('--debug=false')} still wins
 `);
 }
-
-export { displayHelpOutput as default };

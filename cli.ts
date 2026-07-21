@@ -25,18 +25,18 @@ process.title = 'qunitx';
 (async () => {
   const cmd = process.argv[2];
   if (!cmd) {
-    return await (await import('./lib/commands/help.ts')).displayHelpOutput();
+    return await (await import('./lib/commands/help.ts')).run();
   } else if (['--version', '-v', 'version'].includes(cmd)) {
     return process.stdout.write(pkg.version + '\n');
   } else if (['help', 'h', 'p', 'print'].includes(cmd)) {
-    return await (await import('./lib/commands/help.ts')).displayHelpOutput();
+    return await (await import('./lib/commands/help.ts')).run();
   } else if (['new', 'n', 'g', 'generate'].includes(cmd)) {
-    return await (await import('./lib/commands/generate.ts')).generateTestFiles();
+    return await (await import('./lib/commands/generate.ts')).run();
   } else if (cmd === 'init') {
-    return await (await import('./lib/commands/init.ts')).initializeProject();
+    return await (await import('./lib/commands/init.ts')).run();
   } else if (cmd === 'daemon') {
     const Daemon = await import('./lib/commands/daemon/index.ts');
-    process.exit(await Daemon.runCommand());
+    process.exit(await Daemon.run());
   }
 
   // Daemon-routed run: when a live daemon exists for this cwd (or QUNITX_DAEMON=1
@@ -71,8 +71,8 @@ process.title = 'qunitx';
   // --search/--print lists what the filter matches and exits: no browser, no bundle, no tests.
   // Chrome was pre-launched at module load, so shut it back down rather than leaking it.
   if (config.search) {
-    const { searchTests } = await import('./lib/commands/search.ts');
-    const exitCode = await searchTests(config);
+    const Search = await import('./lib/commands/search.ts');
+    const exitCode = await Search.run(config);
     await shutdownPrelaunch();
     return process.stdout.write('', () => process.exit(exitCode));
   }

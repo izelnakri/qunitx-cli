@@ -56,7 +56,7 @@ interface FoundTest {
  *
  * @returns the process exit code: 0 when something matched, 1 when nothing did (as `grep` does).
  */
-export async function searchTests(config: Config): Promise<number> {
+export async function run(config: Config): Promise<number> {
   // A bare --search/--print has no expression of its own, so it previews whatever -t/-m set; with
   // neither, an undefined filter matches everything and the command lists the whole suite.
   const filter = typeof config.search === 'string' ? config.search : config.filter;
@@ -132,8 +132,6 @@ export async function searchTests(config: Config): Promise<number> {
 
   return matches.length > 0 ? 0 : 1;
 }
-
-export { searchTests as default };
 
 /** Per-file resolved line targets. `selectors: null` means "run the whole file" (no restriction). */
 type FileSelectors = Map<string, { selectors: QUnitSelector[] | null; warnings: string[] }>;
