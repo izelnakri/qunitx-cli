@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { resolveSidecarEsbuild } from '../lib/utils/resolve-sidecar-esbuild.ts';
+import { findSidecarEsbuild } from '../lib/utils/find-sidecar-esbuild.ts';
 import { isDenoCompiledBinary } from '../lib/utils/run-user-module.ts';
 import { readTemplate } from '../lib/utils/read-template.ts';
 import './helpers/custom-asserts.ts';
@@ -24,7 +24,7 @@ const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== 'undefined';
 //
 // When bumping Deno, work down this list; each entry maps to its own cleanup commit.
 //
-//  1. esbuild sidecar hint — lib/utils/resolve-sidecar-esbuild.ts
+//  1. esbuild sidecar hint — lib/utils/find-sidecar-esbuild.ts
 //     Why: `deno compile` bundles JS but can't embed esbuild's native binary, so we
 //     point ESBUILD_BINARY_PATH at a sidecar next to the exe. Check: the
 //     "esbuild sidecar resolution" tests below + the deno release-consumer CI lane.
@@ -74,7 +74,7 @@ const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== 'undefined';
 //     'data' listener and run the test-deno lane (watch/daemon tests stall if still needed).
 // ─────────────────────────────────────────────────────────────────────────────
 
-module('Deno compat | esbuild sidecar resolution (resolve-sidecar-esbuild.ts)', () => {
+module('Deno compat | esbuild sidecar resolution (find-sidecar-esbuild.ts)', () => {
   async function stageExecutable(dir: string, name: string): Promise<void> {
     const file = path.join(dir, name);
     await fs.writeFile(file, '#!/bin/sh\n');
@@ -86,7 +86,7 @@ module('Deno compat | esbuild sidecar resolution (resolve-sidecar-esbuild.ts)', 
     await fs.mkdir(dir, { recursive: true });
     try {
       await stageExecutable(dir, 'esbuild');
-      assert.equal(resolveSidecarEsbuild(dir, 'linux'), path.join(dir, 'esbuild'));
+      assert.equal(findSidecarEsbuild(dir, 'linux'), path.join(dir, 'esbuild'));
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
@@ -98,7 +98,7 @@ module('Deno compat | esbuild sidecar resolution (resolve-sidecar-esbuild.ts)', 
     try {
       await stageExecutable(dir, 'esbuild');
       await stageExecutable(dir, 'esbuild.exe');
-      assert.equal(resolveSidecarEsbuild(dir, 'win32'), path.join(dir, 'esbuild.exe'));
+      assert.equal(findSidecarEsbuild(dir, 'win32'), path.join(dir, 'esbuild.exe'));
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
@@ -108,7 +108,7 @@ module('Deno compat | esbuild sidecar resolution (resolve-sidecar-esbuild.ts)', 
     const dir = path.join(os.tmpdir(), `qunitx-sidecar-${randomUUID()}`);
     await fs.mkdir(dir, { recursive: true });
     try {
-      assert.equal(resolveSidecarEsbuild(dir, 'linux'), null);
+      assert.equal(findSidecarEsbuild(dir, 'linux'), null);
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
