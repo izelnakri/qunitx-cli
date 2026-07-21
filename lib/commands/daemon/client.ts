@@ -1,7 +1,7 @@
 import net from 'node:net';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import * as Paths from './socket-path.ts';
+import * as Paths from './paths.ts';
 import { CLEANUP_GRACE_MS } from '../../utils/close-with-grace.ts';
 import * as Args from '../../args/index.ts';
 import { attachLineParser, probeSocket } from './socket-io.ts';

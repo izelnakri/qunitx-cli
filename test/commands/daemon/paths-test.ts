@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import os from 'node:os';
 import path from 'node:path';
-import * as Paths from '../../../lib/commands/daemon/socket-path.ts';
+import * as Paths from '../../../lib/commands/daemon/paths.ts';
 import '../../helpers/custom-asserts.ts';
 
 const FIXED_CWD = '/some/test/project';
