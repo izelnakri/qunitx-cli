@@ -3,7 +3,7 @@ import type { Browser, Page } from 'playwright-core';
 import type { ChildProcess } from 'node:child_process';
 import type { Buffer } from 'node:buffer';
 import type { BuildContext, Plugin as EsbuildPlugin } from 'esbuild';
-import type { SourceMapDecoder } from './utils/source-map-decoder.ts';
+import type { SourceMapDecoder } from './utils/source-map.ts';
 import type { Reporter, ReporterName } from './reporter/types.ts';
 import type { QUnitSelector } from './selection/line-targets.ts';
 import type { FailedTestRecord } from './utils/failure-cache.ts';

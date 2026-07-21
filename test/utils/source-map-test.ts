@@ -1,68 +1,56 @@
 import { module, test } from 'qunitx';
-import {
-  readVLQ,
-  decodeMappings,
-  parseSourceMap,
-  extractInlineSourceMap,
-  lookupPosition,
-  parseFrameLocation,
-  isBundleUrl,
-  resolveFrame,
-  resolveStack,
-  sourceAbsolutePath,
-  type Segment,
-  type SourceMapDecoder,
-} from '../../lib/utils/source-map-decoder.ts';
+import * as SourceMap from '../../lib/utils/source-map.ts';
+import type { Segment, SourceMapDecoder } from '../../lib/utils/source-map.ts';
 
 // ── readVLQ ───────────────────────────────────────────────────────────────────
 
-module('Utils | source-map-decoder | readVLQ', { concurrency: true }, () => {
+module('Utils | source-map | readVLQ', { concurrency: true }, () => {
   test('A encodes 0', (assert) => {
-    const [value, nextPos] = readVLQ('A', 0);
+    const [value, nextPos] = SourceMap.readVLQ('A', 0);
     assert.strictEqual(value, 0);
     assert.strictEqual(nextPos, 1);
   });
 
   test('C encodes +1', (assert) => {
-    const [value] = readVLQ('C', 0);
+    const [value] = SourceMap.readVLQ('C', 0);
     assert.strictEqual(value, 1);
   });
 
   test('D encodes -1', (assert) => {
-    const [value] = readVLQ('D', 0);
+    const [value] = SourceMap.readVLQ('D', 0);
     assert.strictEqual(value, -1);
   });
 
   test('E encodes +2', (assert) => {
-    const [value] = readVLQ('E', 0);
+    const [value] = SourceMap.readVLQ('E', 0);
     assert.strictEqual(value, 2);
   });
 
   test('F encodes -2', (assert) => {
-    const [value] = readVLQ('F', 0);
+    const [value] = SourceMap.readVLQ('F', 0);
     assert.strictEqual(value, -2);
   });
 
   test('Q encodes +8', (assert) => {
-    const [value] = readVLQ('Q', 0);
+    const [value] = SourceMap.readVLQ('Q', 0);
     assert.strictEqual(value, 8);
   });
 
   test('gB encodes +16 (two-char VLQ)', (assert) => {
     // 16 → sign=0, encoded=32 → first digit=0 with cont bit, second digit=1
-    const [value, nextPos] = readVLQ('gB', 0);
+    const [value, nextPos] = SourceMap.readVLQ('gB', 0);
     assert.strictEqual(value, 16);
     assert.strictEqual(nextPos, 2, 'two chars consumed');
   });
 
   test('hB encodes -16 (two-char VLQ, negative)', (assert) => {
-    const [value, nextPos] = readVLQ('hB', 0);
+    const [value, nextPos] = SourceMap.readVLQ('hB', 0);
     assert.strictEqual(value, -16);
     assert.strictEqual(nextPos, 2);
   });
 
   test('pos offset: reads from the middle of the string', (assert) => {
-    const [value, nextPos] = readVLQ('AACAA', 2); // 'C' at index 2
+    const [value, nextPos] = SourceMap.readVLQ('AACAA', 2); // 'C' at index 2
     assert.strictEqual(value, 1);
     assert.strictEqual(nextPos, 3);
   });
@@ -70,8 +58,8 @@ module('Utils | source-map-decoder | readVLQ', { concurrency: true }, () => {
   test('returns updated nextPos so the caller can chain calls', (assert) => {
     // Decode two consecutive VLQ values from one string.
     const s = 'CE'; // 'C'=+1, 'E'=+2
-    const [v1, p1] = readVLQ(s, 0);
-    const [v2, p2] = readVLQ(s, p1);
+    const [v1, p1] = SourceMap.readVLQ(s, 0);
+    const [v2, p2] = SourceMap.readVLQ(s, p1);
     assert.strictEqual(v1, 1);
     assert.strictEqual(v2, 2);
     assert.strictEqual(p2, 2, 'both chars consumed');
@@ -80,7 +68,7 @@ module('Utils | source-map-decoder | readVLQ', { concurrency: true }, () => {
   test('three-char VLQ encodes +1024', (assert) => {
     // 1024 → encoded=2048 → bits: 00000 | 00000 | 00010 with two continuation chars
     // 'g'=32 (cont), 'g'=32 (cont), 'C'=2 (stop) → 0 | (0<<5) | (2<<10) = 2048 → +1024
-    const [value, nextPos] = readVLQ('ggC', 0);
+    const [value, nextPos] = SourceMap.readVLQ('ggC', 0);
     assert.strictEqual(value, 1024);
     assert.strictEqual(nextPos, 3, 'three chars consumed');
   });
@@ -88,7 +76,7 @@ module('Utils | source-map-decoder | readVLQ', { concurrency: true }, () => {
   test('three-char VLQ encodes -1024', (assert) => {
     // -1024 → encoded=2049 → bits: 00001 | 00000 | 00010 with two continuation chars
     // 'h'=33 (cont), 'g'=32 (cont), 'C'=2 (stop) → 1 | (0<<5) | (2<<10) = 2049 → -1024
-    const [value, nextPos] = readVLQ('hgC', 0);
+    const [value, nextPos] = SourceMap.readVLQ('hgC', 0);
     assert.strictEqual(value, -1024);
     assert.strictEqual(nextPos, 3, 'three chars consumed');
   });
@@ -96,21 +84,21 @@ module('Utils | source-map-decoder | readVLQ', { concurrency: true }, () => {
 
 // ── decodeMappings ────────────────────────────────────────────────────────────
 
-module('Utils | source-map-decoder | decodeMappings', { concurrency: true }, () => {
+module('Utils | source-map | decodeMappings', { concurrency: true }, () => {
   test('empty string produces no lines', (assert) => {
-    const lines = decodeMappings('');
+    const lines = SourceMap.decodeMappings('');
     assert.deepEqual(lines, [[]], 'one empty line for the empty string');
   });
 
   test('AAAA produces a single segment at origin', (assert) => {
-    const lines = decodeMappings('AAAA');
+    const lines = SourceMap.decodeMappings('AAAA');
     assert.strictEqual(lines.length, 1);
     assert.strictEqual(lines[0].length, 1);
     assert.deepEqual(lines[0][0], { generatedCol: 0, sourceIndex: 0, sourceLine: 0, sourceCol: 0 });
   });
 
   test('semicolon creates a new generated line', (assert) => {
-    const lines = decodeMappings('AAAA;AAAA');
+    const lines = SourceMap.decodeMappings('AAAA;AAAA');
     assert.strictEqual(lines.length, 2, 'two generated lines');
     assert.strictEqual(lines[0].length, 1);
     assert.strictEqual(lines[1].length, 1);
@@ -118,27 +106,27 @@ module('Utils | source-map-decoder | decodeMappings', { concurrency: true }, () 
 
   test('generatedCol resets to 0 at each new line', (assert) => {
     // Second line has generatedCol delta = +4 (I = 4th positive = 4)
-    const lines = decodeMappings('QAAA;IAAA'); // Q=+8 col, I=+4 col
+    const lines = SourceMap.decodeMappings('QAAA;IAAA'); // Q=+8 col, I=+4 col
     assert.strictEqual(lines[0][0].generatedCol, 8, 'line 0 col');
     assert.strictEqual(lines[1][0].generatedCol, 4, 'line 1 col resets and delta applies fresh');
   });
 
   test('sourceLine delta is cumulative across lines', (assert) => {
     // Line 0: AAAA → sl=0.  Line 1: AACA → delta sl=+1 → sl=1.
-    const lines = decodeMappings('AAAA;AACA');
+    const lines = SourceMap.decodeMappings('AAAA;AACA');
     assert.strictEqual(lines[0][0].sourceLine, 0);
     assert.strictEqual(lines[1][0].sourceLine, 1, 'sl cumulative across line break');
   });
 
   test('sourceIndex delta is cumulative across lines', (assert) => {
     // Line 0: AAAA → si=0.  Line 1: ACAA → delta si=+1 → si=1.
-    const lines = decodeMappings('AAAA;ACAA');
+    const lines = SourceMap.decodeMappings('AAAA;ACAA');
     assert.strictEqual(lines[0][0].sourceIndex, 0);
     assert.strictEqual(lines[1][0].sourceIndex, 1);
   });
 
   test('comma separates segments within a line', (assert) => {
-    const lines = decodeMappings('AAAA,QAAA');
+    const lines = SourceMap.decodeMappings('AAAA,QAAA');
     assert.strictEqual(lines[0].length, 2);
     assert.strictEqual(lines[0][0].generatedCol, 0);
     assert.strictEqual(lines[0][1].generatedCol, 8, 'delta Q=+8 applied to previous gc=0');
@@ -146,20 +134,20 @@ module('Utils | source-map-decoder | decodeMappings', { concurrency: true }, () 
 
   test('1-field segment (only generated column) is skipped', (assert) => {
     // 'A' alone = 1-field segment (no source reference).  'AAAA' = full 4-field segment.
-    const lines = decodeMappings('A,AAAA');
+    const lines = SourceMap.decodeMappings('A,AAAA');
     assert.strictEqual(lines[0].length, 1, 'only the 4-field segment is stored');
     assert.strictEqual(lines[0][0].generatedCol, 0);
   });
 
   test('consecutive empty lines produce empty segment arrays', (assert) => {
-    const lines = decodeMappings(';;;');
+    const lines = SourceMap.decodeMappings(';;;');
     assert.strictEqual(lines.length, 4);
     for (const segs of lines) assert.strictEqual(segs.length, 0);
   });
 
   test('two segments in same line have independent generatedCol deltas', (assert) => {
     // AAAA (gc=0), then QAAA (delta gc=+8 → gc=8), then QAAA (delta gc=+8 → gc=16)
-    const lines = decodeMappings('AAAA,QAAA,QAAA');
+    const lines = SourceMap.decodeMappings('AAAA,QAAA,QAAA');
     assert.strictEqual(lines[0][0].generatedCol, 0);
     assert.strictEqual(lines[0][1].generatedCol, 8);
     assert.strictEqual(lines[0][2].generatedCol, 16);
@@ -167,12 +155,12 @@ module('Utils | source-map-decoder | decodeMappings', { concurrency: true }, () 
 
   test('5-field segment (names index skipped) produces same result as 4-field', (assert) => {
     // 'AAAAA': gc=0, si=0, sl=0, sc=0, namesIdx=0 (5th field, consumed but ignored)
-    assert.deepEqual(decodeMappings('AAAAA')[0], decodeMappings('AAAA')[0]);
+    assert.deepEqual(SourceMap.decodeMappings('AAAAA')[0], SourceMap.decodeMappings('AAAA')[0]);
   });
 
   test('negative source-line delta navigates backward in the source file', (assert) => {
     // Line 0: sl=0; Line 1: delta+1 → sl=1; Line 2: delta-1 (D=-1) → sl=0
-    const lines = decodeMappings('AAAA;AACA;AADA');
+    const lines = SourceMap.decodeMappings('AAAA;AACA;AADA');
     assert.strictEqual(lines[0][0].sourceLine, 0);
     assert.strictEqual(lines[1][0].sourceLine, 1);
     assert.strictEqual(lines[2][0].sourceLine, 0, 'negative delta returns to original source line');
@@ -180,17 +168,17 @@ module('Utils | source-map-decoder | decodeMappings', { concurrency: true }, () 
 
   test('sourceCol delta is cumulative across generated lines', (assert) => {
     // Line 0: AAAC → sc=+1 → sc=1; Line 1: AAAC → delta sc=+1 → sc=2
-    const lines = decodeMappings('AAAC;AAAC');
+    const lines = SourceMap.decodeMappings('AAAC;AAAC');
     assert.strictEqual(lines[0][0].sourceCol, 1);
     assert.strictEqual(lines[1][0].sourceCol, 2, 'sc accumulates across line breaks');
   });
 });
 
-// ── parseSourceMap ─────────────────────────────────────────────────────────────
+// ── parse ─────────────────────────────────────────────────────────────
 
-module('Utils | source-map-decoder | parseSourceMap', { concurrency: true }, () => {
+module('Utils | source-map | parse', { concurrency: true }, () => {
   test('parses sources array', (assert) => {
-    const decoder = parseSourceMap(
+    const decoder = SourceMap.parse(
       JSON.stringify({ sources: ['../src/a.ts', '../src/b.ts'], mappings: 'AAAA' }),
       '/out',
     );
@@ -198,12 +186,12 @@ module('Utils | source-map-decoder | parseSourceMap', { concurrency: true }, () 
   });
 
   test('defaults missing sourceRoot to empty string', (assert) => {
-    const decoder = parseSourceMap(JSON.stringify({ sources: [], mappings: '' }), '/out');
+    const decoder = SourceMap.parse(JSON.stringify({ sources: [], mappings: '' }), '/out');
     assert.strictEqual(decoder.sourceRoot, '');
   });
 
   test('stores provided sourceRoot', (assert) => {
-    const decoder = parseSourceMap(
+    const decoder = SourceMap.parse(
       JSON.stringify({ sources: [], sourceRoot: 'webpack://', mappings: '' }),
       '/out',
     );
@@ -211,17 +199,17 @@ module('Utils | source-map-decoder | parseSourceMap', { concurrency: true }, () 
   });
 
   test('stores outDir', (assert) => {
-    const decoder = parseSourceMap(JSON.stringify({ sources: [], mappings: '' }), '/my/out/dir');
+    const decoder = SourceMap.parse(JSON.stringify({ sources: [], mappings: '' }), '/my/out/dir');
     assert.strictEqual(decoder.outDir, '/my/out/dir');
   });
 
   test('missing sources defaults to empty array', (assert) => {
-    const decoder = parseSourceMap(JSON.stringify({ mappings: 'AAAA' }), '/out');
+    const decoder = SourceMap.parse(JSON.stringify({ mappings: 'AAAA' }), '/out');
     assert.deepEqual(decoder.sources, []);
   });
 
   test('stores sourcesContent array when present', (assert) => {
-    const decoder = parseSourceMap(
+    const decoder = SourceMap.parse(
       JSON.stringify({ sources: ['a.ts'], sourcesContent: ['const x = 1;'], mappings: '' }),
       '/out',
     );
@@ -229,12 +217,12 @@ module('Utils | source-map-decoder | parseSourceMap', { concurrency: true }, () 
   });
 
   test('sourcesContent defaults to empty array when absent', (assert) => {
-    const decoder = parseSourceMap(JSON.stringify({ sources: [], mappings: '' }), '/out');
+    const decoder = SourceMap.parse(JSON.stringify({ sources: [], mappings: '' }), '/out');
     assert.deepEqual(decoder.sourcesContent, []);
   });
 
   test('sourcesContent preserves null entries', (assert) => {
-    const decoder = parseSourceMap(
+    const decoder = SourceMap.parse(
       JSON.stringify({
         sources: ['a.ts', 'b.ts'],
         sourcesContent: [null, 'const y = 2;'],
@@ -246,15 +234,15 @@ module('Utils | source-map-decoder | parseSourceMap', { concurrency: true }, () 
   });
 });
 
-// ── extractInlineSourceMap ─────────────────────────────────────────────────────
+// ── extractInline ─────────────────────────────────────────────────────
 
-module('Utils | source-map-decoder | extractInlineSourceMap', { concurrency: true }, () => {
+module('Utils | source-map | extractInline', { concurrency: true }, () => {
   test('returns null for null bundle', (assert) => {
-    assert.strictEqual(extractInlineSourceMap(null, '/out'), null);
+    assert.strictEqual(SourceMap.extractInline(null, '/out'), null);
   });
 
   test('returns null when bundle has no source map comment', (assert) => {
-    assert.strictEqual(extractInlineSourceMap('console.log("hi");', '/out'), null);
+    assert.strictEqual(SourceMap.extractInline('console.log("hi");', '/out'), null);
   });
 
   test('extracts and parses inline source map from string bundle', (assert) => {
@@ -262,7 +250,7 @@ module('Utils | source-map-decoder | extractInlineSourceMap', { concurrency: tru
       sources: ['../../src/test.ts'],
       mappings: 'AAAA',
     });
-    const decoder = extractInlineSourceMap(bundle, '/project/tmp');
+    const decoder = SourceMap.extractInline(bundle, '/project/tmp');
     assert.notEqual(decoder, null, 'decoder must be returned');
     assert.deepEqual(decoder!.sources, ['../../src/test.ts']);
     assert.strictEqual(decoder!.outDir, '/project/tmp');
@@ -270,14 +258,14 @@ module('Utils | source-map-decoder | extractInlineSourceMap', { concurrency: tru
 
   test('extracts and parses inline source map from Uint8Array bundle', (assert) => {
     const bundle = bundleWithInlineMap({ sources: ['../test.ts'], mappings: 'AAAA' });
-    const decoder = extractInlineSourceMap(new TextEncoder().encode(bundle), '/out');
+    const decoder = SourceMap.extractInline(new TextEncoder().encode(bundle), '/out');
     assert.notEqual(decoder, null);
     assert.deepEqual(decoder!.sources, ['../test.ts']);
   });
 
   test('returns null when base64 payload is not valid JSON', (assert) => {
     const bad = '//# sourceMappingURL=data:application/json;base64,' + btoa('not json');
-    assert.strictEqual(extractInlineSourceMap(bad, '/out'), null);
+    assert.strictEqual(SourceMap.extractInline(bad, '/out'), null);
   });
 });
 
@@ -300,14 +288,14 @@ const LOOKUP_DECODER = makeDecoder(
   ['/project/test/my-test.ts', '/project/node_modules/qunitx/assert.ts'],
 );
 
-module('Utils | source-map-decoder | lookupPosition', { concurrency: true }, () => {
+module('Utils | source-map | lookupPosition', { concurrency: true }, () => {
   test('returns null for an out-of-range generated line', (assert) => {
-    assert.strictEqual(lookupPosition(LOOKUP_DECODER, 99, 1), null);
+    assert.strictEqual(SourceMap.lookupPosition(LOOKUP_DECODER, 99, 1), null);
   });
 
   test('returns null for line with no segments', (assert) => {
     const decoder = makeDecoder([[]], ['/src/a.ts']);
-    assert.strictEqual(lookupPosition(decoder, 1, 1), null);
+    assert.strictEqual(SourceMap.lookupPosition(decoder, 1, 1), null);
   });
 
   test('returns null when column precedes all segments', (assert) => {
@@ -318,11 +306,11 @@ module('Utils | source-map-decoder | lookupPosition', { concurrency: true }, () 
       [[{ generatedCol: 5, sourceIndex: 0, sourceLine: 0, sourceCol: 0 }]],
       ['/src/a.ts'],
     );
-    assert.strictEqual(lookupPosition(decoder, 1, 1), null, 'col0=0 < gc=5, no match');
+    assert.strictEqual(SourceMap.lookupPosition(decoder, 1, 1), null, 'col0=0 < gc=5, no match');
   });
 
   test('exact match: col lands exactly on a segment boundary', (assert) => {
-    const result = lookupPosition(LOOKUP_DECODER, 1, 1); // col=1 → col0=0 → gc=0
+    const result = SourceMap.lookupPosition(LOOKUP_DECODER, 1, 1); // col=1 → col0=0 → gc=0
     assert.notEqual(result, null);
     assert.strictEqual(result!.absolutePath, '/project/test/my-test.ts');
     assert.strictEqual(result!.line, 1); // sourceLine=0 → 1
@@ -330,13 +318,13 @@ module('Utils | source-map-decoder | lookupPosition', { concurrency: true }, () 
   });
 
   test('col within first segment (before gc=10)', (assert) => {
-    const result = lookupPosition(LOOKUP_DECODER, 1, 5); // col0=4, matches gc=0
+    const result = SourceMap.lookupPosition(LOOKUP_DECODER, 1, 5); // col0=4, matches gc=0
     assert.notEqual(result, null);
     assert.strictEqual(result!.absolutePath, '/project/test/my-test.ts');
   });
 
   test('col exactly on second segment boundary', (assert) => {
-    const result = lookupPosition(LOOKUP_DECODER, 1, 11); // col=11 → col0=10 → gc=10
+    const result = SourceMap.lookupPosition(LOOKUP_DECODER, 1, 11); // col=11 → col0=10 → gc=10
     assert.notEqual(result, null);
     assert.strictEqual(result!.absolutePath, '/project/node_modules/qunitx/assert.ts');
     assert.strictEqual(result!.line, 6); // sourceLine=5 → 6
@@ -344,13 +332,13 @@ module('Utils | source-map-decoder | lookupPosition', { concurrency: true }, () 
   });
 
   test('col past the last segment uses the last segment', (assert) => {
-    const result = lookupPosition(LOOKUP_DECODER, 1, 999); // way past gc=10
+    const result = SourceMap.lookupPosition(LOOKUP_DECODER, 1, 999); // way past gc=10
     assert.notEqual(result, null);
     assert.strictEqual(result!.absolutePath, '/project/node_modules/qunitx/assert.ts');
   });
 
   test('line 2 maps to the correct source line', (assert) => {
-    const result = lookupPosition(LOOKUP_DECODER, 2, 1);
+    const result = SourceMap.lookupPosition(LOOKUP_DECODER, 2, 1);
     assert.notEqual(result, null);
     assert.strictEqual(result!.absolutePath, '/project/test/my-test.ts');
     assert.strictEqual(result!.line, 11); // sourceLine=10 → 11
@@ -362,7 +350,7 @@ module('Utils | source-map-decoder | lookupPosition', { concurrency: true }, () 
       ['../src/test.ts'], // one level up from /project/tmp → /project/src/test.ts
       '/project/tmp',
     );
-    const result = lookupPosition(decoder, 1, 1);
+    const result = SourceMap.lookupPosition(decoder, 1, 1);
     assert.strictEqual(result!.absolutePath, '/project/src/test.ts');
   });
 
@@ -372,7 +360,7 @@ module('Utils | source-map-decoder | lookupPosition', { concurrency: true }, () 
       ['file:///abs/path/test.ts'],
       '/out',
     );
-    assert.strictEqual(lookupPosition(decoder, 1, 1)!.absolutePath, '/abs/path/test.ts');
+    assert.strictEqual(SourceMap.lookupPosition(decoder, 1, 1)!.absolutePath, '/abs/path/test.ts');
   });
 
   test('keeps absolute source paths as-is', (assert) => {
@@ -381,7 +369,7 @@ module('Utils | source-map-decoder | lookupPosition', { concurrency: true }, () 
       ['/abs/src/test.ts'],
       '/out',
     );
-    assert.strictEqual(lookupPosition(decoder, 1, 1)!.absolutePath, '/abs/src/test.ts');
+    assert.strictEqual(SourceMap.lookupPosition(decoder, 1, 1)!.absolutePath, '/abs/src/test.ts');
   });
 
   test('binary search with 3 segments finds the correct middle segment', (assert) => {
@@ -396,11 +384,23 @@ module('Utils | source-map-decoder | lookupPosition', { concurrency: true }, () 
       ['/src/test.ts'],
     );
     // col=7 (col0=6) falls between gc=5 and gc=10 → uses gc=5 segment
-    assert.strictEqual(lookupPosition(decoder, 1, 7)!.line, 6, 'middle position → middle segment');
+    assert.strictEqual(
+      SourceMap.lookupPosition(decoder, 1, 7)!.line,
+      6,
+      'middle position → middle segment',
+    );
     // col=1 (col0=0) exactly on gc=0 → first segment
-    assert.strictEqual(lookupPosition(decoder, 1, 1)!.line, 1, 'first position → first segment');
+    assert.strictEqual(
+      SourceMap.lookupPosition(decoder, 1, 1)!.line,
+      1,
+      'first position → first segment',
+    );
     // col=11 (col0=10) exactly on gc=10 → last segment
-    assert.strictEqual(lookupPosition(decoder, 1, 11)!.line, 11, 'last boundary → last segment');
+    assert.strictEqual(
+      SourceMap.lookupPosition(decoder, 1, 11)!.line,
+      11,
+      'last boundary → last segment',
+    );
   });
 
   test('sourceText is the trimmed source line from sourcesContent', (assert) => {
@@ -411,12 +411,15 @@ module('Utils | source-map-decoder | lookupPosition', { concurrency: true }, () 
       '',
       ['line 0\n  assert.strictEqual(x, 3);\nline 2'],
     );
-    assert.strictEqual(lookupPosition(decoder, 1, 1)!.sourceText, 'assert.strictEqual(x, 3);');
+    assert.strictEqual(
+      SourceMap.lookupPosition(decoder, 1, 1)!.sourceText,
+      'assert.strictEqual(x, 3);',
+    );
   });
 
   test('sourceText is null when sourcesContent is absent', (assert) => {
     // LOOKUP_DECODER has no sourcesContent
-    assert.strictEqual(lookupPosition(LOOKUP_DECODER, 1, 1)!.sourceText, null);
+    assert.strictEqual(SourceMap.lookupPosition(LOOKUP_DECODER, 1, 1)!.sourceText, null);
   });
 
   test('sourceText is null when the sourcesContent entry is null', (assert) => {
@@ -427,7 +430,7 @@ module('Utils | source-map-decoder | lookupPosition', { concurrency: true }, () 
       '',
       [null],
     );
-    assert.strictEqual(lookupPosition(decoder, 1, 1)!.sourceText, null);
+    assert.strictEqual(SourceMap.lookupPosition(decoder, 1, 1)!.sourceText, null);
   });
 
   test('sourceText is null for a blank (whitespace-only) source line', (assert) => {
@@ -438,7 +441,7 @@ module('Utils | source-map-decoder | lookupPosition', { concurrency: true }, () 
       '',
       ['line 0\n   \nline 2'],
     );
-    assert.strictEqual(lookupPosition(decoder, 1, 1)!.sourceText, null);
+    assert.strictEqual(SourceMap.lookupPosition(decoder, 1, 1)!.sourceText, null);
   });
 
   test('sourceText is null when sourceLine exceeds the content line count', (assert) => {
@@ -449,7 +452,7 @@ module('Utils | source-map-decoder | lookupPosition', { concurrency: true }, () 
       '',
       ['only one line'],
     );
-    assert.strictEqual(lookupPosition(decoder, 1, 1)!.sourceText, null);
+    assert.strictEqual(SourceMap.lookupPosition(decoder, 1, 1)!.sourceText, null);
   });
 
   test('sourceRoot is prepended when resolving relative paths', (assert) => {
@@ -461,45 +464,45 @@ module('Utils | source-map-decoder | lookupPosition', { concurrency: true }, () 
       '/project/tmp',
       'src',
     );
-    const result = lookupPosition(decoder, 1, 1);
+    const result = SourceMap.lookupPosition(decoder, 1, 1);
     assert.strictEqual(result!.absolutePath, '/project/tmp/src/test.ts');
   });
 });
 
 // ── parseFrameLocation ─────────────────────────────────────────────────────────
 
-module('Utils | source-map-decoder | parseFrameLocation', { concurrency: true }, () => {
+module('Utils | source-map | parseFrameLocation', { concurrency: true }, () => {
   test('parses simple URL:LINE:COL', (assert) => {
-    const r = parseFrameLocation('http://localhost:1234/tests.js:42:15');
+    const r = SourceMap.parseFrameLocation('http://localhost:1234/tests.js:42:15');
     assert.deepEqual(r, { url: 'http://localhost:1234/tests.js', line: 42, col: 15 });
   });
 
   test('handles URL with port (multiple colons)', (assert) => {
     // The port colon must not be confused with line/col separators.
-    const r = parseFrameLocation('http://localhost:9000/tests.js:100:5');
+    const r = SourceMap.parseFrameLocation('http://localhost:9000/tests.js:100:5');
     assert.strictEqual(r!.url, 'http://localhost:9000/tests.js');
     assert.strictEqual(r!.line, 100);
     assert.strictEqual(r!.col, 5);
   });
 
   test('returns null for a string with no colon', (assert) => {
-    assert.strictEqual(parseFrameLocation('nocolon'), null);
+    assert.strictEqual(SourceMap.parseFrameLocation('nocolon'), null);
   });
 
   test('returns null when the last segment after colon is not numeric', (assert) => {
-    assert.strictEqual(parseFrameLocation('file.js:foo:bar'), null);
+    assert.strictEqual(SourceMap.parseFrameLocation('file.js:foo:bar'), null);
   });
 
   test('returns null when only one colon-separated number is found', (assert) => {
-    assert.strictEqual(parseFrameLocation('file.js:42'), null);
+    assert.strictEqual(SourceMap.parseFrameLocation('file.js:42'), null);
   });
 
   test('returns null for an empty string', (assert) => {
-    assert.strictEqual(parseFrameLocation(''), null);
+    assert.strictEqual(SourceMap.parseFrameLocation(''), null);
   });
 
   test('file:// URL is preserved in the url field', (assert) => {
-    const r = parseFrameLocation('file:///home/user/tests.js:10:3');
+    const r = SourceMap.parseFrameLocation('file:///home/user/tests.js:10:3');
     assert.strictEqual(r!.url, 'file:///home/user/tests.js');
     assert.strictEqual(r!.line, 10);
     assert.strictEqual(r!.col, 3);
@@ -508,47 +511,47 @@ module('Utils | source-map-decoder | parseFrameLocation', { concurrency: true },
 
 // ── isBundleUrl ────────────────────────────────────────────────────────────────
 
-module('Utils | source-map-decoder | isBundleUrl', { concurrency: true }, () => {
+module('Utils | source-map | isBundleUrl', { concurrency: true }, () => {
   test('matches /tests.js', (assert) => {
-    assert.true(isBundleUrl('http://localhost:1234/tests.js'));
+    assert.true(SourceMap.isBundleUrl('http://localhost:1234/tests.js'));
   });
 
   test('matches /filtered-tests.js', (assert) => {
-    assert.true(isBundleUrl('http://localhost:1234/filtered-tests.js'));
+    assert.true(SourceMap.isBundleUrl('http://localhost:1234/filtered-tests.js'));
   });
 
   test('matches https scheme', (assert) => {
-    assert.true(isBundleUrl('https://localhost:1234/tests.js'));
+    assert.true(SourceMap.isBundleUrl('https://localhost:1234/tests.js'));
   });
 
   test('handles "async " prefix (Chrome async anonymous frames)', (assert) => {
-    assert.true(isBundleUrl('async http://localhost:1234/tests.js'));
+    assert.true(SourceMap.isBundleUrl('async http://localhost:1234/tests.js'));
   });
 
   test('rejects a file:// URL', (assert) => {
-    assert.false(isBundleUrl('file:///project/tests.js'));
+    assert.false(SourceMap.isBundleUrl('file:///project/tests.js'));
   });
 
   test('rejects an unrelated http URL', (assert) => {
-    assert.false(isBundleUrl('http://localhost:1234/app.js'));
+    assert.false(SourceMap.isBundleUrl('http://localhost:1234/app.js'));
   });
 
   test('rejects a URL that is just a filename without http', (assert) => {
-    assert.false(isBundleUrl('tests.js'));
+    assert.false(SourceMap.isBundleUrl('tests.js'));
   });
 
   test('rejects a URL with tests.js in a path component but not at the end', (assert) => {
-    assert.false(isBundleUrl('http://localhost:1234/tests.js/something'));
+    assert.false(SourceMap.isBundleUrl('http://localhost:1234/tests.js/something'));
   });
 
   test('rejects eval frames that happen to contain tests.js', (assert) => {
     // "eval at <anonymous> (http://..." → url would be "eval at <anonymous> (http://..."
     // which does not start with http:// → false
-    assert.false(isBundleUrl('eval at <anonymous> (http://localhost:1234/tests.js'));
+    assert.false(SourceMap.isBundleUrl('eval at <anonymous> (http://localhost:1234/tests.js'));
   });
 
   test('matches group-prefixed tests.js URL (multi-group mode)', (assert) => {
-    assert.true(isBundleUrl('http://localhost:1234/group-0/tests.js'));
+    assert.true(SourceMap.isBundleUrl('http://localhost:1234/group-0/tests.js'));
   });
 });
 
@@ -569,9 +572,9 @@ const FRAME_DECODER = makeDecoder(
   '/project/tmp',
 );
 
-module('Utils | source-map-decoder | resolveFrame', { concurrency: true }, () => {
+module('Utils | source-map | resolveFrame', { concurrency: true }, () => {
   test('resolves Chrome named frame from test bundle', (assert) => {
-    const r = resolveFrame(
+    const r = SourceMap.resolveFrame(
       '    at Object.equal (http://localhost:1234/tests.js:1:1)',
       FRAME_DECODER,
       '/project',
@@ -582,7 +585,7 @@ module('Utils | source-map-decoder | resolveFrame', { concurrency: true }, () =>
   });
 
   test('resolves Chrome named frame mapping to node_modules → userPath is null', (assert) => {
-    const r = resolveFrame(
+    const r = SourceMap.resolveFrame(
       '    at Object.equal (http://localhost:1234/tests.js:1:10)',
       FRAME_DECODER,
       '/project',
@@ -596,14 +599,18 @@ module('Utils | source-map-decoder | resolveFrame', { concurrency: true }, () =>
   });
 
   test('resolves Chrome anonymous frame', (assert) => {
-    const r = resolveFrame('    at http://localhost:1234/tests.js:2:1', FRAME_DECODER, '/project');
+    const r = SourceMap.resolveFrame(
+      '    at http://localhost:1234/tests.js:2:1',
+      FRAME_DECODER,
+      '/project',
+    );
     assert.notEqual(r, null);
     assert.strictEqual(r!.resolved, '    at test/my-test.ts:11:3');
     assert.strictEqual(r!.userPath, 'test/my-test.ts:11:3');
   });
 
   test('resolves Chrome async anonymous frame', (assert) => {
-    const r = resolveFrame(
+    const r = SourceMap.resolveFrame(
       '    at async http://localhost:1234/tests.js:2:1',
       FRAME_DECODER,
       '/project',
@@ -613,7 +620,7 @@ module('Utils | source-map-decoder | resolveFrame', { concurrency: true }, () =>
   });
 
   test('resolves Firefox/WebKit frame', (assert) => {
-    const r = resolveFrame(
+    const r = SourceMap.resolveFrame(
       'Object.equal@http://localhost:1234/tests.js:1:1',
       FRAME_DECODER,
       '/project',
@@ -624,7 +631,7 @@ module('Utils | source-map-decoder | resolveFrame', { concurrency: true }, () =>
   });
 
   test('returns null for a frame not from a bundle URL', (assert) => {
-    const r = resolveFrame(
+    const r = SourceMap.resolveFrame(
       '    at Object.equal (http://localhost:1234/app.js:1:1)',
       FRAME_DECODER,
       '/project',
@@ -633,18 +640,22 @@ module('Utils | source-map-decoder | resolveFrame', { concurrency: true }, () =>
   });
 
   test('returns null for a native code frame', (assert) => {
-    const r = resolveFrame('    at async Promise.all (index 0)', FRAME_DECODER, '/project');
+    const r = SourceMap.resolveFrame(
+      '    at async Promise.all (index 0)',
+      FRAME_DECODER,
+      '/project',
+    );
     assert.strictEqual(r, null);
   });
 
   test('returns null for an unrecognised frame format', (assert) => {
-    const r = resolveFrame('Error: something went wrong', FRAME_DECODER, '/project');
+    const r = SourceMap.resolveFrame('Error: something went wrong', FRAME_DECODER, '/project');
     assert.strictEqual(r, null);
   });
 
   test('returns null when lookupPosition finds no mapping', (assert) => {
     // Line 999 has no segments in FRAME_DECODER.
-    const r = resolveFrame(
+    const r = SourceMap.resolveFrame(
       '    at Object.x (http://localhost:1234/tests.js:999:1)',
       FRAME_DECODER,
       '/project',
@@ -658,7 +669,7 @@ module('Utils | source-map-decoder | resolveFrame', { concurrency: true }, () =>
       ['/other/project/test.ts'],
       '/out',
     );
-    const r = resolveFrame(
+    const r = SourceMap.resolveFrame(
       '    at fn (http://localhost:1234/tests.js:1:1)',
       decoder,
       '/my/project', // different from source root
@@ -671,7 +682,7 @@ module('Utils | source-map-decoder | resolveFrame', { concurrency: true }, () =>
   });
 
   test('filtered-tests.js URL is also resolved', (assert) => {
-    const r = resolveFrame(
+    const r = SourceMap.resolveFrame(
       '    at fn (http://localhost:1234/filtered-tests.js:1:1)',
       FRAME_DECODER,
       '/project',
@@ -682,14 +693,18 @@ module('Utils | source-map-decoder | resolveFrame', { concurrency: true }, () =>
 
 // ── resolveStack ──────────────────────────────────────────────────────────────
 
-module('Utils | source-map-decoder | resolveStack', { concurrency: true }, () => {
+module('Utils | source-map | resolveStack', { concurrency: true }, () => {
   test('resolves all bundle frames and returns firstUserFrame', (assert) => {
     const stack = [
       '    at Object.equal (http://localhost:1234/tests.js:1:10)', // node_modules
       '    at Object.<anonymous> (http://localhost:1234/tests.js:1:1)', // user code
     ].join('\n');
 
-    const { resolvedStack, firstUserFrame } = resolveStack(stack, FRAME_DECODER, '/project');
+    const { resolvedStack, firstUserFrame } = SourceMap.resolveStack(
+      stack,
+      FRAME_DECODER,
+      '/project',
+    );
 
     assert.true(
       resolvedStack.includes('node_modules/qunitx/assert.ts'),
@@ -710,36 +725,40 @@ module('Utils | source-map-decoder | resolveStack', { concurrency: true }, () =>
       '    at myTest (http://localhost:1234/tests.js:1:1)', // user code (col=1, gc=0)
     ].join('\n');
 
-    const { firstUserFrame } = resolveStack(stack, FRAME_DECODER, '/project');
+    const { firstUserFrame } = SourceMap.resolveStack(stack, FRAME_DECODER, '/project');
     assert.strictEqual(firstUserFrame, 'test/my-test.ts:48:5');
   });
 
   test('non-bundle frames are left unchanged', (assert) => {
     const nativeFrame = '    at async Promise.all (index 0)';
-    const { resolvedStack } = resolveStack(nativeFrame, FRAME_DECODER, '/project');
+    const { resolvedStack } = SourceMap.resolveStack(nativeFrame, FRAME_DECODER, '/project');
     assert.strictEqual(resolvedStack, nativeFrame, 'native frame must not be modified');
   });
 
   test('Error prefix line is left unchanged', (assert) => {
     const stack =
       'Error: Expected 1 to equal 2\n    at Object.equal (http://localhost:1234/tests.js:1:1)';
-    const { resolvedStack } = resolveStack(stack, FRAME_DECODER, '/project');
+    const { resolvedStack } = SourceMap.resolveStack(stack, FRAME_DECODER, '/project');
     assert.true(resolvedStack.startsWith('Error: Expected 1 to equal 2\n'));
   });
 
   test('returns null firstUserFrame when all frames are from node_modules', (assert) => {
     const stack = '    at assert.ok (http://localhost:1234/tests.js:1:10)'; // maps to node_modules
-    const { firstUserFrame } = resolveStack(stack, FRAME_DECODER, '/project');
+    const { firstUserFrame } = SourceMap.resolveStack(stack, FRAME_DECODER, '/project');
     assert.strictEqual(firstUserFrame, null);
   });
 
   test('returns null firstUserFrame when stack has no bundle frames', (assert) => {
-    const { firstUserFrame } = resolveStack('    at native code', FRAME_DECODER, '/project');
+    const { firstUserFrame } = SourceMap.resolveStack(
+      '    at native code',
+      FRAME_DECODER,
+      '/project',
+    );
     assert.strictEqual(firstUserFrame, null);
   });
 
   test('empty stack returns empty resolvedStack and null firstUserFrame', (assert) => {
-    const { resolvedStack, firstUserFrame } = resolveStack('', FRAME_DECODER, '/project');
+    const { resolvedStack, firstUserFrame } = SourceMap.resolveStack('', FRAME_DECODER, '/project');
     assert.strictEqual(resolvedStack, '');
     assert.strictEqual(firstUserFrame, null);
   });
@@ -750,7 +769,11 @@ module('Utils | source-map-decoder | resolveStack', { concurrency: true }, () =>
       '<anonymous>@http://localhost:1234/tests.js:1:1', // user code
     ].join('\n');
 
-    const { resolvedStack, firstUserFrame } = resolveStack(stack, FRAME_DECODER, '/project');
+    const { resolvedStack, firstUserFrame } = SourceMap.resolveStack(
+      stack,
+      FRAME_DECODER,
+      '/project',
+    );
     assert.true(
       resolvedStack.includes('node_modules/qunitx/assert.ts'),
       'node_modules frame resolved',
@@ -766,7 +789,7 @@ module('Utils | source-map-decoder | resolveStack', { concurrency: true }, () =>
       '    at processTicksAndRejections (node:internal/process/task_queues:96:5)',
     ].join('\n');
 
-    const { resolvedStack } = resolveStack(stack, FRAME_DECODER, '/project');
+    const { resolvedStack } = SourceMap.resolveStack(stack, FRAME_DECODER, '/project');
     const lines = resolvedStack.split('\n');
     assert.true(lines[0].includes('test/my-test.ts'), 'bundle frame resolved');
     assert.strictEqual(lines[1], '    at async Promise.all (index 0)', 'native unchanged');
@@ -774,7 +797,7 @@ module('Utils | source-map-decoder | resolveStack', { concurrency: true }, () =>
   });
 
   test('path is made relative to projectRoot when inside the project', (assert) => {
-    const { firstUserFrame } = resolveStack(
+    const { firstUserFrame } = SourceMap.resolveStack(
       '    at fn (http://localhost:1234/tests.js:1:1)',
       FRAME_DECODER,
       '/project',
@@ -793,7 +816,7 @@ module('Utils | source-map-decoder | resolveStack', { concurrency: true }, () =>
       '',
       [lines.join('\n')],
     );
-    const { firstUserFrame, firstUserSourceText } = resolveStack(
+    const { firstUserFrame, firstUserSourceText } = SourceMap.resolveStack(
       '    at fn (http://localhost:1234/tests.js:1:1)',
       decoder,
       '/project',
@@ -803,7 +826,7 @@ module('Utils | source-map-decoder | resolveStack', { concurrency: true }, () =>
   });
 
   test('firstUserSourceText is null when decoder has no sourcesContent', (assert) => {
-    const { firstUserSourceText } = resolveStack(
+    const { firstUserSourceText } = SourceMap.resolveStack(
       '    at fn (http://localhost:1234/tests.js:1:1)',
       FRAME_DECODER,
       '/project',
@@ -831,11 +854,11 @@ module('Utils | source-map-decoder | resolveStack', { concurrency: true }, () =>
       '    at assert.ok (http://localhost:1234/tests.js:1:10)', // node_modules
       '    at myTest (http://localhost:1234/tests.js:1:1)', // user code
     ].join('\n');
-    const { firstUserSourceText } = resolveStack(stack, decoder, '/project');
+    const { firstUserSourceText } = SourceMap.resolveStack(stack, decoder, '/project');
     assert.strictEqual(firstUserSourceText, userLine);
   });
 
-  test('full integration: extractInlineSourceMap + resolveStack with sourcesContent', (assert) => {
+  test('full integration: extractInline + resolveStack with sourcesContent', (assert) => {
     const mapJson = {
       version: 3,
       sources: ['../test/integration.ts', '../node_modules/lib/assert.ts'],
@@ -844,12 +867,12 @@ module('Utils | source-map-decoder | resolveStack', { concurrency: true }, () =>
       sourcesContent: ['assert.strictEqual(result, 42);', null],
     };
     const bundle = bundleWithInlineMap(mapJson);
-    const decoder = extractInlineSourceMap(bundle, '/project/tmp');
+    const decoder = SourceMap.extractInline(bundle, '/project/tmp');
 
     assert.notEqual(decoder, null, 'decoder must be extracted');
 
     const stack = '    at fn (http://localhost:1234/tests.js:1:1)';
-    const { resolvedStack, firstUserFrame, firstUserSourceText } = resolveStack(
+    const { resolvedStack, firstUserFrame, firstUserSourceText } = SourceMap.resolveStack(
       stack,
       decoder!,
       '/project',
@@ -879,7 +902,7 @@ function makeDecoder(
 
 /**
  * Encode a source map JSON as a base64 inline data URL and wrap it in a fake bundle string.
- * Used to test `extractInlineSourceMap` end-to-end.
+ * Used to test `extractInline` end-to-end.
  */
 function bundleWithInlineMap(mapJson: object): string {
   const b64 = btoa(JSON.stringify(mapJson));
@@ -891,9 +914,9 @@ function bundleWithInlineMap(mapJson: object): string {
 // `..` pops wholesale, yielding a *relative* path — which silently defeats the `/node_modules/`
 // and project-root prefix checks downstream. Windows shapes are simulated so this is provable
 // on any platform.
-module('Utils | source-map-decoder | Windows path handling', { concurrency: true }, () => {
+module('Utils | source-map | Windows path handling', { concurrency: true }, () => {
   const decoderFor = (outDir: string): SourceMapDecoder =>
-    parseSourceMap(
+    SourceMap.parse(
       JSON.stringify({
         version: 3,
         sources: ['../../node_modules/qunitx/dist/browser/index.js', '../../src/app.ts'],
@@ -906,31 +929,31 @@ module('Utils | source-map-decoder | Windows path handling', { concurrency: true
   test('resolves sources to absolute paths from a POSIX outDir', (assert) => {
     const decoder = decoderFor('/proj/tmp/run-x');
     assert.strictEqual(
-      sourceAbsolutePath(decoder, 0),
+      SourceMap.sourceAbsolutePath(decoder, 0),
       '/proj/node_modules/qunitx/dist/browser/index.js',
     );
-    assert.strictEqual(sourceAbsolutePath(decoder, 1), '/proj/src/app.ts');
+    assert.strictEqual(SourceMap.sourceAbsolutePath(decoder, 1), '/proj/src/app.ts');
   });
 
   test('resolves sources to absolute paths from a Windows outDir', (assert) => {
     const decoder = decoderFor('D:\\a\\proj\\tmp\\run-x');
     assert.strictEqual(
-      sourceAbsolutePath(decoder, 0),
+      SourceMap.sourceAbsolutePath(decoder, 0),
       'D:/a/proj/node_modules/qunitx/dist/browser/index.js',
       'backslash outDir must not collapse into a relative path',
     );
-    assert.strictEqual(sourceAbsolutePath(decoder, 1), 'D:/a/proj/src/app.ts');
+    assert.strictEqual(SourceMap.sourceAbsolutePath(decoder, 1), 'D:/a/proj/src/app.ts');
   });
 
   test('a Windows-resolved dependency path still reads as node_modules', (assert) => {
     // The consequence that matters: without normalization this path lost its leading segments,
     // so `/node_modules/` never matched and dependencies leaked into coverage / user frames.
-    const dependency = sourceAbsolutePath(decoderFor('D:\\a\\proj\\tmp\\run-x'), 0)!;
+    const dependency = SourceMap.sourceAbsolutePath(decoderFor('D:\\a\\proj\\tmp\\run-x'), 0)!;
     assert.true(dependency.includes('/node_modules/'), 'dependency is detectable as a dependency');
   });
 
   test('resolveStack strips a Windows projectRoot prefix from user frames', (assert) => {
-    const decoder = parseSourceMap(
+    const decoder = SourceMap.parse(
       JSON.stringify({
         version: 3,
         sources: ['../src/app.ts'],
@@ -939,7 +962,7 @@ module('Utils | source-map-decoder | Windows path handling', { concurrency: true
       }),
       'D:\\a\\proj\\tmp',
     );
-    const { firstUserFrame } = resolveStack(
+    const { firstUserFrame } = SourceMap.resolveStack(
       '    at fn (http://localhost:1234/tests.js:1:1)',
       decoder,
       'D:\\a\\proj',
@@ -948,6 +971,6 @@ module('Utils | source-map-decoder | Windows path handling', { concurrency: true
   });
 
   test('returns null for an out-of-range source index', (assert) => {
-    assert.strictEqual(sourceAbsolutePath(decoderFor('/proj/tmp'), 99), null);
+    assert.strictEqual(SourceMap.sourceAbsolutePath(decoderFor('/proj/tmp'), 99), null);
   });
 });

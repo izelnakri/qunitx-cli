@@ -2,7 +2,7 @@ import { module, test } from 'qunitx';
 import { collectCoverage } from '../../lib/coverage/collect.ts';
 import { buildRows, buildLcov } from '../../lib/coverage/report.ts';
 import * as RunState from '../../lib/setup/run-state.ts';
-import type { SourceMapDecoder } from '../../lib/utils/source-map-decoder.ts';
+import type { SourceMapDecoder } from '../../lib/utils/source-map.ts';
 import type { Config, CoverageFileMap } from '../../lib/types.ts';
 
 // A hand-built two-line bundle whose source map attributes each generated line to a distinct

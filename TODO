@@ -1,40 +1,16 @@
+instead of kind: , it could be an instance call with new or .build() then I wont need deriveBuildErrorType and formatBuildErrors neither
+many static methods under 'setup/run-state.ts'
+
+
 ● Looked through the README, CLI flags, TAP output, and existing keyboard/watcher infra. Here are the ones I'd argue clear the "significant UX win" bar — ranked by how much they actually change the day-to-day:
-
-  1. --failed / persistent failure cache
-
-  The single biggest TDD friction left. After a failing run your next move is almost always "rerun that one." Today you have to copy the path out of the TAP output (and there's no
-  way to scope down further than a file). Stash the failures from the last run in tmp/.qunitx-last-failures.json — { file, moduleId, testName, browser } — and let qunitx
-  --only-failed (-f) re-run just those. Pairs perfectly with the daemon and watch mode. Vitest/Jest/pytest all ship this; not having it is the most conspicuous gap.
-
-  2. -t / --filter test-name pattern . -t ok, maybe -m as well?
-
-  No way to narrow within a file right now. A 30-test file = run all 30. Every neighboring runner has it: Jest -t, Vitest -t, Mocha --grep, AVA --match. QUnit already exposes
-  QUnit.config.testFilter and moduleFilter (regex-capable), so this is mostly wiring. Combines naturally with #1 and the watch hotkeys below.
-
   3. Watch-mode interactive hotkeys (Vitest-style)
 
   The infrastructure exists (lib/setup/keyboard-events.ts, lib/utils/listen-to-keyboard-key.ts, ~100 LOC total) — only the bindings are missing. f = only failed, t = prompt for
   test-name regex, p = prompt for file glob, a = all, o = open output, q = quit. Turns --watch from "rerun on save" into an interactive REPL for the suite. Highest ratio of
   impact-to-implementation-cost on the list.
 
-  4. Built-in code coverage (--coverage)
-
-  The genuinely differentiating one. qunitx already drives Chrome over CDP — precise V8 coverage is one Profiler.startPreciseCoverage call plus takePreciseCoverage at run end,
-  mapped through the existing source-map decoder. Default: terminal summary; optional --coverage=lcov,html. jsdom-based runners can't match real-browser coverage cleanly, and
-  Playwright/Cypress coverage is awkward. This is the kind of feature that becomes a reason to choose qunitx over the alternative.
-
-  5. --reporter=junit (small reporter slot, not a plugin system)
-
-  Not glamorous, but JUnit XML is the format every enterprise CI dashboard ingests natively (GitHub Actions test summary, GitLab MR view, CircleCI Insights, BuildKite, Jenkins).
-  Without it, adoption hits a wall in CI orgs that don't speak TAP. Mechanical to add — open a write stream, accumulate <testcase> per testEnd, flush on runEnd.
-
-
-
 
 - investigate take screenshot feature & visual diffing(implement it percy-like)
-
-qunitx-cli JS API should be very usable from outside by JS/TS only, by users of this library. Do them, document it well
-in the codebase and also on the README.md(if needed). claude --resume 5d51cdce-b6b3-4580-8bb9-94649a17da2c
 
 - Think about error handling in JS. Maybe find a better solution than shellFails. check lua's error handling for JavaScript on all my JS code, if this is a better way to do error handling:
 Given this conversation: https://chatgpt.com/share/69e26e08-4dbc-83eb-8d7d-01bba54c8198 I want to create a general-purpose error handling system for JS/TS. What would be the best way to achieve this for the best general-purpose, very useful, readable, performant and flexible abstraction. Show me in code, in-depth with clear tutorial at the end mention all the corner cases, everything, I suspect it is a good idea, I'm still evaluating but would love a general-purpose solution for better error-handling
@@ -51,9 +27,7 @@ Maybe move BundleError to ./errors directory
 
 - refactor and optimize: run/tests-in-browser(and run.ts, very complex), setup/browser.ts, setup/file-watcher.ts
 
-- rename 'testFileLookupPaths' and check other config interface keys that start with _
-
-- check if there are any variables we can remove and/or rename on lib/types.ts
-
-
 - Test and optimize Dockerfile
+
+Also optimize someFuncCall();return; to return someFuncCall() to save lines whenever possible. 
+
