@@ -11,7 +11,7 @@ import type { FailureInfo } from '../reporters/failure.ts';
  * (the caller owns counting) and `failures` are pre-resolved by `failedAssertions`.
  * @returns {void}
  */
-export function TAPDisplayTestResult(
+export function displayTestResult(
   testNumber: number,
   details: TestDetails,
   failures: FailureInfo[] = [],
@@ -56,5 +56,3 @@ export function TAPDisplayTestResult(
 //       Error: test exited without ending: deepEqual true works
 //           at Test.assert [as _assert] (/home/izelnakri/ava-test/node_modules/tape/lib/test.js:269:54)
 //   ...
-
-export { TAPDisplayTestResult as default };

@@ -1,17 +1,17 @@
 import { module, test } from 'qunitx';
-import TAPDisplayTestResult from '../../lib/tap/display-test-result.ts';
+import * as Tap from '../../lib/tap/index.ts';
 import { failedAssertions } from '../../lib/reporters/failure.ts';
 import type { TestDetails } from '../../lib/reporters/types.ts';
 import '../helpers/custom-asserts.ts';
 import { captureStdout } from '../helpers/capture-stdout.ts';
 
-// TAPDisplayTestResult is a pure formatter: the caller owns the TAP sequence number and
+// displayTestResult is a pure formatter: the caller owns the TAP sequence number and
 // pre-resolves failures. This mirrors what TapReporter.onTestEnd does, so these tests still
 // exercise the real rendering path.
 const render = (details: TestDetails, testNumber = 1): string =>
-  captureStdout(() => TAPDisplayTestResult(testNumber, details, failedAssertions(details)));
+  captureStdout(() => Tap.displayTestResult(testNumber, details, failedAssertions(details)));
 
-module('TAP | TAPDisplayTestResult | output', { concurrency: true }, () => {
+module('TAP | displayTestResult | output', { concurrency: true }, () => {
   test('null message and stack are not printed in YAML block', (assert) => {
     const output = render({
       status: 'failed',

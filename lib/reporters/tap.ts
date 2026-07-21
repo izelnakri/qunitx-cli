@@ -1,5 +1,4 @@
-import { TAPDisplayTestResult } from '../tap/display-test-result.ts';
-import { TAPDisplayFinalResult } from '../tap/display-final-result.ts';
+import * as Tap from '../tap/index.ts';
 import { failedAssertions } from './failure.ts';
 import type { Reporter, RunStartInfo, RunEndInfo, TestDetails } from './types.ts';
 import type { Config } from '../types.ts';
@@ -38,11 +37,11 @@ export class TapReporter implements Reporter {
       details.status === 'failed'
         ? failedAssertions(details, config.state.group.sourceMapDecoder, config.projectRoot)
         : [];
-    TAPDisplayTestResult(config.state.results.counter.testCount, details, failures);
+    Tap.displayTestResult(config.state.results.counter.testCount, details, failures);
   }
 
   /** Emits the TAP plan line and the run summary. */
   onRunEnd(config: Config, info: RunEndInfo): void {
-    TAPDisplayFinalResult(config.state.results.counter, info.durationMs);
+    Tap.displayFinalResult(config.state.results.counter, info.durationMs);
   }
 }
