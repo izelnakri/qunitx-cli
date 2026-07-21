@@ -620,7 +620,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
   test('a dangling symlink added to the watched directory is silently ignored', async (assert) => {
     // classifyRenameEvent: stat() fails on the dangling symlink, path is not in fsTree → null.
     // No re-run, no crash, no ADDED: in output.
-    const { dir, id: _id, testsDir } = await makeWatchProject();
+    const { dir, id, testsDir, testContent } = await makeWatchProject();
     const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
 
     try {
@@ -628,16 +628,25 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
 
       await fs.symlink(`${dir}/nonexistent.ts`, `${testsDir}/dangling.ts`);
 
-      // Give the watcher time to process. If a spurious re-run fires, waitForRunComplete
-      // would capture it and the ADDED: assertion below would catch the mistake.
-      await new Promise<void>((resolve) => setTimeout(resolve, 800));
+      // Proving a negative needs a horizon, and a fixed sleep is a guess at one. Instead,
+      // write a real file into the same directory afterwards and wait for ITS event: the
+      // watcher consumes directory events in order, so once the real file's re-run has
+      // completed the dangling symlink has definitively been seen and produced nothing.
+      const realId = randomUUID();
+      await fs.writeFile(`${testsDir}/real-tests.ts`, testContent.replace(id, realId));
+      await session.waitFor((buf) => buf.includes('ADDED:'), 'ADDED event for the real file');
+      const rerunBuf = await waitForRunComplete(session, 2, 're-run for the real file');
 
       assert.equal(
-        countOccurrences(session.stdout, 'QUnitX running:'),
-        1,
-        'no extra run triggered by dangling symlink',
+        countOccurrences(rerunBuf, 'QUnitX running:'),
+        2,
+        'only the real file triggered a re-run; the dangling symlink triggered none',
       );
-      assert.false(session.stdout.includes('ADDED:'), 'no ADDED: logged for dangling symlink');
+      // Matched separately rather than as one 'ADDED: <path>' string: the logged path is
+      // project-relative and separator-native, so it reads \tests\ on Windows.
+      assert.includes(rerunBuf, 'ADDED:');
+      assert.includes(rerunBuf, 'real-tests.ts');
+      assert.notIncludes(rerunBuf, 'dangling.ts');
     } finally {
       await session.kill();
     }
