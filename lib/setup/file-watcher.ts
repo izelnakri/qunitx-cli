@@ -113,7 +113,7 @@ async function dispatchIfContentChanged(
  * watched directory is renamed or deleted (since fs.watch tracks by inode, not path).
  * Uses `config.fsTree` to distinguish `unlink` (tracked file) from `unlinkDir` (directory) on deletion.
  */
-export function setupFileWatchers(
+export function setup(
   testFileLookupPaths: string[],
   config: Config,
   onEventFunc: (event: string, file: string) => unknown,
@@ -224,7 +224,7 @@ export function setupFileWatchers(
     const lastRenameMs: Record<string, number> = {};
     // Needed so the change-event handler can attribute Deno's empty-filename
     // events (see below) to watchPath itself. One sync stat at setup time is
-    // negligible (setupFileWatchers runs once at startup, before workers).
+    // negligible (FileWatcher.setup runs once at startup, before workers).
     const watchPathIsFile = fs.statSync(watchPath, { throwIfNoEntry: false })?.isFile() ?? false;
 
     // Child watcher: tracks file-level events within watchPath.
@@ -544,7 +544,7 @@ export function handleWatchEvent(
  * where FSEvents can drop events under load — additions and removals are recovered from the
  * directory listing, and modifications are recovered by re-stat'ing every tracked file and
  * firing `change` whenever its mtime is newer than `config.state.watch.lastBuildEndMs` (the moment the
- * last build saw the file). The seed for that baseline is set in {@link setupFileWatchers}.
+ * last build saw the file). The seed for that baseline is set in {@link setup}.
  */
 export async function rescanDirectoryForDelta(
   watchPath: string,
@@ -640,8 +640,6 @@ export function mutateFSTree(fsTree: FSTree, event: string, filePath: string): v
     }
   }
 }
-
-export { setupFileWatchers as default };
 
 /**
  * Resolves the event type for a 'rename' kernel event by stat-ing the path.
