@@ -1,6 +1,6 @@
 import { blue } from '../utils/color.ts';
 import { listenToKeyboardKey } from '../utils/listen-to-keyboard-key.ts';
-import { runTestsInBrowser } from '../commands/run/tests-in-browser.ts';
+import { run } from '../commands/run/tests-in-browser.ts';
 import type { Config, Connections } from '../types.ts';
 
 /**
@@ -14,21 +14,21 @@ export function setup(config: Config, connections: Connections): void {
     // "run all" means all: drop the line-target selections that scoped this session. -t/-m stay
     // — those are a standing instruction about which tests to run, not a starting point.
     config.state.group.selectors = undefined;
-    runTestsInBrowser(config, connections);
+    run(config, connections);
   });
   listenToKeyboardKey('qf', () => {
     abortBrowserQUnit(config, connections);
 
     if (!config.state.group.lastFailedFiles) {
       console.log('#', blue(`QUnitX: No tests failed so far, so repeating the last test run`));
-      return runTestsInBrowser(config, connections, config.state.group.lastRanFiles);
+      return run(config, connections, config.state.group.lastRanFiles);
     }
 
-    runTestsInBrowser(config, connections, config.state.group.lastFailedFiles);
+    run(config, connections, config.state.group.lastFailedFiles);
   });
   listenToKeyboardKey('ql', () => {
     abortBrowserQUnit(config, connections);
-    runTestsInBrowser(config, connections, config.state.group.lastRanFiles);
+    run(config, connections, config.state.group.lastRanFiles);
   });
 }
 
