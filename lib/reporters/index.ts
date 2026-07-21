@@ -18,7 +18,7 @@ const STDOUT_REPORTERS: Record<ReporterName, new () => Reporter> = {
 
 /**
  * Reporter wiring. `config.reporter` selects exactly one stdout reporter; artifact
- * reporters (JUnit) are additive and stack on top. Built once per run in `setupConfig` and
+ * reporters (JUnit) are additive and stack on top. Built once per run in `Config.setup` and
  * shared by every concurrent group — the group configs are spread off the parent config, so
  * they all reference this same array (the same way the run counter is shared).
  */

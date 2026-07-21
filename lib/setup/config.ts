@@ -20,7 +20,7 @@ import type { Plugin as EsbuildPlugin } from 'esbuild';
  * `package.json#qunitx.plugins` entries are dynamic-imported into esbuild plugin objects.
  * @returns {Promise<object>}
  */
-export async function setupConfig(): Promise<Config> {
+export async function setup(): Promise<Config> {
   const projectRoot = await findProjectRoot();
   const cliConfigFlags = Args.parse(projectRoot);
   const projectPackageJSON = await readConfigFromPackageJSON(projectRoot);
@@ -75,8 +75,6 @@ export async function setupConfig(): Promise<Config> {
 
   return config;
 }
-
-export { setupConfig as default };
 
 /**
  * Drops a `file#34` line target when another input already includes that file whole — a directory

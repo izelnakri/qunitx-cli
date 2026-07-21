@@ -8,7 +8,7 @@ import { parseDaemonIdleTimeout } from './parse-idle-timeout.ts';
 import { pingDaemon, shutdownDaemon } from './client.ts';
 import pkg from '../../../package.json' with { type: 'json' };
 
-// Daemon startup chains: cli.ts import → setupConfig → Browser.launch (chromium
+// Daemon startup chains: cli.ts import → Config.setup → Browser.launch (chromium
 // connect) → listen() → writeFile(info). Observed timings:
 //   Node, Linux/macOS: typical 0.8–2 s, worst observed ~5 s.
 //   Node, Windows under heavy CI load: typical 4–8 s, worst observed ~12 s.
