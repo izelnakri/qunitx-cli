@@ -1,6 +1,6 @@
 import * as Browser from '../setup/browser.ts';
 import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
-import { HTTPServer } from '../servers/web.ts';
+import { HTTPServer } from '../web/index.ts';
 import { bindServerToPort } from '../setup/bind-server-to-port.ts';
 import * as WebServer from '../setup/web-server.ts';
 import { openOutputInBrowser } from '../utils/open-output-in-browser.ts';

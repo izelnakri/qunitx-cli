@@ -1,4 +1,4 @@
-import type { HTTPServer } from '../servers/web.ts';
+import type { HTTPServer } from '../web/index.ts';
 
 // Maximum number of retries when an explicitly requested port is transiently occupied.
 // Covers the TOCTOU window between findFreePort() and the CLI's own bind: another concurrent

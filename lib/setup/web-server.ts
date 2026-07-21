@@ -7,7 +7,7 @@ import * as Reporter from '../reporters/index.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
 import { isFilteredRun } from '../selection/filter.ts';
 import { blue } from '../utils/color.ts';
-import { HTTPServer, MIME_TYPES } from '../servers/web.ts';
+import { HTTPServer, MIME_TYPES } from '../web/index.ts';
 import { createReconnectingSocket } from './ws-client.js';
 import { readTemplate } from '../utils/read-template.ts';
 import type { Config } from '../types.ts';
