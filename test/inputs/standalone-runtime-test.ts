@@ -20,7 +20,7 @@ function runInDir(dir: string, testFile: string): Promise<{ stdout: string; stde
   });
 }
 
-module('Runtime resolution (self-provided vs consumer qunitx)', { concurrency: true }, () => {
+module('Inputs | qunitx runtime resolution', { concurrency: true }, () => {
   test('falls back to the CLI-provided runtime when the project never installed qunitx', async (assert) => {
     // The temp project lives under os.tmpdir(), OUTSIDE the repo's node_modules ancestry, so the
     // CLI's ANCESTOR_NODE_MODULES (computed from its cwd) finds no qunitx — forcing the esbuild

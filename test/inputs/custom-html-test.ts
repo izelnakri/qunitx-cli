@@ -16,7 +16,7 @@ import { terminateChild } from '../helpers/shell.ts';
 const exec = promisify(execCb);
 const CLI = path.resolve('cli.ts');
 
-module('Input | custom html', { concurrency: true }, () => {
+module('Inputs | custom html template', { concurrency: true }, () => {
   test('runs tests inside a passed custom.html that uses handlebars-style syntax', async (assert) => {
     const { dir, id } = await makeCustomHTMLProject();
     const outputDir = path.resolve(`tmp/run-${randomUUID()}`);

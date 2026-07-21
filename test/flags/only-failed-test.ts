@@ -11,7 +11,7 @@ interface OnlyFailedProject {
   cwd: string;
 }
 
-module('--only-failed flag', { concurrency: true }, () => {
+module('Flags | --only-failed', { concurrency: true }, () => {
   test('caches only the failing file and re-runs just that file', async (assert) => {
     const project = await makeProject();
 

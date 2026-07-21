@@ -3,8 +3,8 @@ import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
 import { shellWatch } from '../helpers/shell.ts';
 
-module('--watch flag tests', { concurrency: true }, () => {
-  test('--watch runs tests, starts the server, and prints watching info', async (assert) => {
+module('Flags | --watch', { concurrency: true }, () => {
+  test('runs the suite, keeps the server up, and prints the watch banner', async (assert) => {
     const stdout = await shellWatch('node cli.ts test/fixtures/passing-tests.ts --watch', {
       until: (buf) => buf.includes('Press "qq"'),
     });
@@ -23,7 +23,7 @@ module('--watch flag tests', { concurrency: true }, () => {
   // is not a real filesystem path, so fs.watch threw ENOENT on it and crashed the whole run —
   // even though the initial (non-watch) build had resolved the glob fine. The fix collapses each
   // lookup path to its deepest existing directory before watching.
-  test('--watch accepts a glob input without crashing on fs.watch ENOENT', async (assert) => {
+  test('accepts a glob input without crashing on fs.watch ENOENT', async (assert) => {
     const stdout = await shellWatch("node cli.ts 'test/fixtures/**/!(plugin-tests).ts' --watch", {
       until: (buf) => buf.includes('Press "qq"'),
     });

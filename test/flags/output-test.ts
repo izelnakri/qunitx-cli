@@ -5,8 +5,8 @@ import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
 import { execute as shell } from '../helpers/shell.ts';
 
-module('--output flag tests for browser mode', { concurrency: true }, (_hooks, moduleMetadata) => {
-  test('--output changes the output directory for built files', async (assert, testMetadata) => {
+module('Flags | --output', { concurrency: true }, (_hooks, moduleMetadata) => {
+  test('writes the built index.html and tests.js into the given directory', async (assert, testMetadata) => {
     const customOutput = `tmp/custom-output-${randomUUID()}`;
 
     try {
