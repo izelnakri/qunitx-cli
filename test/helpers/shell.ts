@@ -22,7 +22,14 @@ const QUNITX_BIN_IS_SCRIPT = QUNITX_BIN?.endsWith('.js') || QUNITX_BIN?.endsWith
 const QUNITX_DEBUG = process.env.QUNITX_DEBUG;
 
 const IS_CLI = /\bnode cli\.ts\b/;
-const NON_BROWSER_SUBCOMMAND = /\bnode cli\.ts\b\s+(generate|g|new|n|help|h|p|print|init)\b/;
+// The two ways cli.ts returns before it ever reaches the run path, and so never
+// touches a browser. Anything that skips Chrome must also skip acquireBrowser(),
+// or it spends a CHROME_CAP slot idling and throttles the rest of the suite.
+const NON_BROWSER_SUBCOMMAND =
+  /\bnode cli\.ts\b\s+(generate|g|new|n|help|h|p|print|init|version|--version|-v)\b/;
+// --search/--print/--preview/-s list what the filter matches and exit (cli.ts),
+// and chrome/prelaunch.ts skips the spawn for the same argv scan.
+const SEARCH_FLAG = /(^|\s)(-s|--search|--print|--preview)(=|\s|$)/;
 
 // Default exec timeout for one-shot CLI invocations. Sized to comfortably exceed
 // every observed tail of the Deno-compiled binary path under concurrent CI
@@ -324,15 +331,16 @@ export async function execute(
     moduleName = '',
     testName = '',
     expectFailure = false,
-  }: { moduleName?: string; testName?: string; expectFailure?: boolean } = {},
+    cwd,
+  }: { moduleName?: string; testName?: string; expectFailure?: boolean; cwd?: string } = {},
 ): Promise<CapturedResult> {
   const command = applyImplicitFlags(commandString);
-  const needsBrowser = IS_CLI.test(commandString) && !NON_BROWSER_SUBCOMMAND.test(commandString);
-  const permit = needsBrowser ? await acquireBrowser() : { release: () => {} };
+  const permit = needsBrowser(commandString) ? await acquireBrowser() : { release: () => {} };
   try {
     const result = await spawnCapture(command, {
       timeout: DEFAULT_EXEC_TIMEOUT_MS,
       env: { ...process.env, FORCE_COLOR: '0' },
+      cwd,
     });
 
     if (process.env.QUNITX_VERBOSE) {
@@ -362,18 +370,30 @@ export async function execute(
  */
 function applyImplicitFlags(commandString: string): string {
   const isCli = IS_CLI.test(commandString);
-  const needsBrowser = isCli && !NON_BROWSER_SUBCOMMAND.test(commandString);
+  const browserRun = needsBrowser(commandString);
   let cmd =
     isCli && !/--output/.test(commandString)
       ? `${commandString} --output=tmp/run-${randomUUID()}`
       : commandString;
-  if (needsBrowser && QUNITX_BROWSER && !/--browser/.test(cmd)) {
+  if (browserRun && QUNITX_BROWSER && !/--browser/.test(cmd)) {
     cmd = `${cmd} --browser=${QUNITX_BROWSER}`;
   }
-  if (needsBrowser && QUNITX_DEBUG && !/--debug/.test(cmd)) {
+  if (browserRun && QUNITX_DEBUG && !/--debug/.test(cmd)) {
     cmd = `${cmd} --debug`;
   }
   return cmd;
+}
+
+/**
+ * Whether this command will actually put a browser on screen — the sole input to
+ * both the semaphore permit and the --browser/--debug forwarding above.
+ */
+export function needsBrowser(commandString: string): boolean {
+  return (
+    IS_CLI.test(commandString) &&
+    !NON_BROWSER_SUBCOMMAND.test(commandString) &&
+    !SEARCH_FLAG.test(commandString)
+  );
 }
 
 /**
