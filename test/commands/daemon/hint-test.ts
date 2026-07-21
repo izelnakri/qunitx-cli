@@ -33,7 +33,7 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
-module('Utils | DaemonHint | Hint.shouldShow', { concurrency: true }, () => {
+module('Daemon | Hint.shouldShow', { concurrency: true }, () => {
   test('shows on slow non-CI TTY run with empty env', (assert) => {
     assert.true(Hint.shouldShow(BASE_CTX));
   });
@@ -74,7 +74,7 @@ module('Utils | DaemonHint | Hint.shouldShow', { concurrency: true }, () => {
   });
 });
 
-module('Utils | DaemonHint | Hint.maybePrint', { concurrency: true }, () => {
+module('Daemon | Hint.maybePrint', { concurrency: true }, () => {
   test('writes hint and creates sentinel on first call', async (assert) => {
     const sentinel = tmpSentinel();
     const writes: string[] = [];

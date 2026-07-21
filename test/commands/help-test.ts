@@ -1,120 +1,140 @@
 import { module, test } from 'qunitx';
 import process from 'node:process';
 import fs from 'node:fs/promises';
-import { promisify } from 'node:util';
-import { exec } from 'node:child_process';
+import * as Help from '../../lib/commands/help.ts';
+import { captureStdout } from '../helpers/capture-stdout.ts';
+import { spawnCapture } from '../helpers/shell.ts';
 import '../helpers/custom-asserts.ts';
 
 const CWD = process.cwd();
-const VERSION = JSON.parse(await fs.readFile(`${CWD}/package.json`, 'utf8')).version;
-const shell = promisify(exec);
-const CLI_ENV = { ...process.env, FORCE_COLOR: '0' };
-const cli = async function (arg = '') {
-  // Under the Deno-driven test runner (`npm run test:deno`), process.argv[0] is the
-  // deno binary. cli.ts works under both runtimes (chrome-prelaunch is statically
-  // imported, so the spawn needs --allow-run + --allow-write + --allow-env + …, i.e.
-  // effectively `-A`).
-  if (process.argv[0].includes('deno')) {
-    return await shell(`deno run -A ${CWD}/cli.ts ${arg}`, { env: CLI_ENV });
-  }
-  return await shell(`node ${CWD}/cli.ts ${arg}`, { env: CLI_ENV });
-};
+const VERSION: string = JSON.parse(await fs.readFile(`${CWD}/package.json`, 'utf8')).version;
 
-const printedHelpOutput = `[qunitx v${VERSION}] Usage: qunitx [targets] --$flags
+// lib/utils/color.ts decides ANSI on/off once at import time from env + TTY. Strip the codes
+// rather than pin the environment, so the assertions below read the same either way. Built
+// via fromCharCode because ESC in a regex literal is a lint error (no-control-regex).
+const ANSI_SEQUENCE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
+const stripAnsi = (text: string): string => text.replace(ANSI_SEQUENCE, '');
 
-Input options:
-- File: $ qunitx test/foo.js
-- Folder: $ qunitx test/login
-- Globs: $ qunitx test/**/*-test.js
-- Combination: $ qunitx test/foo.js test/bar.js test/*-test.js test/logout
-- Line target: $ qunitx test/foo-test.ts#34 — run just the test at that line (or: test/foo-test.ts:34)
+// Help.run() is synchronous console.log, so captureStdout (sync-only) sees all of it —
+// no subprocess needed to assert on the usage text itself.
+const helpText = (): string => stripAnsi(captureStdout(() => Help.run()));
 
-Optional flags:
---debug : print console output when tests run in browser (alias: --console)
---watch : run the target file or folders, watch them for continuous run and expose http server under localhost (short: -w)
---open : run tests in a visible browser window instead of headless; keeps the server alive (short: -o)
---timeout : change default timeout per test case
---output : folder to distribute built qunitx html and js that a webservers can run[default: tmp]
---failFast : run the target file or folders with immediate abort if a single test fails
---only-failed : re-run only the test files that failed on the previous run (short: -f, alias: --failed)
---filter : run only tests whose "Module: test name" matches; substring, /regex/, /regex/i, or ! to invert (spellings: -t, -m, -n, --module)
---search : list the tests the filter matches and exit, without running them (spellings: -s, --print, --preview)
-  values may be unquoted and multi-word, up to the next flag (qunitx test/ -m Cart checkout); put file targets before the filter, or after --
-  substring is case-insensitive; a regex is case-sensitive unless you add /i. For one module and not its lookalikes: -t '/^Cart(:| >)/'
---port : HTTP server port (auto-selects a free port if the given port is taken)[default: 1234] (short: -p)
---extensions : comma-separated file extensions to track for discovery and watch-mode rebuilds[default: js,ts,jsx,tsx]
---browser : browser engine to run tests in: chromium, firefox, webkit[default: chromium]
---reporter : stdout format: tap, spec, dot, github[default: tap] (short: -r)
---junit : also write a JUnit XML report[default path: <output>/junit.xml; --junit=<path> to override]
---coverage : collect V8 line coverage (chromium only); --coverage=lcov,html also writes <output>/coverage/ reports
---before : run a script before the tests(i.e start a new web server before tests)
---after : run a script after the tests(i.e save test results to a file)
---no-daemon : don't use the daemon for this run — skips a running daemon and prevents QUNITX_DAEMON auto-spawn
---changed : run only test files affected by changes since HEAD (requires git; falls back to running all on first use)
---since : run only test files affected by changes since the given git ref (e.g. --since=main); --changed = --since=HEAD
---trace-perf : write timestamped startup-perf trace lines to stderr (Chrome pre-launch, module load, browser bind)
+// Spawned rather than `execute()`: the shell helper appends `--output=tmp/run-<uuid>` to
+// every `node cli.ts …` command, which would make argv[2] non-empty and send the bare
+// `$ qunitx` case down the run path instead of the help path.
+const cli = (args: string): ReturnType<typeof spawnCapture> =>
+  spawnCapture(`node cli.ts ${args}`.trim(), { env: { ...process.env, FORCE_COLOR: '0' } });
 
-Example: $ qunitx test/foo.ts app/e2e --debug --watch --before=scripts/start-new-webserver.js --after=scripts/write-test-results.js
-
-Commands:
-$ qunitx init                            # Bootstraps qunitx base html and add qunitx config to package.json if needed
-$ qunitx new $testFileName               # Creates a qunitx test file
-$ qunitx daemon <start|stop|status>      # Optional persistent daemon — ~2× faster repeated runs
-
-Environment:
-QUNITX_DAEMON=1     : auto-spawn the daemon on the first qunitx run; reuse it on every run after (overrides the CI=1 bypass)
-QUNITX_NO_DAEMON=1  : never use the daemon for this run
-QUNITX_BROWSER=...  : default browser engine when --browser is not passed (chromium, firefox, webkit)
-QUNITX_DEBUG=1      : enables --debug for every run; per-invocation --debug=false still wins`;
-
-module('Commands | Version tests', { concurrency: true }, () => {
-  test('$ qunitx --version -> prints only the version number', async (assert) => {
-    const { stdout } = await cli('--version');
-
-    assert.strictEqual(stdout.trim(), VERSION);
+module('Commands | help | usage text', { concurrency: true }, () => {
+  test('opens with the "[qunitx v<version>] Usage:" banner taken from package.json', (assert) => {
+    assert.true(helpText().startsWith(`[qunitx v${VERSION}] Usage: qunitx [targets] --$flags`));
   });
 
-  test('$ qunitx -v -> prints only the version number', async (assert) => {
-    const { stdout } = await cli('-v');
-
-    assert.strictEqual(stdout.trim(), VERSION);
+  test('documents every input-target form', (assert) => {
+    const text = helpText();
+    for (const form of ['- File:', '- Folder:', '- Globs:', '- Combination:', '- Line target:']) {
+      assert.includes(text, form);
+    }
   });
 
-  test('$ qunitx version -> prints only the version number', async (assert) => {
-    const { stdout } = await cli('version');
+  test('documents every optional flag the cli accepts', (assert) => {
+    // The flag list is the cli's public contract — a flag added to lib/args without a line
+    // here is undiscoverable, and a line here for a removed flag is a lie. Both directions
+    // are caught by keeping this list in sync by hand when the parser changes.
+    const text = helpText();
+    const flags = [
+      '--debug',
+      '--watch',
+      '--open',
+      '--timeout',
+      '--output',
+      '--failFast',
+      '--only-failed',
+      '--filter',
+      '--search',
+      '--port',
+      '--extensions',
+      '--browser',
+      '--reporter',
+      '--junit',
+      '--coverage',
+      '--before',
+      '--after',
+      '--no-daemon',
+      '--changed',
+      '--since',
+      '--trace-perf',
+    ];
+    for (const flag of flags) {
+      assert.includes(text, `${flag} : `, `documents ${flag}`);
+    }
+  });
 
-    assert.strictEqual(stdout.trim(), VERSION);
+  test('documents the short and alias spellings alongside their long flags', (assert) => {
+    const text = helpText();
+    for (const spelling of [
+      '--console',
+      '-w',
+      '-o',
+      '-f',
+      '--failed',
+      '-t',
+      '-m',
+      '-n',
+      '--module',
+      '-s',
+      '--print',
+      '--preview',
+      '-p',
+      '-r',
+    ]) {
+      assert.includes(text, spelling, `documents ${spelling}`);
+    }
+  });
+
+  test('documents the subcommands', (assert) => {
+    const text = helpText();
+    assert.includes(text, '$ qunitx init');
+    assert.includes(text, '$ qunitx new $testFileName');
+    assert.includes(text, '$ qunitx daemon <start|stop|status>');
+  });
+
+  test('documents the environment variables', (assert) => {
+    const text = helpText();
+    for (const variable of [
+      'QUNITX_DAEMON=1',
+      'QUNITX_NO_DAEMON=1',
+      'QUNITX_BROWSER=...',
+      'QUNITX_DEBUG=1',
+    ]) {
+      assert.includes(text, variable, `documents ${variable}`);
+    }
   });
 });
 
-module('Commands | Help tests', { concurrency: true }, () => {
-  test('$ qunitx -> prints help text', async (assert) => {
-    const { stdout } = await cli();
+// End-to-end coverage of cli.ts's dispatch table — the one thing the in-process tests above
+// cannot reach, since cli.ts runs its dispatch in a top-level IIFE with no exported seam.
+module('Commands | help | cli dispatch', { concurrency: true }, () => {
+  test('$ qunitx / print / p / help / h -> print usage and exit 0', async (assert) => {
+    const banner = `[qunitx v${VERSION}] Usage: qunitx [targets] --$flags`;
+    const results = await Promise.all(['', 'print', 'p', 'help', 'h'].map((arg) => cli(arg)));
 
-    assert.includes(stdout, printedHelpOutput);
+    for (const [index, result] of results.entries()) {
+      const spelling = ['<no args>', 'print', 'p', 'help', 'h'][index];
+      assert.exitCode(result, 0, `qunitx ${spelling} exits 0`);
+      assert.includes(result, banner, `qunitx ${spelling} prints usage`);
+    }
   });
+});
 
-  test('$ qunitx print -> prints help text', async (assert) => {
-    const { stdout } = await cli('print');
+module('Commands | version', { concurrency: true }, () => {
+  test('$ qunitx --version / -v / version -> print only the version number', async (assert) => {
+    const results = await Promise.all(['--version', '-v', 'version'].map((arg) => cli(arg)));
 
-    assert.includes(stdout, printedHelpOutput);
-  });
-
-  test('$ qunitx p -> prints help text', async (assert) => {
-    const { stdout } = await cli('p');
-
-    assert.includes(stdout, printedHelpOutput);
-  });
-
-  test('$ qunitx help -> prints help text', async (assert) => {
-    const { stdout } = await cli('help');
-
-    assert.includes(stdout, printedHelpOutput);
-  });
-
-  test('$ qunitx h -> prints help text', async (assert) => {
-    const { stdout } = await cli('h');
-
-    assert.includes(stdout, printedHelpOutput);
+    for (const [index, result] of results.entries()) {
+      const spelling = ['--version', '-v', 'version'][index];
+      assert.exitCode(result, 0, `qunitx ${spelling} exits 0`);
+      assert.strictEqual(result.stdout.trim(), VERSION, `qunitx ${spelling} prints the version`);
+    }
   });
 });

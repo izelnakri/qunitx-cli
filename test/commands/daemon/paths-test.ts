@@ -6,7 +6,7 @@ import '../../helpers/custom-asserts.ts';
 
 const FIXED_CWD = '/some/test/project';
 
-module('Utils | Paths.socket', { concurrency: true }, () => {
+module('Daemon | Paths.socket', { concurrency: true }, () => {
   test('linux: places the socket under os.tmpdir() with .sock suffix', (assert) => {
     const result = Paths.socket(FIXED_CWD, 'linux');
     assert.equal(path.dirname(result), os.tmpdir());
@@ -36,7 +36,7 @@ module('Utils | Paths.socket', { concurrency: true }, () => {
   });
 });
 
-module('Utils | Paths.info', { concurrency: true }, () => {
+module('Daemon | Paths.info', { concurrency: true }, () => {
   test('lives inside a per-cwd subdirectory under os.tmpdir() with info.json filename', (assert) => {
     // The info file is the cross-platform presence sentinel — it must always live on
     // the regular filesystem so existsSync() can see it on Windows too.
