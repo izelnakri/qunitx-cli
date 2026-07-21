@@ -1,47 +1,40 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
-import { exec as execCb, spawn } from 'node:child_process';
-// node:timers' setTimeout returns a Timeout object with .unref() in both Node and
-// Deno; the global setTimeout under Deno returns a plain number (web spec) and
-// crashes on .unref().
-import { setTimeout, clearTimeout } from 'node:timers';
-import { promisify } from 'node:util';
 import { rmRetry } from '../helpers/rm-retry.ts';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import '../helpers/custom-asserts.ts';
-import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
-import { terminateChild } from '../helpers/shell.ts';
+import { execute as shell, shellWatch } from '../helpers/shell.ts';
 
-const exec = promisify(execCb);
 const CLI = path.resolve('cli.ts');
 
 module('Inputs | custom html template', { concurrency: true }, () => {
-  test('runs tests inside a passed custom.html that uses handlebars-style syntax', async (assert) => {
+  // The CLI is invoked from the generated project rather than the repo, so both tests go
+  // through the harness's cwd option — which is also what forwards --browser in the
+  // browser-compat lanes.
+  test('serves the suite from a passed custom.html that uses handlebars-style syntax', async (assert) => {
     const { dir, id } = await makeCustomHTMLProject();
-    const outputDir = path.resolve(`tmp/run-${randomUUID()}`);
 
     try {
-      const permit = await acquireBrowser();
-      const { stdout } = await exec(
-        `node ${CLI} tests/passing-tests.ts custom.html --output=${outputDir}`,
-        { cwd: dir, timeout: 60000 },
-      ).finally(() => permit.release());
+      const result = await shell(`node ${CLI} tests/passing-tests.ts custom.html`, { cwd: dir });
 
-      assert.includes(stdout, 'QUnitX running: http://localhost:');
-      assert.includes(stdout, '/custom.html');
-      assert.passingTestCaseFor({ stdout }, { moduleName: id });
-      assert.tapResult({ stdout }, { testCount: 3 });
+      assert.includes(result, 'QUnitX running: http://localhost:');
+      assert.includes(result, '/custom.html');
+      assert.passingTestCaseFor(result, { moduleName: id });
+      assert.tapResult(result, { testCount: 3 });
     } finally {
       await rmRetry(dir);
     }
   });
 
-  test('watch mode uses a passed custom.html that uses handlebars-style syntax', async (assert) => {
+  test('serves the same custom.html in watch mode and keeps watching', async (assert) => {
     const { dir, id } = await makeCustomHTMLProject();
 
     try {
-      const stdout = await runWatch(dir);
+      const stdout = await shellWatch(`node ${CLI} tests/passing-tests.ts custom.html --watch`, {
+        cwd: dir,
+        until: (buf) => buf.includes('Press "qq"'),
+      });
 
       assert.includes(stdout, 'QUnitX running: http://localhost:');
       assert.includes(stdout, '/custom.html');
@@ -88,48 +81,4 @@ async function makeCustomHTMLProject() {
   ]);
 
   return { dir, id };
-}
-
-// Mirrors STARTUP_TIMEOUT_FACTOR * config.timeout in lib/commands/run/tests-in-browser.ts
-// (9 * 20s = 180s) plus a 30s buffer for Browser.setup + bundle + page.goto + the
-// `Press "qq"` ready-marker print. Bumped 45s → 150s → 210s as STARTUP_TIMEOUT_FACTOR
-// grew over two iterations (firefox-on-macOS-deno hit 45s in CI 26042614416;
-// JSX-on-macOS-deno hit 121s in CI 26046813154).
-const WATCH_READY_TIMEOUT_MS = 210_000;
-
-async function runWatch(dir: string): Promise<string> {
-  const outputDir = path.resolve(`tmp/run-${randomUUID()}`);
-  const permit = await acquireBrowser();
-  const child = spawn(
-    process.execPath,
-    [CLI, 'tests/passing-tests.ts', 'custom.html', '--watch', `--output=${outputDir}`],
-    { cwd: dir },
-  );
-
-  try {
-    return await new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`watch mode timed out after ${WATCH_READY_TIMEOUT_MS}ms`)),
-        WATCH_READY_TIMEOUT_MS,
-      );
-      let buf = '';
-      child.stdout.on('data', (chunk: Buffer) => {
-        buf += chunk.toString();
-        if (buf.includes('Press "qq"')) {
-          clearTimeout(timer);
-          resolve(buf);
-        }
-      });
-      // Drain stderr so a noisy cli (diagnostic warnings) can't fill the OS
-      // pipe and stall. Plain .resume() is unreliable under Deno compat.
-      child.stderr.on('data', () => {});
-      child.on('error', reject);
-    });
-  } finally {
-    // terminateChild awaits 'close' (not 'exit'), so on Windows fs.watch directory
-    // handles inside the child are released before the test's fs.rm() runs —
-    // otherwise rmdir fails with EBUSY.
-    await terminateChild(child);
-    permit.release();
-  }
 }
