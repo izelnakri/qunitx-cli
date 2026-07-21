@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import nodeFs, { existsSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import * as Paths from '../../lib/commands/daemon/socket-path.ts';
+import * as Paths from '../../lib/commands/daemon/paths.ts';
 import * as Client from '../../lib/commands/daemon/client.ts';
 import { spawnCapture, type CapturedError, type CapturedResult } from '../helpers/shell.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';

@@ -4,7 +4,7 @@ import { spawnChrome } from './spawn-chrome.ts';
 import { killProcessGroup } from '../utils/kill-process-group.ts';
 import { CHROMIUM_ARGS } from './chromium-args.ts';
 import { perfLog } from '../utils/perf-logger.ts';
-import * as Paths from '../commands/daemon/socket-path.ts';
+import * as Paths from '../commands/daemon/paths.ts';
 import type { ChromeHandle } from '../types.ts';
 
 // This module is statically imported by cli.ts so its module-level code runs
