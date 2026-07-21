@@ -13,7 +13,7 @@ import { availableParallelism } from 'node:os';
 import { setTimeout, clearTimeout, setInterval, clearInterval } from 'node:timers';
 import { blue, yellow } from '../utils/color.ts';
 import {
-  runTestsInBrowser,
+  run as runInBrowser,
   buildTestBundle,
   buildAllGroupBundles,
   flushConsoleHandlers,
@@ -128,12 +128,12 @@ async function runWatchMode(config: Config): Promise<void> {
   //
   // Start esbuild immediately so it races Chrome setup: Chrome connect + newPage (~150ms)
   // and esbuild (~300–600ms) have no mutual dependency until page.goto() fires inside
-  // runTestsInBrowser. The promise is stored on the group's build state so runTestsInBrowser can
+  // runInBrowser. The promise is stored on the group's build state so runInBrowser can
   // await it inside its own try/catch — errors surface as BundleErrors there, keeping
   // the watcher alive exactly as they would for a normal watch-mode build failure.
   // Suppress unhandled rejection: esbuild can fail (syntax error, missing file) before
   // Browser.setup completes. Without .catch(), Node.js detects the rejection during the
-  // Promise.all window and crashes the process. runTestsInBrowser awaits this promise inside
+  // Promise.all window and crashes the process. runInBrowser awaits this promise inside
   // its own try/catch, so the rejection is handled — but only after Browser.setup resolves.
   const preBuildPromise = buildTestBundle(config);
   preBuildPromise.catch(() => {});
@@ -212,7 +212,7 @@ async function runWatchMode(config: Config): Promise<void> {
   }
 
   try {
-    await runTestsInBrowser(config, connections, initialFilter);
+    await runInBrowser(config, connections, initialFilter);
   } catch (error) {
     await closeWithGrace([connections.server?.close(), connections.browser?.close()]);
     throw error;
@@ -255,19 +255,19 @@ async function runWatchMode(config: Config): Promise<void> {
             );
           }
           // Kick off rebuild immediately so it races Chrome navigation (same pattern as the
-          // initial watch-mode build). runTestsInBrowser picks up the promise from
+          // initial watch-mode build). runInBrowser picks up the promise from
           // preBuildPromise and sets activeRebuild so /tests.js can await it.
           const rebuildPromise = buildTestBundle(config);
           rebuildPromise.catch(() => {});
           build.preBuildPromise = rebuildPromise;
-          return await runTestsInBrowser(config, connections);
+          return await runInBrowser(config, connections);
         }
         if (config.debug) {
           console.log(
             `# Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
           );
         }
-        await runTestsInBrowser(config, connections, [file]);
+        await runInBrowser(config, connections, [file]);
       },
       async (_path, _event) => {
         connections.server.publish('refresh');
@@ -481,7 +481,7 @@ async function runConcurrentMode(
         }
 
         try {
-          await runTestsInBrowser(groupConfig, connections);
+          await runInBrowser(groupConfig, connections);
         } finally {
           await flushConsoleHandlers(
             groupConfig.state.group.pendingConsoleHandlers,

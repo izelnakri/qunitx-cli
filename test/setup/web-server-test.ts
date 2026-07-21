@@ -101,7 +101,7 @@ module('Setup | web-server | header links to /', { concurrency: true }, () => {
 //      map was reset on every WS 'connection' event, a stale testEnd
 //      arriving just after the next-run's `connection` got counted
 //      spuriously because the map had been wiped. Tying the reset to
-//      counter reset (runTestsInBrowser / groupConfig construction)
+//      counter reset (run / groupConfig construction)
 //      keeps the two state lifetimes locked together.
 //
 // Both must hold simultaneously: duplicate suppression within one run AND
@@ -111,7 +111,7 @@ module('Setup | web-server | header links to /', { concurrency: true }, () => {
 module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
   test('duplicate testEnd in one run increments the counter exactly once', async (assert) => {
     const config = makeConfig();
-    config.state.group.testEndCounts = new Map(); // run.ts / runTestsInBrowser ordinarily seeds this
+    config.state.group.testEndCounts = new Map(); // run.ts / run ordinarily seeds this
     const server = WebServer.setup(config);
     await server.listen(0);
     const port = (server._server.address() as { port: number }).port;
@@ -175,7 +175,7 @@ module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
       await done1;
       assert.equal(config.state.results.counter.testCount, 1, 'first run counter = 1');
 
-      // Simulate watch-rerun lifecycle: runTestsInBrowser reset for the next
+      // Simulate watch-rerun lifecycle: run reset for the next
       // run. WS connection from this new run arrives, then a STALE testEnd
       // from the previous run drifts in. The stale event must NOT count
       // because the dedup map remembers the previous run's name.
@@ -183,7 +183,7 @@ module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
       // the stale event leaks into the new run's count — the original bug.)
       config.state.results.counter.testCount = 0;
       // NOTE: deliberately do NOT reset config.state.group.testEndCounts here. In real
-      // code, runTestsInBrowser would reset both the counter and testEndCounts
+      // code, run would reset both the counter and testEndCounts
       // together; this test is verifying that the WS handler does not
       // ALSO reset the map (which would re-admit the stale event).
       const ws2 = await openWebSocket(port);

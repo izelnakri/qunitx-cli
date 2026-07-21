@@ -129,7 +129,7 @@ export function setup(config: Config): HTTPServer {
         config.state.group.signals.onWsOpen?.();
       } else if (event === 'connection') {
         config.state.group.phase = 'running';
-        // Dedup map reset is owned by runTestsInBrowser (alongside the counter
+        // Dedup map reset is owned by run (alongside the counter
         // reset), NOT this WS handler. Resetting on every 'connection' was
         // the bug that broke no-html-test in CI run 26042614416: a stale
         // testEnd arriving just after `connection` for a watch rerun got
