@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import * as Paths from './paths.ts';
 import { CLEANUP_GRACE_MS } from '../../utils/close-with-grace.ts';
 import * as Args from '../../args/index.ts';
-import { attachLineParser, probeSocket } from './socket-io.ts';
+import * as Socket from './socket.ts';
 import type { Request, ResponseChunk } from './protocol.ts';
 
 const CONNECT_TIMEOUT_MS = 1_000;
@@ -51,7 +51,7 @@ export function shouldAutoSpawn(): boolean {
  * on success; resolves `null` on any failure (no socket file, ECONNREFUSED, timeout).
  */
 export function tryConnect(cwd: string = process.cwd()): Promise<net.Socket | null> {
-  return probeSocket(Paths.socket(cwd), CONNECT_TIMEOUT_MS);
+  return Socket.connect(Paths.socket(cwd), CONNECT_TIMEOUT_MS);
 }
 
 /** Sends a `ping` and resolves the daemon's `pong` response (or `null` on failure). */
@@ -59,7 +59,7 @@ export async function ping(): Promise<ResponseChunk | null> {
   const socket = await tryConnect();
   if (!socket) return null;
   const result = new Promise<ResponseChunk | null>((resolve) => {
-    attachLineParser<ResponseChunk>(socket, (chunk) => {
+    Socket.readMessages<ResponseChunk>(socket, (chunk) => {
       if (chunk.type === 'pong') resolve(chunk);
     });
     socket.once('close', () => resolve(null));
@@ -92,7 +92,7 @@ export async function shutdown(cwd: string = process.cwd()): Promise<boolean> {
 
   const socket = await tryConnect(cwd);
   if (!socket) return false;
-  attachLineParser<ResponseChunk>(socket, () => {});
+  Socket.readMessages<ResponseChunk>(socket, () => {});
   send(socket, { type: 'shutdown' });
   await awaitClose(socket);
 
@@ -114,7 +114,7 @@ export async function runVia(argv: string[]): Promise<number> {
   // stream. close/error here are last-resort fallbacks for a daemon that drops
   // the connection without sending one.
   const exitCode = new Promise<number>((resolve) => {
-    attachLineParser<ResponseChunk>(socket, (chunk) => {
+    Socket.readMessages<ResponseChunk>(socket, (chunk) => {
       if (chunk.type === 'stdout') process.stdout.write(chunk.data);
       else if (chunk.type === 'stderr') process.stderr.write(chunk.data);
       else if (chunk.type === 'done') resolve(chunk.exitCode);

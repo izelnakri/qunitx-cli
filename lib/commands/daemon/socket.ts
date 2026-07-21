@@ -6,7 +6,7 @@ import net from 'node:net';
  * Used by both the daemon server (parsing client requests) and the client
  * (parsing server responses).
  */
-export function attachLineParser<T>(socket: net.Socket, onLine: (line: T) => void): void {
+export function readMessages<T>(socket: net.Socket, onLine: (line: T) => void): void {
   let buf = '';
   socket.on('data', (chunk) => {
     buf += chunk.toString('utf8');
@@ -30,7 +30,7 @@ export function attachLineParser<T>(socket: net.Socket, onLine: (line: T) => voi
  * directly — a pre-emptive `existsSync` check would not work for Windows named
  * pipes (they live in `\\.\pipe\...`, not on the regular filesystem).
  */
-export function probeSocket(socketPath: string, timeoutMs: number): Promise<net.Socket | null> {
+export function connect(socketPath: string, timeoutMs: number): Promise<net.Socket | null> {
   return new Promise((resolve) => {
     const sock = net.createConnection(socketPath);
     const timer = setTimeout(() => {
