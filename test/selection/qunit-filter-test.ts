@@ -1,34 +1,37 @@
 import { module, test } from 'qunitx';
-import { matchesQUnitFilter, qunitFullName } from '../../lib/selection/filter-match.ts';
+import { matchQUnitFilter, buildQUnitFullName } from '../../lib/selection/qunit-filter.ts';
 
 // The exact fullNames QUnit builds for test/fixtures + the overlapping-name cart fixture. Every
 // expectation below was verified against a real browser run before being encoded here, so this
 // file pins the port to observed QUnit behaviour rather than to a reading of its source.
-const CART = qunitFullName('Cart', 'adds item');
-const COUPONS = qunitFullName('Cart > Coupons', 'applies code');
-const SHOPPING = qunitFullName('ShoppingCart', 'renders');
-const ITEM = qunitFullName('CartItem', 'renders');
-const CHECKOUT = qunitFullName('Cart checkout', 'pays');
+const CART = buildQUnitFullName('Cart', 'adds item');
+const COUPONS = buildQUnitFullName('Cart > Coupons', 'applies code');
+const SHOPPING = buildQUnitFullName('ShoppingCart', 'renders');
+const ITEM = buildQUnitFullName('CartItem', 'renders');
+const CHECKOUT = buildQUnitFullName('Cart checkout', 'pays');
 const ALL = [CART, COUPONS, SHOPPING, ITEM, CHECKOUT];
 
-const matched = (filter: string | undefined) => ALL.filter((n) => matchesQUnitFilter(filter, n));
+const matched = (filter: string | undefined) => ALL.filter((n) => matchQUnitFilter(filter, n));
 
-module('Utils | qunitFullName', { concurrency: true }, () => {
+module('Utils | buildQUnitFullName', { concurrency: true }, () => {
   test('joins module and test with ": "', (assert) => {
-    assert.equal(qunitFullName('Cart', 'adds item'), 'Cart: adds item');
+    assert.equal(buildQUnitFullName('Cart', 'adds item'), 'Cart: adds item');
   });
 
   test('a nested module keeps its " > " path', (assert) => {
-    assert.equal(qunitFullName('Cart > Coupons', 'applies code'), 'Cart > Coupons: applies code');
+    assert.equal(
+      buildQUnitFullName('Cart > Coupons', 'applies code'),
+      'Cart > Coupons: applies code',
+    );
   });
 
   test('a top-level test yields a leading ": " — QUnit\'s own shape, not a quirk', (assert) => {
-    assert.equal(qunitFullName('', 'loose'), ': loose');
-    assert.true(matchesQUnitFilter('loose', qunitFullName('', 'loose')));
+    assert.equal(buildQUnitFullName('', 'loose'), ': loose');
+    assert.true(matchQUnitFilter('loose', buildQUnitFullName('', 'loose')));
   });
 });
 
-module('Utils | matchesQUnitFilter | substring', { concurrency: true }, () => {
+module('Utils | matchQUnitFilter | substring', { concurrency: true }, () => {
   test('an absent or empty filter matches everything', (assert) => {
     assert.deepEqual(matched(undefined), ALL);
     assert.deepEqual(matched(''), ALL);
@@ -58,7 +61,7 @@ module('Utils | matchesQUnitFilter | substring', { concurrency: true }, () => {
   });
 });
 
-module('Utils | matchesQUnitFilter | regex', { concurrency: true }, () => {
+module('Utils | matchQUnitFilter | regex', { concurrency: true }, () => {
   test('a regex is case-SENSITIVE without the i flag', (assert) => {
     // The surprising one, verified against a real run: `-t /cart/` -> 0, `-t cart` -> 5.
     assert.deepEqual(matched('/cart/'), []);
@@ -86,11 +89,11 @@ module('Utils | matchesQUnitFilter | regex', { concurrency: true }, () => {
   });
 
   test('a regex keeping its own = is not truncated', (assert) => {
-    assert.true(matchesQUnitFilter('/a=b/i', 'A=B: x'));
+    assert.true(matchQUnitFilter('/a=b/i', 'A=B: x'));
   });
 
   test('a bare / is a substring, not a regex', (assert) => {
     assert.deepEqual(matched('/'), [], 'no fullName here contains a literal /');
-    assert.true(matchesQUnitFilter('/', 'a/b: x'));
+    assert.true(matchQUnitFilter('/', 'a/b: x'));
   });
 });

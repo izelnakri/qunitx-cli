@@ -12,7 +12,7 @@ import * as SourceMap from '../../utils/source-map.ts';
 import * as Coverage from '../../coverage/index.ts';
 import * as MetafileCache from '../../utils/metafile-cache.ts';
 import * as FailureCache from '../../utils/failure-cache.ts';
-import { isFilteredRun, qunitFilterQuery } from '../../selection/filter-query.ts';
+import { isFilteredRun, buildQUnitFilterQuery } from '../../selection/filter-query.ts';
 import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
 import * as RunState from '../../setup/run-state.ts';
 import type { AffectedMetafile } from '../../utils/get-changed-files.ts';
@@ -891,7 +891,7 @@ async function runTestInsideHTMLFile(
 
     coverageStarted = await armJSCoverage(page, config);
 
-    const targetUrl = `http://localhost:${config.port}${filePath}${qunitFilterQuery(config)}`;
+    const targetUrl = `http://localhost:${config.port}${filePath}${buildQUnitFilterQuery(config)}`;
     const navOptions = { timeout: navMs, waitUntil: 'commit' as const };
     // Use 'commit' (navigation committed, HTTP response started) rather than 'domcontentloaded'.
     // The test bundle (tests.js) is an external async script — it does NOT block DOMContentLoaded.

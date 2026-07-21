@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import * as Chrome from '../chrome/index.ts';
-import { qunitFilterQuery } from '../selection/filter-query.ts';
+import { buildQUnitFilterQuery } from '../selection/filter-query.ts';
 import type { Config } from '../types.ts';
 
 /**
@@ -19,7 +19,7 @@ export async function openOutputInBrowser(config: Config): Promise<void> {
       (config.watch
         ? `http://localhost:${config.port}`
         : pathToFileURL(path.join(path.resolve(config.projectRoot, config.output), 'index.html'))
-            .href) + qunitFilterQuery(config);
+            .href) + buildQUnitFilterQuery(config);
 
     if (typeof config.open === 'string') {
       spawnDetached(config.open, [outputFile]);

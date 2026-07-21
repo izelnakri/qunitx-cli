@@ -15,7 +15,7 @@ const REGEX_FILTER = /^(!?)\/([\w\W]*)\/(i?$)/;
  * joined by `" > "`. A top-level test has an empty module name, giving `": test name"` — which is
  * QUnit's own behaviour, not a quirk of this port.
  */
-export function qunitFullName(modulePath: string, testName: string): string {
+export function buildQUnitFullName(modulePath: string, testName: string): string {
   return `${modulePath}: ${testName}`;
 }
 
@@ -27,7 +27,7 @@ export function qunitFullName(modulePath: string, testName: string): string {
  *
  * An empty/absent filter matches everything, mirroring QUnit's `if (filter)` guard.
  */
-export function matchesQUnitFilter(filter: string | undefined, fullName: string): boolean {
+export function matchQUnitFilter(filter: string | undefined, fullName: string): boolean {
   if (!filter) {
     return true;
   }
@@ -44,8 +44,6 @@ export function matchesQUnitFilter(filter: string | undefined, fullName: string)
 
   return stringFilter(filter, fullName);
 }
-
-export { matchesQUnitFilter as default };
 
 /** Case-insensitive substring match; a leading `!` inverts. */
 function stringFilter(filter: string, fullName: string): boolean {
