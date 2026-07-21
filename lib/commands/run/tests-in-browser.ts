@@ -12,7 +12,7 @@ import * as SourceMap from '../../utils/source-map.ts';
 import * as Coverage from '../../coverage/index.ts';
 import * as MetafileCache from '../../utils/metafile-cache.ts';
 import * as FailureCache from '../../utils/failure-cache.ts';
-import { isFilteredRun, buildQUnitFilterQuery } from '../../selection/filter-query.ts';
+import { isFilteredRun, buildQUnitFilterQuery } from '../../selection/filter.ts';
 import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
 import * as RunState from '../../setup/run-state.ts';
 import type { AffectedMetafile } from '../../utils/get-changed-files.ts';

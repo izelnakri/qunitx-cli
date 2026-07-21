@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { matchQUnitFilter, buildQUnitFullName } from '../../lib/selection/qunit-filter.ts';
+import { matchQUnitFilter, buildQUnitFullName } from '../../lib/selection/qunit-matcher.ts';
 
 // The exact fullNames QUnit builds for test/fixtures + the overlapping-name cart fixture. Every
 // expectation below was verified against a real browser run before being encoded here, so this

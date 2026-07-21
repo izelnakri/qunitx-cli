@@ -35,7 +35,7 @@ import { closeWithGrace } from '../utils/close-with-grace.ts';
 import * as Hint from './daemon/hint.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
 import * as Coverage from '../coverage/index.ts';
-import { isFilteredRun, describeActiveFilters } from '../selection/filter-query.ts';
+import { isFilteredRun, describeActiveFilters } from '../selection/filter.ts';
 import * as Timings from './run/timings.ts';
 import { applyWatchLineTargets, resolveTargetedFiles, splitIntoGroups } from './run/grouping.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
