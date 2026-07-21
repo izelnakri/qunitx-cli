@@ -1,4 +1,4 @@
-import { setupBrowser, launchBrowser } from '../setup/browser.ts';
+import * as Browser from '../setup/browser.ts';
 import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { HTTPServer } from '../servers/web.ts';
 import { bindServerToPort } from '../setup/bind-server-to-port.ts';
@@ -60,7 +60,7 @@ const WATCH_NAV_TIMEOUT_MS = 5_000;
 const STDOUT_FLUSH_GRACE_MS = 30_000;
 // setInterval period that keeps the event loop alive while Promise.allSettled runs.
 const KEEP_ALIVE_INTERVAL_MS = 10_000;
-// Daemon-only bound on the "connecting" phase (setupBrowser → newPage on the reused
+// Daemon-only bound on the "connecting" phase (Browser.setup → newPage on the reused
 // browser). newPage() is the one connecting step with no timeout — it only rejects once
 // Playwright observes the transport close, which under load can lag a browser that died in
 // the microsecond window after the pre-run liveness probe passed. Without a bound, that
@@ -87,18 +87,18 @@ export async function run(config: Config): Promise<void> {
   }
 
   // Kick off all I/O that doesn't need the HTML fixtures in parallel with resolveHtmlFixtures:
-  //   launchBrowser: CDP connect to pre-launched Chrome (~30-50ms)
+  //   Browser.launch: CDP connect to pre-launched Chrome (~30-50ms)
   //   Timings.read: reads tmp/test-timings.json (~2ms)
   //   resolveHtmlFixtures: reads HTML template from disk (~5-10ms)
   // Chrome is typically fully connected by the time resolveHtmlFixtures + splitIntoGroups resolve.
   // Daemon mode reuses its persistent browser; non-watch local runs launch their own;
-  // watch mode defers launch until setupBrowser inside the watch path.
+  // watch mode defers launch until Browser.setup inside the watch path.
   const daemonBrowser = config.state.daemon?.browser;
   const browserPromise = daemonBrowser
     ? Promise.resolve(daemonBrowser)
     : config.watch
       ? null
-      : launchBrowser(config);
+      : Browser.launch(config);
   const [, timings] = await Promise.all([
     resolveHtmlFixtures(config),
     config.watch
@@ -136,15 +136,15 @@ async function runWatchMode(config: Config): Promise<void> {
   // await it inside its own try/catch — errors surface as BundleErrors there, keeping
   // the watcher alive exactly as they would for a normal watch-mode build failure.
   // Suppress unhandled rejection: esbuild can fail (syntax error, missing file) before
-  // setupBrowser completes. Without .catch(), Node.js detects the rejection during the
+  // Browser.setup completes. Without .catch(), Node.js detects the rejection during the
   // Promise.all window and crashes the process. runTestsInBrowser awaits this promise inside
-  // its own try/catch, so the rejection is handled — but only after setupBrowser resolves.
+  // its own try/catch, so the rejection is handled — but only after Browser.setup resolves.
   const preBuildPromise = buildTestBundle(config);
   preBuildPromise.catch(() => {});
   build.preBuildPromise = preBuildPromise;
 
   const [connections] = await Promise.all([
-    setupBrowser(config),
+    Browser.setup(config),
     writeOutputStaticFiles(config, config.state.htmlAssets),
   ]);
   config.webServer = connections.server;
@@ -302,7 +302,7 @@ async function runWatchMode(config: Config): Promise<void> {
 async function runConcurrentMode(
   config: Config,
   timings: Record<string, number> | null,
-  browserPromise: ReturnType<typeof launchBrowser> | null,
+  browserPromise: ReturnType<typeof Browser.launch> | null,
 ): Promise<void> {
   const build = config.state.group.build;
   // CONCURRENT MODE: split test files across N groups = availableParallelism().
@@ -457,7 +457,7 @@ async function runConcurrentMode(
       const startMs = Date.now();
       const work = (async () => {
         groupConfig.state.group.phase = 'connecting';
-        const connectWork = setupBrowser(groupConfig, browser, sharedServer);
+        const connectWork = Browser.setup(groupConfig, browser, sharedServer);
         // Daemon runs reuse a persistent browser; bound the connect so a handle that
         // died just after the pre-run probe fails fast here (recovered next run) instead
         // of wedging until GROUP_TIMEOUT. See DAEMON_CONNECT_TIMEOUT_MS.

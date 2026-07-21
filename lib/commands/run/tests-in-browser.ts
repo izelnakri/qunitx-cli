@@ -282,7 +282,7 @@ export async function runTestsInBrowser(
   config.state.group.lastRanFiles = targetTestFilesToFilter || allTestFilePaths;
 
   try {
-    // In watch mode, run.js fires buildTestBundle before setupBrowser completes and stores
+    // In watch mode, run.js fires buildTestBundle before Browser.setup completes and stores
     // the promise on preBuildPromise so esbuild races Chrome setup. Always clear it here so
     // watch-mode re-runs always call buildTestBundle fresh — if we skip the await below (because
     // allTestCode is already set from a race win by esbuild), a stale resolved promise would

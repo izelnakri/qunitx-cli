@@ -91,7 +91,7 @@ async function makeCustomHTMLProject() {
 }
 
 // Mirrors STARTUP_TIMEOUT_FACTOR * config.timeout in lib/commands/run/tests-in-browser.ts
-// (9 * 20s = 180s) plus a 30s buffer for setupBrowser + bundle + page.goto + the
+// (9 * 20s = 180s) plus a 30s buffer for Browser.setup + bundle + page.goto + the
 // `Press "qq"` ready-marker print. Bumped 45s → 150s → 210s as STARTUP_TIMEOUT_FACTOR
 // grew over two iterations (firefox-on-macOS-deno hit 45s in CI 26042614416;
 // JSX-on-macOS-deno hit 121s in CI 26046813154).

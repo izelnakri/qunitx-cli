@@ -9,11 +9,11 @@ import { daemonSocketPath, daemonInfoPath, daemonDir } from './socket-path.ts';
 import { parseDaemonIdleTimeout } from './parse-idle-timeout.ts';
 import { attachLineParser } from './socket-io.ts';
 import { setupConfig } from '../../setup/config.ts';
-import { launchBrowser } from '../../setup/browser.ts';
+import * as Browser from '../../setup/browser.ts';
 import { DaemonRunError } from '../run/tests-in-browser.ts';
 import { run } from '../run.ts';
 import type { Request, ResponseChunk, RunRequest, DaemonInfo } from './protocol.ts';
-import type { Browser } from 'playwright-core';
+import type { Browser as PlaywrightBrowser } from 'playwright-core';
 import type { Config, EsbuildCache, DaemonState as DaemonRunHandles } from '../../types.ts';
 
 // Daemon idle window: after the last run finishes, the daemon shuts itself down.
@@ -103,7 +103,7 @@ interface DaemonState {
    * ping and exhaust client-side spawn timeouts in both the Node and Deno
    * paths (CI runs 26006815757 + 26007923495).
    */
-  browser: Browser | null;
+  browser: PlaywrightBrowser | null;
   /**
    * Promise of the in-flight Chrome launch. Settles exactly once for the
    * initial launch and is replaced whenever `recoverBrowser` runs. Awaited
@@ -113,7 +113,7 @@ interface DaemonState {
    * soon as the socket is up. Decoupling Chrome from socket readiness is the
    * fix for the "Daemon did not start within Ns" timeout class on slow CI.
    */
-  browserReady: Promise<Browser>;
+  browserReady: Promise<PlaywrightBrowser>;
   /** Captured at startup; used to relaunch the browser on crash recovery. */
   baseConfig: Config;
   cwd: string;
@@ -144,7 +144,7 @@ interface DaemonState {
   esbuildCache: EsbuildCache;
   /**
    * Single-source Page slot for single-group daemon runs. Lives across runs;
-   * `setupBrowser` reuses `slot.page` (when connected) instead of `newPage()`.
+   * `Browser.setup` reuses `slot.page` (when connected) instead of `newPage()`.
    * Closed on daemon shutdown; cleared (set to null) when the page disconnects.
    */
   pageSlot: DaemonRunHandles['pageSlot'];
@@ -202,18 +202,18 @@ export async function runDaemonServer(): Promise<void> {
   } finally {
     process.argv = argvSnapshot;
   }
-  // baseConfig is only ever handed to launchBrowser (initial launch + crash recovery), never
-  // to run() — so it needs no daemon handles. watch/open still matter: launchBrowser derives
+  // baseConfig is only ever handed to Browser.launch (initial launch + crash recovery), never
+  // to run() — so it needs no daemon handles. watch/open still matter: Browser.launch derives
   // `headless` from them.
   baseConfig.watch = false;
   baseConfig.open = false;
 
-  // Don't await launchBrowser before listen() — see DaemonState.browserReady
+  // Don't await Browser.launch before listen() — see DaemonState.browserReady
   // for the full rationale. Chrome launch tail latency can exceed 100 s under
   // CI contention; making the daemon socket unreachable that long propagates
   // the latency to every client-side spawn timeout. Kick off the launch in
   // parallel; the dispatch handler awaits it lazily inside `awaitBrowser`.
-  const browserReady = launchBrowser(baseConfig);
+  const browserReady = Browser.launch(baseConfig);
   // Absorb the unhandled-rejection: an early launch failure is also re-
   // surfaced through `awaitBrowser` to the first awaiting client (which
   // sends a 'fatal' chunk + triggers shutdown). Logging to stderr means an
@@ -344,7 +344,7 @@ export async function shutdownDaemon(
   // Bounded await on the in-flight browser launch so we can close it through Playwright's API
   // rather than relying on the chrome-prelaunch.ts exit hook alone. Two reasons post-decoupling:
   // (1) the daemon can shut down before any run request awaited browserReady — without this wait
-  // state.browser stays null and the Browser handle leaks; (2) the rapid-stop+start test compounds
+  // state.browser stays null and the PlaywrightBrowser handle leaks; (2) the rapid-stop+start test compounds
   // leaked Chromes that starve the next spawn's launch budget. 3 s covers a healthy launch (typical
   // 0.5–2 s); slower than that, chrome-prelaunch.ts's exit hook SIGKILLs the in-flight Chrome.
   const SHUTDOWN_BROWSER_GRACE_MS = 3_000;
@@ -394,7 +394,7 @@ export async function removeLivenessFiles(state: DaemonState): Promise<void> {
  * 'fatal' chunk to the client + shuts the daemon down (the next client
  * respawns a fresh daemon).
  */
-async function awaitBrowser(state: DaemonState): Promise<Browser> {
+async function awaitBrowser(state: DaemonState): Promise<PlaywrightBrowser> {
   if (state.browser) return state.browser;
   state.browser = await state.browserReady;
   return state.browser;
@@ -512,7 +512,7 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
   //   1. Initial launch in progress — `state.browser` is null until the decoupled
   //      `browserReady` settles (see runDaemonServer comment). The first run
   //      after spawn awaits it here, paying the launch cost once.
-  //   2. Browser died while the daemon was idle — without recovery the run
+  //   2. PlaywrightBrowser died while the daemon was idle — without recovery the run
   //      would hang inside Playwright's CDP send waiting for a response from
   //      a dead Chrome until its 30s internal timeout fires.
   try {
@@ -558,7 +558,7 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
     process.stderr.write = origStderrWrite;
   }
 
-  // Browser-crash recovery: relaunch the persistent browser if it died this
+  // PlaywrightBrowser-crash recovery: relaunch the persistent browser if it died this
   // run. state.browser is non-null here — awaitBrowser succeeded above and
   // recoverBrowser (if it ran) reassigned it; the non-null assertion lets us
   // reuse the existing isConnected() check verbatim.
@@ -589,8 +589,8 @@ export const BROWSER_PROBE_TIMEOUT_MS = 3_000;
  * process exit, so `isConnected()` is already reliable there.
  */
 export async function browserResponsive(
-  browser: Pick<Browser, 'isConnected'> & {
-    newBrowserCDPSession?: Browser['newBrowserCDPSession'];
+  browser: Pick<PlaywrightBrowser, 'isConnected'> & {
+    newBrowserCDPSession?: PlaywrightBrowser['newBrowserCDPSession'];
   },
   browserName: string,
   timeoutMs: number = BROWSER_PROBE_TIMEOUT_MS,
@@ -635,7 +635,7 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
   // dead Chrome) and goes straight to a fresh chromium.launch().
   state.browser?.close().catch(() => {});
   // The persistent page belongs to the dead browser; drop the reference so the
-  // next setupBrowser mints a fresh page on the new browser without paying an
+  // next Browser.setup mints a fresh page on the new browser without paying an
   // isConnected() round-trip on a doomed CDP socket.
   state.pageSlot.page = null;
   // Null state.browser and stage the replacement on browserReady, mirroring
@@ -643,7 +643,7 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
   // new promise instead of returning the dead handle. The .catch keeps the
   // unhandled-rejection logged path consistent with the initial launch.
   state.browser = null;
-  state.browserReady = launchBrowser(state.baseConfig, true);
+  state.browserReady = Browser.launch(state.baseConfig, true);
   state.browserReady.catch((err) => {
     process.stderr.write(
       `# [qunitx daemon] browser relaunch failed: ${(err as Error).message ?? err}\n`,

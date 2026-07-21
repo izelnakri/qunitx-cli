@@ -115,7 +115,7 @@ async function makeMinimalProject({ withHtmlPaths }: { withHtmlPaths: boolean })
 }
 
 // Mirrors STARTUP_TIMEOUT_FACTOR * config.timeout in lib/commands/run/tests-in-browser.ts
-// (9 * 20s = 180s) plus a 30s buffer for setupBrowser + bundle + page.goto + the
+// (9 * 20s = 180s) plus a 30s buffer for Browser.setup + bundle + page.goto + the
 // `Press "qq"` ready-marker print. See custom-html-test.ts for the original
 // observation under firefox + macOS-deno.
 const WATCH_READY_TIMEOUT_MS = 210_000;
