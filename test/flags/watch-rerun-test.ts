@@ -506,9 +506,20 @@ module('--watch re-run tests', { concurrency: true }, () => {
       const newId = randomUUID();
       await fs.writeFile(symlink, testContent.replace(id, newId)); // writes through symlink to target
 
-      await waitForRunComplete(session, 2, 'symlink write-through re-run to start');
+      // A write-through fires more than one fs event, and a mid-write one can trigger a re-run
+      // that reads the target before its bytes settle — a stale rebuild without newId. The
+      // content-hash gate then rebuilds once more on the settled write. Wait for the re-run that
+      // actually reflects the new content rather than asserting on whichever run happened to be
+      // second: in CI run 29790598868 a stale second run reached the assertion first and failed
+      // it. Waiting for the settled content tests the guarantee a user cares about (the watcher
+      // eventually shows the new bytes) and stays deterministic; a watcher that never converges
+      // still fails here on the waitFor timeout.
+      const rerunBuf = await session.waitFor((buf) => {
+        const latest = buf.slice(buf.lastIndexOf('QUnitX running:'));
+        return latest.includes(newId) && latest.includes('# duration');
+      }, 'symlink write-through re-run reflecting the new content');
 
-      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+      const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
       assert.includes(rerunOutput, newId);
       assert.includes(rerunOutput, '# fail 0');
     } finally {

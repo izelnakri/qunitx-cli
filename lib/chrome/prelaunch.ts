@@ -5,6 +5,7 @@ import { killProcessGroup } from '../utils/kill-process-group.ts';
 import { CHROMIUM_ARGS } from './chromium-args.ts';
 import { perfLog } from '../utils/perf-log.ts';
 import * as Paths from '../commands/daemon/paths.ts';
+import type { ChromeHandle } from '../types.ts';
 
 // This module is statically imported by cli.ts so its module-level code runs
 // at the very start of the process — before the IIFE, before playwright-core loads.
@@ -62,23 +63,20 @@ const isDaemonClientRun =
 // With --open alone, qunitx exits after tests complete; the detached browser is opened separately.
 const openWatchMode = openFromArgv && watchFromArgv;
 
-// Stored so the process.on('exit') safety net and shutdownPrelaunch() can reach Chrome.
-let earlyChrome: import('../types.ts').EarlyChrome | null = null;
-// Tracked synchronously the moment Chrome is spawned (before CDP-ready) so the
-// process.on('exit') fallback can SIGKILL the Chrome process even if the daemon
-// exits mid-launch. Without this the decoupled-launch daemon path leaks Chrome
-// when shutdown happens during the gap between spawn and CDP-ready, because
-// `detached: true` keeps the Chrome process group alive after the parent dies.
-let earlyChromeProc: import('node:child_process').ChildProcess | null = null;
+// The pre-launched Chrome's handle, reachable by the process.on('exit') safety net and
+// shutdownPrelaunch(). Set synchronously the instant Chrome is spawned (via onSpawn below), so it
+// is never partial: null before spawn, or a complete handle with a callable shutdown. That
+// invariant is load-bearing — shutdownPrelaunch()'s guard depends on it — and it closes the leak
+// window where a parent process.exit() between spawn and CDP-ready would orphan Chrome (the
+// detached process group outlives the parent).
+let earlyChrome: ChromeHandle | null = null;
 
 if (!openWatchMode) {
   process.on('exit', () => {
-    // Prefer the fully-realised earlyChrome (it points to the same proc); fall back
-    // to the synchronously-tracked proc when CDP-ready hasn't fired yet.
-    const proc = earlyChrome?.proc ?? earlyChromeProc;
+    const proc = earlyChrome?.proc;
     if (proc?.pid == null) return;
     // Last-resort kill: fires in edge cases where process.exit() is called without going
-    // through shutdownPrelaunch() (e.g. FSTree.build ENOENT, signal kills, daemon
+    // through shutdownPrelaunch() (e.g. buildFSTree ENOENT, signal kills, daemon
     // shutdown mid-launch). The normal path calls shutdownPrelaunch() first, so Chrome
     // is already dead here and this is a no-op. SIGKILL so Chrome cannot stall exit.
     killProcessGroup(proc.pid);
@@ -118,18 +116,15 @@ export const prelaunchPromise =
     ? find()
         .then((chromePath) => {
           perfLog('chrome-prelaunch.ts: Chrome.find resolved', chromePath);
-          // onSpawn fires synchronously inside spawn the instant Chrome
-          // is `spawn()`d, before the CDP-ready stderr match. Tracking the proc
-          // here closes the leak window during which a parent process.exit()
-          // would otherwise leave Chrome orphaned (the on('exit') hook above
-          // only had access to `earlyChrome` post-CDP-ready before this change).
-          return spawn(chromePath, CHROMIUM_ARGS, !openWatchMode, (proc) => {
-            earlyChromeProc = proc;
+          // onSpawn fires synchronously inside spawn the instant Chrome is spawned,
+          // before the CDP-ready stderr match — so earlyChrome holds a fully-callable handle for
+          // the entire process lifetime, including the spawn→CDP-ready gap.
+          return spawn(chromePath, CHROMIUM_ARGS, !openWatchMode, (handle) => {
+            earlyChrome = handle;
           });
         })
         .then((info) => {
           perfLog('chrome-prelaunch.ts: Chrome CDP ready', info?.cdpEndpoint ?? null);
-          if (info) earlyChrome = info;
           return info;
         })
     : Promise.resolve(null);
