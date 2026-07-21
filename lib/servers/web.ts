@@ -332,5 +332,3 @@ export class HTTPServer {
     return params;
   }
 }
-
-export { HTTPServer as default };

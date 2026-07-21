@@ -318,7 +318,7 @@ export async function shellFails(commandString: string, options = {}) {
   }
 }
 
-export default async function execute(
+export async function execute(
   commandString: string,
   {
     moduleName = '',

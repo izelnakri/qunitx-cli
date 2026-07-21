@@ -67,9 +67,3 @@ export async function writeNestedTestFolder(): Promise<string> {
 
   return folderName;
 }
-
-export default {
-  writeTestFolder,
-  writeNestedTestFolder,
-  writeTestFile,
-};

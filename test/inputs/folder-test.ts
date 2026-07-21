@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import { writeTestFolder, writeNestedTestFolder } from '../helpers/fs-writers.ts';
 import '../helpers/custom-asserts.ts';
-import shell, { shellFails } from '../helpers/shell.ts';
+import { execute as shell, shellFails } from '../helpers/shell.ts';
 
 module('Folder Input Tests', { concurrency: true }, (_hooks, moduleMetadata) => {
   // Each paired test runs two `node cli.ts` invocations concurrently via Promise.all on the

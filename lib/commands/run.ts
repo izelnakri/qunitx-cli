@@ -631,8 +631,6 @@ async function runConcurrentMode(
   });
 }
 
-export { run as default };
-
 /**
  * Reads each HTML fixture file referenced by the config, classifies them as dynamic (have qunitx
  * tokens, get bundle-injection at request time) or static, collects internal asset paths, and

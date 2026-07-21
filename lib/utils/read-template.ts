@@ -29,5 +29,3 @@ export async function readTemplate(relativePath: string): Promise<string> {
     `qunitx-cli: template "${relativePath}" not found — try reinstalling the package.`,
   );
 }
-
-export { readTemplate as default };

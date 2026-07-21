@@ -2,7 +2,7 @@ import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
-import shell, { shellFails } from '../helpers/shell.ts';
+import { execute as shell, shellFails } from '../helpers/shell.ts';
 
 module('--junit', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('writes junit.xml alongside the streamed TAP for a passing run', async (assert, testMetadata) => {

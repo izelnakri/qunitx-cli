@@ -3,7 +3,7 @@ import { readFile, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import '../helpers/custom-asserts.ts';
-import shell, { shellWatch } from '../helpers/shell.ts';
+import { execute as shell, shellWatch } from '../helpers/shell.ts';
 
 const NESTED = 'test/fixtures/nested-module-tests.ts';
 

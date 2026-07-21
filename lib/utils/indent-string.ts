@@ -22,5 +22,3 @@ export function indentString(
 
   return string.replace(regex, indent.repeat(count));
 }
-
-export { indentString as default };

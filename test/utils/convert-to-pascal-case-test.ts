@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import convertToPascalCase from '../../lib/utils/convert-to-pascal-case.ts';
+import { convertToPascalCase } from '../../lib/utils/convert-to-pascal-case.ts';
 
 module('Utils | convertToPascalCase', { concurrency: true }, () => {
   test('converts kebab-case to PascalCase', (assert) => {

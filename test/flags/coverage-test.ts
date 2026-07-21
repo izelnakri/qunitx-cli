@@ -2,7 +2,7 @@ import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
-import shell from '../helpers/shell.ts';
+import { execute as shell } from '../helpers/shell.ts';
 
 // Coverage is V8-precise-coverage over CDP — chromium only. On the firefox/webkit CI lanes we
 // assert the warning-and-skip path instead of the report itself.

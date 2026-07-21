@@ -19,5 +19,3 @@ export async function pathExists(path: string): Promise<boolean> {
     return false;
   }
 }
-
-export { pathExists as default };

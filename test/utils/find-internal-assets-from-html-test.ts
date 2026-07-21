@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import findInternalAssetsFromHTML from '../../lib/utils/find-internal-assets-from-html.ts';
+import { findInternalAssetsFromHTML } from '../../lib/utils/find-internal-assets-from-html.ts';
 
 module('Utils | findInternalAssetsFromHTML', { concurrency: true }, () => {
   test('extracts internal script src paths', (assert) => {

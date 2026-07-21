@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
-import shell from '../helpers/shell.ts';
+import { execute as shell } from '../helpers/shell.ts';
 
 // Cross-platform: verify Chrome inherits whatever timezone the OS has configured.
 // On Linux this uses glibc; on macOS CoreFoundation; on Windows the registry.

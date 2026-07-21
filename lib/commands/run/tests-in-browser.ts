@@ -656,8 +656,6 @@ export class DaemonRunError extends Error {
   }
 }
 
-export { runTestsInBrowser as default };
-
 function buildFilteredTests(
   filteredTests: string[],
   outputPath: string,

@@ -36,5 +36,3 @@ export function closeWithGrace(
     });
   });
 }
-
-export { closeWithGrace as default };

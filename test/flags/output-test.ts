@@ -2,7 +2,7 @@ import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
-import shell from '../helpers/shell.ts';
+import { execute as shell } from '../helpers/shell.ts';
 
 module('--output flag tests for browser mode', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('--output changes the output directory for built files', async (assert, testMetadata) => {

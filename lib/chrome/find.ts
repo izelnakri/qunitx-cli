@@ -21,8 +21,6 @@ export function find(): Promise<string | null> {
   return Promise.resolve(findChromeSync());
 }
 
-export { find as default };
-
 /**
  * Synchronously resolves the Chrome/Chromium executable path from `CHROME_BIN` or by probing
  * common binary names in PATH directories using accessSync.

@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 // crashes on .unref().
 import { setTimeout, clearTimeout } from 'node:timers';
 import '../helpers/custom-asserts.ts';
-import shell, { shellFails, terminateChild } from '../helpers/shell.ts';
+import { execute as shell, shellFails, terminateChild } from '../helpers/shell.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 
 module('--port flag tests for browser mode', { concurrency: true }, (_hooks, moduleMetadata) => {
