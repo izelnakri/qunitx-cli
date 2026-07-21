@@ -6,7 +6,7 @@ import path from 'node:path';
 // in both Node and Deno; the bare setTimeout global in Deno is the Web variant.
 import { setTimeout, clearTimeout } from 'node:timers';
 import * as Paths from './paths.ts';
-import { parseDaemonIdleTimeout } from './parse-idle-timeout.ts';
+import { parseIdleTimeout } from './parse-idle-timeout.ts';
 import { attachLineParser } from './socket-io.ts';
 import * as Config from '../../setup/config.ts';
 import * as Browser from '../../setup/browser.ts';
@@ -22,11 +22,11 @@ import type {
 
 // Daemon idle window: after the last run finishes, the daemon shuts itself down.
 // Default 30 minutes; override with `QUNITX_DAEMON_IDLE_TIMEOUT` (see
-// `parseDaemonIdleTimeout`). `Infinity` ⇒ no auto-shutdown — `resetIdleTimer` skips
+// `parseIdleTimeout`). `Infinity` ⇒ no auto-shutdown — `resetIdleTimer` skips
 // arming the timer in that case. Read once at startup so a running daemon's lifetime
 // is fixed by the env at spawn time. The CLI side validates and warns separately,
 // so any warning here would only land in QUNITX_DAEMON_LOG (or be lost).
-const IDLE_TIMEOUT_MS = parseDaemonIdleTimeout(process.env.QUNITX_DAEMON_IDLE_TIMEOUT).ms;
+const IDLE_TIMEOUT_MS = parseIdleTimeout(process.env.QUNITX_DAEMON_IDLE_TIMEOUT).ms;
 // After this many back-to-back browser crashes (no successful run between), the daemon
 // gives up rather than entering a relaunch loop. Two attempts catches the common case
 // (one transient crash followed by recovery) without papering over a broken environment.
