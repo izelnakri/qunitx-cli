@@ -18,16 +18,17 @@ export function compute(
   weights: Map<string, number>,
   wallTimes: Map<number, number>,
 ): Map<string, number> {
-  const result = new Map<string, number>();
-  groups.forEach((group, i) => {
-    const wallMs = wallTimes.get(i);
-    if (wallMs === undefined) return;
-    const total = group.reduce((sum, f) => sum + (weights.get(f) ?? 0), 0);
-    group.forEach((f) =>
-      result.set(f, total > 0 ? wallMs * ((weights.get(f) ?? 0) / total) : wallMs / group.length),
-    );
-  });
-  return result;
+  return new Map(
+    groups.flatMap((group, i): [string, number][] => {
+      const wallMs = wallTimes.get(i);
+      if (wallMs === undefined) return [];
+      const total = group.reduce((sum, f) => sum + (weights.get(f) ?? 0), 0);
+      return group.map((f) => [
+        f,
+        total > 0 ? wallMs * ((weights.get(f) ?? 0) / total) : wallMs / group.length,
+      ]);
+    }),
+  );
 }
 
 /** Writes the merged per-file timings back to `tmp/test-timings.json` for the next run to pack with. */
