@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { resolveStack, type SourceMapDecoder } from './source-map-decoder.ts';
+import * as SourceMap from './source-map.ts';
+import type { SourceMapDecoder } from './source-map.ts';
 import { pathExists } from './path-exists.ts';
 import type { Config, FSTree } from '../types.ts';
 
@@ -126,7 +127,7 @@ function attributeFailureFile(
   if (!decoder || !assertions) return null;
   for (const assertion of assertions) {
     if (assertion.passed || assertion.todo || !assertion.stack) continue;
-    const { firstUserFrame } = resolveStack(assertion.stack, decoder, projectRoot);
+    const { firstUserFrame } = SourceMap.resolveStack(assertion.stack, decoder, projectRoot);
     if (!firstUserFrame) continue;
     // firstUserFrame is "path:line:col" (path relative to projectRoot, or absolute when outside
     // it); strip the location and re-root to an absolute path so it matches fsTree keys.

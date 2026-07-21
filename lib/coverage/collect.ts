@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { isBundleUrl, sourceAbsolutePath } from '../utils/source-map-decoder.ts';
-import type { SourceMapDecoder } from '../utils/source-map-decoder.ts';
+import * as SourceMap from '../utils/source-map.ts';
+import type { SourceMapDecoder } from '../utils/source-map.ts';
 import type { Config, CoverageFileMap } from '../types.ts';
 
 /**
@@ -39,7 +39,7 @@ export async function collectCoverage(config: Config, entries: V8ScriptCoverage[
   if (!decoder || !collector) return;
 
   for (const entry of entries) {
-    if (!isBundleUrl(entry.url)) continue;
+    if (!SourceMap.isBundleUrl(entry.url)) continue;
     // Playwright's `source` is often empty for the served bundle; the on-disk tests.js the server
     // wrote is byte-identical to what V8 measured (same buffer), so read it as a fallback. V8
     // ranges are offsets into that exact text, so the source must match the served bytes precisely.
@@ -85,7 +85,7 @@ function attributeEntry(
 
       let absolutePath = pathCache.get(segment.sourceIndex);
       if (absolutePath === undefined) {
-        const resolved = sourceAbsolutePath(decoder, segment.sourceIndex);
+        const resolved = SourceMap.sourceAbsolutePath(decoder, segment.sourceIndex);
         absolutePath = resolved && !isDependencyPath(resolved) ? resolved : null;
         pathCache.set(segment.sourceIndex, absolutePath);
       }

@@ -8,7 +8,7 @@ import { timeCounter } from '../../utils/time-counter.ts';
 import { runUserModule } from '../../utils/run-user-module.ts';
 import { reportRunEnd } from '../../reporter/index.ts';
 import { buildErrorHTML, buildNoTestsHTML } from '../../setup/web-server.ts';
-import { extractInlineSourceMap } from '../../utils/source-map-decoder.ts';
+import * as SourceMap from '../../utils/source-map.ts';
 import { collectCoverage } from '../../coverage/collect.ts';
 import { writeCoverageReport } from '../../coverage/report.ts';
 import * as MetafileCache from '../../utils/metafile-cache.ts';
@@ -231,7 +231,7 @@ export async function buildTestBundle(config: Config): Promise<void> {
       ),
     ]);
     build.allTestCode = allTestCode;
-    config.state.group.sourceMapDecoder = extractInlineSourceMap(allTestCode, outDir);
+    config.state.group.sourceMapDecoder = SourceMap.extractInline(allTestCode, outDir);
     // Persist metafile for the next --changed run. Best-effort; cache miss
     // on subsequent reads degrades to "run all tests."
     if (metafile) void MetafileCache.write(projectRoot, process.cwd(), metafile);
@@ -313,7 +313,7 @@ export async function runTestsInBrowser(
         outputPath,
         config,
       );
-      config.state.group.sourceMapDecoder = extractInlineSourceMap(build.filteredTestCode, outDir);
+      config.state.group.sourceMapDecoder = SourceMap.extractInline(build.filteredTestCode, outDir);
     }
 
     const TIME_COUNTER = timeCounter();
@@ -607,7 +607,7 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
         );
         if (!isMap) {
           build.allTestCode = Buffer.from(outputFile.contents);
-          config.state.group.sourceMapDecoder = extractInlineSourceMap(
+          config.state.group.sourceMapDecoder = SourceMap.extractInline(
             build.allTestCode,
             esbuildOutdir,
           );

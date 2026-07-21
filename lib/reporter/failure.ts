@@ -1,4 +1,5 @@
-import { resolveStack, type SourceMapDecoder } from '../utils/source-map-decoder.ts';
+import * as SourceMap from '../utils/source-map.ts';
+import type { SourceMapDecoder } from '../utils/source-map.ts';
 import type { TestDetails } from './types.ts';
 
 /**
@@ -83,7 +84,7 @@ function resolveLocation(
     return { stack: stack?.trim() || null, at: extractStackAt(stack), source: null };
   }
 
-  const { resolvedStack, firstUserFrame, firstUserSourceText } = resolveStack(
+  const { resolvedStack, firstUserFrame, firstUserSourceText } = SourceMap.resolveStack(
     stack,
     decoder,
     projectRoot,

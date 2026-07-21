@@ -9,7 +9,7 @@
  * Performance: decodeMappings is single-pass with VLQ extracted into a small cursor-based
  * helper (V8 inlines it; benchmarked within noise of the unrolled inline version, and ~9×
  * faster than the original split(';') + tuple-returning readVLQ implementation).
- * extractInlineSourceMap reverse-scans Buffer/Uint8Array bundles in place — they are
+ * extractInline reverse-scans Buffer/Uint8Array bundles in place — they are
  * never decoded to a full UTF-8 string.
  *
  * Browser compatibility: no node:* imports.  Buffer-backed fast paths are feature-detected
@@ -169,7 +169,7 @@ export function decodeMappings(mappings: string): Segment[][] {
 }
 
 /** Parses a source-map V3 JSON string into a `SourceMapDecoder` ready for position lookup. */
-export function parseSourceMap(json: string, outDir: string): SourceMapDecoder {
+export function parse(json: string, outDir: string): SourceMapDecoder {
   const map = JSON.parse(json) as {
     sources?: string[];
     sourceRoot?: string;
@@ -193,7 +193,7 @@ export function parseSourceMap(json: string, outDir: string): SourceMapDecoder {
  * Buffer/Uint8Array bundles are scanned in-place from the tail; the bundle itself is
  * never decoded to a full UTF-8 string.
  */
-export function extractInlineSourceMap(
+export function extractInline(
   bundle: ArrayBufferView | string | null,
   outDir: string,
 ): SourceMapDecoder | null {
@@ -201,7 +201,7 @@ export function extractInlineSourceMap(
   const base64Payload = readMarkerPayload(bundle);
   if (!base64Payload) return null;
   try {
-    return parseSourceMap(decodeBase64Utf8(base64Payload), outDir);
+    return parse(decodeBase64Utf8(base64Payload), outDir);
   } catch {
     return null;
   }
