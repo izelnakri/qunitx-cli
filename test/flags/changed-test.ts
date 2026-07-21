@@ -7,7 +7,7 @@ import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
 import { spawnCapture, shellWatch } from '../helpers/shell.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
-import { metafileCachePath } from '../../lib/utils/metafile-cache.ts';
+import * as MetafileCache from '../../lib/utils/metafile-cache.ts';
 
 const execFileAsync = promisify(execFile);
 const CWD = process.cwd();
@@ -98,7 +98,7 @@ module('--changed flag', { concurrency: true }, () => {
 
     assert.ok(
       await fs
-        .stat(metafileCachePath(project.cwd))
+        .stat(MetafileCache.path(project.cwd))
         .then(() => true)
         .catch(() => false),
       'metafile cache written after first run',

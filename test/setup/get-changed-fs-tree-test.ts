@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { module, test } from 'qunitx';
 import { getChangedFsTree } from '../../lib/setup/get-changed-fs-tree.ts';
-import { writeMetafileCache } from '../../lib/utils/metafile-cache.ts';
+import * as MetafileCache from '../../lib/utils/metafile-cache.ts';
 import type { AffectedMetafile } from '../../lib/utils/get-changed-files.ts';
 import type { FSTree } from '../../lib/types.ts';
 
@@ -79,7 +79,7 @@ module('Setup | getChangedFsTree | fallback paths', { concurrency: true }, () =>
 
   test('git fails (not a repo) → returns input fsTree unchanged', async (assert) => {
     const root = await makeProjectWithoutGit();
-    await writeMetafileCache(root, root, metafileFor({}));
+    await MetafileCache.write(root, root, metafileFor({}));
     const tree = fsTreeFromAbs(root, ['test/a-test.ts']);
     const result = await getChangedFsTree(tree, root, 'HEAD');
     assert.strictEqual(result, tree);
@@ -90,7 +90,7 @@ module('Setup | getChangedFsTree | fallback paths', { concurrency: true }, () =>
       'package.json': '{}',
       'test/a-test.ts': '',
     });
-    await writeMetafileCache(root, root, metafileFor({ 'test/a-test.ts': [] }));
+    await MetafileCache.write(root, root, metafileFor({ 'test/a-test.ts': [] }));
     await fs.writeFile(path.join(root, 'package.json'), '{"name":"x"}');
     const tree = fsTreeFromAbs(root, ['test/a-test.ts']);
     const result = await getChangedFsTree(tree, root, 'HEAD');
@@ -106,7 +106,7 @@ module('Setup | getChangedFsTree | filtered runs', { concurrency: true }, () => 
       'test/a-test.ts': "import './a.ts';",
       'test/b-test.ts': "import './b.ts';",
     });
-    await writeMetafileCache(
+    await MetafileCache.write(
       root,
       root,
       metafileFor({
@@ -128,7 +128,7 @@ module('Setup | getChangedFsTree | filtered runs', { concurrency: true }, () => 
 
   test('no changes → returns empty fsTree (skip-all path)', async (assert) => {
     const root = await makeProjectWithGit({ 'test/a-test.ts': '' });
-    await writeMetafileCache(root, root, metafileFor({ 'test/a-test.ts': [] }));
+    await MetafileCache.write(root, root, metafileFor({ 'test/a-test.ts': [] }));
     const tree = fsTreeFromAbs(root, ['test/a-test.ts']);
     const result = await getChangedFsTree(tree, root, 'HEAD');
     assert.equal(Object.keys(result).length, 0);
