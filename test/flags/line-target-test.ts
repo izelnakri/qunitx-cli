@@ -15,13 +15,15 @@ const SRC = (await readFile(NESTED, 'utf8')).split('\n');
 const lineOf = (needle: string) => SRC.findIndex((line) => line.includes(needle)) + 1;
 const OUTER = lineOf("module('Outer'");
 const OUTER_FIRST = lineOf("test('outer first'");
-const OUTER_SECOND_BODY = lineOf("test('outer second'") + 1; // a line inside the test body
 const INNER = lineOf("module('Inner'");
 const SEPARATE_ONE = lineOf("test('separate one'");
-const IMPORT_LINE = lineOf("from 'qunitx'"); // outside every declaration
 
-module('file#line targeting', { concurrency: true }, (_hooks, moduleMetadata) => {
-  test('#N on a test( line runs only that test', async (assert, tm) => {
+module('Flags | file#line targeting', { concurrency: true }, (_hooks, moduleMetadata) => {
+  // Which declaration a line resolves to is Selection | LineTargets.resolve's job, and the
+  // #N / :N suffix parsing is Args | parse | line targets'. These tests own the seam those
+  // two cannot reach: that the resolved selector survives the trip into QUnit and scopes a
+  // real run. So there is one test per selector KIND, not per resolution rule.
+  test('a test-line target reaches QUnit as a testId and runs only that test', async (assert, tm) => {
     const result = await shell(`node cli.ts ${NESTED}#${OUTER_FIRST}`, {
       ...moduleMetadata,
       ...tm,
@@ -31,39 +33,18 @@ module('file#line targeting', { concurrency: true }, (_hooks, moduleMetadata) =>
     assert.includes(result.stdout, 'Outer | outer first');
   });
 
-  test('#N inside a test body runs only that test', async (assert, tm) => {
-    const result = await shell(`node cli.ts ${NESTED}#${OUTER_SECOND_BODY}`, {
-      ...moduleMetadata,
-      ...tm,
-    });
+  test('a module-line target reaches QUnit as a moduleId, nested children included', async (assert, tm) => {
+    const [inner, outer] = await Promise.all([
+      shell(`node cli.ts ${NESTED}#${INNER}`, { ...moduleMetadata, ...tm }),
+      shell(`node cli.ts ${NESTED}#${OUTER}`, { ...moduleMetadata, ...tm }),
+    ]);
 
-    assert.tapResult(result, { testCount: 1 });
-    assert.includes(result.stdout, 'Outer | outer second');
-  });
+    assert.tapResult(inner, { testCount: 1 });
+    assert.includes(inner.stdout, 'Outer | Inner | inner only');
 
-  test(':N is accepted as an alias for #N', async (assert, tm) => {
-    const result = await shell(`node cli.ts ${NESTED}:${OUTER_FIRST}`, {
-      ...moduleMetadata,
-      ...tm,
-    });
-
-    assert.tapResult(result, { testCount: 1 });
-    assert.includes(result.stdout, 'Outer | outer first');
-  });
-
-  test('#N on a nested module( line runs that module', async (assert, tm) => {
-    const result = await shell(`node cli.ts ${NESTED}#${INNER}`, { ...moduleMetadata, ...tm });
-
-    assert.tapResult(result, { testCount: 1 });
-    assert.includes(result.stdout, 'Outer | Inner | inner only');
-  });
-
-  test('#N on an outer module( line runs the module and its nested children', async (assert, tm) => {
-    const result = await shell(`node cli.ts ${NESTED}#${OUTER}`, { ...moduleMetadata, ...tm });
-
-    assert.tapResult(result, { testCount: 3 });
-    assert.includes(result.stdout, 'Outer | Inner | inner only');
-    assert.notIncludes(result.stdout, 'separate one');
+    assert.tapResult(outer, { testCount: 3 });
+    assert.includes(outer.stdout, 'Outer | Inner | inner only');
+    assert.notIncludes(outer.stdout, 'separate one');
   });
 
   test('two line targets on one file run both tests', async (assert, tm) => {
@@ -89,19 +70,6 @@ module('file#line targeting', { concurrency: true }, (_hooks, moduleMetadata) =>
     assert.includes(result.stdout, 'Outer | outer first');
     assert.includes(result.stdout, 'deepEqual true works');
     assert.notIncludes(result.stdout, 'outer second');
-  });
-
-  test('an unresolvable line warns and runs the whole file', async (assert, tm) => {
-    const result = await shell(`node cli.ts ${NESTED}#${IMPORT_LINE}`, {
-      ...moduleMetadata,
-      ...tm,
-    });
-
-    assert.includes(
-      result.stdout,
-      `# qunitx: no test or module found at ${NESTED}#${IMPORT_LINE} — running the whole file`,
-    );
-    assert.tapResult(result, { testCount: 4 });
   });
 
   test('a line target composes with -t', async (assert, tm) => {
@@ -166,7 +134,7 @@ module('file#line targeting', { concurrency: true }, (_hooks, moduleMetadata) =>
   });
 });
 
-module('file#line targeting in watch mode', { concurrency: true }, () => {
+module('Flags | file#line targeting | watch mode', { concurrency: true }, () => {
   test('--watch with a line target scopes the session and says what it dropped', async (assert) => {
     const stdout = await shellWatch(
       `node cli.ts ${NESTED}#${OUTER_FIRST} test/fixtures/passing-tests.ts --watch`,

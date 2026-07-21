@@ -10,32 +10,11 @@ import '../helpers/custom-asserts.ts';
 import { execute as shell, shellFails, terminateChild } from '../helpers/shell.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 
-module('--port flag tests for browser mode', { concurrency: true }, (_hooks, moduleMetadata) => {
-  test('--port flag is accepted and tests complete successfully', async (assert, testMetadata) => {
-    const { number: port, release } = await findFreePort();
-    await release();
-    const result = await shell(`node cli.ts test/fixtures/passing-tests.js --port=${port}`, {
-      ...moduleMetadata,
-      ...testMetadata,
-    });
-
-    assert.passingTestCaseFor(result, { moduleName: '{{moduleName}}' });
-    assert.tapResult(result, { testCount: 3 });
-  });
-
-  test('-p=<port> is the short alias for --port', async (assert, testMetadata) => {
-    const { number: port, release } = await findFreePort();
-    await release();
-    const result = await shell(`node cli.ts test/fixtures/passing-tests.js -p=${port} --debug`, {
-      ...moduleMetadata,
-      ...testMetadata,
-    });
-
-    assert.tapResult(result, { testCount: 3 });
-    assert.includes(result.stdout, `:${port}`, 'the server bound to the -p port');
-  });
-
-  test('--port flag combined with --debug shows the correct port in the server URL', async (assert, testMetadata) => {
+module('Flags | --port', { concurrency: true }, (_hooks, moduleMetadata) => {
+  // The `-p=<n>` spelling shares one branch with `--port=<n>` in lib/args/parse.ts and is owned
+  // by test/args/parse-test.ts 'Args | parse | --port' — this asserts the wiring from the parsed
+  // value through to the port the server actually announces and runs the suite on.
+  test('serves the suite on the requested port and echoes it in the debug URL', async (assert, testMetadata) => {
     const { number: port, release } = await findFreePort();
     await release();
     const result = await shell(
@@ -56,7 +35,7 @@ module('--port flag tests for browser mode', { concurrency: true }, (_hooks, mod
     assert.tapResult(result, { testCount: 3 });
   });
 
-  test('process truly occupies the bound port while running (TCP connect succeeds)', async (assert) => {
+  test('accepts TCP connections on the bound port while running, and frees it on exit', async (assert) => {
     // Use a dynamically found free port via --port so the test is isolated from concurrent runs.
     const free = await findFreePort();
     const port = free.number;
@@ -82,7 +61,7 @@ module('--port flag tests for browser mode', { concurrency: true }, (_hooks, mod
   // another worker grabs the released port in that window, so the CLI legitimately fails to bind
   // and the test flakes (CI run 29783893187). Widening the retry budget would only mask it.
 
-  test('fails with a clear error when --port is explicitly taken', async (assert, testMetadata) => {
+  test('exits 1 when the requested port is already taken', async (assert, testMetadata) => {
     // Skip on Windows + deno-compiled binary: the binary's net.Server.listen()
     // never emits the 'error' event for EADDRINUSE on Windows, so bindServerToPort
     // hangs in its retry loop forever. Same root cause family as the daemon-on-

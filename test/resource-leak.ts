@@ -8,13 +8,17 @@ const CHROME_DIR_POLL_TIMEOUT_MS = 10_000;
 
 // Resource leak tests check global state (/tmp dirs, /proc, inotify counts).
 // Tests within this module run sequentially; other test files may run concurrently.
-module('resource leak tests', () => {
+module('Resource leaks', () => {
+  // Both halves of "the run cleaned up after itself" — the user-data-dir on disk and the
+  // Chrome process in /proc — are read off the same completed run. They used to be two
+  // tests spawning two identical runs, which in an exclusive phase is a browser launch
+  // spent to learn nothing new.
   test(
-    'no orphaned Chrome user-data-dirs after a completed run',
+    'a completed run leaves behind neither a Chrome user-data-dir nor an orphaned process',
     { skip: process.platform !== 'linux' },
     async (assert) => {
       // Snapshot dirs before our run — dirs already present belong to concurrent test files
-      // (the suite runs with --test-concurrency=16) and must not be counted as our leak.
+      // and must not be counted as our leak.
       const dirsBefore = new Set(
         (await fs.readdir(os.tmpdir())).filter((e) => e.startsWith('qunitx-chrome-')),
       );
@@ -34,15 +38,13 @@ module('resource leak tests', () => {
         await new Promise((resolve) => setTimeout(resolve, 50));
         return poll(deadline);
       })(Date.now() + CHROME_DIR_POLL_TIMEOUT_MS);
-      if (chromeDirs.length === 0) {
-        assert.ok(true, 'no Chrome dirs in tmpdir');
-        return;
-      }
 
-      // Any qunitx-chrome-* dir that appeared during our run and is still present
-      // after our CLI exits is genuinely orphaned by our run. Scan /proc to
-      // produce a useful diagnostic: find which process (if any) holds it as cwd.
+      // One /proc walk answers both questions: which process still holds a leaked dir as
+      // cwd (the diagnostic for the dir assertion), and which Chrome has been reparented
+      // to init (the orphan assertion). A Chrome is orphaned when its parent node-cli was
+      // SIGKILL'd without running the process-group shutdown, so the kernel reparents it.
       const cwdHolders: string[] = [];
+      const orphans: string[] = [];
       const procEntries = await fs.readdir('/proc').catch(() => [] as string[]);
       await Promise.all(
         procEntries.map(async (entry) => {
@@ -50,11 +52,16 @@ module('resource leak tests', () => {
           try {
             const cwd = await fs.readlink(`/proc/${entry}/cwd`).catch(() => '');
             const matched = chromeDirs.find((d) => cwd.startsWith(`${os.tmpdir()}/${d}`));
-            if (!matched) return;
             const cmdline = await fs.readFile(`/proc/${entry}/cmdline`, 'utf8').catch(() => '');
-            cwdHolders.push(
-              `pid ${entry} cwd=${cwd} cmdline=${cmdline.replace(/\0/g, ' ').slice(0, 120)}`,
-            );
+            if (matched) {
+              cwdHolders.push(
+                `pid ${entry} cwd=${cwd} cmdline=${cmdline.replace(/\0/g, ' ').slice(0, 120)}`,
+              );
+            }
+            if (!cmdline.includes('qunitx-chrome-')) return;
+            const status = await fs.readFile(`/proc/${entry}/status`, 'utf8');
+            const ppidMatch = status.match(/^PPid:\s+(\d+)/m);
+            if (ppidMatch && parseInt(ppidMatch[1]) === 1) orphans.push(entry);
           } catch {
             /* /proc entry vanished mid-scan */
           }
@@ -70,34 +77,6 @@ module('resource leak tests', () => {
         0,
         `Chrome dirs not cleaned up after completed run: ${chromeDirs.join(', ')}${detail}`,
       );
-    },
-  );
-
-  // A Chrome process is orphaned when its parent node-cli was SIGKILL'd without
-  // running the process-group shutdown. The kernel then reparents it to init (ppid=1).
-  test(
-    'no orphaned Chrome processes in /proc after a completed run',
-    { skip: process.platform !== 'linux' },
-    async (assert) => {
-      await shell('node cli.ts test/fixtures/passing-tests.ts');
-
-      const procEntries = await fs.readdir('/proc');
-      const orphans: string[] = [];
-      await Promise.all(
-        procEntries.map(async (entry) => {
-          if (!/^\d+$/.test(entry)) return;
-          try {
-            const cmdline = await fs.readFile(`/proc/${entry}/cmdline`, 'utf8');
-            if (!cmdline.includes('qunitx-chrome-')) return;
-            const status = await fs.readFile(`/proc/${entry}/status`, 'utf8');
-            const ppidMatch = status.match(/^PPid:\s+(\d+)/m);
-            if (ppidMatch && parseInt(ppidMatch[1]) === 1) orphans.push(entry);
-          } catch {
-            /* /proc entry vanished mid-scan */
-          }
-        }),
-      );
-
       assert.equal(
         orphans.length,
         0,
@@ -125,9 +104,14 @@ module('resource leak tests', () => {
         return;
       }
 
-      await shell('node cli.ts test/fixtures/passing-tests.ts');
-      await shell('node cli.ts test/fixtures/passing-tests.ts');
-      await shell('node cli.ts test/fixtures/passing-tests.ts');
+      // Concurrent rather than sequential: the count is only read once every run has exited,
+      // so ordering cannot change the verdict, and three overlapping process groups are if
+      // anything a harsher test of the group kill than three consecutive ones.
+      await Promise.all([
+        shell('node cli.ts test/fixtures/passing-tests.ts'),
+        shell('node cli.ts test/fixtures/passing-tests.ts'),
+        shell('node cli.ts test/fixtures/passing-tests.ts'),
+      ]);
       const after = (await readCount())!;
 
       // Allow ±5 for unrelated system activity during a concurrent test run.

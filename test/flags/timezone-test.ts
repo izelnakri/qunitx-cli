@@ -6,7 +6,7 @@ import { execute as shell } from '../helpers/shell.ts';
 // On Linux this uses glibc; on macOS CoreFoundation; on Windows the registry.
 // The assertion compares the browser's Intl timezone against the Node.js process
 // timezone — both read from the same OS source, so they must agree on all platforms.
-module('browser timezone: OS system timezone', { concurrency: true }, (_hooks, moduleMetadata) => {
+module('Flags | --timezone | OS default', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('browser Intl timezone matches the process timezone', async (assert, testMetadata) => {
     const nodeTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const result = await shell('node cli.ts test/fixtures/timezone-tests.ts --debug', {
@@ -19,42 +19,21 @@ module('browser timezone: OS system timezone', { concurrency: true }, (_hooks, m
   });
 });
 
-// Linux-only: verify that the TZ env var overrides are reflected in the browser.
-// Chrome on macOS uses CoreFoundation and on Windows uses the registry — both ignore TZ.
+// Linux-only: verify that a TZ env var override reaches the browser. Chrome on macOS uses
+// CoreFoundation and on Windows the registry — both ignore TZ. One named non-UTC zone is
+// enough: TZ is inherited by the browser process as a whole, so every zone travels the same
+// single mechanism (env inheritance → glibc → Chrome's ICU), and a second zone would only
+// re-test glibc's tzdata.
 if (process.platform === 'linux') {
-  module(
-    'browser timezone: TZ env var override (Linux)',
-    { concurrency: true },
-    (_hooks, moduleMetadata) => {
-      test('TZ=UTC is reflected in browser Intl.DateTimeFormat', async (assert, testMetadata) => {
-        const result = await shell('TZ=UTC node cli.ts test/fixtures/timezone-tests.ts --debug', {
-          ...moduleMetadata,
-          ...testMetadata,
-        });
+  module('Flags | --timezone | TZ override', { concurrency: true }, (_hooks, moduleMetadata) => {
+    test('TZ is reflected in the browser Intl.DateTimeFormat timezone', async (assert, testMetadata) => {
+      const result = await shell(
+        'TZ=America/Los_Angeles node cli.ts test/fixtures/timezone-tests.ts --debug',
+        { ...moduleMetadata, ...testMetadata },
+      );
 
-        assert.includes(result, 'BROWSER_TZ:UTC');
-        assert.tapResult(result, { testCount: 1 });
-      });
-
-      test('TZ=America/Los_Angeles is reflected in browser Intl.DateTimeFormat', async (assert, testMetadata) => {
-        const result = await shell(
-          'TZ=America/Los_Angeles node cli.ts test/fixtures/timezone-tests.ts --debug',
-          { ...moduleMetadata, ...testMetadata },
-        );
-
-        assert.includes(result, 'BROWSER_TZ:America/Los_Angeles');
-        assert.tapResult(result, { testCount: 1 });
-      });
-
-      test('TZ=Europe/Berlin is reflected in browser Intl.DateTimeFormat', async (assert, testMetadata) => {
-        const result = await shell(
-          'TZ=Europe/Berlin node cli.ts test/fixtures/timezone-tests.ts --debug',
-          { ...moduleMetadata, ...testMetadata },
-        );
-
-        assert.includes(result, 'BROWSER_TZ:Europe/Berlin');
-        assert.tapResult(result, { testCount: 1 });
-      });
-    },
-  );
+      assert.includes(result, 'BROWSER_TZ:America/Los_Angeles');
+      assert.tapResult(result, { testCount: 1 });
+    });
+  });
 }

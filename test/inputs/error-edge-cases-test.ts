@@ -2,31 +2,21 @@ import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
 import { shellFails } from '../helpers/shell.ts';
 
-module('Advanced Error Edge Cases Tests', { concurrency: true }, (_hooks, moduleMetadata) => {
-  test('passing a non-existent file path exits with code 1', async (assert, testMetadata) => {
-    const cmd = await shellFails('node cli.ts tmp/this-file-does-not-exist.js', {
-      ...moduleMetadata,
-      ...testMetadata,
-    });
-    assert.exitCode(cmd, 1);
-  });
+module('Inputs | unresolvable inputs', { concurrency: true }, (_hooks, moduleMetadata) => {
+  // All three spellings land on the same code path: cli.ts has no "unknown command" handler,
+  // so an unrecognised argument is just another input path, and a path that resolves to
+  // nothing exits 1. One run per spelling proves the shared exit, and they go out together
+  // so the file costs one browser slot's wall time rather than three.
+  test('a missing file, a missing folder and an unrecognised argument all exit 1', async (assert, testMetadata) => {
+    const metadata = { ...moduleMetadata, ...testMetadata };
+    const [missingFile, missingFolder, unrecognised] = await Promise.all([
+      shellFails('node cli.ts tmp/this-file-does-not-exist.js', metadata),
+      shellFails('node cli.ts tmp/this-folder-does-not-exist', metadata),
+      shellFails('node cli.ts this-command-does-not-exist', metadata),
+    ]);
 
-  test('passing a non-existent folder path exits with code 1', async (assert, testMetadata) => {
-    const cmd = await shellFails('node cli.ts tmp/this-folder-does-not-exist', {
-      ...moduleMetadata,
-      ...testMetadata,
-    });
-    assert.exitCode(cmd, 1);
-  });
-
-  // There is no explicit "unknown command" handler in cli.ts — unrecognised arguments
-  // are treated as file/folder inputs. An arg that maps to a non-existent path therefore
-  // exits 1, the same as passing a missing file explicitly.
-  test('passing an unrecognised argument is treated as a missing path and exits with code 1', async (assert, testMetadata) => {
-    const cmd = await shellFails('node cli.ts this-command-does-not-exist', {
-      ...moduleMetadata,
-      ...testMetadata,
-    });
-    assert.exitCode(cmd, 1);
+    assert.exitCode(missingFile, 1, 'a missing file exits 1');
+    assert.exitCode(missingFolder, 1, 'a missing folder exits 1');
+    assert.exitCode(unrecognised, 1, 'an unrecognised argument is a missing path, and exits 1');
   });
 });
