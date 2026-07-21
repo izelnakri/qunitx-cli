@@ -790,6 +790,10 @@ async function runTestInsideHTMLFile(
   config: Config,
 ): Promise<void> {
   let QUNIT_RESULT: QUnitResult | null | undefined;
+  // Whether the browser sent a WS 'done' message. QUnit fires done even for an empty file, so
+  // this is what tells a genuinely-empty run (done, 0 tests) apart from a timeout that never ran
+  // tests (no done, but the runtime pre-initialised window.QUNIT_RESULT to a 0 tally).
+  let doneReceived = false;
   let targetError: unknown;
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   // wsConnected is set by config.state.group.signals.onWsOpen when Chrome's WS socket opens (< 1s after navigation,
@@ -923,6 +927,7 @@ async function runTestInsideHTMLFile(
     // Prefer the QUNIT_RESULT piggy-backed on the WS 'done' message — zero extra latency.
     // Fall back to page.evaluate() only when the run timed out without a WS 'done' arriving
     // (config.state.group.lastQUnitResult is null), so we still get partial results for diagnostics.
+    doneReceived = config.state.group.lastQUnitResult != null;
     QUNIT_RESULT =
       config.state.group.lastQUnitResult ??
       (await page.evaluate(() => (globalThis as { QUNIT_RESULT?: QUnitResult }).QUNIT_RESULT));
@@ -954,7 +959,21 @@ async function runTestInsideHTMLFile(
     }
   }
 
-  if (!QUNIT_RESULT) {
+  const outcome = classifyRunOutcome(QUNIT_RESULT, doneReceived);
+  const failRun = () =>
+    failOnNonWatchMode(
+      config.watch,
+      { server, browser, page },
+      config.state.group.groupMode,
+      config.state.group.pendingConsoleHandlers,
+      !!config.state.daemon,
+    );
+
+  if (outcome.kind === 'no-tests-ran') {
+    // No 'done' arrived: either no QUnit tally at all, or a zero tally the runtime pre-initialised
+    // before tests.js ran (a CPU-starved page load whose race timer fired first). Both mean the
+    // tests never executed — a timeout, not a green run. This used to slip through as a silent
+    // exit-0 when the pre-initialised {totalTests:0} looked like a genuinely empty file.
     if (targetError) console.log(targetError);
     const wsReason = !wsConnected
       ? 'WebSocket connection never received — Chrome may be CPU-starved or the page failed to load'
@@ -962,31 +981,19 @@ async function runTestInsideHTMLFile(
     console.log(`# TIMEOUT: ${wsReason}`);
     console.log('BROWSER: runtime error thrown during executing tests');
     console.error('BROWSER: runtime error thrown during executing tests');
-    await failOnNonWatchMode(
-      config.watch,
-      { server, browser, page },
-      config.state.group.groupMode,
-      config.state.group.pendingConsoleHandlers,
-      !!config.state.daemon,
-    );
-  } else if (QUNIT_RESULT.totalTests === 0) {
-    // QUnit ran but no tests were registered (or QUnit was not present in the bundle).
-    // This is not a failure — handled at the runTestsInBrowser level as a warning.
+    await failRun();
+  } else if (outcome.kind === 'empty') {
+    // QUnit fired 'done' with zero registered tests — a genuinely empty file (e.g. a helper).
+    // Not a failure — handled at the runTestsInBrowser level as a warning.
     return;
-  } else if (QUNIT_RESULT.totalTests > QUNIT_RESULT.finishedTests) {
+  } else if (outcome.kind === 'stalled') {
     if (targetError) console.log(targetError);
     console.log(
-      `# TIMEOUT: test stalled after ${QUNIT_RESULT.finishedTests}/${QUNIT_RESULT.totalTests} finished — last active: ${QUNIT_RESULT.currentTest}`,
+      `# TIMEOUT: test stalled after ${QUNIT_RESULT!.finishedTests}/${QUNIT_RESULT!.totalTests} finished — last active: ${QUNIT_RESULT!.currentTest}`,
     );
-    console.log(`BROWSER: TEST TIMED OUT: ${QUNIT_RESULT.currentTest}`);
-    console.error(`BROWSER: TEST TIMED OUT: ${QUNIT_RESULT.currentTest}`);
-    await failOnNonWatchMode(
-      config.watch,
-      { server, browser, page },
-      config.state.group.groupMode,
-      config.state.group.pendingConsoleHandlers,
-      !!config.state.daemon,
-    );
+    console.log(`BROWSER: TEST TIMED OUT: ${QUNIT_RESULT!.currentTest}`);
+    console.error(`BROWSER: TEST TIMED OUT: ${QUNIT_RESULT!.currentTest}`);
+    await failRun();
   } else if (config.state.groupCount === 1) {
     // Every registered test finished. The WebSocket testEnd stream is the only channel that
     // feeds the counter, and under load (a CPU-starved CI runner, a dropped or duplicated
@@ -996,7 +1003,7 @@ async function runTestInsideHTMLFile(
     // authoritative, so trust it. Single-group only: the shared counter is this run's own
     // count here; with several concurrent groups it aggregates all of them, so one group's
     // tally cannot safely rewrite it (the multi-group failure safety net below still applies).
-    const undelivered = reconcileUndeliveredResults(config.state.results.counter, QUNIT_RESULT);
+    const undelivered = reconcileUndeliveredResults(config.state.results.counter, QUNIT_RESULT!);
     if (undelivered > 0) {
       const warning =
         `# [qunitx] WARNING: ${undelivered} test result(s) finished in the browser but never ` +
@@ -1006,12 +1013,39 @@ async function runTestInsideHTMLFile(
       process.stdout.write(warning);
       process.stderr.write(warning);
     }
-  } else if (QUNIT_RESULT.failedTests > config.state.results.counter.failCount) {
+  } else if (QUNIT_RESULT!.failedTests > config.state.results.counter.failCount) {
     // Multi-group safety net: the shared counter aggregates every group, so we cannot rewrite
     // its total from one group's tally — but a failure the WS stream dropped must still count,
     // and only bumping failCount up is always safe. Keeps the exit code correct.
-    config.state.results.counter.failCount = QUNIT_RESULT.failedTests;
+    config.state.results.counter.failCount = QUNIT_RESULT!.failedTests;
   }
+}
+
+/** How a browser run ended, decided from QUnit's tally plus whether a WS `done` arrived. */
+export type RunOutcome =
+  | { kind: 'completed' } // every registered test finished; the caller reconciles the counter
+  | { kind: 'empty' } // QUnit fired `done` with zero registered tests — a genuinely empty file
+  | { kind: 'no-tests-ran' } // no `done`: a timeout that never executed tests (fail, not green)
+  | { kind: 'stalled' }; // registered tests started but not all finished before the timer
+
+/**
+ * Classifies a finished browser run.
+ *
+ * `doneReceived` is the load-bearing signal. QUnit fires `done` even for a file with no tests, so
+ * a zero-test tally *with* a `done` is a genuinely empty file. But the injected runtime
+ * pre-initialises `window.QUNIT_RESULT` to a zero tally at page load, so a run that timed out
+ * before `tests.js` executed also reads `totalTests === 0` — *without* a `done`. Treating those
+ * two identically is what let a CPU-starved timeout on CI pass silently as an empty, exit-0 run
+ * (v0.31.0 windows-latest --coverage). The `done` flag tells them apart.
+ */
+export function classifyRunOutcome(
+  result: QUnitResult | null | undefined,
+  doneReceived: boolean,
+): RunOutcome {
+  if (!result) return { kind: 'no-tests-ran' };
+  if (result.totalTests === 0) return doneReceived ? { kind: 'empty' } : { kind: 'no-tests-ran' };
+  if (result.totalTests > result.finishedTests) return { kind: 'stalled' };
+  return { kind: 'completed' };
 }
 
 /**
