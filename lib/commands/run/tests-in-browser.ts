@@ -11,7 +11,7 @@ import { buildErrorHTML, buildNoTestsHTML } from '../../setup/web-server.ts';
 import { extractInlineSourceMap } from '../../utils/source-map-decoder.ts';
 import { collectCoverage } from '../../coverage/collect.ts';
 import { writeCoverageReport } from '../../coverage/report.ts';
-import { writeMetafileCache } from '../../utils/metafile-cache.ts';
+import * as MetafileCache from '../../utils/metafile-cache.ts';
 import { writeFailureCache, buildFailureCache } from '../../utils/failure-cache.ts';
 import { isFilteredRun, qunitFilterQuery } from '../../selection/filter-query.ts';
 import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
@@ -234,7 +234,7 @@ export async function buildTestBundle(config: Config): Promise<void> {
     config.state.group.sourceMapDecoder = extractInlineSourceMap(allTestCode, outDir);
     // Persist metafile for the next --changed run. Best-effort; cache miss
     // on subsequent reads degrades to "run all tests."
-    if (metafile) void writeMetafileCache(projectRoot, process.cwd(), metafile);
+    if (metafile) void MetafileCache.write(projectRoot, process.cwd(), metafile);
     build.lastBuildErrored = false;
   } catch (error) {
     build.lastBuildErrored = true;
@@ -617,7 +617,7 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
     );
     // Persist metafile for the next --changed run (same cache as single-group path).
     if (result.metafile) {
-      void writeMetafileCache(projectRoot, process.cwd(), result.metafile as AffectedMetafile);
+      void MetafileCache.write(projectRoot, process.cwd(), result.metafile as AffectedMetafile);
     }
   } catch (error) {
     const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };

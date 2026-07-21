@@ -2,11 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { module, test } from 'qunitx';
-import {
-  metafileCachePath,
-  readMetafileCache,
-  writeMetafileCache,
-} from '../../lib/utils/metafile-cache.ts';
+import * as MetafileCache from '../../lib/utils/metafile-cache.ts';
 import type { AffectedMetafile } from '../../lib/utils/get-changed-files.ts';
 
 async function tempProjectRoot(): Promise<string> {
@@ -25,8 +21,8 @@ const SAMPLE: AffectedMetafile = {
 module('Utils | metafile-cache', { concurrency: true }, () => {
   test('write then read round-trips esbuildCwd + metafile', async (assert) => {
     const root = await tempProjectRoot();
-    await writeMetafileCache(root, '/some/cwd', SAMPLE);
-    const got = await readMetafileCache(root);
+    await MetafileCache.write(root, '/some/cwd', SAMPLE);
+    const got = await MetafileCache.read(root);
     assert.ok(got, 'cache hit');
     assert.equal(got!.esbuildCwd, '/some/cwd');
     assert.deepEqual(got!.metafile, SAMPLE);
@@ -34,23 +30,23 @@ module('Utils | metafile-cache', { concurrency: true }, () => {
 
   test('read returns null when file does not exist', async (assert) => {
     const root = await tempProjectRoot();
-    assert.equal(await readMetafileCache(root), null);
+    assert.equal(await MetafileCache.read(root), null);
   });
 
   test('read returns null on corrupt JSON', async (assert) => {
     const root = await tempProjectRoot();
-    const cacheFile = metafileCachePath(root);
+    const cacheFile = MetafileCache.path(root);
     await fs.mkdir(path.dirname(cacheFile), { recursive: true });
     await fs.writeFile(cacheFile, '{not-json');
-    assert.equal(await readMetafileCache(root), null);
+    assert.equal(await MetafileCache.read(root), null);
   });
 
   test('read returns null when payload is missing required fields', async (assert) => {
     const root = await tempProjectRoot();
-    const cacheFile = metafileCachePath(root);
+    const cacheFile = MetafileCache.path(root);
     await fs.mkdir(path.dirname(cacheFile), { recursive: true });
     await fs.writeFile(cacheFile, JSON.stringify({ esbuildCwd: '/x' })); // no metafile
-    assert.equal(await readMetafileCache(root), null);
+    assert.equal(await MetafileCache.read(root), null);
   });
 
   test('distinct projectRoots that share a node_modules write to distinct cache files', async (assert) => {
@@ -59,21 +55,21 @@ module('Utils | metafile-cache', { concurrency: true }, () => {
     // concurrent runs overwrote each other. The path tag derived from
     // projectRoot keeps each project's cache isolated even under the symlink.
     const [rootA, rootB] = await Promise.all([tempProjectRoot(), tempProjectRoot()]);
-    assert.notStrictEqual(metafileCachePath(rootA), metafileCachePath(rootB));
+    assert.notStrictEqual(MetafileCache.path(rootA), MetafileCache.path(rootB));
     // Same projectRoot must always resolve to the same path so daemon runs hit.
-    assert.strictEqual(metafileCachePath(rootA), metafileCachePath(rootA));
+    assert.strictEqual(MetafileCache.path(rootA), MetafileCache.path(rootA));
   });
 
   test('write is best-effort: read-only cache dir does not throw', async (assert) => {
     // No cache dir creation — write a regular file at the would-be dir path so
-    // mkdir fails (EEXIST as file). writeMetafileCache should swallow the error.
+    // mkdir fails (EEXIST as file). MetafileCache.write should swallow the error.
     const root = await tempProjectRoot();
     const cacheParent = path.join(root, 'node_modules', '.cache');
     await fs.mkdir(path.dirname(cacheParent), { recursive: true });
     await fs.writeFile(cacheParent, ''); // file where dir is expected → mkdir fails
-    await writeMetafileCache(root, '/x', SAMPLE); // must not throw
+    await MetafileCache.write(root, '/x', SAMPLE); // must not throw
     // And subsequent read returns null because the file was never written.
-    assert.equal(await readMetafileCache(root), null);
+    assert.equal(await MetafileCache.read(root), null);
   });
 });
 
@@ -98,22 +94,22 @@ module('Utils | metafile-cache | atomic publish', { concurrency: true }, () => {
 
   test('a read during an in-flight write never sees a torn cache', async (assert) => {
     const root = await tempProjectRoot();
-    await writeMetafileCache(root, '/cwd', BIG);
+    await MetafileCache.write(root, '/cwd', BIG);
 
     let torn = 0;
     for (let i = 0; i < 20; i++) {
-      writeMetafileCache(root, '/cwd', BIG); // in flight, exactly as watch mode leaves it
-      if (!(await readMetafileCache(root))) torn++;
+      MetafileCache.write(root, '/cwd', BIG); // in flight, exactly as watch mode leaves it
+      if (!(await MetafileCache.read(root))) torn++;
     }
     assert.equal(torn, 0, 'every concurrent read saw a complete cache');
   });
 
   test('the previous cache stays readable until the new one is complete', async (assert) => {
     const root = await tempProjectRoot();
-    await writeMetafileCache(root, '/first', SAMPLE);
+    await MetafileCache.write(root, '/first', SAMPLE);
 
-    writeMetafileCache(root, '/second', BIG); // in flight
-    const during = await readMetafileCache(root);
+    MetafileCache.write(root, '/second', BIG); // in flight
+    const during = await MetafileCache.read(root);
     assert.ok(during, 'never a miss mid-write');
     assert.ok(
       during!.esbuildCwd === '/first' || during!.esbuildCwd === '/second',
@@ -124,17 +120,17 @@ module('Utils | metafile-cache | atomic publish', { concurrency: true }, () => {
   test('concurrent writers cannot corrupt each other', async (assert) => {
     const root = await tempProjectRoot();
     await Promise.all(
-      Array.from({ length: 8 }, (_, i) => writeMetafileCache(root, `/cwd-${i}`, BIG)),
+      Array.from({ length: 8 }, (_, i) => MetafileCache.write(root, `/cwd-${i}`, BIG)),
     );
-    const got = await readMetafileCache(root);
+    const got = await MetafileCache.read(root);
     assert.ok(got, 'the cache is valid after 8 racing writers');
     assert.equal(Object.keys(got!.metafile.inputs).length, 400, 'and complete, not truncated');
   });
 
   test('publishing leaves no temp files behind', async (assert) => {
     const root = await tempProjectRoot();
-    await writeMetafileCache(root, '/cwd', SAMPLE);
-    const dir = path.dirname(metafileCachePath(root));
+    await MetafileCache.write(root, '/cwd', SAMPLE);
+    const dir = path.dirname(MetafileCache.path(root));
     const leftovers = (await fs.readdir(dir)).filter((f) => f.endsWith('.tmp'));
     assert.deepEqual(leftovers, [], 'the temp file is renamed, not abandoned');
   });
