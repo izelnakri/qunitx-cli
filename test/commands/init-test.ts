@@ -1,24 +1,30 @@
 import { module, test } from 'qunitx';
-import { exec as execCb } from 'node:child_process';
-import { promisify } from 'node:util';
 import fs from 'node:fs/promises';
-import { rmRetry } from '../helpers/rm-retry.ts';
 import os from 'node:os';
-import { randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { rmRetry } from '../helpers/rm-retry.ts';
+import { execute as shell, shellFails } from '../helpers/shell.ts';
 import '../helpers/custom-asserts.ts';
 
-const exec = promisify(execCb);
+// Absolute so the command still resolves after `cwd` is pointed at the throwaway project.
+// The shell helper still recognises the trailing `cli.ts` and honours QUNITX_BIN, so
+// scripts/test-release.sh exercises init through the published binary too. It adds no
+// --output/--browser flags here: init never reaches the run path or a browser.
 const CLI = path.resolve('cli.ts');
 
-module('Commands | init tests', { concurrency: true }, (_hooks, _moduleMetadata) => {
-  test('$ qunitx init -> writes test/tests.html, tsconfig.json and updates package.json', async (assert) => {
+module('Commands | init', { concurrency: true }, (_hooks, moduleMetadata) => {
+  test('$ qunitx init -> writes test/tests.html, tsconfig.json and updates package.json', async (assert, testMetadata) => {
     const dir = path.resolve(`tmp/init-${randomUUID()}`);
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(`${dir}/package.json`, JSON.stringify({ name: 'test-project' }, null, 2));
 
     try {
-      const { stdout } = await exec(`node ${CLI} init`, { cwd: dir });
+      const { stdout } = await shell(`node ${CLI} init`, {
+        cwd: dir,
+        ...moduleMetadata,
+        ...testMetadata,
+      });
 
       assert.includes(stdout, 'written', 'prints a confirmation message');
 
@@ -48,16 +54,16 @@ module('Commands | init tests', { concurrency: true }, (_hooks, _moduleMetadata)
     await fs.mkdir(dir, { recursive: true });
 
     try {
-      const error = await exec(`node ${CLI} init`, { cwd: dir }).catch((error) => error);
+      const result = await shellFails(`node ${CLI} init`, { cwd: dir });
 
-      assert.exitCode(error, 1, 'exits with code 1 when no package.json found');
-      assert.ok(error.stdout.includes('package.json'), 'prints error about missing package.json');
+      assert.exitCode(result, 1, 'exits with code 1 when no package.json found');
+      assert.includes(result, 'package.json', 'prints error about missing package.json');
     } finally {
       await rmRetry(dir);
     }
   });
 
-  test('$ qunitx init -> prints "already exists" and does not overwrite an existing html file', async (assert) => {
+  test('$ qunitx init -> prints "already exists" and does not overwrite an existing html file', async (assert, testMetadata) => {
     const dir = path.resolve(`tmp/init-${randomUUID()}`);
     await fs.mkdir(`${dir}/test`, { recursive: true });
     await Promise.all([
@@ -66,7 +72,11 @@ module('Commands | init tests', { concurrency: true }, (_hooks, _moduleMetadata)
     ]);
 
     try {
-      const { stdout } = await exec(`node ${CLI} init`, { cwd: dir });
+      const { stdout } = await shell(`node ${CLI} init`, {
+        cwd: dir,
+        ...moduleMetadata,
+        ...testMetadata,
+      });
 
       assert.includes(stdout, 'already exists', 'reports existing html file');
 

@@ -8,7 +8,7 @@ import '../../helpers/custom-asserts.ts';
 const MIN = 60_000;
 const HOUR = 3_600_000;
 
-module('Utils | parseIdleTimeout | defaults', { concurrency: true }, () => {
+module('Daemon | parseIdleTimeout | defaults', { concurrency: true }, () => {
   test('undefined → default ms, no warning', (assert) => {
     const r = parseIdleTimeout(undefined);
     assert.strictEqual(r.ms, DEFAULT_IDLE_TIMEOUT_MS);
@@ -26,7 +26,7 @@ module('Utils | parseIdleTimeout | defaults', { concurrency: true }, () => {
   });
 });
 
-module('Utils | parseIdleTimeout | bare numbers (minutes)', { concurrency: true }, () => {
+module('Daemon | parseIdleTimeout | bare numbers (minutes)', { concurrency: true }, () => {
   test('"30" → 30 minutes', (assert) => {
     assert.strictEqual(parseIdleTimeout('30').ms, 30 * MIN);
   });
@@ -40,7 +40,7 @@ module('Utils | parseIdleTimeout | bare numbers (minutes)', { concurrency: true 
   });
 });
 
-module('Utils | parseIdleTimeout | unit suffixes', { concurrency: true }, () => {
+module('Daemon | parseIdleTimeout | unit suffixes', { concurrency: true }, () => {
   test('ms suffix is taken literally', (assert) => {
     assert.strictEqual(parseIdleTimeout('500ms').ms, 500);
     assert.strictEqual(parseIdleTimeout('1ms').ms, 1);
@@ -73,7 +73,7 @@ module('Utils | parseIdleTimeout | unit suffixes', { concurrency: true }, () => 
   });
 });
 
-module('Utils | parseIdleTimeout | "false" → infinite', { concurrency: true }, () => {
+module('Daemon | parseIdleTimeout | "false" → infinite', { concurrency: true }, () => {
   test('"false" → Infinity, no warning', (assert) => {
     const r = parseIdleTimeout('false');
     assert.strictEqual(r.ms, Infinity);
@@ -93,7 +93,7 @@ module('Utils | parseIdleTimeout | "false" → infinite', { concurrency: true },
 });
 
 module(
-  'Utils | parseIdleTimeout | invalid input → default + warning',
+  'Daemon | parseIdleTimeout | invalid input → default + warning',
   { concurrency: true },
   () => {
     const cases = [

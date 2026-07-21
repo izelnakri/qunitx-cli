@@ -20,8 +20,7 @@ const FIXTURE_FAIL = path.resolve('test/fixtures/failing-tests.ts');
 // through the daemon. The runner sets QUNITX_NO_DAEMON=1 globally; GitHub Actions sets
 // CI=true. Both short-circuit the daemon dispatch and would silently turn every daemon
 // test into a local run, dropping the "(daemon)" marker that several assertions rely on.
-// Bypass tests below explicitly re-add CI / QUNITX_NO_DAEMON / --no-daemon to verify
-// they win over the daemon path.
+// The bypass test below re-adds --no-daemon to verify it wins over the daemon path.
 const CLI_ENV = (() => {
   const env = { ...process.env, FORCE_COLOR: '0' };
   delete env.QUNITX_NO_DAEMON;
@@ -572,6 +571,11 @@ module('Commands | Daemon | run routing', { concurrency: true }, () => {
   );
 });
 
+// The full env/flag precedence table (--no-daemon, QUNITX_NO_DAEMON, CI, QUNITX_DAEMON and
+// every combination of them) is a pure predicate — Client.shouldUse / Client.shouldAutoSpawn —
+// exhaustively unit-tested in test/commands/daemon/client-test.ts at ~1ms per rule. The one
+// case kept here is the wiring proof: cli.ts really does consult that predicate before
+// dispatching, and a bypassed run really does execute locally.
 module('Commands | Daemon | bypass', { concurrency: true }, () => {
   daemonTest(
     '--no-daemon bypasses a running daemon (no "(daemon)" suffix)',
@@ -584,46 +588,12 @@ module('Commands | Daemon | bypass', { concurrency: true }, () => {
       assert.notIncludes(result, '(daemon)');
     },
   );
-
-  daemonTest('QUNITX_NO_DAEMON env var bypasses a running daemon', async (assert, project) => {
-    await cli(project, 'daemon start');
-    const result = await cli(project, FIXTURE_PASS, {
-      env: { ...CLI_ENV, QUNITX_NO_DAEMON: '1' },
-    });
-
-    assert.exitCode(result, 0);
-    assert.includes(result, '# pass 3');
-    assert.notIncludes(result, '(daemon)');
-  });
-
-  daemonTest('CI env var bypasses a running daemon', async (assert, project) => {
-    await cli(project, 'daemon start');
-    const result = await cli(project, FIXTURE_PASS, { env: { ...CLI_ENV, CI: '1' } });
-
-    assert.exitCode(result, 0);
-    assert.includes(result, '# pass 3');
-    assert.notIncludes(result, '(daemon)');
-  });
-
-  daemonTest(
-    'QUNITX_DAEMON=1 overrides CI=1 (multi-invocation CI opt-in)',
-    async (assert, project) => {
-      // Default: CI=1 bypasses the daemon for single-invocation jobs (most CI). When
-      // both CI=1 and QUNITX_DAEMON=1 are set, the explicit opt-in wins — multi-
-      // invocation CI flows (monorepos, pre-commit hooks doing N qunitx calls) need
-      // to be able to share the warm daemon across calls.
-      await cli(project, 'daemon start');
-      const result = await cli(project, FIXTURE_PASS, {
-        env: { ...CLI_ENV, CI: '1', QUNITX_DAEMON: '1' },
-      });
-
-      assert.exitCode(result, 0);
-      assert.includes(result, '# pass 3');
-      assert.includes(result, '(daemon)');
-    },
-  );
 });
 
+// Which env/flag combinations make auto-spawn eligible is Client.shouldAutoSpawn's job and is
+// covered rule-by-rule in test/commands/daemon/client-test.ts. What is left here is the wiring:
+// an eligible invocation really spawns a daemon and routes through it, an ineligible one really
+// runs locally and leaves no daemon behind, and an already-running daemon is never double-spawned.
 module('Commands | Daemon | auto-spawn', { concurrency: true }, () => {
   daemonTest(
     'QUNITX_DAEMON=1 with no daemon -> auto-spawns and routes',
@@ -673,22 +643,6 @@ module('Commands | Daemon | auto-spawn', { concurrency: true }, () => {
       // Same daemon instance — no double-spawn.
       const samePid = await readDaemonPid(project);
       assert.strictEqual(samePid, startupPid, 'daemon process unchanged');
-    },
-  );
-
-  daemonTest(
-    'QUNITX_DAEMON=1 + --no-daemon -> bypass wins, runs locally',
-    async (assert, project) => {
-      const result = await cli(project, `--no-daemon ${FIXTURE_PASS}`, {
-        env: { ...CLI_ENV, QUNITX_DAEMON: '1' },
-      });
-      assert.exitCode(result, 0);
-      assert.includes(result, '# pass 3');
-      assert.notIncludes(result, '(daemon)');
-
-      // No daemon spawned because --no-daemon vetoes auto-spawn.
-      const status = await cli(project, 'daemon status', { failOk: true });
-      assert.exitCode(status, 1);
     },
   );
 });
