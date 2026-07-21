@@ -4,7 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { blue, magenta } from '../../utils/color.ts';
 import * as Paths from './paths.ts';
-import { parseDaemonIdleTimeout } from './parse-idle-timeout.ts';
+import { parseIdleTimeout } from './parse-idle-timeout.ts';
 import * as Client from './client.ts';
 import pkg from '../../../package.json' with { type: 'json' };
 
@@ -199,7 +199,7 @@ async function spawnAndWaitForDaemon(): Promise<{ pid: number } | null> {
   // so a warning printed from inside it is invisible. Doing it on the CLI side puts
   // the message on the user's terminal at the moment the env value first becomes
   // load-bearing (i.e. a fresh spawn).
-  const parsed = parseDaemonIdleTimeout(process.env.QUNITX_DAEMON_IDLE_TIMEOUT);
+  const parsed = parseIdleTimeout(process.env.QUNITX_DAEMON_IDLE_TIMEOUT);
   if (parsed.warning) process.stderr.write(parsed.warning + '\n');
 
   // Create the per-cwd daemon dir on the client side BEFORE waitForFile attaches
