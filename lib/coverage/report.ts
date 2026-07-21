@@ -24,7 +24,7 @@ interface FileRow {
 }
 
 // The optional on-disk formats `--coverage=` accepts, in the order their `# wrote` lines print.
-// Adding a format is a row here plus a builder — never another branch in writeCoverageReport.
+// Adding a format is a row here plus a builder — never another branch in write.
 const ARTIFACTS = [
   { format: 'lcov', file: 'lcov.info', render: buildLcov },
   { format: 'html', file: 'index.html', render: buildHtml },
@@ -35,7 +35,7 @@ const ARTIFACTS = [
  * `lcov`/`html` reports the user requested via `config.coverageFormats`. `testFiles` (the run's
  * test entry paths) are excluded so the report reflects the code under test, not the tests.
  */
-export async function writeCoverageReport(config: Config, testFiles: string[]): Promise<void> {
+export async function write(config: Config, testFiles: string[]): Promise<void> {
   const collector = config.state.results.coverage;
   if (!collector || collector.size === 0) {
     process.stdout.write(
@@ -70,8 +70,6 @@ export async function writeCoverageReport(config: Config, testFiles: string[]): 
   );
   process.stdout.write((await Promise.all(formatWrites)).join(''));
 }
-
-export { writeCoverageReport as default };
 
 /** Turns the raw coverage map into sorted, test-file-filtered rows with computed percentages. */
 export function buildRows(

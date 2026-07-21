@@ -9,8 +9,7 @@ import { runUserModule } from '../../utils/run-user-module.ts';
 import * as Reporter from '../../reporters/index.ts';
 import { buildErrorHTML, buildNoTestsHTML } from '../../setup/web-server.ts';
 import * as SourceMap from '../../utils/source-map.ts';
-import { collectCoverage } from '../../coverage/collect.ts';
-import { writeCoverageReport } from '../../coverage/report.ts';
+import * as Coverage from '../../coverage/index.ts';
 import * as MetafileCache from '../../utils/metafile-cache.ts';
 import * as FailureCache from '../../utils/failure-cache.ts';
 import { isFilteredRun, qunitFilterQuery } from '../../selection/filter-query.ts';
@@ -375,7 +374,7 @@ export async function runTestsInBrowser(
         );
       }
 
-      if (config.coverage) await writeCoverageReport(config, allTestFilePaths);
+      if (config.coverage) await Coverage.Report.write(config, allTestFilePaths);
 
       if (config.after) {
         await runUserModule(
@@ -944,12 +943,12 @@ async function runTestInsideHTMLFile(
     config.state.group.signals.testRunDone = null;
     config.state.group.lastQUnitResult = null;
     // Collect coverage before the caller closes the page. stopJSCoverage returns the V8 ranges
-    // + bundle source for every script; collectCoverage keeps only the test bundle and maps it
+    // + bundle source for every script; Coverage.collect keeps only the test bundle and maps it
     // back to original sources via config.state.group.sourceMapDecoder, merging into the shared collector.
     if (coverageStarted) {
       const entries = await page.coverage.stopJSCoverage().catch(() => []);
       try {
-        await collectCoverage(config, entries);
+        await Coverage.collect(config, entries);
       } catch (error) {
         config.debug &&
           process.stderr.write(

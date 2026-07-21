@@ -1,3 +1,6 @@
+Use Coverage.collect and Coverage.Report.write as my examples
+
+
 instead of kind: , it could be an instance call with new or .build() then I wont need deriveBuildErrorType and formatBuildErrors neither
 many static methods under 'setup/run-state.ts'
 
