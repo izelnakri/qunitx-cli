@@ -22,6 +22,12 @@ export async function getChangedFsTree(
   fsTree: FSTree,
   projectRoot: string,
   changedSince: string,
+  // The git-backed change detector is injectable so the filter branches can be
+  // unit-tested deterministically — without spawning a real git subprocess, whose
+  // unbounded `init/add/commit` could wedge the whole test for 300s when a child's
+  // exit event never arrived on the deno/Windows lane. Production always uses the
+  // real default; the live integration is covered e2e in test/flags/changed-test.ts.
+  getChanged: typeof getChangedFilePathsInGitSince = getChangedFilePathsInGitSince,
 ): Promise<FSTree> {
   const testFiles = Object.keys(fsTree);
   if (testFiles.length === 0) return fsTree;
@@ -37,9 +43,7 @@ export async function getChangedFsTree(
   // .catch funnels git failures into a value branch so the three outcomes
   // (error / blast-radius / size===0) collapse into one if/else-if chain
   // without a mutable `let changed` + try/catch.
-  const changed = await getChangedFilePathsInGitSince(projectRoot, changedSince).catch(
-    (err: Error) => err,
-  );
+  const changed = await getChanged(projectRoot, changedSince).catch((err: Error) => err);
   if (changed instanceof Error) {
     process.stdout.write(
       `# --changed: git lookup failed (${changed.message.split('\n')[0]}) — running all ${testFiles.length} test files\n`,
