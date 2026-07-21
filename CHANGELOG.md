@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.31.1] - 2026-07-21
+[`v0.31.0...v0.31.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.31.0...v0.31.1)
+
+### Bug Fixes
+- Fail a timed-out run instead of exiting 0 as an empty file — 2026-07-21 by [@izelnakri](https://github.com/izelnakri) ([`4312e8c`](https://github.com/izelnakri/qunitx-cli/commit/4312e8cc7a6ba12c8515fd1af5a216038ba5b45a))
+- Wait for the settled re-run in the symlink write-through watch test — 2026-07-21 by [@izelnakri](https://github.com/izelnakri) ([`ceff22c`](https://github.com/izelnakri/qunitx-cli/commit/ceff22c761633c14147b4c359284d9c4881ddc2c))
+- Repair consumers the namespace sweep missed — 2026-07-21 by [@izelnakri](https://github.com/izelnakri) ([`a1469fb`](https://github.com/izelnakri/qunitx-cli/commit/a1469fb7d08f73949d68252b5021dfd4eebc80ff))
+- Kill the getChangedFsTree deno/Windows flake — unbounded setup git — 2026-07-21 by [@izelnakri](https://github.com/izelnakri) ([`ff9c3b1`](https://github.com/izelnakri/qunitx-cli/commit/ff9c3b18c5b1e2c3db0a79ae09f89f779ca90ba3))
+
+### Refactoring
+- Collapse earlyChrome / earlyChromeProc into one — 2026-07-21 by [@izelnakri](https://github.com/izelnakri) ([`f0df52b`](https://github.com/izelnakri/qunitx-cli/commit/f0df52b213c6f2acb34e6c7519a26af7fa627a74))
+- Drop all internal default exports; named exports only — 2026-07-21 by [@izelnakri](https://github.com/izelnakri) ([`ed03a4b`](https://github.com/izelnakri/qunitx-cli/commit/ed03a4b208c3ef74d716a7f67ef0c853bd7553a4))
+- Relocate the web server to lib/web/index.ts — 2026-07-21 by [@izelnakri](https://github.com/izelnakri) ([`a7ef8c6`](https://github.com/izelnakri/qunitx-cli/commit/a7ef8c63e490593437de5edf7ffaf3c2d1574ccc))
+- Compute builds the Map functionally, no forEach mutation — 2026-07-21 by [@izelnakri](https://github.com/izelnakri) ([`c7fad83`](https://github.com/izelnakri/qunitx-cli/commit/c7fad833f5c66e872ef1756e28c1476e2511a2b9))
+
 ## [0.31.0] - 2026-07-20
 [`v0.30.0...v0.31.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.30.0...v0.31.0)
 
