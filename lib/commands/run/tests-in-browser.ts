@@ -15,7 +15,7 @@ import { writeMetafileCache } from '../../utils/metafile-cache.ts';
 import { writeFailureCache, buildFailureCache } from '../../utils/failure-cache.ts';
 import { isFilteredRun, qunitFilterQuery } from '../../selection/filter-query.ts';
 import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
-import { resetRunResults } from '../../setup/run-state.ts';
+import * as RunState from '../../setup/run-state.ts';
 import type { AffectedMetafile } from '../../utils/get-changed-files.ts';
 import type { Page } from 'playwright-core';
 import type {
@@ -269,8 +269,8 @@ export async function runTestsInBrowser(
   if (!config.state.group.groupMode) {
     // Clears the counter, failure sets and coverage for this run (watch/single-group path);
     // group mode resets them once on the parent config in run.ts before the shared spread.
-    // In place, not replaced: see resetRunResults — group configs share this object.
-    resetRunResults(config.state.results, !!config.coverage);
+    // In place, not replaced: see RunState.reset — group configs share this object.
+    RunState.reset(config.state.results, !!config.coverage);
     // Reset the per-run testEnd dedup map in lockstep with the counter so the two
     // share the same lifetime. WS handler ONLY checks the map — it does not
     // reset on 'connection' events. That avoids the watch-rerun regression

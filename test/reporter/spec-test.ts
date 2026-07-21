@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import { SpecReporter } from '../../lib/reporter/spec.ts';
 import { updateCounter } from '../../lib/reporter/types.ts';
-import { newRunState } from '../../lib/setup/run-state.ts';
+import * as RunState from '../../lib/setup/run-state.ts';
 import type { TestDetails } from '../../lib/reporter/types.ts';
 import type { Config } from '../../lib/types.ts';
 import '../helpers/custom-asserts.ts';
@@ -12,7 +12,7 @@ const makeConfig = (): Config =>
   ({
     projectRoot: '/proj',
     reporter: 'spec',
-    state: newRunState(),
+    state: RunState.create(),
   }) as unknown as Config;
 
 // Drives the reporter the way reportTestEnd does: counter first, then the reporter.
