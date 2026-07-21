@@ -1,15 +1,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { runGit } from '../../lib/utils/get-changed-file-paths-in-git-since.ts';
 import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
 import { spawnCapture, shellWatch } from '../helpers/shell.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 import * as MetafileCache from '../../lib/utils/metafile-cache.ts';
 
-const execFileAsync = promisify(execFile);
 const CWD = process.cwd();
 
 interface ChangedProject {
@@ -54,12 +52,11 @@ async function makeChangedProject(): Promise<ChangedProject> {
 
   // Inline `-c` user info on commit — avoids touching `.git/config` and the
   // lock-file race two parallel `git config` calls would hit.
-  await execFileAsync('git', ['init', '-q', '-b', 'main'], { cwd });
-  await execFileAsync('git', ['add', '-A'], { cwd });
-  await execFileAsync(
-    'git',
+  await runGit(['init', '-q', '-b', 'main'], cwd);
+  await runGit(['add', '-A'], cwd);
+  await runGit(
     ['-c', 'user.email=test@example.com', '-c', 'user.name=Test', 'commit', '-q', '-m', 'init'],
-    { cwd },
+    cwd,
   );
 
   return { cwd };
