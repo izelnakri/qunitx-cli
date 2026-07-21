@@ -5,12 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import {
-  setupWebServer,
-  NOT_FOUND_HTML,
-  buildErrorHTML,
-  buildNoTestsHTML,
-} from '../../lib/setup/web-server.ts';
+import * as WebServer from '../../lib/setup/web-server.ts';
 import '../helpers/custom-asserts.ts';
 import * as RunState from '../../lib/setup/run-state.ts';
 import type { Config } from '../../lib/types.ts';
@@ -22,21 +17,21 @@ const CWD = process.cwd();
 // ---------------------------------------------------------------------------
 
 module('Setup | web-server | static file 404', { concurrency: true }, () => {
-  test('serves NOT_FOUND_HTML for HTML-accepting requests to missing paths', async (assert) => {
-    const server = setupWebServer(makeConfig());
+  test('serves WebServer.NOT_FOUND_HTML for HTML-accepting requests to missing paths', async (assert) => {
+    const server = WebServer.setup(makeConfig());
     await server.listen(0);
     const port = (server._server.address() as { port: number }).port;
     try {
       const { status, body } = await get(port, '/missing-file.html', { accept: 'text/html' });
       assert.equal(status, 404);
-      assert.equal(body, NOT_FOUND_HTML);
+      assert.equal(body, WebServer.NOT_FOUND_HTML);
     } finally {
       await server.close();
     }
   });
 
   test('serves empty body for non-HTML requests to missing paths', async (assert) => {
-    const server = setupWebServer(makeConfig());
+    const server = WebServer.setup(makeConfig());
     await server.listen(0);
     const port = (server._server.address() as { port: number }).port;
     try {
@@ -54,19 +49,21 @@ module('Setup | web-server | static file 404', { concurrency: true }, () => {
 // ---------------------------------------------------------------------------
 
 module('Setup | web-server | header links to /', { concurrency: true }, () => {
-  test('NOT_FOUND_HTML header links to /', (assert) => {
+  test('WebServer.NOT_FOUND_HTML header links to /', (assert) => {
     assert.ok(
-      NOT_FOUND_HTML.includes('<a href="/" style="color:inherit;text-decoration:none">qunitx</a>'),
+      WebServer.NOT_FOUND_HTML.includes(
+        '<a href="/" style="color:inherit;text-decoration:none">qunitx</a>',
+      ),
     );
   });
 
   test('buildErrorHTML header links to /', (assert) => {
-    const html = buildErrorHTML({ type: 'Build Error', formatted: 'some error' });
+    const html = WebServer.buildErrorHTML({ type: 'Build Error', formatted: 'some error' });
     assert.ok(html.includes('<a href="/" style="color:inherit;text-decoration:none">qunitx</a>'));
   });
 
   test('buildNoTestsHTML header links to /', (assert) => {
-    const html = buildNoTestsHTML(['test/foo.ts']);
+    const html = WebServer.buildNoTestsHTML(['test/foo.ts']);
     assert.ok(html.includes('<a href="/" style="color:inherit;text-decoration:none">qunitx</a>'));
   });
 });
@@ -115,7 +112,7 @@ module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
   test('duplicate testEnd in one run increments the counter exactly once', async (assert) => {
     const config = makeConfig();
     config.state.group.testEndCounts = new Map(); // run.ts / runTestsInBrowser ordinarily seeds this
-    const server = setupWebServer(config);
+    const server = WebServer.setup(config);
     await server.listen(0);
     const port = (server._server.address() as { port: number }).port;
     try {
@@ -153,7 +150,7 @@ module('Setup | web-server | WS testEnd dedup', { concurrency: true }, () => {
   test('stale testEnd arriving after the next-run connection is dropped (no-html regression)', async (assert) => {
     const config = makeConfig();
     config.state.group.testEndCounts = new Map();
-    const server = setupWebServer(config);
+    const server = WebServer.setup(config);
     await server.listen(0);
     const port = (server._server.address() as { port: number }).port;
     try {
@@ -229,7 +226,7 @@ module('Setup | web-server | runtime IIFE idempotency', { concurrency: true }, (
   test('a second invocation in the same Window opens exactly one WebSocket', async (assert) => {
     // Fetch the actual served HTML so the test exercises the runtime script
     // produced by testRuntimeToInject(), not a hand-typed copy.
-    const server = setupWebServer(makeConfig());
+    const server = WebServer.setup(makeConfig());
     await server.listen(0);
     const port = (server._server.address() as { port: number }).port;
     let runtimeJs: string;
@@ -311,7 +308,7 @@ module('Setup | web-server | runtime IIFE idempotency', { concurrency: true }, (
 
 module('Setup | web-server | qunit.css resolution', { concurrency: true }, () => {
   async function fetchCss(projectRoot: string): Promise<{ status: number; body: string }> {
-    const server = setupWebServer({ ...makeConfig(), projectRoot } as Config);
+    const server = WebServer.setup({ ...makeConfig(), projectRoot } as Config);
     await server.listen(0);
     const port = (server._server.address() as { port: number }).port;
     try {

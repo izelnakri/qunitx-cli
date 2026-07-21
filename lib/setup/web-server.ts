@@ -68,7 +68,7 @@ const NOT_FOUND_HTML = `<!DOCTYPE html>
  * Creates and returns an HTTPServer with routes for the test HTML, filtered test page, and static assets, plus a WebSocket handler that streams TAP events.
  * @returns {object}
  */
-export function setupWebServer(config: Config): HTTPServer {
+export function setup(config: Config): HTTPServer {
   const build = config.state.group.build;
   const STATIC_FILES_PATH = path.resolve(config.projectRoot, config.output);
   const consumerQunitCssCandidate = resolveConsumerQunitCssCandidate(config.projectRoot);
@@ -680,7 +680,7 @@ export function registerGroupRoutes(server: HTTPServer, groupConfig: Config): vo
 
   // Group pages resolve the template's qunit.css link to /group-N/node_modules/qunitx/vendor/
   // qunit.css; serve the consumer's copy when installed, else the CLI's embedded one (see the
-  // single-mode route in setupWebServer).
+  // single-mode route in WebServer.setup).
   server.get(`/group-${groupId}/node_modules/qunitx/vendor/qunit.css`, async (_req, res) => {
     const consumer = consumerQunitCssCandidate
       ? await fsPromise.readFile(consumerQunitCssCandidate).catch(() => null)
@@ -699,7 +699,7 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
   const socketToGroupId = new WeakMap<object, number>();
   // Diagnostic: count distinct WS connections seen by THIS shared-server handler
   // for each groupConfig. > 1 per group is suspicious in single-test runs;
-  // see setupWebServer's wsConnectionCount comment for full rationale.
+  // see WebServer.setup's wsConnectionCount comment for full rationale.
   for (const gc of groupConfigs) gc.state.group.wsConnectionCount = 0;
 
   server.wss.on('connection', function connection(socket) {
@@ -731,11 +731,11 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
       } else if (event === 'connection') {
         config.state.group.phase = 'running';
         // Dedup map reset owned by run.ts at groupConfig construction (see
-        // setupWebServer for the equivalent rationale); not reset here.
+        // WebServer.setup for the equivalent rationale); not reset here.
         if (config.debug) debugGroupHeader(config);
         config.state.group.signals.resetTestTimeout?.();
       } else if (event === 'testEnd' && !abort) {
-        // Server-side enforcement; see setupWebServer for full rationale.
+        // Server-side enforcement; see WebServer.setup for full rationale.
         const fullName = details.fullName.join(' | ');
         const count = (config.state.group.testEndCounts?.get(fullName) ?? 0) + 1;
         config.state.group.testEndCounts?.set(fullName, count);
@@ -819,7 +819,7 @@ export function registerSharedStaticHandler(server: HTTPServer, groupConfigs: Co
   });
 }
 
-export { NOT_FOUND_HTML, setupWebServer as default };
+export { NOT_FOUND_HTML };
 
 // Candidate path to the consumer project's own qunit.css, so an installed qunitx takes precedence
 // over the CLI's embedded copy (mirrors the esbuild runtime plugin's build.resolve-first behavior).

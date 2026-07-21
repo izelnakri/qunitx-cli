@@ -7,7 +7,7 @@ import {
   deriveBuildErrorType,
   formatBuildErrors,
 } from '../../lib/commands/run/tests-in-browser.ts';
-import { buildErrorHTML, buildNoTestsHTML } from '../../lib/setup/web-server.ts';
+import * as WebServer from '../../lib/setup/web-server.ts';
 import * as RunState from '../../lib/setup/run-state.ts';
 import type { Config } from '../../lib/types.ts';
 
@@ -145,7 +145,7 @@ module('Commands | formatBuildErrors', { concurrency: true }, () => {
 
 module('Setup | buildErrorHTML', { concurrency: true }, () => {
   test('returns a full HTML document with QUnit structural elements', (assert) => {
-    const html = buildErrorHTML({
+    const html = WebServer.buildErrorHTML({
       type: 'Module Resolution Error',
       formatted: 'Could not find module',
     });
@@ -158,12 +158,12 @@ module('Setup | buildErrorHTML', { concurrency: true }, () => {
   });
 
   test('places the error type in the userAgent bar', (assert) => {
-    const html = buildErrorHTML({ type: 'Syntax Error', formatted: 'details' });
+    const html = WebServer.buildErrorHTML({ type: 'Syntax Error', formatted: 'details' });
     assert.includes(html, 'Syntax Error');
   });
 
   test('HTML-escapes angle brackets and ampersands in the formatted error', (assert) => {
-    const html = buildErrorHTML({
+    const html = WebServer.buildErrorHTML({
       type: 'Build Error',
       formatted: '<script>alert("xss")</script> & more',
     });
@@ -173,14 +173,14 @@ module('Setup | buildErrorHTML', { concurrency: true }, () => {
   });
 
   test('includes WebSocket reconnect script guarded by location.port', (assert) => {
-    const html = buildErrorHTML({ type: 'Build Error', formatted: 'err' });
+    const html = WebServer.buildErrorHTML({ type: 'Build Error', formatted: 'err' });
     assert.includes(html, 'location.port');
     assert.includes(html, 'WebSocket');
     assert.includes(html, "e.data === 'refresh'");
   });
 
   test('uses QUnit brand colors in the stylesheet', (assert) => {
-    const html = buildErrorHTML({ type: 'Build Error', formatted: 'err' });
+    const html = WebServer.buildErrorHTML({ type: 'Build Error', formatted: 'err' });
     assert.includes(html, '#0D3349');
     assert.includes(html, '#EE5757');
     assert.includes(html, '#2B81AF');
@@ -193,7 +193,7 @@ module('Setup | buildErrorHTML', { concurrency: true }, () => {
 
 module('Setup | buildNoTestsHTML', { concurrency: true }, () => {
   test('returns a full HTML document with QUnit structural elements', (assert) => {
-    const html = buildNoTestsHTML(['test/fixtures/no-tests.ts']);
+    const html = WebServer.buildNoTestsHTML(['test/fixtures/no-tests.ts']);
     assert.ok(html.startsWith('<!DOCTYPE html>'), 'starts with DOCTYPE');
     assert.includes(html, 'id="qunit-header"');
     assert.includes(html, 'id="qunit-banner"');
@@ -203,31 +203,31 @@ module('Setup | buildNoTestsHTML', { concurrency: true }, () => {
   });
 
   test('places "Warning: No Tests Registered" in the userAgent bar', (assert) => {
-    const html = buildNoTestsHTML([]);
+    const html = WebServer.buildNoTestsHTML([]);
     assert.includes(html, 'Warning: No Tests Registered');
   });
 
   test('includes each file path in the output', (assert) => {
-    const html = buildNoTestsHTML(['test/a.ts', 'test/b.ts']);
+    const html = WebServer.buildNoTestsHTML(['test/a.ts', 'test/b.ts']);
     assert.includes(html, 'test/a.ts');
     assert.includes(html, 'test/b.ts');
   });
 
   test('HTML-escapes angle brackets and ampersands in file paths', (assert) => {
-    const html = buildNoTestsHTML(['<evil>&path</evil>.ts']);
+    const html = WebServer.buildNoTestsHTML(['<evil>&path</evil>.ts']);
     assert.notIncludes(html, '<evil>');
     assert.includes(html, '&lt;evil&gt;');
     assert.includes(html, '&amp;');
   });
 
   test('uses amber banner color (not red) to signal a warning rather than an error', (assert) => {
-    const html = buildNoTestsHTML([]);
+    const html = WebServer.buildNoTestsHTML([]);
     assert.includes(html, '#F0AD4E');
     assert.notIncludes(html, '#EE5757');
   });
 
   test('includes WebSocket reconnect script guarded by location.port', (assert) => {
-    const html = buildNoTestsHTML([]);
+    const html = WebServer.buildNoTestsHTML([]);
     assert.includes(html, 'location.port');
     assert.includes(html, 'WebSocket');
     assert.includes(html, "e.data === 'refresh'");
