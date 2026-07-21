@@ -115,7 +115,7 @@ interface FailedTestDetails {
 /**
  * Attributes a failed test to its source file by source-map-decoding the first failing
  * assertion's stack to its first user frame. Returns an absolute path, or `null` when no user
- * frame resolves. Mirrors the resolution `Tap.displayTestResult` uses for the TAP `at:` field.
+ * frame resolves. Mirrors the resolution `TAP.displayTestResult` uses for the TAP `at:` field.
  */
 function attributeFailureFile(
   assertions: FailedTestDetails['assertions'],

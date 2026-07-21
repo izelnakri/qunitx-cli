@@ -1,4 +1,4 @@
-import { TapReporter } from './tap.ts';
+import { TAPReporter } from './tap.ts';
 import { SpecReporter } from './spec.ts';
 import { DotReporter } from './dot.ts';
 import { GithubReporter } from './github.ts';
@@ -10,7 +10,7 @@ import type { Config } from '../types.ts';
 // The `--reporter` value -> stdout reporter. Keyed by ReporterName so adding a name to
 // REPORTERS without wiring it up here is a type error rather than a silent fall back to tap.
 const STDOUT_REPORTERS: Record<ReporterName, new () => Reporter> = {
-  tap: TapReporter,
+  tap: TAPReporter,
   spec: SpecReporter,
   dot: DotReporter,
   github: GithubReporter,
@@ -53,5 +53,5 @@ export async function runEnd(config: Config, info: RunEndInfo): Promise<void> {
 // Exactly one stdout reporter per run. `--reporter` is validated in Args.parse, so an
 // unknown value never reaches here; tap is the default and the fallback.
 function stdoutReporter(config: Config): Reporter {
-  return new (STDOUT_REPORTERS[config.reporter ?? 'tap'] ?? TapReporter)();
+  return new (STDOUT_REPORTERS[config.reporter ?? 'tap'] ?? TAPReporter)();
 }
