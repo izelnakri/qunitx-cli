@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { resolveSidecarEsbuild } from '../lib/utils/find-sidecar-esbuild.ts';
+import { resolveSidecarEsbuild } from '../lib/utils/resolve-sidecar-esbuild.ts';
 import { isDenoCompiledBinary } from '../lib/utils/run-user-module.ts';
 import { readTemplate } from '../lib/utils/read-template.ts';
 import './helpers/custom-asserts.ts';
@@ -24,7 +24,7 @@ const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== 'undefined';
 //
 // When bumping Deno, work down this list; each entry maps to its own cleanup commit.
 //
-//  1. esbuild sidecar hint — lib/utils/find-sidecar-esbuild.ts
+//  1. esbuild sidecar hint — lib/utils/resolve-sidecar-esbuild.ts
 //     Why: `deno compile` bundles JS but can't embed esbuild's native binary, so we
 //     point ESBUILD_BINARY_PATH at a sidecar next to the exe. Check: the
 //     "esbuild sidecar resolution" tests below + the deno release-consumer CI lane.
@@ -74,7 +74,7 @@ const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== 'undefined';
 //     'data' listener and run the test-deno lane (watch/daemon tests stall if still needed).
 // ─────────────────────────────────────────────────────────────────────────────
 
-module('Deno compat | esbuild sidecar resolution (find-sidecar-esbuild.ts)', () => {
+module('Deno compat | esbuild sidecar resolution (resolve-sidecar-esbuild.ts)', () => {
   async function stageExecutable(dir: string, name: string): Promise<void> {
     const file = path.join(dir, name);
     await fs.writeFile(file, '#!/bin/sh\n');
