@@ -1,3 +1,5 @@
+Is there a good reason to not use `export default` and make everything `export` thus `import { }`;? 
+
 Use Coverage.collect and Coverage.Report.write as my examples
 Dynamic import question for import * as Module from "file";
 

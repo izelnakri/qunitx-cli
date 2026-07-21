@@ -25,7 +25,7 @@ import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import createSemaphoreServer from './helpers/semaphore-server.ts';
 import { killProcessGroup } from '../lib/utils/kill-process-group.ts';
-import { cleanupBrowserDir } from '../lib/chrome/cleanup-dir.ts';
+import { cleanupBrowserDir } from '../lib/chrome/cleanup-browser-dir.ts';
 import { PER_TEST_TIMEOUT_MS } from './helpers/per-test-timeout.ts';
 import { joinRunnerRegistry } from './helpers/runner-registry.ts';
 

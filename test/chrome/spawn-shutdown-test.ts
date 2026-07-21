@@ -1,9 +1,9 @@
 import { module, test } from 'qunitx';
-import { preLaunchChrome } from '../../lib/chrome/spawn.ts';
+import { spawnChrome } from '../../lib/chrome/spawn-chrome.ts';
 import type { ChromeHandle } from '../../lib/types.ts';
 
 // Regression coverage for issue #50. `shutdown` closes over only proc + userDataDir, both known at
-// spawn, so preLaunchChrome hands back a FULL handle synchronously via onSpawn — before the CDP
+// spawn, so spawnChrome hands back a FULL handle synchronously via onSpawn — before the CDP
 // endpoint is known. That is what lets chrome-prelaunch.ts keep one `earlyChrome` variable with a
 // null-or-realized invariant instead of two. The failure mode this guards: a Chrome that dies
 // before CDP-ready must still yield a callable `shutdown` that reaps without throwing. A naive
@@ -14,14 +14,14 @@ import type { ChromeHandle } from '../../lib/types.ts';
 // faithful, deterministic stand-in for "spawned, then died before CDP-ready".
 const FAKE_CHROME = process.execPath;
 
-module('Chrome | preLaunchChrome shutdown handle', { concurrency: true }, () => {
+module('Chrome | spawnChrome shutdown handle', { concurrency: true }, () => {
   test('delivers a complete, callable handle synchronously at spawn', async (assert) => {
     let handleAtSpawn: ChromeHandle | undefined;
-    const result = await preLaunchChrome(FAKE_CHROME, [], true, (handle) => {
+    const result = await spawnChrome(FAKE_CHROME, [], true, (handle) => {
       handleAtSpawn = handle;
     });
 
-    assert.ok(handleAtSpawn, 'onSpawn fired before preLaunchChrome resolved');
+    assert.ok(handleAtSpawn, 'onSpawn fired before spawnChrome resolved');
     assert.ok(handleAtSpawn!.proc, 'the handle carries the spawned process');
     assert.equal(typeof handleAtSpawn!.shutdown, 'function', 'and a callable shutdown — pre-CDP');
     assert.equal(result, null, 'a Chrome that never prints a CDP endpoint resolves null');
@@ -29,7 +29,7 @@ module('Chrome | preLaunchChrome shutdown handle', { concurrency: true }, () => 
 
   test('shutdown() on a Chrome that died before CDP-ready resolves without throwing', async (assert) => {
     let handle: ChromeHandle | undefined;
-    await preLaunchChrome(FAKE_CHROME, [], true, (h) => {
+    await spawnChrome(FAKE_CHROME, [], true, (h) => {
       handle = h;
     });
 
@@ -44,7 +44,7 @@ module('Chrome | preLaunchChrome shutdown handle', { concurrency: true }, () => 
 
   test('returns null immediately when no chrome path is given', async (assert) => {
     let spawned = false;
-    const result = await preLaunchChrome(null, [], true, () => {
+    const result = await spawnChrome(null, [], true, () => {
       spawned = true;
     });
     assert.equal(result, null, 'no path → no launch');
