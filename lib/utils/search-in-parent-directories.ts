@@ -23,5 +23,3 @@ export async function searchInParentDirectories(
 
   return searchInParentDirectories(parent, targetEntry);
 }
-
-export { searchInParentDirectories as default };

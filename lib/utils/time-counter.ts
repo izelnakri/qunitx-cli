@@ -17,5 +17,3 @@ export function timeCounter(): { startTime: Date; stop: () => number } {
     stop: () => +new Date() - +startTime,
   };
 }
-
-export { timeCounter as default };

@@ -21,5 +21,3 @@ export async function findProjectRoot(): Promise<string> {
     process.exit(1);
   }
 }
-
-export { findProjectRoot as default };

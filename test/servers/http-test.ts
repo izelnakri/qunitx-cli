@@ -3,8 +3,8 @@ import http from 'node:http';
 import net from 'node:net';
 // @deno-types="npm:@types/ws"
 import WebSocket from 'ws';
-import HTTPServer from '../../lib/servers/web.ts';
-import bindServerToPort from '../../lib/setup/bind-server-to-port.ts';
+import { HTTPServer } from '../../lib/servers/web.ts';
+import { bindServerToPort } from '../../lib/setup/bind-server-to-port.ts';
 
 module('Servers | bindServerToPort | port selection', { concurrency: true }, () => {
   test('binds to the requested port when it is free', async (assert) => {

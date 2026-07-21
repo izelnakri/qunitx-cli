@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import execute from '../helpers/shell.ts';
+import { execute } from '../helpers/shell.ts';
 import { shellWatch } from '../helpers/shell.ts';
 import '../helpers/custom-asserts.ts';
 

@@ -44,5 +44,3 @@ export function qunitxRuntimePlugin(): Plugin {
     },
   };
 }
-
-export { qunitxRuntimePlugin as default };

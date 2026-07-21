@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import '../helpers/custom-asserts.ts';
-import execute from '../helpers/shell.ts';
+import { execute } from '../helpers/shell.ts';
 
 module('--open flag tests', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('--open runs tests headlessly and exits normally with TAP output', async (assert, testMetadata) => {

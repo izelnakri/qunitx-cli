@@ -47,8 +47,6 @@ export function listenToKeyboardKey(
   targetInputs[inputString.toUpperCase()] = Object.assign(options, { closure });
 }
 
-export { listenToKeyboardKey as default };
-
 function targetListenerConformsToCase(
   targetListener: { caseSensitive: boolean },
   inputString: string,

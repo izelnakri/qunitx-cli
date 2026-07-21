@@ -36,8 +36,6 @@ export async function runUserModule(
   }
 }
 
-export { runUserModule as default };
-
 /**
  * True when running inside a `deno compile`d binary (vs `deno run script.ts` or
  * plain Node). Detection is on `process.execPath`: under `deno run` it ends with
