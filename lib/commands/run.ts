@@ -38,7 +38,7 @@ import { isCustomTemplate } from '../utils/html.ts';
 import { closeWithGrace } from '../utils/close-with-grace.ts';
 import { maybePrintDaemonHint } from './daemon/hint.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
-import { writeCoverageReport } from '../coverage/report.ts';
+import * as Coverage from '../coverage/index.ts';
 import { isFilteredRun, describeFilter } from '../selection/filter-query.ts';
 import {
   readTimingCache,
@@ -549,7 +549,7 @@ async function runConcurrentMode(
 
   await Reporter.runEnd(config, { durationMs: TIME_COUNTER.stop() });
 
-  if (config.coverage) await writeCoverageReport(config, allFiles);
+  if (config.coverage) await Coverage.Report.write(config, allFiles);
 
   // A test-level filter (-t/-m/line target) makes both caches lie: a file that ran 1 of its
   // 30 tests records ~1/30th of its wall time, which mis-packs every future full run, and its

@@ -1,6 +1,5 @@
 import { module, test } from 'qunitx';
-import { collectCoverage } from '../../lib/coverage/collect.ts';
-import { buildRows, buildLcov } from '../../lib/coverage/report.ts';
+import * as Coverage from '../../lib/coverage/index.ts';
 import * as RunState from '../../lib/setup/run-state.ts';
 import type { SourceMapDecoder } from '../../lib/utils/source-map.ts';
 import type { Config, CoverageFileMap } from '../../lib/types.ts';
@@ -59,7 +58,7 @@ const V8_ENTRIES = [
 module('coverage | collect + report', { concurrency: true }, () => {
   test('attributes covered and missed original lines from V8 ranges', async (assert) => {
     const collector: CoverageFileMap = new Map();
-    await collectCoverage(makeConfig(makeDecoder(), collector), V8_ENTRIES);
+    await Coverage.collect(makeConfig(makeDecoder(), collector), V8_ENTRIES);
 
     const fileCoverage = collector.get('/proj/tmp/src/x.ts');
     assert.ok(fileCoverage, 'source file recorded by absolute path');
@@ -72,14 +71,14 @@ module('coverage | collect + report', { concurrency: true }, () => {
     // Empty source + a non-existent output dir → readBundleSource returns null → nothing recorded.
     const collector: CoverageFileMap = new Map();
     const entries = [{ ...V8_ENTRIES[0], source: '' }];
-    await collectCoverage(makeConfig(makeDecoder(), collector), entries);
+    await Coverage.collect(makeConfig(makeDecoder(), collector), entries);
     assert.equal(collector.size, 0, 'no attribution when source is unavailable');
   });
 
   test('skips non-bundle script URLs', async (assert) => {
     const collector: CoverageFileMap = new Map();
     const entries = [{ ...V8_ENTRIES[0], url: 'http://localhost:1234/app.js' }];
-    await collectCoverage(makeConfig(makeDecoder(), collector), entries);
+    await Coverage.collect(makeConfig(makeDecoder(), collector), entries);
     assert.equal(collector.size, 0, 'only /tests.js (or /filtered-tests.js) is attributed');
   });
 
@@ -94,7 +93,11 @@ module('coverage | collect + report', { concurrency: true }, () => {
         { coverable: new Set([1]), covered: new Map([[1, 1]]), sourceContent: null },
       ],
     ]);
-    const rows = buildRows(collector, new Set(['/proj/tmp/test/x-test.ts']), '/proj/tmp');
+    const rows = Coverage.Report.buildRows(
+      collector,
+      new Set(['/proj/tmp/test/x-test.ts']),
+      '/proj/tmp',
+    );
     assert.equal(rows.length, 1, 'test entry file excluded');
     assert.equal(rows[0].displayPath, 'src/x.ts', 'display path relative to projectRoot');
     assert.equal(rows[0].total, 2);
@@ -118,7 +121,7 @@ module('coverage | collect + report', { concurrency: true }, () => {
         { coverable: new Set([1]), covered: new Map([[1, 1]]), sourceContent: null },
       ],
     ]);
-    const rows = buildRows(
+    const rows = Coverage.Report.buildRows(
       collector,
       new Set(['D:\\a\\qunitx-cli\\qunitx-cli\\test\\x-test.ts']),
       projectRoot,
@@ -130,7 +133,7 @@ module('coverage | collect + report', { concurrency: true }, () => {
   test('excludes test files when the source map yields project-relative paths', (assert) => {
     // The map can also hand back an already-relative path (Windows outDir normalization);
     // it must still line up with the absolute fsTree entry.
-    const rows = buildRows(
+    const rows = Coverage.Report.buildRows(
       new Map([
         ['test/x-test.ts', { coverable: new Set([1]), covered: new Map(), sourceContent: null }],
         ['src/x.ts', { coverable: new Set([1]), covered: new Map(), sourceContent: null }],
@@ -143,7 +146,7 @@ module('coverage | collect + report', { concurrency: true }, () => {
   });
 
   test('buildLcov emits DA/LF/LH lines with hit counts', (assert) => {
-    const rows = buildRows(
+    const rows = Coverage.Report.buildRows(
       new Map([
         [
           '/proj/tmp/src/x.ts',
@@ -153,7 +156,7 @@ module('coverage | collect + report', { concurrency: true }, () => {
       new Set(),
       '/proj/tmp',
     );
-    const lcov = buildLcov(rows);
+    const lcov = Coverage.Report.buildLcov(rows);
     assert.true(lcov.includes('SF:src/x.ts'), 'source file line');
     assert.true(lcov.includes('DA:1,3'), 'covered line with hit count');
     assert.true(lcov.includes('DA:2,0'), 'missed line with zero count');

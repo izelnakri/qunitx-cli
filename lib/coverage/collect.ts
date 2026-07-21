@@ -33,7 +33,7 @@ interface V8ScriptCoverage {
  * coverage is enabled and a source-map decoder is present. Only the test bundle is attributed;
  * node_modules sources are dropped here (test entry files are dropped later, in the report layer).
  */
-export async function collectCoverage(config: Config, entries: V8ScriptCoverage[]): Promise<void> {
+export async function collect(config: Config, entries: V8ScriptCoverage[]): Promise<void> {
   const decoder = config.state.group.sourceMapDecoder;
   const collector = config.state.results.coverage;
   if (!decoder || !collector) return;
@@ -48,8 +48,6 @@ export async function collectCoverage(config: Config, entries: V8ScriptCoverage[
     attributeEntry(source, entry.functions, decoder, collector);
   }
 }
-
-export { collectCoverage as default };
 
 /** Reads the served bundle (`tests.js` / `filtered-tests.js`) from the group's output dir. */
 function readBundleSource(config: Config, url: string): Promise<string | null> {
