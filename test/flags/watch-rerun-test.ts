@@ -442,11 +442,11 @@ module('--watch re-run tests', { concurrency: true }, () => {
   // Background: on Linux, fs.unlink on a symlink fires NO fs.watch rename events (unlike regular
   // files). The watcher compensates with fs.watchFile polling (500 ms interval). All symlink
   // deletion tests therefore wait up to 3 s for the polling cycle to fire.
-  // fs.readdir withFileTypes reports symlinks as isSymbolicLink(), not isFile(), so buildFSTree
+  // fs.readdir withFileTypes reports symlinks as isSymbolicLink(), not isFile(), so FSTree.build
   // previously excluded them from the initial scan; that bug is also covered here.
 
   test('a symlink to a .ts file present at startup is tracked and its module runs', async (assert) => {
-    // Verifies the buildFSTree fix: symlinks inside the watched directory are included in the
+    // Verifies the FSTree.build fix: symlinks inside the watched directory are included in the
     // initial fsTree scan and therefore bundled in the first run.
     const { dir, id, symlinkId } = await makeWatchProjectWithSymlink();
     const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
