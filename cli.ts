@@ -60,14 +60,14 @@ process.title = 'qunitx';
     }
   }
 
-  // Local-run path: lazy-import setupConfig + run.ts (and their transitive
+  // Local-run path: lazy-import Config.setup + run.ts (and their transitive
   // chains: esbuild, playwright-core, fs-tree, etc.). Loading in parallel lets
   // playwright-core's heavy module evaluation overlap with config assembly.
-  const [{ setupConfig }, { run }] = await Promise.all([
+  const [Config, { run }] = await Promise.all([
     import('./lib/setup/config.ts'),
     import('./lib/commands/run.ts'),
   ]);
-  const config = await setupConfig();
+  const config = await Config.setup();
 
   // --search/--print lists what the filter matches and exits: no browser, no bundle, no tests.
   // Chrome was pre-launched at module load, so shut it back down rather than leaking it.

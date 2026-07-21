@@ -174,7 +174,7 @@ export interface RunState {
   /** Whole-run accumulators, shared by reference across every concurrent group. */
   results: RunResults;
   /**
-   * Active reporter instances for this run, built by `Reporters.create` in `setupConfig`.
+   * Active reporter instances for this run, built by `Reporters.create` in `Config.setup`.
    * One set for the whole run, so a stateful reporter sees every group rather than one slice.
    */
   reporters: Reporter[];
@@ -346,7 +346,7 @@ export interface RunResults {
 
 /**
  * Full resolved qunitx configuration for a single run, merging `package.json` settings,
- * CLI flags, and runtime state. Most fields are read-only after `setupConfig()` resolves;
+ * CLI flags, and runtime state. Most fields are read-only after `Config.setup()` resolves;
  * underscore-prefixed fields are mutable runtime slots populated during the run lifecycle.
  */
 export interface Config {
