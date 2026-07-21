@@ -53,8 +53,6 @@ export function dumpYaml({
   );
 }
 
-export { dumpYaml as default };
-
 function needsQuoting(str: string): boolean {
   return NEEDS_QUOTING.test(str);
 }
