@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
-import shell, { shellFails } from '../helpers/shell.ts';
+import { execute as shell, shellFails } from '../helpers/shell.ts';
 
 module('File Input Tests', { concurrency: true }, (_hooks, moduleMetadata) => {
   // Each paired test runs two `node cli.ts` invocations concurrently via Promise.all.

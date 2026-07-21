@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import os from 'node:os';
-import shell from './helpers/shell.ts';
+import { execute as shell } from './helpers/shell.ts';
 
 // Must exceed CLEANUP_DEADLINE_MS (5 s) so concurrent tests' in-flight cleanups finish.
 const CHROME_DIR_POLL_TIMEOUT_MS = 10_000;

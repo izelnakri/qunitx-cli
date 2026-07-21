@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import net from 'node:net';
-import createSemaphoreServer from '../helpers/semaphore-server.ts';
+import { createSemaphoreServer } from '../helpers/semaphore-server.ts';
 
 // Connects to the semaphore server, writes the request byte, and resolves once
 // the server replies 'ok'. Returns the socket so the caller can call .destroy()

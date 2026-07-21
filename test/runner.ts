@@ -23,7 +23,7 @@ import os, { availableParallelism } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
-import createSemaphoreServer from './helpers/semaphore-server.ts';
+import { createSemaphoreServer } from './helpers/semaphore-server.ts';
 import { killProcessGroup } from '../lib/utils/kill-process-group.ts';
 import * as Chrome from '../lib/chrome/index.ts';
 import { PER_TEST_TIMEOUT_MS } from './helpers/per-test-timeout.ts';

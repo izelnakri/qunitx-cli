@@ -104,8 +104,6 @@ export async function parseTestDeclarations(
   return { declarations: mapped, hasOnly };
 }
 
-export { parseTestDeclarations as default };
-
 /** Innermost enclosing module wins, so a test inside a module resolves to `Module > test`. */
 function assignParents(declarations: TestDeclaration[]): void {
   declarations.forEach((declaration, index) => {

@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
-import shell, { shellFails } from '../helpers/shell.ts';
+import { execute as shell, shellFails } from '../helpers/shell.ts';
 
 module(
   '--before script tests for browser mode',

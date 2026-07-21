@@ -47,5 +47,3 @@ export async function bindServerToPort(
   config.port = (server._server.address() as import('node:net').AddressInfo).port;
   return server;
 }
-
-export { bindServerToPort as default };

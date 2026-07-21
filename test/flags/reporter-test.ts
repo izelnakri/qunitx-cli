@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
-import shell, { shellFails } from '../helpers/shell.ts';
+import { execute as shell, shellFails } from '../helpers/shell.ts';
 
 module('--reporter', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('tap is the default: TAP still streams with no flag', async (assert, testMetadata) => {

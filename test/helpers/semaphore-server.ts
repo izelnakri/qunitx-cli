@@ -14,7 +14,7 @@ export interface SemaphoreServer {
  * Used by test/runner.ts to cap concurrent Chrome/Firefox/WebKit instances across all
  * parallel test workers. The same function is directly tested by test/setup/semaphore-test.ts.
  */
-export default async function createSemaphoreServer(max: number): Promise<SemaphoreServer> {
+export async function createSemaphoreServer(max: number): Promise<SemaphoreServer> {
   const holders = new Set<net.Socket>();
   const queue: Array<() => void> = [];
 

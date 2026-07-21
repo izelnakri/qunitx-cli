@@ -16,5 +16,3 @@ export function findInternalAssetsFromHTML(htmlContent: string): string[] {
 
   return links.concat(scripts);
 }
-
-export { findInternalAssetsFromHTML as default };

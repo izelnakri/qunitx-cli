@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
-import shell from '../helpers/shell.ts';
+import { execute as shell } from '../helpers/shell.ts';
 
 // All three fixtures (.tsx React, .tsx Vue, .jsx) are bundled into ONE qunitx invocation.
 // This means a single Chrome launch validates: default extension auto-discovery picks up

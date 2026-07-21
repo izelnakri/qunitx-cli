@@ -1,5 +1,10 @@
 Is there a good reason to not use `export default` and make everything `export` thus `import { }`;? 
 
+After last review of namespaces, continue with performance optimizations, update the PR description to my 
+Module styling/naming taste
+
+Optimize test runtimes, make test names more descriptive, remove redundant tests(if they dont decrease test quality)
+
 Use Coverage.collect and Coverage.Report.write as my examples
 Dynamic import question for import * as Module from "file";
 

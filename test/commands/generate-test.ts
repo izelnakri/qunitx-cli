@@ -2,7 +2,7 @@ import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
-import shell from '../helpers/shell.ts';
+import { execute as shell } from '../helpers/shell.ts';
 
 module('Commands | generate tests', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('appends .js extension and writes boilerplate when no extension is given', async (assert, testMetadata) => {

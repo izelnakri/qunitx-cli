@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
-import shell, { shellFails } from '../helpers/shell.ts';
+import { execute as shell, shellFails } from '../helpers/shell.ts';
 
 module('--timeout flag tests for browser mode', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('--timeout=5000 with passing tests completes successfully', async (assert, testMetadata) => {

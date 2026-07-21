@@ -2,7 +2,7 @@ import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
-import shell, { shellFails, spawnCapture } from '../helpers/shell.ts';
+import { execute as shell, shellFails, spawnCapture } from '../helpers/shell.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 
 const NESTED = 'test/fixtures/nested-module-tests.ts';
