@@ -5,7 +5,7 @@ import { shellWatch } from '../helpers/shell.ts';
 
 module('--watch flag tests', { concurrency: true }, () => {
   test('--watch runs tests, starts the server, and prints watching info', async (assert) => {
-    const stdout = await shellWatch('node cli.ts test/helpers/passing-tests.ts --watch', {
+    const stdout = await shellWatch('node cli.ts test/fixtures/passing-tests.ts --watch', {
       until: (buf) => buf.includes('Press "qq"'),
     });
 
@@ -47,7 +47,7 @@ module('--watch flag tests', { concurrency: true }, () => {
   test('shellWatch releases the semaphore permit only after the child process has fully exited', async (assert) => {
     let captured: ChildProcessWithoutNullStreams | null = null;
 
-    await shellWatch('node cli.ts test/helpers/passing-tests.ts --watch', {
+    await shellWatch('node cli.ts test/fixtures/passing-tests.ts --watch', {
       until: (buf) => buf.includes('Press "qq"'),
       onSpawn: (child) => {
         captured = child;

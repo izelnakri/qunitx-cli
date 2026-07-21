@@ -14,7 +14,7 @@ module('--timeout flag tests for browser mode', { concurrency: true }, (_hooks, 
   });
 
   test('--timeout marks a hanging test as failed and exits with code 1', async (assert, testMetadata) => {
-    const cmd = await shellFails('node cli.ts test/helpers/slow-tests.ts --timeout=500', {
+    const cmd = await shellFails('node cli.ts test/fixtures/slow-tests.ts --timeout=500', {
       ...moduleMetadata,
       ...testMetadata,
     });

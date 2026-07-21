@@ -116,7 +116,7 @@ module('File Input Tests', { concurrency: true }, (_hooks, moduleMetadata) => {
   });
 
   test('test.skip produces "ok ... # skip" TAP lines and test.todo produces "not ok ... # TODO" without counting as failures', async (assert, testMetadata) => {
-    const result = await shell('node cli.ts test/helpers/skip-todo-tests.ts', {
+    const result = await shell('node cli.ts test/fixtures/skip-todo-tests.ts', {
       ...moduleMetadata,
       ...testMetadata,
     });

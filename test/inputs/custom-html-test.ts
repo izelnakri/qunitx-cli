@@ -61,7 +61,7 @@ async function makeCustomHTMLProject() {
   await fs.mkdir(testsDir, { recursive: true });
 
   const [template] = await Promise.all([
-    fs.readFile(path.resolve('test/helpers/passing-tests.ts'), 'utf8'),
+    fs.readFile(path.resolve('test/fixtures/passing-tests.ts'), 'utf8'),
     fs.writeFile(
       `${dir}/package.json`,
       JSON.stringify({ name: id, version: '0.0.1', type: 'module' }, null, 2),

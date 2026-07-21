@@ -105,7 +105,7 @@ async function makeMinimalProject({ withHtmlPaths }: { withHtmlPaths: boolean })
   await fs.symlink(`${process.cwd()}/node_modules`, `${dir}/node_modules`);
 
   // Replace {{moduleName}} so the TAP module name is deterministic and unique per run.
-  const template = await fs.readFile(`${process.cwd()}/test/helpers/passing-tests.ts`);
+  const template = await fs.readFile(`${process.cwd()}/test/fixtures/passing-tests.ts`);
   await fs.writeFile(
     `${dir}/tests/passing-tests.ts`,
     template.toString().replace('{{moduleName}}', id),

@@ -8,8 +8,8 @@ export async function writeTestFolder(
   const folderName = crypto.randomUUID();
   const extension = mixedExtensions ? 'ts' : 'js';
   const [passingsTestTemplate, failingTestTemplate] = await Promise.all([
-    fs.readFile(`${process.cwd()}/test/helpers/passing-tests.ts`),
-    options.addFailingTests ? fs.readFile(`${process.cwd()}/test/helpers/failing-tests.ts`) : null,
+    fs.readFile(`${process.cwd()}/test/fixtures/passing-tests.ts`),
+    options.addFailingTests ? fs.readFile(`${process.cwd()}/test/fixtures/failing-tests.ts`) : null,
     fs.mkdir(`${process.cwd()}/tmp/${folderName}`, { recursive: true }),
   ]);
 
@@ -49,7 +49,7 @@ export function writeTestFile(folderName, testFileName, extension, templateBuffe
 export async function writeNestedTestFolder(): Promise<string> {
   const folderName = crypto.randomUUID();
   const base = `${process.cwd()}/tmp/${folderName}`;
-  const template = (await fs.readFile(`${process.cwd()}/test/helpers/passing-tests.ts`)).toString();
+  const template = (await fs.readFile(`${process.cwd()}/test/fixtures/passing-tests.ts`)).toString();
 
   await fs.mkdir(`${base}/subdir/deeper`, { recursive: true });
 
