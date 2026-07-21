@@ -2,8 +2,8 @@ import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
 import { execute as shell, shellFails } from '../helpers/shell.ts';
 
-module('--after script tests for browser mode', { concurrency: true }, (_hooks, moduleMetadata) => {
-  test('--after works when it doesnt need to be awaited', async (assert, testMetadata) => {
+module('Flags | --after', { concurrency: true }, (_hooks, moduleMetadata) => {
+  test('runs a synchronous script after the suite finishes', async (assert, testMetadata) => {
     const result = await shell(
       'node cli.ts test/fixtures/passing-tests.ts --after=test/fixtures/after-script-basic.ts',
       { ...moduleMetadata, ...testMetadata },
@@ -14,7 +14,7 @@ module('--after script tests for browser mode', { concurrency: true }, (_hooks, 
     assert.tapResult(result, { testCount: 3 });
   });
 
-  test('--after exits with code 1 and reports error when script throws', async (assert, testMetadata) => {
+  test('exits 1 and reports the error when the script throws', async (assert, testMetadata) => {
     const result = await shellFails(
       'node cli.ts test/fixtures/passing-tests.ts --after=test/fixtures/hook-script-throws.ts',
       { ...moduleMetadata, ...testMetadata },
@@ -24,7 +24,7 @@ module('--after script tests for browser mode', { concurrency: true }, (_hooks, 
     assert.includes(result.stdout, '# QUnitX after script failed:');
   });
 
-  test('--after works when it needs to be awaited', async (assert, testMetadata) => {
+  test('awaits an async script after the suite finishes', async (assert, testMetadata) => {
     const result = await shell(
       'node cli.ts test/fixtures/passing-tests.ts --after=test/fixtures/after-script-async.ts',
       { ...moduleMetadata, ...testMetadata },

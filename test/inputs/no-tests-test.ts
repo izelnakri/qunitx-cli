@@ -11,7 +11,7 @@ const CWD = process.cwd();
 // the "0 tests registered" warning rather than a TIMEOUT failure.
 const NO_TESTS_FIXTURE = `${CWD}/test/fixtures/no-tests.ts`;
 
-module('No-tests warning', { concurrency: true }, () => {
+module('Inputs | file with no test registrations', { concurrency: true }, () => {
   test('exits 0 and prints a warning when the test file has no QUnit test registrations', async (assert) => {
     const result = await execute(`${CLI} ${NO_TESTS_FIXTURE}`);
     assert.includes(result, '# Warning: 0 tests registered');

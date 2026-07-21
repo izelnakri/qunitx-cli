@@ -6,7 +6,7 @@ import { execute as shell } from '../helpers/shell.ts';
 // This means a single Chrome launch validates: default extension auto-discovery picks up
 // .jsx + .tsx, esbuild's `jsx: 'automatic'` works for React, and the @jsxImportSource pragma
 // re-routes the JSX import to vue/jsx-runtime — all in ~2 s of CI time.
-module('JSX / TSX Input Tests', { concurrency: true }, (_hooks, moduleMetadata) => {
+module('Inputs | jsx + tsx', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('discovers .jsx + .tsx fixtures from a directory and renders React + Vue components', async (assert, testMetadata) => {
     const result = await shell('node cli.ts test/fixtures/jsx', {
       ...moduleMetadata,

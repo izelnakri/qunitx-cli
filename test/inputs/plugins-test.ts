@@ -14,7 +14,7 @@ const CLI_PATH = path.join(PROJECT_ROOT, 'cli.ts');
 // findProjectRoot() picks the fixture's package.json, resolvePlugins() dynamic-imports the
 // local plugin file, and the resulting esbuild plugin produces a virtual module that the
 // test file imports. A single Chrome instance covers the whole feature.
-module('package.json plugins | end-to-end', { concurrency: true }, () => {
+module('Inputs | package.json plugins', { concurrency: true }, () => {
   test('qunitx.plugins specifier is dynamic-imported and applied to the bundle', async (assert) => {
     const permit = await acquireBrowser();
     try {

@@ -72,7 +72,7 @@ function runCli(project: ChangedProject, args: string) {
   return shell(`node ${CWD}/cli.ts ${args}`, { cwd: project.cwd });
 }
 
-module('--changed flag', { concurrency: true }, () => {
+module('Flags | --changed', { concurrency: true }, () => {
   test('first run warms the metafile cache; second --changed with no edits skips all tests', async (assert) => {
     const project = await makeChangedProject();
 

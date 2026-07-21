@@ -9,7 +9,7 @@ import { execute as shell } from '../helpers/shell.ts';
 // assert the warning-and-skip path instead of the report itself.
 const IS_CHROMIUM = (process.env.QUNITX_BROWSER || 'chromium') === 'chromium';
 
-module('--coverage', { concurrency: true }, (_hooks, moduleMetadata) => {
+module('Flags | --coverage', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('prints a terminal summary and writes lcov + html reports', async (assert, testMetadata) => {
     const output = `tmp/cov-${randomUUID()}`;
     try {

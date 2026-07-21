@@ -13,7 +13,7 @@ import { terminateChild } from '../helpers/shell.ts';
 const CLI = `${process.cwd()}/cli.ts`;
 const QUNITX_BROWSER = process.env.QUNITX_BROWSER;
 
-module('--watch re-run tests', { concurrency: true }, () => {
+module('Flags | --watch | re-runs', { concurrency: true }, () => {
   test('changing a file in watched directory triggers a re-run', async (assert) => {
     const { dir, id, testFile, testContent } = await makeWatchProject();
     // Watch the `tests/` directory so the file watcher resolves paths correctly.
