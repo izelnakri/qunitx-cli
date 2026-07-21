@@ -1,7 +1,7 @@
 import path from 'node:path';
 import esbuild from 'esbuild';
-import { parseSourceMap } from '../utils/source-map-decoder.ts';
-import type { SourceMapDecoder } from '../utils/source-map-decoder.ts';
+import * as SourceMap from '../utils/source-map.ts';
+import type { SourceMapDecoder } from '../utils/source-map.ts';
 
 /** A `test(...)` or `module(...)` call found in a test file, in 1-based source lines. */
 export interface TestDeclaration {
@@ -80,7 +80,7 @@ export async function parseTestDeclarations(
 
   let decoder: SourceMapDecoder;
   try {
-    decoder = parseSourceMap(transformed.map, path.dirname(filePath));
+    decoder = SourceMap.parse(transformed.map, path.dirname(filePath));
   } catch {
     return null;
   }
