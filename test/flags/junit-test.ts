@@ -1,5 +1,6 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
+import { rmRetry } from '../helpers/rm-retry.ts';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
 import { execute as shell, shellFails } from '../helpers/shell.ts';
@@ -28,7 +29,7 @@ module('--junit', { concurrency: true }, (_hooks, moduleMetadata) => {
       );
       assert.equal((xml.match(/<testcase /g) ?? []).length, 3, 'three testcases');
     } finally {
-      await fs.rm(output, { recursive: true, force: true });
+      await rmRetry(output);
     }
   });
 
@@ -47,7 +48,7 @@ module('--junit', { concurrency: true }, (_hooks, moduleMetadata) => {
       // Stack in the failure detail is resolved back to the original source file.
       assert.ok(xml.includes('test/fixtures/failing-tests.ts'), 'source-mapped stack in failure');
     } finally {
-      await fs.rm(output, { recursive: true, force: true });
+      await rmRetry(output);
     }
   });
 
@@ -67,7 +68,7 @@ module('--junit', { concurrency: true }, (_hooks, moduleMetadata) => {
         .catch(() => false);
       assert.notOk(defaultExists, 'default junit.xml is not written when overridden');
     } finally {
-      await fs.rm(output, { recursive: true, force: true });
+      await rmRetry(output);
     }
   });
 
@@ -82,7 +83,7 @@ module('--junit', { concurrency: true }, (_hooks, moduleMetadata) => {
       const xml = await fs.readFile(`${output}/junit.xml`, 'utf8');
       assert.ok(xml.includes('<testsuites'), '--reporter and --junit are independent');
     } finally {
-      await fs.rm(output, { recursive: true, force: true });
+      await rmRetry(output);
     }
   });
 
@@ -109,7 +110,7 @@ module('--junit', { concurrency: true }, (_hooks, moduleMetadata) => {
         .catch(() => false);
       assert.notOk(junitExists, 'no junit.xml by default');
     } finally {
-      await fs.rm(output, { recursive: true, force: true });
+      await rmRetry(output);
     }
   });
 });

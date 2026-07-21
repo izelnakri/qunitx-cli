@@ -1,5 +1,6 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
+import { rmRetry } from '../helpers/rm-retry.ts';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
 import { execute as shell } from '../helpers/shell.ts';
@@ -79,7 +80,7 @@ module('Commands | generate tests', { concurrency: true }, (_hooks, moduleMetada
       const content = await fs.readFile(expectedPath, 'utf-8');
       assert.includes(content, "module('", 'file was created inside the nested directory');
     } finally {
-      await fs.rm(`${process.cwd()}/tmp/generated-dir-${uuid}`, { recursive: true, force: true });
+      await rmRetry(`${process.cwd()}/tmp/generated-dir-${uuid}`);
     }
   });
 
@@ -115,7 +116,7 @@ module('Commands | generate tests', { concurrency: true }, (_hooks, moduleMetada
         'module name combines all path segments separated by " | "',
       );
     } finally {
-      await fs.rm(expectedPath, { recursive: true, force: true });
+      await rmRetry(expectedPath);
     }
   });
 

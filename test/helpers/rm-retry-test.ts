@@ -1,4 +1,6 @@
 import { module, test } from 'qunitx';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { rmRetry } from './rm-retry.ts';
 
 // Regression coverage for the Windows teardown flake in test/inputs/custom-html-test.ts
@@ -70,5 +72,53 @@ module('Helpers | rmRetry', { concurrency: true }, () => {
       'surfaces the error once the ladder is exhausted',
     );
     assert.equal(stub.calls, 3, 'stopped at the attempt cap');
+  });
+});
+
+// Adoption guard for the Windows teardown-flake CLASS, not just one file. Two CI jobs have died
+// to it so far — 88257274292 (custom-html) and 88774456721 (standalone-runtime): a test that
+// spawns the CLI leaves esbuild-service and browser grandchildren holding handles on its temp
+// dir, so on Windows a bare recursive `fs.rm` in teardown races the kernel releasing those
+// handles and throws EBUSY/EPERM/ENOTEMPTY. rmRetry() absorbs that race. A spawn-based test
+// cannot close those handles itself (they belong to grandchildren), so retrying the removal is
+// the only fix — unlike in-process bundler/watcher tests, which own and close their handles.
+// This guard fails the moment a spawn-based test reintroduces a non-retrying recursive removal,
+// so the class stays fixed instead of resurfacing one Windows job at a time.
+const SPAWNS_CLI = /spawnCapture|helpers\/shell|node:child_process|runInDir/;
+const BARE_RECURSIVE_RM = /(?:fs\.)?\brm\([^;]*?recursive:\s*true/;
+
+async function testFilesUnder(dir: string): Promise<string[]> {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  const nested = await Promise.all(
+    entries.map((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return testFilesUnder(full);
+      return Promise.resolve(full.endsWith('-test.ts') ? [full] : []);
+    }),
+  );
+  return nested.flat();
+}
+
+module('Helpers | rmRetry adoption', { concurrency: true }, () => {
+  test('spawn-based tests use rmRetry() for temp-dir teardown, never a bare recursive fs.rm', async (assert) => {
+    const testRoot = path.join(process.cwd(), 'test');
+    const files = await testFilesUnder(testRoot);
+    assert.ok(files.length > 50, 'the walk actually traversed the test tree');
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      // Skip this guard and the helper: both carry the patterns above as regex-literal text.
+      if (/rm-retry(-test)?\.ts$/.test(file)) continue;
+      const src = await fs.readFile(file, 'utf8');
+      if (SPAWNS_CLI.test(src) && BARE_RECURSIVE_RM.test(src)) {
+        offenders.push(path.relative(testRoot, file));
+      }
+    }
+
+    assert.deepEqual(
+      offenders,
+      [],
+      `spawn-based tests must use rmRetry() for teardown (Windows EBUSY flake): ${offenders.join(', ')}`,
+    );
   });
 });

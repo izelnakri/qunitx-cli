@@ -1,5 +1,6 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
+import { rmRetry } from './helpers/rm-retry.ts';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -88,7 +89,7 @@ module('Deno compat | esbuild sidecar resolution (find-sidecar-esbuild.ts)', () 
       await stageExecutable(dir, 'esbuild');
       assert.equal(findSidecarEsbuild(dir, 'linux'), path.join(dir, 'esbuild'));
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmRetry(dir);
     }
   });
 
@@ -100,7 +101,7 @@ module('Deno compat | esbuild sidecar resolution (find-sidecar-esbuild.ts)', () 
       await stageExecutable(dir, 'esbuild.exe');
       assert.equal(findSidecarEsbuild(dir, 'win32'), path.join(dir, 'esbuild.exe'));
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmRetry(dir);
     }
   });
 
@@ -110,7 +111,7 @@ module('Deno compat | esbuild sidecar resolution (find-sidecar-esbuild.ts)', () 
     try {
       assert.equal(findSidecarEsbuild(dir, 'linux'), null);
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmRetry(dir);
     }
   });
 });
@@ -197,7 +198,7 @@ module('Deno compat | child_process stderr must be drained (shell.ts#252)', () =
       child.kill();
       assert.true(got.includes('READY'), 'stdout marker arrived past the stderr flood');
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmRetry(dir);
     }
   });
 });

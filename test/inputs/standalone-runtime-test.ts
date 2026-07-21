@@ -1,5 +1,6 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
+import { rmRetry } from '../helpers/rm-retry.ts';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -59,7 +60,7 @@ module('Runtime resolution (self-provided vs consumer qunitx)', { concurrency: t
       );
     } finally {
       permit.release();
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmRetry(dir);
     }
   });
 
@@ -106,7 +107,7 @@ module('Runtime resolution (self-provided vs consumer qunitx)', { concurrency: t
       assert.notIncludes(result.stdout + result.stderr, 'Could not resolve');
     } finally {
       permit.release();
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmRetry(dir);
     }
   });
 });

@@ -1,5 +1,6 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
+import { rmRetry } from '../helpers/rm-retry.ts';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
 import { execute as shell } from '../helpers/shell.ts';
@@ -43,7 +44,7 @@ module('--coverage', { concurrency: true }, (_hooks, moduleMetadata) => {
       assert.ok(html.includes('qunitx coverage'), 'html report generated');
       assert.ok(/class="ln (hit|miss)"/.test(html), 'html shows line-level hit/miss');
     } finally {
-      await fs.rm(output, { recursive: true, force: true });
+      await rmRetry(output);
     }
   });
 
@@ -62,7 +63,7 @@ module('--coverage', { concurrency: true }, (_hooks, moduleMetadata) => {
       assert.notOk(lcov.includes('calculator-test.ts'), 'test entry file excluded');
       assert.notOk(lcov.includes('node_modules'), 'dependencies excluded');
     } finally {
-      await fs.rm(output, { recursive: true, force: true });
+      await rmRetry(output);
     }
   });
 
@@ -84,7 +85,7 @@ module('--coverage', { concurrency: true }, (_hooks, moduleMetadata) => {
         .catch(() => false);
       assert.notOk(dirExists, 'no coverage/ dir for the terminal-only summary');
     } finally {
-      await fs.rm(output, { recursive: true, force: true });
+      await rmRetry(output);
     }
   });
 });

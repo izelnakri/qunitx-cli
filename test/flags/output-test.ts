@@ -1,5 +1,6 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
+import { rmRetry } from '../helpers/rm-retry.ts';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
 import { execute as shell } from '../helpers/shell.ts';
@@ -28,7 +29,7 @@ module('--output flag tests for browser mode', { concurrency: true }, (_hooks, m
       assert.ok(indexStat.value, 'index.html was written to custom output directory');
       assert.ok(testsStat.value, 'tests.js was written to custom output directory');
     } finally {
-      await fs.rm(customOutput, { recursive: true, force: true });
+      await rmRetry(customOutput);
     }
   });
 });

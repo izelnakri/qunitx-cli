@@ -33,7 +33,7 @@ module('Input | custom html', { concurrency: true }, () => {
       assert.passingTestCaseFor({ stdout }, { moduleName: id });
       assert.tapResult({ stdout }, { testCount: 3 });
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmRetry(dir);
     }
   });
 

@@ -1,5 +1,6 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
+import { rmRetry } from '../helpers/rm-retry.ts';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
 import { execute as shell, shellFails, spawnCapture } from '../helpers/shell.ts';
@@ -242,7 +243,7 @@ module('filtered runs and the persistent caches', { concurrency: true }, () => {
         'a filtered run must not rewrite the failure cache',
       );
     } finally {
-      await fs.rm(project, { recursive: true, force: true });
+      await rmRetry(project);
     }
   });
 });

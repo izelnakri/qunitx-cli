@@ -1,5 +1,6 @@
 import { module, test } from 'qunitx';
-import { readFile, mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { readFile, mkdtemp, writeFile } from 'node:fs/promises';
+import { rmRetry } from '../helpers/rm-retry.ts';
 import os from 'node:os';
 import path from 'node:path';
 import '../helpers/custom-asserts.ts';
@@ -148,7 +149,7 @@ module('file#line targeting', { concurrency: true }, (_hooks, moduleMetadata) =>
       assert.includes(out.stdout, '2 of 2 tests');
       assert.includes(out.stdout, 'line target ignored');
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await rmRetry(dir);
     }
   });
 

@@ -1,5 +1,6 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
+import { rmRetry } from '../helpers/rm-retry.ts';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
@@ -69,7 +70,7 @@ module('--search / --print', { concurrency: true }, (_hooks, moduleMetadata) => 
 
       assert.deepEqual(left, [], 'a --print run must not leave a Chrome user-data-dir behind');
     } finally {
-      await fs.rm(tmpdir, { recursive: true, force: true });
+      await rmRetry(tmpdir);
     }
   });
 
@@ -110,7 +111,7 @@ module('--search / --print', { concurrency: true }, (_hooks, moduleMetadata) => 
       assert.includes(result.stdout, 'declared no tests the scan could see');
       assert.includes(result.stdout, 'local alias');
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmRetry(dir);
     }
   });
 

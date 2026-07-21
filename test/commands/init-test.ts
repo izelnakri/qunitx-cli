@@ -2,6 +2,7 @@ import { module, test } from 'qunitx';
 import { exec as execCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs/promises';
+import { rmRetry } from '../helpers/rm-retry.ts';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -36,7 +37,7 @@ module('Commands | init tests', { concurrency: true }, (_hooks, _moduleMetadata)
       );
       assert.ok(tsconfigStat.value, 'tsconfig.json was created');
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmRetry(dir);
     }
   });
 
@@ -52,7 +53,7 @@ module('Commands | init tests', { concurrency: true }, (_hooks, _moduleMetadata)
       assert.exitCode(error, 1, 'exits with code 1 when no package.json found');
       assert.ok(error.stdout.includes('package.json'), 'prints error about missing package.json');
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmRetry(dir);
     }
   });
 
@@ -72,7 +73,7 @@ module('Commands | init tests', { concurrency: true }, (_hooks, _moduleMetadata)
       const content = await fs.readFile(`${dir}/test/tests.html`, 'utf8');
       assert.equal(content, '<!-- original content -->', 'existing html file was not overwritten');
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await rmRetry(dir);
     }
   });
 });

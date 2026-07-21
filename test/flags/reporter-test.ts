@@ -2,6 +2,7 @@ import { module, test } from 'qunitx';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
 import { execute as shell, shellFails } from '../helpers/shell.ts';
+import { rmRetry } from '../helpers/rm-retry.ts';
 
 module('--reporter', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('tap is the default: TAP still streams with no flag', async (assert, testMetadata) => {
@@ -96,7 +97,7 @@ module('--reporter=spec', { concurrency: true }, (_hooks, moduleMetadata) => {
       const xml = await fs.readFile(`${output}/junit.xml`, 'utf8');
       assert.ok(/<testsuites name="qunitx" tests="3"/.test(xml), 'junit artifact still produced');
     } finally {
-      await fs.rm(output, { recursive: true, force: true });
+      await rmRetry(output);
     }
   });
 });
@@ -154,7 +155,7 @@ module('--reporter=dot', { concurrency: true }, (_hooks, moduleMetadata) => {
       const xml = await fs.readFile(`${output}/junit.xml`, 'utf8');
       assert.ok(/<testsuites name="qunitx" tests="3"/.test(xml), 'junit artifact still produced');
     } finally {
-      await fs.rm(output, { recursive: true, force: true });
+      await rmRetry(output);
     }
   });
 });
