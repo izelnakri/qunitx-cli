@@ -4,6 +4,7 @@ import { rmRetry } from '../helpers/rm-retry.ts';
 import { randomUUID } from 'node:crypto';
 import '../helpers/custom-asserts.ts';
 import { execute as shell, shellFails } from '../helpers/shell.ts';
+import { ignore } from '../../lib/result/failure.ts';
 
 const NESTED = 'test/fixtures/nested-module-tests.ts';
 const CWD = process.cwd();
@@ -99,7 +100,9 @@ module('Flags | --filter | persistent caches', { concurrency: true }, () => {
     // A self-contained test file (no external imports) keeps this decoupled from the shared
     // fixtures — the test only needs *some* tests to run, filtered and unfiltered.
     await Promise.all([
-      fs.symlink(`${CWD}/node_modules`, `${project}/node_modules`).catch(() => {}),
+      fs
+        .symlink(`${CWD}/node_modules`, `${project}/node_modules`)
+        .catch(ignore('node_modules symlink (already present)')),
       fs.writeFile(
         `${project}/package.json`,
         JSON.stringify({ name: id, version: '0.0.1', type: 'module' }),

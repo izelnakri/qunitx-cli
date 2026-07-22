@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { spawnCapture } from '../helpers/shell.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 import '../helpers/custom-asserts.ts';
+import { ignore } from '../../lib/result/failure.ts';
 
 const CLI = path.join(process.cwd(), 'cli.ts');
 const QUNITX_BROWSER = process.env.QUNITX_BROWSER;
@@ -82,7 +83,7 @@ module('Inputs | qunitx runtime resolution', { concurrency: true }, () => {
             path.join(destQunitx, `dist/${entry}/index.js`),
             `\nexport const __PROVENANCE__ = 'project-node-modules';\n`,
           )
-          .catch(() => {});
+          .catch(ignore('provenance marker append'));
       }
 
       await fs.writeFile(

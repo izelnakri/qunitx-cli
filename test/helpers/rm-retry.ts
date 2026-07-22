@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
+import * as Result from '../../lib/result/index.ts';
 
 /**
  * Windows error codes for "a handle on this path is still open". All three describe the same
@@ -30,13 +31,14 @@ export async function rmRetry(
     sleep?: (ms: number) => Promise<unknown>;
   } = {},
 ): Promise<void> {
+  // The retryable set is *declared* to the boundary rather than checked inside a catch, so
+  // rethrowing anything else is the default instead of a line someone has to remember. The
+  // previous shape — catch, read `.code`, `if (!RETRYABLE.has(code)) throw` — inverts that:
+  // every unanticipated failure is caught first and only escapes if the guard is right.
   for (let attempt = 1; ; attempt++) {
-    try {
-      return await rm(dir);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code ?? '';
-      if (!RETRYABLE_CODES.has(code) || attempt >= attempts) throw error;
-      await sleep(delayMs * attempt);
-    }
+    const removed = await Result.attempt(() => rm(dir), Result.errno(...RETRYABLE_CODES));
+    if (removed.ok) return;
+    if (attempt >= attempts) throw removed.error;
+    await sleep(delayMs * attempt);
   }
 }

@@ -127,15 +127,13 @@ const HANG_ARGS = IS_DENO
 module('Utils | getChangedFilePathsInGitSince | bounded execution', { concurrency: true }, () => {
   test('kills and rejects a subprocess that never exits, rather than waiting forever', async (assert) => {
     const startedAt = Date.now();
-    let error: Error | undefined;
-    try {
-      await runGit(HANG_ARGS, process.cwd(), 300, process.execPath);
-    } catch (caught) {
-      error = caught as Error;
-    }
+    const ran = await Result.attempt(
+      () => runGit(HANG_ARGS, process.cwd(), 300, process.execPath),
+      Result.instanceOf(Error),
+    );
     const elapsed = Date.now() - startedAt;
 
-    assert.ok(error, 'settles as a rejection instead of hanging forever');
+    assert.notOk(ran.ok, 'settles as a rejection instead of hanging forever');
     assert.ok(elapsed < 10_000, `settles at the bound, not never (took ${elapsed}ms)`);
     // getChangedFsTree funnels any git error into "run all test files" (covered in
     // test/setup/get-changed-fs-tree-test.ts), so rejecting here is what converts an

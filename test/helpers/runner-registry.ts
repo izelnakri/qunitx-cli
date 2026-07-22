@@ -2,6 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { setTimeout as sleep } from 'node:timers/promises';
+import * as Result from '../../lib/result/index.ts';
+import { ignore } from '../../lib/result/failure.ts';
 
 /**
  * Lets several test runners share one checkout.
@@ -87,7 +89,7 @@ export async function joinRunnerRegistry(
   return {
     runId: String(process.pid),
     wasSolo,
-    release: () => fs.unlink(entryPath).catch(() => {}),
+    release: () => fs.unlink(entryPath).catch(ignore('runner registry entry release')),
   };
 }
 
@@ -98,14 +100,16 @@ export async function joinRunnerRegistry(
 export async function liveRunners(
   registryDir: string = DEFAULT_REGISTRY_DIR,
 ): Promise<RunnerEntry[]> {
-  const names = await fs.readdir(registryDir).catch(() => [] as string[]);
+  const names = await fs
+    .readdir(registryDir)
+    .catch((error) => (ignore('runner registry listing')(error), [] as string[]));
   const live: RunnerEntry[] = [];
   for (const name of names) {
     const entryPath = path.join(registryDir, name);
     const entry = await readEntry(entryPath);
     if (!entry || entry.pid === process.pid) continue;
     if (isAlive(entry.pid)) live.push(entry);
-    else await fs.unlink(entryPath).catch(() => {});
+    else await fs.unlink(entryPath).catch(ignore('stale runner registry entry unlink'));
   }
   return live;
 }
@@ -123,7 +127,7 @@ async function acquireMutex(mutexPath: string): Promise<(() => Promise<void>) | 
     }
     const holder = await readEntry(mutexPath);
     if (!holder || !isAlive(holder.pid)) {
-      await fs.unlink(mutexPath).catch(() => {});
+      await fs.unlink(mutexPath).catch(ignore('runner registry mutex unlink'));
       continue;
     }
     if (Date.now() >= deadline) return null;
@@ -142,40 +146,41 @@ async function publish(lockPath: string, entry: RunnerEntry): Promise<boolean> {
   const tmpPath = `${lockPath}.${process.pid}.tmp`;
   await fs.writeFile(tmpPath, JSON.stringify(entry));
   try {
-    await fs.link(tmpPath, lockPath);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    return false;
+    // EEXIST is the whole point of the link: someone else published first, which is an
+    // outcome, not a fault. Declaring it means an EACCES or ENOSPC on the registry directory
+    // propagates instead of being read as "we lost the race" and silently disabling the cap.
+    const linked = await Result.attempt(() => fs.link(tmpPath, lockPath), Result.errno('EEXIST'));
+    return linked.ok;
   } finally {
     // Drop our second reference; on success the lock's own name keeps the inode alive.
-    await fs.unlink(tmpPath).catch(() => {});
+    await fs.unlink(tmpPath).catch(ignore('runner registry tmpfile unlink'));
   }
 }
 
+// `null` here means "no usable entry", which is genuinely all three of missing, torn, and
+// written by an incompatible version — the caller treats them identically, so a Result would
+// name distinctions nobody acts on. The boundary still declares what it expects: a read error
+// or a parse error, not a bug in the shape check below.
 async function readEntry(entryPath: string): Promise<RunnerEntry | null> {
-  try {
-    const parsed = JSON.parse(await fs.readFile(entryPath, 'utf8')) as Partial<RunnerEntry>;
-    return typeof parsed.pid === 'number' && typeof parsed.startedAt === 'number'
-      ? (parsed as RunnerEntry)
-      : null;
-  } catch {
-    return null; // missing, torn, or written by an incompatible version
-  }
+  const read = await Result.attempt(() => fs.readFile(entryPath, 'utf8'), Result.errno());
+  if (!read.ok) return null;
+  const parsed = Result.attempt(() => JSON.parse(read.value) as Partial<RunnerEntry>, SyntaxError);
+  if (!parsed.ok) return null;
+  return typeof parsed.value.pid === 'number' && typeof parsed.value.startedAt === 'number'
+    ? (parsed.value as RunnerEntry)
+    : null;
 }
 
-// EPERM means the pid exists under another user — alive, just not ours to signal.
+// EPERM means the pid exists under another user — alive, just not ours to signal. ESRCH is
+// the real "no such process". Anything else (an invalid pid, a bad signal) is a bug and is
+// left to propagate rather than being reported as "not alive".
 function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
+  const signalled = Result.attempt(() => process.kill(pid, 0), Result.errno('EPERM', 'ESRCH'));
+  return signalled.ok || signalled.error.code === 'EPERM';
 }
 
 // Only ever remove our own lock: a late release must not clear one someone else now holds.
 async function releaseIfOwner(lockPath: string): Promise<void> {
   if ((await readEntry(lockPath))?.pid !== process.pid) return;
-  await fs.unlink(lockPath).catch(() => {});
+  await fs.unlink(lockPath).catch(ignore('runner registry lock unlink'));
 }
