@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { ignore } from '../result/failure.ts';
 
 const CLEANUP_DEADLINE_MS = 5_000;
 const CLEANUP_RETRY_MS = 50;
@@ -20,7 +21,9 @@ const CLEANUP_RETRY_MS = 50;
  */
 export async function cleanupDir(dirPath: string): Promise<void> {
   if (process.platform !== 'linux') {
-    await fs.rm(dirPath, { recursive: true, force: true }).catch(() => {});
+    await fs
+      .rm(dirPath, { recursive: true, force: true })
+      .catch(ignore('chrome user-data-dir removal'));
     return;
   }
 

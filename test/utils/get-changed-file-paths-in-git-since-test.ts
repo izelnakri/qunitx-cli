@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import * as Result from '../../lib/result/index.ts';
 import crypto from 'node:crypto';
 import { module, test } from 'qunitx';
 import {
@@ -58,52 +59,53 @@ module('Utils | getChangedFilePathsInGitSince | git interaction', { concurrency:
   test('returns empty set when nothing changed', async (assert) => {
     const root = await makeRepo({ 'a.ts': 'export const a = 1;' });
     const result = await getChangedFilePathsInGitSince(root, 'HEAD');
-    assert.ok(result, 'not blast-radius');
-    assert.equal(result!.size, 0);
+    assert.equal(Result.unwrap(result).scope, 'paths', 'not blast-radius');
+    assert.equal(paths(result).size, 0);
   });
 
   test('untracked file is reported as changed', async (assert) => {
     const root = await makeRepo({ 'a.ts': 'export const a = 1;' });
     await fs.writeFile(path.join(root, 'b.ts'), 'export const b = 2;');
     const result = await getChangedFilePathsInGitSince(root, 'HEAD');
-    assert.ok(result);
-    assert.ok(result!.has(path.resolve(root, 'b.ts')));
+    assert.ok(paths(result).has(path.resolve(root, 'b.ts')));
   });
 
   test('modified tracked file is reported as changed', async (assert) => {
     const root = await makeRepo({ 'a.ts': 'export const a = 1;' });
     await fs.writeFile(path.join(root, 'a.ts'), 'export const a = 2;');
     const result = await getChangedFilePathsInGitSince(root, 'HEAD');
-    assert.ok(result);
-    assert.ok(result!.has(path.resolve(root, 'a.ts')));
+    assert.ok(paths(result).has(path.resolve(root, 'a.ts')));
   });
 
-  test('package.json change short-circuits to null (blast radius)', async (assert) => {
+  test('a package.json change reports scope "everything", naming the trigger', async (assert) => {
     const root = await makeRepo({
       'a.ts': 'export const a = 1;',
       'package.json': '{}',
     });
     await fs.writeFile(path.join(root, 'package.json'), '{"name":"x"}');
-    const result = await getChangedFilePathsInGitSince(root, 'HEAD');
-    assert.equal(result, null);
+    const scan = Result.unwrap(await getChangedFilePathsInGitSince(root, 'HEAD'));
+    assert.equal(scan.scope, 'everything');
+    assert.equal(scan.trigger, 'package.json', 'names which file forced the full run');
   });
 
-  test('tsconfig.test.json change short-circuits to null', async (assert) => {
+  test('a tsconfig.test.json change reports scope "everything"', async (assert) => {
     const root = await makeRepo({
       'a.ts': 'export const a = 1;',
       'tsconfig.test.json': '{}',
     });
     await fs.writeFile(path.join(root, 'tsconfig.test.json'), '{"compilerOptions":{}}');
-    const result = await getChangedFilePathsInGitSince(root, 'HEAD');
-    assert.equal(result, null);
+    const scan = Result.unwrap(await getChangedFilePathsInGitSince(root, 'HEAD'));
+    assert.equal(scan.scope, 'everything');
   });
 
-  test('throws on missing ref so caller can degrade with a warning', async (assert) => {
+  test('an unknown ref is a declared failure, not a rejection', async (assert) => {
     const root = await makeRepo({ 'a.ts': '' });
-    await assert.rejects(
-      getChangedFilePathsInGitSince(root, 'no-such-ref'),
-      'unknown ref bubbles as a rejection',
-    );
+    const scan = await getChangedFilePathsInGitSince(root, 'no-such-ref');
+
+    assert.notOk(scan.ok);
+    assert.equal(scan.error.code, 'GitScanFailed');
+    assert.equal(scan.error.data.ref, 'no-such-ref');
+    assert.ok(scan.error.cause instanceof Error, "git's own error is kept as the cause");
   });
 });
 
@@ -144,7 +146,14 @@ module('Utils | getChangedFilePathsInGitSince | bounded execution', { concurrenc
     const root = await makeRepo({ 'src/app.ts': 'export const a = 1;\n' });
     await fs.writeFile(path.join(root, 'src/app.ts'), 'export const a = 2;\n');
     const changed = await getChangedFilePathsInGitSince(root, 'HEAD');
-    assert.ok(changed, 'the bound does not interfere with a normal lookup');
-    assert.ok(changed!.has(path.join(root, 'src/app.ts')), 'the modified file is reported');
+    assert.ok(changed.ok, 'the bound does not interfere with a normal lookup');
+    assert.ok(paths(changed).has(path.join(root, 'src/app.ts')), 'the modified file is reported');
   });
 });
+
+/** The scanned paths, asserting the scan succeeded and was not a blast-radius short-circuit. */
+function paths(scan) {
+  const value = Result.unwrap(scan);
+  if (value.scope !== 'paths') throw new Error(`expected scope "paths", got "${value.scope}"`);
+  return value.paths;
+}

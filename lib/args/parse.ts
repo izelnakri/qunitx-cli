@@ -1,6 +1,30 @@
 import path from 'node:path';
 import { tokenize, type QueryToken } from './tokenize.ts';
 import { REPORTERS, type ReporterName } from '../reporters/types.ts';
+import { type Result, ok, err, Failure } from '../result/index.ts';
+
+/**
+ * A flag was given a value this parser will not accept.
+ *
+ * Reported rather than exited on. Parsing argv is a pure transform, and the seven
+ * `console.error` + `process.exit(1)` pairs this replaces made it impossible to call from
+ * anywhere that must survive bad input: the daemon parses argv once per request and would
+ * have taken the whole daemon down with it, and the unit tests had to monkeypatch
+ * `process.exit` into throwing a Symbol to observe any of these branches at all.
+ *
+ * `cli.ts` is now the single place that turns one of these into a message and an exit code.
+ */
+export const InvalidFlag = Failure.define(
+  'InvalidFlag',
+  (data: { flag: string; value: string; expected: string }) =>
+    `Invalid ${data.flag} value: "${data.value}". ${data.expected}`,
+);
+
+/** Every way `parse()` can reject its input. */
+export type ParseFailure = Failure.Of<typeof InvalidFlag>;
+
+const BROWSERS = ['chromium', 'firefox', 'webkit'];
+const COVERAGE_FORMATS = ['text', 'lcov', 'html'];
 
 // Fallback when --timeout is passed with an unparseable or zero value.
 const FALLBACK_TIMEOUT_MS = 10_000;
@@ -43,7 +67,7 @@ interface ParsedFlags {
  * Parses `process.argv` into a qunitx flag object (`inputs`, `debug`, `watch`, `failFast`, `timeout`, `output`, `port`, `before`, `after`).
  * @returns {object}
  */
-export function parse(projectRoot: string): ParsedFlags {
+export function parse(projectRoot: string): Result<ParsedFlags, ParseFailure> {
   const providedFlags = { inputs: new Set<string>() } as ParsedFlags & { inputs: Set<string> };
   // The tokenizer owns how many argv entries a query flag swallows (see tokenize.ts); this
   // loop only interprets the resulting tokens. Query values and inputs are their own token kinds,
@@ -54,7 +78,11 @@ export function parse(projectRoot: string): ParsedFlags {
     } else if (token.kind === 'input') {
       addInput(providedFlags, projectRoot, token.raw);
     } else {
-      applyFlag(providedFlags, token.raw);
+      // First bad flag wins, matching the previous exit-on-first-error behaviour. Collecting
+      // every complaint would be a different (and arguably better) UX, but it is not what the
+      // exits did and is not this change's business.
+      const applied = applyFlag(providedFlags, token.raw);
+      if (!applied.ok) return applied;
     }
   }
 
@@ -63,11 +91,14 @@ export function parse(projectRoot: string): ParsedFlags {
   // without needing to pass --browser on every CLI invocation.
   if (!providedFlags.browser && process.env.QUNITX_BROWSER) {
     const envBrowser = process.env.QUNITX_BROWSER;
-    if (!['chromium', 'firefox', 'webkit'].includes(envBrowser)) {
-      console.error(
-        `Invalid QUNITX_BROWSER value: "${envBrowser}". Must be one of: chromium, firefox, webkit`,
+    if (!BROWSERS.includes(envBrowser)) {
+      return err(
+        InvalidFlag({
+          flag: 'QUNITX_BROWSER',
+          value: envBrowser,
+          expected: `Must be one of: ${BROWSERS.join(', ')}`,
+        }),
       );
-      process.exit(1);
     }
     providedFlags.browser = envBrowser as 'chromium' | 'firefox' | 'webkit';
   }
@@ -79,7 +110,7 @@ export function parse(projectRoot: string): ParsedFlags {
     providedFlags.debug = true;
   }
 
-  return { ...providedFlags, inputs: Array.from(providedFlags.inputs) };
+  return ok({ ...providedFlags, inputs: Array.from(providedFlags.inputs) });
 }
 
 type Flags = ParsedFlags & { inputs: Set<string> };
@@ -88,7 +119,7 @@ type Flags = ParsedFlags & { inputs: Set<string> };
  * Interprets one non-query flag token (`token.raw` verbatim). This is the original prefix/`=`
  * matching chain, unchanged — the tokenizer only lifted `-t`/`-m` and positional inputs out of it.
  */
-function applyFlag(result: Flags, arg: string): void {
+function applyFlag(result: Flags, arg: string): Result<void, ParseFailure> {
   // Every value flag reads the same `=`-suffix, so split once here. A bare boolean flag has no
   // suffix (value === undefined) and falls back to true via parseBoolean.
   const value = arg.split('=')[1];
@@ -116,28 +147,35 @@ function applyFlag(result: Flags, arg: string): void {
     // Fail fast like the other value flags: a bare `--port` (Number(undefined) === NaN) or an
     // out-of-range value would otherwise reach the bind step as a NaN/invalid port.
     if (!Number.isInteger(port) || port < 0 || port > 65535) {
-      console.error(
-        `Invalid --port value: "${value ?? ''}". Expected --port=<0-65535> (short: -p).`,
+      return err(
+        InvalidFlag({
+          flag: '--port',
+          value: value ?? '',
+          expected: 'Expected --port=<0-65535> (short: -p).',
+        }),
       );
-      process.exit(1);
     }
     result.port = port;
     result.portExplicit = true;
   } else if (arg.startsWith('--extensions')) {
     if (!value) {
-      console.error(`Invalid --extensions value: empty. Expected --extensions=js,ts.`);
-      process.exit(1);
+      return err(
+        InvalidFlag({ flag: '--extensions', value: '', expected: 'Expected --extensions=js,ts.' }),
+      );
     }
     result.extensions = value
       .split(',')
       .map((extension) => extension.trim())
       .filter(Boolean);
   } else if (arg.startsWith('--browser')) {
-    if (!['chromium', 'firefox', 'webkit'].includes(value)) {
-      console.error(
-        `Invalid --browser value: "${value}". Must be one of: chromium, firefox, webkit`,
+    if (!BROWSERS.includes(value)) {
+      return err(
+        InvalidFlag({
+          flag: '--browser',
+          value: value ?? '',
+          expected: `Must be one of: ${BROWSERS.join(', ')}`,
+        }),
       );
-      process.exit(1);
     }
     result.browser = value as 'chromium' | 'firefox' | 'webkit';
   } else if (arg.startsWith('--before')) {
@@ -149,8 +187,9 @@ function applyFlag(result: Flags, arg: string): void {
     result.changedSince = 'HEAD';
   } else if (arg.startsWith('--since')) {
     if (!value) {
-      console.error(`Invalid --since value: empty. Expected --since=<git-ref>.`);
-      process.exit(1);
+      return err(
+        InvalidFlag({ flag: '--since', value: '', expected: 'Expected --since=<git-ref>.' }),
+      );
     }
     result.changedSince = value;
   } else if (arg.startsWith('--reporter') || arg === '-r' || arg.startsWith('-r=')) {
@@ -158,10 +197,13 @@ function applyFlag(result: Flags, arg: string): void {
     // are separate additive flags, so `--reporter=dot --junit` is a coherent combination. Value is
     // glued (`-r=spec`) like every non-query value flag.
     if (!value || !REPORTERS.includes(value as ReporterName)) {
-      console.error(
-        `Invalid --reporter value: "${value ?? ''}". Must be one of: ${REPORTERS.join(', ')}`,
+      return err(
+        InvalidFlag({
+          flag: '--reporter',
+          value: value ?? '',
+          expected: `Must be one of: ${REPORTERS.join(', ')}`,
+        }),
       );
-      process.exit(1);
     }
     result.reporter = value as ReporterName;
   } else if (arg.startsWith('--junit')) {
@@ -176,20 +218,26 @@ function applyFlag(result: Flags, arg: string): void {
           .map((format) => format.trim())
           .filter(Boolean)
       : [];
-    const invalid = formats.filter((format) => !['text', 'lcov', 'html'].includes(format));
+    const invalid = formats.filter((format) => !COVERAGE_FORMATS.includes(format));
     if (invalid.length > 0) {
-      console.error(
-        `Invalid --coverage format(s): "${invalid.join(', ')}". Must be one of: lcov, html`,
+      return err(
+        InvalidFlag({
+          flag: '--coverage',
+          value: invalid.join(', '),
+          expected: 'Must be one of: lcov, html',
+        }),
       );
-      process.exit(1);
     }
     result.coverage = true;
     result.coverageFormats = formats.filter((format) => format !== 'text');
   } else if (arg === '--trace-perf') {
     // consumed by perf-log.ts at module load time, not stored in config
   } else {
+    // An unknown flag stays a warning rather than becoming a failure: it always has, and
+    // promoting it would reject argv that older scripts and CI configs still pass.
     console.warn(`# Warning: Unknown flag "${arg}" — ignored`);
   }
+  return ok();
 }
 
 /** Adds a positional target: an `.html` fixture, or a test path with an optional `#34` line suffix. */

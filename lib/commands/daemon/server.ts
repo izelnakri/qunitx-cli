@@ -12,8 +12,11 @@ import * as Config from '../../setup/config.ts';
 import * as Browser from '../../setup/browser.ts';
 import { DaemonRunError } from '../run/tests-in-browser.ts';
 import { run } from '../run.ts';
+import * as Result from '../../result/index.ts';
+import { Failure } from '../../result/index.ts';
 import type { Request, ResponseChunk, RunRequest, DaemonInfo } from './protocol.ts';
 import type { Browser as PlaywrightBrowser } from 'playwright-core';
+import { ignore } from '../../result/failure.ts';
 import type {
   Config as ResolvedConfig,
   EsbuildCache,
@@ -74,7 +77,7 @@ async function tryAcquireDaemonLock(lockPath: string): Promise<boolean> {
         if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
         ownerPid = Number((await readFile(lockPath, 'utf8').catch(() => '')).trim());
         if (ownerPid > 0 && isProcessAlive(ownerPid)) return false;
-        await unlink(lockPath).catch(() => {});
+        await unlink(lockPath).catch(ignore('stale daemon lock unlink'));
       }
     }
     return false;
@@ -82,7 +85,7 @@ async function tryAcquireDaemonLock(lockPath: string): Promise<boolean> {
     // Drop the second hardlink. On success the inode lives on via lockPath
     // until shutdown unlinks it; on failure tmpPath was the only ref
     // and unlinking here reaps the inode.
-    await unlink(tmpPath).catch(() => {});
+    await unlink(tmpPath).catch(ignore('daemon lock tmpfile unlink'));
   }
 }
 
@@ -200,12 +203,16 @@ export async function serve(): Promise<void> {
   // the browser type here. Per-run argv comes from the client via runOnce.
   const argvSnapshot = process.argv;
   process.argv = [argvSnapshot[0], argvSnapshot[1] ?? 'cli.ts'];
-  let baseConfig;
+  let configured;
   try {
-    baseConfig = await Config.setup();
+    configured = await Config.setup();
   } finally {
     process.argv = argvSnapshot;
   }
+  // Startup, not a client run: argv is stripped to nothing here, so the only way this fails is
+  // a broken QUNITX_BROWSER or a plugin the project cannot load — in both cases the daemon has
+  // nothing valid to serve, and refusing to start beats accepting runs it will fail.
+  const baseConfig = Result.expect(configured, 'daemon could not assemble its startup config');
   // baseConfig is only ever handed to Browser.launch (initial launch + crash recovery), never
   // to run() — so it needs no daemon handles. watch/open still matter: Browser.launch derives
   // `headless` from them.
@@ -272,7 +279,8 @@ export async function serve(): Promise<void> {
   // Lock guarantees we're the sole daemon for this cwd — any socket file at the
   // path is from a crashed previous daemon (its lockfile would have been stale-
   // recovered above). Unlink so the bind below creates a fresh dirent.
-  if (fs.existsSync(socketPath)) await unlink(socketPath).catch(() => {});
+  if (fs.existsSync(socketPath))
+    await unlink(socketPath).catch(ignore('stale daemon socket unlink'));
   await listen(state.socketServer, socketPath);
   // Set the ownership flag in the same microtask as listen()'s resolution. Signals
   // are delivered as macrotasks; they cannot interleave between two synchronous
@@ -281,7 +289,8 @@ export async function serve(): Promise<void> {
   // chmod after listen — listen creates the socket file with the default umask, which
   // can leave it world-readable. Skipped on Windows: named pipe paths don't accept
   // POSIX modes and chmod returns EPERM/EINVAL for them.
-  if (process.platform !== 'win32') await chmod(socketPath, 0o600).catch(() => {});
+  if (process.platform !== 'win32')
+    await chmod(socketPath, 0o600).catch(ignore('daemon socket chmod'));
 
   const info: DaemonInfo = {
     pid: process.pid,
@@ -362,16 +371,16 @@ export async function shutdown(
       new Promise<null>((resolve) => setTimeout(() => resolve(null), SHUTDOWN_BROWSER_GRACE_MS)),
     ]));
   await Promise.all([
-    state.pageSlot.page?.close().catch(() => {}),
+    state.pageSlot.page?.close().catch(ignore('daemon page close')),
     // browser may be null if the launch hadn't settled within the grace window
     // (or never started at all); the chrome-prelaunch exit hook handles that.
-    browser?.close().catch(() => {}),
-    state.esbuildCache.context?.dispose().catch(() => {}),
+    browser?.close().catch(ignore('daemon browser close')),
+    state.esbuildCache.context?.dispose().catch(ignore('daemon esbuild context dispose')),
   ]);
   // Best-effort cleanup of the per-cwd daemon dir created in run. rmdir refuses
   // non-empty dirs (we swallow the ENOTEMPTY) so a concurrent sibling that re-created files inside
   // is never trampled. socketPath lives outside Paths.dir, so the dir is empty after the unlinks.
-  await rmdir(Paths.dir(process.cwd())).catch(() => {});
+  await rmdir(Paths.dir(process.cwd())).catch(ignore('daemon run dir rmdir'));
   exit();
 }
 
@@ -384,9 +393,9 @@ export async function shutdown(
  */
 export async function removeLivenessFiles(state: DaemonState): Promise<void> {
   await Promise.all([
-    state.listenSucceeded ? unlink(state.socketPath).catch(() => {}) : null,
-    state.listenSucceeded ? unlink(state.infoPath).catch(() => {}) : null,
-    unlink(state.lockPath).catch(() => {}),
+    state.listenSucceeded ? unlink(state.socketPath).catch(ignore('daemon socket unlink')) : null,
+    state.listenSucceeded ? unlink(state.infoPath).catch(ignore('daemon info file unlink')) : null,
+    unlink(state.lockPath).catch(ignore('daemon lock unlink')),
   ]);
 }
 
@@ -612,12 +621,14 @@ export async function browserResponsive(
   const winner = await Promise.race([probe, timeout]);
   if (winner) {
     // Healthy: tidy up the probe session so it doesn't leak across runs.
-    void winner.detach().catch(() => {});
+    void winner.detach().catch(ignore('browser probe session detach'));
     return true;
   }
   // Not responsive within budget (dead channel or CDP error). If the probe was merely
   // slow and resolves a session after the timeout, detach it so it doesn't leak.
-  void probe.then((session) => session?.detach().catch(() => {}));
+  void probe.then((session) =>
+    session?.detach().catch(ignore('late browser probe session detach')),
+  );
   return false;
 }
 
@@ -637,7 +648,7 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
   // CDP socket hangs forever waiting for a protocol reply that never arrives.
   // skipPrelaunch=true bypasses the singleton prelaunch endpoint (which now points at the
   // dead Chrome) and goes straight to a fresh chromium.launch().
-  state.browser?.close().catch(() => {});
+  state.browser?.close().catch(ignore('crashed browser close'));
   // The persistent page belongs to the dead browser; drop the reference so the
   // next Browser.setup mints a fresh page on the new browser without paying an
   // isConnected() round-trip on a doomed CDP socket.
@@ -681,12 +692,21 @@ async function runOnce(
   const argvSnapshot = process.argv;
   process.argv = ['node', argvSnapshot[1] ?? 'cli.ts', ...argv];
 
-  let config: ResolvedConfig;
+  let configured: Result.Result<ResolvedConfig, Config.ConfigFailure>;
   try {
-    config = await Config.setup();
+    configured = (await Config.setup()) as Result.Result<ResolvedConfig, Config.ConfigFailure>;
   } finally {
     process.argv = argvSnapshot;
   }
+  // A bad flag from one client is that client's problem, not the daemon's. This is the whole
+  // reason config assembly returns instead of exiting: `process.exit(1)` inside `Args.parse`
+  // would have taken down a daemon serving every other invocation in the project.
+  if (!configured.ok) {
+    process.env = envSnapshot;
+    process.stderr.write(`${Failure.format(configured.error)}\n`);
+    return 1;
+  }
+  const config = configured.value;
 
   // Lending the daemon's persistent handles to this run also marks it as a daemon run:
   // a non-null state.daemon makes run() reuse the browser rather than launching one, throw

@@ -40,21 +40,25 @@ export async function getChangedFsTree(
     return fsTree;
   }
 
-  // .catch funnels git failures into a value branch so the three outcomes
-  // (error / blast-radius / size===0) collapse into one if/else-if chain
-  // without a mutable `let changed` + try/catch.
-  const changed = await getChanged(projectRoot, changedSince).catch((err: Error) => err);
-  if (changed instanceof Error) {
+  // Three outcomes, three named shapes: a declared failure, a successful "run everything"
+  // scan, and a set of paths. This used to be one variable holding `Set | null | Error`,
+  // discriminated by `instanceof` — with the `null` branch ("run everything") adjacent to the
+  // `size === 0` branch ("run nothing").
+  const scan = await getChanged(projectRoot, changedSince);
+  if (!scan.ok) {
     process.stdout.write(
-      `# --changed: git lookup failed (${changed.message.split('\n')[0]}) — running all ${testFiles.length} test files\n`,
+      `# --changed: ${scan.error.message} — running all ${testFiles.length} test files\n`,
     );
     return fsTree;
-  } else if (changed === null) {
+  } else if (scan.value.scope === 'everything') {
     process.stdout.write(
-      `# --changed: blast-radius file changed (package.json / tsconfig.json / lockfile) — running all ${testFiles.length} test files\n`,
+      `# --changed: blast-radius file changed (${scan.value.trigger}) — running all ${testFiles.length} test files\n`,
     );
     return fsTree;
-  } else if (changed.size === 0) {
+  }
+
+  const changed = scan.value.paths;
+  if (changed.size === 0) {
     process.stdout.write(
       `# --changed: 0 files changed since ${changedSince} — running 0 test files\n`,
     );

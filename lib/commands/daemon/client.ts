@@ -5,6 +5,7 @@ import * as Paths from './paths.ts';
 import { CLEANUP_GRACE_MS } from '../../utils/close-with-grace.ts';
 import * as Args from '../../args/index.ts';
 import * as Socket from './socket.ts';
+import { type Result, ok, err, Failure } from '../../result/index.ts';
 import type { Request, ResponseChunk } from './protocol.ts';
 
 const CONNECT_TIMEOUT_MS = 1_000;
@@ -100,31 +101,60 @@ export async function shutdown(cwd: string = process.cwd()): Promise<boolean> {
   return true;
 }
 
+/** No daemon was listening — the ordinary case on a cold machine, not an error worth showing. */
+export const DaemonUnreachable = Failure.define(
+  'DaemonUnreachable',
+  'no daemon is listening for this project',
+);
+
+/**
+ * The daemon accepted the run and then dropped the connection without a terminal message.
+ *
+ * Previously indistinguishable from a normal failing run: `close` and `error` both
+ * `resolve(1)`, exactly like `done` with `exitCode: 1`. A daemon that crashed mid-run was
+ * therefore reported to the user — and to CI — as "one test failed", with no hint that no
+ * tests had actually been reported at all.
+ */
+export const DaemonDisconnected = Failure.define(
+  'DaemonDisconnected',
+  (data: { reason: 'close' | 'error' }) =>
+    `daemon closed the connection (${data.reason}) without reporting a result`,
+);
+
+/** Every way a daemon-routed run can fail to produce an exit code. */
+export type RunViaFailure = Failure.Of<typeof DaemonUnreachable | typeof DaemonDisconnected>;
+
 /**
  * Sends `argv` to the daemon and streams its TAP output back to local stdout/stderr.
- * Returns the exit code reported by the daemon. Throws if the connection fails.
+ * Returns the exit code reported by the daemon, or a failure the caller can act on:
+ * `DaemonUnreachable` means "fall through to a local run", `DaemonDisconnected` means the
+ * daemon died mid-run and the user should be told.
+ *
  * Forwards the user's Ctrl+C: client exits with 130; daemon abandons the run cleanly
  * when it sees the socket close (clientAlive=false stops further writes).
  */
-export async function runVia(argv: string[]): Promise<number> {
+export async function runVia(argv: string[]): Promise<Result<number, RunViaFailure>> {
   const socket = await tryConnect();
-  if (!socket) throw new Error('daemon connect failed');
+  if (!socket) return err(DaemonUnreachable());
 
   // Per protocol.ts: exactly one terminal message ('done' or 'fatal') ends the
   // stream. close/error here are last-resort fallbacks for a daemon that drops
-  // the connection without sending one.
-  const exitCode = new Promise<number>((resolve) => {
+  // the connection without sending one — now reported as such rather than folded
+  // into the same exit code a failing test run produces.
+  const outcome = new Promise<Result<number, RunViaFailure>>((resolve) => {
     Socket.readMessages<ResponseChunk>(socket, (chunk) => {
       if (chunk.type === 'stdout') process.stdout.write(chunk.data);
       else if (chunk.type === 'stderr') process.stderr.write(chunk.data);
-      else if (chunk.type === 'done') resolve(chunk.exitCode);
+      else if (chunk.type === 'done') resolve(ok(chunk.exitCode));
       else if (chunk.type === 'fatal') {
+        // A reported fatal IS a terminal result: the daemon ran, decided the run failed, and
+        // said so. That is an exit code, not a transport failure.
         process.stderr.write(`# [qunitx daemon] ${chunk.message}\n`);
-        resolve(1);
+        resolve(ok(1));
       }
     });
-    socket.once('close', () => resolve(1));
-    socket.once('error', () => resolve(1));
+    socket.once('close', () => resolve(err(DaemonDisconnected({ reason: 'close' }))));
+    socket.once('error', () => resolve(err(DaemonDisconnected({ reason: 'error' }))));
   });
 
   const onSigint = () => {
@@ -142,7 +172,7 @@ export async function runVia(argv: string[]): Promise<number> {
   });
 
   try {
-    return await exitCode;
+    return await outcome;
   } finally {
     process.removeListener('SIGINT', onSigint);
   }
