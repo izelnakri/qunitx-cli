@@ -6,8 +6,14 @@ import * as Client from '../../../lib/commands/daemon/client.ts';
 import * as Paths from '../../../lib/commands/daemon/paths.ts';
 import '../../helpers/custom-asserts.ts';
 
+// The only three variables Client consults. They are cleared before each invocation so the
+// test states the whole truth about them: the suite runner exports QUNITX_NO_DAEMON=1 for
+// every worker, and GitHub Actions exports CI=true, either of which would otherwise decide
+// the answer before the case under test got a say.
+const DAEMON_ENV_KEYS = ['QUNITX_DAEMON', 'QUNITX_NO_DAEMON', 'CI'];
+
 interface Invocation {
-  /** The environment the cli process would see. Replaces process.env wholesale. */
+  /** Overrides layered onto the ambient environment, after DAEMON_ENV_KEYS are cleared. */
   env?: NodeJS.ProcessEnv;
   /** argv past `node cli.ts`. */
   args?: string[];
@@ -31,20 +37,27 @@ function withInvocation<T>(
 ): T {
   const cwd = path.join(path.sep, `qunitx-client-test-${randomUUID()}`);
   const original = { env: process.env, argv: process.argv, cwd: process.cwd };
-  if (daemonRunning) {
-    fs.mkdirSync(Paths.dir(cwd), { recursive: true });
-    fs.writeFileSync(Paths.info(cwd), JSON.stringify({ pid: process.pid }));
-  }
-  process.env = env;
+  // The ambient environment is kept and only the daemon keys are replaced. Wiping it wholesale
+  // also wipes TEMP/TMP, and os.tmpdir() — which is where Paths puts the info file — is derived
+  // from those on Windows. The sentinel then got written to one tmpdir and looked for in
+  // another, so every "a daemon is running" case read as false on the windows lanes only.
+  const stubbedEnv = { ...original.env };
+  for (const key of DAEMON_ENV_KEYS) delete stubbedEnv[key];
+
+  process.env = { ...stubbedEnv, ...env };
   process.argv = ['node', 'cli.ts', ...args];
   process.cwd = () => cwd;
   try {
+    if (daemonRunning) {
+      fs.mkdirSync(Paths.dir(cwd), { recursive: true });
+      fs.writeFileSync(Paths.info(cwd), JSON.stringify({ pid: process.pid }));
+    }
     return fn();
   } finally {
+    fs.rmSync(Paths.dir(cwd), { recursive: true, force: true });
     process.env = original.env;
     process.argv = original.argv;
     process.cwd = original.cwd;
-    fs.rmSync(Paths.dir(cwd), { recursive: true, force: true });
   }
 }
 
