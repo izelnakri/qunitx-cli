@@ -628,25 +628,32 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
 
       await fs.symlink(`${dir}/nonexistent.ts`, `${testsDir}/dangling.ts`);
 
-      // Proving a negative needs a horizon, and a fixed sleep is a guess at one. Instead,
-      // write a real file into the same directory afterwards and wait for ITS event: the
-      // watcher consumes directory events in order, so once the real file's re-run has
-      // completed the dangling symlink has definitively been seen and produced nothing.
+      // Proving a negative needs a horizon, and a fixed sleep is a guess at one. Adding a real
+      // file afterwards and waiting for its re-run gives a real horizon: handleWatchEvent logs
+      // every event it acts on before it acts, so by the time the real file's rebuild has
+      // finished, anything the symlink was going to produce has already been logged.
       const realId = randomUUID();
       await fs.writeFile(`${testsDir}/real-tests.ts`, testContent.replace(id, realId));
-      await session.waitFor((buf) => buf.includes('ADDED:'), 'ADDED event for the real file');
-      const rerunBuf = await waitForRunComplete(session, 2, 're-run for the real file');
+      await waitForRunComplete(session, 2, 're-run for the real file');
 
-      assert.equal(
-        countOccurrences(rerunBuf, 'QUnitX running:'),
-        2,
-        'only the real file triggered a re-run; the dangling symlink triggered none',
-      );
+      // The event log is the invariant, not the run count. A dangling symlink is dropped by
+      // classifyRenameEvent (stat fails, path not in fsTree → null) before anything is logged
+      // or any rebuild is queued, so its absence from the log is exactly the claim.
+      //
+      // Run counts are deliberately NOT asserted. One fs.writeFile can emit both a rename and
+      // a trailing change, and whether the second is deduplicated depends on whether the add's
+      // build finished inside ADD_SUPPRESS_WINDOW_MS — best-effort, and false on a loaded
+      // runner. So the real file may legitimately produce one rebuild or two, which says
+      // nothing about the symlink. See the boundary pinned in
+      // `Setup | FileWatcher.handleWatchEvent`.
+      //
+      // session.stdout rather than the waitFor snapshot: it is the live buffer, so a symlink
+      // event arriving late (macOS coalesces and can reorder directory events) is still caught.
+      assert.notIncludes(session.stdout, 'dangling.ts');
       // Matched separately rather than as one 'ADDED: <path>' string: the logged path is
       // project-relative and separator-native, so it reads \tests\ on Windows.
-      assert.includes(rerunBuf, 'ADDED:');
-      assert.includes(rerunBuf, 'real-tests.ts');
-      assert.notIncludes(rerunBuf, 'dangling.ts');
+      assert.includes(session.stdout, 'ADDED:');
+      assert.includes(session.stdout, 'real-tests.ts');
     } finally {
       await session.kill();
     }
@@ -819,7 +826,15 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
   });
 });
 
-// Count non-overlapping occurrences of `needle` in `str`.
+/**
+ * Count non-overlapping occurrences of `needle` in `str`.
+ *
+ * Safe to assert exact counts of watcher EVENTS ('REMOVED:') — firing one per removal is a
+ * real invariant these tests exist to protect. Not safe for RUN markers ('QUnitX running:'):
+ * one file write can legitimately produce one rebuild or two depending on whether the add's
+ * build finished inside ADD_SUPPRESS_WINDOW_MS, so an exact run count is a coin flip under
+ * load. Wait for `>= n` runs via waitForRunComplete and assert on the run's content instead.
+ */
 function countOccurrences(str: string, needle: string): number {
   let count = 0;
   let pos = 0;
