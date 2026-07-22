@@ -107,7 +107,7 @@ module('Commands | Daemon | shutdown', { concurrency: true }, () => {
     assert.ok(exited, 'exit() runs once the browser teardown completes');
   });
 
-  test('Server.removeLivenessFiles keeps socket/info when the daemon never bound, always drops the lock', async (assert) => {
+  test('removeLivenessFiles keeps socket/info if the daemon never bound, and always drops the lock', async (assert) => {
     // A daemon that threw before listen() doesn't own socket/info — unlinking them would corrupt
     // whatever started in its place — but the lock is always ours to release.
     const paths = await tempPaths();

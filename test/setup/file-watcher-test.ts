@@ -199,7 +199,7 @@ module('Setup | FileWatcher.handleWatchEvent', { concurrency: true }, () => {
     assert.deepEqual(calls, [{ event: 'unlinkDir', path: '/project/test/unit' }]);
   });
 
-  test('unlinkDir on a nested subdirectory removes its subtree and leaves siblings untouched', (assert) => {
+  test('unlinkDir on a nested subdirectory removes its subtree, leaving siblings', (assert) => {
     // Verifies both the mutateFSTree prefix fix and that handleWatchEvent coalesces
     // a nested directory removal into a single onEventFunc call.
     const config = {
@@ -220,7 +220,7 @@ module('Setup | FileWatcher.handleWatchEvent', { concurrency: true }, () => {
     assert.deepEqual(calls, [{ event: 'unlinkDir', path: '/project/tests/subdir' }]);
   });
 
-  test('unlinkDir with no matching files leaves fsTree unchanged but still calls onEventFunc', (assert) => {
+  test('unlinkDir matching nothing leaves fsTree unchanged but still fires', (assert) => {
     const config = { fsTree: { '/project/other/baz.js': null }, projectRoot: '/project' };
     assert.equal(trackCalls(config, 'unlinkDir', '/project/test').length, 1);
     assert.deepEqual(config.fsTree, { '/project/other/baz.js': null });
@@ -231,7 +231,7 @@ module('Setup | FileWatcher.handleWatchEvent', { concurrency: true }, () => {
     assert.equal(trackCalls(config, 'change', '/project/styles/app.css').length, 0);
   });
 
-  test('event while a build is active queues a pending trigger instead of calling onEventFunc', (assert) => {
+  test('an event during a build queues a pending trigger instead of firing', (assert) => {
     const config = {
       fsTree: { '/project/test/foo.js': null },
       projectRoot: '/project',
@@ -433,7 +433,7 @@ module('Setup | FileWatcher.handleWatchEvent', { concurrency: true }, () => {
     assert.ok(config.state.watch.lastBuildEndMs > firstEndMs);
   });
 
-  test('a failed build drops the file content-hash baseline so a revert to built content re-fires', async (assert) => {
+  test('a failed build drops the content-hash baseline, so reverting re-fires', async (assert) => {
     // Regression (120s macOS watch hang): a build-error write can arrive as an fs.watch 'rename'
     // that fires the rebuild without advancing builtContentHash. Reverting the file to its last
     // successfully-built content then hashes identically to the stale baseline and is suppressed as
@@ -541,7 +541,7 @@ module('Setup | FileWatcher.setup', { concurrency: true }, () => {
     }
   });
 
-  test('change on a directly-watched file passes the correct path to onEventFunc, not a doubled path', async (assert) => {
+  test('a directly-watched file reports its own path, never a doubled one', async (assert) => {
     // Regression: when watchPath is a file (not a directory), fs.watch fires events with
     // filename = the file's own basename. path.join(watchPath, filename) produced the
     // nonsense doubled path "test/foo.ts/foo.ts" which is never in fsTree, so the guard
@@ -1000,7 +1000,7 @@ module('Setup | FileWatcher.rescanDirectoryForDelta', { concurrency: true }, () 
     }
   });
 
-  test('fires unlinkDir (not individual unlinks) when a tracked subdirectory has been renamed away', async (assert) => {
+  test('a renamed-away subdirectory fires unlinkDir, not individual unlinks', async (assert) => {
     // Regression: rescanDirectoryForDelta fired one 'unlink' per tracked file inside the
     // renamed subdir, producing N REMOVED: log lines. The fix walks up the directory tree to
     // find the highest missing ancestor within watchPath and fires a single unlinkDir instead.

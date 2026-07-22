@@ -186,7 +186,7 @@ module('Daemon | Client.shouldAutoSpawn', { concurrency: true }, () => {
     );
   });
 
-  test('is false with QUNITX_DAEMON=1 when a daemon already runs (shouldUse takes that path)', (assert) => {
+  test('is false when a daemon already runs — shouldUse takes that path', (assert) => {
     assert.false(
       shouldAutoSpawn({
         daemonRunning: true,

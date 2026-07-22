@@ -64,7 +64,7 @@ module('Flags | --reporter', { concurrency: true }, (_hooks, moduleMetadata) => 
     });
   });
 
-  test('a stdout reporter composes with --junit: it owns stdout, the artifact is still written', async (assert, testMetadata) => {
+  test('a stdout reporter composes with --junit: it owns stdout, the artifact still lands', async (assert, testMetadata) => {
     const output = `tmp/spec-junit-${randomUUID()}`;
     const result = await shell(
       `node cli.ts test/fixtures/passing-tests.ts --reporter=spec --junit --output=${output}`,

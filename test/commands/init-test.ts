@@ -14,7 +14,7 @@ import '../helpers/custom-asserts.ts';
 const CLI = path.resolve('cli.ts');
 
 module('Commands | init', { concurrency: true }, (_hooks, moduleMetadata) => {
-  test('$ qunitx init -> writes test/tests.html, tsconfig.json and updates package.json', async (assert, testMetadata) => {
+  test('writes test/tests.html and tsconfig.json, and updates package.json', async (assert, testMetadata) => {
     const dir = path.resolve(`tmp/init-${randomUUID()}`);
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(`${dir}/package.json`, JSON.stringify({ name: 'test-project' }, null, 2));
@@ -47,7 +47,7 @@ module('Commands | init', { concurrency: true }, (_hooks, moduleMetadata) => {
     }
   });
 
-  test('$ qunitx init -> exits with code 1 and prints an error when no package.json is found', async (assert) => {
+  test('exits 1 with an error when there is no package.json', async (assert) => {
     // os.tmpdir() (not hardcoded /tmp) so the path resolves correctly on Windows where
     // /tmp would point at a non-existent D:\tmp.
     const dir = path.join(os.tmpdir(), `qunitx-init-${randomUUID()}`);
@@ -63,7 +63,7 @@ module('Commands | init', { concurrency: true }, (_hooks, moduleMetadata) => {
     }
   });
 
-  test('$ qunitx init -> prints "already exists" and does not overwrite an existing html file', async (assert, testMetadata) => {
+  test('prints "already exists" rather than overwriting an existing html file', async (assert, testMetadata) => {
     const dir = path.resolve(`tmp/init-${randomUUID()}`);
     await fs.mkdir(`${dir}/test`, { recursive: true });
     await Promise.all([

@@ -256,7 +256,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
     }
   });
 
-  test('removing one of multiple watched directories fires REMOVED exactly once and leaves the other watcher active', async (assert) => {
+  test('removing one watched directory fires REMOVED exactly once and leaves the other watcher live', async (assert) => {
     const { dir, id: id1, testsDir: testsDir1, testContent } = await makeWatchProject();
 
     const testsDir2 = `${dir}/tests2`;
@@ -308,7 +308,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
     }
   });
 
-  test('renaming a nested subdirectory fires one REMOVED event and re-runs with remaining files across all watched paths', async (assert) => {
+  test('renaming a nested subdirectory fires one REMOVED and re-runs every watched path without it', async (assert) => {
     // Scenario: multiple watched dirs, one of which has a deep nested structure.
     // Renaming a subdirectory inside a watched path fires a single 'rename' event for the
     // directory itself (not individual events per file). The child watcher must detect that
@@ -461,7 +461,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
     }
   });
 
-  test('adding a symlink to a .ts file into the watched directory triggers a filtered re-run', async (assert) => {
+  test('adding a symlink to a .ts file triggers a filtered re-run', async (assert) => {
     // fs.watch fires a rename event when a symlink is created; classifyRenameEvent follows the
     // symlink via stat() and classifies it as 'add', triggering a filtered re-run.
     const { dir, id, testsDir, testContent } = await makeWatchProject();

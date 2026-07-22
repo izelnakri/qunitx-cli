@@ -40,22 +40,22 @@ module('Args | parse | inputs', { concurrency: true }, () => {
 });
 
 module('Args | parse | --extensions', { concurrency: true }, () => {
-  test('--extensions parses a single extension', (assert) => {
+  test('parses a single extension', (assert) => {
     const flags = withArgv(['--extensions=mjs'], () => Args.parse(PROJECT_ROOT));
     assert.deepEqual(flags.extensions, ['mjs']);
   });
 
-  test('--extensions parses multiple comma-separated extensions', (assert) => {
+  test('parses multiple comma-separated extensions', (assert) => {
     const flags = withArgv(['--extensions=js,ts,mjs'], () => Args.parse(PROJECT_ROOT));
     assert.deepEqual(flags.extensions, ['js', 'ts', 'mjs']);
   });
 
-  test('--extensions trims whitespace around each extension', (assert) => {
+  test('trims whitespace around each extension', (assert) => {
     const flags = withArgv(['--extensions=js, ts , mjs'], () => Args.parse(PROJECT_ROOT));
     assert.deepEqual(flags.extensions, ['js', 'ts', 'mjs']);
   });
 
-  test('--extensions is undefined when flag is not provided', (assert) => {
+  test('is undefined when the flag is not provided', (assert) => {
     const flags = withArgv([], () => Args.parse(PROJECT_ROOT));
     assert.strictEqual(flags.extensions, undefined);
   });
@@ -74,7 +74,7 @@ module('Args | parse | --port', { concurrency: true }, () => {
     assert.strictEqual(flags.portExplicit, true);
   });
 
-  test('--port is undefined (not 1234) when not provided — default comes from default-project-config-values', (assert) => {
+  test('--port is undefined when not provided — 1234 comes from default-project-config-values', (assert) => {
     const flags = withArgv([], () => Args.parse(PROJECT_ROOT));
     assert.strictEqual(flags.port, undefined, 'Args.parse yields no port when flag is absent');
     assert.strictEqual(flags.portExplicit, undefined);
@@ -199,13 +199,13 @@ module('Args | parse | --changed / --since', { concurrency: true }, () => {
 });
 
 module('Args | parse | --timeout', { concurrency: true }, () => {
-  test('--timeout value is parsed as a number, not a string', (assert) => {
+  test('parses its value as a number, not a string', (assert) => {
     const flags = withArgv(['--timeout=5000'], () => Args.parse(PROJECT_ROOT));
     assert.strictEqual(typeof flags.timeout, 'number', 'timeout must be a number');
     assert.strictEqual(flags.timeout, 5000);
   });
 
-  test('--timeout arithmetic does not produce string concatenation', (assert) => {
+  test('arithmetic on the value adds, never concatenates', (assert) => {
     const flags = withArgv(['--timeout=5000'], () => Args.parse(PROJECT_ROOT));
     // This is how tests-in-browser.js uses config.timeout: config.timeout + 10000
     // If timeout is the string "5000", this produces "500010000" instead of 15000.
@@ -216,7 +216,7 @@ module('Args | parse | --timeout', { concurrency: true }, () => {
     );
   });
 
-  test('--timeout defaults to 10000 when not provided', (assert) => {
+  test('defaults to 10000 when not provided', (assert) => {
     const flags = withArgv([], () => Args.parse(PROJECT_ROOT));
     assert.strictEqual(flags.timeout, undefined, 'timeout is undefined when flag is not passed');
   });

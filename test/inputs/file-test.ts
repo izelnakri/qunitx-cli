@@ -62,7 +62,7 @@ module('Inputs | single file', { concurrency: true }, (_hooks, moduleMetadata) =
     assert.tapResult(failing, { testCount: 4, failCount: 3 });
   });
 
-  test('test.skip reports "ok # skip" and test.todo "not ok # TODO", neither counting as a failure', async (assert, testMetadata) => {
+  test('test.skip reports "ok # skip", test.todo "not ok # TODO", neither as a failure', async (assert, testMetadata) => {
     const result = await shell('node cli.ts test/fixtures/skip-todo-tests.ts', {
       ...moduleMetadata,
       ...testMetadata,

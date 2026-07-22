@@ -69,7 +69,7 @@ module('Flags | --filter', { concurrency: true }, (_hooks, moduleMetadata) => {
     assert.notIncludes(result.stdout, 'not ok');
   });
 
-  test('-m selects a module by its own name as well as its full path, nested children included', async (assert, tm) => {
+  test('-m selects a module by its own name or its full path, nested children included', async (assert, tm) => {
     // QUnit's own config.module cannot do the second one: it compares the JOINED chain path,
     // so "Inner" matches nothing. Routing every spelling through config.filter is what fixes
     // it, and only a real run can show QUnit accepted the routing.
