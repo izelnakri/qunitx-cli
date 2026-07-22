@@ -276,6 +276,39 @@ export function from(thrown: unknown): Any {
   return Unknown({ thrown }, { cause: thrown });
 }
 
+// ── Deliberate non-handling ──────────────────────────────────────────────────
+
+// Debug output is gated on the same env var the CLI's --debug flag sets, read once. These
+// call sites are in cleanup paths that run with no config in scope (temp-dir removal, socket
+// teardown), so threading `config.debug` to them is not an option.
+const DEBUG = Boolean(process.env.QUNITX_DEBUG);
+
+/**
+ * Builds a `.catch()` handler for a failure that genuinely has no consequence — but says so
+ * under `QUNITX_DEBUG` instead of vanishing.
+ *
+ * This is the counterpart to `Result`, not a lesser version of it. A `Result` is for a failure
+ * the caller branches on; unlinking a temp directory that is already gone is not that, and
+ * wrapping it would add ceremony while removing nothing (see the "when not to use this"
+ * section of `docs/error-handling.md`).
+ *
+ * What it does fix is that `.catch(() => {})` is indistinguishable from `.catch(() => {})`.
+ * A real `EACCES` on a directory qunitx is trying to clean up, and a benign `ENOENT` because
+ * it was already cleaned up, currently produce identical silence — inside code whose entire
+ * job is diagnosing why a directory will not delete.
+ *
+ * ```ts
+ * await unlink(socketPath).catch(ignore('daemon socket unlink'));
+ * ```
+ */
+export function ignore(context: string): (error: unknown) => void {
+  return (error: unknown) => {
+    if (!DEBUG) return;
+    // stderr, not stdout: stdout is the TAP stream and a stray line there corrupts the report.
+    process.stderr.write(`# [qunitx] ignored (${context}): ${format(error)}\n`);
+  };
+}
+
 // ── Cause chains ─────────────────────────────────────────────────────────────
 
 // Bounds the walk so a self-referential or cyclic `cause` cannot hang the formatter. Cycles

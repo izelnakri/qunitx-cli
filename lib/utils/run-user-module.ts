@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { red } from './color.ts';
+import { ignore } from '../result/failure.ts';
 
 /**
  * Dynamically imports `modulePath` and calls its default export with `params`; exits with code 1 on error.
@@ -112,6 +113,7 @@ async function resolveImportTarget(
   });
   return {
     url: pathToFileURL(outfile).href,
-    cleanup: () => rm(stageDir, { recursive: true, force: true }).catch(() => {}),
+    cleanup: () =>
+      rm(stageDir, { recursive: true, force: true }).catch(ignore('user module stage dir removal')),
   };
 }

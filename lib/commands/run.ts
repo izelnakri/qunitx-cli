@@ -40,6 +40,7 @@ import * as Timings from './run/timings.ts';
 import { applyWatchLineTargets, resolveTargetedFiles, splitIntoGroups } from './run/grouping.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
 import type { Config, HtmlAssets } from '../types.ts';
+import { ignore } from '../result/failure.ts';
 
 // Playwright navigation timeout for headed watch-mode reloads (not test execution).
 const WATCH_NAV_TIMEOUT_MS = 5_000;
@@ -136,7 +137,7 @@ async function runWatchMode(config: Config): Promise<void> {
   // Promise.all window and crashes the process. runInBrowser awaits this promise inside
   // its own try/catch, so the rejection is handled — but only after Browser.setup resolves.
   const preBuildPromise = buildTestBundle(config);
-  preBuildPromise.catch(() => {});
+  preBuildPromise.catch(ignore('pre-build rejection — re-awaited by runInBrowser'));
   build.preBuildPromise = preBuildPromise;
 
   const [connections] = await Promise.all([
@@ -231,7 +232,7 @@ async function runWatchMode(config: Config): Promise<void> {
         waitUntil: 'commit',
         timeout: WATCH_NAV_TIMEOUT_MS,
       })
-      .catch(() => {});
+      .catch(ignore('headed watch-mode navigation to the fallback page'));
   }
 
   if (config.watch) {
@@ -258,7 +259,7 @@ async function runWatchMode(config: Config): Promise<void> {
           // initial watch-mode build). runInBrowser picks up the promise from
           // preBuildPromise and sets activeRebuild so /tests.js can await it.
           const rebuildPromise = buildTestBundle(config);
-          rebuildPromise.catch(() => {});
+          rebuildPromise.catch(ignore('watch rebuild rejection — re-awaited by runInBrowser'));
           build.preBuildPromise = rebuildPromise;
           return await runInBrowser(config, connections);
         }
@@ -280,7 +281,7 @@ async function runWatchMode(config: Config): Promise<void> {
               waitUntil: 'commit',
               timeout: WATCH_NAV_TIMEOUT_MS,
             })
-            .catch(() => {});
+            .catch(ignore('headed watch-mode re-navigation after a rebuild'));
         }
       },
     );

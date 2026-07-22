@@ -142,6 +142,19 @@ FileMissing.code;                       // 'FileMissing'
 A `Failure` is an `Error` subclass carrying a literal `code` discriminant and a typed `data`
 payload, plus `cause` chaining, `toJSON`/`fromJSON`, `causes()`, `rootCause()` and `format()`.
 
+`Failure.ignore(context)` is the deliberate opposite — a `.catch()` handler for a failure that
+genuinely has no consequence, which says so under `QUNITX_DEBUG` instead of vanishing:
+
+```ts
+await unlink(socketPath).catch(ignore('daemon socket unlink'));
+```
+
+It is not a lesser `Result`; it is what §10 recommends *instead* of one. The point is that
+`.catch(() => {})` cannot be told apart from `.catch(() => {})` — a real `EACCES` on a
+directory qunitx is trying to clean up and a benign `ENOENT` because it was already gone
+produce identical silence, inside code whose whole job is diagnosing why a directory will not
+delete.
+
 ### `attempt` — the boundary
 
 ```ts
@@ -949,7 +962,17 @@ blocks. In descending order of value:
 5. **`lib/commands/daemon/client.ts:116-128`** — `resolve(1)` for a fatal chunk, a socket
    close and a socket error means "the daemon crashed" is reported to CI as "one test failed".
 
-Not worth converting: the ~45 cleanup `.catch(() => {})` calls on `unlink`/`rm`, where the
-failure genuinely has no consequence. Those want a one-line logger, not a Result — which is
-the open TODO item *"make all `.catch(() => {})` print something to debug"*, and is a
-different (smaller) job than this one.
+Deliberately **not** converted to Results: the 28 cleanup `.catch(() => {})` calls on
+`unlink`/`rm`/`close`/`dispose`, where the failure genuinely has no consequence. Wrapping
+those would add ceremony and remove nothing. They now carry `Failure.ignore('<what>')`
+instead — the open TODO item *"make all `.catch(() => {})` print something to debug"* — so a
+suppressed failure is labelled and visible under `QUNITX_DEBUG` while still costing nothing on
+the normal path.
+
+Three of those sites are worth knowing about, because they are *not* cleanup and the label now
+says so: `run.ts`'s two `preBuildPromise.catch(() => {})` calls and `web-server.ts`'s
+`activeRebuild.catch(() => {})` are **rejection-deadline extensions**, not error handling. The
+real handling happens at a distance, when `runInBrowser` re-awaits the same promise inside its
+own `try`. Nothing enforces that coupling; a refactor that drops the distant `await` turns
+every watch-mode build failure into silence. The labels are the only thing currently pointing
+at it.

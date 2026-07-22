@@ -5,6 +5,11 @@ import crypto from 'node:crypto';
 import { module, test } from 'qunitx';
 import { getChangedFsTree } from '../../lib/setup/get-changed-fs-tree.ts';
 import * as MetafileCache from '../../lib/utils/metafile-cache.ts';
+import {
+  GitScanFailed,
+  type getChangedFilePathsInGitSince,
+} from '../../lib/utils/get-changed-file-paths-in-git-since.ts';
+import * as Result from '../../lib/result/index.ts';
 import type { AffectedMetafile } from '../../lib/utils/get-changed-files.ts';
 import type { FSTree } from '../../lib/types.ts';
 
@@ -38,12 +43,22 @@ function metafileFor(graph: Record<string, string[]>): AffectedMetafile {
   };
 }
 
-// Injected git seams: what `getChangedFilePathsInGitSince` would have returned.
-// It yields absolute paths, so the fixtures do too.
-const gitChanged = (root: string, files: string[]) => (): Promise<Set<string>> =>
-  Promise.resolve(new Set(files.map((f) => path.join(root, f))));
-const gitBlastRadius = (): Promise<null> => Promise.resolve(null);
-const gitFailed = (): Promise<never> => Promise.reject(new Error('fatal: not a git repository'));
+// Injected git seams: what `getChangedFilePathsInGitSince` would have returned. It yields
+// absolute paths, so the fixtures do too. All three are now ordinary resolved values —
+// the failure seam in particular no longer has to reject, which is what let the branch
+// under test be a plain `if` instead of a `.catch` that funnelled an Error into a union.
+type Scan = ReturnType<typeof getChangedFilePathsInGitSince>;
+
+const gitChanged = (root: string, files: string[]) => (): Scan =>
+  Promise.resolve(
+    Result.ok({ scope: 'paths', paths: new Set(files.map((f) => path.join(root, f))) }),
+  );
+const gitBlastRadius = (): Scan =>
+  Promise.resolve(Result.ok({ scope: 'everything', trigger: 'package.json' }));
+const gitFailed = (): Scan =>
+  Promise.resolve(
+    Result.err(GitScanFailed({ ref: 'HEAD', reason: 'fatal: not a git repository' })),
+  );
 
 module('Setup | getChangedFsTree | fallback paths', { concurrency: true }, () => {
   test('no metafile cache → returns input fsTree unchanged (git never consulted)', async (assert) => {
@@ -61,7 +76,7 @@ module('Setup | getChangedFsTree | fallback paths', { concurrency: true }, () =>
     assert.strictEqual(result, tree);
   });
 
-  test('blast-radius change (git returns null) → returns input fsTree unchanged', async (assert) => {
+  test('blast-radius scan → returns input fsTree unchanged', async (assert) => {
     const root = await makeProject();
     await MetafileCache.write(root, root, metafileFor({ 'test/a-test.ts': [] }));
     const tree = fsTreeFromAbs(root, ['test/a-test.ts']);

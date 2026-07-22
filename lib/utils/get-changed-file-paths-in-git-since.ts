@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 // global is the Web variant, which returns a number with no .unref().
 import { setTimeout, clearTimeout } from 'node:timers';
 import path from 'node:path';
+import { type Result, ok, err, attempt, instanceOf, Failure } from '../result/index.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -74,15 +75,29 @@ const BLAST_RADIUS_FILES = new Set(['package.json', 'package-lock.json', 'deno.j
 const BLAST_RADIUS_PATTERNS = [/^tsconfig.*\.json$/];
 
 /**
- * Resolves the set of working-tree paths that differ from `ref`, plus all
- * uncommitted modifications/additions. Returns absolute paths.
+ * What a change scan found.
  *
- * Returns `null` when any "blast-radius" file (package.json, tsconfig*.json, …)
- * has changed — those changes can affect every test and must skip the
- * dep-graph filter. The caller treats `null` as "run all tests."
- *
- * Throws on git failure (not a repo, ref doesn't exist, git missing, or git exceeding
- * `timeoutMs`). Callers should catch and degrade to the run-all path with a stderr note.
+ * `everything` is a *successful* scan, not a failure: a blast-radius file changed, so the
+ * dep-graph filter cannot be trusted and the whole suite must run. Making that a named
+ * variant is the point of this type. It used to be `null`, returned alongside a `Set` and
+ * against a *throw* for real failure — so the caller held a `Set<string> | null | Error` and
+ * discriminated it by `instanceof`, with `changed === null` ("run everything") sitting
+ * directly beside `changed.size === 0` ("run nothing"). Two adjacent branches, opposite
+ * meanings, one of them a sentinel.
+ */
+export type ChangeScan =
+  { scope: 'everything'; trigger: string } | { scope: 'paths'; paths: Set<string> };
+
+/** git could not answer: not a repo, unknown ref, git missing, or it exceeded `timeoutMs`. */
+export const GitScanFailed = Failure.define(
+  'GitScanFailed',
+  (data: { ref: string; reason: string }) => `git lookup for "${data.ref}" failed: ${data.reason}`,
+);
+
+/**
+ * Resolves the working-tree paths that differ from `ref`, plus all uncommitted
+ * modifications/additions, as absolute paths — or `scope: 'everything'` when a blast-radius
+ * file (package.json, tsconfig*.json, …) changed.
  *
  * `timeoutMs` is injectable for tests; production always uses the default.
  */
@@ -90,11 +105,32 @@ export async function getChangedFilePathsInGitSince(
   projectRoot: string,
   ref: string,
   timeoutMs = GIT_TIMEOUT_MS,
-): Promise<Set<string> | null> {
-  const [diffOut, statusOut] = await Promise.all([
-    runGit(['diff', '--name-only', '--no-renames', ref, '--', projectRoot], projectRoot, timeoutMs),
-    runGit(['status', '--porcelain', '--untracked-files=all'], projectRoot, timeoutMs),
-  ]);
+): Promise<Result<ChangeScan, Failure.Of<typeof GitScanFailed>>> {
+  // The boundary wraps the two git calls and nothing else, so "any Error" is a tight enough
+  // declaration: execFile rejects with a numeric `code` on non-zero exit and a string `code`
+  // on ENOENT, and the timeout race rejects with a plain Error — one matcher covers all three
+  // without also swallowing a bug from the parsing below.
+  const outputs = await attempt(
+    () =>
+      Promise.all([
+        runGit(
+          ['diff', '--name-only', '--no-renames', ref, '--', projectRoot],
+          projectRoot,
+          timeoutMs,
+        ),
+        runGit(['status', '--porcelain', '--untracked-files=all'], projectRoot, timeoutMs),
+      ]),
+    instanceOf(Error),
+  );
+  if (!outputs.ok) {
+    return err(
+      GitScanFailed(
+        { ref, reason: outputs.error.message.split('\n')[0] },
+        { cause: outputs.error },
+      ),
+    );
+  }
+  const [diffOut, statusOut] = outputs.value;
 
   // `git status --porcelain` lines look like "XY path" or "XY path -> newpath"
   // for renames. We disabled renames in `git diff` above; for status, take the
@@ -116,9 +152,15 @@ export async function getChangedFilePathsInGitSince(
     const base = path.basename(rel);
     return BLAST_RADIUS_FILES.has(base) || BLAST_RADIUS_PATTERNS.some((re) => re.test(base));
   };
-  if (Array.from(relPaths).some(isBlastRadius)) return null;
+  // Naming the file that triggered it, which the old `null` could not carry — the caller
+  // could say "a blast-radius file changed" but never which one.
+  const trigger = Array.from(relPaths).find(isBlastRadius);
+  if (trigger !== undefined) return ok({ scope: 'everything', trigger });
 
-  return new Set(Array.from(relPaths, (rel) => path.resolve(projectRoot, rel)));
+  return ok({
+    scope: 'paths',
+    paths: new Set(Array.from(relPaths, (rel) => path.resolve(projectRoot, rel))),
+  });
 }
 
 export { BLAST_RADIUS_FILES, BLAST_RADIUS_PATTERNS, GIT_TIMEOUT_MS };

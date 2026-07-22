@@ -8,6 +8,7 @@ import './lib/utils/enable-compile-cache.ts';
 import './lib/utils/find-sidecar-esbuild.ts';
 import process from 'node:process';
 import { shutdownPrelaunch } from './lib/chrome/prelaunch.ts';
+import { attempt, Failure } from './lib/result/index.ts';
 import pkg from './package.json' with { type: 'json' };
 
 process.title = 'qunitx';
@@ -50,12 +51,19 @@ process.title = 'qunitx';
     useDaemon = await ensureRunning();
   }
   if (useDaemon) {
-    try {
-      const exitCode = await Client.runVia(process.argv.slice(2));
+    // `attempt` with no matchers rather than the bare `catch {}` this replaces: the fall-through
+    // is still unconditional, but a bug inside the client now shows up in the failure instead of
+    // being erased. Both transport failures fall through to a local run; only the one that means
+    // "the daemon died mid-run" says so, because it used to be indistinguishable from exit 1.
+    const routed = await attempt(() => Client.runVia(process.argv.slice(2)));
+    if (routed.ok && routed.value.ok) {
+      const exitCode = routed.value.value;
       process.stdout.write('', () => process.exit(exitCode));
       return;
-    } catch {
-      // Daemon disappeared mid-handshake — fall through to a local run.
+    }
+    const failure = Failure.from(routed.ok ? routed.value.error : routed.error);
+    if (failure.code !== 'DaemonUnreachable') {
+      process.stderr.write(`# [qunitx] ${Failure.format(failure)} — running locally\n`);
     }
   }
 
@@ -66,7 +74,16 @@ process.title = 'qunitx';
     import('./lib/setup/config.ts'),
     import('./lib/commands/run.ts'),
   ]);
-  const config = await Config.setup();
+  // The one place a bad flag or a broken plugin becomes a message and an exit code. Config
+  // assembly used to do this itself, at eight separate `console.error` + `process.exit(1)`
+  // pairs buried in a pure argv transform.
+  const configured = await Config.setup();
+  if (!configured.ok) {
+    console.error(Failure.format(configured.error));
+    await shutdownPrelaunch();
+    return process.stderr.write('', () => process.exit(1));
+  }
+  const config = configured.value;
 
   // --search/--print lists what the filter matches and exits: no browser, no bundle, no tests.
   // Chrome was pre-launched at module load, so shut it back down rather than leaking it.
