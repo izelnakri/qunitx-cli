@@ -54,7 +54,7 @@ module('TAP | displayTestResult | output', { concurrency: true }, () => {
     assert.includes(output, 'message: custom message', 'non-null message must be printed');
   });
 
-  test('Chrome stack: leading whitespace is trimmed so YAML renders "stack: at ..." not "stack:     at ..."', (assert) => {
+  test('Chrome stack: leading whitespace is trimmed so YAML renders "stack: at ..." unindented', (assert) => {
     const output = render({
       status: 'failed',
       fullName: ['mod', 'test'],

@@ -44,7 +44,7 @@ module('Flags | --watch', { concurrency: true }, () => {
   // kernel-state proxies (port-free probes flaked under load due to lingering TCP cleanup),
   // no syscalls, no platform variance — exactly what shellWatch's internal terminateChild
   // is supposed to be waiting on.
-  test('shellWatch releases the semaphore permit only after the child process has fully exited', async (assert) => {
+  test('shellWatch holds the semaphore permit until the child has fully exited', async (assert) => {
     let captured: ChildProcessWithoutNullStreams | null = null;
 
     await shellWatch('node cli.ts test/fixtures/passing-tests.ts --watch', {
