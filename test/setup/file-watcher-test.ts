@@ -758,6 +758,55 @@ module('Setup | FileWatcher.rescanDirectoryForDelta', { concurrency: true }, () 
     }
   });
 
+  test('does not fire add for a dangling symlink, and unlinks one that goes dangling', async (assert) => {
+    // The macos/webkit failure in CI 29954121720, reproduced deterministically and on any
+    // platform by driving the rescan directly. readdir's isSymbolicLink() is lstat-based, so a
+    // broken link looked "present" here and was added — then the symlink poller noticed the
+    // missing target and removed it again, giving `ADDED: dangling.ts` / `REMOVED: dangling.ts`
+    // and two spurious rebuilds. Linux never showed it because its inotify path goes through
+    // classifyRenameEvent, which stats and drops the link before anything is logged; macOS
+    // leans on this rescan. FSTree.build already excluded dangling links, so the rescan was
+    // the one place that disagreed.
+    const dir = path.join(process.cwd(), `tmp/rescan-dangling-${randomUUID()}`);
+    await fs.mkdir(dir, { recursive: true });
+    const wasValid = path.join(dir, 'was-valid.ts');
+    const target = path.join(dir, 'target.ts');
+    await fs.writeFile(target, 'export default {}');
+    await fs.symlink(target, wasValid);
+    // Never resolved at any point.
+    await fs.symlink(path.join(dir, 'no-such-file.ts'), path.join(dir, 'dangling.ts'));
+    // Tracked and resolving until now; its target disappears, so it must still unlink.
+    await fs.rm(target);
+
+    const config: Partial<Config> & { fsTree: FSTree } = {
+      fsTree: { [wasValid]: null },
+      projectRoot: dir,
+    };
+    const events: Array<{ event: string; file: string }> = [];
+
+    await FileWatcher.rescanDirectoryForDelta(
+      dir,
+      asConfig(config),
+      ['ts', 'js'],
+      (ev, f) => events.push({ event: ev, file: f }),
+      null,
+    );
+
+    try {
+      assert.false(
+        events.some((e) => e.file.endsWith('dangling.ts')),
+        'a never-resolving symlink produces no event at all',
+      );
+      assert.deepEqual(
+        events.filter((e) => e.file === wasValid).map((e) => e.event),
+        ['unlink'],
+        'a tracked symlink whose target was deleted still unlinks',
+      );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test('fires change when a tracked file content differs from the built baseline', async (assert) => {
     // When FSEvents drops a 'change' event under load, the rescan must catch the missed
     // modification — otherwise the watcher sits forever on stale content (a 120-second timeout).
