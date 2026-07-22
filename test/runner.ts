@@ -50,7 +50,7 @@ const watchMode = process.argv.includes('--watch');
 const cliFiles = watchMode ? [] : process.argv.slice(2);
 
 // Concurrent Chrome cap. Default = availableParallelism so the semaphore matches
-// the runner's CPU budget. Lowered to 2 in two combinations where browser
+// the runner's CPU budget. Lowered to 2 in three combinations where browser
 // startup contention reliably manifests on hosted CI runners and a 250-ms
 // stagger experiment failed to recover them (cd31f12 → Windows test-deno
 // hit the same 25-min timeout, macos webkit's watch-mode bundle-error test
@@ -71,8 +71,17 @@ const cliFiles = watchMode ? [] : process.argv.slice(2);
 //     Halving parallel pressure removes the stall without serializing the
 //     whole lane.
 //
-// Both caps are removable once the upstream platforms stabilize (see also
-// the windows/firefox exclude in browser-compat.yml and the daemon-on-Windows
+//   * Windows + firefox: inputs/{no-html,custom-html}-test.ts used to lose
+//     --browser forwarding by hand-rolling their spawns, so this lane quietly
+//     ran them on chromium. Routing them back through the shell helper made
+//     them genuinely launch firefox — four concurrent instances between them —
+//     and the lane stopped absorbing it: unrelated files (inputs/jsx-test.ts)
+//     began failing on `page.goto: Timeout 60000ms exceeded` against a server
+//     that had already bound its port. Firefox on Windows is simply heavier
+//     per instance than the chromium these tests were accidentally using.
+//
+// All three caps are removable once the upstream platforms stabilize (see also
+// the windows/webkit exclude in browser-compat.yml and the daemon-on-Windows
 // skip in test/commands/daemon-test.ts — same root family).
 const CHROME_CAP = isContentionLane()
   ? Math.min(2, availableParallelism())
@@ -81,6 +90,7 @@ const CHROME_CAP = isContentionLane()
 function isContentionLane(): boolean {
   if (process.platform === 'win32' && IS_DENO) return true;
   if (process.platform === 'darwin' && process.env.QUNITX_BROWSER === 'webkit') return true;
+  if (process.platform === 'win32' && process.env.QUNITX_BROWSER === 'firefox') return true;
   return false;
 }
 
