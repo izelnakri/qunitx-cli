@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { randomUUID } from 'node:crypto';
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 // Use node:timers' setTimeout (returns a Timeout object with .unref()) rather than
 // the global setTimeout. Under Deno, global setTimeout follows the web spec and
 // returns a plain number — `.unref()` doesn't exist on a number, so the kill-timer
@@ -428,7 +428,7 @@ export async function terminateChild(child: ChildProcessWithoutNullStreams): Pro
     // under load. `taskkill /F /T /PID` walks the process tree from the cli
     // PID and force-kills every descendant in one call — must be issued while
     // the parent is still alive so the tree walk can reach the children.
-    spawnSync('taskkill', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore' });
+    await taskkillTree(child.pid);
     child.stdin.destroy();
     child.stdout.destroy();
     child.stderr.destroy();
@@ -438,7 +438,7 @@ export async function terminateChild(child: ChildProcessWithoutNullStreams): Pro
     // on the directory its fs.watch handles were still holding. taskkill is re-issued because
     // a tree walk that raced a still-spawning descendant (Chrome/Firefox helper) can miss it.
     if (!(await waitForClose(child, CHILD_EXIT_GRACE_MS))) {
-      spawnSync('taskkill', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore' });
+      await taskkillTree(child.pid);
       await waitForClose(child, CHILD_EXIT_GRACE_MS);
     }
     child.unref();
@@ -469,6 +469,23 @@ export async function terminateChild(child: ChildProcessWithoutNullStreams): Pro
   throw new Error(
     `Child process (pid=${child.pid}) failed to close within ${CHILD_EXIT_GRACE_MS}ms after SIGTERM + ${POST_SIGKILL_DRAIN_MS}ms after SIGKILL. exitCode=${child.exitCode} signalCode=${child.signalCode}`,
   );
+}
+
+/**
+ * Force-kills a Windows process tree from `pid` down, resolving once taskkill itself has
+ * exited. Spawned rather than spawnSync'd: terminateChild runs in the finally of every
+ * shellWatch, and a synchronous tree walk freezes the whole worker — the timers and sockets
+ * of every other test sharing it included. Nothing here needed the sync form; the ordering
+ * requirement is that taskkill has finished before we go on to wait for the child, and
+ * awaiting gives exactly that. 'error' resolves too, so a missing taskkill degrades to the
+ * SIGTERM path instead of rejecting out of a cleanup block.
+ */
+function taskkillTree(pid: number | undefined): Promise<void> {
+  return new Promise((resolve) => {
+    spawn('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore' })
+      .once('close', () => resolve())
+      .once('error', () => resolve());
+  });
 }
 
 // 'close' (not 'exit') is the lifecycle event that releases the OS-level stdio
