@@ -1,6 +1,7 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import * as Result from '../../lib/result/index.ts';
 import '../helpers/custom-asserts.ts';
 import {
   buildTestBundle,
@@ -281,7 +282,11 @@ module('Commands | buildTestBundle | fallbackPage lifecycle', { concurrency: tru
     await fs.writeFile(tmpFile, 'this is } invalid { syntax !!!');
     const config = makeConfig([tmpFile]); // watch = false
     try {
-      await buildTestBundle(config).catch(() => {});
+      // Asserted, not merely tolerated. `.catch(() => {})` here accepted a *resolved*
+      // build just as happily, so if buildTestBundle ever stopped rejecting on invalid
+      // syntax this test would still pass while proving nothing.
+      const built = await Result.attempt(() => buildTestBundle(config));
+      assert.notOk(built.ok, 'an unparseable entry point rejects');
       const html = await fs.readFile(`${CWD}/${config.output}/index.html`, 'utf8');
       assert.ok(html.includes('<!DOCTYPE html>'), 'index.html is a full HTML document');
       assert.ok(html.includes('id="qunit-header"'), 'QUnit header element present');
@@ -299,7 +304,11 @@ module('Commands | buildTestBundle | fallbackPage lifecycle', { concurrency: tru
     await fs.writeFile(tmpFile, 'this is } invalid { syntax !!!');
     const config = makeConfig([tmpFile], true); // watch = true
     try {
-      await buildTestBundle(config).catch(() => {});
+      // Asserted, not merely tolerated. `.catch(() => {})` here accepted a *resolved*
+      // build just as happily, so if buildTestBundle ever stopped rejecting on invalid
+      // syntax this test would still pass while proving nothing.
+      const built = await Result.attempt(() => buildTestBundle(config));
+      assert.notOk(built.ok, 'an unparseable entry point rejects');
       const html = await fs.readFile(`${CWD}/${config.output}/index.html`, 'utf8');
       assert.ok(html.includes('<!DOCTYPE html>'), 'index.html written in watch mode too');
     } finally {

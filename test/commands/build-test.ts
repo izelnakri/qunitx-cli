@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { buildTestBundle, bundleCacheKey } from '../../lib/commands/run/tests-in-browser.ts';
 import * as RunState from '../../lib/setup/run-state.ts';
 import type { BuildState, Config } from '../../lib/types.ts';
+import { ignore } from '../../lib/result/failure.ts';
 
 const CWD = process.cwd();
 
@@ -350,7 +351,7 @@ function makeConfig(testFiles: string[], watch = false): Config {
 // Dispose any live esbuild context so the service can be cleaned up after each test.
 async function disposeCached(cached: BuildState): Promise<void> {
   if (cached.context) {
-    await cached.context.dispose().catch(() => {});
+    await cached.context.dispose().catch(ignore('esbuild context dispose during teardown'));
     cached.context = null;
   }
 }
