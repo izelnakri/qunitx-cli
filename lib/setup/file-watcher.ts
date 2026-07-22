@@ -571,6 +571,14 @@ export async function rescanDirectoryForDelta(
       const entryPath = path.join(entry.parentPath, entry.name);
       presentDirs.add(entry.parentPath);
       if (!extensions.some((ext) => entryPath.endsWith(`.${ext}`))) continue;
+      // A symlink counts as present only if it resolves. readdir's isSymbolicLink() is
+      // lstat-based and says nothing about the target, so without this a dangling link is
+      // added to the tree here and then unlinked again as soon as the symlink poller notices
+      // — two spurious rebuilds — and this path contradicts FSTree.build and
+      // classifyRenameEvent, which both stat and skip it. Only paid per symlink, and only on
+      // the rescan path. Leaving it out of presentPaths is also what makes a tracked symlink
+      // whose target has since been deleted fire its unlink below.
+      if (entry.isSymbolicLink() && !(await resolves(entryPath))) continue;
       presentPaths.add(entryPath);
       if (!(entryPath in config.fsTree)) {
         if (entry.isSymbolicLink()) trackSymlinkFn?.(entryPath);
@@ -648,6 +656,14 @@ export function mutateFSTree(fsTree: FSTree, event: string, filePath: string): v
  * Retries once after 50ms for overlayfs (Docker CI) copy-on-write transient unavailability.
  * Returns null when the path is unknown and has no tracked children (safe to ignore).
  */
+/** Whether the path resolves — stat follows symlinks, so a dangling link answers false. */
+function resolves(filePath: string): Promise<boolean> {
+  return stat(filePath).then(
+    () => true,
+    () => false,
+  );
+}
+
 async function classifyRenameEvent(
   fullPath: string,
   fsTree: FSTree | undefined,
