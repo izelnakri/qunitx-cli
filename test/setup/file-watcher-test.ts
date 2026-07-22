@@ -406,6 +406,45 @@ module('Setup | FileWatcher.handleWatchEvent', { concurrency: true }, () => {
     );
   });
 
+  test('a change arriving after the suppression window is NOT suppressed', async (assert) => {
+    // The far side of the same window, and the reason no test may assert on how many re-runs
+    // one file write produces. ADD_SUPPRESS_WINDOW_MS is 1s of best-effort deduplication, not
+    // a guarantee: on a loaded runner the add's own build outlasts it, the trailing 'change'
+    // lands outside, and a second — redundant but harmless, same inputs and same results —
+    // rebuild fires. An e2e test that counted runs flaked on exactly this (macos/webkit, CI
+    // run 29953224549, 3 runs where it demanded 2).
+    //
+    // justAddedAt is seeded in the past rather than slept past, so this pins the boundary
+    // deterministically and instantly.
+    const config = {
+      fsTree: {},
+      projectRoot: '/project',
+      state: watchState({
+        justAddedAt: new Map([['/project/test/new.ts', Date.now() - 5_000]]),
+      }),
+    };
+    const calls: Array<{ event: string; path: string }> = [];
+    const onEvent = (ev: string, p: string): Promise<void> => {
+      calls.push({ event: ev, path: p });
+      return Promise.resolve();
+    };
+
+    await FileWatcher.handleWatchEvent(
+      asConfig(config),
+      ['ts'],
+      'change',
+      '/project/test/new.ts',
+      onEvent,
+      null,
+    );
+
+    assert.deepEqual(
+      calls,
+      [{ event: 'change', path: '/project/test/new.ts' }],
+      'an add older than the window no longer suppresses its trailing change',
+    );
+  });
+
   test('lastBuildEndMs advances on each successive build', async (assert) => {
     const config = { fsTree: { '/project/test/foo.js': null }, projectRoot: '/project' };
     const asyncBuild = () => new Promise<void>((resolve) => setTimeout(resolve, 10));
