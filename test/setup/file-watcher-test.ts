@@ -3,7 +3,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 
+import type { Dirent } from 'node:fs';
 import * as FileWatcher from '../../lib/setup/file-watcher.ts';
+import type { RescanDeps } from '../../lib/setup/file-watcher.ts';
 import '../helpers/custom-asserts.ts';
 import * as RunState from '../../lib/setup/run-state.ts';
 import type { Config, FSTree, RunState as RunStateShape } from '../../lib/types.ts';
@@ -19,6 +21,20 @@ const asConfig = (config: object): Config => {
   withState.state ??= RunState.create();
   return withState;
 };
+
+// A readdir Dirent that claims to be a plain file — how Windows reports a dangling symlink
+// (a broken reparse point) that macOS/Linux would report as a symlink.
+function fileDirent(parentPath: string, name: string): Dirent {
+  return {
+    name,
+    parentPath,
+    isFile: () => true,
+    isDirectory: () => false,
+    isSymbolicLink: () => false,
+  } as unknown as Dirent;
+}
+
+const errno = (code: string): NodeJS.ErrnoException => Object.assign(new Error(code), { code });
 
 // Fresh run state with the watcher's build bookkeeping overridden. These tests drive
 // handleWatchEvent directly, so they seed the slots a real run would have accumulated.
@@ -805,6 +821,74 @@ module('Setup | FileWatcher.rescanDirectoryForDelta', { concurrency: true }, () 
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
+  });
+
+  test('drops a dangling symlink that readdir misreports as a plain file (Windows)', async (assert) => {
+    // The Windows CI flake (job 89249105249). Unlike the macOS case above, this cannot use a
+    // real symlink to reproduce: on macOS/Linux readdir reports a dangling symlink as a symlink,
+    // so the symlink-gated guard already handled it. On Windows a dangling symlink is a broken
+    // reparse point that readdir reports as a plain FILE — isSymbolicLink() is false — so the
+    // guard was skipped, the broken path entered the tree, and every rebuild then failed with
+    // "Could not resolve dangling.ts". Reproduced on any platform by injecting a readdir that
+    // returns a file-typed dirent for a path whose stat is ENOENT — exactly Windows's disagreement.
+    const dir = path.join(process.cwd(), 'tmp', 'rescan-win-dangling');
+    const danglingPath = path.join(dir, 'dangling.ts');
+    const deps = {
+      readdir: (() =>
+        Promise.resolve([fileDirent(dir, 'dangling.ts')])) as unknown as RescanDeps['readdir'],
+      stat: ((p: string) =>
+        p === danglingPath
+          ? Promise.reject(errno('ENOENT'))
+          : Promise.resolve({ mtimeMs: 0 })) as unknown as RescanDeps['stat'],
+    };
+    const config: Partial<Config> & { fsTree: FSTree } = { fsTree: {}, projectRoot: dir };
+    const events: Array<{ event: string; file: string }> = [];
+
+    await FileWatcher.rescanDirectoryForDelta(
+      dir,
+      asConfig(config),
+      ['ts'],
+      (ev, f) => events.push({ event: ev, file: f }),
+      null,
+      undefined,
+      deps,
+    );
+
+    assert.deepEqual(events, [], 'a file-typed dirent that does not resolve produces no event');
+    assert.notOk(danglingPath in config.fsTree, 'the broken path never enters the tree');
+  });
+
+  test('a transient stat error keeps a tracked file present — no spurious unlink', async (assert) => {
+    // The other half of the guard: only ENOENT means "gone". A momentary EACCES/EMFILE under
+    // load must not unlink a real, existing file — which a blanket "drop anything that fails to
+    // stat" would. Inject a stat that fails non-ENOENT for a tracked file and assert it survives.
+    const dir = path.join(process.cwd(), 'tmp', 'rescan-transient');
+    const trackedPath = path.join(dir, 'app.ts');
+    const deps = {
+      readdir: (() =>
+        Promise.resolve([fileDirent(dir, 'app.ts')])) as unknown as RescanDeps['readdir'],
+      stat: (() => Promise.reject(errno('EACCES'))) as unknown as RescanDeps['stat'],
+    };
+    const config: Partial<Config> & { fsTree: FSTree } = {
+      fsTree: { [trackedPath]: null },
+      projectRoot: dir,
+    };
+    const events: Array<{ event: string; file: string }> = [];
+
+    await FileWatcher.rescanDirectoryForDelta(
+      dir,
+      asConfig(config),
+      ['ts'],
+      (ev, f) => events.push({ event: ev, file: f }),
+      null,
+      undefined,
+      deps,
+    );
+
+    assert.false(
+      events.some((e) => e.event === 'unlink'),
+      'a transient stat failure does not unlink a real, tracked file',
+    );
   });
 
   test('fires change when a tracked file content differs from the built baseline', async (assert) => {

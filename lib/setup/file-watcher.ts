@@ -539,6 +539,17 @@ export function handleWatchEvent(
 }
 
 /**
+ * The `fs` calls `rescanDirectoryForDelta` makes — injectable so a platform-specific
+ * readdir/stat disagreement can be reproduced deterministically. Production uses the real fs.
+ */
+export interface RescanDeps {
+  /** Lists the directory tree. Its dirent types are unreliable on Windows — see `isMissing`. */
+  readdir: typeof readdir;
+  /** Resolves a path (follows symlinks). Used to drop entries that are genuinely gone. */
+  stat: typeof stat;
+}
+
+/**
  * Scans `watchPath` recursively and fires `add` / `change` / `unlink` events for any delta
  * between the directory contents and `config.fsTree`. Used as a 1 s safety-net poll on macOS
  * where FSEvents can drop events under load — additions and removals are recovered from the
@@ -553,9 +564,10 @@ export async function rescanDirectoryForDelta(
   onEventFunc: (event: string, file: string) => unknown,
   onFinishFunc: ((path: string, event: string) => void) | null | undefined,
   trackSymlinkFn?: (filePath: string) => void,
+  deps: RescanDeps = { readdir, stat },
 ): Promise<void> {
   try {
-    const entries = await readdir(watchPath, { withFileTypes: true, recursive: true });
+    const entries = await deps.readdir(watchPath, { withFileTypes: true, recursive: true });
     const presentPaths = new Set<string>();
     // presentDirs tracks every directory confirmed present on disk — used below to detect which
     // ancestor directory was removed without issuing additional stat() calls.
@@ -571,14 +583,18 @@ export async function rescanDirectoryForDelta(
       const entryPath = path.join(entry.parentPath, entry.name);
       presentDirs.add(entry.parentPath);
       if (!extensions.some((ext) => entryPath.endsWith(`.${ext}`))) continue;
-      // A symlink counts as present only if it resolves. readdir's isSymbolicLink() is
-      // lstat-based and says nothing about the target, so without this a dangling link is
-      // added to the tree here and then unlinked again as soon as the symlink poller notices
-      // — two spurious rebuilds — and this path contradicts FSTree.build and
-      // classifyRenameEvent, which both stat and skip it. Only paid per symlink, and only on
-      // the rescan path. Leaving it out of presentPaths is also what makes a tracked symlink
-      // whose target has since been deleted fire its unlink below.
-      if (entry.isSymbolicLink() && !(await resolves(entryPath))) continue;
+      // A path counts as present only if it resolves. This must NOT gate on
+      // `entry.isSymbolicLink()`: readdir's dirent type is unreliable on Windows, where a
+      // dangling symlink is a broken reparse point reported as a plain FILE — so the old
+      // symlink-gated check let the broken path in here, added it to the tree, and every
+      // rebuild then failed with "Could not resolve <path>" (the Windows CI flake). Stat every
+      // candidate instead and drop the ones that are genuinely gone — a dangling symlink, or a
+      // file removed since the readdir that listed it — whatever readdir called them. Dropping
+      // is also what makes a tracked symlink whose target was deleted fire its unlink below. A
+      // *transient* stat error (EMFILE/EACCES under load) is not ENOENT, so a real, existing
+      // file stays present and is never spuriously unlinked. FSTree.build and
+      // classifyRenameEvent already stat-and-skip on their own paths; this aligns the rescan.
+      if (await isMissing(entryPath, deps.stat)) continue;
       presentPaths.add(entryPath);
       if (!(entryPath in config.fsTree)) {
         if (entry.isSymbolicLink()) trackSymlinkFn?.(entryPath);
@@ -597,7 +613,7 @@ export async function rescanDirectoryForDelta(
     await Promise.all(
       trackedToRecheck.map(async (filePath) => {
         try {
-          const { mtimeMs } = await stat(filePath);
+          const { mtimeMs } = await deps.stat(filePath);
           if (mtimeMs < buildEndMs - RESCAN_MTIME_GRACE_MS) return;
           await dispatchIfContentChanged(config, extensions, filePath, onEventFunc, onFinishFunc);
         } catch {
@@ -656,12 +672,23 @@ export function mutateFSTree(fsTree: FSTree, event: string, filePath: string): v
  * Retries once after 50ms for overlayfs (Docker CI) copy-on-write transient unavailability.
  * Returns null when the path is unknown and has no tracked children (safe to ignore).
  */
-/** Whether the path resolves — stat follows symlinks, so a dangling link answers false. */
-function resolves(filePath: string): Promise<boolean> {
-  return stat(filePath).then(
-    () => true,
-    () => false,
-  );
+/**
+ * Whether `filePath` is genuinely absent — a dangling symlink (stat follows the link to a
+ * missing target) or a file removed since the readdir that listed it. Both answer `ENOENT`.
+ *
+ * A *transient* stat error (`EMFILE`/`EACCES` under load) is deliberately NOT treated as
+ * absent: it answers `false`, so a real, existing file stays present and is never dropped from
+ * the tree and unlinked. That distinction is what lets the caller stat every candidate — rather
+ * than only readdir-typed symlinks — without a blanket "drop anything that fails to stat"
+ * spuriously unlinking a file under momentary fs pressure.
+ */
+async function isMissing(filePath: string, statFn: typeof stat): Promise<boolean> {
+  try {
+    await statFn(filePath);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT';
+  }
 }
 
 async function classifyRenameEvent(
