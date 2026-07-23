@@ -1,12 +1,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import * as Result from '../../lib/result/index.ts';
 import crypto from 'node:crypto';
 import { module, test } from 'qunitx';
 import {
   BLAST_RADIUS_FILES,
   BLAST_RADIUS_PATTERNS,
+  type ChangeScan,
   getChangedFilePathsInGitSince,
+  GitScanFailed,
   runGit,
 } from '../../lib/utils/get-changed-file-paths-in-git-since.ts';
 
@@ -58,23 +59,23 @@ module('Utils | getChangedFilePathsInGitSince | constants', { concurrency: true 
 module('Utils | getChangedFilePathsInGitSince | git interaction', { concurrency: true }, () => {
   test('returns empty set when nothing changed', async (assert) => {
     const root = await makeRepo({ 'a.ts': 'export const a = 1;' });
-    const result = await getChangedFilePathsInGitSince(root, 'HEAD');
-    assert.equal(Result.unwrap(result).scope, 'paths', 'not blast-radius');
-    assert.equal(paths(result).size, 0);
+    const scan = await getChangedFilePathsInGitSince(root, 'HEAD');
+    assert.equal(scan.scope, 'paths', 'not blast-radius');
+    assert.equal(paths(scan).size, 0);
   });
 
   test('untracked file is reported as changed', async (assert) => {
     const root = await makeRepo({ 'a.ts': 'export const a = 1;' });
     await fs.writeFile(path.join(root, 'b.ts'), 'export const b = 2;');
-    const result = await getChangedFilePathsInGitSince(root, 'HEAD');
-    assert.ok(paths(result).has(path.resolve(root, 'b.ts')));
+    const scan = await getChangedFilePathsInGitSince(root, 'HEAD');
+    assert.ok(paths(scan).has(path.resolve(root, 'b.ts')));
   });
 
   test('modified tracked file is reported as changed', async (assert) => {
     const root = await makeRepo({ 'a.ts': 'export const a = 1;' });
     await fs.writeFile(path.join(root, 'a.ts'), 'export const a = 2;');
-    const result = await getChangedFilePathsInGitSince(root, 'HEAD');
-    assert.ok(paths(result).has(path.resolve(root, 'a.ts')));
+    const scan = await getChangedFilePathsInGitSince(root, 'HEAD');
+    assert.ok(paths(scan).has(path.resolve(root, 'a.ts')));
   });
 
   test('a package.json change reports scope "everything", naming the trigger', async (assert) => {
@@ -83,9 +84,9 @@ module('Utils | getChangedFilePathsInGitSince | git interaction', { concurrency:
       'package.json': '{}',
     });
     await fs.writeFile(path.join(root, 'package.json'), '{"name":"x"}');
-    const scan = Result.unwrap(await getChangedFilePathsInGitSince(root, 'HEAD'));
+    const scan = await getChangedFilePathsInGitSince(root, 'HEAD');
     assert.equal(scan.scope, 'everything');
-    assert.equal(scan.trigger, 'package.json', 'names which file forced the full run');
+    assert.equal(scan.scope === 'everything' && scan.trigger, 'package.json', 'names the trigger');
   });
 
   test('a tsconfig.test.json change reports scope "everything"', async (assert) => {
@@ -94,16 +95,17 @@ module('Utils | getChangedFilePathsInGitSince | git interaction', { concurrency:
       'tsconfig.test.json': '{}',
     });
     await fs.writeFile(path.join(root, 'tsconfig.test.json'), '{"compilerOptions":{}}');
-    const scan = Result.unwrap(await getChangedFilePathsInGitSince(root, 'HEAD'));
+    const scan = await getChangedFilePathsInGitSince(root, 'HEAD');
     assert.equal(scan.scope, 'everything');
   });
 
   test('an unknown ref is a declared failure, not a rejection', async (assert) => {
     const root = await makeRepo({ 'a.ts': '' });
-    const scan = await getChangedFilePathsInGitSince(root, 'no-such-ref');
+    const scan = await getChangedFilePathsInGitSince(root, 'no-such-ref').result();
 
-    assert.notOk(scan.ok);
-    assert.equal(scan.error.code, 'GitScanFailed');
+    assert.notOk(scan.ok, 'a bad ref settles as a Failure, never a thrown bug');
+    assert.ok(GitScanFailed.is(scan.error), 'and it is specifically a GitScanFailed');
+    if (!GitScanFailed.is(scan.error)) return;
     assert.equal(scan.error.data.ref, 'no-such-ref');
     assert.ok(scan.error.cause instanceof Error, "git's own error is kept as the cause");
   });
@@ -127,12 +129,17 @@ const HANG_ARGS = IS_DENO
 module('Utils | getChangedFilePathsInGitSince | bounded execution', { concurrency: true }, () => {
   test('kills and rejects a subprocess that never exits, rather than waiting forever', async (assert) => {
     const startedAt = Date.now();
-    const ran = await Result.try(() => runGit(HANG_ARGS, process.cwd(), 300, process.execPath), {
-      catch: Result.instanceOf(Error),
-    });
+    let rejected = false;
+    // runGit is the low-level throwing primitive (it rejects with a raw Error, not a Failure),
+    // so this boundary stays a plain try/catch — Task is for the async *producers* built on it.
+    try {
+      await runGit(HANG_ARGS, process.cwd(), 300, process.execPath);
+    } catch {
+      rejected = true;
+    }
     const elapsed = Date.now() - startedAt;
 
-    assert.notOk(ran.ok, 'settles as a rejection instead of hanging forever');
+    assert.ok(rejected, 'settles as a rejection instead of hanging forever');
     assert.ok(elapsed < 10_000, `settles at the bound, not never (took ${elapsed}ms)`);
     // getChangedFsTree funnels any git error into "run all test files" (covered in
     // test/setup/get-changed-fs-tree-test.ts), so rejecting here is what converts an
@@ -143,14 +150,12 @@ module('Utils | getChangedFilePathsInGitSince | bounded execution', { concurrenc
     const root = await makeRepo({ 'src/app.ts': 'export const a = 1;\n' });
     await fs.writeFile(path.join(root, 'src/app.ts'), 'export const a = 2;\n');
     const changed = await getChangedFilePathsInGitSince(root, 'HEAD');
-    assert.ok(changed.ok, 'the bound does not interfere with a normal lookup');
     assert.ok(paths(changed).has(path.join(root, 'src/app.ts')), 'the modified file is reported');
   });
 });
 
-/** The scanned paths, asserting the scan succeeded and was not a blast-radius short-circuit. */
-function paths(scan) {
-  const value = Result.unwrap(scan);
-  if (value.scope !== 'paths') throw new Error(`expected scope "paths", got "${value.scope}"`);
-  return value.paths;
+/** The scanned paths, asserting the scan was not a blast-radius short-circuit. */
+function paths(scan: ChangeScan) {
+  if (scan.scope !== 'paths') throw new Error(`expected scope "paths", got "${scan.scope}"`);
+  return scan.paths;
 }
