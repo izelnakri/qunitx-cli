@@ -6,6 +6,7 @@ const Boom = Failure.define('Boom', (data: { at: string }) => `boom at ${data.at
 // A plain async producer: a normal `Promise<T>` that *rejects* with a Failure. No Task, no
 // value-first Result — exactly the "existing Promise-returning function" the design targets.
 async function loadUser(id: number, tag: string): Promise<{ id: number; tag: string }> {
+  await Promise.resolve(); // a real async hop, so the throw below settles as a *rejection*
   if (id <= 0) throw Boom({ at: `loadUser(${id})` });
   return { id, tag };
 }
