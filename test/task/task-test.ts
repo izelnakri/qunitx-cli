@@ -9,6 +9,41 @@ const loadUser = (id: number): Task<{ id: number; name: string }> =>
     return { id, name: 'u' + id };
   });
 
+// ── Lazy: the recipe runs only on await ─────────────────────────────────────────
+
+module('Task | lazy', { concurrency: true }, () => {
+  test('the recipe does not run until the Task is awaited', async (assert) => {
+    let ran = false;
+    const task = Task.run(() => {
+      ran = true;
+      return 1;
+    });
+    assert.false(ran, 'nothing ran at construction');
+    await task;
+    assert.true(ran, 'ran only on await');
+  });
+
+  test('a chain stays lazy — .map does not trigger the upstream Task', async (assert) => {
+    let ran = false;
+    const mapped = Task.run(() => {
+      ran = true;
+      return 2;
+    }).map((x) => x + 1);
+    assert.false(ran, 'building the chain ran nothing');
+    assert.strictEqual(await mapped, 3);
+    assert.true(ran, 'awaiting the chain ran it');
+  });
+
+  test('a memoria-style lazy relationship fires its RPC only on await', async (assert) => {
+    let rpcCount = 0;
+    const posts = () => Task.run(() => (rpcCount++, [{ id: 1 }, { id: 2 }]));
+    const rel = posts();
+    assert.strictEqual(rpcCount, 0, 'accessing the relationship fired no RPC');
+    assert.deepEqual(await rel, [{ id: 1 }, { id: 2 }]);
+    assert.strictEqual(rpcCount, 1, 'RPC fired exactly once, on await');
+  });
+});
+
 // ── It is a real Promise ──────────────────────────────────────────────────────
 
 module('Task | is a real Promise', { concurrency: true }, () => {
@@ -17,7 +52,7 @@ module('Task | is a real Promise', { concurrency: true }, () => {
     assert.true(Task.of(1) instanceof Promise);
   });
 
-  test('await returns the value, or throws the Failure — idiomatic', async (assert) => {
+  test('await returns the value, or throws the Failure — the JS standard', async (assert) => {
     assert.deepEqual(await loadUser(1), { id: 1, name: 'u1' });
     try {
       await loadUser(0);
@@ -28,7 +63,7 @@ module('Task | is a real Promise', { concurrency: true }, () => {
     }
   });
 
-  test('Promise.all fail-fasts on the first failure and short-circuits', async (assert) => {
+  test('Promise.all fail-fasts and short-circuits', async (assert) => {
     assert.deepEqual(await Promise.all([loadUser(1), loadUser(2)]), [
       { id: 1, name: 'u1' },
       { id: 2, name: 'u2' },
@@ -45,12 +80,17 @@ module('Task | builders', { concurrency: true }, () => {
     await assert.rejects(Task.fail(NotFound({ id: 7 })), /no user 7/);
   });
 
-  test('Task.run turns a thrown Failure into a rejection', async (assert) => {
-    const settled = await Task.run(() => {
-      throw NotFound({ id: 3 });
-    }).settle();
-    assert.false(settled.ok);
-    assert.strictEqual(settled.error?.code, 'NotFound');
+  test('Task.run and Task.try turn a thrown Failure into a rejection', async (assert) => {
+    await assert.rejects(
+      Task.run(() => {
+        throw NotFound({ id: 3 });
+      }),
+      /no user 3/,
+    );
+    await assert.rejects(
+      Task.try(() => JSON.parse('not json') as unknown),
+      SyntaxError,
+    );
   });
 
   test('Task.from lifts a plain promise', async (assert) => {
@@ -58,14 +98,14 @@ module('Task | builders', { concurrency: true }, () => {
   });
 });
 
-// ── Transforming — thin over native ─────────────────────────────────────────────
+// ── Transforming — lazy, and each returns a Task ────────────────────────────────
 
 module('Task | transforming', { concurrency: true }, () => {
-  test('map transforms success and returns a Task', async (assert) => {
+  test('map transforms success and returns a chainable Task', async (assert) => {
     const chained = loadUser(1)
       .map((u) => u.name)
       .map((n) => n.toUpperCase());
-    assert.true(chained instanceof Task);
+    assert.true(chained instanceof Task, 'still a Task, so it keeps chaining');
     assert.strictEqual(await chained, 'U1');
   });
 
@@ -114,44 +154,82 @@ module('Task | transforming', { concurrency: true }, () => {
   });
 });
 
-// ── settle — the one bridge to { ok, value, error } ─────────────────────────────
+// ── Retry / restart — the ember-concurrency model ───────────────────────────────
 
-module('Task | settle', { concurrency: true }, () => {
-  test('settle reflects a success to Ok', async (assert) => {
-    const { ok, value, error } = await loadUser(1).settle();
+module('Task | retry & restart', { concurrency: true }, () => {
+  test('retry re-runs the recipe until it succeeds', async (assert) => {
+    let attempts = 0;
+    const flaky = Task.run(() => {
+      attempts++;
+      if (attempts < 3) throw NotFound({ id: attempts });
+      return 'ok@' + attempts;
+    });
+    assert.strictEqual(await flaky.retry(5), 'ok@3');
+    assert.strictEqual(attempts, 3, 'ran the recipe three times');
+  });
+
+  test('retry gives up and rejects with the last failure after exhausting attempts', async (assert) => {
+    let attempts = 0;
+    const always = Task.run(() => {
+      attempts++;
+      throw NotFound({ id: attempts });
+    });
+    await assert.rejects(always.retry(2));
+    assert.strictEqual(attempts, 3, 'initial + 2 retries');
+  });
+
+  test('restart runs a fresh execution of the same recipe', async (assert) => {
+    let runs = 0;
+    const task = Task.run(() => 'run#' + ++runs);
+    assert.strictEqual(await task, 'run#1');
+    assert.strictEqual(await task.restart(), 'run#2', 'a fresh, independent execution');
+  });
+});
+
+// ── result — the one bridge to { ok, value, error } ─────────────────────────────
+
+module('Task | result', { concurrency: true }, () => {
+  test('result reflects a success to Ok', async (assert) => {
+    const { ok, value, error } = await loadUser(1).result();
     assert.true(ok);
     assert.deepEqual(value, { id: 1, name: 'u1' });
     assert.strictEqual(error, undefined);
   });
 
-  test('settle reflects a declared Failure to Err — the { ok, value, error } ergonomics', async (assert) => {
-    const { ok, value, error } = await loadUser(0).settle();
+  test('result reflects a declared Failure to Err — the { ok, value, error } ergonomics', async (assert) => {
+    const { ok, value, error } = await loadUser(0).result();
     assert.false(ok);
     assert.strictEqual(value, undefined);
     assert.strictEqual(error?.code, 'NotFound');
   });
 
-  test('settle RE-THROWS a bug — a non-Failure rejection stays a bug', async (assert) => {
+  test('result RE-THROWS a bug — a non-Failure rejection stays a bug', async (assert) => {
     const buggy = Task.run<number>(() => {
       const x = undefined as unknown as { n: number };
       return x.n;
     });
-    await assert.rejects(buggy.settle(), TypeError);
+    await assert.rejects(buggy.result(), TypeError);
   });
 
-  test('Task.settle lifts and reflects any promise in one step', async (assert) => {
-    const okr = await Task.settle(Promise.resolve(9));
-    assert.strictEqual(okr.value, 9);
-    const errr = await Task.settle(Promise.reject(NotFound({ id: 2 })));
-    assert.strictEqual(errr.error?.code, 'NotFound');
+  test('reflect is an alias of result', async (assert) => {
+    const { ok } = await loadUser(1).reflect();
+    assert.true(ok);
+  });
+
+  test('Task.result lifts and reflects any promise in one step', async (assert) => {
+    assert.strictEqual((await Task.result(Promise.resolve(9))).value, 9);
+    assert.strictEqual(
+      (await Task.result(Promise.reject(NotFound({ id: 2 })))).error?.code,
+      'NotFound',
+    );
   });
 });
 
-// ── settleAll — batch without losing successes ──────────────────────────────────
+// ── results — batch without losing successes ────────────────────────────────────
 
-module('Task | settleAll', { concurrency: true }, () => {
-  test('settleAll keeps every outcome, positionally', async (assert) => {
-    const results = await Task.settleAll([loadUser(1), loadUser(0), loadUser(3)]);
+module('Task | results', { concurrency: true }, () => {
+  test('results keeps every outcome, positionally', async (assert) => {
+    const results = await Task.results([loadUser(1), loadUser(0), loadUser(3)]);
     assert.deepEqual(
       results.map((r) => (r.ok ? r.value.name : 'FAIL:' + r.error.code)),
       ['u1', 'FAIL:NotFound', 'u3'],
@@ -162,6 +240,6 @@ module('Task | settleAll', { concurrency: true }, () => {
     const buggy = Task.run<{ id: number; name: string }>(() => {
       throw new TypeError('boom');
     });
-    await assert.rejects(Task.settleAll([loadUser(1), buggy]), TypeError);
+    await assert.rejects(Task.results([loadUser(1), buggy]), TypeError);
   });
 });
