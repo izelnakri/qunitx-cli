@@ -35,6 +35,7 @@
  */
 
 import { type Result, type Ok, type Err, ok, err } from './result.ts';
+import { isFailure, type Any as AnyFailure } from './failure.ts';
 
 /** A value that can be lifted into the async chain: a plain `Result` or another `AsyncResult`. */
 type Awaitable<T, E> = Result<T, E> | AsyncResult<T, E> | PromiseLike<Result<T, E>>;
@@ -106,6 +107,37 @@ export class AsyncResult<T, E> implements PromiseLike<Result<T, E>> {
   /** A resolved `AsyncResult` carrying a failure. */
   static err<E>(error: E): AsyncResult<never, E> {
     return new AsyncResult<never, E>(Promise.resolve(err(error)));
+  }
+
+  /**
+   * The async throw-boundary: calls `fn(...args)` and reflects the outcome into a chainable
+   * `AsyncResult`. A returned value is `Ok`; a thrown-or-rejected **`Failure`** is `Err`; any
+   * other throw — a *bug* — rejects, keeping the two-tier line. Because it owns the call, a
+   * *synchronous* throw is caught too (unlike handing over an already-running promise).
+   *
+   * This is why it needs no `{ catch }` slot: `isFailure` is the discriminator a bare boundary
+   * would otherwise lack — it catches only declared failures, never "everything", so a bug can
+   * never become a tidy `Err`. The cost is the type: a `Promise<T>` cannot carry its failure
+   * type, so `E` widens to `Failure.Any`. Narrow it at the branch with a factory guard
+   * (`if (Boom.is(r.error))`), or return a typed `Result`/`Task` from the producer instead.
+   *
+   * Sibling of `Result.try` (which returns a plain `Result`/`Promise<Result>`) and `Task.try`
+   * (a lazy `Task`): each namespace's `try` reflects throwing code into its own type.
+   */
+  static try<T, A extends unknown[]>(
+    fn: (...args: A) => T | PromiseLike<T>,
+    ...args: A
+  ): AsyncResult<Awaited<T>, AnyFailure> {
+    return new AsyncResult<Awaited<T>, AnyFailure>(
+      (async () => {
+        try {
+          return ok(await fn(...args));
+        } catch (error) {
+          if (isFailure(error)) return err(error);
+          throw error; // a bug stays a bug — the AsyncResult rejects, it does not tidy it into Err
+        }
+      })(),
+    );
   }
 }
 
