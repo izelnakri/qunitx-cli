@@ -129,7 +129,7 @@ module('Utils | getChangedFilePathsInGitSince | bounded execution', { concurrenc
     const startedAt = Date.now();
     const ran = await Result.attempt(
       () => runGit(HANG_ARGS, process.cwd(), 300, process.execPath),
-      Result.instanceOf(Error),
+      { catch: Result.instanceOf(Error) },
     );
     const elapsed = Date.now() - startedAt;
 

@@ -120,7 +120,7 @@ export async function getChangedFilePathsInGitSince(
         ),
         runGit(['status', '--porcelain', '--untracked-files=all'], projectRoot, timeoutMs),
       ]),
-    instanceOf(Error),
+    { catch: instanceOf(Error) },
   );
   if (!outputs.ok) {
     return err(

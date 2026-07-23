@@ -38,14 +38,20 @@ export {
 
 export {
   type Matcher,
+  type CatchOption,
   type ErrnoError,
   attempt,
+  // `Result.try(fn, { catch: … })` is the primary spelling; `attempt` is the same function
+  // under a name that also survives a bare `import { attempt }` (`try` is a reserved word).
+  attempt as try,
   pcall,
   xpcall,
   errno,
   instanceOf,
   anyOf,
 } from './attempt.ts';
+
+export { AsyncResult, asyncResult } from './async-result.ts';
 
 /** Structured, discriminable errors — the `E` half of `Result<T, E>`. */
 export * as Failure from './failure.ts';

@@ -87,7 +87,7 @@ const cli = async (
         env: { ...baseEnv, QUNITX_DAEMON_LOG: daemonLogPath },
         cwd: project.cwd,
       }),
-    isCapturedError,
+    { catch: isCapturedError },
   );
   if (run.ok) return run.value;
 

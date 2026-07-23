@@ -341,7 +341,7 @@ export async function shellSettles(
 ): Promise<CapturedResult> {
   const run = await Result.attempt(
     () => execute(commandString, { ...options, expectFailure: true }),
-    isProcessFailure,
+    { catch: isProcessFailure },
   );
   return run.ok ? run.value : run.error;
 }

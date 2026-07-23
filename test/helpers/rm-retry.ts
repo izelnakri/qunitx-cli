@@ -36,7 +36,9 @@ export async function rmRetry(
   // previous shape — catch, read `.code`, `if (!RETRYABLE.has(code)) throw` — inverts that:
   // every unanticipated failure is caught first and only escapes if the guard is right.
   for (let attempt = 1; ; attempt++) {
-    const removed = await Result.attempt(() => rm(dir), Result.errno(...RETRYABLE_CODES));
+    const removed = await Result.attempt(() => rm(dir), {
+      catch: Result.errno(...RETRYABLE_CODES),
+    });
     if (removed.ok) return;
     if (attempt >= attempts) throw removed.error;
     await sleep(delayMs * attempt);
