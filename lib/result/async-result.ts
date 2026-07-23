@@ -121,8 +121,11 @@ export class AsyncResult<T, E> implements PromiseLike<Result<T, E>> {
    * type, so `E` widens to `Failure.Any`. Narrow it at the branch with a factory guard
    * (`if (Boom.is(r.error))`), or return a typed `Result`/`Task` from the producer instead.
    *
-   * Sibling of `Result.try` (which returns a plain `Result`/`Promise<Result>`) and `Task.try`
-   * (a lazy `Task`): each namespace's `try` reflects throwing code into its own type.
+   * Sibling of `Result.try` and `Task.try`, but **not** a replacement for either: this one is the
+   * boundary for *our* `Failure` taxonomy, while `Result.try(source, { catch })` is the boundary
+   * for *foreign* errors (a raw Node `errno`, a third-party `Error`) that `isFailure` cannot
+   * recognise and only a declared matcher can catch. Choose by the error's origin, not by whether
+   * the source is async — see the note on `asyncResult` below.
    */
   static try<T, A extends unknown[]>(
     fn: (...args: A) => T | PromiseLike<T>,
@@ -163,7 +166,7 @@ export class AsyncResult<T, E> implements PromiseLike<Result<T, E>> {
  *    defect the whole design rejects). That declaration has no natural slot in a one-argument
  *    `from(x)`, and adding it just reinvents `Result.try(promise, { catch })`. So `from` accepts
  *    only a `Promise<Result>` — a promise that *already* yields a Result and, by convention,
- *    only rejects on a bug. It is a lift, never a boundary; the boundary is `Result.try`.
+ *    only rejects on a bug. It is a lift, never a boundary; the boundaries are the two `try`s.
  *  - **`from(fn) → wrappedFn` — a function decorator.** `Result.try(fn)` already takes a
  *    function, and it *executes* it. A `from(fn)` that instead *wrapped* it (returning a new
  *    Result-returning function) would give the same `function` argument two incompatible
@@ -171,10 +174,23 @@ export class AsyncResult<T, E> implements PromiseLike<Result<T, E>> {
  *    apart at the call site. `neverthrow` keeps these as two names (`fromPromise` vs
  *    `fromThrowable`) for exactly this reason; folding them into one `from` is the collision.
  *
- * The result is that `Result.from` normalises *into* the async-Result world (a lift) while
- * `Result.try` is the one boundary *into* the Result world from throwing code — two verbs, two
- * jobs, no overlap. That is the opposite of `Array.from`'s many-shapes-to-one-Array role, and
- * the difference is the point.
+ * The result is that `Result.from` normalises *into* the async-Result world (a lift) while the
+ * `try`s are the boundaries *into* it from throwing code — distinct verbs, no overlap. That is
+ * the opposite of `Array.from`'s many-shapes-to-one-Array role, and the difference is the point.
+ *
+ * **The two boundaries are not redundant — they catch different *classes* of error.** Which one
+ * you want follows from what the throwing code throws:
+ *
+ *  - **`Result.try(source, { catch })`** — for **foreign** errors: a raw Node `errno`, a
+ *    third-party `Error` subclass, anything outside our taxonomy. Those are not `Failure`s, so
+ *    they can only be caught by an explicit, declared matcher (`errno('EEXIST')`,
+ *    `instanceOf(SyntaxError)`, a custom guard). Works on sync and async sources.
+ *  - **`AsyncResult.try(fn, ...args)`** — for **our own** `Failure` taxonomy, where `isFailure`
+ *    is the declaration, so no matcher is needed. Returns a chainable `AsyncResult`.
+ *
+ * Swapping one for the other is a real bug in both directions: `AsyncResult.try` would re-throw
+ * an `EBUSY` as if it were a defect (it is not a `Failure`), and `Result.try` without a matcher
+ * would catch indiscriminately. Pick by the error's origin, not by whether the source is async.
  */
 export function asyncResult<T, E>(promise: Promise<Result<T, E>>): AsyncResult<T, E> {
   return new AsyncResult(promise);
