@@ -339,10 +339,9 @@ export async function shellSettles(
   commandString: string,
   options: Parameters<typeof execute>[1] = {},
 ): Promise<CapturedResult> {
-  const run = await Result.attempt(
-    () => execute(commandString, { ...options, expectFailure: true }),
-    { catch: isProcessFailure },
-  );
+  const run = await Result.try(() => execute(commandString, { ...options, expectFailure: true }), {
+    catch: isProcessFailure,
+  });
   return run.ok ? run.value : run.error;
 }
 
@@ -369,7 +368,7 @@ export async function shellFails(
   commandString: string,
   options: Parameters<typeof execute>[1] = {},
 ): Promise<CapturedResult> {
-  const run = await Result.attempt(
+  const run = await Result.try(
     () => execute(commandString, { ...options, expectFailure: true }),
     isProcessFailure,
   );

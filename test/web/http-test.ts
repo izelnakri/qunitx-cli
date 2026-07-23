@@ -39,7 +39,7 @@ module('Web | bindServerToPort | port selection', { concurrency: true }, () => {
     // Declaring EADDRINUSE removes the `assert.ok(false, 'should have thrown')` guard AND
     // the `as NodeJS.ErrnoException` cast: a success is a plain `bound.ok`, and any *other*
     // errno is rethrown by attempt rather than being reported as a confusing equality diff.
-    const bound = await Result.attempt(
+    const bound = await Result.try(
       () => bindServerToPort(server, { port: takenPort, portExplicit: true }),
       { catch: Result.errno('EADDRINUSE') },
     );
