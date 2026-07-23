@@ -93,6 +93,8 @@ export const GitScanFailed = Failure.define(
   'GitScanFailed',
   (data: { ref: string; reason: string }) => `git lookup for "${data.ref}" failed: ${data.reason}`,
 );
+/** The failure a git-change scan declares — the `E` of its {@link Task}, the `Err` of `.result()`. */
+export type GitScanFailure = Failure.Of<typeof GitScanFailed>;
 
 /**
  * Resolves the working-tree paths that differ from `ref`, plus all uncommitted
@@ -111,7 +113,7 @@ export function getChangedFilePathsInGitSince(
   projectRoot: string,
   ref: string,
   timeoutMs = GIT_TIMEOUT_MS,
-): Task<ChangeScan> {
+): Task<ChangeScan, GitScanFailure> {
   return Task.run(() =>
     Promise.all([
       runGit(

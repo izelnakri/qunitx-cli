@@ -7,7 +7,6 @@ import {
   BLAST_RADIUS_PATTERNS,
   type ChangeScan,
   getChangedFilePathsInGitSince,
-  GitScanFailed,
   runGit,
 } from '../../lib/utils/get-changed-file-paths-in-git-since.ts';
 
@@ -104,8 +103,10 @@ module('Utils | getChangedFilePathsInGitSince | git interaction', { concurrency:
     const scan = await getChangedFilePathsInGitSince(root, 'no-such-ref').result();
 
     assert.notOk(scan.ok, 'a bad ref settles as a Failure, never a thrown bug');
-    assert.ok(GitScanFailed.is(scan.error), 'and it is specifically a GitScanFailed');
-    if (!GitScanFailed.is(scan.error)) return;
+    if (scan.ok) return;
+    // `.result()` is typed `Result<ChangeScan, GitScanFailure>`, so `.error.data` reads straight
+    // through — no `GitScanFailed.is(...)` narrowing needed. That is what the Task's `E` buys.
+    assert.equal(scan.error.code, 'GitScanFailed');
     assert.equal(scan.error.data.ref, 'no-such-ref');
     assert.ok(scan.error.cause instanceof Error, "git's own error is kept as the cause");
   });
