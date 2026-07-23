@@ -15,15 +15,20 @@
  * have produced a stack trace pointing at the broken line is now a tidy failure value flowing
  * down the same path as a legitimate outcome, and the bug ships.
  *
- * So the recommended call always declares what it expects:
+ * So the recommended call always declares what it expects, in a labelled `catch`:
  *
  * ```ts
- * const parsed = attempt(() => JSON.parse(raw), SyntaxError);
+ * const parsed = Result.try(() => JSON.parse(raw), { catch: SyntaxError });
  * //    ^? Result<unknown, SyntaxError>       — a TypeError from a broken toJSON still throws
  * ```
  *
- * `attempt(fn)` with no matchers remains available and is exactly `pcall`; it types the error
- * as `unknown`, which is the honest description of a value you agreed to catch sight-unseen.
+ * The primary spelling is `Result.try` — it reads as "try this, catch that", and the `catch:`
+ * label names the second argument so a reader never has to guess what it is. `attempt` is the
+ * same function under a name that also works as a bare import (`try` is a reserved word, so
+ * `import { try }` is illegal while `Result.try` is fine).
+ *
+ * `Result.try(fn)` with no `catch` remains available and is exactly `pcall`; it types the
+ * error as `unknown`, the honest description of a value you agreed to catch sight-unseen.
  */
 
 import { type Result, ok, err } from './result.ts';
@@ -63,10 +68,15 @@ type MatchedError<M> = M extends { is(value: unknown): value is infer E }
       ? E
       : never;
 
-/** The `E` of the Result produced by `attempt`: `unknown` when nothing was declared. */
-type ErrorOf<M extends readonly unknown[]> = M extends readonly []
-  ? unknown
-  : MatchedError<M[number]>;
+/** A `catch` declaration: one matcher, or a list of them. Omit it entirely to catch everything. */
+export type CatchOption = Matcher<unknown> | readonly Matcher<unknown>[];
+
+/** The `E` a `catch` declaration proves — the union of its matchers' error types. */
+type CaughtError<C> = C extends readonly Matcher<unknown>[]
+  ? MatchedError<C[number]>
+  : C extends Matcher<unknown>
+    ? MatchedError<C>
+    : never;
 
 /** `Result` for a synchronous source, `Promise<Result>` for an asynchronous one. */
 type Attempted<T, E> =
@@ -93,7 +103,7 @@ export function errno(...codes: string[]): (value: unknown) => value is ErrnoErr
 /**
  * Matches by `instanceof`, stated explicitly.
  *
- * `attempt(fn, SyntaxError)` already does this — the bare-constructor form is detected by
+ * `{ catch: SyntaxError }` already does this — a bare `Error` constructor is detected by
  * inspecting the prototype chain. Use this wrapper when the target is not an `Error`
  * subclass (a thrown `AbortSignal`, a custom sentinel class) and the detection would
  * otherwise treat the constructor as a predicate.
@@ -115,45 +125,53 @@ export function anyOf<const M extends readonly Matcher<unknown>[]>(
 /**
  * Runs `source`, returning `Ok` with its value or `Err` with a **declared** failure.
  *
- * Anything not covered by `matchers` is rethrown, so bugs keep behaving like bugs. With no
- * matchers, everything is caught and typed `unknown` (see the module docs).
+ * `options.catch` declares what is expected — a matcher, or a list of them. Anything it does
+ * not cover is rethrown, so bugs keep behaving like bugs. Omit `catch` entirely and everything
+ * is caught and typed `unknown` (that is `pcall`); pass `{ catch: [] }` and nothing is caught.
  *
  * `source` may be a function or a promise. A function is strongly preferred: it puts the
- * synchronous part of the work inside the boundary too. `attempt(() => fetch(url))` catches a
- * `TypeError` from a malformed URL — which `fetch` throws synchronously — while
- * `attempt(fetch(url))` cannot, because that throw happens while evaluating the argument.
+ * synchronous part of the work inside the boundary too. `Result.try(() => fetch(url))` catches
+ * a `TypeError` from a malformed URL — which `fetch` throws synchronously — while
+ * `Result.try(fetch(url))` cannot, because that throw happens while evaluating the argument.
  *
  * Returns a `Result` for sync sources and a `Promise<Result>` for async ones, decided at
  * runtime by whether the returned value is thenable, and mirrored in the type. The returned
  * promise **never rejects for a declared failure**, which is what makes
- * `Promise.all(items.map((i) => attempt(...)))` safe: no fail-fast, no lost successes.
+ * `Promise.all(items.map((i) => Result.try(...)))` safe: no fail-fast, no lost successes.
  */
-export function attempt<T, const M extends readonly Matcher<unknown>[]>(
+export function attempt<T>(source: (() => T) | PromiseLike<T>): Attempted<T, unknown>;
+/** Runs `source`, typing the failure as whatever `options.catch` declares. */
+export function attempt<T, const C extends CatchOption>(
   source: (() => T) | PromiseLike<T>,
-  ...matchers: M
-): Attempted<T, ErrorOf<M>> {
+  options: { catch: C },
+): Attempted<T, CaughtError<C>>;
+export function attempt<T>(
+  source: (() => T) | PromiseLike<T>,
+  options?: { catch?: CatchOption },
+): Attempted<T, unknown> {
+  const matchers = normalizeCatch(options);
   let value: unknown;
   try {
     value = typeof source === 'function' ? (source as () => T)() : source;
   } catch (thrown) {
-    return settle(thrown, matchers) as Attempted<T, ErrorOf<M>>;
+    return settle(thrown, matchers) as Attempted<T, unknown>;
   }
 
   if (isThenable(value)) {
     return value.then(
       (resolved) => ok(resolved),
       (thrown) => settle(thrown, matchers),
-    ) as Attempted<T, ErrorOf<M>>;
+    ) as Attempted<T, unknown>;
   }
-  return ok(value) as Attempted<T, ErrorOf<M>>;
+  return ok(value) as Attempted<T, unknown>;
 }
 
 /**
  * Lua's `pcall`: runs `source` and catches everything, with no declaration of intent.
  *
- * A named alias for `attempt(source)` rather than a second implementation, so that a reader
- * — or a `grep` before a refactor — can find every unfiltered boundary in a codebase by
- * searching one word. Reach for it at process edges (a plugin call, a user-supplied
+ * A named alias for `Result.try(source)` rather than a second implementation, so that a
+ * reader — or a `grep` before a refactor — can find every unfiltered boundary in a codebase
+ * by searching one word. Reach for it at process edges (a plugin call, a user-supplied
  * callback, a top-level handler) where "anything at all may go wrong and this process must
  * survive it" is genuinely the specification.
  */
@@ -196,9 +214,20 @@ export function xpcall<T, E>(
 
 // ── Internals ────────────────────────────────────────────────────────────────
 
+// `null` means "no `catch` was declared" — catch everything (pcall). An explicit list, even an
+// empty one, means "these and only these", so `{ catch: [] }` declares that nothing is expected.
+function normalizeCatch(options?: { catch?: CatchOption }): readonly Matcher<unknown>[] | null {
+  const declared = options?.catch;
+  if (declared === undefined) return null;
+  return Array.isArray(declared) ? declared : [declared as Matcher<unknown>];
+}
+
 /** Converts a thrown value to `Err` if it was declared, and rethrows it if it was not. */
-function settle(thrown: unknown, matchers: readonly Matcher<unknown>[]): Result<never, unknown> {
-  if (matchers.length === 0) return err(thrown);
+function settle(
+  thrown: unknown,
+  matchers: readonly Matcher<unknown>[] | null,
+): Result<never, unknown> {
+  if (matchers === null) return err(thrown);
   for (const matcher of matchers) {
     if (matches(matcher, thrown)) return err(thrown);
   }

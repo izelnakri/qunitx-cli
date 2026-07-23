@@ -41,7 +41,7 @@ module('Web | bindServerToPort | port selection', { concurrency: true }, () => {
     // errno is rethrown by attempt rather than being reported as a confusing equality diff.
     const bound = await Result.attempt(
       () => bindServerToPort(server, { port: takenPort, portExplicit: true }),
-      Result.errno('EADDRINUSE'),
+      { catch: Result.errno('EADDRINUSE') },
     );
     // `finally` still guards the release — an assertion that fails must not leak the blocker
     // onto the next test. What is gone is the `catch`, which is what conflated "the bind

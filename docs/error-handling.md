@@ -105,7 +105,9 @@ Three modules, no dependencies.
 
 ```ts
 import * as Result from './lib/result/index.ts';
-// or: import { attempt, ok, err, unwrap, type Result } from './lib/result/index.ts';
+// or: import { ok, err, unwrap, attempt, type Result } from './lib/result/index.ts';
+//     ( Result.try is the primary spelling; `attempt` is its bare-importable alias — `try`
+//       is a reserved word, so `import { try }` is illegal while `Result.try` is fine. )
 ```
 
 ### `Result<T, E>` — the value
@@ -155,17 +157,51 @@ directory qunitx is trying to clean up and a benign `ENOENT` because it was alre
 produce identical silence, inside code whose whole job is diagnosing why a directory will not
 delete.
 
-### `attempt` — the boundary
+### `Result.try` — the boundary
 
 ```ts
-const parsed = Result.attempt(() => JSON.parse(raw), SyntaxError);
+const parsed = Result.try(() => JSON.parse(raw), { catch: SyntaxError });
 //    ^? Result<unknown, SyntaxError>
 ```
 
-`attempt` runs a function (or awaits a promise) and converts **declared** failures into
+`Result.try` runs a function (or awaits a promise) and converts **declared** failures into
 `Err`. Anything not declared is rethrown. Matchers may be an `Error` constructor, a type-guard
-predicate (`Result.errno('ENOENT')`), or a `Failure` factory. `Result.pcall` is `attempt` with
-no matchers — Lua semantics, catch everything, typed `unknown`.
+predicate (`Result.errno('ENOENT')`), or a `Failure` factory. Omit `catch` (or call
+`Result.pcall`) for Lua semantics — catch everything, typed `unknown`.
+
+### `AsyncResult` — the awaitable producer
+
+The sync `Result` is inert plain data, which is load-bearing (§4.1) but costs the awaitable,
+left-to-right ergonomics of a promise. `AsyncResult<T, E>` recovers them in the one place it is
+safe: on the **producer**, not on the settled value. It is a thenable that **resolves to a plain
+`Result`**.
+
+```ts
+export function setup(): AsyncResult<Config, ConfigFailure> {
+  return asyncResult(assemble());   // assemble(): Promise<Result<Config, ConfigFailure>>
+}
+
+// A caller that only awaits never needs to know AsyncResult exists — it gets a plain Result:
+const r = await setup();
+if (!r.ok) return handle(r.error);
+use(r.value);
+
+// A caller that wants to transform chains, and still settles to a plain Result:
+const port = await setup().map((c) => c.port).andThen(validatePort);
+```
+
+Why this is safe where a thenable *value* is not: because an `AsyncResult` resolves to a
+non-thenable `Result`, the Promise resolution algorithm's recursive assimilation terminates
+there. `Awaited<AsyncResult<T, E>>` is `Result<T, E>`, so `await` hands you the object you branch
+on — it never collapses to `Promise<T>` the way a thenable value would (§4.4). An `AsyncResult`
+never *rejects* for a declared failure either — an `Err` is a resolved value — so
+`Promise.all([...asyncResults])` collects every settled `Result` without fail-fasting, ready for
+`partition`.
+
+The invariant, stated once: **the value you get after awaiting is plain; only the thing you put
+`await` in front of is thenable.** `lib/setup/config.ts` is the live example — it is `AsyncResult`,
+not `Promise<Result>`, purely so a caller *can* chain; nothing that already only `await`s it had
+to change.
 
 ---
 
@@ -274,12 +310,12 @@ if (ok) value.toFixed();     // number
 else    error.code;          // narrowed
 ```
 
-### 4.4 `attempt` declares what it expects — the core differentiator
+### 4.4 `Result.try` declares what it expects — the core differentiator
 
 Everything else in this document is available in some form elsewhere. This is not.
 
 ```ts
-const parsed = attempt(() => JSON.parse(raw), SyntaxError);
+const parsed = Result.try(() => JSON.parse(raw), { catch: SyntaxError });
 ```
 
 If `JSON.parse` throws `SyntaxError`, that is an `Err`. If the surrounding line throws
@@ -328,12 +364,12 @@ try {
 } catch { return fallback; }
 
 // good — the boundary covers exactly the fallible call
-const user = await attempt(() => fetchUser(id), NetworkError);
+const user = await Result.try(() => fetchUser(id), { catch: NetworkError });
 if (!user.ok) return fallback;
 return render(user.value);      // a bug here throws, as it should
 ```
 
-`attempt` makes the narrow version shorter than the broad one, which is the only reliable way
+`Result.try` makes the narrow version shorter than the broad one, which is the only reliable way
 to change what people write.
 
 ### 4.5 Discriminate on a string `code`, never `instanceof`
@@ -379,10 +415,10 @@ chaining is how you avoid pyramids. JavaScript already has the thing chaining su
 early return.
 
 ```ts
-const config = await attempt(() => readFile(path), errno('ENOENT'));
+const config = await Result.try(() => readFile(path), { catch: errno('ENOENT') });
 if (!config.ok) return defaults;
 
-const parsed = attempt(() => JSON.parse(config.value), SyntaxError);
+const parsed = Result.try(() => JSON.parse(config.value), { catch: SyntaxError });
 if (!parsed.ok) return err(Invalid({ path }, { cause: parsed.error }));
 
 return ok(normalize(parsed.value));
@@ -473,7 +509,7 @@ it** — a `new AppError(…)` built inside a `catch` has a stack pointing at th
   `cause` chaining here.
 - **Zig** error unions + `try`. The strongest static story: the error set is *inferred* from
   the function body, so it cannot drift from reality. TypeScript cannot infer a throw set, and
-  that is exactly the gap `attempt`'s explicit matcher list papers over by hand.
+  that is exactly the gap `Result.try`'s explicit `catch` list papers over by hand.
 - **Swift** `throws`, and since Swift 6, *typed* throws (`throws(MyError)`). Notable because
   Swift arrived at checked exceptions after starting without them, and confined them to a
   single error type per function to avoid Java's ergonomic disaster.
@@ -571,7 +607,7 @@ Reproduce with `lib/result/` and the harness in this document's commit message.
 | return the value directly | 71.6 |
 | `return ok(value)` | 72.7 |
 | `try`/`catch` around a success | 65.7 |
-| `attempt(fn)` on a success | 60.8 |
+| `Result.try(fn)` on a success | 60.8 |
 
 All within noise of each other. **A Result costs nothing on the success path**, and `try/catch`
 has not been a deoptimization barrier in V8 since TurboFan (2017). Any argument for or against
@@ -694,7 +730,7 @@ displaces an in-flight error. It applies only to `using`/`DisposableStack`, not 
 so for ordinary cleanup wrap it explicitly:
 
 ```ts
-const cleanup = await attempt(() => close());
+const cleanup = await Result.try(() => close());
 if (!cleanup.ok) log(cleanup.error);   // never let it displace the real failure
 ```
 
@@ -702,14 +738,14 @@ This repo has the pattern already: `closeWithGrace()` uses `Promise.allSettled` 
 close cannot displace the original error — though it also discards every close failure
 unreported, which is the opposite mistake.
 
-### 8.10 `Promise.all` discards successes; `attempt` does not
+### 8.10 `Promise.all` discards successes; `Result.try` does not
 
 `Promise.all` rejects on the first failure and throws away every success that had already
-settled, plus every other failure. Because `attempt`'s promise never rejects for a declared
+settled, plus every other failure. Because `Result.try`'s promise never rejects for a declared
 failure, this is safe and lossless:
 
 ```ts
-const results = await Promise.all(files.map((f) => attempt(() => readFile(f), errno())));
+const results = await Promise.all(files.map((f) => Result.try(() => readFile(f), { catch: errno() })));
 const { values, errors } = Result.partition(results);
 ```
 
@@ -719,7 +755,7 @@ untyped `reason`.
 ### 8.11 `AggregateError` and `Promise.any`
 
 `Promise.any` rejects with a real `AggregateError` whose `.errors` is an array. Match it with
-`attempt(fn, AggregateError)` — and do not define your own class with that name (§6).
+`Result.try(fn, { catch: AggregateError })` — and do not define your own class with that name (§6).
 
 ### 8.12 Cancellation is not a failure
 
@@ -741,8 +777,8 @@ than as a distinct failure.
 ### 8.13 The thunk form catches more than the promise form
 
 ```ts
-attempt(() => fetch(badUrl), TypeError)   // catches fetch's synchronous TypeError
-attempt(fetch(badUrl), TypeError)         // cannot — the throw happens while evaluating the argument
+Result.try(() => fetch(badUrl), { catch: TypeError })  // catches fetch's synchronous TypeError
+Result.try(fetch(badUrl), { catch: TypeError })        // cannot — the throw happens while evaluating the argument
 ```
 
 Always prefer the thunk. The promise form exists for values you already hold.
@@ -772,7 +808,7 @@ exhaustiveness guarantee, which is the main thing the type was buying.
 
 ### 8.16 What TypeScript still cannot do
 
-There are no checked exceptions, and `attempt`'s matcher list is **asserted, not verified**.
+There are no checked exceptions, and `Result.try`'s `catch` list is **asserted, not verified**.
 If you declare `SyntaxError` and the function also throws `RangeError`, the compiler will not
 tell you; the `RangeError` propagates at runtime. That is the correct default (an undeclared
 failure is a bug), but it is not the guarantee Zig gives you by inferring the error set from
@@ -807,7 +843,7 @@ export const Denied   = Failure.define('ConfigDenied',   (d: { path: string }) =
 ### Step 2 — put the failures in the signature
 
 ```ts
-import { type Result, ok, err, attempt, errno, Failure } from '../result/index.ts';
+import { type Result, ok, err, errno, Failure } from '../result/index.ts';
 
 type LoadFailure = Failure.Of<typeof NotFound | typeof Invalid | typeof Denied>;
 
@@ -820,7 +856,7 @@ mechanics.
 ### Step 3 — convert at the boundary, narrowly, declaring what you expect
 
 ```ts
-  const read = await attempt(() => fs.readFile(path, 'utf8'), errno('ENOENT', 'EACCES'));
+  const read = await Result.try(() => fs.readFile(path, 'utf8'), { catch: errno('ENOENT', 'EACCES') });
   if (!read.ok) {
     return err(
       read.error.code === 'ENOENT'
@@ -837,7 +873,7 @@ neither has a sensible local response. `cause` keeps the original errno error an
 ### Step 4 — keep converting, never widening
 
 ```ts
-  const parsed = attempt(() => JSON.parse(read.value), SyntaxError);
+  const parsed = Result.try(() => JSON.parse(read.value), { catch: SyntaxError });
   if (!parsed.ok) {
     return err(Invalid({ path, reason: parsed.error.message }, { cause: parsed.error }));
   }

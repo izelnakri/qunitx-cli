@@ -12,7 +12,17 @@ import * as Args from '../args/index.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
 import * as Reporter from '../reporters/index.ts';
 import * as RunState from './run-state.ts';
-import { type Result, ok, err, all, attempt, errno, Failure } from '../result/index.ts';
+import {
+  type Result,
+  type AsyncResult,
+  ok,
+  err,
+  all,
+  attempt,
+  errno,
+  asyncResult,
+  Failure,
+} from '../result/index.ts';
 import type { Config, FSTree as FSTreeShape } from '../types.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
 
@@ -43,10 +53,17 @@ export type ConfigFailure =
  * Builds the merged qunitx config from package.json settings and CLI flags.
  * `package.json#qunitx.plugins` entries are dynamic-imported into esbuild plugin objects.
  *
- * Returns rather than exits so the daemon — which assembles a config per request — can report
- * a bad flag to that one client and stay up. `cli.ts` owns turning a failure into an exit code.
+ * Returns an `AsyncResult`, not a bare `Promise`: a caller that only `await`s it gets a plain
+ * `Result<Config, ConfigFailure>` (the daemon and `cli.ts` do exactly that, unchanged), while a
+ * caller that wants to transform the config can chain `.map` / `.andThen` and still settle to a
+ * plain `Result`. It reports rather than exits so the daemon — which assembles a config per
+ * client request — can reject one bad flag and stay up; `cli.ts` turns a failure into an exit.
  */
-export async function setup(): Promise<Result<Config, ConfigFailure>> {
+export function setup(): AsyncResult<Config, ConfigFailure> {
+  return asyncResult(assemble());
+}
+
+async function assemble(): Promise<Result<Config, ConfigFailure>> {
   const projectRoot = await findProjectRoot();
   const flags = Args.parse(projectRoot);
   if (!flags.ok) return flags;
@@ -215,11 +232,14 @@ async function resolvePlugins(
   const loaded = await Promise.all(
     raw.map(async (entry) => {
       const [spec, options] = Array.isArray(entry) ? entry : [entry];
-      const imported = await attempt(async () => {
-        const mod = await import(pathToFileURL(projectRequire.resolve(spec as string)).href);
-        const exported = mod.default ?? mod;
-        return (typeof exported === 'function' ? exported(options) : exported) as EsbuildPlugin;
-      }, errno());
+      const imported = await attempt(
+        async () => {
+          const mod = await import(pathToFileURL(projectRequire.resolve(spec as string)).href);
+          const exported = mod.default ?? mod;
+          return (typeof exported === 'function' ? exported(options) : exported) as EsbuildPlugin;
+        },
+        { catch: errno() },
+      );
       return imported.ok
         ? imported
         : err(PluginLoadFailed({ specifier: String(spec) }, { cause: imported.error }));
