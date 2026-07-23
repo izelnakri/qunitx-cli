@@ -44,7 +44,7 @@ export async function getChangedFsTree(
   // scan, and a set of paths. This used to be one variable holding `Set | null | Error`,
   // discriminated by `instanceof` — with the `null` branch ("run everything") adjacent to the
   // `size === 0` branch ("run nothing").
-  const scan = await getChanged(projectRoot, changedSince);
+  const scan = await getChanged(projectRoot, changedSince).result();
   if (!scan.ok) {
     process.stdout.write(
       `# --changed: ${scan.error.message} — running all ${testFiles.length} test files\n`,

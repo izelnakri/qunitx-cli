@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 // global is the Web variant, which returns a number with no .unref().
 import { setTimeout, clearTimeout } from 'node:timers';
 import path from 'node:path';
-import * as Result from '../result/index.ts';
+import { Task, Failure } from '../task/index.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -89,7 +89,7 @@ export type ChangeScan =
   { scope: 'everything'; trigger: string } | { scope: 'paths'; paths: Set<string> };
 
 /** git could not answer: not a repo, unknown ref, git missing, or it exceeded `timeoutMs`. */
-export const GitScanFailed = Result.Failure.define(
+export const GitScanFailed = Failure.define(
   'GitScanFailed',
   (data: { ref: string; reason: string }) => `git lookup for "${data.ref}" failed: ${data.reason}`,
 );
@@ -100,67 +100,62 @@ export const GitScanFailed = Result.Failure.define(
  * file (package.json, tsconfig*.json, …) changed.
  *
  * `timeoutMs` is injectable for tests; production always uses the default.
+ *
+ * Returns a lazy, retryable `Task`: the two git calls run only when the Task is awaited, and a
+ * caller can `.retry(1)` a transient failure (e.g. `index.lock` contention) for free. The git
+ * boundary is the only throwing step, so `.mapErr` remaps *any* rejection there to a declared
+ * `GitScanFailed`; a parsing bug in `.map` below is downstream of it and stays a bug, never
+ * masked as a Failure. Callers await the value, or `.result()` for `{ ok, value, error }`.
  */
-export async function getChangedFilePathsInGitSince(
+export function getChangedFilePathsInGitSince(
   projectRoot: string,
   ref: string,
   timeoutMs = GIT_TIMEOUT_MS,
-): Promise<Result.Result<ChangeScan, Result.Failure.Of<typeof GitScanFailed>>> {
-  // The boundary wraps the two git calls and nothing else, so "any Error" is a tight enough
-  // declaration: execFile rejects with a numeric `code` on non-zero exit and a string `code`
-  // on ENOENT, and the timeout race rejects with a plain Error — one matcher covers all three
-  // without also swallowing a bug from the parsing below.
-  const outputs = await Result.try(
-    () =>
-      Promise.all([
-        runGit(
-          ['diff', '--name-only', '--no-renames', ref, '--', projectRoot],
-          projectRoot,
-          timeoutMs,
-        ),
-        runGit(['status', '--porcelain', '--untracked-files=all'], projectRoot, timeoutMs),
-      ]),
-    { catch: Result.instanceOf(Error) },
-  );
-  if (!outputs.ok) {
-    return Result.err(
-      GitScanFailed(
-        { ref, reason: outputs.error.message.split('\n')[0] },
-        { cause: outputs.error },
+): Task<ChangeScan> {
+  return Task.run(() =>
+    Promise.all([
+      runGit(
+        ['diff', '--name-only', '--no-renames', ref, '--', projectRoot],
+        projectRoot,
+        timeoutMs,
       ),
-    );
-  }
-  const [diffOut, statusOut] = outputs.value;
+      runGit(['status', '--porcelain', '--untracked-files=all'], projectRoot, timeoutMs),
+    ]),
+  )
+    .mapErr((cause) =>
+      GitScanFailed({ ref, reason: (cause as Error).message.split('\n')[0] }, { cause }),
+    )
+    .map(([diffOut, statusOut]): ChangeScan => {
+      // `git status --porcelain` lines look like "XY path" or "XY path -> newpath"
+      // for renames. We disabled renames in `git diff` above; for status, take the
+      // rightmost path (post-rename name is what's currently on disk).
+      const fromStatus = (line: string) => {
+        const rest = line.slice(3);
+        const arrow = rest.indexOf(' -> ');
+        return arrow === -1 ? rest : rest.slice(arrow + 4);
+      };
+      const relPaths = new Set([
+        ...diffOut.split('\n').filter(Boolean),
+        ...statusOut
+          .split('\n')
+          .filter((l) => l.length >= 4)
+          .map(fromStatus),
+      ]);
 
-  // `git status --porcelain` lines look like "XY path" or "XY path -> newpath"
-  // for renames. We disabled renames in `git diff` above; for status, take the
-  // rightmost path (post-rename name is what's currently on disk).
-  const fromStatus = (line: string) => {
-    const rest = line.slice(3);
-    const arrow = rest.indexOf(' -> ');
-    return arrow === -1 ? rest : rest.slice(arrow + 4);
-  };
-  const relPaths = new Set([
-    ...diffOut.split('\n').filter(Boolean),
-    ...statusOut
-      .split('\n')
-      .filter((l) => l.length >= 4)
-      .map(fromStatus),
-  ]);
+      const isBlastRadius = (rel: string) => {
+        const base = path.basename(rel);
+        return BLAST_RADIUS_FILES.has(base) || BLAST_RADIUS_PATTERNS.some((re) => re.test(base));
+      };
+      // Naming the file that triggered it, which the old `null` could not carry — the caller
+      // could say "a blast-radius file changed" but never which one.
+      const trigger = Array.from(relPaths).find(isBlastRadius);
+      if (trigger !== undefined) return { scope: 'everything', trigger };
 
-  const isBlastRadius = (rel: string) => {
-    const base = path.basename(rel);
-    return BLAST_RADIUS_FILES.has(base) || BLAST_RADIUS_PATTERNS.some((re) => re.test(base));
-  };
-  // Naming the file that triggered it, which the old `null` could not carry — the caller
-  // could say "a blast-radius file changed" but never which one.
-  const trigger = Array.from(relPaths).find(isBlastRadius);
-  if (trigger !== undefined) return Result.ok({ scope: 'everything', trigger });
-
-  return Result.ok({
-    scope: 'paths',
-    paths: new Set(Array.from(relPaths, (rel) => path.resolve(projectRoot, rel))),
-  });
+      return {
+        scope: 'paths',
+        paths: new Set(Array.from(relPaths, (rel) => path.resolve(projectRoot, rel))),
+      };
+    });
 }
 
 export { BLAST_RADIUS_FILES, BLAST_RADIUS_PATTERNS, GIT_TIMEOUT_MS };

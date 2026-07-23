@@ -9,7 +9,7 @@ import {
   GitScanFailed,
   type getChangedFilePathsInGitSince,
 } from '../../lib/utils/get-changed-file-paths-in-git-since.ts';
-import * as Result from '../../lib/result/index.ts';
+import { Task } from '../../lib/task/index.ts';
 import type { AffectedMetafile } from '../../lib/utils/get-changed-files.ts';
 import type { FSTree } from '../../lib/types.ts';
 
@@ -43,22 +43,16 @@ function metafileFor(graph: Record<string, string[]>): AffectedMetafile {
   };
 }
 
-// Injected git seams: what `getChangedFilePathsInGitSince` would have returned. It yields
-// absolute paths, so the fixtures do too. All three are now ordinary resolved values —
-// the failure seam in particular no longer has to reject, which is what let the branch
-// under test be a plain `if` instead of a `.catch` that funnelled an Error into a union.
+// Injected git seams: the Task `getChangedFilePathsInGitSince` would have returned. `Task.of`
+// is a resolved scan, `Task.fail` a declared failure — the caller `.result()`s them, so the
+// branch under test stays a plain `if (!scan.ok)` rather than a `.catch` funnelling an Error.
 type Scan = ReturnType<typeof getChangedFilePathsInGitSince>;
 
 const gitChanged = (root: string, files: string[]) => (): Scan =>
-  Promise.resolve(
-    Result.ok({ scope: 'paths', paths: new Set(files.map((f) => path.join(root, f))) }),
-  );
-const gitBlastRadius = (): Scan =>
-  Promise.resolve(Result.ok({ scope: 'everything', trigger: 'package.json' }));
+  Task.of({ scope: 'paths', paths: new Set(files.map((f) => path.join(root, f))) });
+const gitBlastRadius = (): Scan => Task.of({ scope: 'everything', trigger: 'package.json' });
 const gitFailed = (): Scan =>
-  Promise.resolve(
-    Result.err(GitScanFailed({ ref: 'HEAD', reason: 'fatal: not a git repository' })),
-  );
+  Task.fail(GitScanFailed({ ref: 'HEAD', reason: 'fatal: not a git repository' }));
 
 module('Setup | getChangedFsTree | fallback paths', { concurrency: true }, () => {
   test('no metafile cache → returns input fsTree unchanged (git never consulted)', async (assert) => {
