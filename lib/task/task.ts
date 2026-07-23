@@ -2,8 +2,12 @@ import { type Result, ok, err } from '../result/result.ts';
 import { isFailure, type Any as AnyFailure } from '../result/failure.ts';
 
 /**
- * `Task<T>` — a **lazy, retryable** superset of `Promise<T>` for error handling that respects
- * JavaScript's rules from the ground up.
+ * `Task<T, E>` — a **lazy, retryable** superset of `Promise<T>` for error handling that respects
+ * JavaScript's rules from the ground up. `E` is the *declared* failure type: the reason a caller
+ * expects when it fails, and what {@link Task#result} surfaces as the `Err`. It is advisory (JS
+ * rejections are untyped, so `await` still throws `unknown`) but self-documenting — a
+ * `Task<Config, ConfigFailure>` reads like the old `Result<Config, ConfigFailure>` did, and
+ * `.result()` returns a typed `Result<T, E>` so callers skip the `Failure.is` narrowing.
  *
  * A `Task` is a real `Promise` (`instanceof Promise` is true) built from a **recipe** — a thunk
  * `() => T | PromiseLike<T>` — that runs **only when the Task is first awaited** (or `.then`-ed).
@@ -26,7 +30,7 @@ import { isFailure, type Any as AnyFailure } from '../result/failure.ts';
  *
  * @see docs/error-handling.md
  */
-export class Task<T> extends Promise<T> {
+export class Task<T, E = AnyFailure> extends Promise<T> {
   /** The recipe. Runs at most once per instance (memoised); kept so `retry`/`restart` can re-run it. */
   #recipe: (() => T | PromiseLike<T>) | undefined;
   #started = false;
@@ -94,9 +98,9 @@ export class Task<T> extends Promise<T> {
     );
   }
 
-  /** A Task that fails with `reason` (a rejection — so `await` throws it). */
-  static fail(reason: unknown): Task<never> {
-    return new Task<never>(() => Promise.reject(reason));
+  /** A Task that fails with `reason` (a rejection — so `await` throws it). Carries `reason`'s type. */
+  static fail<F>(reason: F): Task<never, F> {
+    return new Task<never, F>(() => Promise.reject(reason));
   }
 
   /** Lifts a promise or a recipe into a Task. Identical to {@link Task.of}; named for intent. */
@@ -144,32 +148,32 @@ export class Task<T> extends Promise<T> {
   // inside the recipe is what triggers the upstream Task — but only when the *returned* Task is
   // awaited, so a chain like `task.map(f).andThen(g)` stays fully lazy.
 
-  /** Transforms the success value, passing a failure through untouched. */
-  map<U>(fn: (value: T) => U | PromiseLike<U>): Task<U> {
+  /** Transforms the success value, passing a failure through untouched. Keeps the declared `E`. */
+  map<U>(fn: (value: T) => U | PromiseLike<U>): Task<U, E> {
     return new Task(() => this.then(fn));
   }
 
-  /** Chains a second fallible step onto success, short-circuiting on failure. */
-  andThen<U>(fn: (value: T) => PromiseLike<U>): Task<U> {
+  /** Chains a second fallible step onto success, short-circuiting on failure. Keeps the declared `E`. */
+  andThen<U>(fn: (value: T) => PromiseLike<U>): Task<U, E> {
     return new Task(() => this.then(fn));
   }
 
-  /** Transforms the failure reason, passing a success through untouched. */
-  mapErr(fn: (error: unknown) => unknown): Task<T> {
-    return new Task(() =>
+  /** Transforms the failure reason — and re-declares the failure type as `F`, what `fn` returns. */
+  mapErr<F>(fn: (error: unknown) => F): Task<T, F> {
+    return new Task<T, F>(() =>
       this.then(undefined, (error) => {
         throw fn(error);
       }),
     );
   }
 
-  /** Recovers from a failure by producing a success value. (Rust's `unwrap_or_else`.) */
-  recover(fn: (error: unknown) => T | PromiseLike<T>): Task<T> {
+  /** Recovers from a failure by producing a success value (Rust's `unwrap_or_else`) — so `E` is gone. */
+  recover(fn: (error: unknown) => T | PromiseLike<T>): Task<T, never> {
     return new Task(() => this.then(undefined, fn));
   }
 
-  /** Like `await task`, but a failure rethrows as `new Error(message, { cause })`. */
-  expect(message: string): Task<T> {
+  /** Like `await task`, but a failure rethrows as `new Error(message, { cause })` — a bug, so no `E`. */
+  expect(message: string): Task<T, never> {
     return new Task(() =>
       this.then(undefined, (error) => {
         throw new Error(message, { cause: error });
@@ -177,23 +181,23 @@ export class Task<T> extends Promise<T> {
     );
   }
 
-  /** Resolves to the success value, or `fallback` if the Task failed. */
-  unwrapOr<U>(fallback: U): Task<T | U> {
-    return new Task<T | U>(() => this.then(undefined, () => fallback));
+  /** Resolves to the success value, or `fallback` if the Task failed — so the failure is handled. */
+  unwrapOr<U>(fallback: U): Task<T | U, never> {
+    return new Task<T | U, never>(() => this.then(undefined, () => fallback));
   }
 
-  /** Exhaustively handles both branches. */
-  match<A, B>(handlers: { ok: (value: T) => A; err: (error: unknown) => B }): Task<A | B> {
-    return new Task<A | B>(() => this.then(handlers.ok, handlers.err));
+  /** Exhaustively handles both branches — both settled, so nothing is left to fail. */
+  match<A, B>(handlers: { ok: (value: T) => A; err: (error: unknown) => B }): Task<A | B, never> {
+    return new Task<A | B, never>(() => this.then(handlers.ok, handlers.err));
   }
 
   // ── Retry / restart — fresh executions from the kept recipe ───────────────────
 
   /** A Task that runs the recipe again on each failure, up to `times` extra attempts. */
-  retry(times: number): Task<T> {
+  retry(times: number): Task<T, E> {
     const recipe = this.#recipe;
     if (!recipe) throw new Error('Task.retry: this Task has no recipe to re-run');
-    return new Task<T>(async () => {
+    return new Task<T, E>(async () => {
       let last: unknown;
       for (let attempt = 0; attempt <= times; attempt++) {
         try {
@@ -207,10 +211,10 @@ export class Task<T> extends Promise<T> {
   }
 
   /** A fresh Task from the same recipe — a new execution, independent of this one. */
-  restart(): Task<T> {
+  restart(): Task<T, E> {
     const recipe = this.#recipe;
     if (!recipe) throw new Error('Task.restart: this Task has no recipe to re-run');
-    return new Task<T>(recipe);
+    return new Task<T, E>(recipe);
   }
 
   // ── The one bridge to the value world ────────────────────────────────────────
@@ -221,14 +225,16 @@ export class Task<T> extends Promise<T> {
    * where you want to branch on failure inline. A declared `Failure` becomes an `Err`; a *bug* (a
    * non-Failure rejection) is re-thrown, so bugs keep behaving like bugs.
    *
-   * Lazy, like everything else: nothing runs until the returned Task is awaited.
+   * Lazy, like everything else: nothing runs until the returned Task is awaited. The `Err` is
+   * typed as the Task's declared `E`, so a `Task<T, GitScanFailed>` gives `Result<T, GitScanFailed>`
+   * — the caller reads `scan.error.data` directly, without a `Failure.is` narrowing step.
    */
-  result(): Task<Result<T, AnyFailure>> {
+  result(): Task<Result<T, E>, never> {
     return new Task(() =>
       this.then(
-        (value): Result<T, AnyFailure> => ok(value),
-        (error): Result<T, AnyFailure> => {
-          if (isFailure(error)) return err(error);
+        (value): Result<T, E> => ok(value),
+        (error): Result<T, E> => {
+          if (isFailure(error)) return err(error as E & AnyFailure);
           throw error;
         },
       ),
@@ -236,7 +242,7 @@ export class Task<T> extends Promise<T> {
   }
 
   /** Alias of {@link Task#result} — Bluebird's name for this reflection. */
-  reflect(): Task<Result<T, AnyFailure>> {
+  reflect(): Task<Result<T, E>, never> {
     return this.result();
   }
 
