@@ -4,7 +4,7 @@ Implementation: [`lib/result/`](../lib/result/). Tests: [`test/result/`](../test
 
 This document argues for a specific design, shows the code, compares it honestly against the
 alternatives, catalogues the corner cases, and ends with a tutorial. It also says where the
-design is *not* worth adopting, because that turns out to be a large fraction of any codebase.
+design is _not_ worth adopting, because that turns out to be a large fraction of any codebase.
 
 ---
 
@@ -12,18 +12,18 @@ design is *not* worth adopting, because that turns out to be a large fraction of
 
 An audit of this repository (`lib/` + `test/`, excluding `node_modules`/`dist`/`tmp`) found:
 
-| | count |
-|---|---|
-| `try`/`catch` blocks | 85 |
-| `.catch(…)` handlers | 100 |
-| …of which discard the error entirely (`() => {}`, `→ null`, `→ false`, `→ []`, `→ 0`, `→ ''`) | ~67 |
-| functions returning `T \| null` where `null` means "it failed" | 39 |
-| `process.exit()` call sites | 24 |
-| `class X extends Error` | 2 |
-| `AbortController` / `AbortSignal` | 0 |
+|                                                                                               | count |
+| --------------------------------------------------------------------------------------------- | ----- |
+| `try`/`catch` blocks                                                                          | 85    |
+| `.catch(…)` handlers                                                                          | 100   |
+| …of which discard the error entirely (`() => {}`, `→ null`, `→ false`, `→ []`, `→ 0`, `→ ''`) | ~67   |
+| functions returning `T \| null` where `null` means "it failed"                                | 39    |
+| `process.exit()` call sites                                                                   | 24    |
+| `class X extends Error`                                                                       | 2     |
+| `AbortController` / `AbortSignal`                                                             | 0     |
 
 The counts are not the interesting part — most codebases look like this. What is interesting
-is *what the shape of the language did to the code*. Five representative sites:
+is _what the shape of the language did to the code_. Five representative sites:
 
 **A catch that cannot tell four failures apart.** `lib/commands/run/tests-in-browser.ts:404`
 handles a daemon control-flow signal, an esbuild bundle failure, a `page.goto` navigation
@@ -40,7 +40,7 @@ is what a `catch (e: unknown)` forces: the throw site had the category, the type
 provided no channel to carry it, so the catch site reconstructs it from prose.
 
 **A sentinel with two opposite meanings.** `getChangedFilePathsInGitSince()` returns `null` to
-mean *"a blast-radius file changed — run everything"* and throws on actual failure. Its caller
+mean _"a blast-radius file changed — run everything"_ and throws on actual failure. Its caller
 (`lib/setup/get-changed-fs-tree.ts:46`) then does
 `.catch((err: Error) => err)` and discriminates a `Set<string> | null | Error` union by
 `instanceof`. Adjacent branches read `changed === null` (run everything) and
@@ -67,12 +67,12 @@ The design rests on one distinction, and everything else follows from it:
 > **Bugs throw. Expected failures return.**
 
 - A **bug** is a state the programmer did not intend and cannot handle: `undefined is not a
-  function`, an exhausted invariant, a violated precondition. There is no correct local
+function`, an exhausted invariant, a violated precondition. There is no correct local
   response. It should propagate loudly to a boundary, with a stack trace, and ideally crash
   something small.
 - An **expected failure** is a documented outcome of a correct program: the file was not
   there, the port was taken, the input did not validate, the token expired. The caller has a
-  plan. It should be a *value*, in the signature, that the type system forces you to address.
+  plan. It should be a _value_, in the signature, that the type system forces you to address.
 
 This is not a Rust idea. It is exactly what Lua does, and Lua is why the question was asked:
 
@@ -88,7 +88,7 @@ error("unreachable: state machine in an impossible state")
 local ok, result = pcall(risky)
 ```
 
-`io.open` returns `nil, err` because a missing file is *normal*. `error()` exists for the
+`io.open` returns `nil, err` because a missing file is _normal_. `error()` exists for the
 other thing. `pcall` is the boundary between them. Go, Zig, Swift and Rust all landed on the
 same split (Go: `error` vs `panic`; Zig: error unions vs `unreachable`; Swift: `throws` vs
 `fatalError`; Rust: `Result` vs `panic!`).
@@ -113,19 +113,19 @@ import * as Result from './lib/result/index.ts';
 ### `Result<T, E>` — the value
 
 ```ts
-type Ok<T>  = { readonly ok: true;  readonly value: T; readonly error?: undefined };
+type Ok<T> = { readonly ok: true; readonly value: T; readonly error?: undefined };
 type Err<E> = { readonly ok: false; readonly value?: undefined; readonly error: E };
 type Result<T, E = unknown> = Ok<T> | Err<E>;
 ```
 
 ```ts
-Result.ok(42)            // { ok: true,  value: 42, error: undefined }
-Result.err(failure)      // { ok: false, value: undefined, error: failure }
+Result.ok(42); // { ok: true,  value: 42, error: undefined }
+Result.err(failure); // { ok: false, value: undefined, error: failure }
 
-Result.isOk / isErr / isResult
-Result.unwrap / expect / unwrapOr / unwrapOrElse / match
-Result.map / mapErr / andThen
-Result.all / partition
+Result.isOk / isErr / isResult;
+Result.unwrap / expect / unwrapOr / unwrapOrElse / match;
+Result.map / mapErr / andThen;
+Result.all / partition;
 ```
 
 ### `Failure` — the taxonomy
@@ -136,9 +136,9 @@ const FileMissing = Result.Failure.define(
   (data: { path: string }) => `no such file: ${data.path}`,
 );
 
-FileMissing({ path: 'a.ts' });          // Failure<'FileMissing', { path: string }>
-FileMissing.is(caught);                 // cross-realm type guard
-FileMissing.code;                       // 'FileMissing'
+FileMissing({ path: 'a.ts' }); // Failure<'FileMissing', { path: string }>
+FileMissing.is(caught); // cross-realm type guard
+FileMissing.code; // 'FileMissing'
 ```
 
 A `Failure` is an `Error` subclass carrying a literal `code` discriminant and a typed `data`
@@ -151,7 +151,7 @@ genuinely has no consequence, which says so under `QUNITX_DEBUG` instead of vani
 await unlink(socketPath).catch(ignore('daemon socket unlink'));
 ```
 
-It is not a lesser `Result`; it is what §11 recommends *instead* of one. The point is that
+It is not a lesser `Result`; it is what §11 recommends _instead_ of one. The point is that
 `.catch(() => {})` cannot be told apart from `.catch(() => {})` — a real `EACCES` on a
 directory qunitx is trying to clean up and a benign `ENOENT` because it was already gone
 produce identical silence, inside code whose whole job is diagnosing why a directory will not
@@ -178,7 +178,7 @@ safe: on the **producer**, not on the settled value. It is a thenable that **res
 
 ```ts
 export function setup(): AsyncResult<Config, ConfigFailure> {
-  return Result.from(assemble());   // assemble(): Promise<Result<Config, ConfigFailure>>
+  return Result.from(assemble()); // assemble(): Promise<Result<Config, ConfigFailure>>
 }
 
 // A caller that only awaits never needs to know AsyncResult exists — it gets a plain Result:
@@ -187,28 +187,30 @@ if (!r.ok) return handle(r.error);
 use(r.value);
 
 // A caller that wants to transform chains, and still settles to a plain Result:
-const port = await setup().map((c) => c.port).andThen(validatePort);
+const port = await setup()
+  .map((c) => c.port)
+  .andThen(validatePort);
 ```
 
-Why this is safe where a thenable *value* is not: because an `AsyncResult` resolves to a
+Why this is safe where a thenable _value_ is not: because an `AsyncResult` resolves to a
 non-thenable `Result`, the Promise resolution algorithm's recursive assimilation terminates
 there. `Awaited<AsyncResult<T, E>>` is `Result<T, E>`, so `await` hands you the object you branch
 on — it never collapses to `Promise<T>` the way a thenable value would (§4.4). An `AsyncResult`
-never *rejects* for a declared failure either — an `Err` is a resolved value — so
+never _rejects_ for a declared failure either — an `Err` is a resolved value — so
 `Promise.all([...asyncResults])` collects every settled `Result` without fail-fasting, ready for
 `partition`.
 
 The invariant, stated once: **the value you get after awaiting is plain; only the thing you put
 `await` in front of is thenable.** `lib/setup/config.ts` is the live example — it is `AsyncResult`,
-not `Promise<Result>`, purely so a caller *can* chain; nothing that already only `await`s it had
+not `Promise<Result>`, purely so a caller _can_ chain; nothing that already only `await`s it had
 to change.
 
 `Result.from` is deliberately a **lift, not a universal `Array.from`-style converter**. It accepts
 a `Promise<Result>` (a promise that already yields a Result and only rejects on a bug) and never a
-raw `Promise<T>` — because a promise that can *reject* needs a declared `catch`, which has no slot
+raw `Promise<T>` — because a promise that can _reject_ needs a declared `catch`, which has no slot
 in a one-argument `from(x)` and would just reinvent `Result.try(promise, { catch })`. Nor does it
-wrap a *function* into a Result-returning function: `Result.try(fn)` already takes a function and
-*executes* it, so a `from(fn)` that instead *wrapped* it would give the same `function` argument
+wrap a _function_ into a Result-returning function: `Result.try(fn)` already takes a function and
+_executes_ it, so a `from(fn)` that instead _wrapped_ it would give the same `function` argument
 two incompatible meanings. `from` normalises into the async-Result world; `Result.try` is the one
 boundary from throwing code — two verbs, no overlap. (This is why `neverthrow` keeps `fromPromise`
 and `fromThrowable` as separate names rather than one overloaded `from`.)
@@ -230,10 +232,10 @@ A class instance does not survive a boundary:
 ```ts
 const result = Ok({ id: 1 });
 
-structuredClone(result);           // plain object; `unwrap` is gone
-worker.postMessage(result);        // plain object on the other side
-JSON.parse(JSON.stringify(result)) // plain object
-await (await fetch(url)).json()    // plain object
+structuredClone(result); // plain object; `unwrap` is gone
+worker.postMessage(result); // plain object on the other side
+JSON.parse(JSON.stringify(result)); // plain object
+await (await fetch(url)).json(); // plain object
 ```
 
 `structuredClone` (and therefore `postMessage`, `IndexedDB`, and the WebSocket/Worker paths)
@@ -254,14 +256,14 @@ Plain objects make the boundary a non-event:
 ```ts
 // test/result/result-test.ts
 const revived = JSON.parse(JSON.stringify(Result.ok({ id: 1 })));
-Result.isResult(revived);   // true
-revived.value;              // { id: 1 }
+Result.isResult(revived); // true
+revived.value; // { id: 1 }
 ```
 
 The cost is that combinators must be free functions (`Result.map(r, f)`) rather than methods
 (`r.map(f)`). See §4.6 — this is a much smaller loss than it appears.
 
-The error *inside* the Result is a different matter: `Failure` deliberately *is* a class,
+The error _inside_ the Result is a different matter: `Failure` deliberately _is_ a class,
 because too much of the ecosystem keys off `instanceof Error` (Node's `util.inspect`, devtools
 stack expansion, `unhandledRejection` reporting, every logger's error branch). That is why
 `Failure.toJSON`/`fromJSON` exist and why using them is mandatory at a boundary. §9 covers
@@ -270,8 +272,12 @@ what happens if you forget.
 ### 4.2 Both variants have the same hidden class
 
 ```ts
-export function ok<T>(value: T): Ok<T>  { return { ok: true,  value, error: undefined }; }
-export function err<E>(error: E): Err<E> { return { ok: false, value: undefined, error }; }
+export function ok<T>(value: T): Ok<T> {
+  return { ok: true, value, error: undefined };
+}
+export function err<E>(error: E): Err<E> {
+  return { ok: false, value: undefined, error };
+}
 ```
 
 `err` writes `value: undefined` it does not need. The reason is V8's object model: a hidden
@@ -281,10 +287,10 @@ variants degrades from monomorphic to polymorphic inline caching.
 
 Measured (Node 24.16.0, x86-64, 100 alternating reads per iteration):
 
-| | ns per `.ok` read |
-|---|---|
-| one hidden class | 2.43 |
-| two hidden classes | 2.98 |
+|                    | ns per `.ok` read |
+| ------------------ | ----------------- |
+| one hidden class   | 2.43              |
+| two hidden classes | 2.98              |
 
 ~0.5 ns. This is a real effect and an almost totally unimportant one — it is included because
 the claim is frequently made without a number, and the number turns out to be small. The
@@ -307,7 +313,7 @@ Three problems, in increasing order of severity.
 2. **`T | null` collides with the sentinel.** If `T` can legitimately be `null` or `undefined`
    — a cache lookup, an optional field — `[null, null]` is ambiguous. The object form has a
    dedicated `ok` boolean that no payload can impersonate.
-3. **Narrowing is fragile.** It *can* work: TypeScript 4.6+ narrows destructured discriminated
+3. **Narrowing is fragile.** It _can_ work: TypeScript 4.6+ narrows destructured discriminated
    unions, so `[E, null] | [null, T]` does narrow. But it narrows only for `const`
    destructuring in the same scope, breaks if the tuple is passed through a function, and
    silently degrades to `T | null` (with no error) rather than failing loudly.
@@ -316,8 +322,9 @@ The object form narrows everywhere, including destructured:
 
 ```ts
 const { ok, value, error } = someResult;
-if (ok) value.toFixed();     // number
-else    error.code;          // narrowed
+if (ok)
+  value.toFixed(); // number
+else error.code; // narrowed
 ```
 
 ### 4.4 `Result.try` declares what it expects — the core differentiator
@@ -341,7 +348,7 @@ const [e, v] = await to(promise)             // catches everything
 pcall(f)                                     // Lua: catches everything
 ```
 
-Catching everything is *worse than no error handling* for the bug case. Without a `catch`, a
+Catching everything is _worse than no error handling_ for the bug case. Without a `catch`, a
 `TypeError` produces a stack trace pointing at the broken line. With one, it becomes a tidy
 failure value flowing down the same code path as a legitimate outcome — and it ships.
 
@@ -371,12 +378,14 @@ The narrow-boundary rule generalises. Even `try/catch` should be written this wa
 try {
   const data = await fetchUser(id);
   return render(data);
-} catch { return fallback; }
+} catch {
+  return fallback;
+}
 
 // good — the boundary covers exactly the fallible call
 const user = await Result.try(() => fetchUser(id), { catch: NetworkError });
 if (!user.ok) return fallback;
-return render(user.value);      // a bug here throws, as it should
+return render(user.value); // a bug here throws, as it should
 ```
 
 `Result.try` makes the narrow version shorter than the broad one, which is the only reliable way
@@ -415,7 +424,7 @@ Because a Result is plain data, `map`/`mapErr`/`andThen` cannot be methods, so c
 reads inside-out:
 
 ```ts
-andThen(map(parse(raw), normalize), validate)      // vs. parse(raw).map(normalize).andThen(validate)
+andThen(map(parse(raw), normalize), validate); // vs. parse(raw).map(normalize).andThen(validate)
 ```
 
 This is a genuine ergonomic regression relative to `neverthrow`, and the honest response is
@@ -446,7 +455,10 @@ and a retry over a queue. Map `code → status` in the HTTP adapter, where the k
 
 ```ts
 const STATUS: Record<string, number> = {
-  FileMissing: 404, Invalid: 422, Denied: 403, Timeout: 504,
+  FileMissing: 404,
+  Invalid: 422,
+  Denied: 403,
+  Timeout: 504,
 };
 res.status(STATUS[failure.code] ?? 500).json(Failure.toJSON(failure));
 ```
@@ -459,25 +471,25 @@ This is also what makes the OpenAPI generation work properly — see §6.
 
 ### 5.1 Against the JavaScript alternatives
 
-| | typed failures | narrow boundary | survives worker/RPC | stack traces | happy-path cost | learning cost |
-|---|---|---|---|---|---|---|
-| bare `try`/`catch` | ✗ (`unknown`) | ✗ | n/a | ✓ | zero | none |
-| `T \| null` sentinel | ✗ (reason lost) | ✓ | ✓ | ✗ | zero | none |
-| `await-to-js` tuple | partial | ✗ | ✓ | ✓ | one array | none |
-| `neverthrow` | ✓ | ✗ | **✗** | partial | one instance | moderate |
-| `true-myth` | ✓ | ✗ | **✗** | partial | one instance | moderate |
-| `fp-ts` `Either` | ✓ | ✗ | **✗** | ✗ | one instance | high |
-| `Effect` | ✓ (in signature) | ✓ (typed errors) | ✗ | ✓ | fiber runtime | very high |
-| **this design** | ✓ | ✓ | ✓ | ✓ | one literal | low |
+|                      | typed failures   | narrow boundary  | survives worker/RPC | stack traces | happy-path cost | learning cost |
+| -------------------- | ---------------- | ---------------- | ------------------- | ------------ | --------------- | ------------- |
+| bare `try`/`catch`   | ✗ (`unknown`)    | ✗                | n/a                 | ✓            | zero            | none          |
+| `T \| null` sentinel | ✗ (reason lost)  | ✓                | ✓                   | ✗            | zero            | none          |
+| `await-to-js` tuple  | partial          | ✗                | ✓                   | ✓            | one array       | none          |
+| `neverthrow`         | ✓                | ✗                | **✗**               | partial      | one instance    | moderate      |
+| `true-myth`          | ✓                | ✗                | **✗**               | partial      | one instance    | moderate      |
+| `fp-ts` `Either`     | ✓                | ✗                | **✗**               | ✗            | one instance    | high          |
+| `Effect`             | ✓ (in signature) | ✓ (typed errors) | ✗                   | ✓            | fiber runtime   | very high     |
+| **this design**      | ✓                | ✓                | ✓                   | ✓            | one literal     | low           |
 
 Two columns deserve elaboration.
 
 **"Survives worker/RPC"** is §4.1. It is marked as a hard failure for the class-based
-libraries because the failure is *silent*: the object arrives, `.ok` reads correctly, and only
+libraries because the failure is _silent_: the object arrives, `.ok` reads correctly, and only
 the method call throws — often on a rarely-taken branch.
 
 **Effect** is the only entry that is genuinely more powerful. `Effect<A, E, R>` puts the error
-type *and the dependency set* in the signature, gives real structured concurrency,
+type _and the dependency set_ in the signature, gives real structured concurrency,
 interruption, retry schedules and tracing, and its typed-error story is better than this one
 (errors accumulate in a union automatically as you compose). The reasons not to reach for it
 are that it colours every function in the codebase, requires the whole team to learn an
@@ -517,14 +529,14 @@ it** — a `new AppError(…)` built inside a `catch` has a stack pointing at th
 - **Go** `(T, error)`. Same two-tier model, no exhaustiveness, and `if err != nil` everywhere.
   Go's `errors.Is`/`errors.As`/`%w` wrapping is the direct analogue of `code` matching and
   `cause` chaining here.
-- **Zig** error unions + `try`. The strongest static story: the error set is *inferred* from
+- **Zig** error unions + `try`. The strongest static story: the error set is _inferred_ from
   the function body, so it cannot drift from reality. TypeScript cannot infer a throw set, and
   that is exactly the gap `Result.try`'s explicit `catch` list papers over by hand.
-- **Swift** `throws`, and since Swift 6, *typed* throws (`throws(MyError)`). Notable because
+- **Swift** `throws`, and since Swift 6, _typed_ throws (`throws(MyError)`). Notable because
   Swift arrived at checked exceptions after starting without them, and confined them to a
   single error type per function to avoid Java's ergonomic disaster.
 - **Java** checked exceptions — the cautionary tale. Checked exceptions failed less because
-  checking was wrong than because there was no cheap way to *widen* or *ignore* them, so
+  checking was wrong than because there was no cheap way to _widen_ or _ignore_ them, so
   everyone wrote `catch (Exception e) {}`. Any design here must keep the escape hatch cheap:
   `Result.pcall` and `Result.unwrap` are that escape hatch, deliberately one word each.
 - **Erlang/Elixir** "let it crash" + supervision, plus the `{:ok, value} | {:error, reason}`
@@ -558,7 +570,7 @@ layer. Concrete defects, in priority order:
    ```
 
    `Ok(x)` is typed `Result<T, AppError>`, so it does not fit a `Result<T, ValidationError>`
-   slot. Constructors must return the *variant*, not the union: `ok<T>(v): Ok<T>`, so `E` stays
+   slot. Constructors must return the _variant_, not the union: `ok<T>(v): Ok<T>`, so `E` stays
    free to unify with whatever the failing branch produces.
 
 5. **`errors: ['USER_NOT_FOUND', 'PARTIAL_FAILURE']` is hand-maintained and unenforced.**
@@ -592,7 +604,10 @@ Zod is the right call for validation, and it composes cleanly here — `safePars
 returns a Result in all but name:
 
 ```ts
-export function validate<T>(schema: z.ZodType<T>, input: unknown): Result<T, Failure.Of<typeof Invalid>> {
+export function validate<T>(
+  schema: z.ZodType<T>,
+  input: unknown,
+): Result<T, Failure.Of<typeof Invalid>> {
   const parsed = schema.safeParse(input);
   return parsed.success
     ? Result.ok(parsed.data)
@@ -612,12 +627,12 @@ Reproduce with `lib/result/` and the harness in this document's commit message.
 
 **Happy path — the only number most code cares about:**
 
-| | ns/op |
-|---|---|
-| return the value directly | 71.6 |
-| `return ok(value)` | 72.7 |
-| `try`/`catch` around a success | 65.7 |
-| `Result.try(fn)` on a success | 60.8 |
+|                                | ns/op |
+| ------------------------------ | ----- |
+| return the value directly      | 71.6  |
+| `return ok(value)`             | 72.7  |
+| `try`/`catch` around a success | 65.7  |
+| `Result.try(fn)` on a success  | 60.8  |
 
 All within noise of each other. **A Result costs nothing on the success path**, and `try/catch`
 has not been a deoptimization barrier in V8 since TurboFan (2017). Any argument for or against
@@ -625,23 +640,23 @@ this design on happy-path performance grounds is unfounded in both directions.
 
 **Failure path:**
 
-| | depth 10 | depth 60 |
-|---|---|---|
-| `throw new Error` + `catch` | 9 224 | 13 028 |
-| `return err(Failure())` | 10 918 | 11 135 |
-| `return err(Failure(…, { stackless: true }))` | **966** | **1 219** |
-| `return err('string')` | 66.6 | — |
+|                                               | depth 10 | depth 60  |
+| --------------------------------------------- | -------- | --------- |
+| `throw new Error` + `catch`                   | 9 224    | 13 028    |
+| `return err(Failure())`                       | 10 918   | 11 135    |
+| `return err(Failure(…, { stackless: true }))` | **966**  | **1 219** |
+| `return err('string')`                        | 66.6     | —         |
 
 **Cost decomposition** — this is the important table:
 
-| | ns/op |
-|---|---|
-| `new Error()` (stack captured) | 7 763 |
-| `new Error()` with `Error.stackTraceLimit = 0` | 494 |
+|                                                      | ns/op |
+| ---------------------------------------------------- | ----- |
+| `new Error()` (stack captured)                       | 7 763 |
+| `new Error()` with `Error.stackTraceLimit = 0`       | 494   |
 | throwing and catching an already-constructed `Error` | 5 425 |
 
 **~94% of what an error costs is the stack capture, not the throw.** V8 collects structured
-frames eagerly in the `Error` constructor and only *formats* them lazily on first `.stack`
+frames eagerly in the `Error` constructor and only _formats_ them lazily on first `.stack`
 access. This has three consequences:
 
 1. "Exceptions are slow" is really "`new Error()` is slow". Returning an `Err` carrying a
@@ -698,7 +713,7 @@ Every errno error has a string `code` and a string `message`. A purely structura
 forever. The wire form therefore carries an explicit `failure: true` marker, and the
 structural check requires it.
 
-### 8.5 The revived stack is the *remote* stack
+### 8.5 The revived stack is the _remote_ stack
 
 `Failure.fromJSON` restores the `stack` string from the producing process. Over a
 browser→Node WebSocket that is a feature — the frames point at the browser code that actually
@@ -721,7 +736,11 @@ Unchanged by this design, and worth restating because it is the most under-known
 the language:
 
 ```ts
-try { throw new Error('boom'); } finally { return 1; }   // returns 1; the error vanishes
+try {
+  throw new Error('boom');
+} finally {
+  return 1;
+} // returns 1; the error vanishes
 ```
 
 A `return`, `break` or `continue` in `finally` discards a propagating exception. Never do
@@ -730,7 +749,11 @@ control flow in `finally`.
 ### 8.9 Cleanup errors mask the original
 
 ```ts
-try { throw new Error('original'); } finally { await close(); }   // if close() throws, 'original' is lost
+try {
+  throw new Error('original');
+} finally {
+  await close();
+} // if close() throws, 'original' is lost
 ```
 
 Plain `finally` has no suppressed-exception list (Java's `getSuppressed()`). Explicit resource
@@ -741,7 +764,7 @@ so for ordinary cleanup wrap it explicitly:
 
 ```ts
 const cleanup = await Result.try(() => close());
-if (!cleanup.ok) log(cleanup.error);   // never let it displace the real failure
+if (!cleanup.ok) log(cleanup.error); // never let it displace the real failure
 ```
 
 This repo has the pattern already: `closeWithGrace()` uses `Promise.allSettled` so a failing
@@ -755,7 +778,9 @@ settled, plus every other failure. Because `Result.try`'s promise never rejects 
 failure, this is safe and lossless:
 
 ```ts
-const results = await Promise.all(files.map((f) => Result.try(() => readFile(f), { catch: errno() })));
+const results = await Promise.all(
+  files.map((f) => Result.try(() => readFile(f), { catch: errno() })),
+);
 const { values, errors } = Result.partition(results);
 ```
 
@@ -775,7 +800,7 @@ retry, an alert, or a 500. This design models it as a failure with a dedicated c
 preserved at the boundary:
 
 ```ts
-if (!result.ok && result.error.code === 'Aborted') return;   // not an error to report
+if (!result.ok && result.error.code === 'Aborted') return; // not an error to report
 ```
 
 Note also that `AbortSignal` rejects with a `DOMException` named `AbortError`, not an
@@ -787,8 +812,8 @@ than as a distinct failure.
 ### 8.13 The thunk form catches more than the promise form
 
 ```ts
-Result.try(() => fetch(badUrl), { catch: TypeError })  // catches fetch's synchronous TypeError
-Result.try(fetch(badUrl), { catch: TypeError })        // cannot — the throw happens while evaluating the argument
+Result.try(() => fetch(badUrl), { catch: TypeError }); // catches fetch's synchronous TypeError
+Result.try(fetch(badUrl), { catch: TypeError }); // cannot — the throw happens while evaluating the argument
 ```
 
 Always prefer the thunk. The promise form exists for values you already hold.
@@ -803,17 +828,19 @@ points at the code that demanded the value. Neither is right in general; pick pe
 
 ```ts
 switch (failure.code) {
-  case 'FileMissing': return 404;
-  case 'Denied':      return 403;
+  case 'FileMissing':
+    return 404;
+  case 'Denied':
+    return 403;
   default: {
-    const _exhaustive: never = failure;   // compile error if a code is added and unhandled
+    const _exhaustive: never = failure; // compile error if a code is added and unhandled
     return 500;
   }
 }
 ```
 
 This only works if `E` is a union of literal codes rather than `Failure.Any`. Widening to
-`Failure.Any` at a boundary is fine and often right; widening it *early* silently discards the
+`Failure.Any` at a boundary is fine and often right; widening it _early_ silently discards the
 exhaustiveness guarantee, which is the main thing the type was buying.
 
 ### 8.16 What TypeScript still cannot do
@@ -845,9 +872,18 @@ At the top of the module, next to the types. This is documentation the compiler 
 // lib/config/failures.ts
 import { Failure } from '../result/index.ts';
 
-export const NotFound = Failure.define('ConfigNotFound', (d: { path: string }) => `no config at ${d.path}`);
-export const Invalid  = Failure.define('ConfigInvalid',  (d: { path: string; reason: string }) => `${d.path}: ${d.reason}`);
-export const Denied   = Failure.define('ConfigDenied',   (d: { path: string }) => `cannot read ${d.path}`);
+export const NotFound = Failure.define(
+  'ConfigNotFound',
+  (d: { path: string }) => `no config at ${d.path}`,
+);
+export const Invalid = Failure.define(
+  'ConfigInvalid',
+  (d: { path: string; reason: string }) => `${d.path}: ${d.reason}`,
+);
+export const Denied = Failure.define(
+  'ConfigDenied',
+  (d: { path: string }) => `cannot read ${d.path}`,
+);
 ```
 
 ### Step 2 — put the failures in the signature
@@ -866,18 +902,20 @@ mechanics.
 ### Step 3 — convert at the boundary, narrowly, declaring what you expect
 
 ```ts
-  const read = await Result.try(() => fs.readFile(path, 'utf8'), { catch: errno('ENOENT', 'EACCES') });
-  if (!read.ok) {
-    return err(
-      read.error.code === 'ENOENT'
-        ? NotFound({ path }, { cause: read.error })
-        : Denied({ path }, { cause: read.error }),
-    );
-  }
+const read = await Result.try(() => fs.readFile(path, 'utf8'), {
+  catch: errno('ENOENT', 'EACCES'),
+});
+if (!read.ok) {
+  return err(
+    read.error.code === 'ENOENT'
+      ? NotFound({ path }, { cause: read.error })
+      : Denied({ path }, { cause: read.error }),
+  );
+}
 ```
 
 `errno('ENOENT', 'EACCES')` declares the two expected failures. An `EISDIR`, or a `TypeError`
-from a bad argument, is *not* declared and therefore throws — which is what you want, because
+from a bad argument, is _not_ declared and therefore throws — which is what you want, because
 neither has a sensible local response. `cause` keeps the original errno error and its stack.
 
 ### Step 4 — keep converting, never widening
@@ -901,12 +939,19 @@ The caller sees three codes, not three libraries' worth of error types.
 const config = await load('./qunitx.json');
 if (!config.ok) {
   switch (config.error.code) {
-    case 'ConfigNotFound': return DEFAULTS;
-    case 'ConfigDenied':   process.exitCode = 77; break;
-    case 'ConfigInvalid':  process.exitCode = 78; break;
-    default: { const _: never = config.error; }
+    case 'ConfigNotFound':
+      return DEFAULTS;
+    case 'ConfigDenied':
+      process.exitCode = 77;
+      break;
+    case 'ConfigInvalid':
+      process.exitCode = 78;
+      break;
+    default: {
+      const _: never = config.error;
+    }
   }
-  console.error(Failure.format(config.error));   // renders the whole cause chain
+  console.error(Failure.format(config.error)); // renders the whole cause chain
   return;
 }
 use(config.value);
@@ -951,28 +996,28 @@ Do not spread Results into code that has no plan for them. A `Result` that is al
 
 ## 10. The async half — `Task`, and which boundary to use
 
-Sections 1–9 describe the *value* half: a `Result` is inert data, and a failure is a value you
-return. This section is the *producer* half, for async code.
+Sections 1–9 describe the _value_ half: a `Result` is inert data, and a failure is a value you
+return. This section is the _producer_ half, for async code.
 
 ### 10.1 `Task<T, E>` — a lazy, retryable `Promise`
 
-A `Task` **is a real `Promise`** (`instanceof Promise` holds), built from a *recipe* — a thunk
+A `Task` **is a real `Promise`** (`instanceof Promise` holds), built from a _recipe_ — a thunk
 that runs only when the Task is first awaited. A failure is a real **rejection** whose reason is
-a `Failure`. Both choices are what let it work *with* the language rather than beside it:
+a `Failure`. Both choices are what let it work _with_ the language rather than beside it:
 
 ```ts
-const posts = () => Task.run(() => rpcFetchPosts());   // the RPC fires only on await
-const list  = await posts();                            // the value, or it throws
-const fresh = await posts().retry(3);                   // a fresh execution per attempt
+const posts = () => Task.run(() => rpcFetchPosts()); // the RPC fires only on await
+const list = await posts(); // the value, or it throws
+const fresh = await posts().retry(3); // a fresh execution per attempt
 ```
 
 `await task` yields the **value**, never a wrapper — the JS standard. That is deliberate:
-`await` *is* `.then`, so making `await` yield `{ ok, value, error }` would force `.then`,
+`await` _is_ `.then`, so making `await` yield `{ ok, value, error }` would force `.then`,
 `.map` and `Promise.all` to yield the wrapper too. A Promise whose `.then` is not the value is
 the biggest surprise this design can inflict, so the shape lives behind one method instead.
 
 Because it keeps its recipe, `.retry(n)` / `.restart()` spawn fresh executions — a single
-Promise settles once, but a Task re-runs. `E` is the *declared* failure type; it is advisory
+Promise settles once, but a Task re-runs. `E` is the _declared_ failure type; it is advisory
 (JS rejections are untyped) but it makes `.result()` return a typed `Result<T, E>`.
 
 ### 10.2 `.result()` is the one bridge to `{ ok, value, error }`
@@ -988,18 +1033,18 @@ for readers coming from Bluebird — prefer `.result()`.
 ### 10.3 Two boundaries, chosen by the error's origin
 
 Both reflect throwing code into the Result world; they are **not** interchangeable, because they
-catch different *classes* of error:
+catch different _classes_ of error:
 
-| the code throws… | use | why |
-|---|---|---|
-| a **foreign** error — raw Node `errno`, third-party `Error` | `Result.try(source, { catch })` | not a `Failure`, so only a declared matcher can catch it |
-| **our own** `Failure` | `AsyncResult.try(fn, ...args)` | `isFailure` is the declaration; returns a chainable `AsyncResult` |
+| the code throws…                                            | use                             | why                                                               |
+| ----------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------- |
+| a **foreign** error — raw Node `errno`, third-party `Error` | `Result.try(source, { catch })` | not a `Failure`, so only a declared matcher can catch it          |
+| **our own** `Failure`                                       | `AsyncResult.try(fn, ...args)`  | `isFailure` is the declaration; returns a chainable `AsyncResult` |
 
 Swapping them is a real bug in both directions: `AsyncResult.try` would re-throw an `EBUSY` as
 if it were a defect, and a matcher-less foreign boundary would catch indiscriminately — the
 defect §8.3 warns about. Choose by where the error came from, never by whether the call is async.
 
-### 10.4 When a `Task` is *not* the answer
+### 10.4 When a `Task` is _not_ the answer
 
 `Task` earns its cost only when at least one of these is true:
 
@@ -1013,7 +1058,7 @@ at every consumer and buys nothing. `Config.setup()` and the daemon's `runVia` a
 case, and they deliberately stay value-first. This is §10 of the previous section applied to
 itself — the failure mode of a good abstraction is applying it everywhere.
 
-## 11. When *not* to use this
+## 11. When _not_ to use this
 
 This matters more than the rest of the document, because the failure mode of a good error
 abstraction is applying it everywhere.
@@ -1047,11 +1092,11 @@ blocks. In descending order of value:
    spawn failure propagate as itself.
 
    Tightening it immediately found a real misuse. `test/flags/only-failed-test.ts` routed
-   *every* CLI invocation through `shellFails`, including four that assert `exitCode(…, 0)` —
+   _every_ CLI invocation through `shellFails`, including four that assert `exitCode(…, 0)` —
    it wanted "run this and give me the result" and reached for the helper whose name promises
    a failure. Under the old implementation the mismatch was invisible, because a successful
    run was returned with `code` rewritten to `0` and the `exitCode(…, 0)` assertions then
-   passed *for the wrong reason*. That call site now uses a new `shellSettles`, which states
+   passed _for the wrong reason_. That call site now uses a new `shellSettles`, which states
    the actual contract: either exit code is fine, a spawn failure is still not.
 
 2. **`lib/args/parse.ts`** — return `Result<ParsedFlags, Failure.Of<…>>` instead of
@@ -1075,11 +1120,11 @@ blocks. In descending order of value:
 Deliberately **not** converted to Results: the 28 cleanup `.catch(() => {})` calls on
 `unlink`/`rm`/`close`/`dispose`, where the failure genuinely has no consequence. Wrapping
 those would add ceremony and remove nothing. They now carry `Failure.ignore('<what>')`
-instead — the open TODO item *"make all `.catch(() => {})` print something to debug"* — so a
+instead — the open TODO item _"make all `.catch(() => {})` print something to debug"_ — so a
 suppressed failure is labelled and visible under `QUNITX_DEBUG` while still costing nothing on
 the normal path.
 
-Three of those sites are worth knowing about, because they are *not* cleanup and the label now
+Three of those sites are worth knowing about, because they are _not_ cleanup and the label now
 says so: `run.ts`'s two `preBuildPromise.catch(() => {})` calls and `web-server.ts`'s
 `activeRebuild.catch(() => {})` are **rejection-deadline extensions**, not error handling. The
 real handling happens at a distance, when `runInBrowser` re-awaits the same promise inside its
