@@ -12,22 +12,12 @@ import * as Args from '../args/index.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
 import * as Reporter from '../reporters/index.ts';
 import * as RunState from './run-state.ts';
-import {
-  type Result,
-  type AsyncResult,
-  ok,
-  err,
-  all,
-  attempt,
-  errno,
-  asyncResult,
-  Failure,
-} from '../result/index.ts';
+import * as Result from '../result/index.ts';
 import type { Config, FSTree as FSTreeShape } from '../types.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
 
 /** `package.json#qunitx.plugins` was present but not an array. */
-export const InvalidPlugins = Failure.define(
+export const InvalidPlugins = Result.Failure.define(
   'InvalidPlugins',
   (data: { received: string }) =>
     `package.json#qunitx.plugins must be an array, received ${data.received}`,
@@ -40,14 +30,14 @@ export const InvalidPlugins = Failure.define(
  * surfaced as a raw `ERR_MODULE_NOT_FOUND` stack with no indication that a *plugin* was at
  * fault or which entry named it.
  */
-export const PluginLoadFailed = Failure.define(
+export const PluginLoadFailed = Result.Failure.define(
   'PluginLoadFailed',
   (data: { specifier: string }) => `could not load esbuild plugin "${data.specifier}"`,
 );
 
 /** Every way config assembly can fail with something the user can act on. */
 export type ConfigFailure =
-  Args.ParseFailure | Failure.Of<typeof InvalidPlugins | typeof PluginLoadFailed>;
+  Args.ParseFailure | Result.Failure.Of<typeof InvalidPlugins | typeof PluginLoadFailed>;
 
 /**
  * Builds the merged qunitx config from package.json settings and CLI flags.
@@ -59,11 +49,11 @@ export type ConfigFailure =
  * plain `Result`. It reports rather than exits so the daemon — which assembles a config per
  * client request — can reject one bad flag and stay up; `cli.ts` turns a failure into an exit.
  */
-export function setup(): AsyncResult<Config, ConfigFailure> {
-  return asyncResult(assemble());
+export function setup(): Result.AsyncResult<Config, ConfigFailure> {
+  return Result.from(assemble());
 }
 
-async function assemble(): Promise<Result<Config, ConfigFailure>> {
+async function assemble(): Promise<Result.Result<Config, ConfigFailure>> {
   const projectRoot = await findProjectRoot();
   const flags = Args.parse(projectRoot);
   if (!flags.ok) return flags;
@@ -120,7 +110,7 @@ async function assemble(): Promise<Result<Config, ConfigFailure>> {
   // by every concurrent group via the group-config spread in run.ts.
   config.state.reporters = Reporter.create(config);
 
-  return ok(config);
+  return Result.ok(config);
 }
 
 /**
@@ -220,9 +210,11 @@ function readInputsFromPackageJSON(packageJSON: {
 async function resolvePlugins(
   raw: unknown,
   projectRoot: string,
-): Promise<Result<EsbuildPlugin[], Failure.Of<typeof InvalidPlugins | typeof PluginLoadFailed>>> {
-  if (raw == null) return ok([]);
-  if (!Array.isArray(raw)) return err(InvalidPlugins({ received: typeof raw }));
+): Promise<
+  Result.Result<EsbuildPlugin[], Result.Failure.Of<typeof InvalidPlugins | typeof PluginLoadFailed>>
+> {
+  if (raw == null) return Result.ok([]);
+  if (!Array.isArray(raw)) return Result.err(InvalidPlugins({ received: typeof raw }));
 
   const projectRequire = createRequire(`${projectRoot}/package.json`);
   // `attempt` per entry rather than around the whole `Promise.all`, so the failure can name
@@ -232,18 +224,18 @@ async function resolvePlugins(
   const loaded = await Promise.all(
     raw.map(async (entry) => {
       const [spec, options] = Array.isArray(entry) ? entry : [entry];
-      const imported = await attempt(
+      const imported = await Result.try(
         async () => {
           const mod = await import(pathToFileURL(projectRequire.resolve(spec as string)).href);
           const exported = mod.default ?? mod;
           return (typeof exported === 'function' ? exported(options) : exported) as EsbuildPlugin;
         },
-        { catch: errno() },
+        { catch: Result.errno() },
       );
       return imported.ok
         ? imported
-        : err(PluginLoadFailed({ specifier: String(spec) }, { cause: imported.error }));
+        : Result.err(PluginLoadFailed({ specifier: String(spec) }, { cause: imported.error }));
     }),
   );
-  return all(loaded);
+  return Result.all(loaded);
 }

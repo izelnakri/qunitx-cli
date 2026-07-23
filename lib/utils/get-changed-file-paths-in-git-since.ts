@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 // global is the Web variant, which returns a number with no .unref().
 import { setTimeout, clearTimeout } from 'node:timers';
 import path from 'node:path';
-import { type Result, ok, err, attempt, instanceOf, Failure } from '../result/index.ts';
+import * as Result from '../result/index.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -89,7 +89,7 @@ export type ChangeScan =
   { scope: 'everything'; trigger: string } | { scope: 'paths'; paths: Set<string> };
 
 /** git could not answer: not a repo, unknown ref, git missing, or it exceeded `timeoutMs`. */
-export const GitScanFailed = Failure.define(
+export const GitScanFailed = Result.Failure.define(
   'GitScanFailed',
   (data: { ref: string; reason: string }) => `git lookup for "${data.ref}" failed: ${data.reason}`,
 );
@@ -105,12 +105,12 @@ export async function getChangedFilePathsInGitSince(
   projectRoot: string,
   ref: string,
   timeoutMs = GIT_TIMEOUT_MS,
-): Promise<Result<ChangeScan, Failure.Of<typeof GitScanFailed>>> {
+): Promise<Result.Result<ChangeScan, Result.Failure.Of<typeof GitScanFailed>>> {
   // The boundary wraps the two git calls and nothing else, so "any Error" is a tight enough
   // declaration: execFile rejects with a numeric `code` on non-zero exit and a string `code`
   // on ENOENT, and the timeout race rejects with a plain Error — one matcher covers all three
   // without also swallowing a bug from the parsing below.
-  const outputs = await attempt(
+  const outputs = await Result.try(
     () =>
       Promise.all([
         runGit(
@@ -120,10 +120,10 @@ export async function getChangedFilePathsInGitSince(
         ),
         runGit(['status', '--porcelain', '--untracked-files=all'], projectRoot, timeoutMs),
       ]),
-    { catch: instanceOf(Error) },
+    { catch: Result.instanceOf(Error) },
   );
   if (!outputs.ok) {
-    return err(
+    return Result.err(
       GitScanFailed(
         { ref, reason: outputs.error.message.split('\n')[0] },
         { cause: outputs.error },
@@ -155,9 +155,9 @@ export async function getChangedFilePathsInGitSince(
   // Naming the file that triggered it, which the old `null` could not carry — the caller
   // could say "a blast-radius file changed" but never which one.
   const trigger = Array.from(relPaths).find(isBlastRadius);
-  if (trigger !== undefined) return ok({ scope: 'everything', trigger });
+  if (trigger !== undefined) return Result.ok({ scope: 'everything', trigger });
 
-  return ok({
+  return Result.ok({
     scope: 'paths',
     paths: new Set(Array.from(relPaths, (rel) => path.resolve(projectRoot, rel))),
   });
