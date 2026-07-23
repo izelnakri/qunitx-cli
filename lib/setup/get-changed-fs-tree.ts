@@ -55,17 +55,14 @@ export async function getChangedFsTree(
       `# --changed: blast-radius file changed (${scan.value.trigger}) — running all ${testFiles.length} test files\n`,
     );
     return fsTree;
-  }
-
-  const changed = scan.value.paths;
-  if (changed.size === 0) {
+  } else if (scan.value.paths.size === 0) {
     process.stdout.write(
       `# --changed: 0 files changed since ${changedSince} — running 0 test files\n`,
     );
     return {};
   }
 
-  const affected = getChangedFiles(cache.metafile, cache.esbuildCwd, changed, testFiles);
+  const affected = getChangedFiles(cache.metafile, cache.esbuildCwd, scan.value.paths, testFiles);
   process.stdout.write(
     `# --changed: ${affected.size} of ${testFiles.length} test files affected by changes since ${changedSince}\n`,
   );
