@@ -110,17 +110,39 @@ export class AsyncResult<T, E> implements PromiseLike<Result<T, E>> {
 }
 
 /**
- * Lifts a `Promise<Result<T, E>>` into an `AsyncResult<T, E>` — the ergonomic wrapper around an
- * async function that already returns a `Result`.
+ * Lifts a `Promise<Result<T, E>>` into an `AsyncResult<T, E>` — exported as `Result.from`, the
+ * ergonomic wrapper around an async function that already returns a `Result`.
  *
  * ```ts
  * export function setup(): AsyncResult<Config, ConfigFailure> {
- *   return asyncResult(assemble());   // assemble(): Promise<Result<Config, ConfigFailure>>
+ *   return Result.from(assemble());   // assemble(): Promise<Result<Config, ConfigFailure>>
  * }
  * ```
  *
  * A caller that only `await`s gets a plain `Result` and never needs to know `AsyncResult` exists;
  * a caller that wants to chain reaches for `.map` / `.andThen`. Both read the same at the call.
+ *
+ * **Why `from` is *only* a lift, and not the `Array.from`-style universal converter it could
+ * look like.** Two overloads that would seem natural are deliberately absent, because each
+ * collides with something that already has a home:
+ *
+ *  - **`from(rawPromise: Promise<T>)` — a throw boundary.** A promise that can *reject* needs a
+ *    declared `catch`, or it silently catches everything and a bug becomes a tidy `Err` (the
+ *    defect the whole design rejects). That declaration has no natural slot in a one-argument
+ *    `from(x)`, and adding it just reinvents `Result.try(promise, { catch })`. So `from` accepts
+ *    only a `Promise<Result>` — a promise that *already* yields a Result and, by convention,
+ *    only rejects on a bug. It is a lift, never a boundary; the boundary is `Result.try`.
+ *  - **`from(fn) → wrappedFn` — a function decorator.** `Result.try(fn)` already takes a
+ *    function, and it *executes* it. A `from(fn)` that instead *wrapped* it (returning a new
+ *    Result-returning function) would give the same `function` argument two incompatible
+ *    meanings — "run this now" vs "hand me back a wrapped version" — which no reader could tell
+ *    apart at the call site. `neverthrow` keeps these as two names (`fromPromise` vs
+ *    `fromThrowable`) for exactly this reason; folding them into one `from` is the collision.
+ *
+ * The result is that `Result.from` normalises *into* the async-Result world (a lift) while
+ * `Result.try` is the one boundary *into* the Result world from throwing code — two verbs, two
+ * jobs, no overlap. That is the opposite of `Array.from`'s many-shapes-to-one-Array role, and
+ * the difference is the point.
  */
 export function asyncResult<T, E>(promise: Promise<Result<T, E>>): AsyncResult<T, E> {
   return new AsyncResult(promise);

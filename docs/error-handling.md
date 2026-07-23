@@ -178,7 +178,7 @@ safe: on the **producer**, not on the settled value. It is a thenable that **res
 
 ```ts
 export function setup(): AsyncResult<Config, ConfigFailure> {
-  return asyncResult(assemble());   // assemble(): Promise<Result<Config, ConfigFailure>>
+  return Result.from(assemble());   // assemble(): Promise<Result<Config, ConfigFailure>>
 }
 
 // A caller that only awaits never needs to know AsyncResult exists — it gets a plain Result:
@@ -202,6 +202,16 @@ The invariant, stated once: **the value you get after awaiting is plain; only th
 `await` in front of is thenable.** `lib/setup/config.ts` is the live example — it is `AsyncResult`,
 not `Promise<Result>`, purely so a caller *can* chain; nothing that already only `await`s it had
 to change.
+
+`Result.from` is deliberately a **lift, not a universal `Array.from`-style converter**. It accepts
+a `Promise<Result>` (a promise that already yields a Result and only rejects on a bug) and never a
+raw `Promise<T>` — because a promise that can *reject* needs a declared `catch`, which has no slot
+in a one-argument `from(x)` and would just reinvent `Result.try(promise, { catch })`. Nor does it
+wrap a *function* into a Result-returning function: `Result.try(fn)` already takes a function and
+*executes* it, so a `from(fn)` that instead *wrapped* it would give the same `function` argument
+two incompatible meanings. `from` normalises into the async-Result world; `Result.try` is the one
+boundary from throwing code — two verbs, no overlap. (This is why `neverthrow` keeps `fromPromise`
+and `fromThrowable` as separate names rather than one overloaded `from`.)
 
 ---
 

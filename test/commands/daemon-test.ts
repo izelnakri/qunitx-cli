@@ -81,7 +81,7 @@ const cli = async (
   // own log. Declaring CapturedError keeps that enrichment off anything that is not a child
   // process outcome — a bug in this helper is no longer decorated with a daemon log and
   // re-thrown as though it were one.
-  const run = await Result.attempt(
+  const run = await Result.try(
     () =>
       spawnCapture(`node ${CWD}/cli.ts ${args}`, {
         env: { ...baseEnv, QUNITX_DAEMON_LOG: daemonLogPath },

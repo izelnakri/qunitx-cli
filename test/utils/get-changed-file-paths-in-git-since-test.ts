@@ -127,10 +127,9 @@ const HANG_ARGS = IS_DENO
 module('Utils | getChangedFilePathsInGitSince | bounded execution', { concurrency: true }, () => {
   test('kills and rejects a subprocess that never exits, rather than waiting forever', async (assert) => {
     const startedAt = Date.now();
-    const ran = await Result.attempt(
-      () => runGit(HANG_ARGS, process.cwd(), 300, process.execPath),
-      { catch: Result.instanceOf(Error) },
-    );
+    const ran = await Result.try(() => runGit(HANG_ARGS, process.cwd(), 300, process.execPath), {
+      catch: Result.instanceOf(Error),
+    });
     const elapsed = Date.now() - startedAt;
 
     assert.notOk(ran.ok, 'settles as a rejection instead of hanging forever');

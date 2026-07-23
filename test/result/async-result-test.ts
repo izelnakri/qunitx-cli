@@ -1,20 +1,32 @@
 import { module, test } from 'qunitx';
 import * as Result from '../../lib/result/index.ts';
 
-const { AsyncResult, asyncResult, ok, err } = Result;
+const { AsyncResult, ok, err } = Result;
 
 const Denied = Result.Failure.define('Denied', 'permission denied');
 
-// A producer: async work that settles to a plain Result, wrapped as an AsyncResult.
+// A producer: async work that settles to a plain Result, wrapped via `Result.from`.
 function load(
   fail: boolean,
 ): Result.AsyncResult<{ port: number }, Result.Failure.Of<typeof Denied>> {
-  return asyncResult(
+  return Result.from(
     new Promise((resolve) =>
       setTimeout(() => resolve(fail ? err(Denied()) : ok({ port: 3000 })), 1),
     ),
   );
 }
+
+module('Result | from | is the primary spelling of asyncResult', { concurrency: true }, () => {
+  test('Result.from and Result.asyncResult are the same function', (assert) => {
+    assert.strictEqual(Result.from, Result.asyncResult);
+  });
+
+  test('Result.from lifts a Promise<Result> into an awaitable that settles to a plain Result', async (assert) => {
+    const r = await Result.from(Promise.resolve(ok(7)));
+    assert.strictEqual(r.value, 7);
+    assert.strictEqual(typeof (r as { then?: unknown }).then, 'undefined');
+  });
+});
 
 // ── The invariant: await yields a PLAIN Result ────────────────────────────────
 

@@ -285,7 +285,7 @@ module('Commands | buildTestBundle | fallbackPage lifecycle', { concurrency: tru
       // Asserted, not merely tolerated. `.catch(() => {})` here accepted a *resolved*
       // build just as happily, so if buildTestBundle ever stopped rejecting on invalid
       // syntax this test would still pass while proving nothing.
-      const built = await Result.attempt(() => buildTestBundle(config));
+      const built = await Result.try(() => buildTestBundle(config));
       assert.notOk(built.ok, 'an unparseable entry point rejects');
       const html = await fs.readFile(`${CWD}/${config.output}/index.html`, 'utf8');
       assert.ok(html.includes('<!DOCTYPE html>'), 'index.html is a full HTML document');
@@ -307,7 +307,7 @@ module('Commands | buildTestBundle | fallbackPage lifecycle', { concurrency: tru
       // Asserted, not merely tolerated. `.catch(() => {})` here accepted a *resolved*
       // build just as happily, so if buildTestBundle ever stopped rejecting on invalid
       // syntax this test would still pass while proving nothing.
-      const built = await Result.attempt(() => buildTestBundle(config));
+      const built = await Result.try(() => buildTestBundle(config));
       assert.notOk(built.ok, 'an unparseable entry point rejects');
       const html = await fs.readFile(`${CWD}/${config.output}/index.html`, 'utf8');
       assert.ok(html.includes('<!DOCTYPE html>'), 'index.html written in watch mode too');
