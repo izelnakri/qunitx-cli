@@ -151,7 +151,7 @@ genuinely has no consequence, which says so under `QUNITX_DEBUG` instead of vani
 await unlink(socketPath).catch(ignore('daemon socket unlink'));
 ```
 
-It is not a lesser `Result`; it is what §10 recommends *instead* of one. The point is that
+It is not a lesser `Result`; it is what §11 recommends *instead* of one. The point is that
 `.catch(() => {})` cannot be told apart from `.catch(() => {})` — a real `EACCES` on a
 directory qunitx is trying to clean up and a benign `ENOENT` because it was already gone
 produce identical silence, inside code whose whole job is diagnosing why a directory will not
@@ -949,7 +949,71 @@ Do not spread Results into code that has no plan for them. A `Result` that is al
 
 ---
 
-## 10. When *not* to use this
+## 10. The async half — `Task`, and which boundary to use
+
+Sections 1–9 describe the *value* half: a `Result` is inert data, and a failure is a value you
+return. This section is the *producer* half, for async code.
+
+### 10.1 `Task<T, E>` — a lazy, retryable `Promise`
+
+A `Task` **is a real `Promise`** (`instanceof Promise` holds), built from a *recipe* — a thunk
+that runs only when the Task is first awaited. A failure is a real **rejection** whose reason is
+a `Failure`. Both choices are what let it work *with* the language rather than beside it:
+
+```ts
+const posts = () => Task.run(() => rpcFetchPosts());   // the RPC fires only on await
+const list  = await posts();                            // the value, or it throws
+const fresh = await posts().retry(3);                   // a fresh execution per attempt
+```
+
+`await task` yields the **value**, never a wrapper — the JS standard. That is deliberate:
+`await` *is* `.then`, so making `await` yield `{ ok, value, error }` would force `.then`,
+`.map` and `Promise.all` to yield the wrapper too. A Promise whose `.then` is not the value is
+the biggest surprise this design can inflict, so the shape lives behind one method instead.
+
+Because it keeps its recipe, `.retry(n)` / `.restart()` spawn fresh executions — a single
+Promise settles once, but a Task re-runs. `E` is the *declared* failure type; it is advisory
+(JS rejections are untyped) but it makes `.result()` return a typed `Result<T, E>`.
+
+### 10.2 `.result()` is the one bridge to `{ ok, value, error }`
+
+```ts
+const { ok, value, error } = await task.result();
+```
+
+`.result()` is the canonical name. It reflects a declared `Failure` to an `Err` and **re-throws
+a bug**, so the two-tier rule of §3 survives the crossing. `.reflect()` exists only as an alias
+for readers coming from Bluebird — prefer `.result()`.
+
+### 10.3 Two boundaries, chosen by the error's origin
+
+Both reflect throwing code into the Result world; they are **not** interchangeable, because they
+catch different *classes* of error:
+
+| the code throws… | use | why |
+|---|---|---|
+| a **foreign** error — raw Node `errno`, third-party `Error` | `Result.try(source, { catch })` | not a `Failure`, so only a declared matcher can catch it |
+| **our own** `Failure` | `AsyncResult.try(fn, ...args)` | `isFailure` is the declaration; returns a chainable `AsyncResult` |
+
+Swapping them is a real bug in both directions: `AsyncResult.try` would re-throw an `EBUSY` as
+if it were a defect, and a matcher-less foreign boundary would catch indiscriminately — the
+defect §8.3 warns about. Choose by where the error came from, never by whether the call is async.
+
+### 10.4 When a `Task` is *not* the answer
+
+`Task` earns its cost only when at least one of these is true:
+
+- the work should not start until it is awaited (**laziness**),
+- it may need to run again (**retry**), or
+- it fails by **rejecting** and you want the failure type to survive the rejection.
+
+If a producer is awaited immediately, never retried, and already returns a typed
+`Result`/`AsyncResult`, converting it to a `Task` is a **downgrade**: it adds a `.result()` call
+at every consumer and buys nothing. `Config.setup()` and the daemon's `runVia` are exactly that
+case, and they deliberately stay value-first. This is §10 of the previous section applied to
+itself — the failure mode of a good abstraction is applying it everywhere.
+
+## 11. When *not* to use this
 
 This matters more than the rest of the document, because the failure mode of a good error
 abstraction is applying it everywhere.
@@ -969,7 +1033,7 @@ abstraction is applying it everywhere.
 
 ---
 
-## 11. Verdict for this repository
+## 12. Verdict for this repository
 
 Adopt for the ~15 sites where a failure is genuinely branched on, not for the 85 `catch`
 blocks. In descending order of value:
