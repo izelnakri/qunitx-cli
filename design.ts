@@ -1,5 +1,9 @@
 // design.ts — design study: a Task-based web server where the try/catch KEYWORD exists in
 // exactly ONE function body in the entire program (Result.try). Endpoints stay flat.
+//
+// The production implementations live in lib/result/ and lib/task/ (richer: Failure taxonomy,
+// lineage-carrying restart/retry, Promises/A+ compliance); this file stays a self-contained,
+// runnable distillation of the same rules against live HTTP/fs edges.
 // run:   node design.ts                 (starts on an ephemeral port, demos every endpoint, exits)
 //        node design.ts --serve         (keeps serving; GITHUB_TOKEN honored if set)
 // check: deno check design.ts
@@ -54,8 +58,7 @@ export class Failure extends Error {
 }
 
 export type Result<T, E> =
-  | { ok: true; value: T; error?: never }
-  | { ok: false; value?: never; error: E };
+  { ok: true; value: T; error?: never } | { ok: false; value?: never; error: E };
 
 /** The sync twin of Task — and THE ONLY place in the entire program where the try/catch keyword
  *  exists. Mirrors Promise.try's signature: `Result.try(fn, ...args)` runs fn NOW, synchronously.
@@ -76,7 +79,9 @@ export const Result = {
 class TaskImpl<T, E extends Failure = Failure> implements PromiseLike<T> {
   #recipe: () => Promise<T>;
   #memo: Promise<T> | undefined;
-  constructor(recipe: () => Promise<T>) { this.#recipe = recipe; }
+  constructor(recipe: () => Promise<T>) {
+    this.#recipe = recipe;
+  }
 
   /** Start the run NOW without suspending; `await t` later joins it. */
   perform(): Promise<T> {
@@ -117,7 +122,9 @@ class TaskImpl<T, E extends Failure = Failure> implements PromiseLike<T> {
   /** Transform the failure channel E→F; success passes through. */
   mapErr<F extends Failure>(fn: (error: E) => F): Task<T, F> {
     return Task<T, F>(() =>
-      this.perform().catch((error) => { throw error instanceof Failure ? fn(error as E) : error; }),
+      this.perform().catch((error) => {
+        throw error instanceof Failure ? fn(error as E) : error;
+      }),
     );
   }
 
@@ -155,9 +162,12 @@ async function fetchJson<T>(url: string, headers: Record<string, string> = {}): 
   const response = await fetch(url, { headers: { accept: 'application/json', ...headers } });
   if (!response.ok) {
     // Edge classification: upstream's 404 is OUR 404; any other upstream failure is OUR 502.
-    throw new Failure(`upstream ${response.status} from ${url}`, response.status === 404 ? 404 : 502);
+    throw new Failure(
+      `upstream ${response.status} from ${url}`,
+      response.status === 404 ? 404 : 502,
+    );
   }
-  return await response.json() as T;
+  return (await response.json()) as T;
 }
 
 function taskJson<T>(url: string, headers?: Record<string, string>): Task<T, Failure> {
@@ -183,15 +193,29 @@ function githubProfile(username: string): Task<Profile, Failure> {
     `https://api.github.com/users/${encodeURIComponent(username)}`,
     token ? { authorization: `Bearer ${token}` } : {},
   )
-    .map((u): Profile => ({ source: 'github', username: u.login, name: u.name, url: u.html_url, followers: u.followers }))
+    .map((u): Profile => ({
+      source: 'github',
+      username: u.login,
+      name: u.name,
+      url: u.html_url,
+      followers: u.followers,
+    }))
     .expect(`github profile: ${username}`);
 }
 
 function gitlabProfile(username: string): Task<Profile, Failure> {
-  return taskJson<GitlabApiUser[]>(`https://gitlab.com/api/v4/users?username=${encodeURIComponent(username)}`)
+  return taskJson<GitlabApiUser[]>(
+    `https://gitlab.com/api/v4/users?username=${encodeURIComponent(username)}`,
+  )
     .map(([user]): Profile => {
       if (!user) throw new Failure(`gitlab user not found: ${username}`, 404); // a Failure may rise mid-pipeline
-      return { source: 'gitlab', username: user.username, name: user.name, url: user.web_url, followers: null };
+      return {
+        source: 'gitlab',
+        username: user.username,
+        name: user.name,
+        url: user.web_url,
+        followers: null,
+      };
     })
     .expect(`gitlab profile: ${username}`);
 }
@@ -207,20 +231,33 @@ type FsEntry =
 
 /** Edge classification for raw fs errors: known errnos become declared Failures, unknown stay bugs. */
 function classifyErrno(error: Error & { code?: string }, path: string): Error {
-  if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return new Failure(`no such path: ${path}`, 404, { cause: error });
-  if (error.code === 'EACCES' || error.code === 'EPERM') return new Failure(`forbidden: ${path}`, 403, { cause: error });
+  if (error.code === 'ENOENT' || error.code === 'ENOTDIR')
+    return new Failure(`no such path: ${path}`, 404, { cause: error });
+  if (error.code === 'EACCES' || error.code === 'EPERM')
+    return new Failure(`forbidden: ${path}`, 403, { cause: error });
   return error;
 }
 
 async function readEntry(relPath: string): Promise<FsEntry> {
   const full = resolve(ROOT, relPath);
-  if (full !== ROOT && !full.startsWith(ROOT + sep)) throw new Failure(`path escapes served root: ${relPath}`, 400);
-  const stats = await stat(full).catch((e) => { throw classifyErrno(e, relPath); });
+  if (full !== ROOT && !full.startsWith(ROOT + sep))
+    throw new Failure(`path escapes served root: ${relPath}`, 400);
+  const stats = await stat(full).catch((e) => {
+    throw classifyErrno(e, relPath);
+  });
   if (stats.isDirectory()) {
     return { type: 'directory', path: relPath, entries: await readdir(full) };
   }
-  const content = await readFile(full, 'utf8').catch((e) => { throw classifyErrno(e, relPath); });
-  return { type: 'file', path: relPath, size: stats.size, truncated: content.length > MAX_CONTENT, content: content.slice(0, MAX_CONTENT) };
+  const content = await readFile(full, 'utf8').catch((e) => {
+    throw classifyErrno(e, relPath);
+  });
+  return {
+    type: 'file',
+    path: relPath,
+    size: stats.size,
+    truncated: content.length > MAX_CONTENT,
+    content: content.slice(0, MAX_CONTENT),
+  };
 }
 
 function taskFs(rawPath: string): Task<FsEntry, Failure> {
@@ -228,7 +265,8 @@ function taskFs(rawPath: string): Task<FsEntry, Failure> {
     // The sync edge, flat: Result.try boxes the raw URIError, one `if` classifies it — no
     // indentation, no keyword. This is DESIGN NOTE 1 in action.
     const decoded = Result.try(decodeURIComponent, rawPath);
-    if (!decoded.ok) throw new Failure(`malformed percent-encoding: ${rawPath}`, 400, { cause: decoded.error });
+    if (!decoded.ok)
+      throw new Failure(`malformed percent-encoding: ${rawPath}`, 400, { cause: decoded.error });
     return await readEntry(decoded.value);
   }).expect(`fs entry: ${rawPath || '(root)'}`);
 }
@@ -237,7 +275,8 @@ function taskFs(rawPath: string): Task<FsEntry, Failure> {
 
 function causeChain(failure: Error): string[] {
   const chain: string[] = [];
-  for (let cause = failure.cause; cause instanceof Error; cause = cause.cause) chain.push(cause.message);
+  for (let cause = failure.cause; cause instanceof Error; cause = cause.cause)
+    chain.push(cause.message);
   return chain;
 }
 
@@ -263,7 +302,8 @@ function route(req: IncomingMessage): Promise<Reply> {
   else if (head === 'fs') return reply(taskFs(segments.slice(1).join('/')));
   else if (head === 'github' && segments.length === 2) return reply(githubProfile(username));
   else if (head === 'gitlab' && segments.length === 2) return reply(gitlabProfile(username));
-  else if (head === 'bug') return reply(Task(async () => JSON.parse('{malformed') as JsonValue)); // tier-2 on purpose
+  else if (head === 'bug')
+    return reply(Task(async () => JSON.parse('{malformed') as JsonValue)); // tier-2 on purpose
   else return reply(fail(`no route: ${pathname}`, 404));
 }
 
@@ -277,7 +317,8 @@ const server = createServer(async (req, res) => {
     console.error('BUG escaped .result():', bug);
     return { status: 500, body: { error: 'internal error' } };
   });
-  res.writeHead(outcome.status, { 'content-type': 'application/json' })
+  res
+    .writeHead(outcome.status, { 'content-type': 'application/json' })
     .end(JSON.stringify(outcome.body, null, 2));
 });
 
@@ -287,15 +328,15 @@ const origin = `http://localhost:${(server.address() as AddressInfo).port}`;
 // ── demo mode: exercise every endpoint and status class against ourselves ────
 
 const DEMO_PATHS = [
-  '/',                                //  200 index
-  '/fs/package.json',                 //  200 file content
-  '/fs/lib',                          //  200 directory listing
-  '/fs/no-such-file.txt',             //  404 declared: ENOENT classified at the fs edge
-  '/fs/%2e%2e%2fetc%2fpasswd',        //  400 declared: traversal rejected
-  '/github/izelnakri',                //  200 upstream API → Profile
-  '/github/no-such-user-8f3a1c9d2e',  //  404 declared: upstream 404 classified at the http edge
-  '/gitlab/sytses',                   //  200 same Profile shape, different API
-  '/bug',                             //  500 tier-2: rethrown by .result(), caught at THE boundary
+  '/', //  200 index
+  '/fs/package.json', //  200 file content
+  '/fs/lib', //  200 directory listing
+  '/fs/no-such-file.txt', //  404 declared: ENOENT classified at the fs edge
+  '/fs/%2e%2e%2fetc%2fpasswd', //  400 declared: traversal rejected
+  '/github/izelnakri', //  200 upstream API → Profile
+  '/github/no-such-user-8f3a1c9d2e', //  404 declared: upstream 404 classified at the http edge
+  '/gitlab/sytses', //  200 same Profile shape, different API
+  '/bug', //  500 tier-2: rethrown by .result(), caught at THE boundary
 ];
 
 if (process.argv.includes('--serve')) {
@@ -305,7 +346,11 @@ if (process.argv.includes('--serve')) {
   for (const path of DEMO_PATHS) {
     const response = await fetch(origin + path);
     const body = JSON.stringify(await response.json());
-    console.log(String(response.status).padEnd(5), `GET ${path}`.padEnd(38), body.length > 90 ? `${body.slice(0, 87)}...` : body);
+    console.log(
+      String(response.status).padEnd(5),
+      `GET ${path}`.padEnd(38),
+      body.length > 90 ? `${body.slice(0, 87)}...` : body,
+    );
   }
   server.close();
 }
