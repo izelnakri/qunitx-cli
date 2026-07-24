@@ -37,15 +37,9 @@ export {
   isErrno,
 } from './attempt.ts';
 
-export {
-  AsyncResult,
-  asyncResult,
-  // `Result.from(promiseOfResult)` is the primary, `Array.from`-style spelling; `asyncResult`
-  // is the same function under a name that survives a bare import (`from` reads oddly as a bare
-  // local — `import { from } from '…'`). See the "why `from` is only a lift" note in
-  // async-result.ts for what it deliberately does *not* do (it is not a throw-boundary).
-  asyncResult as from,
-} from './async-result.ts';
+// There is deliberately no AsyncResult here. The awaitable, chainable producer half of the
+// system is `Task` (`lib/task/`): a real lazy Promise whose `.result()` settles to the same
+// plain `Result` this module defines — one async abstraction, not two.
 
 /** Structured, discriminable errors — the `E` half of `Result<T, E>`. */
 export * as Failure from './failure.ts';
