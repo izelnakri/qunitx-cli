@@ -11,14 +11,4 @@ export { Task } from './task.ts';
 /** Structured, discriminable failures — the rejection reason of a Task. */
 export * as Failure from '../result/failure.ts';
 
-export {
-  type Result,
-  type Ok,
-  type Err,
-  ok,
-  err,
-  isOk,
-  isErr,
-  isResult,
-  partition,
-} from '../result/result.ts';
+export { type Result, type Ok, type Err, ok, err, isResult, partition } from '../result/result.ts';

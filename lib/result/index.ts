@@ -5,10 +5,10 @@
 // Both access styles are supported and neither is a second-class citizen:
 //
 //   import * as Result from './lib/result/index.ts';
-//   Result.attempt(() => JSON.parse(raw), SyntaxError);
+//   Result.try(JSON.parse, raw);
 //
 //   import { attempt, ok, err, type Result } from './lib/result/index.ts';
-//   attempt(() => JSON.parse(raw), SyntaxError);
+//   attempt(JSON.parse, raw);
 //
 // The type `Result<T, E>` and the namespace `Result` coexist deliberately: TypeScript keeps
 // type and value namespaces separate, so `Result.ok()` and `const r: Result<T, E>` both
@@ -17,38 +17,24 @@ export {
   type Result,
   type Ok,
   type Err,
-  type Success,
-  type Failed,
   ok,
   err,
-  isOk,
-  isErr,
   isResult,
   unwrap,
   unwrapOr,
-  unwrapOrElse,
   expect,
-  match,
-  map,
-  mapErr,
-  andThen,
   all,
   partition,
 } from './result.ts';
 
 export {
-  type Matcher,
-  type CatchOption,
   type ErrnoError,
   attempt,
-  // `Result.try(fn, { catch: … })` is the primary spelling; `attempt` is the same function
-  // under a name that also survives a bare `import { attempt }` (`try` is a reserved word).
+  // `Result.try(fn, ...args)` is the primary spelling — `Promise.try`'s shape, reflecting
+  // into a Result; `attempt` is the same function under a name that also survives a bare
+  // `import { attempt }` (`try` is a reserved word).
   attempt as try,
-  pcall,
-  xpcall,
-  errno,
-  instanceOf,
-  anyOf,
+  isErrno,
 } from './attempt.ts';
 
 export {

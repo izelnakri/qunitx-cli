@@ -48,12 +48,6 @@ export type Err<E> = {
  */
 export type Result<T, E = unknown> = Ok<T> | Err<E>;
 
-/** Extracts the success type of a Result (`Success<Result<User, IoError>>` is `User`). */
-export type Success<R> = R extends Ok<infer T> ? T : never;
-
-/** Extracts the failure type of a Result (`Failed<Result<User, IoError>>` is `IoError`). */
-export type Failed<R> = R extends Err<infer E> ? E : never;
-
 // ── Constructors ─────────────────────────────────────────────────────────────
 
 // `ok()` with no argument is by far the most common Result in void-returning code
@@ -87,15 +81,9 @@ export function err<const E>(error: E): Err<E> {
 
 // ── Guards ───────────────────────────────────────────────────────────────────
 
-/** Whether `result` succeeded. Narrows `result` to `Ok<T>`. */
-export function isOk<T, E>(result: Result<T, E>): result is Ok<T> {
-  return result.ok;
-}
-
-/** Whether `result` failed. Narrows `result` to `Err<E>`. */
-export function isErr<T, E>(result: Result<T, E>): result is Err<E> {
-  return !result.ok;
-}
+// There is deliberately no `isOk`/`isErr` pair here: `result.ok` already narrows both
+// branches under `if`, destructuring, and `switch` (design constraint 2 above), so a guard
+// function would only add a call to spell the same check.
 
 /**
  * Whether `value` is any Result at all — a structural check for values arriving from
@@ -149,50 +137,10 @@ export function unwrapOr<T, U>(result: Result<T, unknown>, fallback: U): T | U {
   return result.ok ? result.value : fallback;
 }
 
-/**
- * Returns the success value, or the result of `recover(error)`.
- *
- * The lazy sibling of `unwrapOr` — for fallbacks that cost something to build, and for
- * fallbacks that depend on *which* failure occurred.
- */
-export function unwrapOrElse<T, E, U>(result: Result<T, E>, recover: (error: E) => U): T | U {
-  return result.ok ? result.value : recover(result.error);
-}
-
-/**
- * Exhaustively handles both branches, returning whatever the taken branch returns.
- *
- * Worth reaching for when a Result is consumed as an *expression* (a JSX subtree, a
- * ternary's worth of logic, the tail of an arrow function). In statement position an
- * `if (!result.ok) return …` early exit reads better and allocates nothing — see the
- * "combinators are not the point" section of `docs/error-handling.md`.
- */
-export function match<T, E, A, B>(
-  result: Result<T, E>,
-  handlers: { ok: (value: T) => A; err: (error: E) => B },
-): A | B {
-  return result.ok ? handlers.ok(result.value) : handlers.err(result.error);
-}
-
-// ── Transformations ──────────────────────────────────────────────────────────
-
-/** Applies `fn` to a success value, passing failures through untouched. */
-export function map<T, E, U>(result: Result<T, E>, fn: (value: T) => U): Result<U, E> {
-  return result.ok ? ok(fn(result.value)) : result;
-}
-
-/** Applies `fn` to a failure, passing successes through untouched. */
-export function mapErr<T, E, F>(result: Result<T, E>, fn: (error: E) => F): Result<T, F> {
-  return result.ok ? result : err(fn(result.error));
-}
-
-/** Chains a second fallible step onto a success, short-circuiting on failure. */
-export function andThen<T, E, U, F>(
-  result: Result<T, E>,
-  fn: (value: T) => Result<U, F>,
-): Result<U, E | F> {
-  return result.ok ? fn(result.value) : result;
-}
+// There is deliberately no `map`/`mapErr`/`andThen`/`match` on a plain Result. A settled
+// Result is branched on with an `if`, which reads better and allocates nothing (see the
+// "combinators are not the point" section of `docs/error-handling.md`); the *async* pipeline
+// — where combinators earn their keep because the value is not here yet — lives on `Task`.
 
 // ── Collections ──────────────────────────────────────────────────────────────
 
@@ -219,11 +167,11 @@ export function all<T, E>(results: ReadonlyArray<Result<T, E>>): Result<T[], E> 
  *
  * This is the shape most batch work actually wants, and the one `Promise.all` cannot give
  * you: a rejected `Promise.all` discards the settled successes alongside the other
- * failures. Combine with `attempt()` — whose returned promise never rejects — to get
- * `Promise.allSettled` semantics with the failures already typed:
+ * failures. Combine with `Result.try` — whose returned promise never rejects — to get
+ * `Promise.allSettled` semantics with the outcomes already reflected:
  *
  * ```ts
- * const results = await Promise.all(files.map((f) => attempt(() => readFile(f), errno())));
+ * const results = await Promise.all(files.map((f) => Result.try(readFile, f)));
  * const { values, errors } = partition(results);
  * ```
  */

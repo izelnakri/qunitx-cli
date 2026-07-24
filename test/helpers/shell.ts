@@ -339,10 +339,10 @@ export async function shellSettles(
   commandString: string,
   options: Parameters<typeof execute>[1] = {},
 ): Promise<CapturedResult> {
-  const run = await Result.try(() => execute(commandString, { ...options, expectFailure: true }), {
-    catch: isProcessFailure,
-  });
-  return run.ok ? run.value : run.error;
+  const run = await Result.try(() => execute(commandString, { ...options, expectFailure: true }));
+  if (run.ok) return run.value;
+  if (!isProcessFailure(run.error)) throw run.error; // never-started: no exit code to report
+  return run.error;
 }
 
 /**
@@ -368,16 +368,14 @@ export async function shellFails(
   commandString: string,
   options: Parameters<typeof execute>[1] = {},
 ): Promise<CapturedResult> {
-  const run = await Result.try(
-    () => execute(commandString, { ...options, expectFailure: true }),
-    isProcessFailure,
-  );
+  const run = await Result.try(() => execute(commandString, { ...options, expectFailure: true }));
   if (run.ok) {
     throw new Error(
       `Expected \`${commandString}\` to fail, but it exited 0 after ${run.value.duration.toFixed(0)} ms.\n` +
         `STDOUT:\n${run.value.stdout.split('\n').slice(-30).join('\n')}`,
     );
   }
+  if (!isProcessFailure(run.error)) throw run.error; // never-started (spawn ENOENT) propagates
   return run.error;
 }
 

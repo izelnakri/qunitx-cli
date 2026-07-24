@@ -147,11 +147,11 @@ async function publish(lockPath: string, entry: RunnerEntry): Promise<boolean> {
   await fs.writeFile(tmpPath, JSON.stringify(entry));
   try {
     // EEXIST is the whole point of the link: someone else published first, which is an
-    // outcome, not a fault. Declaring it means an EACCES or ENOSPC on the registry directory
-    // propagates instead of being read as "we lost the race" and silently disabling the cap.
-    const linked = await Result.try(() => fs.link(tmpPath, lockPath), {
-      catch: Result.errno('EEXIST'),
-    });
+    // outcome, not a fault. The rethrow line means an EACCES or ENOSPC on the registry
+    // directory propagates instead of being read as "we lost the race" and silently
+    // disabling the cap.
+    const linked = await Result.try(fs.link, tmpPath, lockPath);
+    if (!linked.ok && !Result.isErrno(linked.error, 'EEXIST')) throw linked.error;
     return linked.ok;
   } finally {
     // Drop our second reference; on success the lock's own name keeps the inode alive.
@@ -164,14 +164,18 @@ async function publish(lockPath: string, entry: RunnerEntry): Promise<boolean> {
 // name distinctions nobody acts on. The boundary still declares what it expects: a read error
 // or a parse error, not a bug in the shape check below.
 async function readEntry(entryPath: string): Promise<RunnerEntry | null> {
-  const read = await Result.try(() => fs.readFile(entryPath, 'utf8'), {
-    catch: Result.errno(),
-  });
-  if (!read.ok) return null;
-  const parsed = Result.try(() => JSON.parse(read.value) as Partial<RunnerEntry>, {
-    catch: SyntaxError,
-  });
-  if (!parsed.ok) return null;
+  // Thunked rather than `Result.try(fs.readFile, …)`: readFile is overloaded, and inference
+  // against the last overload would widen the value to `string | Buffer`.
+  const read = await Result.try(() => fs.readFile(entryPath, 'utf8'));
+  if (!read.ok) {
+    if (!Result.isErrno(read.error)) throw read.error;
+    return null;
+  }
+  const parsed = Result.try(() => JSON.parse(read.value) as Partial<RunnerEntry>);
+  if (!parsed.ok) {
+    if (!(parsed.error instanceof SyntaxError)) throw parsed.error;
+    return null;
+  }
   return typeof parsed.value.pid === 'number' && typeof parsed.value.startedAt === 'number'
     ? (parsed.value as RunnerEntry)
     : null;
@@ -181,10 +185,10 @@ async function readEntry(entryPath: string): Promise<RunnerEntry | null> {
 // the real "no such process". Anything else (an invalid pid, a bad signal) is a bug and is
 // left to propagate rather than being reported as "not alive".
 function isAlive(pid: number): boolean {
-  const signalled = Result.try(() => process.kill(pid, 0), {
-    catch: Result.errno('EPERM', 'ESRCH'),
-  });
-  return signalled.ok || signalled.error.code === 'EPERM';
+  const signalled = Result.try(() => process.kill(pid, 0));
+  if (signalled.ok) return true;
+  if (!Result.isErrno(signalled.error, 'EPERM', 'ESRCH')) throw signalled.error;
+  return signalled.error.code === 'EPERM';
 }
 
 // Only ever remove our own lock: a late release must not clear one someone else now holds.

@@ -31,15 +31,13 @@ export async function rmRetry(
     sleep?: (ms: number) => Promise<unknown>;
   } = {},
 ): Promise<void> {
-  // The retryable set is *declared* to the boundary rather than checked inside a catch, so
-  // rethrowing anything else is the default instead of a line someone has to remember. The
-  // previous shape — catch, read `.code`, `if (!RETRYABLE.has(code)) throw` — inverts that:
-  // every unanticipated failure is caught first and only escapes if the guard is right.
+  // The flat classification line right after the boundary: box, test, rethrow what was not
+  // declared. A non-retryable failure (EACCES, ENOSPC) escapes on the first attempt instead
+  // of burning the whole retry ladder against an error that will never clear.
   for (let attempt = 1; ; attempt++) {
-    const removed = await Result.try(() => rm(dir), {
-      catch: Result.errno(...RETRYABLE_CODES),
-    });
+    const removed = await Result.try(rm, dir);
     if (removed.ok) return;
+    if (!Result.isErrno(removed.error, ...RETRYABLE_CODES)) throw removed.error;
     if (attempt >= attempts) throw removed.error;
     await sleep(delayMs * attempt);
   }
