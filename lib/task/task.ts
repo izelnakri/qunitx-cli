@@ -95,6 +95,11 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    *
    * The signature mirrors `Promise.prototype.then` exactly (including `reason: any`, which the
    * lib.d.ts declaration uses) so the subclass stays assignable everywhere a Promise is.
+   *
+   * ```ts
+   * const names = task.then((users) => users.map((u) => u.name)); // plain Promise out
+   * // to stay in Task-land (lazy, retryable, typed E), use .map instead
+   * ```
    */
   override then<TResult1 = T, TResult2 = never>(
     onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | null,
@@ -112,6 +117,12 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    *
    * An unconsumed performed Task that fails becomes an unhandled rejection, exactly like any
    * un-awaited promise — perform-and-forget still wants a `.result()` or a `recover` somewhere.
+   *
+   * ```ts
+   * const scan = scanChanges(root, ref).perform(); // git starts NOW
+   * const tree = await buildFsTree(config); // overlapped work
+   * const changes = await scan; // join the in-flight run — no second git call
+   * ```
    */
   perform(): this {
     this.#start();
@@ -120,8 +131,15 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
 
   // ── Builders ─────────────────────────────────────────────────────────────────
 
-  /** Lifts a promise or a recipe into a Task. A recipe stays lazy; a passed promise is already
-   *  running (JS starts promises at creation) — the Task then only defers *observation*. */
+  /**
+   * Lifts a promise or a recipe into a Task. A recipe stays lazy; a passed promise is already
+   * running (JS starts promises at creation) — the Task then only defers *observation*.
+   *
+   * ```ts
+   * Task.from(() => fetch(url)); // fully lazy — fetch fires on first await
+   * Task.from(fetch(url)); // fetch already in flight; retry/result still work
+   * ```
+   */
   static from<T, E = AnyFailure>(
     source: PromiseLike<T> | (() => T | PromiseLike<T>),
   ): TaskClass<T, E> {
@@ -132,6 +150,11 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * The call boundary with arguments — `Promise.try`'s shape, made lazy: `fn(...args)` runs on
    * first await, and whatever it throws (sync or async) becomes the rejection. The closure the
    * caller would otherwise write by hand (`Task(() => fn(a, b))`) is built here instead.
+   *
+   * ```ts
+   * const scan = Task.try(runGit, ['status', '--porcelain'], cwd); // lazy, args captured
+   * await scan.retry(2); // three fresh runGit executions at most
+   * ```
    */
   static override try<T, A extends unknown[]>(
     fn: (...args: A) => T | PromiseLike<T>,
@@ -144,6 +167,10 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * A resolved Task. Overridden because the inherited `Promise.resolve` builds via
    * `new this(executor)`, which our recipe constructor would misread. Same for every static
    * below that the base class would otherwise construct through `NewPromiseCapability`.
+   *
+   * ```ts
+   * await Task.resolve(42); // 42 — a settled value lifted into Task-land
+   * ```
    */
   static override resolve(): TaskClass<void>;
   static override resolve<T>(value: T | PromiseLike<T>): TaskClass<Awaited<T>>;
@@ -151,20 +178,41 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     return new TaskClass(() => value as Awaited<T>);
   }
 
-  /** A rejected Task, spec-shaped (`reason` erased to `unknown`). Prefer {@link TaskClass.fail},
-   *  which keeps the reason's type as the Task's declared `E`. */
+  /**
+   * A rejected Task, spec-shaped (`reason` erased to `unknown`). Prefer {@link TaskClass.fail},
+   * which keeps the reason's type as the Task's declared `E`.
+   *
+   * ```ts
+   * await assert.rejects(Task.reject(new Error('boom')), /boom/);
+   * ```
+   */
   static override reject<T = never>(reason?: unknown): TaskClass<T> {
     return new TaskClass<T>(() => Promise.reject(reason));
   }
 
-  /** A Task that fails with `reason` (a rejection — so `await` throws it), typed: the declared
-   *  `E` is exactly `reason`'s type. */
+  /**
+   * A Task that fails with `reason` (a rejection — so `await` throws it), typed: the declared
+   * `E` is exactly `reason`'s type.
+   *
+   * ```ts
+   * const denied = Task.fail(Denied({ user })); // Task<never, Failure<'Denied', { user }>>
+   * (await denied.result()).error?.code; // 'Denied' — typed end to end
+   * ```
+   */
   static fail<F>(reason: F): TaskClass<never, F> {
     return new TaskClass<never, F>(() => Promise.reject(reason));
   }
 
-  /** `Promise.withResolvers`, returning a Task settled from outside. Lazy like everything else:
-   *  the Task only *observes* the external settlement once something awaits it. */
+  /**
+   * `Promise.withResolvers`, returning a Task settled from outside. Lazy like everything else:
+   * the Task only *observes* the external settlement once something awaits it.
+   *
+   * ```ts
+   * const { promise, resolve } = Task.withResolvers<Frame>();
+   * socket.once('frame', resolve);
+   * await promise; // fine even if the frame landed before this line
+   * ```
+   */
   static override withResolvers<T>(): {
     promise: TaskClass<T>;
     resolve: (value: T | PromiseLike<T>) => void;
@@ -184,6 +232,14 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   // All four are overridden for correctness (the base implementations construct through
   // `new this(executor)`, which a recipe constructor cannot honour) and made LAZY: nothing in
   // `values` is observed — and no lazy member Task starts — until the combined Task is awaited.
+  //
+  // ```ts
+  // const both = Task.all([loadUsers(), loadPosts()]); // nothing has started yet
+  // const [users, posts] = await both;                 // both start HERE, fail-fast applies
+  // await Task.race([fetchTask, deadlineTask]);        // first settlement wins
+  // await Task.any(mirrors.map(fetchMirror));          // first SUCCESS wins
+  // (await Task.allSettled(tasks)).filter((s) => s.status === 'rejected');
+  // ```
 
   static override all<T extends readonly unknown[] | []>(
     values: T,
@@ -223,6 +279,11 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * The errors are the declared `E`; a *bug* in any task rejects the whole call, matching
    * {@link TaskClass#result}'s two-tier rule. (Named `results`, not `allSettled`, which is the
    * inherited static with the spec's `{ status, … }` shape.)
+   *
+   * ```ts
+   * const outcomes = await Task.results(paths.map(load)); // Result<Config, LoadFailure>[]
+   * const { values, errors } = partition(outcomes); // nothing lost, everything typed
+   * ```
    */
   static results<T, E = AnyFailure>(
     tasks: Iterable<TaskClass<T, E> | PromiseLike<T>>,
@@ -249,8 +310,14 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     return derived;
   }
 
-  /** Transforms the success value — `.then(fn)` that stays a Task: lazy, retryable, `E` kept.
-   *  `fn` may return a value or a promise of one (they flatten), so this is `andThen` too. */
+  /**
+   * Transforms the success value — `.then(fn)` that stays a Task: lazy, retryable, `E` kept.
+   * `fn` may return a value or a promise of one (they flatten), so this is `andThen` too.
+   *
+   * ```ts
+   * loadUser(id).map((u) => u.name).map((n) => n.toUpperCase()); // still lazy, still a Task
+   * ```
+   */
   map<U>(fn: (value: T) => U | PromiseLike<U>): TaskClass<U, E> {
     return this.#derive(
       () => this.then(fn),
@@ -263,6 +330,11 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * that sees *every* rejection (`error: unknown`), because its job is to classify foreign
    * errors — an `execFile` timeout, a driver throw — *into* the declared `Failure` taxonomy.
    * Downstream of a `mapErr`, the two-tier methods can trust what they see.
+   *
+   * ```ts
+   * Task(() => execFileAsync('git', args, opts)) // foreign throw-land
+   *   .mapErr((cause) => GitScanFailed({ ref }, { cause })); // classified HERE, once
+   * ```
    */
   mapErr<F>(fn: (error: unknown) => F): TaskClass<T, F> {
     return this.#derive(
@@ -278,6 +350,10 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * Recovers by producing a success value — **the crash boundary**, the Task spelling of the
    * one `.catch()` at the top of a program. Sees every rejection, bugs included; everything
    * downstream is settled, so `E` is `never`.
+   *
+   * ```ts
+   * const reply = await route(req).recover((bug) => (log(bug), internalError()));
+   * ```
    */
   recover<U = T>(fn: (error: unknown) => U | PromiseLike<U>): TaskClass<T | U, never> {
     return this.#derive<T | U, never>(
@@ -292,6 +368,12 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * `switch` on `code`, still hold), `message` as the context line, and the original chained
    * under `cause`. A *bug* passes through untouched: promoting it into the declared tier would
    * hide it from the boundary.
+   *
+   * ```ts
+   * await loadUser(id).expect(`route /users/${id} needs its user`);
+   * // Failure(NotFound): route /users/7 needs its user
+   * //   caused by: Failure(NotFound): no user 7
+   * ```
    */
   expect(message: string): TaskClass<T, E> {
     return this.#derive<T, E>(
@@ -304,8 +386,14 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     );
   }
 
-  /** Substitutes `fallback` for a **declared** failure. A bug still rejects — a fallback that
-   *  absorbed a `TypeError` would be the silent-bug-hider the two-tier rule exists to prevent. */
+  /**
+   * Substitutes `fallback` for a **declared** failure. A bug still rejects — a fallback that
+   * absorbed a `TypeError` would be the silent-bug-hider the two-tier rule exists to prevent.
+   *
+   * ```ts
+   * const config = await loadConfig().unwrapOr(DEFAULTS);
+   * ```
+   */
   unwrapOr<U>(fallback: U): TaskClass<T | U, never> {
     return this.#derive<T | U, never>(
       () =>
@@ -317,8 +405,14 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     );
   }
 
-  /** Handles both declared branches — `err` receives the typed `E`, so it is two-tier like
-   *  {@link TaskClass#result}: a bug belongs to neither branch and keeps rejecting. */
+  /**
+   * Handles both declared branches — `err` receives the typed `E`, so it is two-tier like
+   * {@link TaskClass#result}: a bug belongs to neither branch and keeps rejecting.
+   *
+   * ```ts
+   * const status = await deploy().match({ ok: () => 201, err: (e) => statusFor(e.code) });
+   * ```
+   */
   match<A, B>(handlers: {
     ok: (value: T) => A | PromiseLike<A>;
     err: (error: E) => B | PromiseLike<B>;
@@ -340,6 +434,12 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * lineage is walked — the source restarts and every derivation step is re-applied. So
    * `scan.map(parse).expect(ctx).restart()` re-runs the git call, the parse, and the context
    * wrap; nothing is served from the old chain's memo.
+   *
+   * ```ts
+   * await chain; // ran once, memoised
+   * await chain.restart(); // fresh source execution, every derivation re-applied
+   * await chain; // the original still serves its memo
+   * ```
    */
   restart(): TaskClass<T, E> {
     if (this.#source !== undefined && this.#rederive !== undefined) {
@@ -354,6 +454,11 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * after `times` retries (initial + `times` executions) and rejects with the last reason.
    * Failure-blind by design: transient bugs (a socket reset surfacing as a raw error before its
    * `mapErr`) are exactly what call sites retry, so every rejection counts as an attempt.
+   *
+   * ```ts
+   * await getChangedFilePathsInGitSince(root, ref).retry(); // survives index.lock contention
+   * await flakyUpload.retry(4); // up to 5 fresh executions, rejects with the 5th reason
+   * ```
    */
   retry(times = 1): TaskClass<T, E> {
     return new TaskClass<T, E>(async () => {
@@ -381,6 +486,11 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    *
    * Lazy like everything else, and lineage-carrying: `task.result().restart()` re-runs the
    * chain and reflects the fresh outcome.
+   *
+   * ```ts
+   * const { ok, value, error } = await scan.result();
+   * if (!ok) return degradeToFullRun(error); // error: GitScanFailure — typed, no narrowing
+   * ```
    */
   result(): TaskClass<Result<T, E>, never> {
     return this.#derive<Result<T, E>, never>(
@@ -411,6 +521,11 @@ type TaskConstructor = typeof TaskClass & {
  * Call-or-construct, like `Boolean`/`Date`: `Task(recipe)` and `new Task(recipe)` build the
  * same lazy Task. ES classes reject the call form, so the export is a Proxy whose `apply`
  * forwards to construction — statics, `instanceof`, and the prototype all pass through.
+ *
+ * ```ts
+ * const scan = Task<ChangeScan, GitScanFailure>(() => runGit(args, cwd)); // no `new`
+ * scan instanceof Task && scan instanceof Promise; // true, true
+ * ```
  */
 export const Task: TaskConstructor = new Proxy(TaskClass, {
   apply(target, _thisArg, args: [recipe: () => unknown]) {

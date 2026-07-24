@@ -55,7 +55,14 @@ export type Result<T, E = unknown> = Ok<T> | Err<E>;
 // allocation-free. Freezing is what makes the sharing safe, and it happens exactly once.
 const OK_VOID: Ok<void> = Object.freeze({ ok: true, value: undefined, error: undefined });
 
-/** A successful Result carrying no value. Returns a shared frozen singleton. */
+/**
+ * A successful Result carrying no value. Returns a shared frozen singleton.
+ *
+ * ```ts
+ * ok(42); // { ok: true, value: 42, error: undefined }
+ * ok(); // shared frozen Ok<void> — the allocation-free "it worked" for void-returning code
+ * ```
+ */
 export function ok(): Ok<void>;
 /** A successful Result carrying `value`. */
 export function ok<const T>(value: T): Ok<T>;
@@ -74,6 +81,10 @@ export function ok(value?: unknown): Ok<unknown> {
  * `result.ok` read in the program sees one map and stays monomorphic. Writing the natural
  * `{ok: false, error}` instead produces a second shape and pushes shared call sites into
  * polymorphic (and, mixed with a third shape, megamorphic) inline-cache states.
+ *
+ * ```ts
+ * return err(FileMissing({ path })); // { ok: false, value: undefined, error: Failure<…> }
+ * ```
  */
 export function err<const E>(error: E): Err<E> {
   return { ok: false, value: undefined, error };
@@ -91,6 +102,11 @@ export function err<const E>(error: E): Err<E> {
  *
  * Deliberately structural rather than branded. A Result is plain data whose whole purpose
  * is to cross realms intact, so a check that a foreign realm could fail would defeat it.
+ *
+ * ```ts
+ * const wire = JSON.parse(frame); // a Result that crossed a WebSocket
+ * if (isResult(wire) && !wire.ok) console.error(wire.error);
+ * ```
  */
 export function isResult(value: unknown): value is Result<unknown, unknown> {
   return (
@@ -111,6 +127,10 @@ export function isResult(value: unknown): value is Result<unknown, unknown> {
  * Non-`Error` failures (a string, a `{code}` object, `null` — all legal `throw` operands in
  * JS, and all common in wire payloads) are wrapped so that whatever propagates upward is
  * guaranteed to have a `.stack` and a readable `.message`.
+ *
+ * ```ts
+ * const flags = unwrap(Args.parse(projectRoot)); // ParsedFlags, or the ParseFailure throws
+ * ```
  */
 export function unwrap<T>(result: Result<T, unknown>): T {
   if (result.ok) return result.value;
@@ -126,13 +146,23 @@ export function unwrap<T>(result: Result<T, unknown>): T {
  * The counterpart to `unwrap()`: the thrown error's stack points *here*, at the code that
  * demanded a value, while `cause` preserves the original failure and its own stack. Use it
  * at the point where a failure stops being expected and becomes a bug.
+ *
+ * ```ts
+ * const config = expect(await Config.setup(), 'daemon could not assemble its startup config');
+ * ```
  */
 export function expect<T>(result: Result<T, unknown>, message: string): T {
   if (result.ok) return result.value;
   throw new Error(message, { cause: result.error });
 }
 
-/** Returns the success value, or `fallback` if the Result failed. */
+/**
+ * Returns the success value, or `fallback` if the Result failed.
+ *
+ * ```ts
+ * const port = unwrapOr(parsePort(raw), 3000);
+ * ```
+ */
 export function unwrapOr<T, U>(result: Result<T, unknown>, fallback: U): T | U {
   return result.ok ? result.value : fallback;
 }
@@ -151,6 +181,11 @@ export function unwrapOr<T, U>(result: Result<T, unknown>, fallback: U): T | U {
  * Unlike `Promise.all`, nothing is in flight while this runs: the work already happened, so
  * "short-circuit" only decides what is *reported*, never what is cancelled. When you need
  * every failure rather than the first, use `partition()`.
+ *
+ * ```ts
+ * const plugins = all(loaded); // Result<EsbuildPlugin[], PluginLoadFailed>
+ * if (!plugins.ok) return plugins; // the first failure, with its index's context intact
+ * ```
  */
 export function all<T, E>(results: ReadonlyArray<Result<T, E>>): Result<T[], E> {
   const values: T[] = new Array(results.length);

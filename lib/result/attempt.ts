@@ -40,9 +40,16 @@ type Attempted<T> =
  * Calls `fn(...args)` and reflects the outcome into a `Result` — `Result.try`, shaped like
  * `Promise.try`. See the module doc for the flat-classification pattern this is half of.
  *
+ * ```ts
+ * const parsed = Result.try(JSON.parse, raw); // sync source → Result, synchronously
+ * if (!parsed.ok && !(parsed.error instanceof SyntaxError)) throw parsed.error;
+ *
+ * const read = await Result.try(() => readFile(path, 'utf8')); // async source → Promise<Result>
+ * ```
+ *
  * Because it owns the call, the *synchronous* prefix of async work is inside the boundary
  * too: `Result.try(fetch, url)` boxes the `TypeError` a malformed URL throws synchronously,
- * which `Result.try(() => …)(fetch(url))`-style pre-started promises never could.
+ * which wrapping a pre-started `fetch(url)` promise never could.
  */
 export function attempt<T, const A extends readonly unknown[]>(
   fn: (...args: A) => T,
