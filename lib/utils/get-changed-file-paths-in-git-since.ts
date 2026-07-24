@@ -104,7 +104,8 @@ export type GitScanFailure = Failure.Of<typeof GitScanFailed>;
  * `timeoutMs` is injectable for tests; production always uses the default.
  *
  * Returns a lazy, retryable `Task`: the two git calls run only when the Task is awaited, and a
- * caller can `.retry(1)` a transient failure (e.g. `index.lock` contention) for free. The git
+ * caller can `.retry()` a transient failure (e.g. `index.lock` contention) for free — the
+ * derivation lineage means a retry re-runs this whole chain, git calls included. The git
  * boundary is the only throwing step, so `.mapErr` remaps *any* rejection there to a declared
  * `GitScanFailed`; a parsing bug in `.map` below is downstream of it and stays a bug, never
  * masked as a Failure. Callers await the value, or `.result()` for `{ ok, value, error }`.
@@ -114,7 +115,7 @@ export function getChangedFilePathsInGitSince(
   ref: string,
   timeoutMs = GIT_TIMEOUT_MS,
 ): Task<ChangeScan, GitScanFailure> {
-  return Task.run(() =>
+  return Task(() =>
     Promise.all([
       runGit(
         ['diff', '--name-only', '--no-renames', ref, '--', projectRoot],

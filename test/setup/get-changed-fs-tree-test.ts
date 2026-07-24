@@ -7,6 +7,8 @@ import { getChangedFsTree } from '../../lib/setup/get-changed-fs-tree.ts';
 import * as MetafileCache from '../../lib/utils/metafile-cache.ts';
 import {
   GitScanFailed,
+  type ChangeScan,
+  type GitScanFailure,
   type getChangedFilePathsInGitSince,
 } from '../../lib/utils/get-changed-file-paths-in-git-since.ts';
 import { Task } from '../../lib/task/index.ts';
@@ -43,14 +45,19 @@ function metafileFor(graph: Record<string, string[]>): AffectedMetafile {
   };
 }
 
-// Injected git seams: the Task `getChangedFilePathsInGitSince` would have returned. `Task.of`
-// is a resolved scan, `Task.fail` a declared failure — the caller `.result()`s them, so the
-// branch under test stays a plain `if (!scan.ok)` rather than a `.catch` funnelling an Error.
+// Injected git seams: the Task `getChangedFilePathsInGitSince` would have returned. The
+// call-form `Task(recipe)` is a resolved scan, `Task.fail` a declared failure — the caller
+// `.result()`s them, so the branch under test stays a plain `if (!scan.ok)` rather than a
+// `.catch` funnelling an Error.
 type Scan = ReturnType<typeof getChangedFilePathsInGitSince>;
 
 const gitChanged = (root: string, files: string[]) => (): Scan =>
-  Task.of({ scope: 'paths', paths: new Set(files.map((f) => path.join(root, f))) });
-const gitBlastRadius = (): Scan => Task.of({ scope: 'everything', trigger: 'package.json' });
+  Task<ChangeScan, GitScanFailure>(() => ({
+    scope: 'paths',
+    paths: new Set(files.map((f) => path.join(root, f))),
+  }));
+const gitBlastRadius = (): Scan =>
+  Task<ChangeScan, GitScanFailure>(() => ({ scope: 'everything', trigger: 'package.json' }));
 const gitFailed = (): Scan =>
   Task.fail(GitScanFailed({ ref: 'HEAD', reason: 'fatal: not a git repository' }));
 
