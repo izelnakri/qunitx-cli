@@ -418,4 +418,6 @@ export const Task: TaskConstructor = new Proxy(TaskClass, {
   },
 }) as TaskConstructor;
 
+/** The instance type of {@link Task} — value and type share the name, so a signature reads
+ *  `Task<Config, ConfigFailure>` while the same identifier constructs one. */
 export type Task<T, E = AnyFailure> = TaskClass<T, E>;
