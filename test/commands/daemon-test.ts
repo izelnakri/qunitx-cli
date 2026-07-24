@@ -9,6 +9,8 @@ import * as Client from '../../lib/commands/daemon/client.ts';
 import { spawnCapture, type CapturedError, type CapturedResult } from '../helpers/shell.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 import '../helpers/custom-asserts.ts';
+import { ignore } from '../../lib/result/failure.ts';
+import * as Result from '../../lib/result/index.ts';
 
 const CWD = process.cwd();
 const FIXTURE_PASS = path.resolve('test/fixtures/passing-tests.ts');
@@ -75,18 +77,24 @@ const cli = async (
 ): Promise<CapturedResult> => {
   const daemonLogPath = path.join(project.cwd, 'daemon.log');
   const baseEnv = opts.env ?? CLI_ENV;
-  try {
-    return await spawnCapture(`node ${CWD}/cli.ts ${args}`, {
+  // The repo's only enrich-then-rethrow: a failing daemon run is useless without the daemon's
+  // own log. The flat isCapturedError line keeps that enrichment off anything that is not a
+  // child process outcome — a bug in this helper is no longer decorated with a daemon log and
+  // re-thrown as though it were one.
+  const run = await Result.try(() =>
+    spawnCapture(`node ${CWD}/cli.ts ${args}`, {
       env: { ...baseEnv, QUNITX_DAEMON_LOG: daemonLogPath },
       cwd: project.cwd,
-    });
-  } catch (err) {
-    const log = await fs.readFile(daemonLogPath, 'utf8').catch(() => '<no daemon log written>');
-    const annotated = err as CapturedError;
-    annotated.stderr = `${annotated.stderr}\n----- daemon log (${daemonLogPath}) -----\n${log}`;
-    if (opts.failOk) return annotated;
-    throw annotated;
-  }
+    }),
+  );
+  if (run.ok) return run.value;
+  if (!isCapturedError(run.error)) throw run.error;
+
+  const log = await fs.readFile(daemonLogPath, 'utf8').catch(() => '<no daemon log written>');
+  const annotated = run.error;
+  annotated.stderr = `${annotated.stderr}\n----- daemon log (${daemonLogPath}) -----\n${log}`;
+  if (opts.failOk) return annotated;
+  throw annotated;
 };
 
 async function ensureDaemonStopped(project: DaemonProject): Promise<void> {
@@ -96,12 +104,12 @@ async function ensureDaemonStopped(project: DaemonProject): Promise<void> {
   // by the lifecycle tests below, so we don't need to re-cover it here.
   // Client.shutdown reads the pid, sends shutdown via socket, waits for pid exit;
   // it returns false (no throw) when no daemon is running.
-  await Client.shutdown(project.cwd).catch(() => {});
+  await Client.shutdown(project.cwd).catch(ignore('daemon shutdown during teardown'));
   // Defensive: drop stale files that a crashed daemon may have left behind
   // (e.g. SIGKILL'd before the shutdown handler could unlink them).
   await Promise.all([
-    fs.unlink(project.socketPath).catch(() => {}),
-    fs.unlink(project.infoPath).catch(() => {}),
+    fs.unlink(project.socketPath).catch(ignore('daemon socket unlink during teardown')),
+    fs.unlink(project.infoPath).catch(ignore('daemon info unlink during teardown')),
   ]);
 }
 
@@ -182,7 +190,7 @@ function daemonTest(
     try {
       await fn(assert, project);
     } finally {
-      await ensureDaemonStopped(project).catch(() => {});
+      await ensureDaemonStopped(project).catch(ignore('daemon stop during teardown'));
       permit.release();
     }
   });
@@ -837,4 +845,9 @@ async function killDaemonChrome(daemonPid: number): Promise<boolean> {
     }
   }
   return killedAny;
+}
+
+/** A child that actually ran and exited non-zero, as opposed to one that never started. */
+function isCapturedError(value: unknown): value is CapturedError {
+  return value instanceof Error && typeof (value as CapturedError).duration === 'number';
 }

@@ -7,6 +7,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 // teardown below would crash with `timer.unref is not a function`.
 import { setTimeout, clearTimeout } from 'node:timers';
 import { acquireBrowser } from './browser-semaphore-queue.ts';
+import * as Result from '../../lib/result/index.ts';
 
 // When QUNITX_BROWSER is set, all browser test runs use that engine (firefox, webkit, chromium).
 const QUNITX_BROWSER = process.env.QUNITX_BROWSER;
@@ -310,19 +311,72 @@ export async function shellWatch(
   }
 }
 
-export async function shellFails(commandString: string, options = {}) {
-  try {
-    const result = (await execute(commandString, {
-      ...options,
-      expectFailure: true,
-    })) as CapturedResult & { code: number };
-    // The command succeeded when shellFails expected failure. Force `code` to 0 so a
-    // following `assert.exitCode(cmd, <non-zero>)` flags the unexpected success cleanly.
-    result.code = 0;
-    return result;
-  } catch (error) {
-    return error;
+/**
+ * Distinguishes "the child ran and exited non-zero" from "the child never started".
+ *
+ * `spawnCapture` rejects with two structurally different values: a `CapturedError` carrying
+ * the full run diagnostics, and — via `child.once('error')` — a bare Node `Error` for a
+ * spawn-level failure such as `ENOENT`. `duration` is present on the first and absent on the
+ * second, because it is only ever set once the child has closed.
+ */
+function isProcessFailure(value: unknown): value is CapturedError {
+  return value instanceof Error && typeof (value as CapturedError).duration === 'number';
+}
+
+/**
+ * Runs a CLI command and returns its captured run **whatever exit code it produced**.
+ *
+ * For test files that drive the same command through both outcomes and assert the exit code
+ * each time — `assert.exitCode(result, 0)` here, `assert.exitCode(result, 1)` there. Reaching
+ * for `shellFails` in that situation is the mistake it looks like: the helper's name claims
+ * a failure the caller does not actually require, so a run that unexpectedly succeeds is
+ * indistinguishable from one that was supposed to.
+ *
+ * A spawn-level failure still propagates — a command that never started has no exit code to
+ * assert on, and returning one would be an invention.
+ */
+export async function shellSettles(
+  commandString: string,
+  options: Parameters<typeof execute>[1] = {},
+): Promise<CapturedResult> {
+  const run = await Result.try(() => execute(commandString, { ...options, expectFailure: true }));
+  if (run.ok) return run.value;
+  if (!isProcessFailure(run.error)) throw run.error; // never-started: no exit code to report
+  return run.error;
+}
+
+/**
+ * Runs a CLI command that is *expected* to fail, and returns its captured run.
+ *
+ * The expected failure is declared, so the two things that are not expected stop being
+ * silently absorbed:
+ *
+ *  - **The command succeeded.** Previously this returned the successful result with `code`
+ *    overwritten to `0`, which only surfaced if the caller happened to follow up with
+ *    `assert.exitCode(cmd, 1)`. It now fails immediately, at the call that was wrong, with
+ *    the output that was not supposed to exist.
+ *  - **The command never started.** A typo in the binary, or a missing `QUNITX_BIN`, rejects
+ *    with a bare `Error` that has no `code`, `stdout` or `duration`. That used to be returned
+ *    as a value and read back as `cmd.code === undefined`, so the test reported "expected 1,
+ *    got undefined" instead of "spawn ENOENT". It is not matched here, so it propagates.
+ *
+ * The return type is now `CapturedResult` rather than the previous implicit
+ * `CapturedResult | CapturedError | Error`, so the 40-odd call sites reading `.code`,
+ * `.stdout` and `.stderr` are type-checked instead of duck-typed.
+ */
+export async function shellFails(
+  commandString: string,
+  options: Parameters<typeof execute>[1] = {},
+): Promise<CapturedResult> {
+  const run = await Result.try(() => execute(commandString, { ...options, expectFailure: true }));
+  if (run.ok) {
+    throw new Error(
+      `Expected \`${commandString}\` to fail, but it exited 0 after ${run.value.duration.toFixed(0)} ms.\n` +
+        `STDOUT:\n${run.value.stdout.split('\n').slice(-30).join('\n')}`,
+    );
   }
+  if (!isProcessFailure(run.error)) throw run.error; // never-started (spawn ENOENT) propagates
+  return run.error;
 }
 
 export async function execute(

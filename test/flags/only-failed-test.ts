@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { module, test } from 'qunitx';
 import '../helpers/custom-asserts.ts';
-import { shellFails, shellWatch } from '../helpers/shell.ts';
+import { shellSettles, shellWatch } from '../helpers/shell.ts';
 
 const CWD = process.cwd();
 
@@ -154,11 +154,11 @@ async function writeWithMkdir(filePath: string, content: string): Promise<void> 
 
 // cwd puts the run inside the project so qunitx resolves its package.json + tests, not
 // qunitx-cli's. The failure cache lives at the project's literal
-// tmp/.qunitx-last-failures.json — independent of --output. shellFails rather than shell
-// because failing runs are the point here, and it returns the CapturedError with the same
-// { code, stdout } shape the asserts read.
+// tmp/.qunitx-last-failures.json — independent of --output. shellSettles rather than shell
+// or shellFails: this file drives the same command through both outcomes and asserts the exit
+// code every time, so neither "must succeed" nor "must fail" is the contract.
 function runCli(project: OnlyFailedProject, args: string) {
-  return shellFails(`node ${CWD}/cli.ts ${args}`, { cwd: project.cwd });
+  return shellSettles(`node ${CWD}/cli.ts ${args}`, { cwd: project.cwd });
 }
 
 async function readCache(project: OnlyFailedProject): Promise<{ files: string[] } | null> {

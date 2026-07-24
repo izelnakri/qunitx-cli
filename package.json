@@ -33,6 +33,7 @@
     "changelog:update": "git-cliff --output CHANGELOG.md",
     "postinstall": "PLAYWRIGHT_SKIP_DOWNLOAD=true deno install --allow-scripts=npm:playwright-core || true",
     "test": "node test/runner.ts",
+    "test:aplus": "node test/task/promises-aplus.ts",
     "test:debug": "QUNITX_DEBUG=1 node test/runner.ts",
     "test:deno": "deno run -A test/runner.ts",
     "dev": "node test/runner.ts --watch",
@@ -61,6 +62,7 @@
   "devDependencies": {
     "js-yaml": "^5.2.1",
     "prettier": "^3.9.5",
+    "promises-aplus-tests": "^2.1.2",
     "qunitx": "^1.2.18",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
@@ -74,5 +76,15 @@
     "printWidth": 100,
     "singleQuote": true,
     "arrowParens": "always"
+  },
+  "overrides": {
+    "promises-aplus-tests": {
+      "mocha": {
+        ".": "^11.7.1",
+        "diff": "^8.0.3",
+        "serialize-javascript": "^7.0.5"
+      },
+      "underscore": "^1.13.7"
+    }
   }
 }

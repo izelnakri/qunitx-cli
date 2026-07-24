@@ -26,6 +26,7 @@ import type {
   QUnitResult,
 } from '../../types.ts';
 import type { HTTPServer } from '../../web/index.ts';
+import { ignore } from '../../result/failure.ts';
 
 /**
  * Returns all node_modules directories on the ancestor chain of `dir`,
@@ -328,7 +329,9 @@ export async function run(
     }
 
     if (build.activeRebuild) {
-      await build.activeRebuild.catch(() => {});
+      await build.activeRebuild.catch(
+        ignore('in-flight rebuild — its failure is reported by the caller'),
+      );
       build.activeRebuild = null;
       if (!build.allTestCode) {
         const fallback = build.fallbackPage;
@@ -360,7 +363,7 @@ export async function run(
         fs.writeFile(
           path.join(outDir, 'index.html'),
           WebServer.buildNoTestsHTML(displayFiles),
-        ).catch(() => {});
+        ).catch(ignore('no-tests fallback page write'));
       }
 
       await Reporter.runEnd(config, { durationMs: TIME_TAKEN });
@@ -459,7 +462,7 @@ export async function flushConsoleHandlers(
 ): Promise<void> {
   if (!handlers || Date.now() >= deadline) return;
   // Force CDP queue drain (page may be closed already — swallow the rejection).
-  if (page) await page.evaluate(() => 0).catch(() => {});
+  if (page) await page.evaluate(() => 0).catch(ignore('CDP queue drain on a possibly-closed page'));
   // Yield once more so Promise.resolve continuations queued by the dispatch above
   // run before we observe the Set.
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -757,7 +760,7 @@ async function buildIncrementally(
   const buildOpts: esbuild.BuildOptions = { ...options, write: false };
 
   if (!cache.context || cache.contextKey !== fileKey) {
-    cache.context?.dispose().catch(() => {});
+    cache.context?.dispose().catch(ignore('stale esbuild context dispose'));
     cache.context = await esbuild.context(buildOpts);
     cache.contextKey = fileKey;
   }

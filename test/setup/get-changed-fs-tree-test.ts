@@ -5,6 +5,13 @@ import crypto from 'node:crypto';
 import { module, test } from 'qunitx';
 import { getChangedFsTree } from '../../lib/setup/get-changed-fs-tree.ts';
 import * as MetafileCache from '../../lib/utils/metafile-cache.ts';
+import {
+  GitScanFailed,
+  type ChangeScan,
+  type GitScanFailure,
+  type getChangedFilePathsInGitSince,
+} from '../../lib/utils/get-changed-file-paths-in-git-since.ts';
+import { Task } from '../../lib/task/index.ts';
 import type { AffectedMetafile } from '../../lib/utils/get-changed-files.ts';
 import type { FSTree } from '../../lib/types.ts';
 
@@ -38,12 +45,21 @@ function metafileFor(graph: Record<string, string[]>): AffectedMetafile {
   };
 }
 
-// Injected git seams: what `getChangedFilePathsInGitSince` would have returned.
-// It yields absolute paths, so the fixtures do too.
-const gitChanged = (root: string, files: string[]) => (): Promise<Set<string>> =>
-  Promise.resolve(new Set(files.map((f) => path.join(root, f))));
-const gitBlastRadius = (): Promise<null> => Promise.resolve(null);
-const gitFailed = (): Promise<never> => Promise.reject(new Error('fatal: not a git repository'));
+// Injected git seams: the Task `getChangedFilePathsInGitSince` would have returned. The
+// call-form `Task(recipe)` is a resolved scan, `Task.fail` a declared failure — the caller
+// `.result()`s them, so the branch under test stays a plain `if (!scan.ok)` rather than a
+// `.catch` funnelling an Error.
+type Scan = ReturnType<typeof getChangedFilePathsInGitSince>;
+
+const gitChanged = (root: string, files: string[]) => (): Scan =>
+  Task<ChangeScan, GitScanFailure>(() => ({
+    scope: 'paths',
+    paths: new Set(files.map((f) => path.join(root, f))),
+  }));
+const gitBlastRadius = (): Scan =>
+  Task<ChangeScan, GitScanFailure>(() => ({ scope: 'everything', trigger: 'package.json' }));
+const gitFailed = (): Scan =>
+  Task.fail(GitScanFailed({ ref: 'HEAD', reason: 'fatal: not a git repository' }));
 
 module('Setup | getChangedFsTree | fallback paths', { concurrency: true }, () => {
   test('no metafile cache → returns input fsTree unchanged (git never consulted)', async (assert) => {
@@ -61,7 +77,7 @@ module('Setup | getChangedFsTree | fallback paths', { concurrency: true }, () =>
     assert.strictEqual(result, tree);
   });
 
-  test('blast-radius change (git returns null) → returns input fsTree unchanged', async (assert) => {
+  test('blast-radius scan → returns input fsTree unchanged', async (assert) => {
     const root = await makeProject();
     await MetafileCache.write(root, root, metafileFor({ 'test/a-test.ts': [] }));
     const tree = fsTreeFromAbs(root, ['test/a-test.ts']);

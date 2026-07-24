@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import nodePath from 'node:path';
 import { createHash } from 'node:crypto';
 import type { AffectedMetafile } from './get-changed-files.ts';
+import { ignore } from '../result/failure.ts';
 
 /**
  * Persistent on-disk cache of the most recent successful esbuild metafile,
@@ -70,7 +71,7 @@ export async function write(
     await fs.rename(tmpFile, file);
   } catch {
     /* node_modules/.cache may not be writable (read-only FS, EACCES); silent degrade. */
-    await fs.unlink(tmpFile).catch(() => {});
+    await fs.unlink(tmpFile).catch(ignore('metafile cache tmpfile unlink'));
   }
 }
 

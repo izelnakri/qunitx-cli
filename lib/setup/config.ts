@@ -12,17 +12,47 @@ import * as Args from '../args/index.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
 import * as Reporter from '../reporters/index.ts';
 import * as RunState from './run-state.ts';
+import * as Result from '../result/index.ts';
 import type { Config, FSTree as FSTreeShape } from '../types.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
+
+/** `package.json#qunitx.plugins` was present but not an array. */
+export const InvalidPlugins = Result.Failure.define(
+  'InvalidPlugins',
+  (data: { received: string }) =>
+    `package.json#qunitx.plugins must be an array, received ${data.received}`,
+);
+
+/**
+ * A plugin specifier could not be resolved or imported.
+ *
+ * Previously this was an unhandled throw out of a `Promise.all`, so a typo'd plugin name
+ * surfaced as a raw `ERR_MODULE_NOT_FOUND` stack with no indication that a *plugin* was at
+ * fault or which entry named it.
+ */
+export const PluginLoadFailed = Result.Failure.define(
+  'PluginLoadFailed',
+  (data: { specifier: string }) => `could not load esbuild plugin "${data.specifier}"`,
+);
+
+/** Every way config assembly can fail with something the user can act on. */
+export type ConfigFailure =
+  Args.ParseFailure | Result.Failure.Of<typeof InvalidPlugins | typeof PluginLoadFailed>;
 
 /**
  * Builds the merged qunitx config from package.json settings and CLI flags.
  * `package.json#qunitx.plugins` entries are dynamic-imported into esbuild plugin objects.
- * @returns {Promise<object>}
+ *
+ * Resolves to a plain `Result<Config, ConfigFailure>` — a *declared* failure is a value the
+ * caller branches on, never a rejection. It reports rather than exits so the daemon — which
+ * assembles a config per client request — can reject one bad flag and stay up; `cli.ts`
+ * turns a failure into an exit.
  */
-export async function setup(): Promise<Config> {
+export async function setup(): Promise<Result.Result<Config, ConfigFailure>> {
   const projectRoot = await findProjectRoot();
-  const cliConfigFlags = Args.parse(projectRoot);
+  const flags = Args.parse(projectRoot);
+  if (!flags.ok) return flags;
+  const cliConfigFlags = flags.value;
   const projectPackageJSON = await readConfigFromPackageJSON(projectRoot);
   const { plugins: rawPlugins, ...userQunitx } =
     (projectPackageJSON.qunitx as Partial<Config> & {
@@ -47,10 +77,12 @@ export async function setup(): Promise<Config> {
     // function used to repeat are now redundant.
   } as Config;
   config.htmlPaths = normalizeHTMLPaths(config.projectRoot, config.htmlPaths);
-  [config.fsTree, config.plugins] = await Promise.all([
+  const [fsTree, plugins] = await Promise.all([
     FSTree.build(config.testFileLookupPaths, config),
     pluginsPromise,
   ]);
+  if (!plugins.ok) return plugins;
+  [config.fsTree, config.plugins] = [fsTree, plugins.value];
 
   pruneSupersededLineTargets(config);
 
@@ -73,7 +105,7 @@ export async function setup(): Promise<Config> {
   // by every concurrent group via the group-config spread in run.ts.
   config.state.reporters = Reporter.create(config);
 
-  return config;
+  return Result.ok(config);
 }
 
 /**
@@ -170,19 +202,34 @@ function readInputsFromPackageJSON(packageJSON: {
  * `createRequire(projectRoot)` keeps resolution rooted at the user's project so plugins work
  * under local installs, globals, or `npx`.
  */
-function resolvePlugins(raw: unknown, projectRoot: string): Promise<EsbuildPlugin[]> {
-  if (raw == null) return Promise.resolve([]);
-  if (!Array.isArray(raw)) {
-    console.error(`# qunitx: package.json#qunitx.plugins must be an array`);
-    process.exit(1);
-  }
+async function resolvePlugins(
+  raw: unknown,
+  projectRoot: string,
+): Promise<
+  Result.Result<EsbuildPlugin[], Result.Failure.Of<typeof InvalidPlugins | typeof PluginLoadFailed>>
+> {
+  if (raw == null) return Result.ok([]);
+  if (!Array.isArray(raw)) return Result.err(InvalidPlugins({ received: typeof raw }));
+
   const projectRequire = createRequire(`${projectRoot}/package.json`);
-  return Promise.all(
+  // `Result.try` per entry rather than around the whole `Promise.all`, so the failure can
+  // name *which* specifier broke — `Promise.all` would report the first rejection with no
+  // such context.
+  const loaded = await Promise.all(
     raw.map(async (entry) => {
       const [spec, options] = Array.isArray(entry) ? entry : [entry];
-      const mod = await import(pathToFileURL(projectRequire.resolve(spec as string)).href);
-      const exported = mod.default ?? mod;
-      return typeof exported === 'function' ? exported(options) : exported;
+      const imported = await Result.try(async () => {
+        const mod = await import(pathToFileURL(projectRequire.resolve(spec as string)).href);
+        const exported = mod.default ?? mod;
+        return (typeof exported === 'function' ? exported(options) : exported) as EsbuildPlugin;
+      });
+      if (imported.ok) return imported;
+      // Only a resolution/import error (a Node error carrying `code`, e.g.
+      // ERR_MODULE_NOT_FOUND) is the declared "could not load" failure. A plugin factory
+      // that throws while building its own options is a bug and stays one.
+      if (!Result.isErrno(imported.error)) throw imported.error;
+      return Result.err(PluginLoadFailed({ specifier: String(spec) }, { cause: imported.error }));
     }),
   );
+  return Result.all(loaded);
 }
