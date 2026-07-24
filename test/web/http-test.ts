@@ -36,19 +36,22 @@ module('Web | bindServerToPort | port selection', { concurrency: true }, () => {
     const blocker = await findFreePort();
     const takenPort = blocker.number;
     const server = new HTTPServer();
-    // Declaring EADDRINUSE removes the `assert.ok(false, 'should have thrown')` guard AND
-    // the `as NodeJS.ErrnoException` cast: a success is a plain `bound.ok`, and any *other*
-    // errno is rethrown by attempt rather than being reported as a confusing equality diff.
-    const bound = await Result.try(
-      () => bindServerToPort(server, { port: takenPort, portExplicit: true }),
-      { catch: Result.errno('EADDRINUSE') },
+    // Declaring EADDRINUSE on the flat line removes the `assert.ok(false, 'should have
+    // thrown')` guard AND the `as NodeJS.ErrnoException` cast: a success is a plain
+    // `bound.ok`, and any *other* errno rethrows instead of a confusing equality diff.
+    const bound = await Result.try(() =>
+      bindServerToPort(server, { port: takenPort, portExplicit: true }),
     );
+    if (!bound.ok && !Result.isErrno(bound.error, 'EADDRINUSE')) throw bound.error;
     // `finally` still guards the release — an assertion that fails must not leak the blocker
     // onto the next test. What is gone is the `catch`, which is what conflated "the bind
     // failed as expected" with "an assertion threw".
     try {
       assert.notOk(bound.ok, 'an explicitly requested taken port is rejected');
-      assert.equal(bound.error?.code, 'EADDRINUSE', 'throws EADDRINUSE for explicit taken port');
+      assert.true(
+        Result.isErrno(bound.error, 'EADDRINUSE'),
+        'throws EADDRINUSE for explicit taken port',
+      );
     } finally {
       await blocker.release();
       server._server.close();

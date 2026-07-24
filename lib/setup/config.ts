@@ -217,24 +217,23 @@ async function resolvePlugins(
   if (!Array.isArray(raw)) return Result.err(InvalidPlugins({ received: typeof raw }));
 
   const projectRequire = createRequire(`${projectRoot}/package.json`);
-  // `attempt` per entry rather than around the whole `Promise.all`, so the failure can name
-  // *which* specifier broke — `Promise.all` would report the first rejection with no such
-  // context. Nothing is declared, so a plugin factory that throws while building its own
-  // options still propagates as a bug rather than being reported as a load failure.
+  // `Result.try` per entry rather than around the whole `Promise.all`, so the failure can
+  // name *which* specifier broke — `Promise.all` would report the first rejection with no
+  // such context.
   const loaded = await Promise.all(
     raw.map(async (entry) => {
       const [spec, options] = Array.isArray(entry) ? entry : [entry];
-      const imported = await Result.try(
-        async () => {
-          const mod = await import(pathToFileURL(projectRequire.resolve(spec as string)).href);
-          const exported = mod.default ?? mod;
-          return (typeof exported === 'function' ? exported(options) : exported) as EsbuildPlugin;
-        },
-        { catch: Result.errno() },
-      );
-      return imported.ok
-        ? imported
-        : Result.err(PluginLoadFailed({ specifier: String(spec) }, { cause: imported.error }));
+      const imported = await Result.try(async () => {
+        const mod = await import(pathToFileURL(projectRequire.resolve(spec as string)).href);
+        const exported = mod.default ?? mod;
+        return (typeof exported === 'function' ? exported(options) : exported) as EsbuildPlugin;
+      });
+      if (imported.ok) return imported;
+      // Only a resolution/import error (a Node error carrying `code`, e.g.
+      // ERR_MODULE_NOT_FOUND) is the declared "could not load" failure. A plugin factory
+      // that throws while building its own options is a bug and stays one.
+      if (!Result.isErrno(imported.error)) throw imported.error;
+      return Result.err(PluginLoadFailed({ specifier: String(spec) }, { cause: imported.error }));
     }),
   );
   return Result.all(loaded);

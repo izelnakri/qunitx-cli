@@ -78,18 +78,17 @@ const cli = async (
   const daemonLogPath = path.join(project.cwd, 'daemon.log');
   const baseEnv = opts.env ?? CLI_ENV;
   // The repo's only enrich-then-rethrow: a failing daemon run is useless without the daemon's
-  // own log. Declaring CapturedError keeps that enrichment off anything that is not a child
-  // process outcome — a bug in this helper is no longer decorated with a daemon log and
+  // own log. The flat isCapturedError line keeps that enrichment off anything that is not a
+  // child process outcome — a bug in this helper is no longer decorated with a daemon log and
   // re-thrown as though it were one.
-  const run = await Result.try(
-    () =>
-      spawnCapture(`node ${CWD}/cli.ts ${args}`, {
-        env: { ...baseEnv, QUNITX_DAEMON_LOG: daemonLogPath },
-        cwd: project.cwd,
-      }),
-    { catch: isCapturedError },
+  const run = await Result.try(() =>
+    spawnCapture(`node ${CWD}/cli.ts ${args}`, {
+      env: { ...baseEnv, QUNITX_DAEMON_LOG: daemonLogPath },
+      cwd: project.cwd,
+    }),
   );
   if (run.ok) return run.value;
+  if (!isCapturedError(run.error)) throw run.error;
 
   const log = await fs.readFile(daemonLogPath, 'utf8').catch(() => '<no daemon log written>');
   const annotated = run.error;

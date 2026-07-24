@@ -1,43 +1,75 @@
 /**
- * `attempt` — the boundary half of the error system: the one place throwing code turns into
- * Result-returning code.
+ * `attempt` — exported as **`Result.try`**, the throw boundary of the error system: the one
+ * place in a program where the `try`/`catch` *keyword* lives. Everywhere else, error handling
+ * is a flat `if` on a `Result`.
  *
- * This is Lua's `pcall` with one addition that changes its character completely: **a list of
- * expected failures**. `pcall(f)` catches everything, and so does every JavaScript port of it
- * (`try/catch`, `await-to-js`, `Result.fromThrowable`, `Effect.try`). Catching everything is
- * the defect at the centre of most error handling, because a `catch` cannot tell these apart:
+ * The signature mirrors `Promise.try`: `Result.try(fn, ...args)` calls `fn(...args)` **now**
+ * and reflects the outcome — a return becomes `Ok`, a throw becomes `Err`. A synchronous
+ * source yields a `Result`; a source that returns a thenable yields a `Promise<Result>` that
+ * **never rejects**, which is what makes `Promise.all(items.map((i) => Result.try(work, i)))`
+ * safe: no fail-fast, no lost successes.
  *
- *   - the network call failed          — expected; the caller has a plan
- *   - `config.retries` was `undefined` — a bug; the caller has no plan and never will
- *
- * Convert the first into a Result and the program gets better. Convert the second and the
- * program gets *worse* than it was with no error handling at all: a `TypeError` that would
- * have produced a stack trace pointing at the broken line is now a tidy failure value flowing
- * down the same path as a legitimate outcome, and the bug ships.
- *
- * So the recommended call always declares what it expects, in a labelled `catch`:
+ * It boxes **every** throw, because it is the raw edge — the counterpart of Lua's `pcall`.
+ * The two-tier discipline (expected failure vs bug) is enforced *at the call site*, flat,
+ * where the reader can see exactly what is declared:
  *
  * ```ts
- * const parsed = Result.try(() => JSON.parse(raw), { catch: SyntaxError });
- * //    ^? Result<unknown, SyntaxError>       — a TypeError from a broken toJSON still throws
+ * const parsed = Result.try(JSON.parse, raw);                       // Result<unknown, unknown>
+ * if (!parsed.ok && !(parsed.error instanceof SyntaxError)) throw parsed.error; // a bug stays a bug
  * ```
  *
- * The primary spelling is `Result.try` — it reads as "try this, catch that", and the `catch:`
- * label names the second argument so a reader never has to guess what it is. `attempt` is the
- * same function under a name that also works as a bare import (`try` is a reserved word, so
- * `import { try }` is illegal while `Result.try` is fine).
+ * That one visible rethrow line is the entire declaration mechanism. An earlier design put a
+ * `{ catch: matcher }` grammar inside the boundary instead; it was removed because the flat
+ * spelling says the same thing with zero machinery, composes with any guard the call site
+ * already has (`instanceof`, a `Failure` factory's `.is`, {@link isErrno}), and keeps
+ * `Result.try`'s signature identical to `Promise.try`'s — one shape to learn, arguments and
+ * all. The async sibling for *declared* failures is `Task` (`lib/task/`), whose `.result()`
+ * boxes only `Failure`s; `Result.try` is for the foreign edge where nothing is declared yet.
  *
- * `Result.try(fn)` with no `catch` remains available and is exactly `pcall`; it types the
- * error as `unknown`, the honest description of a value you agreed to catch sight-unseen.
+ * `E` is always `unknown` — the honest type of a value caught sight-unseen. Narrow it with
+ * the same guard you would have written in a `catch`, on the flat path.
  */
 
 import { type Result, ok, err } from './result.ts';
 
-// ── Matchers ─────────────────────────────────────────────────────────────────
+/** `Result` for a synchronous source, a never-rejecting `Promise<Result>` for an async one. */
+type Attempted<T> =
+  T extends PromiseLike<unknown> ? Promise<Result<Awaited<T>, unknown>> : Result<T, unknown>;
+
+/**
+ * Calls `fn(...args)` and reflects the outcome into a `Result` — `Result.try`, shaped like
+ * `Promise.try`. See the module doc for the flat-classification pattern this is half of.
+ *
+ * Because it owns the call, the *synchronous* prefix of async work is inside the boundary
+ * too: `Result.try(fetch, url)` boxes the `TypeError` a malformed URL throws synchronously,
+ * which `Result.try(() => …)(fetch(url))`-style pre-started promises never could.
+ */
+export function attempt<T, const A extends readonly unknown[]>(
+  fn: (...args: A) => T,
+  ...args: A
+): Attempted<T> {
+  let value: T;
+  try {
+    value = fn(...args);
+  } catch (error) {
+    return err(error) as Attempted<T>;
+  }
+
+  if (isThenable(value)) {
+    // `Promise.resolve` first: a foreign or misbehaving thenable (calls its callbacks twice,
+    // throws from `.then`) is normalised by the spec's resolution algorithm instead of being
+    // trusted to behave. Both callbacks return, so the promise can never reject.
+    return Promise.resolve(value).then(
+      (resolved) => ok(resolved),
+      (thrown) => err(thrown),
+    ) as Attempted<T>;
+  }
+  return ok(value) as Attempted<T>;
+}
 
 /** Minimal shape of a Node system error, declared locally so this module stays runtime-free. */
 export interface ErrnoError extends Error {
-  /** The symbolic error code, e.g. `ENOENT`. What `errno()` matches on. */
+  /** The symbolic error code, e.g. `ENOENT`. What {@link isErrno} matches on. */
   code?: string;
   /** The negated platform errno number. */
   errno?: number;
@@ -48,215 +80,23 @@ export interface ErrnoError extends Error {
 }
 
 /**
- * A declaration of an expected failure. Three forms are accepted:
+ * Whether `value` is an `Error` carrying one of the given Node `code` strings — `ENOENT`,
+ * `EADDRINUSE`, `EBUSY`. With no codes it matches any error that has a string `code` at all
+ * (which includes Node's `ERR_*` internal errors, e.g. `ERR_MODULE_NOT_FOUND`).
  *
- *  - an `Error` constructor      — `SyntaxError`, `MyError`     (matched with `instanceof`)
- *  - a type-guard predicate      — `errno('ENOENT')`
- *  - anything with `.is()`       — a `Failure` factory from `failure.ts`
+ * This is the guard for the flat classification line that follows a `Result.try` on Node
+ * API calls — the discrimination the codebase used to perform as an `err.code !== 'X' &&
+ * throw err` ladder in seven places:
+ *
+ * ```ts
+ * const linked = await Result.try(fs.link, tmpPath, lockPath);
+ * if (!linked.ok && !Result.isErrno(linked.error, 'EEXIST')) throw linked.error;
+ * ```
  */
-export type Matcher<E> =
-  | (abstract new (...args: never[]) => E)
-  | ((value: unknown) => value is E)
-  | { is(value: unknown): value is E };
-
-/** Extracts the error type a single matcher proves. */
-type MatchedError<M> = M extends { is(value: unknown): value is infer E }
-  ? E
-  : M extends (value: unknown) => value is infer E
-    ? E
-    : M extends abstract new (...args: never[]) => infer E
-      ? E
-      : never;
-
-/** A `catch` declaration: one matcher, or a list of them. Omit it entirely to catch everything. */
-export type CatchOption = Matcher<unknown> | readonly Matcher<unknown>[];
-
-/** The `E` a `catch` declaration proves — the union of its matchers' error types. */
-type CaughtError<C> = C extends readonly Matcher<unknown>[]
-  ? MatchedError<C[number]>
-  : C extends Matcher<unknown>
-    ? MatchedError<C>
-    : never;
-
-/** `Result` for a synchronous source, `Promise<Result>` for an asynchronous one. */
-type Attempted<T, E> =
-  T extends PromiseLike<infer U> ? Promise<Result<Awaited<U>, E>> : Result<T, E>;
-
-/**
- * Matches any `Error` carrying one of the given Node `code` strings — `ENOENT`, `EADDRINUSE`,
- * `EBUSY`. With no arguments it matches any error that has a string `code` at all.
- *
- * This is the discrimination the codebase already performs by hand in seven places
- * (`lib/setup/bind-server-to-port.ts:34`, `lib/commands/daemon/server.ts:74`,
- * `lib/utils/rm-retry.ts`, …), each spelling out the same `err.code !== 'X' && throw err`
- * ladder. Expressing it as a matcher makes the rethrow the default rather than a line
- * somebody has to remember to write.
- */
-export function errno(...codes: string[]): (value: unknown) => value is ErrnoError {
-  return (value: unknown): value is ErrnoError => {
-    if (!(value instanceof Error)) return false;
-    const code = (value as ErrnoError).code;
-    return typeof code === 'string' && (codes.length === 0 || codes.includes(code));
-  };
-}
-
-/**
- * Matches by `instanceof`, stated explicitly.
- *
- * `{ catch: SyntaxError }` already does this — a bare `Error` constructor is detected by
- * inspecting the prototype chain. Use this wrapper when the target is not an `Error`
- * subclass (a thrown `AbortSignal`, a custom sentinel class) and the detection would
- * otherwise treat the constructor as a predicate.
- */
-export function instanceOf<E>(constructor: abstract new (...args: never[]) => E) {
-  return (value: unknown): value is E => value instanceof constructor;
-}
-
-/** Matches if any of the given matchers match. Handy for naming a reusable failure set. */
-export function anyOf<const M extends readonly Matcher<unknown>[]>(
-  ...matchers: M
-): (value: unknown) => value is MatchedError<M[number]> {
-  return (value: unknown): value is MatchedError<M[number]> =>
-    matchers.some((matcher) => matches(matcher, value));
-}
-
-// ── attempt ──────────────────────────────────────────────────────────────────
-
-/**
- * Runs `source`, returning `Ok` with its value or `Err` with a **declared** failure.
- *
- * `options.catch` declares what is expected — a matcher, or a list of them. Anything it does
- * not cover is rethrown, so bugs keep behaving like bugs. Omit `catch` entirely and everything
- * is caught and typed `unknown` (that is `pcall`); pass `{ catch: [] }` and nothing is caught.
- *
- * `source` may be a function or a promise. A function is strongly preferred: it puts the
- * synchronous part of the work inside the boundary too. `Result.try(() => fetch(url))` catches
- * a `TypeError` from a malformed URL — which `fetch` throws synchronously — while
- * `Result.try(fetch(url))` cannot, because that throw happens while evaluating the argument.
- *
- * Returns a `Result` for sync sources and a `Promise<Result>` for async ones, decided at
- * runtime by whether the returned value is thenable, and mirrored in the type. The returned
- * promise **never rejects for a declared failure**, which is what makes
- * `Promise.all(items.map((i) => Result.try(...)))` safe: no fail-fast, no lost successes.
- */
-export function attempt<T>(source: (() => T) | PromiseLike<T>): Attempted<T, unknown>;
-/** Runs `source`, typing the failure as whatever `options.catch` declares. */
-export function attempt<T, const C extends CatchOption>(
-  source: (() => T) | PromiseLike<T>,
-  options: { catch: C },
-): Attempted<T, CaughtError<C>>;
-export function attempt<T>(
-  source: (() => T) | PromiseLike<T>,
-  options?: { catch?: CatchOption },
-): Attempted<T, unknown> {
-  const matchers = normalizeCatch(options);
-  let value: unknown;
-  try {
-    value = typeof source === 'function' ? (source as () => T)() : source;
-  } catch (thrown) {
-    return settle(thrown, matchers) as Attempted<T, unknown>;
-  }
-
-  if (isThenable(value)) {
-    return value.then(
-      (resolved) => ok(resolved),
-      (thrown) => settle(thrown, matchers),
-    ) as Attempted<T, unknown>;
-  }
-  return ok(value) as Attempted<T, unknown>;
-}
-
-/**
- * Lua's `pcall`: runs `source` and catches everything, with no declaration of intent.
- *
- * A named alias for `Result.try(source)` rather than a second implementation, so that a
- * reader — or a `grep` before a refactor — can find every unfiltered boundary in a codebase
- * by searching one word. Reach for it at process edges (a plugin call, a user-supplied
- * callback, a top-level handler) where "anything at all may go wrong and this process must
- * survive it" is genuinely the specification.
- */
-export function pcall<T>(source: (() => T) | PromiseLike<T>): Attempted<T, unknown> {
-  return attempt(source);
-}
-
-/**
- * Lua's `xpcall`: runs `source` and passes any thrown value through `handler` on the way out.
- *
- * **The semantics differ from Lua's, and the difference is not fixable.** In Lua the message
- * handler runs *at the point of the error, before the stack unwinds*, which is why
- * `xpcall(f, debug.traceback)` can capture a live traceback. JavaScript has one-phase
- * exception handling: by the time a `catch` runs, the stack is already gone. What survives is
- * whatever the `Error` object snapshotted in its constructor — so you get the frames, but not
- * the live locals, and nothing at all if the thrown value was not an `Error`.
- *
- * The practical use is therefore narrower than Lua's: normalising or enriching a failure at
- * the boundary, typically `xpcall(work, (e) => Wrapped({ during: 'work' }, { cause: e }))`.
- */
-export function xpcall<T, E>(
-  source: (() => T) | PromiseLike<T>,
-  handler: (thrown: unknown) => E,
-): Attempted<T, E> {
-  let value: unknown;
-  try {
-    value = typeof source === 'function' ? (source as () => T)() : source;
-  } catch (thrown) {
-    return err(handler(thrown)) as Attempted<T, E>;
-  }
-
-  if (isThenable(value)) {
-    return value.then(
-      (resolved) => ok(resolved),
-      (thrown) => err(handler(thrown)),
-    ) as Attempted<T, E>;
-  }
-  return ok(value) as Attempted<T, E>;
-}
-
-// ── Internals ────────────────────────────────────────────────────────────────
-
-// `null` means "no `catch` was declared" — catch everything (pcall). An explicit list, even an
-// empty one, means "these and only these", so `{ catch: [] }` declares that nothing is expected.
-function normalizeCatch(options?: { catch?: CatchOption }): readonly Matcher<unknown>[] | null {
-  const declared = options?.catch;
-  if (declared === undefined) return null;
-  return Array.isArray(declared) ? declared : [declared as Matcher<unknown>];
-}
-
-/** Converts a thrown value to `Err` if it was declared, and rethrows it if it was not. */
-function settle(
-  thrown: unknown,
-  matchers: readonly Matcher<unknown>[] | null,
-): Result<never, unknown> {
-  if (matchers === null) return err(thrown);
-  for (const matcher of matchers) {
-    if (matches(matcher, thrown)) return err(thrown);
-  }
-  throw thrown;
-}
-
-function matches(matcher: Matcher<unknown>, value: unknown): boolean {
-  // `.is` is tested first because the three matcher forms are not disjoint at runtime: a
-  // `Failure` factory is a *callable* object that also carries `.is`. Dispatching on
-  // `typeof === 'function'` first would invoke the factory as though it were a predicate —
-  // which mints a brand-new Failure, returns a truthy object rather than `true`, and so
-  // silently reports "no match" for the one matcher form most likely to be used.
-  if (typeof (matcher as { is?: unknown }).is === 'function') {
-    return (matcher as { is(value: unknown): boolean }).is(value);
-  }
-  if (typeof matcher === 'function') {
-    // A constructor and a type-guard predicate are both `function`, and both are legal
-    // matchers, so they have to be told apart. `Error` subclasses are the only constructors
-    // this form accepts — anything else must go through `instanceOf()`, which is unambiguous.
-    return isErrorConstructor(matcher)
-      ? value instanceof (matcher as abstract new (...args: never[]) => unknown)
-      : (matcher as (value: unknown) => boolean)(value) === true;
-  }
-  return false;
-}
-
-function isErrorConstructor(fn: unknown): boolean {
-  const prototype = (fn as { prototype?: unknown }).prototype;
-  return prototype === Error.prototype || prototype instanceof Error;
+export function isErrno(value: unknown, ...codes: string[]): value is ErrnoError {
+  if (!(value instanceof Error)) return false;
+  const code = (value as ErrnoError).code;
+  return typeof code === 'string' && (codes.length === 0 || codes.includes(code));
 }
 
 /**

@@ -1,295 +1,164 @@
 import { module, test } from 'qunitx';
 import * as Result from '../../lib/result/index.ts';
+import { attempt, isErrno } from '../../lib/result/attempt.ts';
 
-const Denied = Result.Failure.define('Denied', 'permission denied');
+// ── The spelling ──────────────────────────────────────────────────────────────
 
-// `Result.try` is the primary spelling; `Result.attempt` is the same function under a name
-// that also survives a bare import. Every test below drives `Result.try` so the primary path
-// is the one under test.
-module('Result | try | is the primary spelling of attempt', { concurrency: true }, () => {
-  test('Result.try and Result.attempt are the same function', (assert) => {
-    assert.strictEqual(Result.try, Result.attempt);
+module('Result | try | spelling', { concurrency: true }, () => {
+  test('Result.try and attempt are the same function', (assert) => {
+    // `try` is a reserved word, so the bare import is `attempt`; the namespace spelling is
+    // `Result.try`. One implementation, two legal names.
+    assert.strictEqual(Result.try, attempt);
+  });
+
+  test('mirrors Promise.try: the arguments after fn are passed through to it', (assert) => {
+    const outcome = Result.try((a: number, b: number, c: string) => `${a + b}${c}`, 1, 2, '!');
+    assert.true(outcome.ok);
+    assert.strictEqual(outcome.value, '3!');
+  });
+
+  test('a zero-arg thunk needs no arguments — the closure spelling still works', (assert) => {
+    assert.strictEqual(Result.try(() => 7).value, 7);
   });
 });
 
-// ── Declared failures ─────────────────────────────────────────────────────────
+// ── Synchronous sources ───────────────────────────────────────────────────────
 
-module('Result | try | declared failures', { concurrency: true }, () => {
-  test('a success becomes Ok', (assert) => {
-    const result = Result.try(() => JSON.parse('{"a":1}'), { catch: SyntaxError });
-    assert.deepEqual(Result.unwrap(result), { a: 1 });
+module('Result | try | sync', { concurrency: true }, () => {
+  test('a return becomes Ok, synchronously — no promise in sight', (assert) => {
+    const parsed = Result.try(JSON.parse, '{"n":1}');
+    assert.true(parsed.ok);
+    assert.deepEqual(parsed.value, { n: 1 });
   });
 
-  test('a declared throw becomes Err', (assert) => {
-    const result = Result.try(() => JSON.parse('not json'), { catch: SyntaxError });
-    assert.false(result.ok);
-    assert.true(result.error instanceof SyntaxError);
+  test('a throw becomes Err carrying the thrown value by identity', (assert) => {
+    const parsed = Result.try(JSON.parse, 'not json');
+    assert.false(parsed.ok);
+    assert.true(parsed.error instanceof SyntaxError);
   });
 
-  test('an UNdeclared throw is rethrown, so bugs keep behaving like bugs', (assert) => {
-    // The defining property of this design. A TypeError from broken code inside the boundary
-    // must not become a tidy failure value that flows down the same path as a real outcome.
-    assert.throws(
-      () =>
-        Result.try(
-          () => {
-            throw new TypeError('cannot read properties of undefined');
-          },
-          { catch: SyntaxError },
-        ),
-      TypeError,
-    );
-  });
-
-  test('with no catch it is pcall: everything is caught', (assert) => {
-    const result = Result.try(() => {
-      throw new TypeError('anything');
+  test('every throw is boxed — classification is the call site’s flat rethrow line', (assert) => {
+    // The boundary catches everything (it is the raw edge, like Lua's pcall). The two-tier
+    // discipline lives in the visible line that follows: rethrow what was not declared.
+    const outcome = Result.try((): number => {
+      throw new TypeError('a bug, not a SyntaxError');
     });
-    assert.false(result.ok);
-    assert.true(result.error instanceof TypeError);
+    assert.false(outcome.ok);
+    assert.throws(() => {
+      if (!outcome.ok && !(outcome.error instanceof SyntaxError)) throw outcome.error;
+    }, TypeError);
   });
 
-  test('an empty catch list declares that nothing is expected — everything rethrows', (assert) => {
-    assert.throws(
-      () =>
-        Result.try(
-          () => {
-            throw new SyntaxError('a');
-          },
-          { catch: [] },
-        ),
-      SyntaxError,
-    );
+  test('non-Error throwables are boxed verbatim — strings, null, undefined', (assert) => {
+    const throwing = (value: unknown) =>
+      Result.try(() => {
+        throw value;
+      });
+    assert.strictEqual(throwing('nope').error, 'nope');
+    assert.strictEqual(throwing(null).error, null);
+    const boxedUndefined = throwing(undefined);
+    assert.false(boxedUndefined.ok, 'a thrown undefined is still a failure');
+    assert.strictEqual(boxedUndefined.error, undefined);
   });
 
-  test('a catch list widens the declared set', (assert) => {
-    const run = (thrown: unknown) =>
-      Result.try(
-        () => {
-          throw thrown;
-        },
-        { catch: [SyntaxError, RangeError] },
-      );
-    assert.false(run(new SyntaxError('a')).ok);
-    assert.false(run(new RangeError('b')).ok);
-    assert.throws(() => run(new TypeError('c')), TypeError);
-  });
-
-  test('a non-Error throwable is caught only when something declares it', (assert) => {
-    const isString = (value: unknown): value is string => typeof value === 'string';
-    const result = Result.try(
-      () => {
-        throw 'legacy library';
-      },
-      { catch: isString },
-    );
-    assert.strictEqual(result.error, 'legacy library');
-
-    assert.throws(
-      () =>
-        Result.try(
-          () => {
-            throw 'legacy library';
-          },
-          { catch: SyntaxError },
-        ),
-      /legacy library/,
-    );
+  test('returning a Result does not flatten — the inner Result stays intact inside Ok', (assert) => {
+    const nested = Result.try(() => Result.err('inner'));
+    assert.true(nested.ok, 'the outer try succeeded');
+    assert.false(nested.value.ok, 'the inner Result is untouched');
   });
 });
 
-// ── Matchers ──────────────────────────────────────────────────────────────────
-
-module('Result | try | matchers', { concurrency: true }, () => {
-  test('errno matches by Node code and rethrows the rest', (assert) => {
-    const raise = (code: string) => () => {
-      throw Object.assign(new Error(`${code}: failed`), { code });
-    };
-    assert.false(Result.try(raise('ENOENT'), { catch: Result.errno('ENOENT') }).ok);
-    assert.throws(() => Result.try(raise('EACCES'), { catch: Result.errno('ENOENT') }), /EACCES/);
-  });
-
-  test('errno with no codes matches any error carrying a string code', (assert) => {
-    const result = Result.try(
-      () => {
-        throw Object.assign(new Error('boom'), { code: 'EBUSY' });
-      },
-      { catch: Result.errno() },
-    );
-    assert.strictEqual(result.error?.code, 'EBUSY');
-  });
-
-  test('a Failure factory is itself a matcher', (assert) => {
-    const result = Result.try(
-      () => {
-        throw Denied();
-      },
-      { catch: Denied },
-    );
-    assert.strictEqual(result.error?.code, 'Denied');
-  });
-
-  test('instanceOf covers constructors that are not Error subclasses', (assert) => {
-    class Sentinel {}
-    const result = Result.try(
-      () => {
-        throw new Sentinel();
-      },
-      { catch: Result.instanceOf(Sentinel) },
-    );
-    assert.true(result.error instanceof Sentinel);
-  });
-
-  test('anyOf composes a reusable failure set', (assert) => {
-    const transient = Result.anyOf(Result.errno('EBUSY', 'EAGAIN'), Denied);
-    assert.false(
-      Result.try(
-        () => {
-          throw Denied();
-        },
-        { catch: transient },
-      ).ok,
-    );
-    assert.false(
-      Result.try(
-        () => {
-          throw Object.assign(new Error('busy'), { code: 'EBUSY' });
-        },
-        { catch: transient },
-      ).ok,
-    );
-    assert.throws(
-      () =>
-        Result.try(
-          () => {
-            throw new Error('unrelated');
-          },
-          { catch: transient },
-        ),
-      /unrelated/,
-    );
-  });
-});
-
-// ── Async ─────────────────────────────────────────────────────────────────────
+// ── Asynchronous sources ──────────────────────────────────────────────────────
 
 module('Result | try | async', { concurrency: true }, () => {
-  test('an async source yields a promise of a Result', async (assert) => {
-    const result = await Result.try(async () => await Promise.resolve('value'));
-    assert.strictEqual(Result.unwrap(result), 'value');
+  test('a thenable return yields a Promise of a Result', async (assert) => {
+    const outcome = Result.try((n: number) => Promise.resolve(n * 2), 21);
+    assert.true(outcome instanceof Promise, 'async source, promise out');
+    assert.deepEqual(await outcome, Result.ok(42));
   });
 
-  test('a declared rejection resolves to Err — the promise does not reject', async (assert) => {
-    const result = await Result.try(
-      async () => {
-        await Promise.resolve();
-        throw new SyntaxError('bad');
+  test('a rejection resolves to Err — the returned promise NEVER rejects', async (assert) => {
+    const outcome = await Result.try(() => Promise.reject(new Error('boom')));
+    assert.false(outcome.ok);
+    assert.strictEqual((outcome.error as Error).message, 'boom');
+  });
+
+  test('the synchronous prefix of async work is inside the boundary too', (assert) => {
+    // An async operation that throws before returning its promise — fetch on a malformed
+    // URL is the canonical case — fails synchronously. Because Result.try owns the call,
+    // that throw is boxed sync; wrapping a pre-started promise could never offer this.
+    const outcome = Result.try((url: string): Promise<never> => {
+      throw new TypeError(`Invalid URL: ${url}`);
+    }, '::not-a-url');
+    assert.false((outcome as Result.Result<never>).ok, 'boxed synchronously, not a rejection');
+  });
+
+  test('a foreign thenable takes the async path and is settled by the spec algorithm', async (assert) => {
+    const thenable = {
+      then(resolve: (v: string) => void) {
+        resolve('from a hand-rolled thenable');
       },
-      { catch: SyntaxError },
-    );
-    assert.true(result.error instanceof SyntaxError);
-  });
-
-  test('an undeclared rejection still rejects', async (assert) => {
-    await assert.rejects(
-      Result.try(
-        async () => {
-          await Promise.resolve();
-          throw new TypeError('bug');
-        },
-        { catch: SyntaxError },
-      ),
-      TypeError,
-    );
-  });
-
-  test('a thunk also catches the synchronous part of async work', (assert) => {
-    // `Result.try(() => fetch(badUrl))` catches the TypeError fetch throws synchronously;
-    // `Result.try(fetch(badUrl))` cannot, because that throw happens while evaluating the
-    // argument, outside the boundary. This is why the thunk form is the documented one.
-    const result = Result.try(
-      () => {
-        throw new SyntaxError('thrown before any promise existed');
-        // deno-lint-ignore no-unreachable
-        return Promise.resolve(1);
-      },
-      { catch: SyntaxError },
-    );
-    assert.false((result as Result.Result<number, SyntaxError>).ok);
-  });
-
-  test('a promise may be passed directly when there is no sync part to guard', async (assert) => {
-    const result = await Result.try(Promise.reject(new SyntaxError('bad')), { catch: SyntaxError });
-    assert.true(result.error instanceof SyntaxError);
-  });
-
-  test('a foreign thenable takes the async path', async (assert) => {
-    const thenable = { then: (resolve: (v: number) => void) => resolve(7) };
-    assert.strictEqual(Result.unwrap(await Result.try(thenable)), 7);
+    };
+    const outcome = await Result.try(() => thenable as PromiseLike<string>);
+    assert.strictEqual(outcome.value, 'from a hand-rolled thenable');
   });
 
   test('Promise.all over tries never fail-fasts, so no success is discarded', async (assert) => {
-    // The property that makes batch work tractable: `Promise.all` rejects on the first
-    // failure and throws away every settled success alongside it. These promises only ever
-    // resolve, so `partition` sees the whole batch.
-    const work = [1, 2, 3, 4].map((n) =>
-      Result.try(
-        async () => {
-          await Promise.resolve();
-          if (n % 2 === 0) throw Denied();
-          return n;
-        },
-        { catch: Denied },
-      ),
-    );
-    const { values, errors } = Result.partition(await Promise.all(work));
+    const work = (n: number) =>
+      Result.try(() => {
+        if (n % 2 === 0) return Promise.reject(new Error(`even ${n}`));
+        return Promise.resolve(n);
+      });
+    const results = await Promise.all([1, 2, 3, 4].map(work));
+    const { values, errors } = Result.partition(results);
     assert.deepEqual(values, [1, 3]);
-    assert.strictEqual(errors.length, 2);
+    assert.deepEqual(
+      errors.map((e) => (e as Error).message),
+      ['even 2', 'even 4'],
+    );
   });
 });
 
-// ── Lua parity ────────────────────────────────────────────────────────────────
+// ── isErrno — the flat-classification guard for Node system errors ───────────
 
-module('Result | try | pcall/xpcall', { concurrency: true }, () => {
-  test('pcall catches everything, exactly like Lua', (assert) => {
-    const result = Result.pcall(() => {
-      throw new TypeError('anything at all');
+module('Result | try | isErrno', { concurrency: true }, () => {
+  const errnoError = (code: string) => Object.assign(new Error(code), { code });
+
+  test('matches by Node code, so the rethrow line reads as the declaration', (assert) => {
+    const outcome = Result.try(() => {
+      throw errnoError('EEXIST');
     });
-    assert.true(result.error instanceof TypeError);
+    assert.false(outcome.ok);
+    assert.true(isErrno(outcome.error, 'EEXIST'));
+    assert.false(isErrno(outcome.error, 'ENOENT'), 'the wrong code does not match');
   });
 
-  test('xpcall runs the handler on the way out', (assert) => {
-    const result = Result.xpcall(
-      () => {
-        throw new Error('EACCES');
-      },
-      (thrown) => Denied(undefined, { cause: thrown }),
-    );
-    assert.strictEqual(result.error?.code, 'Denied');
-    assert.strictEqual((result.error?.cause as Error).message, 'EACCES');
+  test('with no codes it matches any error carrying a string code', (assert) => {
+    assert.true(isErrno(errnoError('ANYTHING')));
+    assert.true(isErrno(errnoError('ERR_MODULE_NOT_FOUND')), 'Node internal errors count too');
+    assert.false(isErrno(new Error('no code at all')));
   });
 
-  test('xpcall handles rejections too', async (assert) => {
-    const result = await Result.xpcall(
-      async () => {
-        await Promise.resolve();
-        throw new Error('EACCES');
-      },
-      (thrown) => Denied(undefined, { cause: thrown }),
-    );
-    assert.strictEqual(result.error?.code, 'Denied');
+  test('rejects non-Errors even when they look the part', (assert) => {
+    assert.false(isErrno({ code: 'ENOENT', message: 'imposter' }));
+    assert.false(isErrno('ENOENT'));
+    assert.false(isErrno(null));
   });
 
-  test('xpcall sees the snapshotted stack, not a live one', (assert) => {
-    // Lua's message handler runs at the error point *before* unwinding, which is what makes
-    // `xpcall(f, debug.traceback)` work. JavaScript has one-phase exception handling: by the
-    // time a handler runs the stack is gone, and only what the Error captured survives.
-    const result = Result.xpcall(
-      () => {
-        throw new Error('boom');
-      },
-      (thrown) => (thrown as Error).stack ?? '',
-    );
-    assert.true((result.error?.split('\n').length ?? 0) > 1, 'frames survive via the Error object');
+  test('the canonical flat line: box, test, rethrow what was not declared', (assert) => {
+    const link = (fail: string | null) =>
+      Result.try(() => {
+        if (fail) throw errnoError(fail);
+        return 'linked';
+      });
+
+    const lost = link('EEXIST');
+    if (!lost.ok && !isErrno(lost.error, 'EEXIST')) throw lost.error;
+    assert.false(lost.ok, 'EEXIST was declared, so it flows as a value');
+
+    const broken = link('ENOSPC');
+    assert.throws(() => {
+      if (!broken.ok && !isErrno(broken.error, 'EEXIST')) throw broken.error;
+    }, /ENOSPC/);
   });
 });

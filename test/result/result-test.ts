@@ -43,7 +43,6 @@ module('Result | ok/err', { concurrency: true }, () => {
     // mistaken for success by any code path.
     const result = Result.err(undefined);
     assert.false(result.ok);
-    assert.true(Result.isErr(result));
   });
 });
 
@@ -70,14 +69,16 @@ module('Result | narrowing', { concurrency: true }, () => {
     }
   });
 
-  test('isOk and isErr narrow when the check has to happen elsewhere', (assert) => {
+  test('a plain `.ok` arrow narrows through filter — why there is no isOk/isErr helper', (assert) => {
+    // TypeScript 5.5+ infers a type predicate for `(r) => r.ok`, so even the one place a
+    // guard *function* used to be needed (Array#filter) narrows without a named helper.
     const results: Result.Result<number, string>[] = [Result.ok(1), Result.err('bad')];
     assert.deepEqual(
-      results.filter(Result.isOk).map((r) => r.value),
+      results.filter((r) => r.ok).map((r) => r.value),
       [1],
     );
     assert.deepEqual(
-      results.filter(Result.isErr).map((r) => r.error),
+      results.filter((r) => !r.ok).map((r) => r.error),
       ['bad'],
     );
   });
@@ -148,56 +149,9 @@ module('Result | unwrap', { concurrency: true }, () => {
     }
   });
 
-  test('unwrapOr and unwrapOrElse substitute a fallback', (assert) => {
+  test('unwrapOr substitutes a fallback', (assert) => {
     assert.strictEqual(Result.unwrapOr(Result.err('e'), 'fallback'), 'fallback');
     assert.strictEqual(Result.unwrapOr(Result.ok('v'), 'fallback'), 'v');
-    assert.strictEqual(
-      Result.unwrapOrElse(Result.err('e'), (error) => `recovered from ${error}`),
-      'recovered from e',
-    );
-  });
-
-  test('match runs exactly the branch that applies', (assert) => {
-    const render = (result: Result.Result<number, string>) =>
-      Result.match(result, { ok: (n) => `got ${n}`, err: (e) => `failed: ${e}` });
-    assert.strictEqual(render(Result.ok(3)), 'got 3');
-    assert.strictEqual(render(Result.err('nope')), 'failed: nope');
-  });
-});
-
-// ── Transformations ───────────────────────────────────────────────────────────
-
-module('Result | transformations', { concurrency: true }, () => {
-  test('map applies to successes and leaves failures alone', (assert) => {
-    assert.strictEqual(Result.unwrap(Result.map(Result.ok(2), (n) => n * 3)), 6);
-    const failure = Result.err('e');
-    assert.strictEqual(
-      Result.map(failure, () => 'never'),
-      failure,
-      'passed through by identity',
-    );
-  });
-
-  test('mapErr applies to failures and leaves successes alone', (assert) => {
-    const mapped = Result.mapErr(Result.err('e'), (e) => new Error(e));
-    assert.true(mapped.error instanceof Error);
-    const success = Result.ok(1);
-    assert.strictEqual(
-      Result.mapErr(success, () => 'never'),
-      success,
-    );
-  });
-
-  test('andThen short-circuits on the first failure', (assert) => {
-    const parse = (raw: string): Result.Result<number, string> => {
-      const n = Number(raw);
-      return Number.isNaN(n) ? Result.err(`not a number: ${raw}`) : Result.ok(n);
-    };
-    assert.strictEqual(Result.unwrap(Result.andThen(Result.ok('7'), parse)), 7);
-    assert.strictEqual(
-      Result.andThen(parse('abc'), (n) => Result.ok(n)).error,
-      'not a number: abc',
-    );
   });
 });
 
