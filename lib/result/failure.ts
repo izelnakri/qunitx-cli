@@ -35,7 +35,15 @@ const FAILURE_BRAND: unique symbol = Symbol.for('result.Failure') as never;
 // which matters here, because this project runs its own tests in firefox and webkit.
 const HAS_CAPTURE = typeof Error.captureStackTrace === 'function';
 
-/** The wire form of a Failure — what `toJSON` emits and `fromJSON` accepts. */
+/**
+ * The wire form of a Failure — what `toJSON` emits and `fromJSON` accepts.
+ *
+ * ```ts
+ * toJSON(FileMissing({ path: 'a.ts' }));
+ * // { failure: true, code: 'FileMissing', message: 'no such file: a.ts',
+ * //   data: { path: 'a.ts' }, stack: 'Failure(FileMissing): …' }
+ * ```
+ */
 export interface SerializedFailure {
   /**
    * Wire marker. `Symbol.for` keys survive neither `JSON.stringify` nor `structuredClone`,
@@ -59,7 +67,14 @@ export interface SerializedFailure {
   cause?: SerializedFailure | { name: string; message: string; stack?: string };
 }
 
-/** Options accepted by the `Failure` constructor and by every generated factory. */
+/**
+ * Options accepted by the `Failure` constructor and by every generated factory.
+ *
+ * ```ts
+ * FileMissing({ path }, { cause: errnoError }); // wrap, keeping the original under `.cause`
+ * Tick({ n }, { stackless: true });             // hot loop: skip the stack capture
+ * ```
+ */
 export interface FailureOptions {
   /** The error this failure was derived from. Preserved verbatim and walked by `causes()`. */
   cause?: unknown;
@@ -85,6 +100,14 @@ export interface FailureOptions {
  *
  * Construct these through `define()` rather than directly: the factory is what pins `code`
  * to a literal type and gives you a matching type guard.
+ *
+ * ```ts
+ * const FileMissing = define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
+ * const failure = FileMissing({ path: 'a.ts' });
+ * failure.code;             // 'FileMissing' — a literal type, so `switch` narrows
+ * failure.data.path;        // 'a.ts' — typed payload, no message parsing
+ * failure instanceof Error; // true — devtools, loggers and `util.inspect` keep working
+ * ```
  */
 export class Failure<Code extends string = string, Data = undefined> extends Error {
   /** Cross-realm brand read by `isFailure()`. Non-enumerable so it never reaches the wire. */
@@ -136,6 +159,12 @@ export class Failure<Code extends string = string, Data = undefined> extends Err
 /**
  * Any Failure at all — the type to reach for when a signature accepts failures it does not
  * enumerate, e.g. `Result<T, Failure.Any>` at a boundary that only logs.
+ *
+ * ```ts
+ * function report(failure: Failure.Any) {
+ *   console.error(failure.code, failure.data); // every Failure has these, whatever its kind
+ * }
+ * ```
  */
 export type Any = Failure<string, unknown>;
 
@@ -143,11 +172,27 @@ export type Any = Failure<string, unknown>;
  * The Failure type a factory produces: `Failure.Of<typeof FileMissing>`.
  *
  * Lets a function signature name its failure modes by pointing at the declarations rather
- * than restating their code and payload — `Result<Config, Failure.Of<typeof FileMissing | typeof Invalid>>`.
+ * than restating their code and payload:
+ *
+ * ```ts
+ * const GitScanFailed = define('GitScanFailed', (d: { ref: string }) => `bad ref: ${d.ref}`);
+ * export type GitScanFailure = Failure.Of<typeof GitScanFailed>;
+ * //          ^? Failure<'GitScanFailed', { ref: string }>
+ * function scan(ref: string): Result<Scan, GitScanFailure> { … }
+ * ```
  */
 export type Of<F> = F extends FailureFactory<infer Code, infer Data> ? Failure<Code, Data> : never;
 
-/** A callable failure constructor produced by `define()`, carrying its own type guard. */
+/**
+ * A callable failure constructor produced by `define()`, carrying its own type guard.
+ *
+ * ```ts
+ * const Timeout = define('Timeout', (d: { ms: number }) => `timed out after ${d.ms}ms`);
+ * Timeout({ ms: 3000 }); // build one
+ * Timeout.is(caught);    // narrow one
+ * Timeout.code;          // 'Timeout'
+ * ```
+ */
 export interface FailureFactory<Code extends string, Data> {
   (data: Data, options?: FailureOptions): Failure<Code, Data>;
   /** The literal code this factory produces. Useful as a `switch` case and in registries. */
@@ -228,6 +273,15 @@ export function define<Code extends string, Data>(
  * algorithm handles `Error` objects by preserving `name`, `message`, `stack` and `cause` and
  * discarding both the subclass and every own property — so `code` and `data` are simply gone,
  * and answering `true` here would be a lie. Serialize with `toJSON`, not `structuredClone`.
+ *
+ * ```ts
+ * try {
+ *   await work();
+ * } catch (error) {
+ *   if (!isFailure(error)) throw error;   // a bug keeps flying
+ *   report(error.code, error.data);       // a declared failure gets handled
+ * }
+ * ```
  */
 export function isFailure(value: unknown): value is Any {
   if (typeof value !== 'object' || value === null) return false;
@@ -258,7 +312,13 @@ export function hasCode<const Codes extends readonly string[]>(
 
 // ── Normalizing arbitrary throwables ─────────────────────────────────────────
 
-/** The failure `from()` produces for a throwable that is not already a Failure. */
+/**
+ * The failure `from()` produces for a throwable that is not already a Failure.
+ *
+ * ```ts
+ * Unknown.is(from('nope')); // true — and the original string is preserved under `.cause`
+ * ```
+ */
 export const Unknown = define('Unknown', (data: { thrown: unknown }) =>
   data.thrown instanceof Error ? data.thrown.message : `non-Error thrown: ${label(data.thrown)}`,
 );
@@ -270,6 +330,12 @@ export const Unknown = define('Unknown', (data: { thrown: unknown }) =>
  * `throw { code: 42 }` are all legal and all occur in the wild (DOM callbacks, old libraries,
  * and any `Promise.reject(someNonError)`). The original is preserved under `cause` rather
  * than being flattened into a string, so nothing is lost on the way through.
+ *
+ * ```ts
+ * from(FileMissing({ path: 'a.ts' })); // the same Failure, untouched
+ * from(new RangeError('x'));           // Failure(Unknown) with the RangeError as `.cause`
+ * from('nope');                        // Failure(Unknown) — even a thrown string survives
+ * ```
  */
 export function from(thrown: unknown): Any {
   if (isFailure(thrown)) return thrown;
@@ -320,6 +386,12 @@ const MAX_CAUSE_DEPTH = 32;
  * Flattens an error's `cause` chain into an array, `error` first and the root cause last.
  *
  * Cycle-safe and depth-bounded: a repeated reference terminates the walk instead of looping.
+ *
+ * ```ts
+ * const root = new Error('EACCES');
+ * const wrapped = FileMissing({ path: 'a.ts' }, { cause: root });
+ * causes(wrapped); // [wrapped, root]
+ * ```
  */
 export function causes(error: unknown): unknown[] {
   const chain: unknown[] = [];
@@ -333,7 +405,13 @@ export function causes(error: unknown): unknown[] {
   return chain;
 }
 
-/** The deepest `cause` in the chain — the original failure, whatever wrapped it since. */
+/**
+ * The deepest `cause` in the chain — the original failure, whatever wrapped it since.
+ *
+ * ```ts
+ * rootCause(wrapped) === root; // true, however many layers wrapped it on the way up
+ * ```
+ */
 export function rootCause(error: unknown): unknown {
   return causes(error).at(-1);
 }
@@ -344,6 +422,13 @@ export function rootCause(error: unknown): unknown {
  * Node's own `util.inspect` renders `cause` chains well, but only for real `Error` objects
  * and only when something calls it — this works on revived wire failures too, and is what
  * you want in a TAP comment or a CLI's stderr block where a full stack would be noise.
+ *
+ * ```ts
+ * console.error(format(failure));
+ * // GitScanFailed: git lookup for "HEAD" failed: not a repository
+ * //   caused by: Error: spawn git ENOENT
+ * format(failure, { stacks: true }); // same, with indented frames under each link
+ * ```
  */
 export function format(error: unknown, { stacks = false }: { stacks?: boolean } = {}): string {
   return causes(error)
@@ -383,6 +468,10 @@ export function format(error: unknown, { stacks = false }: { stacks?: boolean } 
  * `message`, `stack`, and `cause`) but still drops the prototype and *every own property you
  * added* — so `code` and `data` would not survive it either. Use this, not `structuredClone`,
  * for Failures.
+ *
+ * ```ts
+ * ws.send(JSON.stringify({ event: 'run-error', error: toJSON(failure) }));
+ * ```
  */
 export function toJSON(error: unknown): SerializedFailure {
   const failure = from(error);
@@ -408,6 +497,12 @@ export function toJSON(error: unknown): SerializedFailure {
  * produced the failure, not this one. That is a feature over a WebSocket boundary (it points
  * at the browser code that actually broke) and a trap if you forget it, so the docs call it
  * out explicitly.
+ *
+ * ```ts
+ * const { error } = JSON.parse(frame);
+ * const failure = fromJSON(error); // a real Failure again
+ * GitScanFailed.is(failure);       // factory guards work on revived failures too
+ * ```
  */
 export function fromJSON(json: SerializedFailure): Any {
   const failure = new Failure(json.code, json.message, json.data, {

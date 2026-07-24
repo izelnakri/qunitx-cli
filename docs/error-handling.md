@@ -148,6 +148,36 @@ FileMissing.code; // 'FileMissing'
 A `Failure` is an `Error` subclass carrying a literal `code` discriminant and a typed `data`
 payload, plus `cause` chaining, `toJSON`/`fromJSON`, `causes()`, `rootCause()` and `format()`.
 
+**Why not a hand-rolled `class X extends Error`?** A Failure _is_ an `Error` — devtools,
+`util.inspect`, `unhandledRejection` diagnostics and every logger's error branch keep working —
+so this is not Failure _versus_ Error. It is one `define()` line versus re-solving five
+problems per subclass:
+
+1. **The discriminant is typed and the guard is free.** `code` is a string _literal_ type, so
+   `switch (e.code)` narrows and can be exhaustiveness-checked (§8.15); `Factory.is` and
+   `hasCode` are generated, not hand-written. The subclass's tool is `instanceof` — realm-scoped
+   and wire-dead (§4.5).
+2. **Facts travel as `data`, not prose.** The message is derived _from_ the typed payload, so
+   the two cannot disagree — and no consumer regexes a message to recover what the throw site
+   knew. This repo's `deriveBuildErrorType()` runs four regexes over `error.message` to
+   re-derive a category esbuild had in hand (§1).
+3. **It survives the wire.** `JSON.stringify(new Error('boom'))` is `{}` (§8.2) and
+   `structuredClone` silently drops `code` and `data` (§8.3). `toJSON`/`fromJSON` round-trip
+   code, payload, stack and the whole `cause` chain — and `isFailure` still recognises the
+   revived object.
+4. **Identity crosses realms.** The `Symbol.for` brand compares equal across workers, iframes
+   and `vm` contexts, where each realm's own `Error.prototype` makes `instanceof` answer false.
+   qunitx's main data path is two realms by construction: browser page → WebSocket → CLI.
+5. **The stack is engineered, not inherited.** The capture anchor puts the _reporting_ site on
+   top instead of factory plumbing; `stackless` skips capture in hot loops; the
+   `stackTraceLimit` trick makes an anchored Failure cost about one plain `new Error()` instead
+   of two (§7). `causes()`/`rootCause()`/`format()` walk the chain cycle-safely — on revived
+   wire failures too, where `util.inspect` gives up.
+
+The honest boundary: in a single-realm program that never serialises an error, points 3–4 lie
+dormant and this is a convention a team could hand-roll. This codebase crosses realm and wire
+on its main path, which is why the module carries its weight here.
+
 `Failure.ignore(context)` is the deliberate opposite — a `.catch()` handler for a failure that
 genuinely has no consequence, which says so under `QUNITX_DEBUG` instead of vanishing:
 
@@ -459,16 +489,17 @@ This is also what makes the OpenAPI generation work properly — see §6.
 
 ### 5.1 Against the JavaScript alternatives
 
-|                      | typed failures   | narrow boundary  | survives worker/RPC | stack traces | happy-path cost | learning cost |
-| -------------------- | ---------------- | ---------------- | ------------------- | ------------ | --------------- | ------------- |
-| bare `try`/`catch`   | ✗ (`unknown`)    | ✗                | n/a                 | ✓            | zero            | none          |
-| `T \| null` sentinel | ✗ (reason lost)  | ✓                | ✓                   | ✗            | zero            | none          |
-| `await-to-js` tuple  | partial          | ✗                | ✓                   | ✓            | one array       | none          |
-| `neverthrow`         | ✓                | ✗                | **✗**               | partial      | one instance    | moderate      |
-| `true-myth`          | ✓                | ✗                | **✗**               | partial      | one instance    | moderate      |
-| `fp-ts` `Either`     | ✓                | ✗                | **✗**               | ✗            | one instance    | high          |
-| `Effect`             | ✓ (in signature) | ✓ (typed errors) | ✗                   | ✓            | fiber runtime   | very high     |
-| **this design**      | ✓                | ✓                | ✓                   | ✓            | one literal     | low           |
+|                         | typed failures          | narrow boundary  | survives worker/RPC | stack traces | happy-path cost | learning cost |
+| ----------------------- | ----------------------- | ---------------- | ------------------- | ------------ | --------------- | ------------- |
+| bare `try`/`catch`      | ✗ (`unknown`)           | ✗                | n/a                 | ✓            | zero            | none          |
+| `T \| null` sentinel    | ✗ (reason lost)         | ✓                | ✓                   | ✗            | zero            | none          |
+| `await-to-js` tuple     | partial                 | ✗                | ✓                   | ✓            | one array       | none          |
+| `class X extends Error` | partial (DIY per class) | ✗                | **✗**               | ✓            | one instance    | low           |
+| `neverthrow`            | ✓                       | ✗                | **✗**               | partial      | one instance    | moderate      |
+| `true-myth`             | ✓                       | ✗                | **✗**               | partial      | one instance    | moderate      |
+| `fp-ts` `Either`        | ✓                       | ✗                | **✗**               | ✗            | one instance    | high          |
+| `Effect`                | ✓ (in signature)        | ✓ (typed errors) | ✗                   | ✓            | fiber runtime   | very high     |
+| **this design**         | ✓                       | ✓                | ✓                   | ✓            | one literal     | low           |
 
 Two columns deserve elaboration.
 
