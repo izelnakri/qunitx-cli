@@ -1,7 +1,6 @@
 import { getChangedFiles } from '../utils/get-changed-files.ts';
 import { getChangedFilePathsInGitSince } from '../utils/get-changed-file-paths-in-git-since.ts';
 import * as MetafileCache from '../utils/metafile-cache.ts';
-import { AsyncResult } from '../result/index.ts';
 import type { FSTree } from '../types.ts';
 
 /**
@@ -46,12 +45,11 @@ export async function getChangedFsTree(
   // discriminated by `instanceof` — with the `null` branch ("run everything") adjacent to the
   // `size === 0` branch ("run nothing").
   //
-  // `AsyncResult.try` owns the call, so it reflects both a rejection and a synchronous throw.
-  // It works on `getChanged` unchanged because a `Task` *is* a real Promise — the Task world
-  // flows into the Result world with no adapter. The trade is the type: a reflected promise
-  // cannot carry its failure type, so `scan.error` is `Failure.Any` rather than
-  // `GitScanFailure`. Nothing here needs more than `.message`, so no guard is required.
-  const scan = await AsyncResult.try(getChanged, projectRoot, changedSince);
+  // `.result()` is the Task's own bridge to `{ ok, value, error }`, and it carries the
+  // *declared* failure type: `scan.error` is a typed `GitScanFailure`, not a `Failure.Any`
+  // that would need narrowing. The two-tier gate holds — a declared scan failure flows here
+  // as a value, while a bug in the scanner still rejects and crashes the run loudly.
+  const scan = await getChanged(projectRoot, changedSince).result();
   if (!scan.ok) {
     process.stdout.write(
       `# --changed: ${scan.error.message} — running all ${testFiles.length} test files\n`,

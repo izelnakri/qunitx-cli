@@ -43,17 +43,12 @@ export type ConfigFailure =
  * Builds the merged qunitx config from package.json settings and CLI flags.
  * `package.json#qunitx.plugins` entries are dynamic-imported into esbuild plugin objects.
  *
- * Returns an `AsyncResult`, not a bare `Promise`: a caller that only `await`s it gets a plain
- * `Result<Config, ConfigFailure>` (the daemon and `cli.ts` do exactly that, unchanged), while a
- * caller that wants to transform the config can chain `.map` / `.andThen` and still settle to a
- * plain `Result`. It reports rather than exits so the daemon — which assembles a config per
- * client request — can reject one bad flag and stay up; `cli.ts` turns a failure into an exit.
+ * Resolves to a plain `Result<Config, ConfigFailure>` — a *declared* failure is a value the
+ * caller branches on, never a rejection. It reports rather than exits so the daemon — which
+ * assembles a config per client request — can reject one bad flag and stay up; `cli.ts`
+ * turns a failure into an exit.
  */
-export function setup(): Result.AsyncResult<Config, ConfigFailure> {
-  return Result.from(assemble());
-}
-
-async function assemble(): Promise<Result.Result<Config, ConfigFailure>> {
+export async function setup(): Promise<Result.Result<Config, ConfigFailure>> {
   const projectRoot = await findProjectRoot();
   const flags = Args.parse(projectRoot);
   if (!flags.ok) return flags;
