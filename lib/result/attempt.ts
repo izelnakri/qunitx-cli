@@ -14,7 +14,10 @@
  * where the reader can see exactly what is declared:
  *
  * ```ts
- * const parsed = Result.try(JSON.parse, raw);                       // Result<unknown, unknown>
+ * import * as Result from './index.ts';
+ * declare const raw: string;
+ *
+ * const parsed = Result.try(JSON.parse, raw); // Result<unknown, unknown>
  * if (!parsed.ok && !(parsed.error instanceof SyntaxError)) throw parsed.error; // a bug stays a bug
  * ```
  *
@@ -32,15 +35,30 @@
 
 import { type Result, ok, err } from './result.ts';
 
-/** `Result` for a synchronous source, a never-rejecting `Promise<Result>` for an async one. */
-type Attempted<T> =
-  T extends PromiseLike<unknown> ? Promise<Result<Awaited<T>, unknown>> : Result<T, unknown>;
+/**
+ * `Result` for a synchronous source, a never-rejecting `Promise<Result>` for an async one.
+ *
+ * The first arm handles an `any`-typed source — `JSON.parse`, the flagship caller. A
+ * conditional type applied to `any` resolves to the *union* of both branches, which would
+ * hand the caller the unusable `Promise<Result> | Result` (no `.ok` until narrowed by hand).
+ * `0 extends 1 & T` is true only for `any`; such a source is treated as synchronous and its
+ * value as `unknown` — the honest reading of `any`, and what the call site can branch on.
+ */
+type Attempted<T> = 0 extends 1 & T
+  ? Result<unknown, unknown>
+  : T extends PromiseLike<unknown>
+    ? Promise<Result<Awaited<T>, unknown>>
+    : Result<T, unknown>;
 
 /**
  * Calls `fn(...args)` and reflects the outcome into a `Result` — `Result.try`, shaped like
  * `Promise.try`. See the module doc for the flat-classification pattern this is half of.
  *
  * ```ts
+ * import { readFile } from 'node:fs/promises';
+ * import * as Result from './index.ts';
+ * declare const raw: string, path: string;
+ *
  * const parsed = Result.try(JSON.parse, raw); // sync source → Result, synchronously
  * if (!parsed.ok && !(parsed.error instanceof SyntaxError)) throw parsed.error;
  *
@@ -96,6 +114,10 @@ export interface ErrnoError extends Error {
  * throw err` ladder in seven places:
  *
  * ```ts
+ * import fs from 'node:fs/promises';
+ * import * as Result from './index.ts';
+ * declare const tmpPath: string, lockPath: string;
+ *
  * const linked = await Result.try(fs.link, tmpPath, lockPath);
  * if (!linked.ok && !Result.isErrno(linked.error, 'EEXIST')) throw linked.error;
  * ```

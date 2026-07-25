@@ -13,7 +13,24 @@
 // - `private-type-ref`: fires when public symbols reference types from external npm packages
 //   (Browser/Page from playwright-core, WebSocketServer from ws). These can't be fixed
 //   without re-exporting third-party types, which would bloat the public API.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+
+// Doctests, Rust-style: `deno check --doc` type-checks every ```ts block in these files'
+// JSDoc, so an example that drifts from the API stops the build. A ratchet, not a sweep —
+// add a file here once its blocks are self-contained (imports + `declare const` for the
+// values an example assumes; the documented module's own exports are auto-imported).
+// Illustrative fragments that should not be checked use a ```ts ignore fence.
+//
+// CACHE FOOTGUN: deno's type-check cache is content-keyed but (as of 2.9) not keyed on
+// --doc, so an unchanged file that previously passed a plain `deno check` silently skips
+// its doc blocks here. CI is always cold; locally, touch the file to re-verify it.
+const DOCTESTED = ['lib/result/attempt.ts'];
+
+const doctests = spawnSync('deno', ['check', '--doc', ...DOCTESTED], { encoding: 'utf8' });
+if (doctests.status !== 0) {
+  process.stderr.write(doctests.stdout + doctests.stderr);
+  process.exit(1);
+}
 
 const proc = spawn('deno', ['doc', '--lint', '--quiet', 'lib/', 'cli.ts'], { encoding: 'utf8' });
 let output = '';
