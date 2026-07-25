@@ -165,6 +165,15 @@ export class Failure<Code extends string = string, Data = undefined> extends Err
  *   console.error(failure.code, failure.data); // every Failure has these, whatever its kind
  * }
  * ```
+ *
+ * This is NOT redundant with the bare `Failure` type. The class defaults `Data` to
+ * `undefined` (so that `Failure<'Simple'>` means "carries no payload"), which makes an
+ * unparameterised `Failure` mean `Failure<string, undefined>` — a type only payload-less
+ * failures satisfy. `report(failure: Failure)` would reject `FileMissing({ path })` with
+ * `'{ path: string }' is not assignable to 'undefined'`. `Any` widens `Data` to `unknown`,
+ * which every payload is assignable to — the actual top type of the taxonomy. (Under the
+ * standard `import * as Failure` namespace import the class is not even nameable without
+ * `Failure.Failure`, so `Failure.Any` is also the only spelling that reads.)
  */
 export type Any = Failure<string, unknown>;
 
