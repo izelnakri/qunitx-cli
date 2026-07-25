@@ -24,9 +24,11 @@ import path from 'node:path';
 // sandbox. Every block must be self-contained with real stub values — `deno test --doc`
 // wraps blocks in a test function, where `declare` headers are illegal (TS1184) and
 // import statements are hoisted — and the documented module's own exports are
-// auto-imported. A ```ts ignore fence opts a fragment out of both gates (unknown
-// attributes like no-eval are silently IGNORED by deno, not honoured); an example whose
-// side effect must not run is written as a defined-but-never-invoked function instead.
+// auto-imported. Deno's ```ts ignore fence would opt a fragment out of both gates (and
+// unknown attributes like no-eval are silently IGNORED by deno, not honoured) — so the
+// zero-ignore check below keeps that hatch unused: an example whose side effect must not
+// run is written as a defined-but-never-invoked function instead, which both gates still
+// verify in full.
 // One reporting quirk: a SYNTAX error in any block aborts the whole check invocation,
 // masking other files' type errors until it is fixed — the exit code still fails either
 // way. (An earlier note here claimed deno's check cache could silently skip doc blocks
@@ -63,10 +65,22 @@ async function doctestGateIsAlive() {
   }
 }
 
-const [gateAlive, docLint] = await Promise.all([
+const [gateAlive, docLint, ignoreFences] = await Promise.all([
   doctestGateIsAlive(),
   run('deno', ['doc', '--lint', '--quiet', 'lib/', 'cli.ts']),
+  // Zero-ignore invariant: every example in the public API stays checked AND run. An
+  // `ignore` fence is an example nobody verifies — convert it (stub values, or a
+  // defined-but-never-invoked function) or delete it. grep exits 0 on a match.
+  run('grep', ['-rnE', '```(ts|js)[^`]*\\bignore\\b', '--include=*.ts', 'lib/', 'cli.ts']),
 ]);
+
+if (ignoreFences.code === 0) {
+  process.stderr.write(
+    'doctest: `ignore` fence found — every example must stay checked and run:\n' +
+      ignoreFences.output,
+  );
+  process.exitCode = 1;
+}
 
 if (!gateAlive) {
   process.stderr.write(
