@@ -18,14 +18,19 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-// Doctests, Rust-style, live in `npm run typecheck` (`deno check --doc lib/ cli.ts`), which
-// type-checks every ```ts/```js block in JSDoc across the whole public API: an example that
-// drifts stops the build. Every block must be self-contained (imports + `declare const` for
-// the values it assumes; the documented module's own exports are auto-imported), and a
-// ```ts ignore fence opts a fragment out. One reporting quirk: a SYNTAX error in any block
-// aborts the whole invocation, masking other files' type errors until it is fixed — the
-// exit code still fails either way. (An earlier note here claimed deno's check cache could
-// silently skip doc blocks after a plain check; a controlled test disproved that.)
+// Doctests, Rust-style, live in two gates: `npm run typecheck` (`deno check --doc`)
+// type-checks every ```ts/```js block in JSDoc across the whole public API, and
+// `npm run test:doctest` (`deno test --doc`) RUNS them under a near-zero-permission
+// sandbox. Every block must be self-contained with real stub values — `deno test --doc`
+// wraps blocks in a test function, where `declare` headers are illegal (TS1184) and
+// import statements are hoisted — and the documented module's own exports are
+// auto-imported. A ```ts ignore fence opts a fragment out of both gates (unknown
+// attributes like no-eval are silently IGNORED by deno, not honoured); an example whose
+// side effect must not run is written as a defined-but-never-invoked function instead.
+// One reporting quirk: a SYNTAX error in any block aborts the whole check invocation,
+// masking other files' type errors until it is fixed — the exit code still fails either
+// way. (An earlier note here claimed deno's check cache could silently skip doc blocks
+// after a plain check; a controlled test disproved that.)
 //
 // The canary below is this gate's self-test: a deliberately broken example must FAIL under
 // --doc. If it ever passes — a deno upgrade changed block extraction, or the flag moved —
@@ -66,7 +71,7 @@ const [gateAlive, docLint] = await Promise.all([
 if (!gateAlive) {
   process.stderr.write(
     'doctest canary: `deno check --doc` accepted a deliberately broken JSDoc example — ' +
-      'the doctest gate (npm run typecheck) is no longer checking doc blocks.\n',
+      'the doctest gates (npm run typecheck / test:doctest) are no longer checking doc blocks.\n',
   );
   process.exitCode = 1;
 }

@@ -2,7 +2,7 @@
  * Prepends `count` repetitions of `indent` (default: one space) to each non-empty line of `string`.
  * @example
  * ```js
- * import indentString from './indent-string.ts';
+ * import { indentString } from './indent-string.ts';
  * console.assert(indentString('hello\nworld', 2) === '  hello\n  world');
  * ```
  * @returns {string}

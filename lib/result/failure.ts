@@ -75,10 +75,10 @@ export interface SerializedFailure {
  * ```ts
  * const FileMissing = define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
  * const Tick = define('Tick', (d: { n: number }) => `tick ${d.n}`);
- * declare const path: string, n: number, errnoError: Error;
+ * const errnoError = new Error('EACCES');
  *
- * FileMissing({ path }, { cause: errnoError }); // wrap, keeping the original under `.cause`
- * Tick({ n }, { stackless: true }); // hot loop: skip the stack capture
+ * FileMissing({ path: 'a.ts' }, { cause: errnoError }); // wrap, original kept under `.cause`
+ * Tick({ n: 1 }, { stackless: true }); // hot loop: skip the stack capture
  * ```
  */
 export interface FailureOptions {
@@ -197,12 +197,12 @@ export type Any = Failure<string, unknown>;
  *
  * ```ts
  * import * as Failure from './failure.ts';
- * import type { Result } from './result.ts';
+ * import { err, type Result } from './result.ts';
  *
  * const GitScanFailed = Failure.define('GitScanFailed', (d: { ref: string }) => `bad ref: ${d.ref}`);
- * export type GitScanFailure = Failure.Of<typeof GitScanFailed>;
- * //          ^? Failure<'GitScanFailed', { ref: string }>
- * declare function scan(ref: string): Result<string[], GitScanFailure>;
+ * type GitScanFailure = Failure.Of<typeof GitScanFailed>;
+ * //   ^? Failure<'GitScanFailed', { ref: string }>
+ * const scan = (ref: string): Result<string[], GitScanFailure> => err(GitScanFailed({ ref }));
  * ```
  */
 export type Of<F> = F extends FailureFactory<infer Code, infer Data> ? Failure<Code, Data> : never;
@@ -212,10 +212,9 @@ export type Of<F> = F extends FailureFactory<infer Code, infer Data> ? Failure<C
  *
  * ```ts
  * const Timeout = define('Timeout', (d: { ms: number }) => `timed out after ${d.ms}ms`);
- * declare const caught: unknown;
+ * const caught: unknown = Timeout({ ms: 3000 }); // build one
  *
- * Timeout({ ms: 3000 }); // build one
- * Timeout.is(caught); // narrow one
+ * Timeout.is(caught); // narrow one — true
  * Timeout.code; // 'Timeout'
  * ```
  */
@@ -243,10 +242,10 @@ export function define<Code extends string, Data>(
  *
  * ```ts
  * const FileMissing = define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
- * declare const someCaughtValue: unknown;
+ * const someCaughtValue: unknown = FileMissing({ path: 'a.ts' });
  *
  * FileMissing({ path: 'a.ts' }); // Failure<'FileMissing', { path: string }>
- * FileMissing.is(someCaughtValue); // type guard, cross-realm safe
+ * FileMissing.is(someCaughtValue); // type guard, cross-realm safe — true
  * FileMissing.code; // 'FileMissing'
  * ```
  *
@@ -302,8 +301,8 @@ export function define<Code extends string, Data>(
  * and answering `true` here would be a lie. Serialize with `toJSON`, not `structuredClone`.
  *
  * ```ts
- * declare function work(): Promise<void>;
- * declare function report(code: string, data: unknown): void;
+ * const work = async (): Promise<void> => {};
+ * const report = (code: string, data: unknown): void => console.debug(code, data);
  *
  * try {
  *   await work();
@@ -330,7 +329,7 @@ export { isFailure as is };
  * Narrows a Failure to one of several codes — the multi-code sibling of `Factory.is`.
  *
  * ```ts
- * declare const error: unknown;
+ * const error: unknown = from(new Error('EACCES'));
  *
  * if (hasCode(error, 'FileMissing', 'PermissionDenied')) error.code; // 'FileMissing' | 'PermissionDenied'
  * ```
@@ -399,9 +398,9 @@ const DEBUG = Boolean(process.env.QUNITX_DEBUG);
  *
  * ```ts
  * import { unlink } from 'node:fs/promises';
- * declare const socketPath: string;
+ * const socketPath = '/tmp/qunitx-daemon.sock';
  *
- * await unlink(socketPath).catch(ignore('daemon socket unlink'));
+ * await unlink(socketPath).catch(ignore('daemon socket unlink')); // even a denied unlink is fine
  * ```
  */
 export function ignore(context: string): (error: unknown) => void {
@@ -467,10 +466,11 @@ export function rootCause(error: unknown): unknown {
  * you want in a TAP comment or a CLI's stderr block where a full stack would be noise.
  *
  * ```ts
- * declare const failure: Any;
+ * const GitScanFailed = define('GitScanFailed', (d: { ref: string }) => `bad ref: ${d.ref}`);
+ * const failure = GitScanFailed({ ref: 'HEAD' }, { cause: new Error('spawn git ENOENT') });
  *
- * console.error(format(failure));
- * // GitScanFailed: git lookup for "HEAD" failed: not a repository
+ * format(failure);
+ * // GitScanFailed: bad ref: HEAD
  * //   caused by: Error: spawn git ENOENT
  * format(failure, { stacks: true }); // same, with indented frames under each link
  * ```
@@ -515,8 +515,8 @@ export function format(error: unknown, { stacks = false }: { stacks?: boolean } 
  * for Failures.
  *
  * ```ts
- * declare const ws: { send(data: string): void };
- * declare const failure: Any;
+ * const ws = { send(_data: string) {} }; // stands in for the run's WebSocket
+ * const failure = from(new Error('boom'));
  *
  * ws.send(JSON.stringify({ event: 'run-error', error: toJSON(failure) }));
  * ```
@@ -548,11 +548,11 @@ export function toJSON(error: unknown): SerializedFailure {
  *
  * ```ts
  * const GitScanFailed = define('GitScanFailed', (d: { ref: string }) => `bad ref: ${d.ref}`);
- * declare const frame: string;
+ * const frame = JSON.stringify({ error: toJSON(GitScanFailed({ ref: 'HEAD' })) });
  *
  * const { error } = JSON.parse(frame);
  * const failure = fromJSON(error); // a real Failure again
- * GitScanFailed.is(failure); // factory guards work on revived failures too
+ * GitScanFailed.is(failure); // factory guards work on revived failures too — true
  * ```
  */
 export function fromJSON(json: SerializedFailure): Any {

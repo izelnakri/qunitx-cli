@@ -107,9 +107,9 @@ export function err<const E>(error: E): Err<E> {
  * is to cross realms intact, so a check that a foreign realm could fail would defeat it.
  *
  * ```ts
- * declare const frame: string;
+ * const frame = JSON.stringify(ok({ id: 1 })); // a Result that crossed a WebSocket
  *
- * const wire = JSON.parse(frame); // a Result that crossed a WebSocket
+ * const wire = JSON.parse(frame);
  * if (isResult(wire) && !wire.ok) console.error(wire.error);
  * ```
  */
@@ -135,9 +135,8 @@ export function isResult(value: unknown): value is Result<unknown, unknown> {
  *
  * ```ts
  * import * as Args from '../args/index.ts';
- * declare const projectRoot: string;
  *
- * const flags = unwrap(Args.parse(projectRoot)); // ParsedFlags, or the ParseFailure throws
+ * const flags = unwrap(Args.parse('/repo')); // ParsedFlags, or the ParseFailure throws
  * ```
  */
 export function unwrap<T>(result: Result<T, unknown>): T {
@@ -158,7 +157,11 @@ export function unwrap<T>(result: Result<T, unknown>): T {
  * ```ts
  * import * as Config from '../setup/config.ts';
  *
- * const config = expect(await Config.setup(), 'daemon could not assemble its startup config');
+ * // Defined, not invoked: setup() assembles a real config. The doctest checks and
+ * // evaluates the definition; only a caller would perform the work.
+ * async function daemonBoot() {
+ *   return expect(await Config.setup(), 'daemon could not assemble its startup config');
+ * }
  * ```
  */
 export function expect<T>(result: Result<T, unknown>, message: string): T {
@@ -170,10 +173,9 @@ export function expect<T>(result: Result<T, unknown>, message: string): T {
  * Returns the success value, or `fallback` if the Result failed.
  *
  * ```ts
- * declare function parsePort(raw: string): Result<number, unknown>;
- * declare const raw: string;
+ * const parsePort = (raw: string): Result<number, unknown> => ok(Number(raw));
  *
- * const port = unwrapOr(parsePort(raw), 3000);
+ * const port = unwrapOr(parsePort('8080'), 3000);
  * ```
  */
 export function unwrapOr<T, U>(result: Result<T, unknown>, fallback: U): T | U {
@@ -197,7 +199,7 @@ export function unwrapOr<T, U>(result: Result<T, unknown>, fallback: U): T | U {
  *
  * ```ts
  * import * as Failure from './failure.ts';
- * declare const loaded: Result<{ name: string }, Failure.Any>[];
+ * const loaded: Result<{ name: string }, Failure.Any>[] = [ok({ name: 'esbuild-css' })];
  *
  * const plugins = all(loaded); // as in Config's resolvePlugins: Result<Plugin[], LoadFailed>
  * if (!plugins.ok) console.error(plugins.error.message); // the first failure, context intact
@@ -224,10 +226,10 @@ export function all<T, E>(results: ReadonlyArray<Result<T, E>>): Result<T[], E> 
  * ```ts
  * import { readFile } from 'node:fs/promises';
  * import * as Result from './index.ts';
- * declare const files: string[];
+ * const files = ['a.json', 'b.json'];
  *
  * const results = await Promise.all(files.map((f) => Result.try(() => readFile(f, 'utf8'))));
- * const { values, errors } = partition(results);
+ * const { values, errors } = partition(results); // never rejects — even a denied read is an Err
  * ```
  */
 export function partition<T, E>(

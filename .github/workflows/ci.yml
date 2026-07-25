@@ -36,11 +36,20 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+          # Warm DENO_DIR (keyed on deno.lock) so the three deno checks below reuse the
+          # type-check cache across runs. Safe for the --doc gates: the check cache is
+          # content-keyed, and a controlled test showed --doc re-checks doc blocks
+          # correctly on cached content (see scripts/lint-docs.js).
+          cache: true
       - run: npm ci
       - run: npm run format
       - run: npm run lint
       - run: npm run lint:docs
       - run: npm run typecheck
+      # Rust-style doctests, both halves: typecheck above TYPE-CHECKS every JSDoc example
+      # (deno check --doc); this step RUNS them (51 blocks, ~7s) under a sandbox that only
+      # allows env reads + /tmp reads — an example that does real I/O fails loudly.
+      - run: npm run test:doctest
       - run: deno check 'benches/**/*.ts'
       # Promises/A+ compliance for lib/task (872 tests, ~13s, no browser needed) — cheaper
       # here than in the Chrome-bearing test matrix.

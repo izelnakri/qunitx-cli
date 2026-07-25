@@ -36,14 +36,15 @@ import { Failure, isFailure, type Any as AnyFailure } from '../result/failure.ts
  * like `Boolean`/`Date`, because a factory reads better at the end of an adapter:
  *
  * ```ts
- * import { type Failure } from '../result/failure.ts';
+ * import { define, type Of } from '../result/failure.ts';
+ * const GitScanFailed = define('GitScanFailed', (d: { root: string }) => `scan failed: ${d.root}`);
+ * type GitScanFailure = Of<typeof GitScanFailed>;
  * type ChangeScan = { scope: 'everything' } | { scope: 'paths'; paths: Set<string> };
- * type GitScanFailure = Failure<'GitScanFailed', { root: string }>;
- * declare function runGit(root: string): Promise<string>;
- * declare function classify(error: unknown): GitScanFailure;
- * declare function parse(out: string): ChangeScan;
+ * const runGit = async (root: string): Promise<string> => `M ${root}/lib/a.ts`;
+ * const classify = (error: unknown): GitScanFailure => GitScanFailed({ root: '.' }, { cause: error });
+ * const parse = (out: string): ChangeScan => ({ scope: 'paths', paths: new Set(out.split('\n')) });
  *
- * export function scanChanges(root: string): Task<ChangeScan, GitScanFailure> {
+ * function scanChanges(root: string): Task<ChangeScan, GitScanFailure> {
  *   return Task(() => runGit(root)).mapErr(classify).map(parse);
  * }
  * ```
@@ -104,10 +105,10 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * lib.d.ts declaration uses) so the subclass stays assignable everywhere a Promise is.
    *
    * ```ts
-   * declare const task: Task<{ name: string }[]>;
+   * const task = Task(() => [{ name: 'ada' }]);
    *
    * const names = task.then((users) => users.map((u) => u.name)); // plain Promise out
-   * // to stay in Task-land (lazy, retryable, typed E), use .map instead
+   * await names; // ['ada'] — to stay in Task-land (lazy, retryable, typed E), use .map instead
    * ```
    */
   override then<TResult1 = T, TResult2 = never>(
@@ -128,12 +129,11 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * un-awaited promise — perform-and-forget still wants a `.result()` or a `recover` somewhere.
    *
    * ```ts
-   * declare function scanChanges(root: string, ref: string): Task<Set<string>>;
-   * declare function buildFsTree(config: object): Promise<object>;
-   * declare const root: string, ref: string, config: object;
+   * const scanChanges = (root: string, ref: string) => Task(() => new Set([root, ref]));
+   * const buildFsTree = async (config: object): Promise<object> => config;
    *
-   * const scan = scanChanges(root, ref).perform(); // git starts NOW
-   * const tree = await buildFsTree(config); // overlapped work
+   * const scan = scanChanges('.', 'HEAD').perform(); // git starts NOW
+   * const tree = await buildFsTree({}); // overlapped work
    * const changes = await scan; // join the in-flight run — no second git call
    * ```
    */
@@ -149,10 +149,12 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * running (JS starts promises at creation) — the Task then only defers *observation*.
    *
    * ```ts
-   * declare const url: string;
-   *
-   * Task.from(() => fetch(url)); // fully lazy — fetch fires on first await
-   * Task.from(fetch(url)); // fetch already in flight; retry/result still work
+   * // Defined, not invoked: the second line starts a real network request at call time —
+   * // that eagerness is exactly what the comment is documenting.
+   * function bothSpellings(url: string) {
+   *   Task.from(() => fetch(url)); // fully lazy — fetch fires on first await
+   *   return Task.from(fetch(url)); // fetch already in flight; retry/result still work
+   * }
    * ```
    */
   static from<T, E = AnyFailure>(
@@ -167,10 +169,9 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * caller would otherwise write by hand (`Task(() => fn(a, b))`) is built here instead.
    *
    * ```ts
-   * declare function runGit(args: string[], cwd: string): Promise<string>;
-   * declare const cwd: string;
+   * const runGit = async (args: string[], cwd: string) => `ran git ${args[0]} in ${cwd}`;
    *
-   * const scan = Task.try(runGit, ['status', '--porcelain'], cwd); // lazy, args captured
+   * const scan = Task.try(runGit, ['status', '--porcelain'], '.'); // lazy, args captured
    * await scan.retry(2); // three fresh runGit executions at most
    * ```
    */
@@ -217,9 +218,8 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * ```ts
    * import { define } from '../result/failure.ts';
    * const Denied = define('Denied', (d: { user: string }) => `denied: ${d.user}`);
-   * declare const user: string;
    *
-   * const denied = Task.fail(Denied({ user })); // Task<never, Failure<'Denied', { user }>>
+   * const denied = Task.fail(Denied({ user: 'root' })); // Task<never, Failure<'Denied', …>>
    * (await denied.result()).error?.code; // 'Denied' — typed end to end
    * ```
    */
@@ -232,7 +232,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * the Task only *observes* the external settlement once something awaits it.
    *
    * ```ts
-   * declare const socket: { once(event: string, handler: (frame: string) => void): void };
+   * const socket = { once(_event: string, handler: (frame: string) => void) { handler('hi'); } };
    *
    * const { promise, resolve } = Task.withResolvers<string>();
    * socket.once('frame', resolve);
@@ -309,10 +309,10 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * ```ts
    * import { partition } from '../result/result.ts';
    * import type { Any as LoadFailure } from '../result/failure.ts';
-   * declare const paths: string[];
-   * declare function load(path: string): Task<object, LoadFailure>;
+   * const paths = ['a.json', 'b.json'];
+   * const load = (path: string) => Task<object, LoadFailure>(() => ({ path }));
    *
-   * const outcomes = await Task.results(paths.map(load)); // Result<Config, LoadFailure>[]
+   * const outcomes = await Task.results(paths.map(load)); // Result<object, LoadFailure>[]
    * const { values, errors } = partition(outcomes); // nothing lost, everything typed
    * ```
    */
@@ -346,10 +346,9 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * `fn` may return a value or a promise of one (they flatten), so this is `andThen` too.
    *
    * ```ts
-   * declare function loadUser(id: number): Task<{ name: string }>;
-   * declare const id: number;
+   * const loadUser = (id: number) => Task(() => ({ name: 'u' + id }));
    *
-   * loadUser(id).map((u) => u.name).map((n) => n.toUpperCase()); // still lazy, still a Task
+   * loadUser(1).map((u) => u.name).map((n) => n.toUpperCase()); // still lazy, still a Task
    * ```
    */
   map<U>(fn: (value: T) => U | PromiseLike<U>): TaskClass<U, E> {
@@ -368,10 +367,10 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * ```ts
    * import { define } from '../result/failure.ts';
    * const GitScanFailed = define('GitScanFailed', (d: { ref: string }) => `scan failed: ${d.ref}`);
-   * declare function execFileAsync(cmd: string, args: string[], opts: object): Promise<string>;
-   * declare const args: string[], opts: object, ref: string;
+   * const execFileAsync = async (cmd: string, args: string[]) => `${cmd} ${args[0]}`;
+   * const ref = 'HEAD';
    *
-   * Task(() => execFileAsync('git', args, opts)) // foreign throw-land
+   * Task(() => execFileAsync('git', ['status'])) // foreign throw-land
    *   .mapErr((cause) => GitScanFailed({ ref }, { cause })); // classified HERE, once
    * ```
    */
@@ -391,10 +390,10 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * downstream is settled, so `E` is `never`.
    *
    * ```ts
-   * declare function route(req: Request): Task<Response>;
-   * declare function internalError(): Response;
-   * declare function log(value: unknown): void;
-   * declare const req: Request;
+   * const route = (_req: Request) => Task(() => new Response('ok'));
+   * const internalError = () => new Response(null, { status: 500 });
+   * const log = (value: unknown): void => console.debug(value);
+   * const req = new Request('https://example.com/users/7');
    *
    * const reply = await route(req).recover((bug) => (log(bug), internalError()));
    * ```
@@ -414,10 +413,10 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * hide it from the boundary.
    *
    * ```ts
-   * declare function loadUser(id: number): Task<{ name: string }>;
-   * declare const id: number;
+   * const loadUser = (id: number) => Task(() => ({ name: 'u' + id }));
    *
-   * await loadUser(id).expect(`route /users/${id} needs its user`);
+   * await loadUser(7).expect('route /users/7 needs its user');
+   * // and when loadUser rejects with Failure(NotFound), the await throws:
    * // Failure(NotFound): route /users/7 needs its user
    * //   caused by: Failure(NotFound): no user 7
    * ```
@@ -438,8 +437,8 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * absorbed a `TypeError` would be the silent-bug-hider the two-tier rule exists to prevent.
    *
    * ```ts
-   * declare function loadConfig(): Task<{ port: number }>;
-   * declare const DEFAULTS: { port: number };
+   * const loadConfig = () => Task(() => ({ port: 8080 }));
+   * const DEFAULTS = { port: 3000 };
    *
    * const config = await loadConfig().unwrapOr(DEFAULTS);
    * ```
@@ -460,8 +459,8 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * {@link TaskClass#result}: a bug belongs to neither branch and keeps rejecting.
    *
    * ```ts
-   * declare function deploy(): Task<string>;
-   * declare function statusFor(code: string): number;
+   * const deploy = () => Task(() => 'v2.1.0');
+   * const statusFor = (_code: string) => 503;
    *
    * const status = await deploy().match({ ok: () => 201, err: (e) => statusFor(e.code) });
    * ```
@@ -489,7 +488,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * wrap; nothing is served from the old chain's memo.
    *
    * ```ts
-   * declare const chain: Task<string>;
+   * const chain = Task(() => 'fetched').map((s) => s.toUpperCase());
    *
    * await chain; // ran once, memoised
    * await chain.restart(); // fresh source execution, every derivation re-applied
@@ -512,10 +511,13 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    *
    * ```ts
    * import { getChangedFilePathsInGitSince } from '../utils/get-changed-file-paths-in-git-since.ts';
-   * declare const root: string, ref: string;
-   * declare const flakyUpload: Task<void>;
    *
-   * await getChangedFilePathsInGitSince(root, ref).retry(); // survives index.lock contention
+   * // Defined, not invoked: the scan spawns real git subprocesses when awaited.
+   * function resilientScan(root: string, ref: string) {
+   *   return getChangedFilePathsInGitSince(root, ref).retry(); // survives index.lock contention
+   * }
+   *
+   * const flakyUpload = Task<void>(() => undefined);
    * await flakyUpload.retry(4); // up to 5 fresh executions, rejects with the 5th reason
    * ```
    */
@@ -548,8 +550,8 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    *
    * ```ts
    * import type { Any as GitScanFailure } from '../result/failure.ts';
-   * declare const scan: Task<Set<string>, GitScanFailure>;
-   * declare function degradeToFullRun(failure: GitScanFailure): Set<string>;
+   * const scan = Task<Set<string>, GitScanFailure>(() => new Set(['lib/a.ts']));
+   * const degradeToFullRun = (_failure: GitScanFailure) => new Set<string>();
    *
    * const { ok, value, error } = await scan.result();
    * if (!ok) degradeToFullRun(error); // error: GitScanFailure — typed, no narrowing
@@ -589,10 +591,10 @@ type TaskConstructor = typeof TaskClass & {
  * import { type Failure } from '../result/failure.ts';
  * type ChangeScan = { scope: 'paths'; paths: Set<string> };
  * type GitScanFailure = Failure<'GitScanFailed', { ref: string }>;
- * declare function runGit(args: string[], cwd: string): Promise<ChangeScan>;
- * declare const args: string[], cwd: string;
+ * const runGit = async (args: string[]): Promise<ChangeScan> =>
+ *   ({ scope: 'paths', paths: new Set(args) });
  *
- * const scan = Task<ChangeScan, GitScanFailure>(() => runGit(args, cwd)); // no `new`
+ * const scan = Task<ChangeScan, GitScanFailure>(() => runGit(['status'])); // no `new`
  * scan instanceof Task && scan instanceof Promise; // true, true
  * ```
  */

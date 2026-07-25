@@ -15,7 +15,7 @@
  *
  * ```ts
  * import * as Result from './index.ts';
- * declare const raw: string;
+ * const raw = '{"n": 1}';
  *
  * const parsed = Result.try(JSON.parse, raw); // Result<unknown, unknown>
  * if (!parsed.ok && !(parsed.error instanceof SyntaxError)) throw parsed.error; // a bug stays a bug
@@ -57,12 +57,12 @@ type Attempted<T> = 0 extends 1 & T
  * ```ts
  * import { readFile } from 'node:fs/promises';
  * import * as Result from './index.ts';
- * declare const raw: string, path: string;
+ * const raw = '{"n": 1}';
  *
  * const parsed = Result.try(JSON.parse, raw); // sync source → Result, synchronously
  * if (!parsed.ok && !(parsed.error instanceof SyntaxError)) throw parsed.error;
  *
- * const read = await Result.try(() => readFile(path, 'utf8')); // async source → Promise<Result>
+ * const read = await Result.try(() => readFile('config.json', 'utf8')); // async → Promise<Result>
  * ```
  *
  * Because it owns the call, the *synchronous* prefix of async work is inside the boundary
@@ -116,10 +116,14 @@ export interface ErrnoError extends Error {
  * ```ts
  * import fs from 'node:fs/promises';
  * import * as Result from './index.ts';
- * declare const tmpPath: string, lockPath: string;
  *
- * const linked = await Result.try(fs.link, tmpPath, lockPath);
- * if (!linked.ok && !Result.isErrno(linked.error, 'EEXIST')) throw linked.error;
+ * // Defined, not invoked: the rethrow line is the point, and a sandboxed doctest run
+ * // would trip it with a permission error rather than the declared EEXIST.
+ * async function publish(tmpPath: string, lockPath: string) {
+ *   const linked = await Result.try(fs.link, tmpPath, lockPath);
+ *   if (!linked.ok && !Result.isErrno(linked.error, 'EEXIST')) throw linked.error;
+ *   return linked.ok;
+ * }
  * ```
  */
 export function isErrno(value: unknown, ...codes: string[]): value is ErrnoError {
