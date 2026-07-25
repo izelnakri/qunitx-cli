@@ -83,7 +83,10 @@ export function ok(value?: unknown): Ok<unknown> {
  * polymorphic (and, mixed with a third shape, megamorphic) inline-cache states.
  *
  * ```ts
- * return err(FileMissing({ path })); // { ok: false, value: undefined, error: Failure<…> }
+ * import { define } from './failure.ts';
+ * const FileMissing = define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
+ *
+ * err(FileMissing({ path: 'a.ts' })); // { ok: false, value: undefined, error: Failure<…> }
  * ```
  */
 export function err<const E>(error: E): Err<E> {
@@ -104,6 +107,8 @@ export function err<const E>(error: E): Err<E> {
  * is to cross realms intact, so a check that a foreign realm could fail would defeat it.
  *
  * ```ts
+ * declare const frame: string;
+ *
  * const wire = JSON.parse(frame); // a Result that crossed a WebSocket
  * if (isResult(wire) && !wire.ok) console.error(wire.error);
  * ```
@@ -129,6 +134,9 @@ export function isResult(value: unknown): value is Result<unknown, unknown> {
  * guaranteed to have a `.stack` and a readable `.message`.
  *
  * ```ts
+ * import * as Args from '../args/index.ts';
+ * declare const projectRoot: string;
+ *
  * const flags = unwrap(Args.parse(projectRoot)); // ParsedFlags, or the ParseFailure throws
  * ```
  */
@@ -148,6 +156,8 @@ export function unwrap<T>(result: Result<T, unknown>): T {
  * at the point where a failure stops being expected and becomes a bug.
  *
  * ```ts
+ * import * as Config from '../setup/config.ts';
+ *
  * const config = expect(await Config.setup(), 'daemon could not assemble its startup config');
  * ```
  */
@@ -160,6 +170,9 @@ export function expect<T>(result: Result<T, unknown>, message: string): T {
  * Returns the success value, or `fallback` if the Result failed.
  *
  * ```ts
+ * declare function parsePort(raw: string): Result<number, unknown>;
+ * declare const raw: string;
+ *
  * const port = unwrapOr(parsePort(raw), 3000);
  * ```
  */
@@ -183,8 +196,11 @@ export function unwrapOr<T, U>(result: Result<T, unknown>, fallback: U): T | U {
  * every failure rather than the first, use `partition()`.
  *
  * ```ts
- * const plugins = all(loaded); // Result<EsbuildPlugin[], PluginLoadFailed>
- * if (!plugins.ok) return plugins; // the first failure, with its index's context intact
+ * import * as Failure from './failure.ts';
+ * declare const loaded: Result<{ name: string }, Failure.Any>[];
+ *
+ * const plugins = all(loaded); // as in Config's resolvePlugins: Result<Plugin[], LoadFailed>
+ * if (!plugins.ok) console.error(plugins.error.message); // the first failure, context intact
  * ```
  */
 export function all<T, E>(results: ReadonlyArray<Result<T, E>>): Result<T[], E> {
@@ -206,7 +222,11 @@ export function all<T, E>(results: ReadonlyArray<Result<T, E>>): Result<T[], E> 
  * `Promise.allSettled` semantics with the outcomes already reflected:
  *
  * ```ts
- * const results = await Promise.all(files.map((f) => Result.try(readFile, f)));
+ * import { readFile } from 'node:fs/promises';
+ * import * as Result from './index.ts';
+ * declare const files: string[];
+ *
+ * const results = await Promise.all(files.map((f) => Result.try(() => readFile(f, 'utf8'))));
  * const { values, errors } = partition(results);
  * ```
  */
