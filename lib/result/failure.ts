@@ -109,7 +109,12 @@ export interface FailureOptions {
  * failure instanceof Error; // true — devtools, loggers and `util.inspect` keep working
  * ```
  */
-export class Failure<Code extends string = string, Data = undefined> extends Error {
+// `Data` defaults to `unknown` so that the unparameterised `Failure` type IS the top type of
+// the taxonomy — every concrete `Failure<Code, Data>` is assignable to it. (An earlier
+// `Data = undefined` default made bare `Failure` mean "carries no payload", which rejected
+// nearly every real failure; nothing relied on it — the no-payload `define` overload spells
+// `undefined` explicitly.)
+export class Failure<Code extends string = string, Data = unknown> extends Error {
   /** Cross-realm brand read by `isFailure()`. Non-enumerable so it never reaches the wire. */
   declare readonly [FAILURE_BRAND]: true;
 
@@ -166,14 +171,13 @@ export class Failure<Code extends string = string, Data = undefined> extends Err
  * }
  * ```
  *
- * This is NOT redundant with the bare `Failure` type. The class defaults `Data` to
- * `undefined` (so that `Failure<'Simple'>` means "carries no payload"), which makes an
- * unparameterised `Failure` mean `Failure<string, undefined>` — a type only payload-less
- * failures satisfy. `report(failure: Failure)` would reject `FileMissing({ path })` with
- * `'{ path: string }' is not assignable to 'undefined'`. `Any` widens `Data` to `unknown`,
- * which every payload is assignable to — the actual top type of the taxonomy. (Under the
- * standard `import * as Failure` namespace import the class is not even nameable without
- * `Failure.Failure`, so `Failure.Any` is also the only spelling that reads.)
+ * Since `Data` defaults to `unknown`, this is the same type as an unparameterised `Failure`
+ * — the alias earns its keep twice anyway. Under the standard `import * as Failure`
+ * namespace import, the class type is not nameable without the stuttering `Failure.Failure`,
+ * so `Failure.Any` is the spelling that reads. And §8.15 of the docs warns that widening to
+ * the top type *early* silently discards exhaustiveness checking — because every deliberate
+ * widening is spelled `Any`, `grep 'Failure.Any'` audits exactly where the taxonomy goes
+ * un-enumerated.
  */
 export type Any = Failure<string, unknown>;
 
