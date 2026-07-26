@@ -1,6 +1,6 @@
 // Barrel assembling the `Result` namespace: import * as Result from '.../result/index.ts'.
-// A single-action file contributes a bare verb (Result.attempt); a multi-operation file
-// contributes a sub-namespace (Result.Failure.define).
+// Boundary verbs land flat on the namespace (Result.try, Result.isErrno); the failure
+// taxonomy is its own cohesive noun-module, so it stays a sub-namespace (Result.Failure.define).
 //
 // Both access styles are supported and neither is a second-class citizen:
 //

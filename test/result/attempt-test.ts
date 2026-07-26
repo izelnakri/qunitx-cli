@@ -31,7 +31,7 @@ module('Result | try | sync', { concurrency: true }, () => {
     assert.deepEqual(parsed.value, { n: 1 });
   });
 
-  test('a throw becomes Err carrying the thrown value by identity', (assert) => {
+  test('a throw becomes Err — the SyntaxError lands in .error untouched', (assert) => {
     const parsed = Result.try(JSON.parse, 'not json');
     assert.false(parsed.ok);
     assert.true(parsed.error instanceof SyntaxError);

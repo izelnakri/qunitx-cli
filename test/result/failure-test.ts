@@ -45,6 +45,14 @@ module('Result | Failure | define', { concurrency: true }, () => {
     assert.strictEqual(failure.stack, 'Failure(Timeout): operation timed out');
   });
 
+  test('stackAnchor elides a wrapper around the factory from the trace', (assert) => {
+    function wrapper(path: string) {
+      return FileMissing({ path }, { stackAnchor: wrapper });
+    }
+    const firstFrame = wrapper('a.ts').stack?.split('\n')[1] ?? '';
+    assert.false(firstFrame.includes('wrapper'), 'the anchored wrapper frame is elided');
+  });
+
   test('cause is the spec-defined own property, not a bag field', (assert) => {
     const original = new Error('EACCES');
     const failure = FileMissing({ path: 'a.ts' }, { cause: original });
@@ -225,7 +233,7 @@ module('Result | Failure | serialization', { concurrency: true }, () => {
 
 // ── Observability: setDebug + onIgnored — the seams for hosts and future packaging ──
 
-module('Failure | ignore observability', { concurrency: true }, () => {
+module('Result | Failure | ignore observability', { concurrency: true }, () => {
   test('onIgnored sees every ignored failure, with its label — and detaches cleanly', (assert) => {
     const seen: { context: string; error: unknown }[] = [];
     Failure.onIgnored((context, error) => seen.push({ context, error }));

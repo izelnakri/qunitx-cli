@@ -19,38 +19,21 @@
  *     so `result.ok` stays a monomorphic load site instead of degrading to polymorphic the
  *     first time both variants flow through the same code. See the perf notes below.
  *
- * The `readonly` markers are compile-time only; nothing is frozen at runtime (freezing every
- * Result would cost more than it protects, and the type already forbids assignment).
+ * The `readonly` markers are compile-time only; nothing is frozen at runtime except the
+ * shared `ok()` void singleton (freezing every Result would cost more than it protects,
+ * and the type already forbids assignment).
  */
 
 // ── The type ─────────────────────────────────────────────────────────────────
 
-/**
- * A successful Result carrying `value`. `error` is present-but-undefined to keep the shape stable.
- *
- * ```ts
- * import * as Result from './index.ts';
- *
- * const success: Result.Ok<number> = Result.ok(42);
- * success.value; // 42 — and `success.error` reads undefined, same key set as Err
- * ```
- */
+/** A successful Result carrying `value`. `error` is present-but-undefined to keep the shape stable. */
 export type Ok<T> = {
   readonly ok: true;
   readonly value: T;
   readonly error?: undefined;
 };
 
-/**
- * A failed Result carrying `error`. `value` is present-but-undefined to keep the shape stable.
- *
- * ```ts
- * import * as Result from './index.ts';
- *
- * const failed: Result.Err<string> = Result.err('nope');
- * failed.error; // 'nope' — and `failed.value` reads undefined
- * ```
- */
+/** A failed Result carrying `error`. `value` is present-but-undefined to keep the shape stable. */
 export type Err<E> = {
   readonly ok: false;
   readonly value?: undefined;
@@ -89,8 +72,8 @@ const OK_VOID: Ok<void> = Object.freeze({ ok: true, value: undefined, error: und
  * ```ts
  * import * as Result from './index.ts';
  *
- * Result.ok(42); // { ok: true, value: 42, error: undefined }
  * Result.ok(); // shared frozen Result.Ok<void> — the allocation-free "it worked" for void-returning code
+ * Result.ok(42); // { ok: true, value: 42, error: undefined } — the value-carrying overload
  * ```
  */
 export function ok(): Ok<void>;
@@ -114,9 +97,9 @@ export function ok(value?: unknown): Ok<unknown> {
  *
  * ```ts
  * import * as Result from './index.ts';
+ * import * as Failure from './failure.ts';
  *
- * import { define } from './failure.ts';
- * const FileMissing = define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
+ * const FileMissing = Failure.define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
  *
  * Result.err(FileMissing({ path: 'a.ts' })); // { ok: false, value: undefined, error: Failure<…> }
  * ```
@@ -270,8 +253,9 @@ export function all<T, E>(results: ReadonlyArray<Result<T, E>>): Result<T[], E> 
  * import * as Result from './index.ts';
  * const files = ['a.json', 'b.json'];
  *
+ * // never rejects — Result.try boxes each outcome, so even a denied read is an Err
  * const results = await Promise.all(files.map((f) => Result.try(() => readFile(f, 'utf8'))));
- * const { values, errors } = Result.partition(results); // never rejects — even a denied read is an Err
+ * const { values, errors } = Result.partition(results);
  * ```
  */
 export function partition<T, E>(

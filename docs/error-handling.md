@@ -1195,7 +1195,7 @@ than `QUNITX_DEBUG` — is converted too, by answering the gate question head-on
 `ignore()`-suppressed rejections and the two debug switches mean one thing. The wiring is
 enable-only: a daemon request without `--debug` never switches an env-enabled toggle off.
 
-What deliberately remains as plain `.catch` is *handling*, not suppression: value-defaults
+What deliberately remains as plain `.catch` is _handling_, not suppression: value-defaults
 (`.catch(() => null)` and friends) where the fallback **is** the behavior, the daemon's
 always-printed `browserReady.catch` diagnostics (not debug-gated — silencing them by default
 would be a regression), and watch mode's build-error reporter. A `.catch` that produces a

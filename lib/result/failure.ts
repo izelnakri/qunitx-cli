@@ -188,12 +188,13 @@ export type Any = Failure<string, unknown>;
  *
  * ```ts
  * import * as Failure from './failure.ts';
- * import { err, type Result } from './result.ts';
+ * import * as Result from './result.ts';
  *
  * const GitScanFailed = Failure.define('GitScanFailed', (d: { ref: string }) => `bad ref: ${d.ref}`);
  * type GitScanFailure = Failure.Of<typeof GitScanFailed>;
  * //   ^? Failure<'GitScanFailed', { ref: string }>
- * const scan = (ref: string): Result<string[], GitScanFailure> => err(GitScanFailed({ ref }));
+ * const scan = (ref: string): Result.Result<string[], GitScanFailure> =>
+ *   Result.err(GitScanFailed({ ref }));
  * ```
  */
 export type Of<F> = F extends FailureFactory<infer Code, infer Data> ? Failure<Code, Data> : never;
@@ -262,7 +263,7 @@ export function define<Code extends string, Data>(
     } finally {
       Error.stackTraceLimit = limit;
     }
-    if (!options?.stackless) Error.captureStackTrace(failure, factory);
+    if (!options?.stackless) Error.captureStackTrace(failure, options?.stackAnchor ?? factory);
     return failure;
   };
 
@@ -318,9 +319,12 @@ export { isFailure as is };
  * ```ts
  * import * as Failure from './failure.ts';
  *
- * const error: unknown = Failure.from(new Error('EACCES'));
+ * const FileMissing = Failure.define('FileMissing', (d: { path: string }) => `no ${d.path}`);
+ * const error: unknown = FileMissing({ path: 'a.ts' });
  *
- * if (Failure.hasCode(error, 'FileMissing', 'PermissionDenied')) error.code; // 'FileMissing' | 'PermissionDenied'
+ * if (Failure.hasCode(error, 'FileMissing', 'PermissionDenied')) error.code; // narrowed union
+ * Failure.hasCode(error, 'FileMissing', 'PermissionDenied'); // true
+ * Failure.hasCode(Failure.from(new Error('EACCES')), 'FileMissing'); // false — code is 'Unknown'
  * ```
  */
 export function hasCode<const Codes extends readonly string[]>(
@@ -359,8 +363,8 @@ export const Unknown = define('Unknown', (data: { thrown: unknown }) =>
  * const FileMissing = Failure.define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
  *
  * Failure.from(FileMissing({ path: 'a.ts' })); // the same Failure, untouched
- * Failure.from(new RangeError('x')); // Failure(Failure.Unknown) with the RangeError as `.cause`
- * Failure.from('nope'); // Failure(Failure.Unknown) — even a thrown string survives
+ * Failure.from(new RangeError('x')); // Failure(Unknown) with the RangeError as `.cause`
+ * Failure.from('nope'); // Failure(Unknown) — even a thrown string survives
  * ```
  */
 export function from(thrown: unknown): Any {
@@ -370,11 +374,12 @@ export function from(thrown: unknown): Any {
 
 // ── Deliberate non-handling ──────────────────────────────────────────────────
 
-// Debug output defaults to the env var the CLI's --debug flag sets, read once at import.
-// These call sites are in cleanup paths that run with no config in scope (temp-dir removal,
-// socket teardown), so threading `config.debug` to them is not an option. Mutable, because
-// an env var read at import time cannot be flipped from userland — `setDebug()` below is the
-// runtime seam a host application (or a future standalone packaging of this module) needs.
+// Debug output defaults to QUNITX_DEBUG, read once at import; `Config.setup()` calls
+// `setDebug(true)` when the --debug flag is set, so both switches reveal the same output.
+// The ignore() call sites are in cleanup paths that run with no config in scope (temp-dir
+// removal, socket teardown), so threading `config.debug` to them is not an option. Mutable,
+// because an env var read at import time cannot be flipped from userland — `setDebug()` below
+// is the runtime seam a host application (or a standalone packaging of this module) needs.
 let DEBUG = Boolean(process.env.QUNITX_DEBUG);
 
 /**
@@ -428,7 +433,7 @@ export function onIgnored(observer: IgnoredObserver | null): void {
  * wrapping it would add ceremony while removing nothing (see the "when not to use this"
  * section of `docs/error-handling.md`).
  *
- * What it does fix is that `.catch(() => {})` is indistinguishable from `.catch(() => {})`.
+ * What it does fix is that one `.catch(() => {})` is indistinguishable from any other.
  * A real `EACCES` on a directory qunitx is trying to clean up, and a benign `ENOENT` because
  * it was already cleaned up, currently produce identical silence — inside code whose entire
  * job is diagnosing why a directory will not delete.
