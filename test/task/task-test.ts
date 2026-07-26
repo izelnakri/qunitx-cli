@@ -179,7 +179,7 @@ module('Task | is a real Promise', { concurrency: true }, () => {
     }
   });
 
-  test('Promise.all over Tasks fail-fasts and short-circuits', async (assert) => {
+  test('Promise.all over Tasks fail-fasts', async (assert) => {
     assert.deepEqual(await Promise.all([loadUser(1), loadUser(2)]), [
       { id: 1, name: 'u1' },
       { id: 2, name: 'u2' },
@@ -308,6 +308,21 @@ module('Task | combinators', { concurrency: true }, () => {
       throw new TypeError('boom');
     });
     await assert.rejects(Task.results([loadUser(1), buggy]), TypeError);
+  });
+
+  test('combinators snapshot a one-shot iterable — restart() re-awaits the same members', async (assert) => {
+    function* gen() {
+      yield Task(() => 1);
+      yield Task(() => 2);
+    }
+    const all = Task.all(gen());
+    assert.deepEqual(await all, [1, 2]);
+    // Without the snapshot, restart() re-iterates the exhausted generator and resolves [].
+    assert.deepEqual(await all.restart(), [1, 2]);
+    assert.deepEqual(await Task.results(gen()).restart(), [
+      { ok: true, value: 1, error: undefined },
+      { ok: true, value: 2, error: undefined },
+    ]);
   });
 });
 

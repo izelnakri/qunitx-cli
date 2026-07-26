@@ -191,8 +191,9 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
 
   /**
    * A resolved Task. Overridden because the inherited `Promise.resolve` builds via
-   * `new this(executor)`, which our recipe constructor would misread. Same for every static
-   * below that the base class would otherwise construct through `NewPromiseCapability`.
+   * `new this(executor)`, which our recipe constructor would misread. Same for every other
+   * inherited static (`try` above, `reject`/`withResolvers`/the combinators below) that the
+   * base class would otherwise construct through `NewPromiseCapability`.
    *
    * ```ts
    * await Task.resolve(42); // 42 — a settled value lifted into Task-land
@@ -235,8 +236,8 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   }
 
   /**
-   * `Promise.withResolvers`, returning a Task settled from outside. Lazy like everything else:
-   * the Task only *observes* the external settlement once something awaits it.
+   * `Promise.withResolvers`, returning a Task settled from outside. Lazy like every method
+   * but `ignore`: the Task only *observes* the external settlement once something awaits it.
    *
    * ```ts
    * const socket = { once(_event: string, handler: (frame: string) => void) { handler('hi'); } };
@@ -280,7 +281,8 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   ): TaskClass<{ -readonly [P in keyof T]: Awaited<T[P]> }>;
   static override all<T>(values: Iterable<T | PromiseLike<T>>): TaskClass<Awaited<T>[]>;
   static override all(values: Iterable<unknown>): TaskClass<unknown[]> {
-    return new TaskClass(() => Promise.all(values));
+    const members = snapshotOnce(values);
+    return new TaskClass(() => Promise.all(members()));
   }
 
   /**
@@ -294,7 +296,8 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   static override race<T extends readonly unknown[] | []>(values: T): TaskClass<Awaited<T[number]>>;
   static override race<T>(values: Iterable<T | PromiseLike<T>>): TaskClass<Awaited<T>>;
   static override race(values: Iterable<unknown>): TaskClass<unknown> {
-    return new TaskClass(() => Promise.race(values));
+    const members = snapshotOnce(values);
+    return new TaskClass(() => Promise.race(members()));
   }
 
   /**
@@ -307,7 +310,8 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   static override any<T extends readonly unknown[] | []>(values: T): TaskClass<Awaited<T[number]>>;
   static override any<T>(values: Iterable<T | PromiseLike<T>>): TaskClass<Awaited<T>>;
   static override any(values: Iterable<unknown>): TaskClass<unknown> {
-    return new TaskClass(() => Promise.any(values));
+    const members = snapshotOnce(values);
+    return new TaskClass(() => Promise.any(members()));
   }
 
   /**
@@ -328,7 +332,34 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   static override allSettled(
     values: Iterable<unknown>,
   ): TaskClass<PromiseSettledResult<unknown>[]> {
-    return new TaskClass(() => Promise.allSettled(values));
+    const members = snapshotOnce(values);
+    return new TaskClass(() => Promise.allSettled(members()));
+  }
+
+  /**
+   * Awaits every task and returns their outcomes **positionally** — index-preserving, so a batch
+   * knows *which* input failed, and no success is discarded (unlike `Promise.all`'s fail-fast).
+   * The errors are the declared `E`; a *bug* in any task rejects the whole call, matching
+   * {@link TaskClass#result}'s two-tier rule. (Named `results`, not `allSettled`, which is the
+   * inherited static with the spec's `{ status, … }` shape.)
+   *
+   * ```ts
+   * import { partition } from '../result/result.ts';
+   * import type { Any as LoadFailure } from '../result/failure.ts';
+   * const paths = ['a.json', 'b.json'];
+   * const load = (path: string) => Task<object, LoadFailure>(() => ({ path }));
+   *
+   * const outcomes = await Task.results(paths.map(load)); // Result<object, LoadFailure>[]
+   * const { values, errors } = partition(outcomes); // nothing lost, everything typed
+   * ```
+   */
+  static results<T, E = AnyFailure>(
+    tasks: Iterable<TaskClass<T, E> | PromiseLike<T>>,
+  ): TaskClass<Result<T, E>[], never> {
+    const members = snapshotOnce(tasks);
+    return new TaskClass(() =>
+      Promise.all(members().map((task) => TaskClass.from<T, E>(task).result())),
+    );
   }
 
   // ── Data-first twins of every transforming method ────────────────────────────
@@ -340,7 +371,8 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   // `Task.m(t, …) === t.m(…)` holds by construction. `then` stays instance-only (the Promise
   // contract) and `ignore` already has its source-accepting static below.
 
-  /** Data-first twin of {@link TaskClass#map}.
+  /**
+   * Data-first twin of {@link TaskClass#map}.
    *
    * ```ts
    * const upper = Task.map(Task(() => 'fetched'), (s) => s.toUpperCase());
@@ -463,7 +495,8 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     return task.retry(times);
   }
 
-  /** Data-first twin of {@link TaskClass#result} — the `{ ok, value, error }` bridge.
+  /**
+   * Data-first twin of {@link TaskClass#result} — the `{ ok, value, error }` bridge.
    *
    * ```ts
    * const { ok, value } = await Task.result(Task(() => 21 * 2));
@@ -471,31 +504,6 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    */
   static result<T, E>(task: TaskClass<T, E>): TaskClass<Result<T, E>, never> {
     return task.result();
-  }
-
-  /**
-   * Awaits every task and returns their outcomes **positionally** — index-preserving, so a batch
-   * knows *which* input failed, and no success is discarded (unlike `Promise.all`'s fail-fast).
-   * The errors are the declared `E`; a *bug* in any task rejects the whole call, matching
-   * {@link TaskClass#result}'s two-tier rule. (Named `results`, not `allSettled`, which is the
-   * inherited static with the spec's `{ status, … }` shape.)
-   *
-   * ```ts
-   * import { partition } from '../result/result.ts';
-   * import type { Any as LoadFailure } from '../result/failure.ts';
-   * const paths = ['a.json', 'b.json'];
-   * const load = (path: string) => Task<object, LoadFailure>(() => ({ path }));
-   *
-   * const outcomes = await Task.results(paths.map(load)); // Result<object, LoadFailure>[]
-   * const { values, errors } = partition(outcomes); // nothing lost, everything typed
-   * ```
-   */
-  static results<T, E = AnyFailure>(
-    tasks: Iterable<TaskClass<T, E> | PromiseLike<T>>,
-  ): TaskClass<Result<T, E>[], never> {
-    return new TaskClass(() =>
-      Promise.all(Array.from(tasks, (task) => TaskClass.from<T, E>(task).result())),
-    );
   }
 
   // ── Transforming — lazy, and each returns a real Task ────────────────────────
@@ -609,10 +617,9 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
 
   /**
    * One-shot static spelling of {@link TaskClass#ignore} for a foreign promise or recipe —
-   * the fire-and-forget cleanup idiom in a single call. (Deliberately the only instance
-   * method with a static twin: ignore is a *terminal* verb usable without ever holding a
-   * Task, while a static `map`/`mapErr`/… would just restate the instance chain with the
-   * receiver moved into an argument.)
+   * the fire-and-forget cleanup idiom in a single call. (The one twin whose first argument
+   * is a raw `PromiseLike` or recipe rather than a Task: ignore is a *terminal* verb usable
+   * without ever holding a Task.)
    *
    * ```ts
    * import { unlink } from 'node:fs/promises';
@@ -739,8 +746,9 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    *   return getChangedFilePathsInGitSince(root, ref).retry(); // survives index.lock contention
    * }
    *
-   * const flakyUpload = Task<void>(() => undefined);
-   * await flakyUpload.retry(4); // up to 5 fresh executions, rejects with the 5th reason
+   * let attempts = 0;
+   * const flakyUpload = Task(() => (++attempts < 3 ? Promise.reject(new Error('flaky')) : 'ok'));
+   * await flakyUpload.retry(4); // 'ok' — succeeded on the 3rd of up to 5 fresh executions
    * ```
    */
   retry(times = 1): TaskClass<T, E> {
@@ -767,8 +775,8 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * gate:** a declared `Failure` becomes a typed `Err<E>`; a *bug* is re-thrown, so it lands at
    * the program's one crash boundary instead of being silently boxed.
    *
-   * Lazy like everything else, and lineage-carrying: `task.result().restart()` re-runs the
-   * chain and reflects the fresh outcome.
+   * Lazy like every method but `ignore`, and lineage-carrying: `task.result().restart()`
+   * re-runs the chain and reflects the fresh outcome.
    *
    * ```ts
    * import type { Any as GitScanFailure } from '../result/failure.ts';
@@ -798,6 +806,14 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
 // declaration and the callable `const` below; the runtime name stays `Task` for stacks,
 // `util.inspect` and devtools.
 Object.defineProperty(TaskClass, 'name', { value: 'Task' });
+
+// Snapshots a possibly one-shot iterable (generator, consumed iterator) on FIRST run, still
+// inside the recipe so laziness holds — nothing is observed before the await. Without it,
+// `restart()` would re-iterate an exhausted generator and silently combine over `[]`.
+function snapshotOnce<T>(values: Iterable<T>): () => T[] {
+  let snapshot: T[] | undefined;
+  return () => (snapshot ??= Array.from(values));
+}
 
 /**
  * The call-or-construct type of the exported {@link Task} value: the class's statics and

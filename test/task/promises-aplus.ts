@@ -1,5 +1,5 @@
 /**
- * Runs the official Promises/A+ compliance suite (872 tests) against Task.
+ * Runs the official Promises/A+ compliance suite (~870 tests) against Task.
  *
  * A standalone runner rather than a *-test.ts file: the suite drives its own mocha instance,
  * which cannot nest inside the qunitx runner. Invoke with `npm run test:aplus`.
