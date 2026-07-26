@@ -14,7 +14,7 @@
 //   (Browser/Page from playwright-core, WebSocketServer from ws). These can't be fixed
 //   without re-exporting third-party types, which would bloat the public API.
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -43,10 +43,13 @@ import path from 'node:path';
 function run(command, args) {
   return new Promise((resolve) => {
     const proc = spawn(command, args);
-    let output = '';
-    proc.stdout.on('data', (chunk) => (output += chunk));
-    proc.stderr.on('data', (chunk) => (output += chunk));
-    proc.on('close', (code) => resolve({ code, output }));
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (chunk) => (stdout += chunk));
+    proc.stderr.on('data', (chunk) => (stderr += chunk));
+    // `output` interleaves both for human-facing reporting; JSON consumers read `stdout`
+    // alone so a stray warning on stderr cannot corrupt a parse.
+    proc.on('close', (code) => resolve({ code, stdout, stderr, output: stdout + stderr }));
   });
 }
 
@@ -65,51 +68,68 @@ async function doctestGateIsAlive() {
   }
 }
 
-// Example-presence enforcement: every exported symbol and public method in these modules
-// must carry a fenced ```ts example (presence enforced here; correctness and runnability by
-// `npm run typecheck` and `npm run test:doctest`). A ratchet — widen the list as other
-// modules get their example backfill.
-const EXAMPLE_ENFORCED = [
-  'lib/result/result.ts',
-  'lib/result/attempt.ts',
-  'lib/result/failure.ts',
-  'lib/task/task.ts',
-];
-// TaskClass is declared private but IS the public surface (exported as the callable `Task`
-// proxy const); the doc graph cannot see through the proxy's intersection type, so its
-// methods are opted in by name.
-const PRIVATE_PUBLIC_CLASSES = new Set(['TaskClass']);
+// Example-presence enforcement: every public symbol and public method in lib/ must carry a
+// fenced ```ts example (presence enforced here; correctness by `npm run typecheck`,
+// runnability by `npm run test:doctest` — the three gates compose). "Public" is computed,
+// not listed: exported symbols, plus the reachability closure of private symbols referenced
+// from exported declarations (a private class behind a callable-proxy export, a private type
+// alias in an exported signature — the reader meets them, so they need examples too).
+// Aliases are computed, not assumed: a re-export surfaces as a declaration of kind
+// 'reference' (pointing at its definition site), which is enforced where it is DEFINED — a
+// barrel's re-exports inherit the definition site's doc and example (the write-once-reuse
+// rule), while symbols a barrel defines itself are enforced like any other.
 
 async function missingExamples() {
-  const { code, output } = await run('deno', ['doc', '--json', ...EXAMPLE_ENFORCED]);
+  const files = (await readdir('lib', { recursive: true }))
+    .filter((f) => f.endsWith('.ts') && !String(f).includes('..'))
+    .map((f) => path.join('lib', String(f)));
+  const { code, stdout, output } = await run('deno', ['doc', '--json', ...files]);
   if (code !== 0) return [`deno doc --json failed:\n${output}`];
   const hasFence = (jsDoc) => /```/.test(jsDoc?.doc ?? '');
   const gaps = [];
-  for (const [fileUrl, entry] of Object.entries(JSON.parse(output).nodes)) {
+  for (const [fileUrl, entry] of Object.entries(JSON.parse(stdout).nodes)) {
     const file = `lib/${fileUrl.split('/lib/').pop()}`;
-    for (const symbol of entry.symbols) {
-      const declarations = symbol.declarations.filter(
-        (d) =>
-          d.declarationKind === 'export' ||
-          (d.kind === 'class' && PRIVATE_PUBLIC_CLASSES.has(symbol.name)),
-      );
+    const symbols = entry.symbols ?? [];
+
+    // Reachability closure: start from exported symbols; any non-exported symbol whose name
+    // appears in a reachable declaration's def (types, not prose) becomes public surface too.
+    const byName = new Map(symbols.map((s) => [s.name, s]));
+    const isExported = (s) => s.declarations.some((d) => d.declarationKind === 'export');
+    const reachable = new Set(symbols.filter(isExported).map((s) => s.name));
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const name of [...reachable]) {
+        const defText = JSON.stringify(byName.get(name)?.declarations.map((d) => d.def) ?? '');
+        for (const s of symbols) {
+          if (reachable.has(s.name)) continue;
+          if (new RegExp(`"${s.name}"`).test(defText)) {
+            reachable.add(s.name);
+            grew = true;
+          }
+        }
+      }
+    }
+
+    for (const symbol of symbols) {
+      if (!reachable.has(symbol.name)) continue;
+      // Skip re-export declarations; their definition sites carry the enforcement.
+      const declarations = symbol.declarations.filter((d) => d.kind !== 'reference');
       if (declarations.length === 0) continue;
       const classDeclaration = declarations.find((d) => d.kind === 'class');
       if (classDeclaration) {
-        // Group by method name so one documented overload covers its siblings; Symbol-keyed
-        // members ([Symbol.species]) and constructors (the class doc owns construction) are
-        // out of scope.
-        const byName = new Map();
-        for (const method of classDeclaration.def.methods) {
+        // Group per method name AND staticness (a documented instance method must not vouch
+        // for its undocumented static twin); one documented overload covers its siblings.
+        // Symbol-keyed members and constructors (the class doc owns construction) are exempt.
+        const methods = new Map();
+        for (const method of classDeclaration.def?.methods ?? []) {
           if (method.name.startsWith('[')) continue;
-          // Static and instance methods may share a name (the data-first twins); a documented
-          // instance method must not vouch for its undocumented static sibling.
+          if (method.accessibility === 'private' || method.name.startsWith('#')) continue;
           const key = `${method.isStatic ? 'static ' : ''}${method.name}`;
-          const list = byName.get(key) ?? [];
+          const list = methods.get(key) ?? [];
           list.push(method);
-          byName.set(key, list);
+          methods.set(key, list);
         }
-        for (const [name, overloads] of byName) {
+        for (const [name, overloads] of methods) {
           if (!overloads.some((m) => hasFence(m.jsDoc))) {
             gaps.push(
               `${file}:${overloads[0].location.line} — ${symbol.name}.${name}() has no fenced example`,
