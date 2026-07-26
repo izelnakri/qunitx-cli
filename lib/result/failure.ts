@@ -377,10 +377,45 @@ export function from(thrown: unknown): Any {
 
 // ── Deliberate non-handling ──────────────────────────────────────────────────
 
-// Debug output is gated on the same env var the CLI's --debug flag sets, read once. These
-// call sites are in cleanup paths that run with no config in scope (temp-dir removal, socket
-// teardown), so threading `config.debug` to them is not an option.
-const DEBUG = Boolean(process.env.QUNITX_DEBUG);
+// Debug output defaults to the env var the CLI's --debug flag sets, read once at import.
+// These call sites are in cleanup paths that run with no config in scope (temp-dir removal,
+// socket teardown), so threading `config.debug` to them is not an option. Mutable, because
+// an env var read at import time cannot be flipped from userland — `setDebug()` below is the
+// runtime seam a host application (or a future standalone packaging of this module) needs.
+let DEBUG = Boolean(process.env.QUNITX_DEBUG);
+
+/**
+ * Toggles ignored-failure reporting at runtime, overriding the `QUNITX_DEBUG` default.
+ *
+ * ```ts
+ * setDebug(true); // every ignore() label now reports on stderr as it fires
+ * setDebug(false); // back to silent
+ * ```
+ */
+export function setDebug(enabled: boolean): void {
+  DEBUG = enabled;
+}
+
+type IgnoredObserver = (context: string, error: unknown) => void;
+let ignoredObserver: IgnoredObserver | null = null;
+
+/**
+ * Installs a process-wide observer for every ignored failure — the interception seam for
+ * "list everything the program decided not to handle". Costs one null check on the failure
+ * path only (nothing on success, nothing per Task), and retains nothing itself: whether the
+ * suppressed failures accumulate, sample, or stream somewhere is the observer's decision.
+ * Pass `null` to detach.
+ *
+ * ```ts
+ * const suppressed: { context: string; error: unknown }[] = [];
+ * onIgnored((context, error) => suppressed.push({ context, error }));
+ * // … exercise the program, then: console.table(suppressed)
+ * onIgnored(null); // detach
+ * ```
+ */
+export function onIgnored(observer: IgnoredObserver | null): void {
+  ignoredObserver = observer;
+}
 
 /**
  * Builds a `.catch()` handler for a failure that genuinely has no consequence — but says so
@@ -406,6 +441,7 @@ const DEBUG = Boolean(process.env.QUNITX_DEBUG);
  */
 export function ignore(context: string): (error: unknown) => void {
   return (error: unknown) => {
+    ignoredObserver?.(context, error);
     if (!DEBUG) return;
     // stderr, not stdout: stdout is the TAP stream and a stray line there corrupts the report.
     process.stderr.write(`# [qunitx] ignored (${context}): ${format(error)}\n`);

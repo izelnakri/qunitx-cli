@@ -222,3 +222,50 @@ module('Result | Failure | serialization', { concurrency: true }, () => {
     assert.false(Failure.is(cloned));
   });
 });
+
+// ── Observability: setDebug + onIgnored — the seams for hosts and future packaging ──
+
+module('Failure | ignore observability', { concurrency: true }, () => {
+  test('onIgnored sees every ignored failure, with its label — and detaches cleanly', (assert) => {
+    const seen: { context: string; error: unknown }[] = [];
+    Failure.onIgnored((context, error) => seen.push({ context, error }));
+    try {
+      const boom = new Error('EBUSY');
+      Failure.ignore('observed unlink')(boom);
+      const mine = seen.filter((s) => s.context === 'observed unlink');
+      assert.strictEqual(mine.length, 1);
+      assert.strictEqual(mine[0].error, boom, 'the original error, by identity');
+    } finally {
+      Failure.onIgnored(null);
+    }
+    Failure.ignore('after detach')(new Error('x'));
+    assert.strictEqual(
+      seen.filter((s) => s.context === 'after detach').length,
+      0,
+      'a detached observer sees nothing',
+    );
+  });
+
+  test('setDebug(true) reports on stderr at runtime; setDebug(false) silences again', (assert) => {
+    const written: string[] = [];
+    const realWrite = process.stderr.write;
+    process.stderr.write = ((chunk: string) => (written.push(String(chunk)), true)) as never;
+    try {
+      Failure.setDebug(true);
+      Failure.ignore('debug toggled on')(new Error('EPERM'));
+      Failure.setDebug(false);
+      Failure.ignore('debug toggled off')(new Error('EPERM'));
+    } finally {
+      process.stderr.write = realWrite;
+      Failure.setDebug(Boolean(process.env.QUNITX_DEBUG));
+    }
+    assert.true(
+      written.some((line) => line.includes('ignored (debug toggled on): Error: EPERM')),
+      'the labelled report reached stderr while enabled',
+    );
+    assert.false(
+      written.some((line) => line.includes('debug toggled off')),
+      'silent again after setDebug(false)',
+    );
+  });
+});

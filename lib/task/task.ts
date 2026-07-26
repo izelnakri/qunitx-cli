@@ -441,6 +441,26 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   }
 
   /**
+   * One-shot static spelling of {@link TaskClass#ignore} for a foreign promise or recipe —
+   * the fire-and-forget cleanup idiom in a single call. (Deliberately the only instance
+   * method with a static twin: ignore is a *terminal* verb usable without ever holding a
+   * Task, while a static `map`/`mapErr`/… would just restate the instance chain with the
+   * receiver moved into an argument.)
+   *
+   * ```ts
+   * import { unlink } from 'node:fs/promises';
+   *
+   * Task.ignore(unlink('/tmp/qunitx-daemon.sock'), 'daemon socket unlink');
+   * ```
+   */
+  static ignore<T>(
+    source: PromiseLike<T> | (() => T | PromiseLike<T>),
+    context: string,
+  ): TaskClass<T | undefined, never> {
+    return new TaskClass<T, AnyFailure>(source).ignore(context);
+  }
+
+  /**
    * Adds context to a declared failure — anyhow's `.context()`, not Rust's panicking `expect`.
    * A `Failure` rethrows as a new Failure with the **same `code` and `data`** (so `E`, and every
    * `switch` on `code`, still hold), `message` as the context line, and the original chained

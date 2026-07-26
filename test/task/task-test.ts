@@ -136,6 +136,27 @@ module('Task | ignore', { concurrency: true }, () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     assert.true(true, 'the runner would have flagged an unhandled rejection by now');
   });
+
+  test('Task.ignore is the one-shot static spelling — same semantics, no intermediate', async (assert) => {
+    assert.strictEqual(
+      await Task.ignore(Promise.reject(NotFound({ id: 1 })), 'cleanup'),
+      undefined,
+    );
+    assert.strictEqual(await Task.ignore(() => 5, 'unused label'), 5, 'success passes through');
+  });
+
+  test('ignored failures reach the Failure.onIgnored observer, from both spellings', async (assert) => {
+    const seen: string[] = [];
+    Failure.onIgnored((context) => seen.push(context));
+    try {
+      await loadUser(0).ignore('instance spelling');
+      await Task.ignore(Promise.reject(NotFound({ id: 2 })), 'static spelling');
+    } finally {
+      Failure.onIgnored(null);
+    }
+    assert.true(seen.includes('instance spelling'));
+    assert.true(seen.includes('static spelling'));
+  });
 });
 
 // ── It is a real Promise ──────────────────────────────────────────────────────
