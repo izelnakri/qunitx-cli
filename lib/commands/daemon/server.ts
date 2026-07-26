@@ -102,6 +102,8 @@ function isProcessAlive(pid: number): boolean {
  * threads it through every handler.
  *
  * ```ts
+ * import type * as Server from './server.ts';
+ *
  * // Internal — a snapshot of the lifecycle flags the handlers coordinate on.
  * const flags = { shuttingDown: false, consecutiveCrashes: 0, listenSucceeded: true };
  * flags.consecutiveCrashes; // 0 — reset after any run that leaves the browser connected
@@ -173,9 +175,10 @@ interface DaemonState {
  * mutation, node version mismatch, or an explicit `shutdown` request.
  *
  * ```ts
- * import type { serve } from './server.ts';
+ * import type * as Server from './server.ts';
+ *
  * // Defined, not invoked: binds the per-cwd socket and launches a persistent Chrome.
- * async function daemonEntry(start: typeof serve) {
+ * async function daemonEntry(start: typeof Server.serve) {
  *   await start(); // never resolves — the daemon exits via shutdown()
  * }
  * ```
@@ -347,9 +350,10 @@ function listen(server: net.Server, socketPath: string): Promise<void> {
  * process; production always uses the default. See test/commands/daemon-shutdown-test.ts.
  *
  * ```ts
- * import type { shutdown } from './server.ts';
+ * import type * as Server from './server.ts';
+ *
  * // Defined, not invoked: closes the socket server and browser, then exits the process.
- * async function stopOnSignal(stop: typeof shutdown, state: Parameters<typeof shutdown>[0]) {
+ * async function stopOnSignal(stop: typeof Server.shutdown, state: Parameters<typeof Server.shutdown>[0]) {
  *   await stop(state, 'SIGTERM');
  * }
  * ```
@@ -418,10 +422,11 @@ export async function shutdown(
  * true, so always release it or the next spawn has to stale-pid-recover.
  *
  * ```ts
- * import type { removeLivenessFiles } from './server.ts';
- * type State = Parameters<typeof removeLivenessFiles>[0];
+ * import type * as Server from './server.ts';
+ *
+ * type State = Parameters<typeof Server.removeLivenessFiles>[0];
  * // Defined, not invoked: unlinks socket + info (when owned) and always the lock.
- * async function releaseMarkers(remove: typeof removeLivenessFiles, state: State) {
+ * async function releaseMarkers(remove: typeof Server.removeLivenessFiles, state: State) {
  *   await remove(state); // before the slow browser teardown, so clients see "gone" fast
  * }
  * ```
@@ -627,8 +632,9 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
  * a doomed browser surfaces in seconds, not the 3-minute last-resort deadline.
  *
  * ```ts
- * import type { BROWSER_PROBE_TIMEOUT_MS } from './server.ts';
- * const budgetMs: typeof BROWSER_PROBE_TIMEOUT_MS = 3_000; // the probe's upper bound
+ * import type * as Server from './server.ts';
+ *
+ * const budgetMs: typeof Server.BROWSER_PROBE_TIMEOUT_MS = 3_000; // the probe's upper bound
  * budgetMs; // 3000
  * ```
  */
@@ -643,10 +649,11 @@ export const BROWSER_PROBE_TIMEOUT_MS = 3_000;
  * process exit, so `isConnected()` is already reliable there.
  *
  * ```ts
- * import type { browserResponsive } from './server.ts';
+ * import type * as Server from './server.ts';
+ *
  * import type { Browser } from 'playwright-core';
  * // Defined, not invoked: bounded CDP round-trip against the daemon's persistent browser.
- * async function probeBeforeRun(probe: typeof browserResponsive, browser: Browser) {
+ * async function probeBeforeRun(probe: typeof Server.browserResponsive, browser: Browser) {
  *   return await probe(browser, 'chromium'); // false within 3s when the channel is dead
  * }
  * ```

@@ -7,11 +7,13 @@ import net from 'node:net';
  * (parsing server responses).
  *
  * ```ts
+ * import * as Socket from './socket.ts';
+ *
  * import net from 'node:net';
  * import { Buffer } from 'node:buffer';
  * const seen: Array<{ type: string }> = [];
  * const sock = new net.Socket();
- * readMessages<{ type: string }>(sock, (msg) => seen.push(msg));
+ * Socket.readMessages<{ type: string }>(sock, (msg) => seen.push(msg));
  * sock.emit('data', Buffer.from('{"type":"ping"}\nnot-json\n'));
  * seen; // [{ type: 'ping' }] — the malformed line is dropped
  * ```
@@ -41,9 +43,11 @@ export function readMessages<T>(socket: net.Socket, onLine: (line: T) => void): 
  * pipes (they live in `\\.\pipe\...`, not on the regular filesystem).
  *
  * ```ts
+ * import * as Socket from './socket.ts';
+ *
  * // Defined, not invoked: dials a Unix socket / named pipe.
  * async function dialDaemon() {
- *   return await connect('/tmp/qunitx-daemon-ab12cd34ef56.sock', 1_000); // net.Socket, or null
+ *   return await Socket.connect('/tmp/qunitx-daemon-ab12cd34ef56.sock', 1_000); // net.Socket, or null
  * }
  * ```
  */

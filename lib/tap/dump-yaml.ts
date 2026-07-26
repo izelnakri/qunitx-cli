@@ -23,7 +23,9 @@ const NEEDS_QUOTING =
  * Uses a template literal (no Object.entries overhead) for the known top-level keys.
  *
  * ```ts
- * dumpYaml({
+ * import * as TAP from './index.ts';
+ *
+ * TAP.dumpYaml({
  *   name: 'Assertion #1', actual: 3, expected: 4, message: 'bad sum',
  *   stack: null, source: null, at: 'lib/math.ts:4:3',
  * });

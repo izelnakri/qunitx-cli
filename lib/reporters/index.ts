@@ -23,9 +23,11 @@ const STDOUT_REPORTERS: Record<ReporterName, new () => Reporter> = {
  * they all reference this same array (the same way the run counter is shared).
  *
  * ```ts
+ * import * as Reporter from './index.ts';
+ *
  * import type { Config } from '../types.ts';
  *
- * const reporters = (config: Config) => create(config); // 1 stdout reporter, +JUnit if --junit
+ * const reporters = (config: Config) => Reporter.create(config); // 1 stdout reporter, +JUnit if --junit
  * ```
  */
 export function create(config: Config): Reporter[] {
@@ -38,12 +40,14 @@ export function create(config: Config): Reporter[] {
  * Emits run start to every active reporter. In watch mode this fires once per rerun.
  *
  * ```ts
+ * import * as Reporter from './index.ts';
+ *
  * import type { Config } from '../types.ts';
  * import type { RunStartInfo } from './types.ts';
  *
  * // Defined, not invoked: fans out to the run's live reporters, which write to stdout.
  * function announce(config: Config, info: RunStartInfo) {
- *   runStart(config, info);
+ *   Reporter.runStart(config, info);
  * }
  * ```
  */
@@ -57,12 +61,14 @@ export function runStart(config: Config, info: RunStartInfo): void {
  * correct regardless of how many reporters are attached.
  *
  * ```ts
+ * import * as Reporter from './index.ts';
+ *
  * import type { Config } from '../types.ts';
  * import type { TestDetails } from './types.ts';
  *
  * // Defined, not invoked: mutates the shared counter and writes reporter output.
  * function record(config: Config, details: TestDetails) {
- *   testEnd(config, details); // counter first, then every reporter sees the same totals
+ *   Reporter.testEnd(config, details); // counter first, then every reporter sees the same totals
  * }
  * ```
  */
@@ -75,12 +81,14 @@ export function testEnd(config: Config, details: TestDetails): void {
  * Emits run end to every active reporter, awaiting any that flush asynchronously.
  *
  * ```ts
+ * import * as Reporter from './index.ts';
+ *
  * import type { Config } from '../types.ts';
  * import type { RunEndInfo } from './types.ts';
  *
  * // Defined, not invoked: JUnit flushes its XML file here.
  * async function finish(config: Config, info: RunEndInfo) {
- *   await runEnd(config, info);
+ *   await Reporter.runEnd(config, info);
  * }
  * ```
  */

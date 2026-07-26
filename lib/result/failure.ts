@@ -37,14 +37,6 @@ const HAS_CAPTURE = typeof Error.captureStackTrace === 'function';
 
 /**
  * The wire form of a Failure — what `toJSON` emits and `fromJSON` accepts.
- *
- * ```ts
- * const FileMissing = define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
- *
- * toJSON(FileMissing({ path: 'a.ts' }));
- * // { failure: true, code: 'FileMissing', message: 'no such file: a.ts',
- * //   data: { path: 'a.ts' }, stack: 'Failure(FileMissing): …' }
- * ```
  */
 export interface SerializedFailure {
   /**
@@ -71,15 +63,6 @@ export interface SerializedFailure {
 
 /**
  * Options accepted by the `Failure` constructor and by every generated factory.
- *
- * ```ts
- * const FileMissing = define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
- * const Tick = define('Tick', (d: { n: number }) => `tick ${d.n}`);
- * const errnoError = new Error('EACCES');
- *
- * FileMissing({ path: 'a.ts' }, { cause: errnoError }); // wrap, original kept under `.cause`
- * Tick({ n: 1 }, { stackless: true }); // hot loop: skip the stack capture
- * ```
  */
 export interface FailureOptions {
   /** The error this failure was derived from. Preserved verbatim and walked by `causes()`. */
@@ -108,10 +91,9 @@ export interface FailureOptions {
  * to a literal type and gives you a matching type guard.
  *
  * ```ts
- * const FileMissing = define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
- * const failure = FileMissing({ path: 'a.ts' });
- * failure.code;             // 'FileMissing' — a literal type, so `switch` narrows
- * failure.data.path;        // 'a.ts' — typed payload, no message parsing
+ * const failure = new Failure('FileMissing', 'no such file: a.ts', { path: 'a.ts' });
+ * failure.code; // 'FileMissing' — a literal type, so `switch` narrows
+ * failure.data.path; // 'a.ts' — typed payload, no message parsing
  * failure instanceof Error; // true — devtools, loggers and `util.inspect` keep working
  * ```
  */
@@ -165,7 +147,9 @@ export class Failure<Code extends string = string, Data = unknown> extends Error
    * Serializes to plain JSON so `console.log(JSON.stringify(failure))` is not `{}`.
    *
    * ```ts
-   * const Denied = define('Denied', 'permission denied');
+   * import * as Failure from './failure.ts';
+   *
+   * const Denied = Failure.define('Denied', 'permission denied');
    * JSON.stringify(Denied()); // JSON.stringify calls this — the full wire form, not '{}'
    * ```
    */
@@ -216,14 +200,6 @@ export type Of<F> = F extends FailureFactory<infer Code, infer Data> ? Failure<C
 
 /**
  * A callable failure constructor produced by `define()`, carrying its own type guard.
- *
- * ```ts
- * const Timeout = define('Timeout', (d: { ms: number }) => `timed out after ${d.ms}ms`);
- * const caught: unknown = Timeout({ ms: 3000 }); // build one
- *
- * Timeout.is(caught); // narrow one — true
- * Timeout.code; // 'Timeout'
- * ```
  */
 export interface FailureFactory<Code extends string, Data> {
   (data: Data, options?: FailureOptions): Failure<Code, Data>;
@@ -248,7 +224,9 @@ export function define<Code extends string, Data>(
  * Declares a failure kind once and returns its constructor.
  *
  * ```ts
- * const FileMissing = define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
+ * import * as Failure from './failure.ts';
+ *
+ * const FileMissing = Failure.define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
  * const someCaughtValue: unknown = FileMissing({ path: 'a.ts' });
  *
  * FileMissing({ path: 'a.ts' }); // Failure<'FileMissing', { path: string }>
@@ -308,13 +286,15 @@ export function define<Code extends string, Data>(
  * and answering `true` here would be a lie. Serialize with `toJSON`, not `structuredClone`.
  *
  * ```ts
+ * import * as Failure from './failure.ts';
+ *
  * const work = async (): Promise<void> => {};
  * const report = (code: string, data: unknown): void => console.debug(code, data);
  *
  * try {
  *   await work();
  * } catch (error) {
- *   if (!isFailure(error)) throw error; // a bug keeps flying
+ *   if (!Failure.is(error)) throw error; // a bug keeps flying
  *   report(error.code, error.data); // a declared failure gets handled
  * }
  * ```
@@ -336,9 +316,11 @@ export { isFailure as is };
  * Narrows a Failure to one of several codes — the multi-code sibling of `Factory.is`.
  *
  * ```ts
- * const error: unknown = from(new Error('EACCES'));
+ * import * as Failure from './failure.ts';
  *
- * if (hasCode(error, 'FileMissing', 'PermissionDenied')) error.code; // 'FileMissing' | 'PermissionDenied'
+ * const error: unknown = Failure.from(new Error('EACCES'));
+ *
+ * if (Failure.hasCode(error, 'FileMissing', 'PermissionDenied')) error.code; // 'FileMissing' | 'PermissionDenied'
  * ```
  */
 export function hasCode<const Codes extends readonly string[]>(
@@ -354,7 +336,9 @@ export function hasCode<const Codes extends readonly string[]>(
  * The failure `from()` produces for a throwable that is not already a Failure.
  *
  * ```ts
- * Unknown.is(from('nope')); // true — and the original string is preserved under `.cause`
+ * import * as Failure from './failure.ts';
+ *
+ * Failure.Unknown.is(Failure.from('nope')); // true — and the original string is preserved under `.cause`
  * ```
  */
 export const Unknown = define('Unknown', (data: { thrown: unknown }) =>
@@ -370,11 +354,13 @@ export const Unknown = define('Unknown', (data: { thrown: unknown }) =>
  * than being flattened into a string, so nothing is lost on the way through.
  *
  * ```ts
- * const FileMissing = define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
+ * import * as Failure from './failure.ts';
  *
- * from(FileMissing({ path: 'a.ts' })); // the same Failure, untouched
- * from(new RangeError('x')); // Failure(Unknown) with the RangeError as `.cause`
- * from('nope'); // Failure(Unknown) — even a thrown string survives
+ * const FileMissing = Failure.define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
+ *
+ * Failure.from(FileMissing({ path: 'a.ts' })); // the same Failure, untouched
+ * Failure.from(new RangeError('x')); // Failure(Failure.Unknown) with the RangeError as `.cause`
+ * Failure.from('nope'); // Failure(Failure.Unknown) — even a thrown string survives
  * ```
  */
 export function from(thrown: unknown): Any {
@@ -395,8 +381,10 @@ let DEBUG = Boolean(process.env.QUNITX_DEBUG);
  * Toggles ignored-failure reporting at runtime, overriding the `QUNITX_DEBUG` default.
  *
  * ```ts
- * setDebug(true); // every ignore() label now reports on stderr as it fires
- * setDebug(false); // back to silent
+ * import * as Failure from './failure.ts';
+ *
+ * Failure.setDebug(true); // every Failure.ignore() label now reports on stderr as it fires
+ * Failure.setDebug(false); // back to silent
  * ```
  */
 export function setDebug(enabled: boolean): void {
@@ -406,12 +394,6 @@ export function setDebug(enabled: boolean): void {
 /**
  * The callback shape {@link onIgnored} installs: every ignored failure arrives with the
  * label its call site declared.
- *
- * ```ts
- * const collect: IgnoredObserver = (context, error) => console.debug(context, error);
- * onIgnored(collect);
- * onIgnored(null); // detach
- * ```
  */
 export type IgnoredObserver = (context: string, error: unknown) => void;
 let ignoredObserver: IgnoredObserver | null = null;
@@ -424,10 +406,12 @@ let ignoredObserver: IgnoredObserver | null = null;
  * Pass `null` to detach.
  *
  * ```ts
+ * import * as Failure from './failure.ts';
+ *
  * const suppressed: { context: string; error: unknown }[] = [];
- * onIgnored((context, error) => suppressed.push({ context, error }));
+ * Failure.onIgnored((context, error) => suppressed.push({ context, error }));
  * // … exercise the program, then: console.table(suppressed)
- * onIgnored(null); // detach
+ * Failure.onIgnored(null); // detach
  * ```
  */
 export function onIgnored(observer: IgnoredObserver | null): void {
@@ -450,10 +434,12 @@ export function onIgnored(observer: IgnoredObserver | null): void {
  * job is diagnosing why a directory will not delete.
  *
  * ```ts
+ * import * as Failure from './failure.ts';
+ *
  * import { unlink } from 'node:fs/promises';
  * const socketPath = '/tmp/qunitx-daemon.sock';
  *
- * await unlink(socketPath).catch(ignore('daemon socket unlink')); // even a denied unlink is fine
+ * await unlink(socketPath).catch(Failure.ignore('daemon socket unlink')); // even a denied unlink is fine
  * ```
  */
 export function ignore(context: string): (error: unknown) => void {
@@ -478,11 +464,13 @@ const MAX_CAUSE_DEPTH = 32;
  * Cycle-safe and depth-bounded: a repeated reference terminates the walk instead of looping.
  *
  * ```ts
- * const FileMissing = define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
+ * import * as Failure from './failure.ts';
+ *
+ * const FileMissing = Failure.define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
  *
  * const root = new Error('EACCES');
  * const wrapped = FileMissing({ path: 'a.ts' }, { cause: root });
- * causes(wrapped); // [wrapped, root]
+ * Failure.causes(wrapped); // [wrapped, root]
  * ```
  */
 export function causes(error: unknown): unknown[] {
@@ -504,11 +492,13 @@ export function causes(error: unknown): unknown[] {
  * The deepest `cause` in the chain — the original failure, whatever wrapped it since.
  *
  * ```ts
- * const FileMissing = define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
+ * import * as Failure from './failure.ts';
+ *
+ * const FileMissing = Failure.define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
  * const root = new Error('EACCES');
  * const wrapped = FileMissing({ path: 'a.ts' }, { cause: root });
  *
- * rootCause(wrapped) === root; // true, however many layers wrapped it on the way up
+ * Failure.rootCause(wrapped) === root; // true, however many layers wrapped it on the way up
  * ```
  */
 export function rootCause(error: unknown): unknown {
@@ -523,13 +513,15 @@ export function rootCause(error: unknown): unknown {
  * you want in a TAP comment or a CLI's stderr block where a full stack would be noise.
  *
  * ```ts
- * const GitScanFailed = define('GitScanFailed', (d: { ref: string }) => `bad ref: ${d.ref}`);
+ * import * as Failure from './failure.ts';
+ *
+ * const GitScanFailed = Failure.define('GitScanFailed', (d: { ref: string }) => `bad ref: ${d.ref}`);
  * const failure = GitScanFailed({ ref: 'HEAD' }, { cause: new Error('spawn git ENOENT') });
  *
- * format(failure);
+ * Failure.format(failure);
  * // GitScanFailed: bad ref: HEAD
  * //   caused by: Error: spawn git ENOENT
- * format(failure, { stacks: true }); // same, with indented frames under each link
+ * Failure.format(failure, { stacks: true }); // same, with indented frames under each link
  * ```
  */
 export function format(error: unknown, { stacks = false }: { stacks?: boolean } = {}): string {
@@ -572,10 +564,12 @@ export function format(error: unknown, { stacks = false }: { stacks?: boolean } 
  * for Failures.
  *
  * ```ts
- * const ws = { send(_data: string) {} }; // stands in for the run's WebSocket
- * const failure = from(new Error('boom'));
+ * import * as Failure from './failure.ts';
  *
- * ws.send(JSON.stringify({ event: 'run-error', error: toJSON(failure) }));
+ * const ws = { send(_data: string) {} }; // stands in for the run's WebSocket
+ * const failure = Failure.from(new Error('boom'));
+ *
+ * ws.send(JSON.stringify({ event: 'run-error', error: Failure.toJSON(failure) }));
  * ```
  */
 export function toJSON(error: unknown): SerializedFailure {
@@ -604,11 +598,13 @@ export function toJSON(error: unknown): SerializedFailure {
  * out explicitly.
  *
  * ```ts
- * const GitScanFailed = define('GitScanFailed', (d: { ref: string }) => `bad ref: ${d.ref}`);
- * const frame = JSON.stringify({ error: toJSON(GitScanFailed({ ref: 'HEAD' })) });
+ * import * as Failure from './failure.ts';
+ *
+ * const GitScanFailed = Failure.define('GitScanFailed', (d: { ref: string }) => `bad ref: ${d.ref}`);
+ * const frame = JSON.stringify({ error: Failure.toJSON(GitScanFailed({ ref: 'HEAD' })) });
  *
  * const { error } = JSON.parse(frame);
- * const failure = fromJSON(error); // a real Failure again
+ * const failure = Failure.fromJSON(error); // a real Failure again
  * GitScanFailed.is(failure); // factory guards work on revived failures too — true
  * ```
  */

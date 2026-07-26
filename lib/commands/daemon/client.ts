@@ -35,9 +35,11 @@ const SHUTDOWN_PID_POLL_MS = 50;
  * primary dispatch check.
  *
  * ```ts
+ * import * as Client from './client.ts';
+ *
  * // Defined, not invoked: checks env, argv and the on-disk sentinel for process.cwd().
  * function daemonAvailable() {
- *   return shouldUse(); // true only when eligible and a daemon info file exists
+ *   return Client.shouldUse(); // true only when eligible and a daemon info file exists
  * }
  * ```
  */
@@ -51,9 +53,11 @@ export function shouldUse(): boolean {
  * one before dispatching the run.
  *
  * ```ts
+ * import * as Client from './client.ts';
+ *
  * // Defined, not invoked: reads env + the on-disk sentinel for process.cwd().
  * function needsSpawn() {
- *   return shouldAutoSpawn(); // true → cli spawns the daemon before dispatching
+ *   return Client.shouldAutoSpawn(); // true → cli spawns the daemon before dispatching
  * }
  * ```
  */
@@ -66,9 +70,11 @@ export function shouldAutoSpawn(): boolean {
  * on success; resolves `null` on any failure (no socket file, ECONNREFUSED, timeout).
  *
  * ```ts
+ * import * as Client from './client.ts';
+ *
  * // Defined, not invoked: dials the project's daemon socket.
  * async function probe() {
- *   return await tryConnect('/proj'); // net.Socket, or null within 1s on any failure
+ *   return await Client.tryConnect('/proj'); // net.Socket, or null within 1s on any failure
  * }
  * ```
  */
@@ -80,9 +86,11 @@ export function tryConnect(cwd: string = process.cwd()): Promise<net.Socket | nu
  * Sends a `ping` and resolves the daemon's `pong` response (or `null` on failure).
  *
  * ```ts
+ * import * as Client from './client.ts';
+ *
  * // Defined, not invoked: one ping/pong round-trip over the daemon socket.
  * async function daemonIdentity() {
- *   return await ping(); // { type: 'pong', pid, nodeVersion, cwd, startedAt } or null
+ *   return await Client.ping(); // { type: 'pong', pid, nodeVersion, cwd, startedAt } or null
  * }
  * ```
  */
@@ -119,9 +127,11 @@ export async function ping(): Promise<ResponseChunk | null> {
  * was running.
  *
  * ```ts
+ * import * as Client from './client.ts';
+ *
  * // Defined, not invoked: `qunitx daemon stop` — IPC plus a bounded pid-exit poll.
  * async function stopDaemon() {
- *   return await shutdown(); // true if a daemon was reached, false when none was running
+ *   return await Client.shutdown(); // true if a daemon was reached, false when none was running
  * }
  * ```
  */
@@ -142,7 +152,9 @@ export async function shutdown(cwd: string = process.cwd()): Promise<boolean> {
  * No daemon was listening — the ordinary case on a cold machine, not an error worth showing.
  *
  * ```ts
- * const failure = DaemonUnreachable();
+ * import * as Client from './client.ts';
+ *
+ * const failure = Client.DaemonUnreachable();
  * failure.code; // 'DaemonUnreachable'
  * failure.message; // 'no daemon is listening for this project'
  * ```
@@ -161,7 +173,9 @@ export const DaemonUnreachable = Failure.define(
  * tests had actually been reported at all.
  *
  * ```ts
- * DaemonDisconnected({ reason: 'close' }).message;
+ * import * as Client from './client.ts';
+ *
+ * Client.DaemonDisconnected({ reason: 'close' }).message;
  * // 'daemon closed the connection (close) without reporting a result'
  * ```
  */
@@ -175,7 +189,9 @@ export const DaemonDisconnected = Failure.define(
  * Every way a daemon-routed run can fail to produce an exit code.
  *
  * ```ts
- * const failure: RunViaFailure = DaemonDisconnected({ reason: 'error' });
+ * import * as Client from './client.ts';
+ *
+ * const failure: Client.RunViaFailure = Client.DaemonDisconnected({ reason: 'error' });
  * failure.code; // 'DaemonDisconnected' — or 'DaemonUnreachable'; narrow with a switch
  * ```
  */
@@ -191,9 +207,11 @@ export type RunViaFailure = Failure.Of<typeof DaemonUnreachable | typeof DaemonD
  * when it sees the socket close (clientAlive=false stops further writes).
  *
  * ```ts
+ * import * as Client from './client.ts';
+ *
  * // Defined, not invoked: streams the daemon's TAP output to this process's stdio.
  * async function runOnDaemon() {
- *   const outcome = await runVia(['test/foo-test.ts']);
+ *   const outcome = await Client.runVia(['test/foo-test.ts']);
  *   return outcome.ok ? outcome.value : null; // exit code, or a RunViaFailure to act on
  * }
  * ```

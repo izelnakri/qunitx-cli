@@ -9,9 +9,11 @@ import { convertToPascalCase } from '../utils/convert-to-pascal-case.ts';
  * Generates a new test file from the boilerplate template.
  *
  * ```ts
+ * import * as Generate from './generate.ts';
+ *
  * // Defined, not invoked: `qunitx new test/login-test.ts` — reads argv[3], writes the file.
  * async function generateCommand() {
- *   await run(); // /project/test/login-test.ts written
+ *   await Generate.run(); // /project/test/login-test.ts written
  * }
  * ```
  * @returns {Promise<void>}

@@ -8,8 +8,10 @@ import type { TestDeclaration, DeclarationScan } from './parse-test-declarations
  * cannot be matched exactly.
  *
  * ```ts
- * const oneTest: QUnitSelector = { module: 'Cart > totals', test: 'sums line items' };
- * const wholeModule: QUnitSelector = { module: 'Cart' }; // and everything nested under it
+ * import * as LineTargets from './line-targets.ts';
+ *
+ * const oneTest: LineTargets.QUnitSelector = { module: 'Cart > totals', test: 'sums line items' };
+ * const wholeModule: LineTargets.QUnitSelector = { module: 'Cart' }; // and everything nested under it
  * ```
  */
 export interface QUnitSelector {
@@ -23,7 +25,9 @@ export interface QUnitSelector {
  * Result of resolving a file's line targets into selectors, plus any diagnostics to surface.
  *
  * ```ts
- * const narrowed: LineTargetResolution = {
+ * import * as LineTargets from './line-targets.ts';
+ *
+ * const narrowed: LineTargets.LineTargetResolution = {
  *   selectors: [{ module: 'Cart', test: 'adds an item' }],
  *   warnings: [],
  * };
@@ -46,7 +50,9 @@ export interface LineTargetResolution {
  * rather than failing the run.
  *
  * ```ts
- * const { selectors, warnings } = await resolve('/tmp/qunitx-doc-missing-test.ts', [34]);
+ * import * as LineTargets from './line-targets.ts';
+ *
+ * const { selectors, warnings } = await LineTargets.resolve('/tmp/qunitx-doc-missing-test.ts', [34]);
  * selectors; // null — an unreadable file degrades to running the whole file
  * warnings; // ['could not read /tmp/qunitx-doc-missing-test.ts — running the whole file']
  * ```
@@ -81,6 +87,8 @@ export async function resolve(
  * those files a second time.
  *
  * ```ts
+ * import * as LineTargets from './line-targets.ts';
+ *
  * import type { DeclarationScan } from './parse-test-declarations.ts';
  *
  * const scan: DeclarationScan = {
@@ -90,8 +98,8 @@ export async function resolve(
  *     { kind: 'test', name: 'adds an item', startLine: 5, endLine: 9, parent: 0 },
  *   ],
  * };
- * selectorsFromScan(scan, [6], 'cart-test.ts').selectors; // [{ module: 'Cart', test: 'adds an item' }]
- * selectorsFromScan(scan, [15], 'cart-test.ts').selectors; // [{ module: 'Cart' }] — outside every test
+ * LineTargets.selectorsFromScan(scan, [6], 'cart-test.ts').selectors; // [{ module: 'Cart', test: 'adds an item' }]
+ * LineTargets.selectorsFromScan(scan, [15], 'cart-test.ts').selectors; // [{ module: 'Cart' }] — outside every test
  * ```
  */
 export function selectorsFromScan(

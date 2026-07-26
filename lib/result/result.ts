@@ -29,7 +29,9 @@
  * A successful Result carrying `value`. `error` is present-but-undefined to keep the shape stable.
  *
  * ```ts
- * const success: Ok<number> = ok(42);
+ * import * as Result from './index.ts';
+ *
+ * const success: Result.Ok<number> = Result.ok(42);
  * success.value; // 42 — and `success.error` reads undefined, same key set as Err
  * ```
  */
@@ -43,7 +45,9 @@ export type Ok<T> = {
  * A failed Result carrying `error`. `value` is present-but-undefined to keep the shape stable.
  *
  * ```ts
- * const failed: Err<string> = err('nope');
+ * import * as Result from './index.ts';
+ *
+ * const failed: Result.Err<string> = Result.err('nope');
  * failed.error; // 'nope' — and `failed.value` reads undefined
  * ```
  */
@@ -61,8 +65,10 @@ export type Err<E> = {
  * so at the use site instead of letting a wrong assumption compile.
  *
  * ```ts
- * const parsePort = (raw: string): Result<number, string> =>
- *   /^\d+$/.test(raw) ? ok(Number(raw)) : err(`not a port: ${raw}`);
+ * import * as Result from './index.ts';
+ *
+ * const parsePort = (raw: string): Result.Result<number, string> =>
+ *   /^\d+$/.test(raw) ? Result.ok(Number(raw)) : Result.err(`not a port: ${raw}`);
  *
  * const port = parsePort('8080');
  * if (port.ok) port.value; // narrowed to number; the else branch narrows to string
@@ -81,8 +87,10 @@ const OK_VOID: Ok<void> = Object.freeze({ ok: true, value: undefined, error: und
  * A successful Result carrying no value. Returns a shared frozen singleton.
  *
  * ```ts
- * ok(42); // { ok: true, value: 42, error: undefined }
- * ok(); // shared frozen Ok<void> — the allocation-free "it worked" for void-returning code
+ * import * as Result from './index.ts';
+ *
+ * Result.ok(42); // { ok: true, value: 42, error: undefined }
+ * Result.ok(); // shared frozen Result.Ok<void> — the allocation-free "it worked" for void-returning code
  * ```
  */
 export function ok(): Ok<void>;
@@ -105,10 +113,12 @@ export function ok(value?: unknown): Ok<unknown> {
  * polymorphic (and, mixed with a third shape, megamorphic) inline-cache states.
  *
  * ```ts
+ * import * as Result from './index.ts';
+ *
  * import { define } from './failure.ts';
  * const FileMissing = define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
  *
- * err(FileMissing({ path: 'a.ts' })); // { ok: false, value: undefined, error: Failure<…> }
+ * Result.err(FileMissing({ path: 'a.ts' })); // { ok: false, value: undefined, error: Failure<…> }
  * ```
  */
 export function err<const E>(error: E): Err<E> {
@@ -129,10 +139,12 @@ export function err<const E>(error: E): Err<E> {
  * is to cross realms intact, so a check that a foreign realm could fail would defeat it.
  *
  * ```ts
- * const frame = JSON.stringify(ok({ id: 1 })); // a Result that crossed a WebSocket
+ * import * as Result from './index.ts';
+ *
+ * const frame = JSON.stringify(Result.ok({ id: 1 })); // a Result that crossed a WebSocket
  *
  * const wire = JSON.parse(frame);
- * if (isResult(wire) && !wire.ok) console.error(wire.error);
+ * if (Result.isResult(wire) && !wire.ok) console.error(wire.error);
  * ```
  */
 export function isResult(value: unknown): value is Result<unknown, unknown> {
@@ -156,9 +168,11 @@ export function isResult(value: unknown): value is Result<unknown, unknown> {
  * guaranteed to have a `.stack` and a readable `.message`.
  *
  * ```ts
+ * import * as Result from './index.ts';
+ *
  * import * as Args from '../args/index.ts';
  *
- * const flags = unwrap(Args.parse('/repo')); // ParsedFlags, or the ParseFailure throws
+ * const flags = Result.unwrap(Args.parse('/repo')); // ParsedFlags, or the ParseFailure throws
  * ```
  */
 export function unwrap<T>(result: Result<T, unknown>): T {
@@ -177,12 +191,14 @@ export function unwrap<T>(result: Result<T, unknown>): T {
  * at the point where a failure stops being expected and becomes a bug.
  *
  * ```ts
+ * import * as Result from './index.ts';
+ *
  * import * as Config from '../setup/config.ts';
  *
  * // Defined, not invoked: setup() assembles a real config. The doctest checks and
  * // evaluates the definition; only a caller would perform the work.
  * async function daemonBoot() {
- *   return expect(await Config.setup(), 'daemon could not assemble its startup config');
+ *   return Result.expect(await Config.setup(), 'daemon could not assemble its startup config');
  * }
  * ```
  */
@@ -195,9 +211,11 @@ export function expect<T>(result: Result<T, unknown>, message: string): T {
  * Returns the success value, or `fallback` if the Result failed.
  *
  * ```ts
- * const parsePort = (raw: string): Result<number, unknown> => ok(Number(raw));
+ * import * as Result from './index.ts';
  *
- * const port = unwrapOr(parsePort('8080'), 3000);
+ * const parsePort = (raw: string): Result.Result<number, unknown> => Result.ok(Number(raw));
+ *
+ * const port = Result.unwrapOr(parsePort('8080'), 3000);
  * ```
  */
 export function unwrapOr<T, U>(result: Result<T, unknown>, fallback: U): T | U {
@@ -220,10 +238,12 @@ export function unwrapOr<T, U>(result: Result<T, unknown>, fallback: U): T | U {
  * every failure rather than the first, use `partition()`.
  *
  * ```ts
- * import * as Failure from './failure.ts';
- * const loaded: Result<{ name: string }, Failure.Any>[] = [ok({ name: 'esbuild-css' })];
+ * import * as Result from './index.ts';
  *
- * const plugins = all(loaded); // as in Config's resolvePlugins: Result<Plugin[], LoadFailed>
+ * import * as Failure from './failure.ts';
+ * const loaded: Result.Result<{ name: string }, Failure.Any>[] = [Result.ok({ name: 'esbuild-css' })];
+ *
+ * const plugins = Result.all(loaded); // as in Config's resolvePlugins: Result.Result<Plugin[], LoadFailed>
  * if (!plugins.ok) console.error(plugins.error.message); // the first failure, context intact
  * ```
  */
@@ -251,7 +271,7 @@ export function all<T, E>(results: ReadonlyArray<Result<T, E>>): Result<T[], E> 
  * const files = ['a.json', 'b.json'];
  *
  * const results = await Promise.all(files.map((f) => Result.try(() => readFile(f, 'utf8'))));
- * const { values, errors } = partition(results); // never rejects — even a denied read is an Err
+ * const { values, errors } = Result.partition(results); // never rejects — even a denied read is an Err
  * ```
  */
 export function partition<T, E>(

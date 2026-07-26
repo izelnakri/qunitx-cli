@@ -13,8 +13,10 @@ import path from 'node:path';
  * `platform` is parameterized for testability; it defaults to `process.platform`.
  *
  * ```ts
- * socket('/home/me/app', 'linux'); // '/tmp/qunitx-daemon-<12-hex>.sock'
- * socket('/home/me/app', 'win32'); // '\\.\pipe\qunitx-daemon-<12-hex>'
+ * import * as Paths from './paths.ts';
+ *
+ * Paths.socket('/home/me/app', 'linux'); // '/tmp/qunitx-daemon-<12-hex>.sock'
+ * Paths.socket('/home/me/app', 'win32'); // '\\.\pipe\qunitx-daemon-<12-hex>'
  * ```
  */
 export function socket(
@@ -44,7 +46,9 @@ export function socket(
  * events the watcher actually cares about and sidesteps the libuv wart.
  *
  * ```ts
- * dir('/home/me/app'); // '/tmp/qunitx-daemon-<12-hex>' — per-cwd private directory
+ * import * as Paths from './paths.ts';
+ *
+ * Paths.dir('/home/me/app'); // '/tmp/qunitx-daemon-<12-hex>' — per-cwd private directory
  * ```
  */
 export function dir(cwd: string = process.cwd()): string {
@@ -61,7 +65,9 @@ export function dir(cwd: string = process.cwd()): string {
  * `dir` for the Windows-fs.watch crash this avoids.
  *
  * ```ts
- * info('/home/me/app'); // '/tmp/qunitx-daemon-<12-hex>/info.json'
+ * import * as Paths from './paths.ts';
+ *
+ * Paths.info('/home/me/app'); // '/tmp/qunitx-daemon-<12-hex>/info.json'
  * ```
  */
 export function info(cwd: string = process.cwd()): string {

@@ -9,8 +9,10 @@
  * the same as they would in a real browser.
  *
  * ```ts
- * CHROMIUM_ARGS.includes('--no-sandbox'); // true — required in most CI containers
- * CHROMIUM_ARGS.filter((arg) => arg.startsWith('--disable-features=')).length; // 1
+ * import * as Chrome from './index.ts';
+ *
+ * Chrome.CHROMIUM_ARGS.includes('--no-sandbox'); // true — required in most CI containers
+ * Chrome.CHROMIUM_ARGS.filter((arg) => arg.startsWith('--disable-features=')).length; // 1
  * ```
  */
 export const CHROMIUM_ARGS: string[] = [

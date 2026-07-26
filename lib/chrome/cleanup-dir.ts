@@ -20,9 +20,11 @@ const CLEANUP_RETRY_MS = 50;
  * Linux-only: falls back to a single best-effort rm() on other platforms.
  *
  * ```ts
+ * import * as Chrome from './index.ts';
+ *
  * // Defined, not invoked: a real call SIGKILLs FD holders and rm()s the directory.
  * async function reapUserDataDir(userDataDir: string) {
- *   await cleanupDir(userDataDir); // resolves once gone, or after the 5s deadline
+ *   await Chrome.cleanupDir(userDataDir); // resolves once gone, or after the 5s deadline
  * }
  * ```
  */

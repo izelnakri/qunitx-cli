@@ -18,6 +18,8 @@ import type { Config, CoverageFileMap } from '../types.ts';
  * node_modules sources are dropped here; the report layer additionally drops the test entry files.
  *
  * ```ts
+ * import * as Coverage from './index.ts';
+ *
  * const entry = { // the shape playwright's page.coverage.stopJSCoverage() returns per script
  *   url: 'http://localhost:1234/tests.js',
  *   scriptId: '5',
@@ -45,11 +47,13 @@ interface V8ScriptCoverage {
  * node_modules sources are dropped here (test entry files are dropped later, in the report layer).
  *
  * ```ts
+ * import * as Coverage from './index.ts';
+ *
  * import type { Config } from '../types.ts';
  *
  * // Defined, not invoked: needs the group's live source-map decoder and the served bundle.
- * async function example(config: Config, entries: Parameters<typeof collect>[1]) {
- *   await collect(config, entries); // entries: a page's stopJSCoverage() result
+ * async function example(config: Config, entries: Parameters<typeof Coverage.collect>[1]) {
+ *   await Coverage.collect(config, entries); // entries: a page's stopJSCoverage() result
  *   // config.state.results.coverage now maps original files → coverable/covered lines
  * }
  * ```

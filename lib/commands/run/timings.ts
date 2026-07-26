@@ -6,7 +6,9 @@ import fs from 'node:fs/promises';
  * Reads `tmp/test-timings.json` from projectRoot; returns `{}` on any error or invalid content.
  *
  * ```ts
- * await read('/no/such/project'); // {} — a missing or invalid cache degrades to empty
+ * import * as Timings from './timings.ts';
+ *
+ * await Timings.read('/no/such/project'); // {} — a missing or invalid cache degrades to empty
  * ```
  */
 export async function read(projectRoot: string): Promise<Record<string, number>> {
@@ -22,8 +24,10 @@ export async function read(projectRoot: string): Promise<Record<string, number>>
  * Distributes each group's wall-clock ms to its files proportionally by LPT weight.
  *
  * ```ts
+ * import * as Timings from './timings.ts';
+ *
  * const weights = new Map([['/a.ts', 300], ['/b.ts', 100]]);
- * const times = compute([['/a.ts', '/b.ts']], weights, new Map([[0, 800]]));
+ * const times = Timings.compute([['/a.ts', '/b.ts']], weights, new Map([[0, 800]]));
  * times.get('/a.ts'); // 600 — group 0's 800ms split 3:1 by weight
  * ```
  */
@@ -49,9 +53,11 @@ export function compute(
  * Writes the merged per-file timings back to `tmp/test-timings.json` for the next run to pack with.
  *
  * ```ts
+ * import * as Timings from './timings.ts';
+ *
  * // Defined, not invoked: writes tmp/test-timings.json under projectRoot.
  * async function saveTimings(fileTimes: Map<string, number>) {
- *   await persist(fileTimes, '/proj'); // next run's splitIntoGroups packs with these
+ *   await Timings.persist(fileTimes, '/proj'); // next run's splitIntoGroups packs with these
  * }
  * ```
  */
@@ -66,7 +72,9 @@ export async function persist(fileTimes: Map<string, number>, projectRoot: strin
  * `--debug` listing of this run's per-file wall times, slowest first.
  *
  * ```ts
- * print(new Map(), '/proj'); // empty run — prints nothing
+ * import * as Timings from './timings.ts';
+ *
+ * Timings.print(new Map(), '/proj'); // empty run — prints nothing
  * // A non-empty map writes lines like `#   1240ms  test/cart-test.ts` to stdout.
  * ```
  */

@@ -20,10 +20,12 @@ const OK_PCT = 50;
  * renderers so the three can never disagree. Produced by {@link buildRows}.
  *
  * ```ts
+ * import * as Report from './report.ts';
+ *
  * const coverage = new Map([
  *   ['/repo/lib/math.ts', { coverable: new Set([1, 2]), covered: new Map([[1, 3]]), sourceContent: null }],
  * ]);
- * const [row] = buildRows(coverage, new Set<string>(), '/repo');
+ * const [row] = Report.buildRows(coverage, new Set<string>(), '/repo');
  * row.displayPath; // 'lib/math.ts'
  * row.pct; // 50 — 1 of 2 coverable lines was hit
  * ```
@@ -49,11 +51,13 @@ const ARTIFACTS = [
  * test entry paths) are excluded so the report reflects the code under test, not the tests.
  *
  * ```ts
+ * import * as Report from './report.ts';
+ *
  * import type { Config } from '../types.ts';
  *
  * // Defined, not invoked: prints the summary and writes files under <output>/coverage/.
  * async function example(config: Config, testFiles: string[]) {
- *   await write(config, testFiles);
+ *   await Report.write(config, testFiles);
  *   // stdout: the "# Coverage (V8 line coverage)" table, then "# wrote coverage lcov to …" lines
  * }
  * ```
@@ -98,11 +102,13 @@ export async function write(config: Config, testFiles: string[]): Promise<void> 
  * Turns the raw coverage map into sorted, test-file-filtered rows with computed percentages.
  *
  * ```ts
+ * import * as Report from './report.ts';
+ *
  * const coverage = new Map([
  *   ['/repo/lib/math.ts', { coverable: new Set([1, 2]), covered: new Map([[1, 3]]), sourceContent: null }],
  *   ['/repo/test/math-test.ts', { coverable: new Set([1]), covered: new Map([[1, 1]]), sourceContent: null }],
  * ]);
- * const rows = buildRows(coverage, new Set(['/repo/test/math-test.ts']), '/repo');
+ * const rows = Report.buildRows(coverage, new Set(['/repo/test/math-test.ts']), '/repo');
  * rows.map((row) => row.displayPath); // ['lib/math.ts'] — the test file is excluded
  * rows[0].covered; // 1 — only line 1 had a hit count above zero
  * ```
@@ -180,10 +186,12 @@ function formatRow(
  * Builds a standard LCOV `lcov.info` string (line coverage only: DA/LF/LH per file).
  *
  * ```ts
+ * import * as Report from './report.ts';
+ *
  * const coverage = new Map([
  *   ['/repo/lib/math.ts', { coverable: new Set([1, 2]), covered: new Map([[1, 3]]), sourceContent: null }],
  * ]);
- * buildLcov(buildRows(coverage, new Set<string>(), '/repo'));
+ * Report.buildLcov(Report.buildRows(coverage, new Set<string>(), '/repo'));
  * // 'TN:\nSF:lib/math.ts\nDA:1,3\nDA:2,0\nLF:2\nLH:1\nend_of_record\n'
  * ```
  */
@@ -210,10 +218,12 @@ export function buildLcov(rows: FileRow[]): string {
  * Builds a self-contained HTML report: a summary table plus per-file source with line coloring.
  *
  * ```ts
+ * import * as Report from './report.ts';
+ *
  * const coverage = new Map([
  *   ['/repo/lib/one.ts', { coverable: new Set([1]), covered: new Map([[1, 1]]), sourceContent: 'export const one = 1;' }],
  * ]);
- * const html = buildHtml(buildRows(coverage, new Set<string>(), '/repo'));
+ * const html = Report.buildHtml(Report.buildRows(coverage, new Set<string>(), '/repo'));
  * html.includes('100.00%'); // true — the overall badge; each file's colored source follows
  * ```
  */

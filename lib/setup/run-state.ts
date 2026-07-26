@@ -14,9 +14,11 @@ import type { Page } from 'playwright-core';
  * so the rule lives in one place rather than in two guards that must agree.
  *
  * ```ts
- * const state = create();
- * reusablePageSlot(state); // null — not a daemon run, nothing to reuse
- * reusablePageSlot({ ...state, groupCount: 3 }); // null — withheld in concurrent group mode
+ * import * as RunState from './run-state.ts';
+ *
+ * const state = RunState.create();
+ * RunState.reusablePageSlot(state); // null — not a daemon run, nothing to reuse
+ * RunState.reusablePageSlot({ ...state, groupCount: 3 }); // null — withheld in concurrent group mode
  * ```
  */
 export function reusablePageSlot(state: RunState): { page: Page | null } | null {
@@ -40,7 +42,9 @@ function newCounter(): Counter {
  * replaces `state.group` with this so groups never share the slots inside it.
  *
  * ```ts
- * const group = newGroup(2);
+ * import * as RunState from './run-state.ts';
+ *
+ * const group = RunState.newGroup(2);
  * group.index; // 2
  * group.phase; // 'bundling'
  * ```
@@ -76,7 +80,9 @@ export function newGroup(index = 0, selectors?: QUnitSelector[]): GroupState {
  * Fresh run state for a single `qunitx` invocation. Built once per run in `Config.setup()`.
  *
  * ```ts
- * const state = create();
+ * import * as RunState from './run-state.ts';
+ *
+ * const state = RunState.create();
  * state.groupCount; // 1
  * state.results.counter.testCount; // 0
  * ```
@@ -119,10 +125,12 @@ export function create(): RunState {
  * safe for the same reason — it mutates a field of the shared object rather than replacing it.
  *
  * ```ts
- * const { results } = create();
+ * import * as RunState from './run-state.ts';
+ *
+ * const { results } = RunState.create();
  * results.counter.failCount = 3;
  * results.failedFiles.add('/proj/test/cart-test.ts');
- * reset(results, false);
+ * RunState.reset(results, false);
  * [results.counter.failCount, results.failedFiles.size]; // [0, 0] — same objects, cleared in place
  * ```
  */
@@ -141,9 +149,11 @@ export function reset(results: RunResults, coverageEnabled: boolean): void {
  * servable — and a watch-mode delete would then rerun tests from a file that no longer exists.
  *
  * ```ts
- * const { build } = newGroup();
+ * import * as RunState from './run-state.ts';
+ *
+ * const { build } = RunState.newGroup();
  * build.allTestCode = 'bundled js…';
- * clearBundles(build);
+ * RunState.clearBundles(build);
  * build.allTestCode; // null — the next run rebuilds both bundles from disk
  * ```
  */

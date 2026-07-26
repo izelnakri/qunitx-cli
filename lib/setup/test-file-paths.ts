@@ -11,7 +11,9 @@ interface PathMeta {
  * Deduplicates a list of file, folder, and glob inputs so that more-specific paths covered by broader ones are removed.
  *
  * ```ts
- * setup(['/proj/test', '/proj/test/unit/cart-test.ts', '/proj/lib/util-test.ts']);
+ * import * as TestFilePaths from './test-file-paths.ts';
+ *
+ * TestFilePaths.setup(['/proj/test', '/proj/test/unit/cart-test.ts', '/proj/lib/util-test.ts']);
  * // ['/proj/test', '/proj/lib/util-test.ts'] — the folder already covers the nested file
  * ```
  * @returns {string[]}

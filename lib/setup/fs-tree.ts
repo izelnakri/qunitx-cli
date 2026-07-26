@@ -7,9 +7,11 @@ import type { FSTree } from '../types.ts';
  * Resolves an array of file paths, directories, or glob patterns into a flat `{ absolutePath: null }` map.
  *
  * ```ts
+ * import * as FSTree from './fs-tree.ts';
+ *
  * // Defined, not invoked: stats and walks the real filesystem.
  * async function discover(projectRoot: string) {
- *   return build([`${projectRoot}/test/**`, `${projectRoot}/lib/util-test.ts`]);
+ *   return FSTree.build([`${projectRoot}/test/**`, `${projectRoot}/lib/util-test.ts`]);
  *   // { '/proj/test/cart-test.ts': null, '/proj/lib/util-test.ts': null, … }
  * }
  * ```

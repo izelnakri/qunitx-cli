@@ -8,9 +8,11 @@ const color = (text: string) => blue(text);
  * Prints qunitx-cli usage information to stdout.
  *
  * ```ts
+ * import * as Help from './help.ts';
+ *
  * // Defined, not invoked: prints the full multi-line usage text.
  * function helpCommand() {
- *   run(); // [qunitx vX.Y.Z] Usage: qunitx [targets] --$flags …
+ *   Help.run(); // [qunitx vX.Y.Z] Usage: qunitx [targets] --$flags …
  * }
  * ```
  */

@@ -16,13 +16,13 @@ const CDP_URL_REGEX = /DevTools listening on (ws:\/\/[^\s]+)/;
  * to start, so callers can fall back to playwright's normal `chromium.launch()`.
  *
  * ```ts
- * import { CHROMIUM_ARGS } from './chromium-args.ts';
+ * import * as Chrome from './index.ts';
  *
- * await spawn(null, CHROMIUM_ARGS); // null — no Chrome path, caller falls back to chromium.launch()
+ * await Chrome.spawn(null, Chrome.CHROMIUM_ARGS); // null — no Chrome path, caller falls back to chromium.launch()
  *
  * // Defined, not invoked: a real call spawns Chrome and creates a temp user-data-dir.
  * async function prelaunch(chromePath: string) {
- *   return await spawn(chromePath, CHROMIUM_ARGS); // EarlyChrome — { proc, cdpEndpoint, shutdown }
+ *   return await Chrome.spawn(chromePath, Chrome.CHROMIUM_ARGS); // EarlyChrome — { proc, cdpEndpoint, shutdown }
  * }
  * ```
  */

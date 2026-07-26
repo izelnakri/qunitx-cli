@@ -17,7 +17,9 @@ const PATH_DIRS = (process.env.PATH || '').split(delimiter).filter(Boolean);
  * with callers, but the resolution is synchronous.
  *
  * ```ts
- * const chromePath = await find();
+ * import * as Chrome from './index.ts';
+ *
+ * const chromePath = await Chrome.find();
  * chromePath; // '/usr/bin/google-chrome-stable' — or null when nothing on PATH is executable
  * ```
  *

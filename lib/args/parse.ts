@@ -15,7 +15,9 @@ import { type Result, ok, err, Failure } from '../result/index.ts';
  * `cli.ts` is now the single place that turns one of these into a message and an exit code.
  *
  * ```ts
- * const failure = InvalidFlag({ flag: '--port', value: 'abc', expected: 'Expected --port=<0-65535>.' });
+ * import * as Args from './index.ts';
+ *
+ * const failure = Args.InvalidFlag({ flag: '--port', value: 'abc', expected: 'Expected --port=<0-65535>.' });
  * failure.message; // 'Invalid --port value: "abc". Expected --port=<0-65535>.'
  * failure.data.flag; // '--port' — typed payload, no message parsing
  * ```
@@ -30,7 +32,9 @@ export const InvalidFlag = Failure.define(
  * Every way `parse()` can reject its input.
  *
  * ```ts
- * const failure: ParseFailure = InvalidFlag({ flag: '--browser', value: 'ie', expected: 'No.' });
+ * import * as Args from './index.ts';
+ *
+ * const failure: Args.ParseFailure = Args.InvalidFlag({ flag: '--browser', value: 'ie', expected: 'No.' });
  * failure.code; // 'InvalidFlag' — the only parse failure kind today
  * ```
  */
@@ -50,9 +54,11 @@ const FILE_LOOKING = /\.(js|ts|jsx|tsx|html)$/;
  * The flag object a successful `parse()` carries — CLI flags only, before package.json merge.
  *
  * ```ts
+ * import * as Args from './index.ts';
+ *
  * // Defined, not invoked: the shape is what parse(projectRoot) yields on the ok branch.
  * function flagsOf(projectRoot: string) {
- *   const parsed = parse(projectRoot);
+ *   const parsed = Args.parse(projectRoot);
  *   return parsed.ok ? { inputs: parsed.value.inputs, watch: parsed.value.watch } : null;
  * }
  * ```
@@ -91,9 +97,11 @@ interface ParsedFlags {
  * Parses `process.argv` into a qunitx flag object (`inputs`, `debug`, `watch`, `failFast`, `timeout`, `output`, `port`, `before`, `after`).
  *
  * ```ts
+ * import * as Args from './index.ts';
+ *
  * // Defined, not invoked: reads the live process.argv.
  * function example(projectRoot: string) {
- *   const parsed = parse(projectRoot); // a Result — a bad flag reports, never exits
+ *   const parsed = Args.parse(projectRoot); // a Result — a bad flag reports, never exits
  *   return parsed.ok ? parsed.value.inputs : parsed.error.code; // absolute inputs | 'InvalidFlag'
  * }
  * ```

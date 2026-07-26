@@ -40,7 +40,9 @@ function diagWrite(msg: string): void {
  * Static 404 page served for HTML-accepting requests to missing static assets.
  *
  * ```ts
- * NOT_FOUND_HTML.includes('404 Not Found'); // true — self-contained, styled like the QUnit reporter
+ * import * as WebServer from './web-server.ts';
+ *
+ * WebServer.NOT_FOUND_HTML.includes('404 Not Found'); // true — self-contained, styled like the QUnit reporter
  * ```
  */
 const NOT_FOUND_HTML = `<!DOCTYPE html>
@@ -75,12 +77,14 @@ const NOT_FOUND_HTML = `<!DOCTYPE html>
  * Creates and returns an HTTPServer with routes for the test HTML, filtered test page, and static assets, plus a WebSocket handler that streams TAP events.
  *
  * ```ts
+ * import * as WebServer from './web-server.ts';
+ *
  * import type { Config } from '../types.ts';
  * import { bindServerToPort } from './bind-server-to-port.ts';
  *
  * // Defined, not invoked: wires live run state into routes and WS handlers.
  * function example(config: Config) {
- *   const server = setup(config); // routes ready, not yet listening
+ *   const server = WebServer.setup(config); // routes ready, not yet listening
  *   return bindServerToPort(server, config); // bind, then navigate the page to '/'
  * }
  * ```
@@ -418,7 +422,9 @@ export function setup(config: Config): HTTPServer {
  * next successful build.
  *
  * ```ts
- * const html = buildNoTestsHTML(['/proj/test/empty-test.ts']);
+ * import * as WebServer from './web-server.ts';
+ *
+ * const html = WebServer.buildNoTestsHTML(['/proj/test/empty-test.ts']);
  * html.includes('0 QUnit tests were registered'); // true — lists the bundled files verbatim
  * ```
  */
@@ -536,7 +542,9 @@ export function buildNoTestsHTML(files: string[]): string {
  * is a no-op when the page is opened as a static file (location.port is empty).
  *
  * ```ts
- * const html = buildErrorHTML({ type: 'SyntaxError', formatted: 'x.ts:1:0: Unexpected "<"' });
+ * import * as WebServer from './web-server.ts';
+ *
+ * const html = WebServer.buildErrorHTML({ type: 'SyntaxError', formatted: 'x.ts:1:0: Unexpected "<"' });
  * html.includes('Build Error: SyntaxError'); // true — the formatted esbuild output, HTML-escaped
  * ```
  */
@@ -651,12 +659,14 @@ export function buildErrorHTML(buildError: { type: string; formatted: string }):
  * Routes: `GET /group-${groupId}/` and `GET /group-${groupId}/tests.js`.
  *
  * ```ts
+ * import * as WebServer from './web-server.ts';
+ *
  * import type { Config } from '../types.ts';
  * import type { HTTPServer } from '../web/index.ts';
  *
  * // Defined, not invoked: registers routes on a live shared server.
  * function example(server: HTTPServer, groupConfigs: Config[]) {
- *   groupConfigs.forEach((groupConfig) => registerGroupRoutes(server, groupConfig));
+ *   groupConfigs.forEach((groupConfig) => WebServer.registerGroupRoutes(server, groupConfig));
  * }
  * ```
  */
@@ -736,12 +746,14 @@ export function registerGroupRoutes(server: HTTPServer, groupConfig: Config): vo
  * baked into the browser-side `wsOpen` message by `testRuntimeToInject`.
  *
  * ```ts
+ * import * as WebServer from './web-server.ts';
+ *
  * import type { Config } from '../types.ts';
  * import type { HTTPServer } from '../web/index.ts';
  *
  * // Defined, not invoked: attaches WS listeners to a live shared server.
  * function example(server: HTTPServer, groupConfigs: Config[]) {
- *   setupGroupWSHandler(server, groupConfigs); // one dispatcher, routed by each socket's wsOpen groupId
+ *   WebServer.setupGroupWSHandler(server, groupConfigs); // one dispatcher, routed by each socket's wsOpen groupId
  * }
  * ```
  */
@@ -829,12 +841,14 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
  * from each group's output directory, routing by `/group-{id}/` URL prefix.
  *
  * ```ts
+ * import * as WebServer from './web-server.ts';
+ *
  * import type { Config } from '../types.ts';
  * import type { HTTPServer } from '../web/index.ts';
  *
  * // Defined, not invoked: serves files from each group's real output directory.
  * function example(server: HTTPServer, groupConfigs: Config[]) {
- *   registerSharedStaticHandler(server, groupConfigs); // /group-0/app.css → <group 0 output>/app.css
+ *   WebServer.registerSharedStaticHandler(server, groupConfigs); // /group-0/app.css → <group 0 output>/app.css
  * }
  * ```
  */

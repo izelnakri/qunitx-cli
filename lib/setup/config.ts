@@ -20,7 +20,9 @@ import type { Plugin as EsbuildPlugin } from 'esbuild';
  * `package.json#qunitx.plugins` was present but not an array.
  *
  * ```ts
- * const failure = InvalidPlugins({ received: 'string' });
+ * import * as Config from './config.ts';
+ *
+ * const failure = Config.InvalidPlugins({ received: 'string' });
  * failure.message; // 'package.json#qunitx.plugins must be an array, received string'
  * ```
  */
@@ -38,7 +40,9 @@ export const InvalidPlugins = Result.Failure.define(
  * fault or which entry named it.
  *
  * ```ts
- * const failure = PluginLoadFailed({ specifier: 'esbuild-plugin-vue' }, { cause: new Error('ERR_MODULE_NOT_FOUND') });
+ * import * as Config from './config.ts';
+ *
+ * const failure = Config.PluginLoadFailed({ specifier: 'esbuild-plugin-vue' }, { cause: new Error('ERR_MODULE_NOT_FOUND') });
  * failure.data.specifier; // 'esbuild-plugin-vue' — the entry at fault, resolver error under `.cause`
  * ```
  */
@@ -51,7 +55,9 @@ export const PluginLoadFailed = Result.Failure.define(
  * Every way config assembly can fail with something the user can act on.
  *
  * ```ts
- * const failure: ConfigFailure = InvalidPlugins({ received: 'number' });
+ * import * as Config from './config.ts';
+ *
+ * const failure: Config.ConfigFailure = Config.InvalidPlugins({ received: 'number' });
  * failure.code; // 'InvalidPlugins' | 'PluginLoadFailed' | 'InvalidFlag' — switch and report
  * ```
  */
@@ -68,9 +74,11 @@ export type ConfigFailure =
  * turns a failure into an exit.
  *
  * ```ts
+ * import * as Config from './config.ts';
+ *
  * // Defined, not invoked: reads package.json and walks the real fs.
  * async function example() {
- *   const config = await setup();
+ *   const config = await Config.setup();
  *   return config.ok ? config.value : config.error; // Config out, or a ConfigFailure to report
  * }
  * ```

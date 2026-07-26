@@ -15,8 +15,9 @@ const DEFAULT_SENTINEL = path.join(os.homedir(), '.cache', 'qunitx', 'hint-shown
  * Run context consumed by the daemon-hint eligibility check.
  *
  * ```ts
- * import type { HintContext } from './hint.ts';
- * const ctx: HintContext = { durationMs: 1200, env: {}, isTTY: true };
+ * import type * as Hint from './hint.ts';
+ *
+ * const ctx: Hint.HintContext = { durationMs: 1200, env: {}, isTTY: true };
  * ctx.durationMs; // 1200 — compared against the 500ms fast-run threshold
  * ```
  */
@@ -37,9 +38,10 @@ export interface HintContext {
  * Side-effect injection points for `maybePrint` — testing seams.
  *
  * ```ts
- * import type { PrintOpts } from './hint.ts';
+ * import type * as Hint from './hint.ts';
+ *
  * const lines: string[] = [];
- * const opts: PrintOpts = { sentinelPath: '/tmp/qunitx-hint-shown', write: (t) => lines.push(t) };
+ * const opts: Hint.PrintOpts = { sentinelPath: '/tmp/qunitx-hint-shown', write: (t) => lines.push(t) };
  * opts.sentinelPath; // '/tmp/qunitx-hint-shown'
  * ```
  */
@@ -56,9 +58,10 @@ export interface PrintOpts {
  * the fast-run threshold, and TTY presence. No filesystem access.
  *
  * ```ts
- * import type { shouldShow } from './hint.ts';
+ * import type * as Hint from './hint.ts';
+ *
  * // Defined, not invoked: the module resolves a homedir sentinel path at load time.
- * function hintGate(show: typeof shouldShow) {
+ * function hintGate(show: typeof Hint.shouldShow) {
  *   return show({ durationMs: 900, env: {}, isTTY: true }); // true — slow local TTY run
  * }
  * ```
@@ -84,9 +87,10 @@ export function shouldShow(ctx: HintContext): boolean {
  * failure just means the hint shows again on the next eligible run.
  *
  * ```ts
- * import type { maybePrint } from './hint.ts';
+ * import type * as Hint from './hint.ts';
+ *
  * // Defined, not invoked: reads and writes the ~/.cache/qunitx sentinel file.
- * async function nudge(print: typeof maybePrint, write: (t: string) => void) {
+ * async function nudge(print: typeof Hint.maybePrint, write: (t: string) => void) {
  *   await print({ durationMs: 1200 }, { write }); // hints at most once per machine
  * }
  * ```

@@ -73,9 +73,11 @@ const ADD_SUPPRESS_WINDOW_MS = 1_000;
  * propagate so the caller's catch can treat a vanished file as a removal.
  *
  * ```ts
+ * import * as FileWatcher from './file-watcher.ts';
+ *
  * import { Buffer } from 'node:buffer';
  *
- * const content = await readFileStable('/proj/test/cart-test.ts', async () => Buffer.from('settled'));
+ * const content = await FileWatcher.readFileStable('/proj/test/cart-test.ts', async () => Buffer.from('settled'));
  * content.toString(); // 'settled' — two reads 10ms apart returned identical bytes
  * ```
  */
@@ -121,11 +123,13 @@ async function dispatchIfContentChanged(
  * Uses `config.fsTree` to distinguish `unlink` (tracked file) from `unlinkDir` (directory) on deletion.
  *
  * ```ts
+ * import * as FileWatcher from './file-watcher.ts';
+ *
  * import type { Config } from '../types.ts';
  *
  * // Defined, not invoked: starts real fs.watch watchers on the lookup paths.
  * async function watch(config: Config, onEvent: (event: string, file: string) => unknown) {
- *   const watchers = setup(config.testFileLookupPaths, config, onEvent, null);
+ *   const watchers = FileWatcher.setup(config.testFileLookupPaths, config, onEvent, null);
  *   await watchers.ready; // no event is processed before the content-hash seed completes
  *   return watchers.killFileWatchers; // teardown: closes every watcher, poller and timer
  * }
@@ -465,11 +469,13 @@ export function setup(
  * When a build is already in progress, queues the event as a pending trigger (last-write-wins).
  *
  * ```ts
+ * import * as FileWatcher from './file-watcher.ts';
+ *
  * import type { Config } from '../types.ts';
  *
  * // Defined, not invoked: mutates the live fsTree and dispatches a rebuild.
  * function onSave(config: Config, rebuild: (event: string, file: string) => Promise<void>) {
- *   return handleWatchEvent(config, ['js', 'ts'], 'change', '/proj/test/cart-test.ts', rebuild, null);
+ *   return FileWatcher.handleWatchEvent(config, ['js', 'ts'], 'change', '/proj/test/cart-test.ts', rebuild, null);
  * }
  * ```
  */
@@ -570,9 +576,11 @@ export function handleWatchEvent(
  * readdir/stat disagreement can be reproduced deterministically. Production uses the real fs.
  *
  * ```ts
+ * import * as FileWatcher from './file-watcher.ts';
+ *
  * import { readdir, stat } from 'node:fs/promises';
  *
- * const deps: RescanDeps = { readdir, stat }; // the production default; tests inject fakes
+ * const deps: FileWatcher.RescanDeps = { readdir, stat }; // the production default; tests inject fakes
  * ```
  */
 export interface RescanDeps {
@@ -591,11 +599,13 @@ export interface RescanDeps {
  * last build saw the file). The seed for that baseline is set in {@link setup}.
  *
  * ```ts
+ * import * as FileWatcher from './file-watcher.ts';
+ *
  * import type { Config } from '../types.ts';
  *
  * // Defined, not invoked: walks the real directory tree.
  * function rescan(config: Config, onEvent: (event: string, file: string) => unknown) {
- *   return rescanDirectoryForDelta('/proj/test', config, ['js', 'ts'], onEvent, null);
+ *   return FileWatcher.rescanDirectoryForDelta('/proj/test', config, ['js', 'ts'], onEvent, null);
  * }
  * ```
  */
@@ -693,8 +703,10 @@ export async function rescanDirectoryForDelta(
  * Mutates `fsTree` in place based on a file-system event.
  *
  * ```ts
+ * import * as FileWatcher from './file-watcher.ts';
+ *
  * const fsTree = { '/proj/test/a-test.ts': null, '/proj/test/sub/b-test.ts': null };
- * mutateFSTree(fsTree, 'unlinkDir', '/proj/test/sub');
+ * FileWatcher.mutateFSTree(fsTree, 'unlinkDir', '/proj/test/sub');
  * Object.keys(fsTree); // ['/proj/test/a-test.ts'] — the subtree's entries are gone
  * ```
  */
@@ -780,8 +792,10 @@ function colorEvent(event: string): unknown {
  * fs.watch can watch recursively (`test/x/!(plugin).ts` collapses to `test/x`).
  *
  * ```ts
- * toWatchableRoot('/tmp'); // '/tmp' — a real path is watchable as-is
- * toWatchableRoot('/tmp/absent/!(skip)-test.ts'); // '/tmp' — a glob collapses to its deepest existing ancestor
+ * import * as FileWatcher from './file-watcher.ts';
+ *
+ * FileWatcher.toWatchableRoot('/tmp'); // '/tmp' — a real path is watchable as-is
+ * FileWatcher.toWatchableRoot('/tmp/absent/!(skip)-test.ts'); // '/tmp' — a glob collapses to its deepest existing ancestor
  * ```
  */
 export function toWatchableRoot(lookupPath: string): string {

@@ -15,7 +15,9 @@ import { Task } from '../task/index.ts';
  * where qunitx is invoked from on the next run.
  *
  * ```ts
- * const payload: MetafileCachePayload = {
+ * import * as MetafileCache from './metafile-cache.ts';
+ *
+ * const payload: MetafileCache.MetafileCachePayload = {
  *   esbuildCwd: '/proj',
  *   metafile: { inputs: { 'test/a-test.ts': { imports: [{ path: 'lib/util.ts' }] } } },
  * };
@@ -44,8 +46,10 @@ let writeSequence = 0;
  * "projects on one machine."
  *
  * ```ts
- * path('/proj'); // '/proj/node_modules/.cache/qunitx/d6f745519348/metafile.json'
- * path('/other'); // same layout, different hash tag — no clash on shared node_modules
+ * import * as MetafileCache from './metafile-cache.ts';
+ *
+ * MetafileCache.path('/proj'); // '/proj/node_modules/.cache/qunitx/d6f745519348/metafile.json'
+ * MetafileCache.path('/other'); // same layout, different hash tag — no clash on shared node_modules
  * ```
  */
 export function path(projectRoot: string): string {
@@ -68,7 +72,9 @@ export function path(projectRoot: string): string {
  * worst case is a leftover temp file, never a corrupt cache.
  *
  * ```ts
- * await write('/not/writable/anywhere', '/proj', { inputs: {} });
+ * import * as MetafileCache from './metafile-cache.ts';
+ *
+ * await MetafileCache.write('/not/writable/anywhere', '/proj', { inputs: {} });
  * // resolves — an unwritable cache dir degrades silently, the next read is just a miss
  * ```
  */
@@ -96,7 +102,9 @@ export async function write(
  * Reads the cached metafile. Returns `null` on miss or corruption.
  *
  * ```ts
- * await read('/tmp/no-such-qunitx-project'); // null — missing or corrupt cache is a miss
+ * import * as MetafileCache from './metafile-cache.ts';
+ *
+ * await MetafileCache.read('/tmp/no-such-qunitx-project'); // null — missing or corrupt cache is a miss
  * ```
  */
 export async function read(projectRoot: string): Promise<MetafileCachePayload | null> {
