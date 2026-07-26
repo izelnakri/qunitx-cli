@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { module, test } from 'qunitx';
 import { Task, Failure } from '../../lib/task/index.ts';
 
@@ -495,5 +496,93 @@ module('Task | retry & restart', { concurrency: true }, () => {
     });
     await assert.rejects(flaky, /no user 1/);
     assert.strictEqual(await flaky.retry(1), 2, 'retry never serves the failed memo');
+  });
+});
+
+// ── Data-first statics — the twin law: Task.m(t, …) ≡ t.m(…) ─────────────────
+
+module('Task | data-first statics', { concurrency: true }, () => {
+  test('map / mapErr / recover / expect delegate exactly', async (assert) => {
+    assert.strictEqual(await Task.map(loadUser(1), (u) => u.name), 'u1');
+    await assert.rejects(
+      Task.mapErr(loadUser(0), (e) => new RangeError('twin: ' + (e as Failure.Any).code)),
+      /twin: NotFound/,
+    );
+    assert.deepEqual(await Task.recover(loadUser(0), () => ({ id: -1, name: 'guest' })), {
+      id: -1,
+      name: 'guest',
+    });
+    try {
+      await Task.expect(loadUser(0), 'twin context');
+      assert.true(false, 'unreachable');
+    } catch (error) {
+      assert.strictEqual((error as Error).message, 'twin context');
+      assert.true(NotFound.is(error), 'code preserved through the static twin');
+    }
+  });
+
+  test('unwrapOr / match / result delegate, two-tier rules intact', async (assert) => {
+    assert.deepEqual(await Task.unwrapOr(loadUser(0), { id: 0, name: 'anon' }), {
+      id: 0,
+      name: 'anon',
+    });
+    assert.strictEqual(
+      await Task.match(loadUser(1), { ok: (u) => u.name, err: (e) => e.code }),
+      'u1',
+    );
+    const { ok, error } = await Task.result(loadUser(0));
+    assert.false(ok);
+    assert.strictEqual(error?.code, 'NotFound');
+  });
+
+  test('perform / restart / retry delegate — lineage stays deep', async (assert) => {
+    let runs = 0;
+    const source = Task(() => 'run#' + ++runs);
+    const chain = source.map((s) => s.toUpperCase());
+    assert.strictEqual(await Task.perform(chain), 'RUN#1');
+    assert.strictEqual(await Task.restart(chain), 'RUN#2', 'static restart re-ran the source');
+    let attempts = 0;
+    const flaky = Task(() => {
+      attempts++;
+      if (attempts < 3) throw NotFound({ id: attempts });
+      return attempts;
+    });
+    assert.strictEqual(await Task.retry(flaky, 5), 3, 'static retry spawns fresh executions');
+  });
+});
+
+// ── The loud default: an unconsumed rejection crashes, and says what broke ────
+
+module('Task | unconsumed rejection', { concurrency: true }, () => {
+  test('a performed-but-unconsumed failing Task crashes the process with the Failure visible', async (assert) => {
+    // The real UX, in a real child process: no handler anywhere → the runtime's
+    // unhandled-rejection default kills the process, and because the reason is a Failure
+    // (a real Error with name/message/code/data/cause), the crash names the culprit.
+    if ('Deno' in globalThis) {
+      assert.true(true, 'skipped under Deno — the node lane owns this child-process assert');
+      return;
+    }
+    const entry = new URL('../../lib/task/index.ts', import.meta.url).href;
+    const script =
+      `import(${JSON.stringify(entry)}).then(({ Task, Failure }) => {` +
+      `const NotFound = Failure.define('NotFound', (d) => 'no user ' + d.id);` +
+      `Task(() => { throw NotFound({ id: 9 }); }).perform();` +
+      `});`;
+    const child = spawn(process.execPath, ['-e', script]);
+    let stderr = '';
+    child.stderr.on('data', (chunk) => (stderr += chunk));
+    const code = await new Promise<number | null>((resolve) => child.on('close', resolve));
+    assert.notStrictEqual(code, 0, 'the process died — loud, not silent');
+    assert.true(stderr.includes('Failure(NotFound)'), 'the crash names the failure code');
+    assert.true(stderr.includes('no user 9'), 'and carries the interpolated message');
+    assert.true(stderr.includes('id: 9'), 'and the structured data payload');
+  });
+
+  test('an unstarted Task cannot crash — laziness means dropped chains are dead code', async (assert) => {
+    Task(() => {
+      throw NotFound({ id: 1 });
+    }); // never awaited, never performed: the recipe NEVER runs, so nothing can reject
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.true(true, 'no rejection existed to go unhandled');
   });
 });

@@ -323,6 +323,84 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * const { values, errors } = partition(outcomes); // nothing lost, everything typed
    * ```
    */
+  // ── Data-first twins of every transforming method ────────────────────────────
+  //
+  // `Task.map(task, fn)` ≡ `task.map(fn)`, for each method below — the Elixir-style module
+  // function spelling, kept pipeline-operator-ready (a future `task |> Task.map(%, fn)` needs
+  // the module function to exist). Each is pure delegation: same laziness, same lineage, same
+  // two-tier rule; the receiver simply moves to the first argument, so the twin law
+  // `Task.m(t, …) === t.m(…)` holds by construction. `then` stays instance-only (the Promise
+  // contract) and `ignore` already has its source-accepting static below.
+
+  /** Data-first twin of {@link TaskClass#map}.
+   *
+   * ```ts
+   * const upper = Task.map(Task(() => 'fetched'), (s) => s.toUpperCase());
+   * ```
+   */
+  static map<T, E, U>(
+    task: TaskClass<T, E>,
+    fn: (value: T) => U | PromiseLike<U>,
+  ): TaskClass<U, E> {
+    return task.map(fn);
+  }
+
+  /** Data-first twin of {@link TaskClass#mapErr} — the adapter edge, receiver-first. */
+  static mapErr<T, E, F>(task: TaskClass<T, E>, fn: (error: unknown) => F): TaskClass<T, F> {
+    return task.mapErr(fn);
+  }
+
+  /** Data-first twin of {@link TaskClass#recover} — the crash boundary, receiver-first. */
+  static recover<T, E, U = T>(
+    task: TaskClass<T, E>,
+    fn: (error: unknown) => U | PromiseLike<U>,
+  ): TaskClass<T | U, never> {
+    return task.recover(fn);
+  }
+
+  /** Data-first twin of {@link TaskClass#expect} — context for declared failures only. */
+  static expect<T, E>(task: TaskClass<T, E>, message: string): TaskClass<T, E> {
+    return task.expect(message);
+  }
+
+  /** Data-first twin of {@link TaskClass#unwrapOr} — fallback for declared failures only. */
+  static unwrapOr<T, E, U>(task: TaskClass<T, E>, fallback: U): TaskClass<T | U, never> {
+    return task.unwrapOr(fallback);
+  }
+
+  /** Data-first twin of {@link TaskClass#match} — both declared branches, bugs keep flying. */
+  static match<T, E, A, B>(
+    task: TaskClass<T, E>,
+    handlers: { ok: (value: T) => A | PromiseLike<A>; err: (error: E) => B | PromiseLike<B> },
+  ): TaskClass<A | B, never> {
+    return task.match(handlers);
+  }
+
+  /** Data-first twin of {@link TaskClass#perform} — start now, hand the same task back. */
+  static perform<T, E>(task: TaskClass<T, E>): TaskClass<T, E> {
+    return task.perform();
+  }
+
+  /** Data-first twin of {@link TaskClass#restart} — a fresh execution of the whole chain. */
+  static restart<T, E>(task: TaskClass<T, E>): TaskClass<T, E> {
+    return task.restart();
+  }
+
+  /** Data-first twin of {@link TaskClass#retry} — fresh restarts until success. */
+  static retry<T, E>(task: TaskClass<T, E>, times = 1): TaskClass<T, E> {
+    return task.retry(times);
+  }
+
+  /** Data-first twin of {@link TaskClass#result} — the `{ ok, value, error }` bridge.
+   *
+   * ```ts
+   * const { ok, value } = await Task.result(Task(() => 21 * 2));
+   * ```
+   */
+  static result<T, E>(task: TaskClass<T, E>): TaskClass<Result<T, E>, never> {
+    return task.result();
+  }
+
   static results<T, E = AnyFailure>(
     tasks: Iterable<TaskClass<T, E> | PromiseLike<T>>,
   ): TaskClass<Result<T, E>[], never> {
