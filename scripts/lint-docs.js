@@ -120,6 +120,13 @@ const methodGaps = (file, symbolName, classDeclaration) =>
     .filter(([, overloads]) => !overloads.some((m) => hasFence(m.jsDoc)))
     .map(([name, [first]]) => gap(file, first.location.line, `${symbolName}.${name}()`));
 
+// Examples are REQUIRED for callables and values — functions, classes, variables,
+// namespaces, and class methods — where usage is the documentation. Pure type declarations
+// (interfaces, type aliases) may carry examples but are never forced to: a shape's example
+// usually restates its producer's call (SerializedFailure ← toJSON, FailureOptions ← the
+// factories), and a demanded restatement is noise, not documentation.
+const EXAMPLE_REQUIRED_KINDS = new Set(['function', 'variable', 'class', 'enum', 'namespace']);
+
 // One symbol's gaps: re-export declarations (kind 'reference') are enforced at their
 // definition site, so a barrel inherits the definition's doc and example (write-once-reuse)
 // while symbols a barrel defines itself are enforced like any other.
@@ -127,9 +134,10 @@ const symbolGaps = (file, reachable) => (symbol) => {
   const declarations = symbol.declarations.filter((d) => d.kind !== 'reference');
   if (!reachable.has(symbol.name) || declarations.length === 0) return [];
   const classDeclaration = declarations.find((d) => d.kind === 'class');
+  const requiresExample = declarations.some((d) => EXAMPLE_REQUIRED_KINDS.has(d.kind));
   return [
     ...(classDeclaration ? methodGaps(file, symbol.name, classDeclaration) : []),
-    ...(declarations.some((d) => hasFence(d.jsDoc))
+    ...(!requiresExample || declarations.some((d) => hasFence(d.jsDoc))
       ? []
       : [gap(file, declarations[0].location.line, symbol.name)]),
   ];
