@@ -91,6 +91,51 @@ module('Task | call form', { concurrency: true }, () => {
   test('the runtime name stays Task, not the internal class binding', (assert) => {
     assert.strictEqual(Task.name, 'Task');
   });
+
+  test('Task(promise) wraps an in-flight promise — observation deferred, Task API intact', async (assert) => {
+    const task = Task(Promise.resolve(7));
+    assert.true(task instanceof Task);
+    assert.strictEqual(await task, 7);
+    assert.strictEqual((await task.result()).value, 7);
+  });
+
+  test('new Task(promise) — the constructor takes the same union', async (assert) => {
+    assert.strictEqual(await new Task(Promise.resolve(8)), 8);
+  });
+});
+
+// ── ignore — deliberate non-handling, eager by design ────────────────────────
+
+module('Task | ignore', { concurrency: true }, () => {
+  test('swallows a declared failure and resolves undefined', async (assert) => {
+    assert.strictEqual(await loadUser(0).ignore('cleanup that may fail'), undefined);
+  });
+
+  test('swallows a bug too — ignore declares the outcome has no consequence at all', async (assert) => {
+    const buggy = Task<number>(() => {
+      throw new TypeError('boom');
+    });
+    assert.strictEqual(await buggy.ignore('cleanup'), undefined);
+  });
+
+  test('passes a success through untouched', async (assert) => {
+    assert.deepEqual(await loadUser(1).ignore('unused label'), { id: 1, name: 'u1' });
+  });
+
+  test('is EAGER — fire-and-forget starts the work with no await', (assert) => {
+    let ran = false;
+    Task(() => {
+      ran = true;
+      return 1;
+    }).ignore('fire and forget');
+    assert.true(ran, 'ignore started the recipe immediately, unlike every lazy method');
+  });
+
+  test('a fire-and-forget rejection is absorbed, never an unhandled rejection', async (assert) => {
+    Task<number>(() => Promise.reject(NotFound({ id: 9 }))).ignore('cleanup');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.true(true, 'the runner would have flagged an unhandled rejection by now');
+  });
 });
 
 // ── It is a real Promise ──────────────────────────────────────────────────────

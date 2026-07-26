@@ -1,5 +1,10 @@
 import { type Result, ok, err } from '../result/result.ts';
-import { Failure, isFailure, type Any as AnyFailure } from '../result/failure.ts';
+import {
+  Failure,
+  ignore as failureIgnore,
+  isFailure,
+  type Any as AnyFailure,
+} from '../result/failure.ts';
 
 /**
  * `Task<T, E>` — a **lazy, retryable** superset of `Promise<T>` for error handling that respects
@@ -62,8 +67,10 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   #source: TaskClass<unknown, unknown> | undefined;
   #rederive: ((fresh: TaskClass<unknown, unknown>) => TaskClass<T, E>) | undefined;
 
-  /** The argument is a recipe, not an executor: it takes no arguments and runs on first await. */
-  constructor(recipe: () => T | PromiseLike<T>) {
+  /** Takes a recipe (lazy — runs on first await), or an already-running promise (the Task
+   *  then defers only *observation*). Never an executor — that is what makes it constructible
+   *  around work instead of inside it. */
+  constructor(source: PromiseLike<T> | (() => T | PromiseLike<T>)) {
     let resolve!: (value: T | PromiseLike<T>) => void;
     let reject!: (reason: unknown) => void;
     // A no-op executor: the work does not start here (that is the whole point). We only capture
@@ -72,7 +79,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
       resolve = res;
       reject = rej;
     });
-    this.#recipe = recipe;
+    this.#recipe = typeof source === 'function' ? source : () => source;
     this.#resolve = resolve;
     this.#reject = reject;
   }
@@ -160,7 +167,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   static from<T, E = AnyFailure>(
     source: PromiseLike<T> | (() => T | PromiseLike<T>),
   ): TaskClass<T, E> {
-    return new TaskClass(typeof source === 'function' ? source : () => source);
+    return new TaskClass(source);
   }
 
   /**
@@ -406,6 +413,34 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   }
 
   /**
+   * Deliberate non-handling — the Task spelling of `promise.catch(Failure.ignore(context))`.
+   * Swallows **every** rejection (bugs included: this is for cleanup whose failure genuinely
+   * has no consequence) and says so on stderr under `QUNITX_DEBUG` instead of vanishing.
+   *
+   * Unlike every other method this one **starts the task**: "the outcome does not matter" is
+   * not a decision laziness can defer, and eager attachment is what keeps a fire-and-forget
+   * call site from ever holding an unobserved rejection.
+   *
+   * ```ts
+   * import { unlink } from 'node:fs/promises';
+   *
+   * Task(unlink('/tmp/qunitx-daemon.sock')).ignore('daemon socket unlink'); // fire and forget
+   * await Task(unlink('/tmp/qunitx.lock')).ignore('daemon lock unlink'); // or join the cleanup
+   * ```
+   */
+  ignore(context: string): TaskClass<T | undefined, never> {
+    const report = failureIgnore(context);
+    return this.#derive<T | undefined, never>(
+      () =>
+        this.then<T | undefined, undefined>(undefined, (error: unknown) => {
+          report(error);
+          return undefined;
+        }),
+      (fresh) => fresh.ignore(context),
+    ).perform();
+  }
+
+  /**
    * Adds context to a declared failure — anyhow's `.context()`, not Rust's panicking `expect`.
    * A `Failure` rethrows as a new Failure with the **same `code` and `data`** (so `E`, and every
    * `switch` on `code`, still hold), `message` as the context line, and the original chained
@@ -578,8 +613,8 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
 Object.defineProperty(TaskClass, 'name', { value: 'Task' });
 
 type TaskConstructor = typeof TaskClass & {
-  /** Call form — `Task(recipe)` without `new`; identical to `new Task(recipe)`. */
-  <T, E = AnyFailure>(recipe: () => T | PromiseLike<T>): TaskClass<T, E>;
+  /** Call form — `Task(recipeOrPromise)` without `new`; identical to the constructor. */
+  <T, E = AnyFailure>(source: PromiseLike<T> | (() => T | PromiseLike<T>)): TaskClass<T, E>;
 };
 
 /**
