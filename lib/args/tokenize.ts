@@ -30,7 +30,14 @@ const QUERY_FLAG_ACTION = new Map<string, 'run' | 'list'>([
   ['--preview', 'list'],
 ]);
 
-/** A query flag (`-t`/`-m`/`-s`/`-p`) with its resolved value. */
+/**
+ * A query flag (`-t`/`-m`/`-s`/`-p`) with its resolved value.
+ *
+ * ```ts
+ * tokenize(['--filter=Cart checkout'])[0];
+ * // { kind: 'query', action: 'run', value: 'Cart checkout', greedy: false }
+ * ```
+ */
 export interface QueryToken {
   /** Discriminant. */
   kind: 'query';
@@ -42,7 +49,14 @@ export interface QueryToken {
   greedy: boolean;
 }
 
-/** Any other flag (`--watch`, `--timeout=5000`, `-o`, …), passed through verbatim. */
+/**
+ * Any other flag (`--watch`, `--timeout=5000`, `-o`, …), passed through verbatim.
+ *
+ * ```ts
+ * const flag: FlagToken = { kind: 'flag', raw: '--timeout=5000' };
+ * flag.raw; // '--timeout=5000' — dashes and the glued =value stay intact
+ * ```
+ */
 export interface FlagToken {
   /** Discriminant. */
   kind: 'flag';
@@ -50,7 +64,14 @@ export interface FlagToken {
   raw: string;
 }
 
-/** A positional target: a file, folder, or glob (possibly with a `#34` line suffix). */
+/**
+ * A positional target: a file, folder, or glob (possibly with a `#34` line suffix).
+ *
+ * ```ts
+ * const input: InputToken = { kind: 'input', raw: 'test/cart-test.ts#34' };
+ * input.raw; // 'test/cart-test.ts#34' — the parser splits the #line suffix later
+ * ```
+ */
 export interface InputToken {
   /** Discriminant. */
   kind: 'input';
@@ -58,7 +79,14 @@ export interface InputToken {
   raw: string;
 }
 
-/** One classified argv entry: a query flag, any other flag, or a positional input. */
+/**
+ * One classified argv entry: a query flag, any other flag, or a positional input.
+ *
+ * ```ts
+ * const tokens: ArgToken[] = tokenize(['test/cart-test.ts', '-t', 'checkout', '--watch']);
+ * tokens.map((token) => token.kind); // ['input', 'query', 'flag']
+ * ```
+ */
 export type ArgToken = QueryToken | FlagToken | InputToken;
 
 /**
@@ -72,6 +100,13 @@ export type ArgToken = QueryToken | FlagToken | InputToken;
  *
  * A `--` entry is the POSIX end-of-options marker: everything after it is a positional input, so
  * `-t a b -- test/foo` scopes the run to `test/foo` while keeping `"a b"` as the filter.
+ *
+ * ```ts
+ * tokenize(['-t', 'Cart', 'checkout', '--watch']);
+ * // [{ kind: 'query', action: 'run', value: 'Cart checkout', greedy: true },
+ * //  { kind: 'flag', raw: '--watch' }]
+ * tokenize(['-t', 'a b', '--', 'test/cart-test.ts']).at(-1); // { kind: 'input', raw: 'test/cart-test.ts' }
+ * ```
  */
 export function tokenize(args: string[]): ArgToken[] {
   // The fold carries two bits of cross-entry state: `rest` (past the `--` marker, everything is a

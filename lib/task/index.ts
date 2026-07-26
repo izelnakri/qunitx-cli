@@ -8,7 +8,15 @@
 // value that `task.result()` reflects to — the value half, reused from lib/result unchanged.
 export { Task } from './task.ts';
 
-/** Structured, discriminable failures — the rejection reason of a Task. */
+/**
+ * Structured, discriminable failures — the rejection reason of a Task.
+ *
+ * ```ts
+ * import * as Failure from '../result/failure.ts';
+ * const Timeout = Failure.define('Timeout', (d: { ms: number }) => `timed out after ${d.ms}ms`);
+ * Timeout.is(Timeout({ ms: 3000 })); // true
+ * ```
+ */
 export * as Failure from '../result/failure.ts';
 
 export { type Result, type Ok, type Err, ok, err, isResult, partition } from '../result/result.ts';

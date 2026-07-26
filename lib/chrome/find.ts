@@ -15,6 +15,12 @@ const PATH_DIRS = (process.env.PATH || '').split(delimiter).filter(Boolean);
 /**
  * Resolves the Chrome/Chromium executable path. Returns a Promise for API compatibility
  * with callers, but the resolution is synchronous.
+ *
+ * ```ts
+ * const chromePath = await find();
+ * chromePath; // '/usr/bin/google-chrome-stable' — or null when nothing on PATH is executable
+ * ```
+ *
  * @returns {Promise<string|null>}
  */
 export function find(): Promise<string | null> {

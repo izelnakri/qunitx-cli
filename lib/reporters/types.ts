@@ -5,10 +5,22 @@ import type { Config, Counter } from '../types.ts';
  * active per run — artifact outputs (`--junit`, `--coverage`) are separate additive flags.
  * This module is a leaf (type-only imports), so `Args.parse` can validate against it
  * without pulling the reporter implementations into the CLI's startup path.
+ *
+ * ```ts
+ * REPORTERS[0]; // 'tap' — the default
+ * REPORTERS.join(', '); // 'tap, spec, dot, github' — the order help and errors list them in
+ * ```
  */
 export const REPORTERS = ['tap', 'spec', 'dot', 'github'] as const;
 
-/** A valid `--reporter` value. */
+/**
+ * A valid `--reporter` value.
+ *
+ * ```ts
+ * const name: ReporterName = 'dot';
+ * name; // 'dot' — anything outside REPORTERS is a type error
+ * ```
+ */
 export type ReporterName = (typeof REPORTERS)[number];
 
 /**
@@ -24,6 +36,19 @@ export type ReporterName = (typeof REPORTERS)[number];
  * Concurrency: one reporter instance is shared across all concurrent groups (the group
  * configs are spread off the parent config, so `state.reporters` is the same array). `onTestEnd`
  * therefore arrives interleaved across groups.
+ *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ *
+ * const names: string[] = [];
+ * const reporter: Reporter = {
+ *   onTestEnd(_config, details) {
+ *     names.push(details.fullName.join(' | ')); // one entry per finished test
+ *   },
+ * };
+ * reporter.onTestEnd?.({} as Config, { status: 'passed', fullName: ['Math', 'adds'], runtime: 2 });
+ * names; // ['Math | adds']
+ * ```
  */
 export interface Reporter {
   /** Called once before any test output. In watch mode, once per rerun. */
@@ -34,7 +59,14 @@ export interface Reporter {
   onRunEnd?(config: Config, info: RunEndInfo): void | Promise<void>;
 }
 
-/** One QUnit assertion inside a `testEnd` payload. */
+/**
+ * One QUnit assertion inside a `testEnd` payload.
+ *
+ * ```ts
+ * const assertion: TestAssertion = { passed: false, todo: false, actual: 3, expected: 4 };
+ * assertion.passed; // false — this assertion is what failed its test
+ * ```
+ */
 export interface TestAssertion {
   /** `true` when the assertion held. */
   passed: boolean;
@@ -53,6 +85,11 @@ export interface TestAssertion {
 /**
  * The QUnit `testEnd` payload as it arrives over the WebSocket. Passing tests carry the
  * trimmed `{ status, fullName, runtime }`; failing tests additionally carry `assertions`.
+ *
+ * ```ts
+ * const details: TestDetails = { status: 'passed', fullName: ['Math', 'adds'], runtime: 2 };
+ * details.fullName.join(' | '); // 'Math | adds' — the display name reporters print
+ * ```
  */
 export interface TestDetails {
   /** QUnit's outcome: `passed` | `failed` | `skipped` | `todo`. */
@@ -68,6 +105,13 @@ export interface TestDetails {
 /**
  * Run-scope counts. `fileCount === null` means "counts unknown at this point" (watch mode,
  * where the header is emitted per browser connection rather than per file batch).
+ *
+ * ```ts
+ * const batch: RunStartInfo = { fileCount: 3, groupCount: 2 }; // "3 test files across 2 groups"
+ * const watch: RunStartInfo = { fileCount: null, groupCount: null }; // counts unknown
+ * batch.fileCount; // 3
+ * watch.fileCount; // null
+ * ```
  */
 export interface RunStartInfo {
   /** Test files in this run, or `null` when not known at announce time. */
@@ -76,7 +120,14 @@ export interface RunStartInfo {
   groupCount: number | null;
 }
 
-/** Final run info; the counts themselves live on `config.state.results.counter`. */
+/**
+ * Final run info; the counts themselves live on `config.state.results.counter`.
+ *
+ * ```ts
+ * const info: RunEndInfo = { durationMs: 1240 };
+ * info.durationMs; // what the summary prints as "(1240ms)"
+ * ```
+ */
 export interface RunEndInfo {
   /** Wall-clock duration of the run in milliseconds. */
   durationMs: number;
@@ -86,6 +137,13 @@ export interface RunEndInfo {
  * Applies one `testEnd` to the run's counters. Kept separate from any reporter so the
  * numbers are identical no matter which reporter (or how many) is active — the exit code
  * and the TAP plan both read `counter`, so it must be updated exactly once per test.
+ *
+ * ```ts
+ * const counter = { testCount: 0, failCount: 0, skipCount: 0, todoCount: 0, passCount: 0, errorCount: 0 };
+ * updateCounter(counter, { status: 'passed', fullName: ['Math', 'adds'], runtime: 2 });
+ * counter.testCount; // 1
+ * counter.passCount; // 1
+ * ```
  */
 export function updateCounter(counter: Counter, details: TestDetails): void {
   counter.testCount++;

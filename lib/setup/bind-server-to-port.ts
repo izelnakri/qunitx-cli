@@ -16,6 +16,16 @@ const EXPLICIT_PORT_RETRY_DELAY_MS = 50;
  * - Explicit port (portExplicit true): retries up to EXPLICIT_PORT_RETRIES times on EADDRINUSE
  *   to recover from transient TOCTOU races, then throws if still occupied.
  * Uses try-catch on the actual listen() call — never check-then-listen (TOCTOU).
+ *
+ * ```ts
+ * import type { HTTPServer } from '../web/index.ts';
+ *
+ * // Defined, not invoked: binds a real port.
+ * async function bind(server: HTTPServer, config: { port: number; portExplicit?: boolean }) {
+ *   await bindServerToPort(server, config);
+ *   return config.port; // updated in place to the port actually bound
+ * }
+ * ```
  */
 export async function bindServerToPort(
   server: HTTPServer,

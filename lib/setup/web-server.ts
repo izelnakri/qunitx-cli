@@ -36,7 +36,13 @@ function diagWrite(msg: string): void {
   process.stdout.write(msg);
 }
 
-/** Static 404 page served for HTML-accepting requests to missing static assets. */
+/**
+ * Static 404 page served for HTML-accepting requests to missing static assets.
+ *
+ * ```ts
+ * NOT_FOUND_HTML.includes('404 Not Found'); // true — self-contained, styled like the QUnit reporter
+ * ```
+ */
 const NOT_FOUND_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -67,6 +73,17 @@ const NOT_FOUND_HTML = `<!DOCTYPE html>
 
 /**
  * Creates and returns an HTTPServer with routes for the test HTML, filtered test page, and static assets, plus a WebSocket handler that streams TAP events.
+ *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ * import { bindServerToPort } from './bind-server-to-port.ts';
+ *
+ * // Defined, not invoked: wires live run state into routes and WS handlers.
+ * function example(config: Config) {
+ *   const server = setup(config); // routes ready, not yet listening
+ *   return bindServerToPort(server, config); // bind, then navigate the page to '/'
+ * }
+ * ```
  * @returns {object}
  */
 export function setup(config: Config): HTTPServer {
@@ -399,6 +416,11 @@ export function setup(config: Config): HTTPServer {
  * QUnit tests. Styled to match the QUnit HTML reporter, with an amber banner instead of red.
  * Includes the same WebSocket reconnect script as buildErrorHTML so the page reloads on the
  * next successful build.
+ *
+ * ```ts
+ * const html = buildNoTestsHTML(['/proj/test/empty-test.ts']);
+ * html.includes('0 QUnit tests were registered'); // true — lists the bundled files verbatim
+ * ```
  */
 export function buildNoTestsHTML(files: string[]): string {
   const escaped = files
@@ -512,6 +534,11 @@ export function buildNoTestsHTML(files: string[]): string {
  * Includes a WebSocket reconnect script that reloads the page on 'refresh' (next successful
  * build). Uses `location.port` so no port needs to be baked in at generation time; the script
  * is a no-op when the page is opened as a static file (location.port is empty).
+ *
+ * ```ts
+ * const html = buildErrorHTML({ type: 'SyntaxError', formatted: 'x.ts:1:0: Unexpected "<"' });
+ * html.includes('Build Error: SyntaxError'); // true — the formatted esbuild output, HTML-escaped
+ * ```
  */
 export function buildErrorHTML(buildError: { type: string; formatted: string }): string {
   const escaped = buildError.formatted
@@ -622,6 +649,16 @@ export function buildErrorHTML(buildError: { type: string; formatted: string }):
 /**
  * Registers HTML and JS bundle routes for one concurrent group on a shared HTTPServer.
  * Routes: `GET /group-${groupId}/` and `GET /group-${groupId}/tests.js`.
+ *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ * import type { HTTPServer } from '../web/index.ts';
+ *
+ * // Defined, not invoked: registers routes on a live shared server.
+ * function example(server: HTTPServer, groupConfigs: Config[]) {
+ *   groupConfigs.forEach((groupConfig) => registerGroupRoutes(server, groupConfig));
+ * }
+ * ```
  */
 export function registerGroupRoutes(server: HTTPServer, groupConfig: Config): void {
   const groupId = groupConfig.state.group.index;
@@ -697,6 +734,16 @@ export function registerGroupRoutes(server: HTTPServer, groupConfig: Config): vo
  * Attaches the shared WebSocket event dispatcher to `server.wss`.
  * Routes each socket's messages to the correct group's `Config` using the `groupId`
  * baked into the browser-side `wsOpen` message by `testRuntimeToInject`.
+ *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ * import type { HTTPServer } from '../web/index.ts';
+ *
+ * // Defined, not invoked: attaches WS listeners to a live shared server.
+ * function example(server: HTTPServer, groupConfigs: Config[]) {
+ *   setupGroupWSHandler(server, groupConfigs); // one dispatcher, routed by each socket's wsOpen groupId
+ * }
+ * ```
  */
 export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]): void {
   const socketToGroupId = new WeakMap<object, number>();
@@ -780,6 +827,16 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
 /**
  * Registers a `GET /*` wildcard handler on a shared HTTPServer that serves static assets
  * from each group's output directory, routing by `/group-{id}/` URL prefix.
+ *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ * import type { HTTPServer } from '../web/index.ts';
+ *
+ * // Defined, not invoked: serves files from each group's real output directory.
+ * function example(server: HTTPServer, groupConfigs: Config[]) {
+ *   registerSharedStaticHandler(server, groupConfigs); // /group-0/app.css → <group 0 output>/app.css
+ * }
+ * ```
  */
 export function registerSharedStaticHandler(server: HTTPServer, groupConfigs: Config[]): void {
   const groupUrlRegex = /^\/group-(\d+)(\/.*)?$/;

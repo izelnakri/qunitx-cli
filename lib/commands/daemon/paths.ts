@@ -11,6 +11,11 @@ import path from 'node:path';
  *   Win32 named pipe; a regular tmpdir filesystem path silently fails to bind.
  *
  * `platform` is parameterized for testability; it defaults to `process.platform`.
+ *
+ * ```ts
+ * socket('/home/me/app', 'linux'); // '/tmp/qunitx-daemon-<12-hex>.sock'
+ * socket('/home/me/app', 'win32'); // '\\.\pipe\qunitx-daemon-<12-hex>'
+ * ```
  */
 export function socket(
   cwd: string = process.cwd(),
@@ -37,6 +42,10 @@ export function socket(
  *
  * Giving the daemon its own small private directory keeps watch traffic to
  * events the watcher actually cares about and sidesteps the libuv wart.
+ *
+ * ```ts
+ * dir('/home/me/app'); // '/tmp/qunitx-daemon-<12-hex>' — per-cwd private directory
+ * ```
  */
 export function dir(cwd: string = process.cwd()): string {
   return path.join(os.tmpdir(), `qunitx-daemon-${cwdHash(cwd)}`);
@@ -50,6 +59,10 @@ export function dir(cwd: string = process.cwd()): string {
  *
  * Lives inside `dir(cwd)` rather than directly under os.tmpdir() — see
  * `dir` for the Windows-fs.watch crash this avoids.
+ *
+ * ```ts
+ * info('/home/me/app'); // '/tmp/qunitx-daemon-<12-hex>/info.json'
+ * ```
  */
 export function info(cwd: string = process.cwd()): string {
   return path.join(dir(cwd), 'info.json');

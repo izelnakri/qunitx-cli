@@ -13,16 +13,53 @@ import type { Config } from '../types.ts';
  *
  * Composes SpecReporter rather than reimplementing it: the log stays as readable as a normal
  * spec run, and annotations are strictly additional.
+ *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ * import type { TestDetails } from './types.ts';
+ *
+ * // Defined, not invoked: streams spec output plus ::error commands to stdout.
+ * function example(config: Config, details: TestDetails) {
+ *   const reporter = new GithubReporter();
+ *   reporter.onRunStart(config, { fileCount: 1, groupCount: 1 });
+ *   reporter.onTestEnd(config, details); // spec line, plus "::error …" per failing assertion
+ *   reporter.onRunEnd(config, { durationMs: 800 });
+ * }
+ * ```
  */
 export class GithubReporter implements Reporter {
   #spec = new SpecReporter();
 
-  /** Delegates the run banner to the spec renderer. */
+  /**
+   * Delegates the run banner to the spec renderer.
+   *
+   * ```ts
+   * import type { Config } from '../types.ts';
+   *
+   * // Defined, not invoked: prints the banner to stdout.
+   * function example(reporter: GithubReporter, config: Config) {
+   *   reporter.onRunStart(config, { fileCount: 2, groupCount: 1 }); // "Running 2 test files …"
+   * }
+   * ```
+   */
   onRunStart(config: Config, info: RunStartInfo): void {
     this.#spec.onRunStart(config, info);
   }
 
-  /** Renders the spec line, then annotates each failing assertion for the PR diff. */
+  /**
+   * Renders the spec line, then annotates each failing assertion for the PR diff.
+   *
+   * ```ts
+   * import type { Config } from '../types.ts';
+   * import type { TestDetails } from './types.ts';
+   *
+   * // Defined, not invoked: writes the spec line and one ::error command per failing assertion.
+   * function example(reporter: GithubReporter, config: Config, failed: TestDetails) {
+   *   reporter.onTestEnd(config, failed);
+   *   // "  ✖ adds (3ms)" … then "::error file=lib/math.ts,line=4,col=3,title=Math | adds::…"
+   * }
+   * ```
+   */
   onTestEnd(config: Config, details: TestDetails): void {
     this.#spec.onTestEnd(config, details);
     if (details.status !== 'failed') return;
@@ -37,13 +74,33 @@ export class GithubReporter implements Reporter {
     );
   }
 
-  /** Delegates the summary + failure recap to the spec renderer. */
+  /**
+   * Delegates the summary + failure recap to the spec renderer.
+   *
+   * ```ts
+   * import type { Config } from '../types.ts';
+   *
+   * // Defined, not invoked: prints the summary to stdout.
+   * function example(reporter: GithubReporter, config: Config) {
+   *   reporter.onRunEnd(config, { durationMs: 800 }); // "  5 passing (800ms)" …
+   * }
+   * ```
+   */
   onRunEnd(config: Config, info: RunEndInfo): void {
     this.#spec.onRunEnd(config, info);
   }
 }
 
-/** Builds one `::error file=…,line=…,col=…,title=…::message` workflow command. */
+/**
+ * Builds one `::error file=…,line=…,col=…,title=…::message` workflow command.
+ *
+ * ```ts
+ * annotation('Math | adds', {
+ *   index: 1, message: 'bad sum', actual: 3, expected: 4, stack: null, at: 'lib/math.ts:4:3', source: null,
+ * });
+ * // '::error file=lib/math.ts,line=4,col=3,title=Math | adds::bad sum%0Aexpected: 4%0Aactual:   3'
+ * ```
+ */
 export function annotation(title: string, failure: FailureInfo): string {
   const location = parseAt(failure.at);
   const properties = [

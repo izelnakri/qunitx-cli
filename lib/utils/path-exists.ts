@@ -2,11 +2,10 @@ import fs from 'node:fs/promises';
 
 /**
  * Returns `true` if the given filesystem path is accessible, `false` otherwise.
- * @example
- * ```js
- * import { pathExists } from './path-exists.ts';
- * console.assert(await pathExists('/tmp') === true);
- * console.assert(await pathExists('/tmp/nonexistent-qunitx-file') === false);
+ *
+ * ```ts
+ * await pathExists('/tmp'); // true
+ * await pathExists('/tmp/nonexistent-qunitx-file'); // false — any access failure reads as absent
  * ```
  * @returns {Promise<boolean>}
  */

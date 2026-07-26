@@ -3,7 +3,19 @@ import esbuild from 'esbuild';
 import * as SourceMap from '../utils/source-map.ts';
 import type { SourceMapDecoder } from '../utils/source-map.ts';
 
-/** A `test(...)` or `module(...)` call found in a test file, in 1-based source lines. */
+/**
+ * A `test(...)` or `module(...)` call found in a test file, in 1-based source lines.
+ *
+ * ```ts
+ * const declaration: TestDeclaration = {
+ *   kind: 'test',
+ *   name: 'adds an item',
+ *   startLine: 5,
+ *   endLine: 9,
+ *   parent: 0, // index of the enclosing module declaration; null at the top level
+ * };
+ * ```
+ */
 export interface TestDeclaration {
   /** Whether this is a `test(...)` or a `module(...)` call. */
   kind: 'test' | 'module';
@@ -17,7 +29,17 @@ export interface TestDeclaration {
   parent: number | null;
 }
 
-/** Every declaration found in a file, plus whether it uses `only()`. */
+/**
+ * Every declaration found in a file, plus whether it uses `only()`.
+ *
+ * ```ts
+ * const scan: DeclarationScan = {
+ *   declarations: [{ kind: 'module', name: 'Cart', startLine: 1, endLine: 20, parent: null }],
+ *   hasOnly: false,
+ * };
+ * scan.hasOnly; // false — no only() call, so a line target can still match
+ * ```
+ */
 export interface DeclarationScan {
   /** All test/module declarations, sorted by start line, with `parent` links resolved. */
   declarations: TestDeclaration[];
@@ -59,6 +81,14 @@ const LOADERS: Record<string, esbuild.Loader> = {
  * strings, template literals and the regex-vs-divide ambiguity.
  *
  * Returns null when the file cannot be parsed — callers fall back to running the whole file.
+ *
+ * ```ts
+ * // Defined, not invoked: transform spawns esbuild's service, which the doc sandbox cannot run.
+ * async function scanFile(source: string) {
+ *   const scan = await parseTestDeclarations(source, '/proj/cart-test.ts');
+ *   return scan?.declarations ?? []; // null degrades to "run the whole file"
+ * }
+ * ```
  */
 export async function parseTestDeclarations(
   source: string,

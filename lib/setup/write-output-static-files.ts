@@ -4,6 +4,16 @@ import type { HtmlAssets } from '../types.ts';
 
 /**
  * Copies static HTML files and referenced assets from the project into the configured output directory.
+ *
+ * ```ts
+ * import type { HtmlAssets } from '../types.ts';
+ *
+ * // Defined, not invoked: writes into the real output directory.
+ * async function example(htmlAssets: HtmlAssets) {
+ *   await writeOutputStaticFiles({ projectRoot: '/proj', output: 'tmp' }, htmlAssets);
+ *   // each static HTML + referenced asset now lives under /proj/tmp/
+ * }
+ * ```
  * @returns {Promise<void>}
  */
 export async function writeOutputStaticFiles(

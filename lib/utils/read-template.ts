@@ -12,6 +12,13 @@ import { fileURLToPath } from 'node:url';
  * The two `__dirname`-relative bases cover (a) running from source where
  * templates are 2 levels above lib/utils/, and (b) running from the bundled
  * dist/ where __dirname is the package root so templates are only 1 level up.
+ *
+ * ```ts
+ * // Defined, not invoked: reads template files from the package directory (or the SEA store).
+ * async function loadRunnerHtml(): Promise<string> {
+ *   return await readTemplate('test-runner.html'); // throws when the asset is missing entirely
+ * }
+ * ```
  */
 export async function readTemplate(relativePath: string): Promise<string> {
   const sea = await import('node:sea').catch(() => null);

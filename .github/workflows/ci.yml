@@ -47,8 +47,10 @@ jobs:
       - run: npm run lint:docs
       - run: npm run typecheck
       # Rust-style doctests, both halves: typecheck above TYPE-CHECKS every JSDoc example
-      # (deno check --doc); this step RUNS them (51 blocks, ~7s) under a sandbox that only
-      # allows env reads + /tmp reads — an example that does real I/O fails loudly.
+      # (deno check --doc); this step RUNS them (346 blocks, ~60s) under a sandbox allowing
+      # only env reads, /tmp reads, and read-only system metadata (--allow-sys, which
+      # playwright-core's module eval needs) — an example that writes, connects, or spawns
+      # fails loudly.
       - run: npm run test:doctest
       - run: deno check 'benches/**/*.ts'
       # Promises/A+ compliance for lib/task (872 tests, ~13s, no browser needed) — cheaper

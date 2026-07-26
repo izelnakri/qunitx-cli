@@ -16,6 +16,17 @@ import type { Config, CoverageFileMap } from '../types.ts';
  * coverage to the original files the user wrote rather than the concatenated bundle.
  *
  * node_modules sources are dropped here; the report layer additionally drops the test entry files.
+ *
+ * ```ts
+ * const entry = { // the shape playwright's page.coverage.stopJSCoverage() returns per script
+ *   url: 'http://localhost:1234/tests.js',
+ *   scriptId: '5',
+ *   functions: [
+ *     { functionName: 'add', isBlockCoverage: true, ranges: [{ count: 2, startOffset: 0, endOffset: 40 }] },
+ *   ],
+ * };
+ * entry.functions[0].ranges[0].count; // 2 — V8's hit count for that byte range of the bundle
+ * ```
  */
 interface V8ScriptCoverage {
   url: string;
@@ -32,6 +43,16 @@ interface V8ScriptCoverage {
  * Merges one page's `stopJSCoverage()` result into `config.state.results.coverage`. No-op unless
  * coverage is enabled and a source-map decoder is present. Only the test bundle is attributed;
  * node_modules sources are dropped here (test entry files are dropped later, in the report layer).
+ *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: needs the group's live source-map decoder and the served bundle.
+ * async function example(config: Config, entries: Parameters<typeof collect>[1]) {
+ *   await collect(config, entries); // entries: a page's stopJSCoverage() result
+ *   // config.state.results.coverage now maps original files → coverable/covered lines
+ * }
+ * ```
  */
 export async function collect(config: Config, entries: V8ScriptCoverage[]): Promise<void> {
   const decoder = config.state.group.sourceMapDecoder;

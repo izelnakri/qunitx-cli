@@ -90,6 +90,10 @@ perfLog('chrome-prelaunch.ts: module evaluated');
  * Must be called before process.exit() so the event loop is still alive and the
  * async rm() inside spawn's close handler can run to completion.
  * Safe to call multiple times or when Chrome was never pre-launched (no-op).
+ *
+ * ```ts
+ * await shutdownPrelaunch(); // no-op when nothing was pre-launched; idempotent otherwise
+ * ```
  */
 export async function shutdownPrelaunch(): Promise<void> {
   if (!earlyChrome) return;
@@ -106,6 +110,11 @@ export async function shutdownPrelaunch(): Promise<void> {
  * chromium-headless-shell (not Google Chrome for Testing) and its path is not
  * known at module-evaluation time. playwright-core's chromium.launch() resolves
  * the binary correctly and is used directly in browser.ts.
+ *
+ * ```ts
+ * const early = await prelaunchPromise;
+ * early; // null here — this is not a run command, so no Chrome was pre-launched
+ * ```
  */
 export const prelaunchPromise =
   isRunCommand &&

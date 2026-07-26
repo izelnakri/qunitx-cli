@@ -13,6 +13,12 @@ import { type Result, ok, err, Failure } from '../result/index.ts';
  * `process.exit` into throwing a Symbol to observe any of these branches at all.
  *
  * `cli.ts` is now the single place that turns one of these into a message and an exit code.
+ *
+ * ```ts
+ * const failure = InvalidFlag({ flag: '--port', value: 'abc', expected: 'Expected --port=<0-65535>.' });
+ * failure.message; // 'Invalid --port value: "abc". Expected --port=<0-65535>.'
+ * failure.data.flag; // '--port' — typed payload, no message parsing
+ * ```
  */
 export const InvalidFlag = Failure.define(
   'InvalidFlag',
@@ -20,7 +26,14 @@ export const InvalidFlag = Failure.define(
     `Invalid ${data.flag} value: "${data.value}". ${data.expected}`,
 );
 
-/** Every way `parse()` can reject its input. */
+/**
+ * Every way `parse()` can reject its input.
+ *
+ * ```ts
+ * const failure: ParseFailure = InvalidFlag({ flag: '--browser', value: 'ie', expected: 'No.' });
+ * failure.code; // 'InvalidFlag' — the only parse failure kind today
+ * ```
+ */
 export type ParseFailure = Failure.Of<typeof InvalidFlag>;
 
 const BROWSERS = ['chromium', 'firefox', 'webkit'];
@@ -33,6 +46,17 @@ const FALLBACK_TIMEOUT_MS = 10_000;
 // hint can run at parse time (config, which owns the real list, is built from these flags).
 const FILE_LOOKING = /\.(js|ts|jsx|tsx|html)$/;
 
+/**
+ * The flag object a successful `parse()` carries — CLI flags only, before package.json merge.
+ *
+ * ```ts
+ * // Defined, not invoked: the shape is what parse(projectRoot) yields on the ok branch.
+ * function flagsOf(projectRoot: string) {
+ *   const parsed = parse(projectRoot);
+ *   return parsed.ok ? { inputs: parsed.value.inputs, watch: parsed.value.watch } : null;
+ * }
+ * ```
+ */
 // { inputs: [], debug: true, watch: true, open: true, failFast: true, onlyFailed: true, htmlPaths: [], output }
 interface ParsedFlags {
   inputs: string[];
@@ -65,6 +89,14 @@ interface ParsedFlags {
 
 /**
  * Parses `process.argv` into a qunitx flag object (`inputs`, `debug`, `watch`, `failFast`, `timeout`, `output`, `port`, `before`, `after`).
+ *
+ * ```ts
+ * // Defined, not invoked: reads the live process.argv.
+ * function example(projectRoot: string) {
+ *   const parsed = parse(projectRoot); // a Result — a bad flag reports, never exits
+ *   return parsed.ok ? parsed.value.inputs : parsed.error.code; // absolute inputs | 'InvalidFlag'
+ * }
+ * ```
  * @returns {object}
  */
 export function parse(projectRoot: string): Result<ParsedFlags, ParseFailure> {

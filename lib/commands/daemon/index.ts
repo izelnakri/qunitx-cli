@@ -93,6 +93,13 @@ async function buildDaemonSpawn(): Promise<{ bin: string; args: string[] }> {
  * (spawned by `start`); all other subcommands are client operations. No subcommand
  * (or `--help` / `-h` / `help`) prints usage and exits 0; an unknown subcommand
  * prints usage to stderr and exits 1.
+ *
+ * ```ts
+ * // Defined, not invoked: dispatches on live process.argv and may spawn the daemon.
+ * async function daemonCommand(): Promise<number> {
+ *   return await run(); // `qunitx daemon status` → exit code
+ * }
+ * ```
  */
 export function run(): Promise<number> {
   const sub = process.argv[3];
@@ -226,6 +233,13 @@ async function spawnAndWaitForDaemon(): Promise<{ pid: number } | null> {
  * Ensures a daemon is reachable for the current cwd. Returns true if one was
  * already running or was successfully spawned; false on spawn timeout. Silent —
  * intended for the cli.ts auto-spawn path where the spawn is incidental to the run.
+ *
+ * ```ts
+ * // Defined, not invoked: pings the daemon socket and may spawn a real process.
+ * async function warmDaemon(): Promise<boolean> {
+ *   return await ensureRunning(); // true → a daemon is reachable for this cwd
+ * }
+ * ```
  */
 export async function ensureRunning(): Promise<boolean> {
   if ((await Client.ping())?.type === 'pong') return true;

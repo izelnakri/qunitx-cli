@@ -3,12 +3,12 @@
  * Splits on `-` and `_` word boundaries; internal capitals in camelCase/PascalCase
  * are preserved as-is.
  *
- * @example
- * convertToPascalCase('user-contact-details') // 'UserContactDetails'
- * convertToPascalCase('user_contact_details') // 'UserContactDetails'
- * convertToPascalCase('userContactDetails')   // 'UserContactDetails'
- * convertToPascalCase('UserContactDetails')   // 'UserContactDetails'
- * convertToPascalCase('my_api-handler')       // 'MyApiHandler'
+ * ```ts
+ * convertToPascalCase('user-contact-details'); // 'UserContactDetails'
+ * convertToPascalCase('user_contact_details'); // 'UserContactDetails'
+ * convertToPascalCase('userContactDetails'); // 'UserContactDetails'
+ * convertToPascalCase('my_api-handler'); // 'MyApiHandler'
+ * ```
  */
 export function convertToPascalCase(str: string): string {
   return str

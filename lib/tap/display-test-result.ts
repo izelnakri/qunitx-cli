@@ -9,6 +9,18 @@ import type { FailureInfo } from '../reporters/failure.ts';
  * Formats and prints a single QUnit testEnd event as a TAP `ok`/`not ok` line with an
  * optional YAML failure block. A pure formatter: `testNumber` is the TAP sequence number
  * (the caller owns counting) and `failures` are pre-resolved by `failedAssertions`.
+ *
+ * ```ts
+ * import type { TestDetails } from '../reporters/types.ts';
+ * import type { FailureInfo } from '../reporters/failure.ts';
+ *
+ * // Defined, not invoked: writes the TAP line (plus YAML failure blocks) to stdout.
+ * function example(details: TestDetails, failures: FailureInfo[]) {
+ *   displayTestResult(3, details, failures);
+ *   // "not ok 3 Math | adds # (2 ms)" then one "  ---" YAML block per failure
+ * }
+ * ```
+ *
  * @returns {void}
  */
 export function displayTestResult(

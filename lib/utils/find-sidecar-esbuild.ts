@@ -23,6 +23,11 @@ import { dirname, join } from 'node:path';
  * Returns the path to an executable esbuild sidecar sitting next to `execDir`, or
  * null if none is present. On Windows the `.exe` variant is preferred. Pure and
  * injectable so the lookup order is unit-testable without a real compiled binary.
+ *
+ * ```ts
+ * findSidecarEsbuild('/tmp/no-sidecar-here'); // null — nothing executable next to the binary
+ * findSidecarEsbuild('/tmp/no-sidecar-here', 'win32'); // null — checked esbuild.exe first
+ * ```
  */
 export function findSidecarEsbuild(
   execDir: string,

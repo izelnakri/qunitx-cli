@@ -33,6 +33,13 @@ const SHUTDOWN_PID_POLL_MS = 50;
 /**
  * True iff a live daemon socket exists and the invocation can use it. The cli's
  * primary dispatch check.
+ *
+ * ```ts
+ * // Defined, not invoked: checks env, argv and the on-disk sentinel for process.cwd().
+ * function daemonAvailable() {
+ *   return shouldUse(); // true only when eligible and a daemon info file exists
+ * }
+ * ```
  */
 export function shouldUse(): boolean {
   return isDaemonEligible() && existsSync(Paths.info());
@@ -42,6 +49,13 @@ export function shouldUse(): boolean {
  * True iff the user opted in to auto-spawn (`QUNITX_DAEMON=1`), the invocation
  * is daemon-eligible, and no daemon is running yet — meaning cli should spawn
  * one before dispatching the run.
+ *
+ * ```ts
+ * // Defined, not invoked: reads env + the on-disk sentinel for process.cwd().
+ * function needsSpawn() {
+ *   return shouldAutoSpawn(); // true → cli spawns the daemon before dispatching
+ * }
+ * ```
  */
 export function shouldAutoSpawn(): boolean {
   return Boolean(process.env.QUNITX_DAEMON) && isDaemonEligible() && !existsSync(Paths.info());
@@ -50,12 +64,28 @@ export function shouldAutoSpawn(): boolean {
 /**
  * Opens a connection to the daemon for the given cwd. Resolves the connected socket
  * on success; resolves `null` on any failure (no socket file, ECONNREFUSED, timeout).
+ *
+ * ```ts
+ * // Defined, not invoked: dials the project's daemon socket.
+ * async function probe() {
+ *   return await tryConnect('/proj'); // net.Socket, or null within 1s on any failure
+ * }
+ * ```
  */
 export function tryConnect(cwd: string = process.cwd()): Promise<net.Socket | null> {
   return Socket.connect(Paths.socket(cwd), CONNECT_TIMEOUT_MS);
 }
 
-/** Sends a `ping` and resolves the daemon's `pong` response (or `null` on failure). */
+/**
+ * Sends a `ping` and resolves the daemon's `pong` response (or `null` on failure).
+ *
+ * ```ts
+ * // Defined, not invoked: one ping/pong round-trip over the daemon socket.
+ * async function daemonIdentity() {
+ *   return await ping(); // { type: 'pong', pid, nodeVersion, cwd, startedAt } or null
+ * }
+ * ```
+ */
 export async function ping(): Promise<ResponseChunk | null> {
   const socket = await tryConnect();
   if (!socket) return null;
@@ -87,6 +117,13 @@ export async function ping(): Promise<ResponseChunk | null> {
  *
  * Returns `true` if a daemon was reached and asked to stop, `false` if no daemon
  * was running.
+ *
+ * ```ts
+ * // Defined, not invoked: `qunitx daemon stop` — IPC plus a bounded pid-exit poll.
+ * async function stopDaemon() {
+ *   return await shutdown(); // true if a daemon was reached, false when none was running
+ * }
+ * ```
  */
 export async function shutdown(cwd: string = process.cwd()): Promise<boolean> {
   const pid = await readDaemonPid(cwd);
@@ -101,7 +138,15 @@ export async function shutdown(cwd: string = process.cwd()): Promise<boolean> {
   return true;
 }
 
-/** No daemon was listening — the ordinary case on a cold machine, not an error worth showing. */
+/**
+ * No daemon was listening — the ordinary case on a cold machine, not an error worth showing.
+ *
+ * ```ts
+ * const failure = DaemonUnreachable();
+ * failure.code; // 'DaemonUnreachable'
+ * failure.message; // 'no daemon is listening for this project'
+ * ```
+ */
 export const DaemonUnreachable = Failure.define(
   'DaemonUnreachable',
   'no daemon is listening for this project',
@@ -114,6 +159,11 @@ export const DaemonUnreachable = Failure.define(
  * `resolve(1)`, exactly like `done` with `exitCode: 1`. A daemon that crashed mid-run was
  * therefore reported to the user — and to CI — as "one test failed", with no hint that no
  * tests had actually been reported at all.
+ *
+ * ```ts
+ * DaemonDisconnected({ reason: 'close' }).message;
+ * // 'daemon closed the connection (close) without reporting a result'
+ * ```
  */
 export const DaemonDisconnected = Failure.define(
   'DaemonDisconnected',
@@ -121,7 +171,14 @@ export const DaemonDisconnected = Failure.define(
     `daemon closed the connection (${data.reason}) without reporting a result`,
 );
 
-/** Every way a daemon-routed run can fail to produce an exit code. */
+/**
+ * Every way a daemon-routed run can fail to produce an exit code.
+ *
+ * ```ts
+ * const failure: RunViaFailure = DaemonDisconnected({ reason: 'error' });
+ * failure.code; // 'DaemonDisconnected' — or 'DaemonUnreachable'; narrow with a switch
+ * ```
+ */
 export type RunViaFailure = Failure.Of<typeof DaemonUnreachable | typeof DaemonDisconnected>;
 
 /**
@@ -132,6 +189,14 @@ export type RunViaFailure = Failure.Of<typeof DaemonUnreachable | typeof DaemonD
  *
  * Forwards the user's Ctrl+C: client exits with 130; daemon abandons the run cleanly
  * when it sees the socket close (clientAlive=false stops further writes).
+ *
+ * ```ts
+ * // Defined, not invoked: streams the daemon's TAP output to this process's stdio.
+ * async function runOnDaemon() {
+ *   const outcome = await runVia(['test/foo-test.ts']);
+ *   return outcome.ok ? outcome.value : null; // exit code, or a RunViaFailure to act on
+ * }
+ * ```
  */
 export async function runVia(argv: string[]): Promise<Result<number, RunViaFailure>> {
   const socket = await tryConnect();

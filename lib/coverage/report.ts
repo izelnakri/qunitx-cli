@@ -15,6 +15,19 @@ import type { Config, CoverageFileMap, FileCoverage } from '../types.ts';
 const GOOD_PCT = 80;
 const OK_PCT = 50;
 
+/**
+ * One report row: a source file's coverage totals, shared by the terminal, lcov and HTML
+ * renderers so the three can never disagree. Produced by {@link buildRows}.
+ *
+ * ```ts
+ * const coverage = new Map([
+ *   ['/repo/lib/math.ts', { coverable: new Set([1, 2]), covered: new Map([[1, 3]]), sourceContent: null }],
+ * ]);
+ * const [row] = buildRows(coverage, new Set<string>(), '/repo');
+ * row.displayPath; // 'lib/math.ts'
+ * row.pct; // 50 — 1 of 2 coverable lines was hit
+ * ```
+ */
 interface FileRow {
   displayPath: string;
   total: number; // coverable (executable) lines
@@ -34,6 +47,16 @@ const ARTIFACTS = [
  * Renders the run's accumulated coverage: always prints the terminal summary, then writes the
  * `lcov`/`html` reports the user requested via `config.coverageFormats`. `testFiles` (the run's
  * test entry paths) are excluded so the report reflects the code under test, not the tests.
+ *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: prints the summary and writes files under <output>/coverage/.
+ * async function example(config: Config, testFiles: string[]) {
+ *   await write(config, testFiles);
+ *   // stdout: the "# Coverage (V8 line coverage)" table, then "# wrote coverage lcov to …" lines
+ * }
+ * ```
  */
 export async function write(config: Config, testFiles: string[]): Promise<void> {
   const collector = config.state.results.coverage;
@@ -71,7 +94,19 @@ export async function write(config: Config, testFiles: string[]): Promise<void> 
   process.stdout.write((await Promise.all(formatWrites)).join(''));
 }
 
-/** Turns the raw coverage map into sorted, test-file-filtered rows with computed percentages. */
+/**
+ * Turns the raw coverage map into sorted, test-file-filtered rows with computed percentages.
+ *
+ * ```ts
+ * const coverage = new Map([
+ *   ['/repo/lib/math.ts', { coverable: new Set([1, 2]), covered: new Map([[1, 3]]), sourceContent: null }],
+ *   ['/repo/test/math-test.ts', { coverable: new Set([1]), covered: new Map([[1, 1]]), sourceContent: null }],
+ * ]);
+ * const rows = buildRows(coverage, new Set(['/repo/test/math-test.ts']), '/repo');
+ * rows.map((row) => row.displayPath); // ['lib/math.ts'] — the test file is excluded
+ * rows[0].covered; // 1 — only line 1 had a hit count above zero
+ * ```
+ */
 export function buildRows(
   collector: CoverageFileMap,
   testFiles: Set<string>,
@@ -141,7 +176,17 @@ function formatRow(
   return `# ${truncated.padEnd(pathWidth)}   ${colored}   ${covered}/${total}`;
 }
 
-/** Builds a standard LCOV `lcov.info` string (line coverage only: DA/LF/LH per file). */
+/**
+ * Builds a standard LCOV `lcov.info` string (line coverage only: DA/LF/LH per file).
+ *
+ * ```ts
+ * const coverage = new Map([
+ *   ['/repo/lib/math.ts', { coverable: new Set([1, 2]), covered: new Map([[1, 3]]), sourceContent: null }],
+ * ]);
+ * buildLcov(buildRows(coverage, new Set<string>(), '/repo'));
+ * // 'TN:\nSF:lib/math.ts\nDA:1,3\nDA:2,0\nLF:2\nLH:1\nend_of_record\n'
+ * ```
+ */
 export function buildLcov(rows: FileRow[]): string {
   return (
     rows
@@ -161,7 +206,17 @@ export function buildLcov(rows: FileRow[]): string {
   );
 }
 
-/** Builds a self-contained HTML report: a summary table plus per-file source with line coloring. */
+/**
+ * Builds a self-contained HTML report: a summary table plus per-file source with line coloring.
+ *
+ * ```ts
+ * const coverage = new Map([
+ *   ['/repo/lib/one.ts', { coverable: new Set([1]), covered: new Map([[1, 1]]), sourceContent: 'export const one = 1;' }],
+ * ]);
+ * const html = buildHtml(buildRows(coverage, new Set<string>(), '/repo'));
+ * html.includes('100.00%'); // true — the overall badge; each file's colored source follows
+ * ```
+ */
 export function buildHtml(rows: FileRow[]): string {
   const totalLines = rows.reduce((sum, row) => sum + row.total, 0);
   const coveredLines = rows.reduce((sum, row) => sum + row.covered, 0);

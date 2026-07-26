@@ -23,6 +23,16 @@ perfLog('browser.js: playwright-core import started');
  * back to chromium.launch() if pre-launch failed.
  * For firefox/webkit: uses playwright's standard launch (requires `npx playwright install [browser]`).
  *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: connects to / launches a real browser.
+ * async function example(config: Config) {
+ *   const browser = await launch(config); // chromium: CDP fast path, else playwright launch()
+ *   return browser.newPage();
+ * }
+ * ```
+ *
  * @param skipPrelaunch When true, bypasses the prelaunch CDP path entirely and goes
  * straight to a fresh chromium.launch(). Used by the daemon's crash-recovery path —
  * prelaunch is a one-shot startup optimization and recovery needs a fresh browser.
@@ -112,6 +122,16 @@ export async function launch(config: Config, skipPrelaunch = false): Promise<Bro
 
 /**
  * Launches a Playwright browser (or reuses an existing one), starts the web server, and returns the page/server/browser connection object.
+ *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: starts a real server, browser and page.
+ * async function example(config: Config) {
+ *   const { page } = await setup(config); // server is bound, console/pageerror wired
+ *   return page.goto(`http://localhost:${config.port}`);
+ * }
+ * ```
  * @returns {Promise<{server: object, browser: object, page: object}>}
  */
 export async function setup(

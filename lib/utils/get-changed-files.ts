@@ -4,6 +4,12 @@ import path from 'node:path';
  * Subset of esbuild's Metafile shape that we actually read. Defined locally so
  * this module doesn't import the heavy `esbuild` package — it only parses a
  * JSON file that esbuild produced earlier.
+ *
+ * ```ts
+ * const metafile: AffectedMetafile = {
+ *   inputs: { 'test/a-test.ts': { imports: [{ path: 'lib/util.ts' }] }, 'lib/util.ts': {} },
+ * };
+ * ```
  */
 export interface AffectedMetafile {
   /** Every input file esbuild visited, keyed by path relative to esbuild's cwd. */
@@ -20,6 +26,22 @@ export interface AffectedMetafile {
  *
  * Paths in the metafile are relative to `esbuildCwd`; we resolve them against it
  * so comparisons happen on normalized absolute paths.
+ *
+ * ```ts
+ * const metafile: AffectedMetafile = {
+ *   inputs: {
+ *     'test/a-test.ts': { imports: [{ path: 'lib/util.ts' }] },
+ *     'test/b-test.ts': { imports: [] },
+ *     'lib/util.ts': {},
+ *   },
+ * };
+ *
+ * getChangedFiles(metafile, '/proj', new Set(['/proj/lib/util.ts']), [
+ *   '/proj/test/a-test.ts',
+ *   '/proj/test/b-test.ts',
+ * ]);
+ * // Set { '/proj/test/a-test.ts' } — only the test that transitively imports the change
+ * ```
  */
 export function getChangedFiles(
   metafile: AffectedMetafile,

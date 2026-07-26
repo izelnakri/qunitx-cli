@@ -79,7 +79,14 @@ const UTF8_DECODER = new TextDecoder();
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-/** One decoded mapping entry.  All coordinates are 0-based. */
+/**
+ * One decoded mapping entry.  All coordinates are 0-based.
+ *
+ * ```ts
+ * const segment: Segment = { generatedCol: 0, sourceIndex: 0, sourceLine: 10, sourceCol: 2 };
+ * // bundle column 0 maps to line 11, column 3 of `sources[0]` (1-based display)
+ * ```
+ */
 export interface Segment {
   /** 0-based column in the generated (bundle) file. */
   generatedCol: number;
@@ -91,7 +98,14 @@ export interface Segment {
   sourceCol: number;
 }
 
-/** Parsed representation of a source-map V3 JSON, ready for position lookup. */
+/**
+ * Parsed representation of a source-map V3 JSON, ready for position lookup.
+ *
+ * ```ts
+ * const decoder: SourceMapDecoder = parse('{"sources":["src/a.ts"],"mappings":"AAAA"}', '/proj/tmp');
+ * decoder.outDir; // '/proj/tmp' — relative `sources` entries resolve against it
+ * ```
+ */
 export interface SourceMapDecoder {
   /** Decoded segments indexed by 0-based generated line number. */
   segmentsByLine: Segment[][];
@@ -113,6 +127,12 @@ export interface SourceMapDecoder {
  *
  * Each base64 character contributes 5 data bits (bits 0–4) and 1 continuation bit (bit 5).
  * The least-significant bit of the fully-accumulated value is the sign bit.
+ *
+ * ```ts
+ * readVLQ('C', 0); // [1, 1] — value 1, next position 1
+ * readVLQ('D', 0); // [-1, 1] — the low bit is the sign
+ * readVLQ('gB', 0); // [16, 2] — 'g' sets the continuation bit, 'B' finishes the value
+ * ```
  */
 export function readVLQ(text: string, position: number): [value: number, nextPos: number] {
   const cursor = { position };
@@ -130,6 +150,12 @@ export function readVLQ(text: string, position: number): [value: number, nextPos
  * accesses out of a hot loop containing further string ops.  Branches are ordered by
  * descending frequency: the VLQ default fires for every segment (~64K calls per real
  * bundle), `,` fires N − L times, `;` only L − 1 times.
+ *
+ * ```ts
+ * decodeMappings('AAAA;AACA');
+ * // [ [{ generatedCol: 0, sourceIndex: 0, sourceLine: 0, sourceCol: 0 }],
+ * //   [{ generatedCol: 0, sourceIndex: 0, sourceLine: 1, sourceCol: 0 }] ] — deltas accumulate
+ * ```
  */
 export function decodeMappings(mappings: string): Segment[][] {
   const result: Segment[][] = [];
@@ -168,7 +194,15 @@ export function decodeMappings(mappings: string): Segment[][] {
   return result;
 }
 
-/** Parses a source-map V3 JSON string into a `SourceMapDecoder` ready for position lookup. */
+/**
+ * Parses a source-map V3 JSON string into a `SourceMapDecoder` ready for position lookup.
+ *
+ * ```ts
+ * const decoder = parse('{"sources":["../test/login-test.ts"],"mappings":"AAAA"}', '/proj/tmp');
+ * decoder.sources; // ['../test/login-test.ts']
+ * decoder.segmentsByLine[0].length; // 1
+ * ```
+ */
 export function parse(json: string, outDir: string): SourceMapDecoder {
   const map = JSON.parse(json) as {
     sources?: string[];
@@ -192,6 +226,15 @@ export function parse(json: string, outDir: string): SourceMapDecoder {
  *
  * Buffer/Uint8Array bundles are scanned in-place from the tail; the bundle itself is
  * never decoded to a full UTF-8 string.
+ *
+ * ```ts
+ * const bundle =
+ *   'console.log(1);\n//# sourceMappingURL=data:application/json;base64,' +
+ *   btoa('{"sources":["src/a.ts"],"mappings":"AAAA"}');
+ *
+ * extractInline(bundle, '/proj/tmp')?.sources; // ['src/a.ts']
+ * extractInline('no inline map here', '/proj/tmp'); // null
+ * ```
  */
 export function extractInline(
   bundle: ArrayBufferView | string | null,
@@ -211,6 +254,14 @@ export function extractInline(
  * Returns the original source position for a generated (line, col) pair.
  * Both coordinates are **1-based** (the format Chrome uses in `Error.stack`).
  * Returns `null` when the position cannot be mapped.
+ *
+ * ```ts
+ * const decoder = parse('{"sources":["../test/login-test.ts"],"mappings":"AAAA"}', '/proj/tmp');
+ *
+ * lookupPosition(decoder, 1, 1);
+ * // { absolutePath: '/proj/test/login-test.ts', line: 1, col: 1, sourceText: null }
+ * lookupPosition(decoder, 99, 1); // null — no mapping for that generated line
+ * ```
  */
 export function lookupPosition(
   decoder: SourceMapDecoder,
@@ -238,6 +289,12 @@ export function lookupPosition(
  * Parses the trailing `URL:LINE:COL` suffix of a stack frame.  The greedy `(.+)` group
  * captures URLs that contain colons (e.g. `http://host:PORT/path`); the regex anchors
  * mean the last two `:digits` sequences are always the line/col.
+ *
+ * ```ts
+ * parseFrameLocation('http://localhost:7357/tests.js:10:15');
+ * // { url: 'http://localhost:7357/tests.js', line: 10, col: 15 } — the port survives
+ * parseFrameLocation('native code'); // null
+ * ```
  */
 export function parseFrameLocation(
   text: string,
@@ -246,7 +303,15 @@ export function parseFrameLocation(
   return match ? { url: match[1], line: +match[2], col: +match[3] } : null;
 }
 
-/** Returns `true` when `url` points to a test bundle (`/tests.js` or `/filtered-tests.js`) served by the local HTTP server. */
+/**
+ * Returns `true` when `url` points to a test bundle (`/tests.js` or `/filtered-tests.js`) served by the local HTTP server.
+ *
+ * ```ts
+ * isBundleUrl('http://localhost:7357/tests.js'); // true
+ * isBundleUrl('async https://localhost:7357/filtered-tests.js'); // true — Chrome's async prefix
+ * isBundleUrl('http://localhost:7357/vendor.js'); // false
+ * ```
+ */
 export function isBundleUrl(url: string): boolean {
   return BUNDLE_URL_RE.test(url);
 }
@@ -256,6 +321,13 @@ export function isBundleUrl(url: string): boolean {
  * applying the same `sourceRoot` + `outDir` rules as position lookups. Returns `null` when
  * the index is out of range or the entry is empty. Used by the coverage collector to key
  * accumulated line coverage by absolute source path.
+ *
+ * ```ts
+ * const decoder = parse('{"sources":["src/a.ts"],"mappings":"AAAA"}', '/proj/tmp');
+ *
+ * sourceAbsolutePath(decoder, 0); // '/proj/tmp/src/a.ts'
+ * sourceAbsolutePath(decoder, 7); // null — index out of range
+ * ```
  */
 export function sourceAbsolutePath(decoder: SourceMapDecoder, sourceIndex: number): string | null {
   const rawSource = decoder.sources[sourceIndex];
@@ -271,6 +343,14 @@ export function sourceAbsolutePath(decoder: SourceMapDecoder, sourceIndex: numbe
  * Returns `{ resolved, userPath, sourceText }` when the frame is from a test bundle and the
  * position can be mapped; `null` otherwise (caller keeps the original frame).
  * `userPath` and `sourceText` are non-null only when the resolved source is outside `node_modules/`.
+ *
+ * ```ts
+ * const decoder = parse('{"sources":["../test/login-test.ts"],"mappings":"AAAA"}', '/proj/tmp');
+ *
+ * resolveFrame('    at http://localhost:7357/tests.js:1:1', decoder, '/proj');
+ * // { resolved: '    at test/login-test.ts:1:1', userPath: 'test/login-test.ts:1:1', sourceText: null }
+ * resolveFrame('    at native code', decoder, '/proj'); // null — kept verbatim by the caller
+ * ```
  */
 export function resolveFrame(
   frame: string,
@@ -301,6 +381,14 @@ export function resolveFrame(
  *   or `null` when the map has no embedded source text.
  *
  * Frames from native code, external scripts, or unknown formats are left unchanged.
+ *
+ * ```ts
+ * const decoder = parse('{"sources":["../test/login-test.ts"],"mappings":"AAAA"}', '/proj/tmp');
+ *
+ * resolveStack('Error: rejected\n    at http://localhost:7357/tests.js:1:1', decoder, '/proj');
+ * // { resolvedStack: 'Error: rejected\n    at test/login-test.ts:1:1',
+ * //   firstUserFrame: 'test/login-test.ts:1:1', firstUserSourceText: null }
+ * ```
  */
 export function resolveStack(
   stack: string,

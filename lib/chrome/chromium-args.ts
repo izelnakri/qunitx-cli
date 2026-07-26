@@ -7,6 +7,11 @@
  * Anything that changes observable JS behaviour (e.g. CORS policy, storage partitioning,
  * service worker behaviour) is intentionally left at its default so user test suites behave
  * the same as they would in a real browser.
+ *
+ * ```ts
+ * CHROMIUM_ARGS.includes('--no-sandbox'); // true — required in most CI containers
+ * CHROMIUM_ARGS.filter((arg) => arg.startsWith('--disable-features=')).length; // 1
+ * ```
  */
 export const CHROMIUM_ARGS: string[] = [
   // ── Sandbox / rendering ──────────────────────────────────────────────────────

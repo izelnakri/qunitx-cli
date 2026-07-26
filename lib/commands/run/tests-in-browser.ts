@@ -89,6 +89,12 @@ const GROUP_OUTPUT_REGEX = /group-(\d+)\.js(\.map)?$/;
 /**
  * Derives a human-readable error category from an esbuild BuildFailure or a generic Error.
  * Inspects the first structured esbuild message when available; falls back to string heuristics.
+ *
+ * ```ts
+ * deriveBuildErrorType(new Error('Could not resolve "./missing.ts"')); // 'Module Resolution Error'
+ * deriveBuildErrorType(new Error('Unexpected token ")"')); // 'Syntax Error'
+ * deriveBuildErrorType(new Error('something else broke')); // 'Build Error'
+ * ```
  */
 export function deriveBuildErrorType(error: unknown): string {
   const msgs: EsbuildMessage[] = (error as { errors?: EsbuildMessage[] })?.errors ?? [];
@@ -104,6 +110,12 @@ export function deriveBuildErrorType(error: unknown): string {
  * Formats esbuild BuildFailure messages into clean human-readable text (no ANSI codes).
  * When given a structured BuildFailure, each error is formatted with its file location and
  * a caret line. Falls back to stripping ANSI codes from the error's string representation.
+ *
+ * ```ts
+ * formatBuildErrors({ errors: [{ text: 'Could not resolve "x"', location: null, notes: [] }] });
+ * // '[1] Could not resolve "x"'
+ * formatBuildErrors(new Error('boom')); // 'Error: boom'
+ * ```
  */
 export function formatBuildErrors(error: unknown): string {
   const msgs: EsbuildMessage[] = (error as { errors?: EsbuildMessage[] })?.errors ?? [];
@@ -140,6 +152,11 @@ export function formatBuildErrors(error: unknown): string {
  * hardcoded literals (`bundle`, `keepNames`, `legalComments`, `jsx`, `sourcemap`,
  * `footer`, `logLevel`). When adding a new variable BuildOption, extend this function
  * — that is the contract enforced by the unit suite.
+ *
+ * ```ts
+ * bundleCacheKey({ outfile: 'tmp/tests.js', target: ['chrome120'] }, ['/proj/test/a-test.ts']);
+ * // '{"files":["/proj/test/a-test.ts"],"outfile":"tmp/tests.js","target":["chrome120"]}'
+ * ```
  */
 export function bundleCacheKey(opts: esbuild.BuildOptions, files: string[]): string {
   return JSON.stringify({ files, outfile: opts.outfile, target: opts.target });
@@ -147,6 +164,14 @@ export function bundleCacheKey(opts: esbuild.BuildOptions, files: string[]): str
 
 /**
  * Pre-builds the esbuild bundle for all test files and caches the result in the group's build state.
+ *
+ * ```ts
+ * import type { Config } from '../../types.ts';
+ * // Defined, not invoked: runs esbuild over every file in config.fsTree.
+ * async function prebuild(config: Config) {
+ *   await buildTestBundle(config); // build.allTestCode set; throws on a build error
+ * }
+ * ```
  * @returns {Promise<void>}
  */
 export async function buildTestBundle(config: Config): Promise<void> {
@@ -252,6 +277,14 @@ export async function buildTestBundle(config: Config): Promise<void> {
 
 /**
  * Runs the esbuild-bundled tests inside a Playwright-controlled browser page and streams TAP output.
+ *
+ * ```ts
+ * import type { Config, Connections } from '../../types.ts';
+ * // Defined, not invoked: navigates the Playwright page and streams TAP until QUnit's done.
+ * async function runGroup(config: Config, connections: Connections) {
+ *   await run(config, connections); // returns connections; exits/throws per mode when done
+ * }
+ * ```
  * @returns {Promise<object>}
  */
 export async function run(
@@ -452,6 +485,10 @@ export async function run(
  * read by Playwright and dispatched to `page.on('console')`, so by the time it
  * resolves every pending handler is in the Set. Without this, late console.log()
  * output is lost when the page closes mid-flight under concurrent CI load.
+ *
+ * ```ts
+ * await flushConsoleHandlers(new Set()); // resolves once the handler set is stably empty
+ * ```
  * @returns {Promise<void>}
  */
 export async function flushConsoleHandlers(
@@ -480,6 +517,14 @@ export async function flushConsoleHandlers(
  *
  * Each group gets a virtual entry point via an esbuild plugin. Outputs land in memory
  * (write:false), then are written to each group's output directory in parallel.
+ *
+ * ```ts
+ * import type { Config } from '../../types.ts';
+ * // Defined, not invoked: one esbuild invocation shared by every concurrent group.
+ * async function bundleGroups(groupConfigs: Config[]) {
+ *   await buildAllGroupBundles(groupConfigs); // each group's build.allTestCode populated
+ * }
+ * ```
  */
 export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void> {
   groupConfigs.forEach((groupConfig) => {
@@ -646,6 +691,12 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
  * Thrown in daemon mode in place of `process.exit(code)` so the caller (the daemon
  * server's run handler) can capture the exit code, restore stdout interception, and
  * keep the daemon process alive for the next run.
+ *
+ * ```ts
+ * const error = new DaemonRunError(1);
+ * error.exitCode; // 1
+ * error instanceof Error; // true — passes through catch blocks unchanged
+ * ```
  */
 export class DaemonRunError extends Error {
   /** The exit code that the run would have passed to `process.exit()` outside of daemon mode. */
@@ -1021,7 +1072,14 @@ async function runTestInsideHTMLFile(
   }
 }
 
-/** How a browser run ended, decided from QUnit's tally plus whether a WS `done` arrived. */
+/**
+ * How a browser run ended, decided from QUnit's tally plus whether a WS `done` arrived.
+ *
+ * ```ts
+ * const outcome: RunOutcome = classifyRunOutcome(null, false);
+ * outcome.kind; // 'no-tests-ran'
+ * ```
+ */
 export type RunOutcome =
   | { kind: 'completed' } // every registered test finished; the caller reconciles the counter
   | { kind: 'empty' } // QUnit fired `done` with zero registered tests — a genuinely empty file
@@ -1037,6 +1095,14 @@ export type RunOutcome =
  * before `tests.js` executed also reads `totalTests === 0` — *without* a `done`. Treating those
  * two identically is what let a CPU-starved timeout on CI pass silently as an empty, exit-0 run
  * (v0.31.0 windows-latest --coverage). The `done` flag tells them apart.
+ *
+ * ```ts
+ * const tally = { totalTests: 3, finishedTests: 3, failedTests: 0, currentTest: null };
+ * classifyRunOutcome(tally, true); // { kind: 'completed' }
+ * classifyRunOutcome({ ...tally, finishedTests: 2, currentTest: 'slow test' }, true); // { kind: 'stalled' }
+ * classifyRunOutcome({ ...tally, totalTests: 0 }, true); // { kind: 'empty' } — done with 0 tests
+ * classifyRunOutcome({ ...tally, totalTests: 0 }, false); // { kind: 'no-tests-ran' } — a timeout
+ * ```
  */
 export function classifyRunOutcome(
   result: QUnitResult | null | undefined,
@@ -1058,6 +1124,13 @@ export function classifyRunOutcome(
  * tests than the runner received, the remainder ran too — so trust QUnit's total rather than
  * report the run as empty. Passes are derived as the remainder after the counts we did receive,
  * which is exact for the common all-passing loss and best-effort if a skip/todo was also dropped.
+ *
+ * ```ts
+ * const counter = { testCount: 2, failCount: 0, skipCount: 0, todoCount: 0, passCount: 2, errorCount: 0 };
+ * const tally = { totalTests: 3, finishedTests: 3, failedTests: 1, currentTest: null };
+ * reconcileUndeliveredResults(counter, tally); // 1 — one result never reached the runner
+ * counter; // { testCount: 3, failCount: 1, passCount: 2, … } — QUnit's tally wins
+ * ```
  */
 export function reconcileUndeliveredResults(counter: Counter, result: QUnitResult): number {
   if (result.failedTests > counter.failCount) counter.failCount = result.failedTests;
@@ -1135,6 +1208,15 @@ interface EsbuildMessage {
  *
  * `log` is injectable so tests can assert on the warning without patching global stdout —
  * console.log bypasses process.stdout.write under Deno, so capturing it is not portable.
+ *
+ * ```ts
+ * import type { Page } from 'playwright-core';
+ * import type { Config } from '../../types.ts';
+ * // Defined, not invoked: starts V8 coverage on a live chromium page.
+ * async function arm(page: Page, config: Config) {
+ *   return await armJSCoverage(page, config); // false unless --coverage on chromium
+ * }
+ * ```
  */
 export async function armJSCoverage(
   page: Page,

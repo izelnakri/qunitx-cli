@@ -10,6 +10,15 @@ import type { Config } from '../types.ts';
  * In watch mode, opens the live HTTP server URL so WebSocket-driven reloads work on file changes.
  * In normal mode, opens the static file:// URL (the bundle is self-contained, no server needed).
  * If config.open is a string, it is used as the browser binary/command directly (e.g. 'brave', 'google-chrome-lts').
+ *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: spawns a detached browser process.
+ * async function maybeOpen(config: Config) {
+ *   if (config.open) await openOutputInBrowser(config); // watch mode → live URL; else file://
+ * }
+ * ```
  */
 export async function openOutputInBrowser(config: Config): Promise<void> {
   try {

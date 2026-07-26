@@ -97,6 +97,16 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+/**
+ * All state one daemon process owns; `serve()` constructs the single instance and
+ * threads it through every handler.
+ *
+ * ```ts
+ * // Internal — a snapshot of the lifecycle flags the handlers coordinate on.
+ * const flags = { shuttingDown: false, consecutiveCrashes: 0, listenSucceeded: true };
+ * flags.consecutiveCrashes; // 0 — reset after any run that leaves the browser connected
+ * ```
+ */
 interface DaemonState {
   /**
    * Resolved Chrome handle. `null` until the initial in-flight launch settles
@@ -161,6 +171,14 @@ interface DaemonState {
  * Daemon process entry point. Owns one persistent Chrome and one Unix socket; serves
  * `run` requests serially. Shuts down on SIGTERM/SIGINT, idle timeout, package.json
  * mutation, node version mismatch, or an explicit `shutdown` request.
+ *
+ * ```ts
+ * import type { serve } from './server.ts';
+ * // Defined, not invoked: binds the per-cwd socket and launches a persistent Chrome.
+ * async function daemonEntry(start: typeof serve) {
+ *   await start(); // never resolves — the daemon exits via shutdown()
+ * }
+ * ```
  */
 export async function serve(): Promise<void> {
   const cwd = process.cwd();
@@ -327,6 +345,14 @@ function listen(server: net.Server, socketPath: string): Promise<void> {
  * the browser/esbuild within a bounded grace, then exits. Idempotent via `state.shuttingDown`.
  * `exit` is injectable only so the shutdown ordering can be tested without killing the test
  * process; production always uses the default. See test/commands/daemon-shutdown-test.ts.
+ *
+ * ```ts
+ * import type { shutdown } from './server.ts';
+ * // Defined, not invoked: closes the socket server and browser, then exits the process.
+ * async function stopOnSignal(stop: typeof shutdown, state: Parameters<typeof shutdown>[0]) {
+ *   await stop(state, 'SIGTERM');
+ * }
+ * ```
  */
 export async function shutdown(
   state: DaemonState,
@@ -390,6 +416,15 @@ export async function shutdown(
  * (e.g. an early throw) doesn't own them, and unlinking would corrupt whatever started in its
  * place. The lock IS ours unconditionally: reaching shutdown means tryAcquireDaemonLock returned
  * true, so always release it or the next spawn has to stale-pid-recover.
+ *
+ * ```ts
+ * import type { removeLivenessFiles } from './server.ts';
+ * type State = Parameters<typeof removeLivenessFiles>[0];
+ * // Defined, not invoked: unlinks socket + info (when owned) and always the lock.
+ * async function releaseMarkers(remove: typeof removeLivenessFiles, state: State) {
+ *   await remove(state); // before the slow browser teardown, so clients see "gone" fast
+ * }
+ * ```
  */
 export async function removeLivenessFiles(state: DaemonState): Promise<void> {
   await Promise.all([
@@ -590,6 +625,12 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
  * ms even on a loaded runner, so this is generous headroom: if it elapses, the browser is
  * dead (or wedged) and recovery relaunches a fresh one. Kept well under GROUP_TIMEOUT_MS so
  * a doomed browser surfaces in seconds, not the 3-minute last-resort deadline.
+ *
+ * ```ts
+ * import type { BROWSER_PROBE_TIMEOUT_MS } from './server.ts';
+ * const budgetMs: typeof BROWSER_PROBE_TIMEOUT_MS = 3_000; // the probe's upper bound
+ * budgetMs; // 3000
+ * ```
  */
 export const BROWSER_PROBE_TIMEOUT_MS = 3_000;
 
@@ -600,6 +641,15 @@ export const BROWSER_PROBE_TIMEOUT_MS = 3_000;
  * channel resolves `false` within the budget rather than hanging. Chromium-only:
  * firefox/webkit use a pipe transport whose 'disconnected' fires promptly on
  * process exit, so `isConnected()` is already reliable there.
+ *
+ * ```ts
+ * import type { browserResponsive } from './server.ts';
+ * import type { Browser } from 'playwright-core';
+ * // Defined, not invoked: bounded CDP round-trip against the daemon's persistent browser.
+ * async function probeBeforeRun(probe: typeof browserResponsive, browser: Browser) {
+ *   return await probe(browser, 'chromium'); // false within 3s when the channel is dead
+ * }
+ * ```
  */
 export async function browserResponsive(
   browser: Pick<PlaywrightBrowser, 'isConnected'> & {

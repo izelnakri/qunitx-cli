@@ -14,6 +14,17 @@ const CDP_URL_REGEX = /DevTools listening on (ws:\/\/[^\s]+)/;
  * Spawns a headless Chrome process with `--remote-debugging-port=0` and resolves once the
  * CDP WebSocket endpoint appears on stderr. Returns null if Chrome is unavailable or fails
  * to start, so callers can fall back to playwright's normal `chromium.launch()`.
+ *
+ * ```ts
+ * import { CHROMIUM_ARGS } from './chromium-args.ts';
+ *
+ * await spawn(null, CHROMIUM_ARGS); // null — no Chrome path, caller falls back to chromium.launch()
+ *
+ * // Defined, not invoked: a real call spawns Chrome and creates a temp user-data-dir.
+ * async function prelaunch(chromePath: string) {
+ *   return await spawn(chromePath, CHROMIUM_ARGS); // EarlyChrome — { proc, cdpEndpoint, shutdown }
+ * }
+ * ```
  */
 export async function spawn(
   chromePath: string | null | undefined,

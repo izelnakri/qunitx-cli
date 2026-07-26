@@ -17,6 +17,15 @@ import type { FSTree } from '../types.ts';
  *
  * Always logs how the filter resolved (full / filtered / fallback) so users can
  * reason about why their selected suite ran.
+ *
+ * ```ts
+ * import type { FSTree } from '../types.ts';
+ *
+ * // Defined, not invoked: reads the metafile cache and runs git.
+ * async function narrow(fsTree: FSTree, projectRoot: string) {
+ *   return getChangedFsTree(fsTree, projectRoot, 'HEAD'); // only tests affected since HEAD
+ * }
+ * ```
  */
 export async function getChangedFsTree(
   fsTree: FSTree,

@@ -403,7 +403,17 @@ export function setDebug(enabled: boolean): void {
   DEBUG = enabled;
 }
 
-type IgnoredObserver = (context: string, error: unknown) => void;
+/**
+ * The callback shape {@link onIgnored} installs: every ignored failure arrives with the
+ * label its call site declared.
+ *
+ * ```ts
+ * const collect: IgnoredObserver = (context, error) => console.debug(context, error);
+ * onIgnored(collect);
+ * onIgnored(null); // detach
+ * ```
+ */
+export type IgnoredObserver = (context: string, error: unknown) => void;
 let ignoredObserver: IgnoredObserver | null = null;
 
 /**

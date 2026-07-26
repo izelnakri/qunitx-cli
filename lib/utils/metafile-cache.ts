@@ -13,6 +13,13 @@ import { Task } from '../task/index.ts';
  * The wrapper format records the absolute cwd at write time so the reader can
  * resolve metafile-relative paths the same way esbuild would, regardless of
  * where qunitx is invoked from on the next run.
+ *
+ * ```ts
+ * const payload: MetafileCachePayload = {
+ *   esbuildCwd: '/proj',
+ *   metafile: { inputs: { 'test/a-test.ts': { imports: [{ path: 'lib/util.ts' }] } } },
+ * };
+ * ```
  */
 interface MetafileCachePayload {
   /** `process.cwd()` at the moment the metafile was produced; metafile paths are relative to it. */
@@ -35,6 +42,11 @@ let writeSequence = 0;
  * `node_modules` (pnpm workspaces, monorepos, integration test fixtures) write
  * to distinct files. 12 hex chars is far below collision risk for the scale of
  * "projects on one machine."
+ *
+ * ```ts
+ * path('/proj'); // '/proj/node_modules/.cache/qunitx/d6f745519348/metafile.json'
+ * path('/other'); // same layout, different hash tag — no clash on shared node_modules
+ * ```
  */
 export function path(projectRoot: string): string {
   const tag = createHash('sha1').update(projectRoot).digest('hex').slice(0, 12);
@@ -54,6 +66,11 @@ export function path(projectRoot: string): string {
  * always sees either the previous complete cache or this one, never a torn one. It also makes
  * concurrent writers (two runs sharing a checkout) and a process killed mid-write safe: the
  * worst case is a leftover temp file, never a corrupt cache.
+ *
+ * ```ts
+ * await write('/not/writable/anywhere', '/proj', { inputs: {} });
+ * // resolves — an unwritable cache dir degrades silently, the next read is just a miss
+ * ```
  */
 export async function write(
   projectRoot: string,
@@ -75,7 +92,13 @@ export async function write(
   }
 }
 
-/** Reads the cached metafile. Returns `null` on miss or corruption. */
+/**
+ * Reads the cached metafile. Returns `null` on miss or corruption.
+ *
+ * ```ts
+ * await read('/tmp/no-such-qunitx-project'); // null — missing or corrupt cache is a miss
+ * ```
+ */
 export async function read(projectRoot: string): Promise<MetafileCachePayload | null> {
   try {
     const raw = await fs.readFile(path(projectRoot), 'utf8');

@@ -7,6 +7,15 @@ import { spawnSync } from 'node:child_process';
  * On Windows, uses `taskkill /F /T` to kill the process and its entire child tree
  * (renderer, GPU, crashpad helpers etc. that survive a plain process.kill() on Windows).
  * All errors are silently suppressed — ESRCH means the process already exited.
+ *
+ * ```ts
+ * import type { ChildProcess } from 'node:child_process';
+ *
+ * // Defined, not invoked: SIGKILLs a live process group.
+ * function reapChrome(chrome: ChildProcess) {
+ *   if (chrome.pid) killProcessGroup(chrome.pid); // takes renderer/GPU helpers down with it
+ * }
+ * ```
  */
 export function killProcessGroup(pid: number): void {
   try {

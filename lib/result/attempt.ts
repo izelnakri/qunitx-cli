@@ -43,6 +43,12 @@ import { type Result, ok, err } from './result.ts';
  * hand the caller the unusable `Promise<Result> | Result` (no `.ok` until narrowed by hand).
  * `0 extends 1 & T` is true only for `any`; such a source is treated as synchronous and its
  * value as `unknown` — the honest reading of `any`, and what the call site can branch on.
+ *
+ * ```ts
+ * const sync = attempt(JSON.parse, '1'); // Attempted<any> → Result<unknown, unknown>, no promise
+ * const deferred = attempt(() => Promise.resolve(1)); // → Promise<Result<number, unknown>>
+ * sync.ok && (await deferred).ok; // true
+ * ```
  */
 type Attempted<T> = 0 extends 1 & T
   ? Result<unknown, unknown>

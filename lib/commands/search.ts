@@ -54,6 +54,14 @@ interface FoundTest {
  * (``test(`case ${i}`)``) has no name until the browser runs it, so it cannot be listed. Those are
  * counted and reported rather than silently omitted.
  *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ * // Defined, not invoked: reads and scans every selected file, prints the listing.
+ * async function searchCommand(config: Config) {
+ *   return await run(config); // 'Cart: checkout  test/cart-test.ts#12' … then the match count
+ * }
+ * ```
+ *
  * @returns the process exit code: 0 when something matched, 1 when nothing did (as `grep` does).
  */
 export async function run(config: Config): Promise<number> {

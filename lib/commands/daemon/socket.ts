@@ -5,6 +5,16 @@ import net from 'node:net';
  * Tolerates packet splits across line boundaries; silently drops malformed lines.
  * Used by both the daemon server (parsing client requests) and the client
  * (parsing server responses).
+ *
+ * ```ts
+ * import net from 'node:net';
+ * import { Buffer } from 'node:buffer';
+ * const seen: Array<{ type: string }> = [];
+ * const sock = new net.Socket();
+ * readMessages<{ type: string }>(sock, (msg) => seen.push(msg));
+ * sock.emit('data', Buffer.from('{"type":"ping"}\nnot-json\n'));
+ * seen; // [{ type: 'ping' }] — the malformed line is dropped
+ * ```
  */
 export function readMessages<T>(socket: net.Socket, onLine: (line: T) => void): void {
   let buf = '';
@@ -29,6 +39,13 @@ export function readMessages<T>(socket: net.Socket, onLine: (line: T) => void): 
  * ECONNREFUSED, ENOENT, timeout). Lets `net.createConnection` produce the error
  * directly — a pre-emptive `existsSync` check would not work for Windows named
  * pipes (they live in `\\.\pipe\...`, not on the regular filesystem).
+ *
+ * ```ts
+ * // Defined, not invoked: dials a Unix socket / named pipe.
+ * async function dialDaemon() {
+ *   return await connect('/tmp/qunitx-daemon-ab12cd34ef56.sock', 1_000); // net.Socket, or null
+ * }
+ * ```
  */
 export function connect(socketPath: string, timeoutMs: number): Promise<net.Socket | null> {
   return new Promise((resolve) => {

@@ -7,6 +7,13 @@ import { Task } from '../task/index.ts';
 
 /**
  * Dynamically imports `modulePath` and calls its default export with `params`; exits with code 1 on error.
+ *
+ * ```ts
+ * // Defined, not invoked: imports and runs an arbitrary user script, exits the process on error.
+ * async function runBeforeHook(config: { before?: string }) {
+ *   if (config.before) await runUserModule(config.before, config, 'before');
+ * }
+ * ```
  * @returns {Promise<void>}
  */
 export async function runUserModule(
@@ -44,6 +51,12 @@ export async function runUserModule(
  * binary name. `Deno.mainModule` looked tempting but is also a `file:` URL in
  * compiled binaries (a virtual path under `/tmp/deno-compile-<name>/`), so it
  * can't differentiate the two.
+ *
+ * ```ts
+ * isDenoCompiledBinary(true, '/usr/bin/deno'); // false — plain `deno run`
+ * isDenoCompiledBinary(true, '/usr/local/bin/qunitx'); // true — a compiled binary
+ * isDenoCompiledBinary(false, '/usr/bin/node'); // false — not Deno at all
+ * ```
  */
 export function isDenoCompiledBinary(
   hasDeno: boolean = typeof (globalThis as { Deno?: unknown }).Deno !== 'undefined',

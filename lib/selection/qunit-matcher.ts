@@ -14,6 +14,11 @@ const REGEX_FILTER = /^(!?)\/([\w\W]*)\/(i?$)/;
  * The string a filter is matched against: `"Module: test name"`, with nested modules already
  * joined by `" > "`. A top-level test has an empty module name, giving `": test name"` — which is
  * QUnit's own behaviour, not a quirk of this port.
+ *
+ * ```ts
+ * buildQUnitFullName('Cart > totals', 'sums line items'); // 'Cart > totals: sums line items'
+ * buildQUnitFullName('', 'boots'); // ': boots' — QUnit's own spelling for a top-level test
+ * ```
  */
 export function buildQUnitFullName(modulePath: string, testName: string): string {
   return `${modulePath}: ${testName}`;
@@ -26,6 +31,14 @@ export function buildQUnitFullName(modulePath: string, testName: string): string
  * - a leading `!` inverts either form
  *
  * An empty/absent filter matches everything, mirroring QUnit's `if (filter)` guard.
+ *
+ * ```ts
+ * matchQUnitFilter('cart', 'Cart: adds an item'); // true — case-insensitive substring
+ * matchQUnitFilter('!cart', 'Cart: adds an item'); // false — a leading ! inverts
+ * matchQUnitFilter('/^cart/', 'Cart: adds an item'); // false — regexes are case-SENSITIVE
+ * matchQUnitFilter('/^cart/i', 'Cart: adds an item'); // true
+ * matchQUnitFilter(undefined, 'Cart: adds an item'); // true — no filter matches everything
+ * ```
  */
 export function matchQUnitFilter(filter: string | undefined, fullName: string): boolean {
   if (!filter) {

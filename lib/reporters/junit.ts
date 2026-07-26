@@ -13,21 +13,63 @@ import type { Config, JUnitCase } from '../types.ts';
  *
  * Cases live on the instance (not on `config`), and the instance is shared across concurrent
  * groups, so one document covers the whole run. `onRunStart` resets it for watch reruns.
+ *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ * import type { TestDetails } from './types.ts';
+ *
+ * // Defined, not invoked: onRunEnd writes junit.xml to disk.
+ * async function example(config: Config, details: TestDetails) {
+ *   const reporter = new JUnitReporter();
+ *   reporter.onRunStart();
+ *   reporter.onTestEnd(config, details); // one <testcase> recorded
+ *   await reporter.onRunEnd(config, { durationMs: 40 }); // document written to outputPath(config)
+ * }
+ * ```
  */
 export class JUnitReporter implements Reporter {
   #cases: JUnitCase[] = [];
 
-  /** Drops cases from any previous run so watch reruns start clean. */
+  /**
+   * Drops cases from any previous run so watch reruns start clean.
+   *
+   * ```ts
+   * const reporter = new JUnitReporter();
+   * reporter.onRunStart(); // cases recorded by a previous watch-mode run are gone
+   * ```
+   */
   onRunStart(): void {
     this.#cases = [];
   }
 
-  /** Accumulates one `<testcase>`; the document is written once at run end. */
+  /**
+   * Accumulates one `<testcase>`; the document is written once at run end.
+   *
+   * ```ts
+   * import type { Config } from '../types.ts';
+   *
+   * const reporter = new JUnitReporter();
+   * reporter.onTestEnd({} as Config, { status: 'passed', fullName: ['Math', 'adds'], runtime: 2 });
+   * // recorded as <testcase name="adds" classname="Math"/> (config is only read for failures)
+   * ```
+   */
   onTestEnd(config: Config, details: TestDetails): void {
     this.#cases.push(toCase(config, details));
   }
 
-  /** Serializes the accumulated cases and writes the XML document to disk. */
+  /**
+   * Serializes the accumulated cases and writes the XML document to disk.
+   *
+   * ```ts
+   * import type { Config } from '../types.ts';
+   *
+   * // Defined, not invoked: writes the XML document to disk.
+   * async function example(reporter: JUnitReporter, config: Config) {
+   *   await reporter.onRunEnd(config, { durationMs: 40 });
+   *   // "# wrote JUnit report to tmp/junit.xml" on stdout
+   * }
+   * ```
+   */
   async onRunEnd(config: Config, _info: RunEndInfo): Promise<void> {
     const file = outputPath(config);
     await fs.mkdir(path.dirname(file), { recursive: true });
@@ -39,6 +81,14 @@ export class JUnitReporter implements Reporter {
 /**
  * Resolves where the JUnit document is written: `--junit=<path>` (relative to the project
  * root) when given a string, else `<output>/junit.xml`.
+ *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ *
+ * const config = { projectRoot: '/repo', output: 'tmp', junit: true } as Partial<Config> as Config;
+ * outputPath(config); // '/repo/tmp/junit.xml'
+ * outputPath({ ...config, junit: 'reports/junit.xml' }); // '/repo/reports/junit.xml'
+ * ```
  */
 export function outputPath(config: Config): string {
   return typeof config.junit === 'string'
@@ -49,6 +99,14 @@ export function outputPath(config: Config): string {
 /**
  * Converts one `testEnd` into a JUnit `<testcase>`. Failing assertions are flattened into a
  * `failureDetail` with stacks resolved back to original sources (same as the TAP `at:` field).
+ *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ *
+ * toCase({} as Config, { status: 'passed', fullName: ['Math', 'adds'], runtime: 1500 });
+ * // { classname: 'Math', name: 'adds', time: 1.5, status: 'passed' } — config is only
+ * // read for failed tests (the group's source-map decoder resolves their stacks)
+ * ```
  */
 export function toCase(config: Config, details: TestDetails): JUnitCase {
   const fullName = details.fullName;
@@ -84,7 +142,15 @@ export function toCase(config: Config, details: TestDetails): JUnitCase {
   return testCase;
 }
 
-/** Builds the full JUnit XML document string from a flat list of test cases. */
+/**
+ * Builds the full JUnit XML document string from a flat list of test cases.
+ *
+ * ```ts
+ * const xml = buildXML([{ classname: 'Math', name: 'adds', time: 0.002, status: 'passed' }]);
+ * xml.includes('<testsuite name="Math" tests="1" failures="0" skipped="0" time="0.002">'); // true
+ * xml.includes('<testcase name="adds" classname="Math" time="0.002"/>'); // true — self-closing
+ * ```
+ */
 export function buildXML(cases: JUnitCase[]): string {
   // Map.groupBy keys by first appearance, so suites stay in the order their tests ran.
   const suites = Map.groupBy(cases, (testCase) => testCase.classname);

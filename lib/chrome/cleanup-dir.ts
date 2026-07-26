@@ -18,6 +18,13 @@ const CLEANUP_RETRY_MS = 50;
  * once they are released, regardless of how far the process-table cleanup has progressed.
  *
  * Linux-only: falls back to a single best-effort rm() on other platforms.
+ *
+ * ```ts
+ * // Defined, not invoked: a real call SIGKILLs FD holders and rm()s the directory.
+ * async function reapUserDataDir(userDataDir: string) {
+ *   await cleanupDir(userDataDir); // resolves once gone, or after the 5s deadline
+ * }
+ * ```
  */
 export async function cleanupDir(dirPath: string): Promise<void> {
   if (process.platform !== 'linux') {

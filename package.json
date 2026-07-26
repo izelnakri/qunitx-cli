@@ -34,7 +34,7 @@
     "postinstall": "PLAYWRIGHT_SKIP_DOWNLOAD=true deno install --allow-scripts=npm:playwright-core || true",
     "test": "node test/runner.ts",
     "test:aplus": "node test/task/promises-aplus.ts",
-    "test:doctest": "deno test --doc --allow-env --allow-read=/tmp --allow-sys=uid lib/ cli.ts",
+    "test:doctest": "deno test --doc --allow-env --allow-read=/tmp --allow-sys lib/ cli.ts",
     "test:debug": "QUNITX_DEBUG=1 node test/runner.ts",
     "test:deno": "deno run -A test/runner.ts",
     "dev": "node test/runner.ts --watch",

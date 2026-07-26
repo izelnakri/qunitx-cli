@@ -799,6 +799,17 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
 // `util.inspect` and devtools.
 Object.defineProperty(TaskClass, 'name', { value: 'Task' });
 
+/**
+ * The call-or-construct type of the exported {@link Task} value: the class's statics and
+ * construct signature, intersected with a plain call signature.
+ *
+ * ```ts
+ * const viaCall = Task(() => 1); // the call signature
+ * const viaNew = new Task(() => 2); // the construct signature — same Task either way
+ * await viaCall; // 1
+ * await viaNew; // 2
+ * ```
+ */
 type TaskConstructor = typeof TaskClass & {
   /** Call form — `Task(recipeOrPromise)` without `new`; identical to the constructor. */
   <T, E = AnyFailure>(source: PromiseLike<T> | (() => T | PromiseLike<T>)): TaskClass<T, E>;

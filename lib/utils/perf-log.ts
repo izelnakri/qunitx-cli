@@ -23,6 +23,11 @@ const processStart = isPerfTracing ? Date.now() : 0;
 
 /**
  * Writes a timestamped perf trace line to stderr when --trace-perf is active.
+ *
+ * ```ts
+ * perfLog('esbuild bundle done', 3, 'files');
+ * // stderr: "[perf +42ms] esbuild bundle done 3 files" — zero-overhead no-op when tracing is off
+ * ```
  * @param {string} label
  * @param {...*} details
  */

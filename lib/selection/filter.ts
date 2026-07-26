@@ -1,6 +1,17 @@
 import path from 'node:path';
 import type { Config } from '../types.ts';
 
+/**
+ * The slice of {@link Config} the filter helpers read — every function below takes this
+ * rather than a full Config, so callers with only the three fields qualify.
+ *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ *
+ * type FilterConfig = Pick<Config, 'filter' | 'lineTargets' | 'state'>;
+ * const expression: FilterConfig['filter'] = '/^Cart(:| >)/'; // the exact-module recipe
+ * ```
+ */
 type FilterConfig = Pick<Config, 'filter' | 'lineTargets' | 'state'>;
 
 /**
@@ -12,6 +23,14 @@ type FilterConfig = Pick<Config, 'filter' | 'lineTargets' | 'state'>;
  *
  * `lineTargets` counts even before it resolves to selectors — it is read on the parent config,
  * where per-group selectors are not visible.
+ *
+ * ```ts
+ * import * as RunState from '../setup/run-state.ts';
+ *
+ * const state = RunState.create();
+ * isFilteredRun({ state }); // false — whole files, caches stay valid
+ * isFilteredRun({ filter: 'cart', state }); // true — a test-level subset
+ * ```
  */
 export function isFilteredRun(config: FilterConfig): boolean {
   return Boolean(
@@ -29,6 +48,14 @@ export function isFilteredRun(config: FilterConfig): boolean {
  * time, and its html-reporter block unconditionally overwrites `config.filter` from
  * `location.search` at bundle-eval time — so a preconfig global would be clobbered.
  * Returns '' when no filter is set, leaving URLs byte-identical to before.
+ *
+ * ```ts
+ * import * as RunState from '../setup/run-state.ts';
+ *
+ * const state = RunState.create();
+ * buildQUnitFilterQuery({ filter: 'cart checkout', state }); // '?filter=cart+checkout'
+ * buildQUnitFilterQuery({ state }); // '' — URL byte-identical to an unfiltered run
+ * ```
  */
 export function buildQUnitFilterQuery(config: FilterConfig): string {
   if (!config.filter) {
@@ -42,7 +69,17 @@ export function buildQUnitFilterQuery(config: FilterConfig): string {
   return `?${params.toString()}`;
 }
 
-/** Human-readable description of the active filters, for the "nothing matched" message. */
+/**
+ * Human-readable description of the active filters, for the "nothing matched" message.
+ *
+ * ```ts
+ * import * as RunState from '../setup/run-state.ts';
+ *
+ * const state = RunState.create();
+ * describeActiveFilters({ filter: 'cart', lineTargets: { '/proj/cart-test.ts': [34, 60] }, state });
+ * // '--filter=cart cart-test.ts#34 cart-test.ts#60'
+ * ```
+ */
 export function describeActiveFilters(config: FilterConfig): string {
   const parts: string[] = [];
   if (config.filter) {

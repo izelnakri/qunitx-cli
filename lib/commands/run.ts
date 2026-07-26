@@ -71,6 +71,15 @@ const EXIT_CODE_SIGTERM = 128 + 15;
 
 /**
  * Runs qunitx tests in headless Chrome, either in watch mode or concurrent batch mode.
+ *
+ * ```ts
+ * import type { run } from './run.ts';
+ * import type { Config } from '../types.ts';
+ * // Defined, not invoked: launches Chrome and runs the whole suite.
+ * async function runSuite(runTests: typeof run, config: Config) {
+ *   await runTests(config); // batch mode exits the process itself; watch mode returns, process alive
+ * }
+ * ```
  * @returns {Promise<void>}
  */
 export async function run(config: Config): Promise<void> {

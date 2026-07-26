@@ -13,6 +13,10 @@ const execFileAsync = promisify(execFile);
  * git fails, so a stuck git should *reject* rather than wedge the run — without a bound the CLI
  * hangs forever, since neither git nor the caller ever gives up. 30s is orders of magnitude
  * above a healthy `git status` on a large repo, so it only fires on a genuine wedge.
+ *
+ * ```ts
+ * GIT_TIMEOUT_MS; // 30_000 — the default `timeoutMs` of runGit and getChangedFilePathsInGitSince
+ * ```
  */
 const GIT_TIMEOUT_MS = 30_000;
 /**
@@ -30,6 +34,13 @@ const GIT_KILL_GRACE_MS = 2_000;
  * child's exit event never arrives — the case where killing the child doesn't help because
  * nobody is listening for it to die. That second layer is what turns an unkillable hang into a
  * normal rejection the caller already knows how to degrade on.
+ *
+ * ```ts
+ * // Defined, not invoked: spawns a git subprocess.
+ * async function headDiff(projectRoot: string): Promise<string> {
+ *   return await runGit(['diff', '--name-only', 'HEAD'], projectRoot); // git's stdout
+ * }
+ * ```
  */
 export function runGit(
   args: string[],
@@ -65,12 +76,22 @@ export function runGit(
  * to any of these short-circuits `getChangedFilePathsInGitSince` to `null`, signalling
  * the caller to skip filtering and run everything. The qunitx config lives
  * inside `package.json` per project convention, so package.json alone covers it.
+ *
+ * ```ts
+ * BLAST_RADIUS_FILES.has('package.json'); // true — a lockstep change reruns the whole suite
+ * BLAST_RADIUS_FILES.has('lib/utils/color.ts'); // false — regular files stay filterable
+ * ```
  */
 const BLAST_RADIUS_FILES = new Set(['package.json', 'package-lock.json', 'deno.json', 'deno.lock']);
 /**
  * Basename regexes with the same blast-radius semantics. Currently catches
  * `tsconfig.json` and editor variants like `tsconfig.test.json` /
  * `tsconfig.build.json`.
+ *
+ * ```ts
+ * BLAST_RADIUS_PATTERNS.some((re) => re.test('tsconfig.build.json')); // true
+ * BLAST_RADIUS_PATTERNS.some((re) => re.test('deno.jsonc')); // false — only tsconfig variants
+ * ```
  */
 const BLAST_RADIUS_PATTERNS = [/^tsconfig.*\.json$/];
 
@@ -84,16 +105,36 @@ const BLAST_RADIUS_PATTERNS = [/^tsconfig.*\.json$/];
  * discriminated it by `instanceof`, with `changed === null` ("run everything") sitting
  * directly beside `changed.size === 0` ("run nothing"). Two adjacent branches, opposite
  * meanings, one of them a sentinel.
+ *
+ * ```ts
+ * const full: ChangeScan = { scope: 'everything', trigger: 'package.json' };
+ * const subset: ChangeScan = { scope: 'paths', paths: new Set(['/proj/lib/a.ts']) };
+ * ```
  */
 export type ChangeScan =
   { scope: 'everything'; trigger: string } | { scope: 'paths'; paths: Set<string> };
 
-/** git could not answer: not a repo, unknown ref, git missing, or it exceeded `timeoutMs`. */
+/**
+ * git could not answer: not a repo, unknown ref, git missing, or it exceeded `timeoutMs`.
+ *
+ * ```ts
+ * const failure = GitScanFailed({ ref: 'HEAD~1', reason: 'not a git repository' });
+ * failure.code; // 'GitScanFailed'
+ * failure.message; // 'git lookup for "HEAD~1" failed: not a git repository'
+ * ```
+ */
 export const GitScanFailed = Failure.define(
   'GitScanFailed',
   (data: { ref: string; reason: string }) => `git lookup for "${data.ref}" failed: ${data.reason}`,
 );
-/** The failure a git-change scan declares — the `E` of its {@link Task}, the `Err` of `.result()`. */
+/**
+ * The failure a git-change scan declares — the `E` of its {@link Task}, the `Err` of `.result()`.
+ *
+ * ```ts
+ * const failure: GitScanFailure = GitScanFailed({ ref: 'main', reason: 'timed out' });
+ * failure.data.ref; // 'main' — typed payload, no message parsing
+ * ```
+ */
 export type GitScanFailure = Failure.Of<typeof GitScanFailed>;
 
 /**
@@ -109,6 +150,14 @@ export type GitScanFailure = Failure.Of<typeof GitScanFailed>;
  * boundary is the only throwing step, so `.mapErr` remaps *any* rejection there to a declared
  * `GitScanFailed`; a parsing bug in `.map` below is downstream of it and stays a bug, never
  * masked as a Failure. Callers await the value, or `.result()` for `{ ok, value, error }`.
+ *
+ * ```ts
+ * // Defined, not invoked: awaiting the Task spawns the git subprocesses.
+ * async function scan(projectRoot: string): Promise<ChangeScan | 'run-all'> {
+ *   const result = await getChangedFilePathsInGitSince(projectRoot, 'main').result();
+ *   return result.ok ? result.value : 'run-all'; // GitScanFailed degrades to a full run
+ * }
+ * ```
  */
 export function getChangedFilePathsInGitSince(
   projectRoot: string,

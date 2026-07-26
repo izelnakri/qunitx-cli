@@ -15,12 +15,37 @@ const LINE_WIDTH = 72;
  *
  * Unlike spec, failure detail is buffered rather than printed inline — interleaving failure
  * blocks with the dot matrix would break the matrix apart and lose the at-a-glance shape.
+ *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ * import type { TestDetails } from './types.ts';
+ *
+ * // Defined, not invoked: streams the dot matrix to stdout.
+ * function example(config: Config, details: TestDetails) {
+ *   const reporter = new DotReporter();
+ *   reporter.onRunStart(config, { fileCount: 3, groupCount: 2 });
+ *   reporter.onTestEnd(config, details); // one character per test: . F t s
+ *   reporter.onRunEnd(config, { durationMs: 1200 }); // counts + buffered failure blocks
+ * }
+ * ```
  */
 export class DotReporter implements Reporter {
   #column = 0;
   #failures: Array<{ name: string; block: string }> = [];
 
-  /** Resets the matrix column and buffered failures, then prints the run banner. */
+  /**
+   * Resets the matrix column and buffered failures, then prints the run banner.
+   *
+   * ```ts
+   * import type { Config } from '../types.ts';
+   *
+   * // Defined, not invoked: prints the banner to stdout.
+   * function example(config: Config) {
+   *   new DotReporter().onRunStart(config, { fileCount: 3, groupCount: 2 });
+   *   // "Running 3 test files across 2 worker(s)"
+   * }
+   * ```
+   */
   onRunStart(_config: Config, info: RunStartInfo): void {
     this.#column = 0;
     this.#failures = [];
@@ -33,7 +58,19 @@ export class DotReporter implements Reporter {
     process.stdout.write(`\nRunning ${files} across ${info.groupCount} worker(s)\n\n`);
   }
 
-  /** Writes this test's character, wrapping the matrix, and buffers any failure detail. */
+  /**
+   * Writes this test's character, wrapping the matrix, and buffers any failure detail.
+   *
+   * ```ts
+   * import type { Config } from '../types.ts';
+   *
+   * // Defined, not invoked: writes one status character to stdout.
+   * function example(reporter: DotReporter, config: Config) {
+   *   reporter.onTestEnd(config, { status: 'passed', fullName: ['Math', 'adds'], runtime: 2 }); // '.'
+   *   reporter.onTestEnd(config, { status: 'skipped', fullName: ['Math', 'later'], runtime: 0 }); // 's'
+   * }
+   * ```
+   */
   onTestEnd(config: Config, details: TestDetails): void {
     // Dot and any wrap in one write: this runs per test, and a split write invites another
     // group's output between the character and its own newline.
@@ -50,7 +87,18 @@ export class DotReporter implements Reporter {
     });
   }
 
-  /** Closes the matrix line, then prints the counts and every buffered failure. */
+  /**
+   * Closes the matrix line, then prints the counts and every buffered failure.
+   *
+   * ```ts
+   * import type { Config } from '../types.ts';
+   *
+   * // Defined, not invoked: reads config.state.results.counter and writes to stdout.
+   * function example(reporter: DotReporter, config: Config) {
+   *   reporter.onRunEnd(config, { durationMs: 1200 }); // "  12 passing (1200ms)" + failure recap
+   * }
+   * ```
+   */
   onRunEnd(config: Config, info: RunEndInfo): void {
     const { passCount, failCount, skipCount, todoCount } = config.state.results.counter;
     // Zero counts stay off the summary — "0 failing" is noise on a green run.

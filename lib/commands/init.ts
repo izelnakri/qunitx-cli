@@ -5,7 +5,16 @@ import { pathExists } from '../utils/path-exists.ts';
 import { defaultProjectConfigValues } from '../setup/default-project-config-values.ts';
 import { readTemplate } from '../utils/read-template.ts';
 
-/** Bootstraps a new qunitx project: writes the test HTML template, updates package.json, and optionally writes tsconfig.json. */
+/**
+ * Bootstraps a new qunitx project: writes the test HTML template, updates package.json, and optionally writes tsconfig.json.
+ *
+ * ```ts
+ * // Defined, not invoked: `qunitx init` — writes test/tests.html + qunitx config into package.json.
+ * async function initCommand() {
+ *   await run(); // /project/test/tests.html written
+ * }
+ * ```
+ */
 export async function run() {
   const projectRoot = await findProjectRoot();
   const oldPackageJSON = JSON.parse(await fs.readFile(`${projectRoot}/package.json`, 'utf8'));

@@ -41,5 +41,13 @@ export {
 // system is `Task` (`lib/task/`): a real lazy Promise whose `.result()` settles to the same
 // plain `Result` this module defines — one async abstraction, not two.
 
-/** Structured, discriminable errors — the `E` half of `Result<T, E>`. */
+/**
+ * Structured, discriminable errors — the `E` half of `Result<T, E>`.
+ *
+ * ```ts
+ * import * as Failure from './failure.ts';
+ * const FileMissing = Failure.define('FileMissing', (d: { path: string }) => `no ${d.path}`);
+ * FileMissing.is(FileMissing({ path: 'a.ts' })); // true
+ * ```
+ */
 export * as Failure from './failure.ts';
