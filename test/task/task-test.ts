@@ -601,3 +601,55 @@ module('Task | unconsumed rejection', { concurrency: true }, () => {
     assert.true(true, 'no rejection existed to go unhandled');
   });
 });
+
+// ── The observation seam — consumers report classified failures ────────────────
+
+module('Task | failure observation seam', () => {
+  const collect = () => {
+    const seen: string[] = [];
+    Failure.onObserved((failure) => seen.push(failure.code));
+    return seen;
+  };
+
+  test('result, match, unwrapOr and recover each report the declared failure once', async (assert) => {
+    const seen = collect();
+    try {
+      await loadUser(0).result();
+      await loadUser(0).match({ ok: () => 'ok', err: (e) => e.code });
+      await loadUser(0).unwrapOr(null);
+      await loadUser(0).recover(() => null);
+      assert.deepEqual(seen, ['NotFound', 'NotFound', 'NotFound', 'NotFound']);
+    } finally {
+      Failure.onObserved(null);
+    }
+  });
+
+  test('bugs never reach the seam — not even through recover, which survives them', async (assert) => {
+    const seen = collect();
+    try {
+      const buggy = () =>
+        Task<string>(() => {
+          throw new TypeError('boom');
+        });
+      await buggy().recover(() => 'survived');
+      await buggy()
+        .result()
+        .catch(() => 'rethrown as expected');
+      assert.deepEqual(seen, [], 'the two tiers stay separate in tracing too');
+    } finally {
+      Failure.onObserved(null);
+    }
+  });
+
+  test('a memoised consumer reports once, however many times it is awaited', async (assert) => {
+    const seen = collect();
+    try {
+      const reflected = loadUser(0).result();
+      await reflected;
+      await reflected;
+      assert.deepEqual(seen, ['NotFound'], 'memoisation covers the seam too');
+    } finally {
+      Failure.onObserved(null);
+    }
+  });
+});

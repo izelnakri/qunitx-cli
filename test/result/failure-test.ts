@@ -298,3 +298,57 @@ module('Result | Failure | ignore observability', { concurrency: true }, () => {
     assert.strictEqual(seenA.length, 1, 'unsubscribed channels see nothing further');
   });
 });
+
+// ── Tracing: attributes + the observed seam ──────────────────────────────────
+
+module('Result | Failure | tracing', { concurrency: true }, () => {
+  const AuthFailed = Failure.define(
+    'AuthFailed',
+    (d: { status: number; password: string }) => `auth rejected: HTTP ${d.status}`,
+    { trace: (d) => ({ 'auth.status': d.status }) },
+  );
+
+  test('attributes returns the code plus only what the trace mapper allowlisted', (assert) => {
+    const attrs = Failure.attributes(AuthFailed({ status: 401, password: 'hunter2' }));
+    assert.deepEqual(attrs, { 'failure.code': 'AuthFailed', 'auth.status': 401 });
+    assert.false(
+      JSON.stringify(attrs).includes('hunter2'),
+      'the unmapped field cannot leak — redaction by omission',
+    );
+  });
+
+  test('a kind with no trace mapper yields the code alone — safe default', (assert) => {
+    assert.deepEqual(Failure.attributes(FileMissing({ path: 'secret/x.ts' })), {
+      'failure.code': 'FileMissing',
+    });
+  });
+
+  test('attributes resolves by code, so a fromJSON-revived failure still maps', (assert) => {
+    const revived = Failure.fromJSON(
+      JSON.parse(JSON.stringify(AuthFailed({ status: 503, password: 'x' }))),
+    );
+    assert.deepEqual(Failure.attributes(revived), {
+      'failure.code': 'AuthFailed',
+      'auth.status': 503,
+    });
+  });
+
+  test('observed() reports to the portable observer and the diagnostics_channel', (assert) => {
+    const viaHook: string[] = [];
+    const viaChannel: unknown[] = [];
+    const sub = (message: unknown) => viaChannel.push(message);
+    Failure.onObserved((failure) => viaHook.push(failure.code));
+    subscribe(Failure.OBSERVED_CHANNEL_NAME, sub);
+    try {
+      const failure = AuthFailed({ status: 401, password: 'x' });
+      Failure.observed(failure);
+      assert.deepEqual(viaHook, ['AuthFailed']);
+      assert.deepEqual(viaChannel, [{ error: failure }]);
+    } finally {
+      Failure.onObserved(null);
+      unsubscribe(Failure.OBSERVED_CHANNEL_NAME, sub);
+    }
+    Failure.observed(AuthFailed({ status: 500, password: 'x' }));
+    assert.strictEqual(viaHook.length, 1, 'a detached observer sees nothing further');
+  });
+});

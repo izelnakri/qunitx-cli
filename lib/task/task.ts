@@ -2,6 +2,7 @@ import { type Result, ok, err } from '../result/result.ts';
 import {
   Failure,
   ignore as failureIgnore,
+  observed as failureObserved,
   isFailure,
   type Any as AnyFailure,
 } from '../result/failure.ts';
@@ -582,7 +583,13 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    */
   recover<U = T>(fn: (error: unknown) => U | PromiseLike<U>): TaskClass<T | U, never> {
     return this.#derive<T | U, never>(
-      () => this.then<T | U, T | U>(undefined, fn),
+      () =>
+        this.then<T | U, T | U>(undefined, (error: unknown) => {
+          // recover sees bugs too, but only declared failures report to the observation
+          // seam — a bug being *survived* here is still not a planned outcome.
+          if (isFailure(error)) failureObserved(error);
+          return fn(error);
+        }),
       (fresh) => fresh.recover(fn),
     );
   }
@@ -677,6 +684,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
       () =>
         this.then<T | U, T | U>(undefined, (error: unknown) => {
           if (!isFailure(error)) throw error;
+          failureObserved(error);
           return fallback;
         }),
       (fresh) => fresh.unwrapOr(fallback),
@@ -702,6 +710,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
       () =>
         this.then<A | B, A | B>(handlers.ok, (error: unknown) => {
           if (!isFailure(error)) throw error;
+          failureObserved(error);
           return handlers.err(error as E);
         }),
       (fresh) => fresh.match(handlers),
@@ -775,6 +784,11 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * gate:** a declared `Failure` becomes a typed `Err<E>`; a *bug* is re-thrown, so it lands at
    * the program's one crash boundary instead of being silently boxed.
    *
+   * Classifying a failure also reports it to the observation seam (`Failure.observed` — the
+   * `qunitx.failure.observed` channel plus `Failure.onObserved`), as do `match`/`unwrapOr`/
+   * `recover`: a tracing adapter subscribed there annotates the active span with
+   * `Failure.attributes(error)`, with zero tracing code at any call site.
+   *
    * Lazy like every method but `ignore`, and lineage-carrying: `task.result().restart()`
    * re-runs the chain and reflects the fresh outcome.
    *
@@ -793,7 +807,10 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
         this.then(
           (value): Result<T, E> => ok(value),
           (error: unknown): Result<T, E> => {
-            if (isFailure(error)) return err(error as E & AnyFailure);
+            if (isFailure(error)) {
+              failureObserved(error);
+              return err(error as E & AnyFailure);
+            }
             throw error;
           },
         ),

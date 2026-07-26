@@ -210,16 +210,40 @@ export interface FailureFactory<Code extends string, Data> {
   is(value: unknown): value is Failure<Code, Data>;
 }
 
+/**
+ * The attribute primitives tracing systems accept (OpenTelemetry's span-attribute values) —
+ * what a `trace` mapper returns and {@link attributes} yields.
+ */
+export type TraceAttributes = Record<string, string | number | boolean>;
+
+/**
+ * Per-kind options accepted by `define()`.
+ */
+export interface DefineOptions<Data> {
+  /**
+   * Allowlist mapper from the typed payload to span/log attributes, consumed by
+   * {@link attributes}. Deliberately not a redaction filter: only what the mapper *returns*
+   * is ever exposed, so sensitive fields are private by omission, not by scrubbing.
+   */
+  trace?: (data: Data) => TraceAttributes;
+}
+
+// Keyed by code (not by factory) so attributes() also resolves for failures that arrived
+// cross-realm or through fromJSON. Registered by define(); re-defining a code replaces it.
+const traceMappers = new Map<string, (data: unknown) => TraceAttributes>();
+
 /** `define()` overload for failures that carry no payload. */
 export function define<Code extends string>(
   code: Code,
   message: string,
+  defineOptions?: DefineOptions<undefined>,
 ): FailureFactory<Code, undefined> &
   ((data?: undefined, options?: FailureOptions) => Failure<Code, undefined>);
 /** `define()` overload for failures whose message is derived from their payload. */
 export function define<Code extends string, Data>(
   code: Code,
   message: (data: Data) => string,
+  defineOptions?: DefineOptions<Data>,
 ): FailureFactory<Code, Data>;
 /**
  * Declares a failure kind once and returns its constructor.
@@ -238,11 +262,29 @@ export function define<Code extends string, Data>(
  * The message is a *function of the payload* rather than a pre-interpolated string so that
  * the structured `data` and the human sentence can never disagree, and so nothing has to be
  * formatted for failures that end up handled silently.
+ *
+ * The optional third argument declares tracing behavior for the kind — see
+ * {@link DefineOptions} and {@link attributes}:
+ *
+ * ```ts
+ * import * as Failure from './failure.ts';
+ *
+ * const AuthFailed = Failure.define(
+ *   'AuthFailed',
+ *   (d: { status: number; password: string }) => `auth rejected: HTTP ${d.status}`,
+ *   { trace: (d) => ({ 'auth.status': d.status }) }, // the allowlist — password stays private
+ * );
+ * Failure.attributes(AuthFailed({ status: 401, password: 'hunter2' }));
+ * // { 'failure.code': 'AuthFailed', 'auth.status': 401 }
+ * ```
  */
 export function define<Code extends string, Data>(
   code: Code,
   message: string | ((data: Data) => string),
+  defineOptions?: DefineOptions<Data>,
 ): FailureFactory<Code, Data> {
+  if (defineOptions?.trace)
+    traceMappers.set(code, defineOptions.trace as (data: unknown) => TraceAttributes);
   const factory = (data: Data, options?: FailureOptions): Failure<Code, Data> => {
     // Computed outside the window below because it is caller-supplied code: anything it
     // throws must still get a stack trace of its own.
@@ -411,10 +453,9 @@ const NODE_PROCESS = (
  * ```
  */
 export const IGNORED_CHANNEL_NAME = 'qunitx.failure.ignored';
-const ignoredChannel = (
-  NODE_PROCESS?.getBuiltinModule?.('node:diagnostics_channel') as
-    typeof import('node:diagnostics_channel') | undefined
-)?.channel(IGNORED_CHANNEL_NAME);
+const DIAGNOSTICS = NODE_PROCESS?.getBuiltinModule?.('node:diagnostics_channel') as
+  typeof import('node:diagnostics_channel') | undefined;
+const ignoredChannel = DIAGNOSTICS?.channel(IGNORED_CHANNEL_NAME);
 
 // Debug output defaults to QUNITX_DEBUG, read once at import; `Config.setup()` calls
 // `setDebug(true)` when the --debug flag is set, so both switches reveal the same output.
@@ -504,6 +545,110 @@ export function ignore(context: string): (error: unknown) => void {
     if (NODE_PROCESS?.stderr) NODE_PROCESS.stderr.write(`${line}\n`);
     else console.error(line);
   };
+}
+
+// ── Tracing — the observation seam ───────────────────────────────────────────
+//
+// The counterpart to the ignore seam above, for failures that ARE handled: whenever a Task
+// classifies a rejection as a declared Failure and hands it to the caller (`result()`,
+// `match`, `unwrapOr`, `recover`), it reports here. A tracing adapter subscribes once and
+// annotates the active span — application code never writes `span.recordException` by hand,
+// and the abstractions never import a tracer. Bugs never pass through this seam: they keep
+// rejecting toward the crash boundary, so the two tiers stay separate in traces too.
+
+/**
+ * Name of the diagnostics_channel that {@link observed} publishes to on Node and Deno.
+ * Messages are `{ error: Failure.Any }`. This is what a tracing adapter subscribes to —
+ * e.g. OpenTelemetry, in its entirety:
+ *
+ * ```ts
+ * import * as Failure from './failure.ts';
+ * import diagnostics_channel from 'node:diagnostics_channel';
+ *
+ * // Defined, not invoked: the adapter an application imports once at boot.
+ * function installOtelAdapter(getActiveSpan: () => { recordException(e: Error): void; setAttributes(a: object): void } | undefined) {
+ *   diagnostics_channel.subscribe(Failure.OBSERVED_CHANNEL_NAME, (message) => {
+ *     const { error } = message as { error: Failure.Any };
+ *     const span = getActiveSpan(); // resolves via AsyncLocalStorage — the right span, free
+ *     span?.recordException(error);
+ *     span?.setAttributes(Failure.attributes(error));
+ *   });
+ * }
+ * ```
+ */
+export const OBSERVED_CHANNEL_NAME = 'qunitx.failure.observed';
+const observedChannel = DIAGNOSTICS?.channel(OBSERVED_CHANNEL_NAME);
+
+/**
+ * The callback shape {@link onObserved} installs: every declared failure a consumer
+ * classified arrives right as it is handed to application code.
+ */
+export type ObservedObserver = (failure: Any) => void;
+let observedObserver: ObservedObserver | null = null;
+
+/**
+ * Installs a process-wide observer for every *handled* declared failure — the portable
+ * (browser-friendly) counterpart of subscribing to {@link OBSERVED_CHANNEL_NAME}. Single
+ * slot, one null check on the failure path, nothing retained; pass `null` to detach.
+ *
+ * ```ts
+ * import * as Failure from './failure.ts';
+ *
+ * const handled: string[] = [];
+ * Failure.onObserved((failure) => handled.push(failure.code));
+ * // … Task consumers (`result()`, `match`, `unwrapOr`, `recover`) report here as they classify
+ * Failure.onObserved(null); // detach
+ * ```
+ */
+export function onObserved(observer: ObservedObserver | null): void {
+  observedObserver = observer;
+}
+
+/**
+ * Reports a declared failure to the observation seam — {@link onObserved} plus the
+ * {@link OBSERVED_CHANNEL_NAME} channel. Task's consuming methods call this at their
+ * classification points; call it yourself only for a *synchronous* `Result` flow that never
+ * crossed a Task, so a tracing adapter sees those failures too.
+ *
+ * ```ts
+ * import * as Failure from './failure.ts';
+ *
+ * const Invalid = Failure.define('Invalid', (d: { field: string }) => `bad ${d.field}`);
+ * const failure = Invalid({ field: 'email' });
+ * Failure.observed(failure); // hand-reported: a sync Result branch a tracer should still see
+ * ```
+ */
+export function observed(failure: Any): void {
+  observedObserver?.(failure);
+  // hasSubscribers first so the quiet path allocates no message object.
+  if (observedChannel?.hasSubscribers) observedChannel.publish({ error: failure });
+}
+
+/**
+ * Span/log attributes a failure declares for tracing: `failure.code` plus whatever its
+ * factory's `trace` mapper (see {@link define}) explicitly allowlisted from `data`. A
+ * failure whose factory declared no mapper yields the code alone — **unmapped payload
+ * fields never leave the process**, which is what makes redaction (passwords, tokens) the
+ * default rather than a discipline.
+ *
+ * Keyed by `code`, so it also works on failures that crossed a realm or a `fromJSON` revive.
+ *
+ * ```ts
+ * import * as Failure from './failure.ts';
+ *
+ * const AuthFailed = Failure.define(
+ *   'AuthFailed',
+ *   (d: { status: number; password: string }) => `auth rejected: HTTP ${d.status}`,
+ *   { trace: (d) => ({ 'auth.status': d.status }) },
+ * );
+ *
+ * Failure.attributes(AuthFailed({ status: 401, password: 'hunter2' }));
+ * // { 'failure.code': 'AuthFailed', 'auth.status': 401 } — the password cannot leak: never mapped
+ * ```
+ */
+export function attributes(failure: Any): TraceAttributes {
+  const mapper = traceMappers.get(failure.code);
+  return { 'failure.code': failure.code, ...mapper?.(failure.data) };
 }
 
 // ── Cause chains ─────────────────────────────────────────────────────────────

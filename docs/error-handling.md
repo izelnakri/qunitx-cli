@@ -1192,6 +1192,19 @@ browsers, which have no channel API); and `Failure.setDebug(true)` / `QUNITX_DEB
 `diagnostics_channel` via `process.getBuiltinModule`, so no `node:` import ever lands in a
 browser bundle — there the chain resolves to `undefined` and publishing is skipped.
 
+_Handled_ failures have the mirror-image seam, for tracing: whenever a consuming method
+(`result()`, `match`, `unwrapOr`, `recover`) classifies a rejection as a declared Failure, it
+reports through `Failure.observed` — the `qunitx.failure.observed` channel plus the portable
+`Failure.onObserved(fn)` hook. A ~12-line tracing adapter subscribes once at boot, calls
+`span.recordException(error)` and `span.setAttributes(Failure.attributes(error))` on the
+active span (resolved via `AsyncLocalStorage`, which flows through Task's native promise
+machinery for free), and every route handler in the application gets failure-annotated spans
+with zero tracing code. `Failure.attributes` derives span attributes from the optional
+`trace` mapper a kind declares in `define(code, message, { trace })` — an **allowlist**, so a
+payload field a mapper does not return (a password, a token) cannot reach a span; redaction
+is the default, not a discipline. Bugs never pass through this seam — they keep rejecting
+toward the crash boundary, so the two tiers stay separate in traces too.
+
 Three of those sites are worth knowing about, because they are _not_ cleanup and the label
 says so: `run.ts`'s two `Task(buildPromise).ignore(…)` calls and `web-server.ts`'s
 `activeRebuild` waits are **rejection-deadline extensions**, not error handling. The real
