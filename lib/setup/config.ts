@@ -111,6 +111,10 @@ export async function setup(): Promise<Result.Result<Config, ConfigFailure>> {
     // complete Config is only guaranteed at the return. The later `as Config` casts this
     // function used to repeat are now redundant.
   } as Config;
+  // `--debug` also reveals `.ignore(context)`-suppressed rejections as TAP comments —
+  // one flag lights every deliberate swallow. (QUNITX_DEBUG covers the env path at
+  // failure.ts load; enable-only, so a daemon run without the flag never turns it off.)
+  if (config.debug) Result.Failure.setDebug(true);
   config.htmlPaths = normalizeHTMLPaths(config.projectRoot, config.htmlPaths);
   const [fsTree, plugins] = await Promise.all([
     FSTree.build(config.testFileLookupPaths, config),

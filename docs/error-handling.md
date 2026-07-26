@@ -1189,7 +1189,14 @@ handling happens at a distance, when `runInBrowser` re-awaits the same promise i
 `try`. Nothing enforces that coupling; a refactor that drops the distant `await` turns every
 watch-mode build failure into silence. The labels are the only thing currently pointing at it.
 
-A separate family survives as plain `.catch((err) => config.debug && …)`: the ~10 sites that
-have a `config` in scope and gate on `--debug` rather than `QUNITX_DEBUG`. Converting them to
-`ignore()` would silently change which flag reveals them; they stay until that gate question
-is answered on purpose.
+The `.catch((err) => config.debug && …)` family — the ~10 sites gated on `--debug` rather
+than `QUNITX_DEBUG` — is converted too, by answering the gate question head-on:
+`Config.setup()` calls `Failure.setDebug(true)` when `--debug` is set, so both flags reveal
+`ignore()`-suppressed rejections and the two debug switches mean one thing. The wiring is
+enable-only: a daemon request without `--debug` never switches an env-enabled toggle off.
+
+What deliberately remains as plain `.catch` is *handling*, not suppression: value-defaults
+(`.catch(() => null)` and friends) where the fallback **is** the behavior, the daemon's
+always-printed `browserReady.catch` diagnostics (not debug-gated — silencing them by default
+would be a regression), and watch mode's build-error reporter. A `.catch` that produces a
+value or a message the user always sees has nothing to hand `ignore()`.

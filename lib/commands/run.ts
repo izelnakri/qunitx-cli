@@ -563,19 +563,15 @@ async function runConcurrentMode(
     wallTimes,
   );
   if (!filteredRun) {
-    Timings.persist(fileTimes, config.projectRoot).catch(
-      (err: Error) =>
-        config.debug && process.stderr.write(`# [qunitx] Timings.persist: ${err.message}\n`),
-    );
+    Task(Timings.persist(fileTimes, config.projectRoot)).ignore('Timings.persist');
   }
   // Persist this run's failures for the next `--only-failed`. An empty set (all green) is
   // written too, so a passing re-run clears the cache. Awaited on the exit path below (unlike
   // timings, which tolerate loss) so a slow filesystem can't lose the cache to process.exit.
   const failureCacheWrite = filteredRun
     ? null
-    : FailureCache.write(config.projectRoot, FailureCache.build(config)).catch(
-        (err: Error) =>
-          config.debug && process.stderr.write(`# [qunitx] FailureCache.write: ${err.message}\n`),
+    : Task(FailureCache.write(config.projectRoot, FailureCache.build(config))).ignore(
+        'FailureCache.write',
       );
   if (config.debug) Timings.print(fileTimes, config.projectRoot);
 
@@ -588,14 +584,7 @@ async function runConcurrentMode(
   // handler captures the exit code instead of hitting process.exit.
   if (config.state.daemon) {
     clearInterval(keepAlive);
-    await closeWithGrace([
-      sharedServer
-        ?.close()
-        .catch(
-          (err: Error) =>
-            config.debug && process.stderr.write(`# [qunitx] server.close: ${err.message}\n`),
-        ),
-    ]);
+    await closeWithGrace([Task(() => sharedServer?.close()).ignore('server.close')]);
     throw new DaemonRunError(exitCode);
   }
 
@@ -622,18 +611,8 @@ async function runConcurrentMode(
     // SIGTERMs it ~60 s later. Best-effort cleanup, exit anyway.
     await closeWithGrace([
       failureCacheWrite,
-      sharedServer
-        ?.close()
-        .catch(
-          (err: Error) =>
-            config.debug && process.stderr.write(`# [qunitx] server.close: ${err.message}\n`),
-        ),
-      browser
-        .close()
-        .catch(
-          (err: Error) =>
-            config.debug && process.stderr.write(`# [qunitx] browser.close: ${err.message}\n`),
-        ),
+      Task(() => sharedServer?.close()).ignore('server.close'),
+      Task(browser.close()).ignore('browser.close'),
       shutdownPrelaunch(),
     ]);
     clearInterval(keepAlive);

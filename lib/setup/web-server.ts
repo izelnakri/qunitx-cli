@@ -113,13 +113,7 @@ export function setup(config: Config): HTTPServer {
     './filtered-tests.js',
   );
   const saveHTML = (filePath: string, html: string) =>
-    fsPromise
-      .writeFile(filePath, html)
-      .catch(
-        (err: Error) =>
-          config.debug &&
-          process.stderr.write(`# [qunitx] writeFile ${filePath}: ${err.message}\n`),
-      );
+    Task(fsPromise.writeFile(filePath, html)).ignore(`writeFile ${filePath}`);
 
   config.state.group.wsConnectionCount = 0;
   server.wss.on('connection', function connection(socket) {
@@ -685,13 +679,7 @@ export function registerGroupRoutes(server: HTTPServer, groupConfig: Config): vo
     './tests.js',
   );
   const saveHTML = (filePath: string, html: string) =>
-    fsPromise
-      .writeFile(filePath, html)
-      .catch(
-        (err: Error) =>
-          groupConfig.debug &&
-          process.stderr.write(`# [qunitx] writeFile ${filePath}: ${err.message}\n`),
-      );
+    Task(fsPromise.writeFile(filePath, html)).ignore(`writeFile ${filePath}`);
 
   server.get(`/group-${groupId}/`, (_req, res) => {
     const fallback = groupConfig.state.group.build.fallbackPage;

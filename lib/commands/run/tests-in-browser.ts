@@ -404,9 +404,8 @@ export async function run(
       // a file subset (runHasFilter) or to a test subset (-t/-m/line target) — so a scoped
       // re-run can't shrink the cache below the full known-failing set.
       if (!runHasFilter && !isFilteredRun(config)) {
-        FailureCache.write(config.projectRoot, FailureCache.build(config)).catch(
-          (err: Error) =>
-            config.debug && process.stderr.write(`# [qunitx] FailureCache.write: ${err.message}\n`),
+        Task(FailureCache.write(config.projectRoot, FailureCache.build(config))).ignore(
+          'FailureCache.write',
         );
       }
 
@@ -455,11 +454,9 @@ export async function run(
     ) {
       const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
       build.fallbackPage = { kind: 'build-error', error: buildError };
-      fs.writeFile(path.join(outDir, 'qunitx.html'), WebServer.buildErrorHTML(buildError)).catch(
-        (err: Error) =>
-          config.debug &&
-          process.stderr.write(`# [qunitx] writeFile qunitx.html: ${err.message}\n`),
-      );
+      Task(
+        fs.writeFile(path.join(outDir, 'qunitx.html'), WebServer.buildErrorHTML(buildError)),
+      ).ignore('writeFile qunitx.html');
     }
 
     if (config.watch) {
@@ -531,7 +528,7 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
     groupConfig.state.group.build.fallbackPage = null;
   });
 
-  const { projectRoot, debug, browser } = groupConfigs[0];
+  const { projectRoot, browser } = groupConfigs[0];
 
   // Build each group's descriptor in one pass, skipping empty groups (overlayfs race).
   // Their build.allTestCode stays null so run's early-return handles them.
@@ -672,15 +669,12 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
     await Promise.all(
       activeGroups.map((group) => {
         group.build.fallbackPage = { kind: 'build-error', error: buildError };
-        return fs
-          .writeFile(
+        return Task(
+          fs.writeFile(
             path.join(path.resolve(group.config.projectRoot, group.config.output), 'index.html'),
             errorHtml,
-          )
-          .catch(
-            (err: Error) =>
-              debug && process.stderr.write(`# [qunitx] writeFile index.html: ${err.message}\n`),
-          );
+          ),
+        ).ignore('writeFile index.html');
       }),
     );
     throw error;
@@ -999,14 +993,7 @@ async function runTestInsideHTMLFile(
     // back to original sources via config.state.group.sourceMapDecoder, merging into the shared collector.
     if (coverageStarted) {
       const entries = await page.coverage.stopJSCoverage().catch(() => []);
-      try {
-        await Coverage.collect(config, entries);
-      } catch (error) {
-        config.debug &&
-          process.stderr.write(
-            `# [qunitx] coverage collection failed: ${(error as Error).message}\n`,
-          );
-      }
+      await Task(() => Coverage.collect(config, entries)).ignore('coverage collection');
     }
   }
 
