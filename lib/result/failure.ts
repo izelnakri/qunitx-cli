@@ -384,7 +384,8 @@ const DEBUG = Boolean(process.env.QUNITX_DEBUG);
 
 /**
  * Builds a `.catch()` handler for a failure that genuinely has no consequence — but says so
- * under `QUNITX_DEBUG` instead of vanishing.
+ * under `QUNITX_DEBUG` instead of vanishing. This is the raw handler; the ergonomic spelling
+ * at call sites is `Task(promise).ignore(context)`, which wraps exactly this function.
  *
  * This is the counterpart to `Result`, not a lesser version of it. A `Result` is for a failure
  * the caller branches on; unlinking a temp directory that is already gone is not that, and

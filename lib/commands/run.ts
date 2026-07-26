@@ -40,7 +40,7 @@ import * as Timings from './run/timings.ts';
 import { applyWatchLineTargets, resolveTargetedFiles, splitIntoGroups } from './run/grouping.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
 import type { Config, HtmlAssets } from '../types.ts';
-import { ignore } from '../result/failure.ts';
+import { Task } from '../task/index.ts';
 
 // Playwright navigation timeout for headed watch-mode reloads (not test execution).
 const WATCH_NAV_TIMEOUT_MS = 5_000;
@@ -133,11 +133,11 @@ async function runWatchMode(config: Config): Promise<void> {
   // await it inside its own try/catch — errors surface as BundleErrors there, keeping
   // the watcher alive exactly as they would for a normal watch-mode build failure.
   // Suppress unhandled rejection: esbuild can fail (syntax error, missing file) before
-  // Browser.setup completes. Without .catch(), Node.js detects the rejection during the
+  // Browser.setup completes. Without an eagerly-attached handler, Node.js detects the rejection during the
   // Promise.all window and crashes the process. runInBrowser awaits this promise inside
   // its own try/catch, so the rejection is handled — but only after Browser.setup resolves.
   const preBuildPromise = buildTestBundle(config);
-  preBuildPromise.catch(ignore('pre-build rejection — re-awaited by runInBrowser'));
+  Task(preBuildPromise).ignore('pre-build rejection — re-awaited by runInBrowser');
   build.preBuildPromise = preBuildPromise;
 
   const [connections] = await Promise.all([
@@ -227,12 +227,12 @@ async function runWatchMode(config: Config): Promise<void> {
   //   but the no-tests fallback page is set only AFTER runTestInsideHTMLFile returns, so we must
   //   re-navigate so the route handler can now serve the warning page.
   if (isHeadedWatchMode && build.fallbackPage) {
-    await connections.page
-      .goto(`http://localhost:${config.port}/`, {
+    await Task(
+      connections.page.goto(`http://localhost:${config.port}/`, {
         waitUntil: 'commit',
         timeout: WATCH_NAV_TIMEOUT_MS,
-      })
-      .catch(ignore('headed watch-mode navigation to the fallback page'));
+      }),
+    ).ignore('headed watch-mode navigation to the fallback page');
   }
 
   if (config.watch) {
@@ -259,7 +259,7 @@ async function runWatchMode(config: Config): Promise<void> {
           // initial watch-mode build). runInBrowser picks up the promise from
           // preBuildPromise and sets activeRebuild so /tests.js can await it.
           const rebuildPromise = buildTestBundle(config);
-          rebuildPromise.catch(ignore('watch rebuild rejection — re-awaited by runInBrowser'));
+          Task(rebuildPromise).ignore('watch rebuild rejection — re-awaited by runInBrowser');
           build.preBuildPromise = rebuildPromise;
           return await runInBrowser(config, connections);
         }
@@ -276,12 +276,12 @@ async function runWatchMode(config: Config): Promise<void> {
         // means it ignores the WS 'refresh' message). Navigate it directly after a build error
         // or a 0-tests warning so it shows the correct HTML rather than stale test results.
         if (isHeadedWatchMode && build.fallbackPage) {
-          await connections.page
-            .goto(`http://localhost:${config.port}/`, {
+          await Task(
+            connections.page.goto(`http://localhost:${config.port}/`, {
               waitUntil: 'commit',
               timeout: WATCH_NAV_TIMEOUT_MS,
-            })
-            .catch(ignore('headed watch-mode re-navigation after a rebuild'));
+            }),
+          ).ignore('headed watch-mode re-navigation after a rebuild');
         }
       },
     );

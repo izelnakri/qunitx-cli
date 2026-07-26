@@ -178,11 +178,13 @@ The honest boundary: in a single-realm program that never serialises an error, p
 dormant and this is a convention a team could hand-roll. This codebase crosses realm and wire
 on its main path, which is why the module carries its weight here.
 
-`Failure.ignore(context)` is the deliberate opposite — a `.catch()` handler for a failure that
-genuinely has no consequence, which says so under `QUNITX_DEBUG` instead of vanishing:
+`Failure.ignore(context)` is the deliberate opposite — labelled non-handling for a failure
+that genuinely has no consequence, which says so under `QUNITX_DEBUG` instead of vanishing.
+Its call-site spelling is `Task#ignore` (§10.2), which wraps the same handler and is **eager**
+— fire-and-forget cleanup attaches its observer immediately, so no unhandled-rejection window:
 
 ```ts
-await unlink(socketPath).catch(ignore('daemon socket unlink'));
+await Task(unlink(socketPath)).ignore('daemon socket unlink'); // or fire-and-forget: no await
 ```
 
 It is not a lesser `Result`; it is what §11 recommends _instead_ of one. The point is that
@@ -1062,14 +1064,15 @@ const { ok, value, error } = await task.result();
 It reflects a declared `Failure` to a typed `Err<E>` and **re-throws a bug**, so the two-tier
 rule of §3 survives the crossing — and the same rule threads through every consuming method:
 
-| method                   | declared `Failure`                                    | bug (any other rejection)                        |
-| ------------------------ | ----------------------------------------------------- | ------------------------------------------------ |
-| `result()`               | typed `Err<E>`                                        | re-thrown                                        |
-| `match({ ok, err })`     | `err` branch, typed `E`                               | re-thrown                                        |
-| `unwrapOr(fallback)`     | fallback                                              | re-thrown                                        |
-| `expect(message)`        | re-thrown with context — same `code`/`data`, `cause`d | passes through untouched                         |
-| `mapErr(fn)` — adapter   | remapped                                              | **remapped too** — classification happens here   |
-| `recover(fn)` — boundary | recovered                                             | **recovered too** — the program's one `.catch()` |
+| method                      | declared `Failure`                                    | bug (any other rejection)                                   |
+| --------------------------- | ----------------------------------------------------- | ----------------------------------------------------------- |
+| `result()`                  | typed `Err<E>`                                        | re-thrown                                                   |
+| `match({ ok, err })`        | `err` branch, typed `E`                               | re-thrown                                                   |
+| `unwrapOr(fallback)`        | fallback                                              | re-thrown                                                   |
+| `expect(message)`           | re-thrown with context — same `code`/`data`, `cause`d | passes through untouched                                    |
+| `mapErr(fn)` — adapter      | remapped                                              | **remapped too** — classification happens here              |
+| `recover(fn)` — boundary    | recovered                                             | **recovered too** — the program's one `.catch()`            |
+| `ignore(context)` — cleanup | swallowed, labelled under `QUNITX_DEBUG`              | **swallowed too** — and EAGER: fire-and-forget attaches now |
 
 `expect` is anyhow's `.context()`, not Rust's panicking `expect`: the failure keeps its `code`
 and `data` (every `switch` on the code still works), gains the context message, and chains the
@@ -1173,15 +1176,20 @@ blocks. In descending order of value:
 
 Deliberately **not** converted to Results: the 28 cleanup `.catch(() => {})` calls on
 `unlink`/`rm`/`close`/`dispose`, where the failure genuinely has no consequence. Wrapping
-those would add ceremony and remove nothing. They now carry `Failure.ignore('<what>')`
-instead — the open TODO item _"make all `.catch(() => {})` print something to debug"_ — so a
-suppressed failure is labelled and visible under `QUNITX_DEBUG` while still costing nothing on
-the normal path.
+those would add ceremony and remove nothing. They now read
+`Task(promise).ignore('<what>')` — the open TODO item _"make all `.catch(() => {})` print
+something to debug"_ — so a suppressed failure is labelled, visible under `QUNITX_DEBUG`, and
+eagerly observed (no unhandled-rejection window at fire-and-forget sites), while still
+costing nothing on the normal path.
 
-Three of those sites are worth knowing about, because they are _not_ cleanup and the label now
-says so: `run.ts`'s two `preBuildPromise.catch(() => {})` calls and `web-server.ts`'s
-`activeRebuild.catch(() => {})` are **rejection-deadline extensions**, not error handling. The
-real handling happens at a distance, when `runInBrowser` re-awaits the same promise inside its
-own `try`. Nothing enforces that coupling; a refactor that drops the distant `await` turns
-every watch-mode build failure into silence. The labels are the only thing currently pointing
-at it.
+Three of those sites are worth knowing about, because they are _not_ cleanup and the label
+says so: `run.ts`'s two `Task(buildPromise).ignore(…)` calls and `web-server.ts`'s
+`activeRebuild` waits are **rejection-deadline extensions**, not error handling. The real
+handling happens at a distance, when `runInBrowser` re-awaits the same promise inside its own
+`try`. Nothing enforces that coupling; a refactor that drops the distant `await` turns every
+watch-mode build failure into silence. The labels are the only thing currently pointing at it.
+
+A separate family survives as plain `.catch((err) => config.debug && …)`: the ~10 sites that
+have a `config` in scope and gate on `--debug` rather than `QUNITX_DEBUG`. Converting them to
+`ignore()` would silently change which flag reveals them; they stay until that gate question
+is answered on purpose.

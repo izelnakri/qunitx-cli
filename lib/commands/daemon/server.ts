@@ -16,7 +16,7 @@ import * as Result from '../../result/index.ts';
 import { Failure } from '../../result/index.ts';
 import type { Request, ResponseChunk, RunRequest, DaemonInfo } from './protocol.ts';
 import type { Browser as PlaywrightBrowser } from 'playwright-core';
-import { ignore } from '../../result/failure.ts';
+import { Task } from '../../task/index.ts';
 import type {
   Config as ResolvedConfig,
   EsbuildCache,
@@ -77,7 +77,7 @@ async function tryAcquireDaemonLock(lockPath: string): Promise<boolean> {
         if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
         ownerPid = Number((await readFile(lockPath, 'utf8').catch(() => '')).trim());
         if (ownerPid > 0 && isProcessAlive(ownerPid)) return false;
-        await unlink(lockPath).catch(ignore('stale daemon lock unlink'));
+        await Task(unlink(lockPath)).ignore('stale daemon lock unlink');
       }
     }
     return false;
@@ -85,7 +85,7 @@ async function tryAcquireDaemonLock(lockPath: string): Promise<boolean> {
     // Drop the second hardlink. On success the inode lives on via lockPath
     // until shutdown unlinks it; on failure tmpPath was the only ref
     // and unlinking here reaps the inode.
-    await unlink(tmpPath).catch(ignore('daemon lock tmpfile unlink'));
+    await Task(unlink(tmpPath)).ignore('daemon lock tmpfile unlink');
   }
 }
 
@@ -280,7 +280,7 @@ export async function serve(): Promise<void> {
   // path is from a crashed previous daemon (its lockfile would have been stale-
   // recovered above). Unlink so the bind below creates a fresh dirent.
   if (fs.existsSync(socketPath))
-    await unlink(socketPath).catch(ignore('stale daemon socket unlink'));
+    await Task(unlink(socketPath)).ignore('stale daemon socket unlink');
   await listen(state.socketServer, socketPath);
   // Set the ownership flag in the same microtask as listen()'s resolution. Signals
   // are delivered as macrotasks; they cannot interleave between two synchronous
@@ -290,7 +290,7 @@ export async function serve(): Promise<void> {
   // can leave it world-readable. Skipped on Windows: named pipe paths don't accept
   // POSIX modes and chmod returns EPERM/EINVAL for them.
   if (process.platform !== 'win32')
-    await chmod(socketPath, 0o600).catch(ignore('daemon socket chmod'));
+    await Task(chmod(socketPath, 0o600)).ignore('daemon socket chmod');
 
   const info: DaemonInfo = {
     pid: process.pid,
@@ -371,16 +371,16 @@ export async function shutdown(
       new Promise<null>((resolve) => setTimeout(() => resolve(null), SHUTDOWN_BROWSER_GRACE_MS)),
     ]));
   await Promise.all([
-    state.pageSlot.page?.close().catch(ignore('daemon page close')),
+    Task(() => state.pageSlot.page?.close()).ignore('daemon page close'),
     // browser may be null if the launch hadn't settled within the grace window
     // (or never started at all); the chrome-prelaunch exit hook handles that.
-    browser?.close().catch(ignore('daemon browser close')),
-    state.esbuildCache.context?.dispose().catch(ignore('daemon esbuild context dispose')),
+    Task(() => browser?.close()).ignore('daemon browser close'),
+    Task(() => state.esbuildCache.context?.dispose()).ignore('daemon esbuild context dispose'),
   ]);
   // Best-effort cleanup of the per-cwd daemon dir created in run. rmdir refuses
   // non-empty dirs (we swallow the ENOTEMPTY) so a concurrent sibling that re-created files inside
   // is never trampled. socketPath lives outside Paths.dir, so the dir is empty after the unlinks.
-  await rmdir(Paths.dir(process.cwd())).catch(ignore('daemon run dir rmdir'));
+  await Task(rmdir(Paths.dir(process.cwd()))).ignore('daemon run dir rmdir');
   exit();
 }
 
@@ -393,9 +393,9 @@ export async function shutdown(
  */
 export async function removeLivenessFiles(state: DaemonState): Promise<void> {
   await Promise.all([
-    state.listenSucceeded ? unlink(state.socketPath).catch(ignore('daemon socket unlink')) : null,
-    state.listenSucceeded ? unlink(state.infoPath).catch(ignore('daemon info file unlink')) : null,
-    unlink(state.lockPath).catch(ignore('daemon lock unlink')),
+    state.listenSucceeded ? Task(unlink(state.socketPath)).ignore('daemon socket unlink') : null,
+    state.listenSucceeded ? Task(unlink(state.infoPath)).ignore('daemon info file unlink') : null,
+    Task(unlink(state.lockPath)).ignore('daemon lock unlink'),
   ]);
 }
 
@@ -621,13 +621,13 @@ export async function browserResponsive(
   const winner = await Promise.race([probe, timeout]);
   if (winner) {
     // Healthy: tidy up the probe session so it doesn't leak across runs.
-    void winner.detach().catch(ignore('browser probe session detach'));
+    Task(winner.detach()).ignore('browser probe session detach');
     return true;
   }
   // Not responsive within budget (dead channel or CDP error). If the probe was merely
   // slow and resolves a session after the timeout, detach it so it doesn't leak.
   void probe.then((session) =>
-    session?.detach().catch(ignore('late browser probe session detach')),
+    Task(() => session?.detach()).ignore('late browser probe session detach'),
   );
   return false;
 }
@@ -648,7 +648,7 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
   // CDP socket hangs forever waiting for a protocol reply that never arrives.
   // skipPrelaunch=true bypasses the singleton prelaunch endpoint (which now points at the
   // dead Chrome) and goes straight to a fresh chromium.launch().
-  state.browser?.close().catch(ignore('crashed browser close'));
+  Task(() => state.browser?.close()).ignore('crashed browser close');
   // The persistent page belongs to the dead browser; drop the reference so the
   // next Browser.setup mints a fresh page on the new browser without paying an
   // isConnected() round-trip on a doomed CDP socket.

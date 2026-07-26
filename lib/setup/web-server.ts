@@ -11,7 +11,7 @@ import { HTTPServer, MIME_TYPES } from '../web/index.ts';
 import { createReconnectingSocket } from './ws-client.js';
 import { readTemplate } from '../utils/read-template.ts';
 import type { Config } from '../types.ts';
-import { ignore } from '../result/failure.ts';
+import { Task } from '../task/index.ts';
 
 const fsPromise = fs.promises;
 
@@ -206,9 +206,7 @@ export function setup(config: Config): HTTPServer {
     // esbuild settles. On build failure, send a WS done signal with 0 tests so the test
     // race resolves immediately rather than waiting for the startup timeout.
     if (build.activeRebuild) {
-      await build.activeRebuild.catch(
-        ignore('in-flight rebuild — reported by the request handler'),
-      );
+      await Task(build.activeRebuild).ignore('in-flight rebuild — reported by the request handler');
       if (!build.allTestCode) {
         // Resolve testRaceResult from Node.js directly — the WS may not be open yet
         // when this script executes on CI (Chrome can fetch tests.js before the WS
@@ -291,7 +289,9 @@ export function setup(config: Config): HTTPServer {
     // buildTestBundle clears fallbackPage only after its first await (fs.mkdir), so a stale
     // error from the previous run can persist into the next run's navigation window.
     // Awaiting activeRebuild here ensures we act on the settled build state, not stale state.
-    await build.activeRebuild?.catch(ignore('in-flight rebuild — reported by the request handler'));
+    await Task(() => build.activeRebuild).ignore(
+      'in-flight rebuild — reported by the request handler',
+    );
     const fallback = build.fallbackPage;
     if (fallback?.kind === 'build-error') {
       const htmlContent = buildErrorHTML(fallback.error);

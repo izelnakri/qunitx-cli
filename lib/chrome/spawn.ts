@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Socket } from 'node:net';
 import type { ChromeHandle, EarlyChrome } from '../types.ts';
-import { ignore } from '../result/failure.ts';
+import { Task } from '../task/index.ts';
 
 const CDP_URL_REGEX = /DevTools listening on (ws:\/\/[^\s]+)/;
 
@@ -48,8 +48,8 @@ export async function spawn(
 
   proc.on('close', () => {
     if (!cdpConnected)
-      rm(userDataDir, { recursive: true, force: true }).catch(
-        ignore('chrome user-data-dir removal after a failed CDP connect'),
+      Task(rm(userDataDir, { recursive: true, force: true })).ignore(
+        'chrome user-data-dir removal after a failed CDP connect',
       );
     resolveWith(null);
   });
