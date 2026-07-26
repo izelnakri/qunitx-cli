@@ -374,13 +374,55 @@ export function from(thrown: unknown): Any {
 
 // ── Deliberate non-handling ──────────────────────────────────────────────────
 
+// `process` is reached through globalThis so this module also loads in browsers, where the
+// object is absent: the env default is simply off there, and setDebug()/onIgnored() remain
+// the portable switches.
+const NODE_PROCESS = (
+  globalThis as {
+    process?: {
+      env?: Record<string, string | undefined>;
+      stderr?: { write(chunk: string): void };
+      getBuiltinModule?: (id: string) => unknown;
+    };
+  }
+).process;
+
+// The standard observability seam on server runtimes: every ignored failure also publishes
+// `{ context, error }` to the Node/Deno diagnostics_channel below, so any number of
+// subscribers (an APM agent, an OpenTelemetry bridge, a test) can listen without this module
+// owning a multi-observer registry. `process.getBuiltinModule` is the one builtin access that
+// neither crashes a browser nor drags a `node:` import into browser bundles — there the chain
+// yields `undefined` and publishing is skipped.
+/**
+ * Name of the diagnostics_channel that {@link ignore} publishes to on Node and Deno —
+ * subscribe with the platform API, no qunitx registry involved. Messages are
+ * `{ context: string, error: unknown }`. Browsers have no channel; use {@link onIgnored}.
+ *
+ * ```ts
+ * import * as Failure from './failure.ts';
+ * import diagnostics_channel from 'node:diagnostics_channel';
+ *
+ * const seen: unknown[] = [];
+ * const collect = (message: unknown) => seen.push(message);
+ * diagnostics_channel.subscribe(Failure.IGNORED_CHANNEL_NAME, collect);
+ * await Promise.reject(new Error('boom')).catch(Failure.ignore('cleanup'));
+ * seen; // [{ context: 'cleanup', error: Error('boom') }]
+ * diagnostics_channel.unsubscribe(Failure.IGNORED_CHANNEL_NAME, collect);
+ * ```
+ */
+export const IGNORED_CHANNEL_NAME = 'qunitx.failure.ignored';
+const ignoredChannel = (
+  NODE_PROCESS?.getBuiltinModule?.('node:diagnostics_channel') as
+    typeof import('node:diagnostics_channel') | undefined
+)?.channel(IGNORED_CHANNEL_NAME);
+
 // Debug output defaults to QUNITX_DEBUG, read once at import; `Config.setup()` calls
 // `setDebug(true)` when the --debug flag is set, so both switches reveal the same output.
 // The ignore() call sites are in cleanup paths that run with no config in scope (temp-dir
 // removal, socket teardown), so threading `config.debug` to them is not an option. Mutable,
 // because an env var read at import time cannot be flipped from userland — `setDebug()` below
 // is the runtime seam a host application (or a standalone packaging of this module) needs.
-let DEBUG = Boolean(process.env.QUNITX_DEBUG);
+let DEBUG = Boolean(NODE_PROCESS?.env?.QUNITX_DEBUG);
 
 /**
  * Toggles ignored-failure reporting at runtime, overriding the `QUNITX_DEBUG` default.
@@ -409,6 +451,10 @@ let ignoredObserver: IgnoredObserver | null = null;
  * path only (nothing on success, nothing per Task), and retains nothing itself: whether the
  * suppressed failures accumulate, sample, or stream somewhere is the observer's decision.
  * Pass `null` to detach.
+ *
+ * This is the *portable* hook (it works in browsers) and it holds one observer. On Node and
+ * Deno the same events also publish to the {@link IGNORED_CHANNEL_NAME} diagnostics_channel,
+ * which takes any number of platform-level subscribers — prefer it for APM/tracing agents.
  *
  * ```ts
  * import * as Failure from './failure.ts';
@@ -450,9 +496,13 @@ export function onIgnored(observer: IgnoredObserver | null): void {
 export function ignore(context: string): (error: unknown) => void {
   return (error: unknown) => {
     ignoredObserver?.(context, error);
+    // hasSubscribers first so the quiet path allocates no message object.
+    if (ignoredChannel?.hasSubscribers) ignoredChannel.publish({ context, error });
     if (!DEBUG) return;
     // stderr, not stdout: stdout is the TAP stream and a stray line there corrupts the report.
-    process.stderr.write(`# [qunitx] ignored (${context}): ${format(error)}\n`);
+    const line = `# [qunitx] ignored (${context}): ${format(error)}`;
+    if (NODE_PROCESS?.stderr) NODE_PROCESS.stderr.write(`${line}\n`);
+    else console.error(line);
   };
 }
 

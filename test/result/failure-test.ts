@@ -1,4 +1,5 @@
 import { module, test } from 'qunitx';
+import { subscribe, unsubscribe } from 'node:diagnostics_channel';
 import * as Failure from '../../lib/result/failure.ts';
 
 const FileMissing = Failure.define(
@@ -275,5 +276,25 @@ module('Result | Failure | ignore observability', { concurrency: true }, () => {
       written.some((line) => line.includes('debug toggled off')),
       'silent again after setDebug(false)',
     );
+  });
+
+  test('ignored failures publish to the platform diagnostics_channel — any number of subscribers', (assert) => {
+    const seenA: unknown[] = [];
+    const seenB: unknown[] = [];
+    const subA = (message: unknown) => seenA.push(message);
+    const subB = (message: unknown) => seenB.push(message);
+    subscribe(Failure.IGNORED_CHANNEL_NAME, subA);
+    subscribe(Failure.IGNORED_CHANNEL_NAME, subB);
+    try {
+      const boom = new Error('EBUSY');
+      Failure.ignore('channel unlink')(boom);
+      assert.deepEqual(seenA, [{ context: 'channel unlink', error: boom }]);
+      assert.deepEqual(seenB, seenA, 'both subscribers see the same event — no single-slot limit');
+    } finally {
+      unsubscribe(Failure.IGNORED_CHANNEL_NAME, subA);
+      unsubscribe(Failure.IGNORED_CHANNEL_NAME, subB);
+    }
+    Failure.ignore('after unsubscribe')(new Error('x'));
+    assert.strictEqual(seenA.length, 1, 'unsubscribed channels see nothing further');
   });
 });

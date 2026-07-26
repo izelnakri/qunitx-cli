@@ -1182,6 +1182,16 @@ something to debug"_ — so a suppressed failure is labelled, visible under `QUN
 eagerly observed (no unhandled-rejection window at fire-and-forget sites), while still
 costing nothing on the normal path.
 
+Ignored failures are observable through three seams, cheapest first: on Node and Deno each
+one publishes `{ context, error }` to the `qunitx.failure.ignored` **diagnostics_channel**
+(`Failure.IGNORED_CHANNEL_NAME`) — the platform's own multi-subscriber mechanism, which APM
+agents and OpenTelemetry bridges already speak, costing one `hasSubscribers` boolean when
+nobody listens; `Failure.onIgnored(fn)` installs a single portable observer (it also works in
+browsers, which have no channel API); and `Failure.setDebug(true)` / `QUNITX_DEBUG` /
+`--debug` print each label as a TAP-safe stderr comment. The module reaches
+`diagnostics_channel` via `process.getBuiltinModule`, so no `node:` import ever lands in a
+browser bundle — there the chain resolves to `undefined` and publishing is skipped.
+
 Three of those sites are worth knowing about, because they are _not_ cleanup and the label
 says so: `run.ts`'s two `Task(buildPromise).ignore(…)` calls and `web-server.ts`'s
 `activeRebuild` waits are **rejection-deadline extensions**, not error handling. The real
