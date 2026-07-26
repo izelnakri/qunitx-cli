@@ -79,72 +79,74 @@ async function doctestGateIsAlive() {
 // barrel's re-exports inherit the definition site's doc and example (the write-once-reuse
 // rule), while symbols a barrel defines itself are enforced like any other.
 
+const hasFence = (jsDoc) => /```/.test(jsDoc?.doc ?? '');
+const isExported = (symbol) => symbol.declarations.some((d) => d.declarationKind === 'export');
+const gap = (file, line, what) => `${file}:${line} — ${what} has no fenced example`;
+
+// Reachability closure: exported symbols seed the frontier; any private symbol whose quoted
+// name appears in a reachable symbol's declaration defs (types, never prose) is public
+// surface too — how a callable-proxy-hidden class or a private type in an exported signature
+// is found without a name list. Def texts are serialised once; the worklist visits each
+// symbol at most once, so this is O(symbols × frontier) with plain string scans.
+function reachableNames(symbols) {
+  const defTexts = new Map(
+    symbols.map((s) => [s.name, JSON.stringify(s.declarations.map((d) => d.def))]),
+  );
+  const reached = new Set(symbols.filter(isExported).map((s) => s.name));
+  for (const frontier = [...reached]; frontier.length > 0;) {
+    const defText = defTexts.get(frontier.pop()) ?? '';
+    for (const { name } of symbols) {
+      if (!reached.has(name) && defText.includes(`"${name}"`)) {
+        reached.add(name);
+        frontier.push(name);
+      }
+    }
+  }
+  return reached;
+}
+
+// Method gaps, grouped by name AND staticness (a documented instance method must not vouch
+// for its undocumented static twin); one documented overload covers its siblings. Symbol-keyed
+// members ([Symbol.species]) and constructors (the class doc owns construction) are exempt.
+const methodGaps = (file, symbolName, classDeclaration) =>
+  [
+    ...Map.groupBy(
+      (classDeclaration.def?.methods ?? []).filter(
+        (m) => !m.name.startsWith('[') && !m.name.startsWith('#') && m.accessibility !== 'private',
+      ),
+      (m) => `${m.isStatic ? 'static ' : ''}${m.name}`,
+    ),
+  ]
+    .filter(([, overloads]) => !overloads.some((m) => hasFence(m.jsDoc)))
+    .map(([name, [first]]) => gap(file, first.location.line, `${symbolName}.${name}()`));
+
+// One symbol's gaps: re-export declarations (kind 'reference') are enforced at their
+// definition site, so a barrel inherits the definition's doc and example (write-once-reuse)
+// while symbols a barrel defines itself are enforced like any other.
+const symbolGaps = (file, reachable) => (symbol) => {
+  const declarations = symbol.declarations.filter((d) => d.kind !== 'reference');
+  if (!reachable.has(symbol.name) || declarations.length === 0) return [];
+  const classDeclaration = declarations.find((d) => d.kind === 'class');
+  return [
+    ...(classDeclaration ? methodGaps(file, symbol.name, classDeclaration) : []),
+    ...(declarations.some((d) => hasFence(d.jsDoc))
+      ? []
+      : [gap(file, declarations[0].location.line, symbol.name)]),
+  ];
+};
+
 async function missingExamples() {
   const files = (await readdir('lib', { recursive: true }))
     .filter((f) => f.endsWith('.ts') && !String(f).includes('..'))
     .map((f) => path.join('lib', String(f)));
   const { code, stdout, output } = await run('deno', ['doc', '--json', ...files]);
   if (code !== 0) return [`deno doc --json failed:\n${output}`];
-  const hasFence = (jsDoc) => /```/.test(jsDoc?.doc ?? '');
-  const gaps = [];
-  for (const [fileUrl, entry] of Object.entries(JSON.parse(stdout).nodes)) {
-    const file = `lib/${fileUrl.split('/lib/').pop()}`;
+  return Object.entries(JSON.parse(stdout).nodes).flatMap(([fileUrl, entry]) => {
     const symbols = entry.symbols ?? [];
-
-    // Reachability closure: start from exported symbols; any non-exported symbol whose name
-    // appears in a reachable declaration's def (types, not prose) becomes public surface too.
-    const byName = new Map(symbols.map((s) => [s.name, s]));
-    const isExported = (s) => s.declarations.some((d) => d.declarationKind === 'export');
-    const reachable = new Set(symbols.filter(isExported).map((s) => s.name));
-    for (let grew = true; grew;) {
-      grew = false;
-      for (const name of [...reachable]) {
-        const defText = JSON.stringify(byName.get(name)?.declarations.map((d) => d.def) ?? '');
-        for (const s of symbols) {
-          if (reachable.has(s.name)) continue;
-          if (new RegExp(`"${s.name}"`).test(defText)) {
-            reachable.add(s.name);
-            grew = true;
-          }
-        }
-      }
-    }
-
-    for (const symbol of symbols) {
-      if (!reachable.has(symbol.name)) continue;
-      // Skip re-export declarations; their definition sites carry the enforcement.
-      const declarations = symbol.declarations.filter((d) => d.kind !== 'reference');
-      if (declarations.length === 0) continue;
-      const classDeclaration = declarations.find((d) => d.kind === 'class');
-      if (classDeclaration) {
-        // Group per method name AND staticness (a documented instance method must not vouch
-        // for its undocumented static twin); one documented overload covers its siblings.
-        // Symbol-keyed members and constructors (the class doc owns construction) are exempt.
-        const methods = new Map();
-        for (const method of classDeclaration.def?.methods ?? []) {
-          if (method.name.startsWith('[')) continue;
-          if (method.accessibility === 'private' || method.name.startsWith('#')) continue;
-          const key = `${method.isStatic ? 'static ' : ''}${method.name}`;
-          const list = methods.get(key) ?? [];
-          list.push(method);
-          methods.set(key, list);
-        }
-        for (const [name, overloads] of methods) {
-          if (!overloads.some((m) => hasFence(m.jsDoc))) {
-            gaps.push(
-              `${file}:${overloads[0].location.line} — ${symbol.name}.${name}() has no fenced example`,
-            );
-          }
-        }
-      }
-      if (!declarations.some((d) => hasFence(d.jsDoc))) {
-        gaps.push(
-          `${file}:${declarations[0].location.line} — ${symbol.name} has no fenced example`,
-        );
-      }
-    }
-  }
-  return gaps;
+    return symbols.flatMap(
+      symbolGaps(`lib/${fileUrl.split('/lib/').pop()}`, reachableNames(symbols)),
+    );
+  });
 }
 
 const [gateAlive, docLint, ignoreFences, exampleGaps] = await Promise.all([
