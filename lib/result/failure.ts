@@ -161,7 +161,14 @@ export class Failure<Code extends string = string, Data = unknown> extends Error
     }
   }
 
-  /** Serializes to plain JSON so `console.log(JSON.stringify(failure))` is not `{}`. */
+  /**
+   * Serializes to plain JSON so `console.log(JSON.stringify(failure))` is not `{}`.
+   *
+   * ```ts
+   * const Denied = define('Denied', 'permission denied');
+   * JSON.stringify(Denied()); // JSON.stringify calls this — the full wire form, not '{}'
+   * ```
+   */
   toJSON(): SerializedFailure {
     return toJSON(this);
   }

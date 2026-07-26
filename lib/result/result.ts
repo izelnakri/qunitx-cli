@@ -25,14 +25,28 @@
 
 // ── The type ─────────────────────────────────────────────────────────────────
 
-/** A successful Result carrying `value`. `error` is present-but-undefined to keep the shape stable. */
+/**
+ * A successful Result carrying `value`. `error` is present-but-undefined to keep the shape stable.
+ *
+ * ```ts
+ * const success: Ok<number> = ok(42);
+ * success.value; // 42 — and `success.error` reads undefined, same key set as Err
+ * ```
+ */
 export type Ok<T> = {
   readonly ok: true;
   readonly value: T;
   readonly error?: undefined;
 };
 
-/** A failed Result carrying `error`. `value` is present-but-undefined to keep the shape stable. */
+/**
+ * A failed Result carrying `error`. `value` is present-but-undefined to keep the shape stable.
+ *
+ * ```ts
+ * const failed: Err<string> = err('nope');
+ * failed.error; // 'nope' — and `failed.value` reads undefined
+ * ```
+ */
 export type Err<E> = {
   readonly ok: false;
   readonly value?: undefined;
@@ -45,6 +59,14 @@ export type Err<E> = {
  * `E` defaults to `unknown` rather than `Error` on purpose: an un-narrowed error is exactly
  * as untrustworthy as a `catch` binding, and typing it `unknown` makes the type checker say
  * so at the use site instead of letting a wrong assumption compile.
+ *
+ * ```ts
+ * const parsePort = (raw: string): Result<number, string> =>
+ *   /^\d+$/.test(raw) ? ok(Number(raw)) : err(`not a port: ${raw}`);
+ *
+ * const port = parsePort('8080');
+ * if (port.ok) port.value; // narrowed to number; the else branch narrows to string
+ * ```
  */
 export type Result<T, E = unknown> = Ok<T> | Err<E>;
 

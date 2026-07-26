@@ -65,14 +65,86 @@ async function doctestGateIsAlive() {
   }
 }
 
-const [gateAlive, docLint, ignoreFences] = await Promise.all([
+// Example-presence enforcement: every exported symbol and public method in these modules
+// must carry a fenced ```ts example (presence enforced here; correctness and runnability by
+// `npm run typecheck` and `npm run test:doctest`). A ratchet — widen the list as other
+// modules get their example backfill.
+const EXAMPLE_ENFORCED = [
+  'lib/result/result.ts',
+  'lib/result/attempt.ts',
+  'lib/result/failure.ts',
+  'lib/task/task.ts',
+];
+// TaskClass is declared private but IS the public surface (exported as the callable `Task`
+// proxy const); the doc graph cannot see through the proxy's intersection type, so its
+// methods are opted in by name.
+const PRIVATE_PUBLIC_CLASSES = new Set(['TaskClass']);
+
+async function missingExamples() {
+  const { code, output } = await run('deno', ['doc', '--json', ...EXAMPLE_ENFORCED]);
+  if (code !== 0) return [`deno doc --json failed:\n${output}`];
+  const hasFence = (jsDoc) => /```/.test(jsDoc?.doc ?? '');
+  const gaps = [];
+  for (const [fileUrl, entry] of Object.entries(JSON.parse(output).nodes)) {
+    const file = `lib/${fileUrl.split('/lib/').pop()}`;
+    for (const symbol of entry.symbols) {
+      const declarations = symbol.declarations.filter(
+        (d) =>
+          d.declarationKind === 'export' ||
+          (d.kind === 'class' && PRIVATE_PUBLIC_CLASSES.has(symbol.name)),
+      );
+      if (declarations.length === 0) continue;
+      const classDeclaration = declarations.find((d) => d.kind === 'class');
+      if (classDeclaration) {
+        // Group by method name so one documented overload covers its siblings; Symbol-keyed
+        // members ([Symbol.species]) and constructors (the class doc owns construction) are
+        // out of scope.
+        const byName = new Map();
+        for (const method of classDeclaration.def.methods) {
+          if (method.name.startsWith('[')) continue;
+          // Static and instance methods may share a name (the data-first twins); a documented
+          // instance method must not vouch for its undocumented static sibling.
+          const key = `${method.isStatic ? 'static ' : ''}${method.name}`;
+          const list = byName.get(key) ?? [];
+          list.push(method);
+          byName.set(key, list);
+        }
+        for (const [name, overloads] of byName) {
+          if (!overloads.some((m) => hasFence(m.jsDoc))) {
+            gaps.push(
+              `${file}:${overloads[0].location.line} — ${symbol.name}.${name}() has no fenced example`,
+            );
+          }
+        }
+      }
+      if (!declarations.some((d) => hasFence(d.jsDoc))) {
+        gaps.push(
+          `${file}:${declarations[0].location.line} — ${symbol.name} has no fenced example`,
+        );
+      }
+    }
+  }
+  return gaps;
+}
+
+const [gateAlive, docLint, ignoreFences, exampleGaps] = await Promise.all([
   doctestGateIsAlive(),
   run('deno', ['doc', '--lint', '--quiet', 'lib/', 'cli.ts']),
   // Zero-ignore invariant: every example in the public API stays checked AND run. An
   // `ignore` fence is an example nobody verifies — convert it (stub values, or a
   // defined-but-never-invoked function) or delete it. grep exits 0 on a match.
   run('grep', ['-rnE', '```(ts|js)[^`]*\\bignore\\b', '--include=*.ts', 'lib/', 'cli.ts']),
+  missingExamples(),
 ]);
+
+if (exampleGaps.length > 0) {
+  process.stderr.write(
+    `doctest: ${exampleGaps.length} public symbol(s) without a fenced example:\n  ` +
+      exampleGaps.join('\n  ') +
+      '\n',
+  );
+  process.exitCode = 1;
+}
 
 if (ignoreFences.code === 0) {
   process.stderr.write(

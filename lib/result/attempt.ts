@@ -92,7 +92,16 @@ export function attempt<T, const A extends readonly unknown[]>(
   return ok(value) as Attempted<T>;
 }
 
-/** Minimal shape of a Node system error, declared locally so this module stays runtime-free. */
+/**
+ * Minimal shape of a Node system error, declared locally so this module stays runtime-free.
+ *
+ * ```ts
+ * const denied: ErrnoError = Object.assign(new Error('EACCES: permission denied'), {
+ *   code: 'EACCES',
+ * });
+ * isErrno(denied, 'EACCES'); // true
+ * ```
+ */
 export interface ErrnoError extends Error {
   /** The symbolic error code, e.g. `ENOENT`. What {@link isErrno} matches on. */
   code?: string;

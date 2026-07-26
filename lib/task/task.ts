@@ -265,15 +265,16 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   // All four are overridden for correctness (the base implementations construct through
   // `new this(executor)`, which a recipe constructor cannot honour) and made LAZY: nothing in
   // `values` is observed — and no lazy member Task starts — until the combined Task is awaited.
-  //
-  // ```ts
-  // const both = Task.all([loadUsers(), loadPosts()]); // nothing has started yet
-  // const [users, posts] = await both;                 // both start HERE, fail-fast applies
-  // await Task.race([fetchTask, deadlineTask]);        // first settlement wins
-  // await Task.any(mirrors.map(fetchMirror));          // first SUCCESS wins
-  // (await Task.allSettled(tasks)).filter((s) => s.status === 'rejected');
-  // ```
 
+  /**
+   * Lazy `Promise.all`: on await, everything starts together, resolves positionally, and
+   * fail-fast applies — before the await, nothing has begun.
+   *
+   * ```ts
+   * const both = Task.all([Task(() => 'a'), Task(() => 'b')]); // nothing has started yet
+   * await both; // ['a', 'b'] — both started HERE
+   * ```
+   */
   static override all<T extends readonly unknown[] | []>(
     values: T,
   ): TaskClass<{ -readonly [P in keyof T]: Awaited<T[P]> }>;
@@ -282,18 +283,42 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     return new TaskClass(() => Promise.all(values));
   }
 
+  /**
+   * Lazy `Promise.race`: the first settlement — success or failure — wins.
+   *
+   * ```ts
+   * await Task.race([Task(() => 'fast'), Task<string>(() => new Promise<never>(() => {}))]);
+   * // 'fast'
+   * ```
+   */
   static override race<T extends readonly unknown[] | []>(values: T): TaskClass<Awaited<T[number]>>;
   static override race<T>(values: Iterable<T | PromiseLike<T>>): TaskClass<Awaited<T>>;
   static override race(values: Iterable<unknown>): TaskClass<unknown> {
     return new TaskClass(() => Promise.race(values));
   }
 
+  /**
+   * Lazy `Promise.any`: the first SUCCESS wins; failures only lose.
+   *
+   * ```ts
+   * await Task.any([Task.reject(new Error('x')), Task(() => 'ok')]); // 'ok'
+   * ```
+   */
   static override any<T extends readonly unknown[] | []>(values: T): TaskClass<Awaited<T[number]>>;
   static override any<T>(values: Iterable<T | PromiseLike<T>>): TaskClass<Awaited<T>>;
   static override any(values: Iterable<unknown>): TaskClass<unknown> {
     return new TaskClass(() => Promise.any(values));
   }
 
+  /**
+   * Lazy `Promise.allSettled`, keeping the spec's `{ status, … }` shape — contrast
+   * {@link TaskClass.results}, which yields typed `Result`s instead.
+   *
+   * ```ts
+   * const settled = await Task.allSettled([Task(() => 1), Task.reject(new Error('x'))]);
+   * settled.map((s) => s.status); // ['fulfilled', 'rejected']
+   * ```
+   */
   static override allSettled<T extends readonly unknown[] | []>(
     values: T,
   ): TaskClass<{ -readonly [P in keyof T]: PromiseSettledResult<Awaited<T[P]>> }>;
@@ -306,23 +331,6 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     return new TaskClass(() => Promise.allSettled(values));
   }
 
-  /**
-   * Awaits every task and returns their outcomes **positionally** — index-preserving, so a batch
-   * knows *which* input failed, and no success is discarded (unlike `Promise.all`'s fail-fast).
-   * The errors are the declared `E`; a *bug* in any task rejects the whole call, matching
-   * {@link TaskClass#result}'s two-tier rule. (Named `results`, not `allSettled`, which is the
-   * inherited static with the spec's `{ status, … }` shape.)
-   *
-   * ```ts
-   * import { partition } from '../result/result.ts';
-   * import type { Any as LoadFailure } from '../result/failure.ts';
-   * const paths = ['a.json', 'b.json'];
-   * const load = (path: string) => Task<object, LoadFailure>(() => ({ path }));
-   *
-   * const outcomes = await Task.results(paths.map(load)); // Result<object, LoadFailure>[]
-   * const { values, errors } = partition(outcomes); // nothing lost, everything typed
-   * ```
-   */
   // ── Data-first twins of every transforming method ────────────────────────────
   //
   // `Task.map(task, fn)` ≡ `task.map(fn)`, for each method below — the Elixir-style module
@@ -345,12 +353,28 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     return task.map(fn);
   }
 
-  /** Data-first twin of {@link TaskClass#mapErr} — the adapter edge, receiver-first. */
+  /**
+   * Data-first twin of {@link TaskClass#mapErr} — the adapter edge, receiver-first.
+   *
+   * ```ts
+   * import { define } from '../result/failure.ts';
+   * const Classified = define('Classified', (d: { op: string }) => `failed: ${d.op}`);
+   *
+   * const t = Task.mapErr(Task(() => 'ok'), (cause) => Classified({ op: 'io' }, { cause }));
+   * await t; // 'ok' — success passes through untouched
+   * ```
+   */
   static mapErr<T, E, F>(task: TaskClass<T, E>, fn: (error: unknown) => F): TaskClass<T, F> {
     return task.mapErr(fn);
   }
 
-  /** Data-first twin of {@link TaskClass#recover} — the crash boundary, receiver-first. */
+  /**
+   * Data-first twin of {@link TaskClass#recover} — the crash boundary, receiver-first.
+   *
+   * ```ts
+   * await Task.recover(Task.reject<string>(new Error('boom')), () => 'safe'); // 'safe'
+   * ```
+   */
   static recover<T, E, U = T>(
     task: TaskClass<T, E>,
     fn: (error: unknown) => U | PromiseLike<U>,
@@ -358,17 +382,38 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     return task.recover(fn);
   }
 
-  /** Data-first twin of {@link TaskClass#expect} — context for declared failures only. */
+  /**
+   * Data-first twin of {@link TaskClass#expect} — context for declared failures only.
+   *
+   * ```ts
+   * await Task.expect(Task(() => 'v'), 'must load'); // 'v' — context only decorates failures
+   * ```
+   */
   static expect<T, E>(task: TaskClass<T, E>, message: string): TaskClass<T, E> {
     return task.expect(message);
   }
 
-  /** Data-first twin of {@link TaskClass#unwrapOr} — fallback for declared failures only. */
+  /**
+   * Data-first twin of {@link TaskClass#unwrapOr} — fallback for declared failures only.
+   *
+   * ```ts
+   * import { define } from '../result/failure.ts';
+   * const Missing = define('Missing', 'missing');
+   *
+   * await Task.unwrapOr(Task.fail(Missing()), 'fallback'); // 'fallback'
+   * ```
+   */
   static unwrapOr<T, E, U>(task: TaskClass<T, E>, fallback: U): TaskClass<T | U, never> {
     return task.unwrapOr(fallback);
   }
 
-  /** Data-first twin of {@link TaskClass#match} — both declared branches, bugs keep flying. */
+  /**
+   * Data-first twin of {@link TaskClass#match} — both declared branches, bugs keep flying.
+   *
+   * ```ts
+   * await Task.match(Task(() => 2), { ok: (n) => n * 21, err: () => 0 }); // 42
+   * ```
+   */
   static match<T, E, A, B>(
     task: TaskClass<T, E>,
     handlers: { ok: (value: T) => A | PromiseLike<A>; err: (error: E) => B | PromiseLike<B> },
@@ -376,17 +421,44 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     return task.match(handlers);
   }
 
-  /** Data-first twin of {@link TaskClass#perform} — start now, hand the same task back. */
+  /**
+   * Data-first twin of {@link TaskClass#perform} — start now, hand the same task back.
+   *
+   * ```ts
+   * const started = Task.perform(Task(() => 'now')); // running already
+   * await started; // 'now'
+   * ```
+   */
   static perform<T, E>(task: TaskClass<T, E>): TaskClass<T, E> {
     return task.perform();
   }
 
-  /** Data-first twin of {@link TaskClass#restart} — a fresh execution of the whole chain. */
+  /**
+   * Data-first twin of {@link TaskClass#restart} — a fresh execution of the whole chain.
+   *
+   * ```ts
+   * let runs = 0;
+   * const t = Task(() => ++runs);
+   * await t; // 1
+   * await Task.restart(t); // 2 — a fresh execution
+   * ```
+   */
   static restart<T, E>(task: TaskClass<T, E>): TaskClass<T, E> {
     return task.restart();
   }
 
-  /** Data-first twin of {@link TaskClass#retry} — fresh restarts until success. */
+  /**
+   * Data-first twin of {@link TaskClass#retry} — fresh restarts until success.
+   *
+   * ```ts
+   * let tries = 0;
+   * const flaky = Task(() => {
+   *   if (++tries < 2) throw new Error('again');
+   *   return tries;
+   * });
+   * await Task.retry(flaky); // 2
+   * ```
+   */
   static retry<T, E>(task: TaskClass<T, E>, times = 1): TaskClass<T, E> {
     return task.retry(times);
   }
@@ -401,6 +473,23 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     return task.result();
   }
 
+  /**
+   * Awaits every task and returns their outcomes **positionally** — index-preserving, so a batch
+   * knows *which* input failed, and no success is discarded (unlike `Promise.all`'s fail-fast).
+   * The errors are the declared `E`; a *bug* in any task rejects the whole call, matching
+   * {@link TaskClass#result}'s two-tier rule. (Named `results`, not `allSettled`, which is the
+   * inherited static with the spec's `{ status, … }` shape.)
+   *
+   * ```ts
+   * import { partition } from '../result/result.ts';
+   * import type { Any as LoadFailure } from '../result/failure.ts';
+   * const paths = ['a.json', 'b.json'];
+   * const load = (path: string) => Task<object, LoadFailure>(() => ({ path }));
+   *
+   * const outcomes = await Task.results(paths.map(load)); // Result<object, LoadFailure>[]
+   * const { values, errors } = partition(outcomes); // nothing lost, everything typed
+   * ```
+   */
   static results<T, E = AnyFailure>(
     tasks: Iterable<TaskClass<T, E> | PromiseLike<T>>,
   ): TaskClass<Result<T, E>[], never> {
@@ -737,6 +826,13 @@ export const Task: TaskConstructor = new Proxy(TaskClass, {
   },
 }) as TaskConstructor;
 
-/** The instance type of {@link Task} — value and type share the name, so a signature reads
- *  `Task<Config, ConfigFailure>` while the same identifier constructs one. */
+/**
+ * The instance type of {@link Task} — value and type share the name, so a signature reads
+ * `Task<Config, ConfigFailure>` while the same identifier constructs one.
+ *
+ * ```ts
+ * const load = (id: number): Task<{ id: number }> => Task(() => ({ id }));
+ * await load(7); // { id: 7 }
+ * ```
+ */
 export type Task<T, E = AnyFailure> = TaskClass<T, E>;
