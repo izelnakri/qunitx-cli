@@ -173,6 +173,11 @@ export function unwrap<T>(result: Result<T, unknown>): T {
  * demanded a value, while `cause` preserves the original failure and its own stack. Use it
  * at the point where a failure stops being expected and becomes a bug.
  *
+ * A plain `Error`, deliberately — never a `Failure`: every Task consumer (`result()`,
+ * `match`, `unwrapOr`, `recover`) classifies a thrown Failure as *declared* and hands it
+ * onward as a value, so a Failure here would let an upstream boundary silently un-crash the
+ * bug this call just promoted. A plain Error can only travel to the crash boundary.
+ *
  * ```ts
  * import * as Result from './index.ts';
  *
