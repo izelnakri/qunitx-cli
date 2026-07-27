@@ -1,7 +1,7 @@
 /**
  * `Result<T, E>` — a value that is either a success or a declared failure.
  *
- * This is the *value* half of the error system; `attempt.ts` is the *boundary* half and
+ * This is the *value* half of the error system; `try.ts` is the *boundary* half and
  * `failure.ts` is the *taxonomy* half. The split mirrors Lua, where `error()`/`pcall()`
  * (boundary) and the `nil, err` return convention (value) are deliberately different
  * mechanisms used for different classes of problem — see `docs/error-handling.md`.

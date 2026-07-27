@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import * as Result from '../../lib/result/index.ts';
-import { attempt, isErrno } from '../../lib/result/attempt.ts';
+import { attempt, isErrno } from '../../lib/result/try.ts';
 
 // ── The spelling ──────────────────────────────────────────────────────────────
 

@@ -35,7 +35,7 @@ export {
   // `import { attempt }` (`try` is a reserved word).
   attempt as try,
   isErrno,
-} from './attempt.ts';
+} from './try.ts';
 
 // There is deliberately no AsyncResult here. The awaitable, chainable producer half of the
 // system is `Task` (`lib/task/`): a real lazy Promise whose `.result()` settles to the same
