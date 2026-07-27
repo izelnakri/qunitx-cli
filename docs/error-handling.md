@@ -105,9 +105,9 @@ Three modules, no dependencies.
 
 ```ts
 import * as Result from './lib/result/index.ts';
-// or: import { ok, err, unwrap, attempt, type Result } from './lib/result/index.ts';
-//     ( Result.try is the primary spelling; `attempt` is its bare-importable alias — `try`
-//       is a reserved word, so `import { try }` is illegal while `Result.try` is fine. )
+// or: import { ok, err, unwrap, tryCatch, type Result } from './lib/result/index.ts';
+//     ( Result.try is the primary spelling; `tryCatch` is its bare-importable alias — `try`
+//       alone is a reserved word, so `import { try }` is illegal while `Result.try` is fine. )
 ```
 
 ### `Result<T, E>` — the value

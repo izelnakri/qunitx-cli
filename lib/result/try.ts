@@ -1,7 +1,7 @@
 /**
- * `attempt` — exported as **`Result.try`**, the throw boundary of the error system: the one
- * place in a program where the `try`/`catch` *keyword* lives. Everywhere else, error handling
- * is a flat `if` on a `Result`.
+ * `tryCatch` — exported as **`Result.try`**, the throw boundary of the error system: the one
+ * place in a program where the `try`/`catch` *keyword* lives (hence the bare-importable name —
+ * `try` alone is reserved). Everywhere else, error handling is a flat `if` on a `Result`.
  *
  * The signature mirrors `Promise.try`: `Result.try(fn, ...args)` calls `fn(...args)` **now**
  * and reflects the outcome — a return becomes `Ok`, a throw becomes `Err`. A synchronous
@@ -44,7 +44,7 @@ import { type Result, ok, err } from './result.ts';
  * `0 extends 1 & T` is true only for `any`; such a source is treated as synchronous and its
  * value as `unknown` — the honest reading of `any`, and what the call site can branch on.
  */
-type Attempted<T> = 0 extends 1 & T
+type Tried<T> = 0 extends 1 & T
   ? Result<unknown, unknown>
   : T extends PromiseLike<unknown>
     ? Promise<Result<Awaited<T>, unknown>>
@@ -69,15 +69,15 @@ type Attempted<T> = 0 extends 1 & T
  * too: `Result.try(fetch, url)` boxes the `TypeError` a malformed URL throws synchronously,
  * which wrapping a pre-started `fetch(url)` promise never could.
  */
-export function attempt<T, const A extends readonly unknown[]>(
+export function tryCatch<T, const A extends readonly unknown[]>(
   fn: (...args: A) => T,
   ...args: A
-): Attempted<T> {
+): Tried<T> {
   let value: T;
   try {
     value = fn(...args);
   } catch (error) {
-    return err(error) as Attempted<T>;
+    return err(error) as Tried<T>;
   }
 
   if (isThenable(value)) {
@@ -87,9 +87,9 @@ export function attempt<T, const A extends readonly unknown[]>(
     return Promise.resolve(value).then(
       (resolved) => ok(resolved),
       (thrown) => err(thrown),
-    ) as Attempted<T>;
+    ) as Tried<T>;
   }
-  return ok(value) as Attempted<T>;
+  return ok(value) as Tried<T>;
 }
 
 /**

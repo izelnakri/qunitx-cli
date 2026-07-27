@@ -206,7 +206,7 @@ export interface FailureFactory<Code extends string, Data> {
   (data: Data, options?: FailureOptions): Failure<Code, Data>;
   /** The literal code this factory produces. Useful as a `switch` case and in registries. */
   readonly code: Code;
-  /** Cross-realm type guard narrowing to this exact failure. Usable as an `attempt()` matcher. */
+  /** Cross-realm type guard narrowing to this exact failure — the flat rethrow line's guard after a `Result.try`. */
   is(value: unknown): value is Failure<Code, Data>;
 }
 

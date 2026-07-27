@@ -8,7 +8,7 @@ import './lib/utils/enable-compile-cache.ts';
 import './lib/utils/find-sidecar-esbuild.ts';
 import process from 'node:process';
 import { shutdownPrelaunch } from './lib/chrome/prelaunch.ts';
-import { attempt, Failure } from './lib/result/index.ts';
+import { tryCatch, Failure } from './lib/result/index.ts';
 import pkg from './package.json' with { type: 'json' };
 
 process.title = 'qunitx';
@@ -51,11 +51,11 @@ process.title = 'qunitx';
     useDaemon = await ensureRunning();
   }
   if (useDaemon) {
-    // `attempt` with no matchers rather than the bare `catch {}` this replaces: the fall-through
+    // `tryCatch` with no rethrow line rather than the bare `catch {}` this replaces: the fall-through
     // is still unconditional, but a bug inside the client now shows up in the failure instead of
     // being erased. Both transport failures fall through to a local run; only the one that means
     // "the daemon died mid-run" says so, because it used to be indistinguishable from exit 1.
-    const routed = await attempt(() => Client.runVia(process.argv.slice(2)));
+    const routed = await tryCatch(() => Client.runVia(process.argv.slice(2)));
     if (routed.ok && routed.value.ok) {
       const exitCode = routed.value.value;
       process.stdout.write('', () => process.exit(exitCode));

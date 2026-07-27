@@ -1,14 +1,15 @@
 import { module, test } from 'qunitx';
 import * as Result from '../../lib/result/index.ts';
-import { attempt, isErrno } from '../../lib/result/try.ts';
+import { tryCatch, isErrno } from '../../lib/result/try.ts';
 
 // ── The spelling ──────────────────────────────────────────────────────────────
 
 module('Result | try | spelling', { concurrency: true }, () => {
-  test('Result.try and attempt are the same function', (assert) => {
-    // `try` is a reserved word, so the bare import is `attempt`; the namespace spelling is
-    // `Result.try`. One implementation, two legal names.
-    assert.strictEqual(Result.try, attempt);
+  test('Result.try and tryCatch are the same function', (assert) => {
+    // `try` alone is a reserved word, so the bare import is `tryCatch` — named for the one
+    // keyword pair this boundary owns; the namespace spelling is `Result.try`. One
+    // implementation, two legal names.
+    assert.strictEqual(Result.try, tryCatch);
   });
 
   test('mirrors Promise.try: the arguments after fn are passed through to it', (assert) => {
