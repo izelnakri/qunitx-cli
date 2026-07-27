@@ -408,6 +408,28 @@ the narrow spelling _shorter_ than the broad one — the flat form keeps: the tw
 are still shorter than the `try`/`catch` they replace, and `grep 'throw .*\.error'` now finds
 every declaration in the codebase.
 
+**The propagation line.** The flat family has a third member, and it is the first thing a
+reviewer trips on. `ok()`/`err()` appear only where an outcome is **born** — the code that
+discovered the failure (or produced the value) wraps it, once. Everywhere the boxed outcome
+merely **travels**, the spelling is a bare pass-through:
+
+```ts
+const applied = applyFlag(flags, token.raw); // applyFlag already wrapped its failure in err()
+if (!applied.ok) return applied; // hand the SAME box up — do not re-wrap it
+```
+
+`return err(applied.error)` would compile too, but it opens the box only to seal an identical
+one — an allocation that tells the reader something changed here when nothing did. The
+pass-through typechecks against _any_ caller's Result because an `Err` carries no success
+value: a failure box fits every function whose failure half matches, whatever its success type
+(`applyFlag` succeeds with `void`, `parse` with `ParsedFlags`; the same `Err<ParseFailure>`
+serves both). This is Rust's grammar without the sugar — `Ok(v)`/`Err(e)` at the origin, `?`
+for propagation — and the two-token line is the JS floor for it: a helper cannot early-return
+on its caller's behalf, generator do-notation buys ceremony and a trampoline (§5.1's Effect
+objection), and a thrown short-circuit smuggles expected failures back onto the exception
+channel. In async code the propagation line disappears entirely: a `Task` failure is a
+rejection, and rejections propagate themselves.
+
 ### 4.5 Discriminate on a string `code`, never `instanceof`
 
 `instanceof` is realm-scoped. Each realm — an iframe, a `Worker`, a `vm` context, a
