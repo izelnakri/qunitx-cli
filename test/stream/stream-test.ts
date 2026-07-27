@@ -293,3 +293,137 @@ module('Stream | cleanup', { concurrency: true }, () => {
     assert.true(cleaned, 'take() closed the source — no leaked handle');
   });
 });
+
+// ── Full parity: zip, timers, resource, tee, chunk family, tap/run ───────────
+
+module('Stream | zip', { concurrency: true }, () => {
+  test('zips in lockstep, ends at the shortest, and closes the longer source', async (assert) => {
+    let cleaned = false;
+    const longer = (async function* () {
+      try {
+        for (let n = 0; ; n++) yield n;
+      } finally {
+        cleaned = true;
+      }
+    })();
+    assert.deepEqual(await Stream.zip(['a', 'b'], longer).values(), [
+      ['a', 0],
+      ['b', 1],
+    ]);
+    assert.true(cleaned, 'the infinite side was closed, not leaked');
+  });
+
+  test('a failure element passes bare without consuming from the other sources', async (assert) => {
+    const { values, errors } = await Stream.zip(
+      [1, BadRow({ line: 4 }), 2],
+      ['a', 'b'],
+    ).partition();
+    assert.deepEqual(
+      values,
+      [
+        [1, 'a'],
+        [2, 'b'],
+      ],
+      'pairs stayed aligned around the failure',
+    );
+    assert.strictEqual(errors.length, 1);
+  });
+
+  test('zipWith combines the tuple spread', async (assert) => {
+    assert.deepEqual(
+      await Stream.zipWith(
+        [
+          [1, 2],
+          [10, 20],
+        ],
+        (a, b) => a + b,
+      ).values(),
+      [11, 22],
+    );
+  });
+});
+
+module('Stream | timers and resource', { concurrency: true }, () => {
+  test('interval ticks and timer emits once', async (assert) => {
+    assert.deepEqual(await Stream.interval(1).take(3).values(), [0, 1, 2]);
+    assert.deepEqual(await Stream.timer(1).values(), [0]);
+  });
+
+  test('resource runs after() on normal end AND on early exit', async (assert) => {
+    const events: string[] = [];
+    const make = () =>
+      Stream.resource(
+        () => (events.push('open'), 0),
+        (n) => (n < 3 ? ([n, n + 1] as const) : null),
+        () => void events.push('close'),
+      );
+    assert.deepEqual(await make().values(), [0, 1, 2]);
+    assert.deepEqual(await make().take(1).values(), [0], 'early exit');
+    assert.deepEqual(events, ['open', 'close', 'open', 'close']);
+  });
+});
+
+module('Stream | tee and chunk family', { concurrency: true }, () => {
+  test('into writes values to the sink, passes failures through unwritten', async (assert) => {
+    const written: number[] = [];
+    const sink = new WritableStream<number>({ write: (n) => void written.push(n) });
+    const { values, errors } = await Stream.from([1, BadRow({ line: 2 }), 3])
+      .into(sink)
+      .partition();
+    assert.deepEqual(values, [1, 3]);
+    assert.strictEqual(errors.length, 1, 'the failure passed the tee');
+    assert.deepEqual(written, [1, 3], 'only values reached the sink');
+  });
+
+  test('chunkEvery full arity: sliding windows, skipping steps, leftover rules', async (assert) => {
+    const src = () => Stream.from([1, 2, 3, 4, 5]);
+    assert.deepEqual(await src().chunkEvery(3, 2).values(), [[1, 2, 3], [3, 4, 5], [5]]);
+    assert.deepEqual(await src().chunkEvery(3, 2, 'discard').values(), [
+      [1, 2, 3],
+      [3, 4, 5],
+    ]);
+    assert.deepEqual(
+      await src().chunkEvery(2, 3).values(),
+      [
+        [1, 2],
+        [4, 5],
+      ],
+      'step > count skips',
+    );
+    assert.deepEqual(
+      await Stream.from([1, 2, 3, 4]).chunkEvery(3, 3, [0, 0]).values(),
+      [
+        [1, 2, 3],
+        [4, 0, 0],
+      ],
+      'pad from the leftover array',
+    );
+  });
+
+  test('chunkBy closes on key change; failures are transparent to the chunk', async (assert) => {
+    const { values, errors } = await Stream.from([1, 3, BadRow({ line: 1 }), 5, 2])
+      .chunkBy((n) => n % 2)
+      .partition();
+    assert.deepEqual(values, [[1, 3, 5], [2]], 'the failure did not close the odd chunk');
+    assert.strictEqual(errors.length, 1);
+  });
+
+  test('chunkWhile emits on demand, halts on demand, and flushes', async (assert) => {
+    const untilNegative = Stream.from([1, 2, -1, 9]).chunkWhile(
+      [] as number[],
+      (n, acc) => (n < 0 ? { acc, halt: true } : { acc: [...acc, n] }),
+      (acc) => (acc.length > 0 ? acc : undefined),
+    );
+    assert.deepEqual(await untilNegative.values(), [[1, 2]], 'halted before 9, flushed the acc');
+  });
+});
+
+module('Stream | tap and run', { concurrency: true }, () => {
+  test('tap is lazy and passes everything; run forces for effects alone', async (assert) => {
+    const seen: number[] = [];
+    const tapped = Stream.from([1, 2]).tap((n) => void seen.push(n));
+    assert.deepEqual(seen, [], 'tap ran nothing eagerly');
+    await tapped.run();
+    assert.deepEqual(seen, [1, 2]);
+  });
+});
