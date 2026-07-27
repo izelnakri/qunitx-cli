@@ -218,6 +218,124 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
     });
   }
 
+  /**
+   * Zips sources in lockstep, ending at the shortest (Elixir's `Stream.zip`) and closing
+   * the longer sources so their cleanup runs. JS divergences: sources are pulled
+   * sequentially per slot, and a failure element passes through bare **without consuming**
+   * from the other sources — failures cannot pair.
+   *
+   * ```ts
+   * await Stream.zip([1, 2, 3], ['a', 'b']).values(); // [[1, 'a'], [2, 'b']]
+   * ```
+   */
+  static zip<U extends readonly unknown[]>(
+    ...sources: { [K in keyof U]: Source<U[K]> }
+  ): StreamClass<{ [K in keyof U]: Exclude<U[K], AnyFailure> }, Extract<U[number], AnyFailure>> {
+    return new StreamClass(async function* () {
+      const iterators = sources.map((source) => iterate(source));
+      try {
+        for (;;) {
+          const tuple: unknown[] = [];
+          for (const iterator of iterators) {
+            for (;;) {
+              const { value, done } = await iterator.next();
+              if (done) return;
+              if (!isFailure(value)) {
+                tuple.push(value);
+                break;
+              }
+              yield value as never;
+            }
+          }
+          yield tuple as never;
+        }
+      } finally {
+        for (const iterator of iterators) await iterator.return(undefined);
+      }
+    }) as never;
+  }
+
+  /**
+   * `zip` plus a combiner — Elixir's `Stream.zip_with`; the tuple arrives spread.
+   *
+   * ```ts
+   * await Stream.zipWith([[1, 2], [10, 20]], (a, b) => a + b).values(); // [11, 22]
+   * ```
+   */
+  static zipWith<U extends readonly unknown[], R>(
+    sources: { [K in keyof U]: Source<U[K]> },
+    fn: (...values: { [K in keyof U]: Exclude<U[K], AnyFailure> }) => R,
+  ): StreamClass<Exclude<R, AnyFailure>, Extract<U[number] | R, AnyFailure>> {
+    return StreamClass.zip<U>(...sources).map((tuple) => fn(...tuple)) as never;
+  }
+
+  /**
+   * Emits `0, 1, 2, …` every `ms` milliseconds, forever — Elixir's `Stream.interval/1`,
+   * on `setTimeout` (universal). Infinite: always bound it.
+   *
+   * ```ts
+   * await Stream.interval(1).take(3).values(); // [0, 1, 2]
+   * ```
+   */
+  static interval(ms: number): StreamClass<number> {
+    return new StreamClass<number, never>(async function* () {
+      for (let n = 0; ; n++) {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+        yield n;
+      }
+    });
+  }
+
+  /**
+   * Emits a single `0` after `ms` milliseconds, then ends — Elixir's `Stream.timer/1`.
+   *
+   * ```ts
+   * await Stream.timer(1).values(); // [0]
+   * ```
+   */
+  static timer(ms: number): StreamClass<number> {
+    return StreamClass.interval(ms).take(1);
+  }
+
+  /**
+   * `unfold` with lifecycle hooks — Elixir's `Stream.resource/3`: `start` runs on first
+   * pull, `next` is unfold's step, and `after` ALWAYS runs — normal end, early `take`, or a
+   * throw. (Plain generators already get this via `try`/`finally`; `resource` is for when
+   * the setup/teardown pair deserves to be explicit.)
+   *
+   * ```ts
+   * const opened: string[] = [];
+   * const rows = Stream.resource(
+   *   () => (opened.push('open'), { cursor: 0 }),
+   *   (db) => (db.cursor < 2 ? ([`row-${db.cursor}`, { cursor: db.cursor + 1 }] as const) : null),
+   *   () => void opened.push('close'),
+   * );
+   * await rows.values(); // ['row-0', 'row-1'] — and opened is ['open', 'close']
+   * ```
+   */
+  static resource<S, U>(
+    start: () => S | PromiseLike<S>,
+    next: (state: S) => Promise<readonly [U, S | null] | null> | readonly [U, S | null] | null,
+    after: (state: S) => void | PromiseLike<void>,
+  ): StreamClass<Exclude<U, AnyFailure>, Extract<U, AnyFailure>> {
+    return new StreamClass(async function* () {
+      const initial = await start();
+      let state: S | null = initial;
+      let last: S = initial;
+      try {
+        while (state !== null) {
+          const step = await next(state);
+          if (step === null) return;
+          yield step[0];
+          if (step[1] !== null) last = step[1];
+          state = step[1];
+        }
+      } finally {
+        await after(last);
+      }
+    }) as never;
+  }
+
   // ── Transforms — lazy, failures pass through untouched ──────────────────────
 
   /**
@@ -575,29 +693,162 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
   }
 
   /**
-   * Groups values into arrays of `count` (a trailing partial chunk is emitted). Failures
-   * pass through **between** chunks without breaking the one being assembled — a bad row
-   * never voids the batch around it.
+   * Runs `fn` per value as a lazy side effect and passes everything through unchanged —
+   * Elixir's *lazy* `Stream.each/2`, under the idiomatic JS name. Nothing runs until a
+   * consumer pulls; pair with {@link StreamClass#run} for side effects alone.
+   *
+   * ```ts
+   * const seen: number[] = [];
+   * await Stream.from([1, 2]).tap((n) => void seen.push(n)).values(); // [1, 2]
+   * seen; // [1, 2]
+   * ```
+   */
+  tap(fn: (value: T, index: number) => void | PromiseLike<void>): StreamClass<T, E> {
+    const open = this.#open;
+    return new StreamClass<T, E>(async function* () {
+      let index = 0;
+      for await (const element of open()) {
+        if (!isFailure(element)) await fn(element as T, index++);
+        yield element;
+      }
+    });
+  }
+
+  /**
+   * Tees every value into a web `WritableStream` while passing all elements through —
+   * Elixir's `Stream.into/2`, with the platform's own sink as the Collectable. The sink is
+   * closed on normal completion and released on early exit; failures pass the tee but are
+   * **not** written (the sink types `T`, not `T | E`).
+   *
+   * ```ts
+   * const written: number[] = [];
+   * const sink = new WritableStream<number>({ write: (n) => void written.push(n) });
+   * await Stream.from([1, 2, 3]).into(sink).values(); // [1, 2, 3]
+   * written; // [1, 2, 3]
+   * ```
+   */
+  into(sink: WritableStream<T>): StreamClass<T, E> {
+    const open = this.#open;
+    return new StreamClass<T, E>(async function* () {
+      const writer = sink.getWriter();
+      try {
+        for await (const element of open()) {
+          if (!isFailure(element)) await writer.write(element as T);
+          yield element;
+        }
+        await writer.close();
+      } finally {
+        writer.releaseLock();
+      }
+    });
+  }
+
+  /**
+   * Groups values into arrays of `count`, sliding by `step` (Elixir's full
+   * `chunk_every/4`): `step < count` overlaps windows, `step > count` skips between them.
+   * `leftover` rules the trailing partial chunk: emitted as-is by default, `'discard'`
+   * drops it, an array pads it up to `count`. Failures pass through **between** chunks
+   * without breaking the one being assembled — a bad row never voids the batch around it.
    *
    * ```ts
    * await Stream.from([1, 2, 3, 4, 5]).chunkEvery(2).values(); // [[1, 2], [3, 4], [5]]
+   * await Stream.from([1, 2, 3, 4, 5]).chunkEvery(3, 2, 'discard').values(); // [[1, 2, 3], [3, 4, 5]]
+   * await Stream.from([1, 2, 3, 4]).chunkEvery(3, 3, [0, 0]).values(); // [[1, 2, 3], [4, 0, 0]]
    * ```
    */
-  chunkEvery(count: number): StreamClass<T[], E> {
+  chunkEvery(count: number, step = count, leftover: T[] | 'discard' = []): StreamClass<T[], E> {
     const open = this.#open;
     return new StreamClass<T[], E>(async function* () {
-      let chunk: T[] = [];
+      let window: T[] = [];
+      let skip = 0;
       for await (const element of open()) {
         if (isFailure(element)) yield element as never;
+        else if (skip > 0) skip--;
         else {
-          chunk.push(element as T);
-          if (chunk.length >= count) {
-            yield chunk;
-            chunk = [];
+          window.push(element as T);
+          if (window.length === count) {
+            yield [...window];
+            if (step >= count) {
+              window = [];
+              skip = step - count;
+            } else window = window.slice(step);
           }
         }
       }
+      // The trailing partial: only a window that never filled (or the overlap remainder
+      // shorter than a full chunk) reaches here.
+      if (window.length > 0 && window.length < count) {
+        if (leftover === 'discard') return;
+        const padded = [...window, ...leftover].slice(0, count);
+        yield padded;
+      }
+    });
+  }
+
+  /**
+   * Chunks *consecutive* values sharing a key — Elixir's `chunk_by/2`; a key change closes
+   * the chunk. Failures are transparent: they pass through without closing the chunk
+   * around them, consistent with `dedup`.
+   *
+   * ```ts
+   * await Stream.from([1, 3, 2, 4, 5]).chunkBy((n) => n % 2).values(); // [[1, 3], [2, 4], [5]]
+   * ```
+   */
+  chunkBy(key: (value: T) => unknown): StreamClass<T[], E> {
+    const open = this.#open;
+    return new StreamClass<T[], E>(async function* () {
+      let chunk: T[] = [];
+      let current: unknown = Symbol();
+      for await (const element of open()) {
+        if (isFailure(element)) yield element as never;
+        else {
+          const k = key(element as T);
+          if (chunk.length > 0 && k !== current) {
+            yield chunk;
+            chunk = [];
+          }
+          chunk.push(element as T);
+          current = k;
+        }
+      }
       if (chunk.length > 0) yield chunk;
+    });
+  }
+
+  /**
+   * The general chunker — Elixir's `chunk_while/4`, object-shaped for JS: `step` returns
+   * `{ acc }` to keep accumulating, `{ acc, emit }` to emit a chunk, plus `halt: true` to
+   * end the stream; `flush` may emit one last chunk from the final accumulator. Values
+   * only; failures pass through.
+   *
+   * ```ts
+   * const batchesOfTwo = Stream.from([1, 2, 3, 4, 5]).chunkWhile(
+   *   [] as number[],
+   *   (n, acc) => (acc.length === 1 ? { acc: [], emit: [...acc, n] } : { acc: [...acc, n] }),
+   *   (acc) => (acc.length > 0 ? acc : undefined),
+   * );
+   * await batchesOfTwo.values(); // [[1, 2], [3, 4], [5]]
+   * ```
+   */
+  chunkWhile<A, C>(
+    initial: A,
+    step: (value: T, accumulator: A) => { acc: A; emit?: C; halt?: boolean },
+    flush?: (accumulator: A) => C | undefined,
+  ): StreamClass<C, E> {
+    const open = this.#open;
+    return new StreamClass<C, E>(async function* () {
+      let accumulator = initial;
+      for await (const element of open()) {
+        if (isFailure(element)) yield element as never;
+        else {
+          const result = step(element as T, accumulator);
+          accumulator = result.acc;
+          if (result.emit !== undefined) yield result.emit;
+          if (result.halt) break;
+        }
+      }
+      const last = flush?.(accumulator);
+      if (last !== undefined) yield last;
     });
   }
 
@@ -712,6 +963,20 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
         await fn(element as T, index++);
       }
     });
+  }
+
+  /**
+   * Forces the stream for its side effects alone — Elixir's `Stream.run/1`. Fail-fast like
+   * {@link StreamClass#each}: pair with {@link StreamClass#tap} for the effects.
+   *
+   * ```ts
+   * const seen: number[] = [];
+   * await Stream.from([1, 2]).tap((n) => void seen.push(n)).run();
+   * seen; // [1, 2]
+   * ```
+   */
+  run(): Task<void, E> {
+    return this.each(() => {});
   }
 
   /**
