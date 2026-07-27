@@ -171,3 +171,51 @@ module('Result | try | isErrno', { concurrency: true }, () => {
     }, /ENOSPC/);
   });
 });
+
+// ── rescue — the boundary and the declaration fused ──────────────────────────
+
+module('Result | rescue', { concurrency: true }, () => {
+  const BadInput = Result.Failure.define(
+    'BadInput',
+    (d: { hint: string }) => `bad input: ${d.hint}`,
+  );
+
+  test('a return comes back bare; a throw comes back as the declared failure', (assert) => {
+    const parsed = Result.rescue(
+      JSON.parse,
+      (cause) => BadInput({ hint: 'json' }, { cause }),
+      '{"n":1}',
+    );
+    assert.deepEqual(parsed, { n: 1 });
+    const failed = Result.rescue(
+      JSON.parse,
+      (cause) => BadInput({ hint: 'json' }, { cause }),
+      'nope',
+    );
+    assert.true(BadInput.is(failed));
+    assert.true((failed as Result.Failure.Any).cause instanceof SyntaxError, 'original chained');
+  });
+
+  test('an async source resolves to the bare union and never rejects', async (assert) => {
+    const ok = await Result.rescue(
+      () => Promise.resolve(7),
+      () => BadInput({ hint: 'io' }),
+    );
+    assert.strictEqual(ok, 7);
+    const failed = await Result.rescue(
+      () => Promise.reject(new Error('io down')),
+      (cause) => BadInput({ hint: 'io' }, { cause }),
+    );
+    assert.true(BadInput.is(failed));
+  });
+
+  test('the synchronous prefix of async work is classified too', async (assert) => {
+    const failed = Result.rescue(
+      (): Promise<never> => {
+        throw new TypeError('sync throw before the promise');
+      },
+      (cause) => BadInput({ hint: 'sync' }, { cause }),
+    );
+    assert.true(BadInput.is(failed), 'classified synchronously, not a rejection');
+  });
+});

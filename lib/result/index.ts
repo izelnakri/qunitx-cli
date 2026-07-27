@@ -26,6 +26,11 @@ export {
   // `import { tryCatch }` (`try` alone is a reserved word, and this boundary is exactly
   // where the try/catch keyword pair lives).
   tryCatch as try,
+  // The boundary and the declaration fused: value bare, throw classified into a declared
+  // Failure — the sync sibling of Task#mapErr, for when the flat rethrow line would only
+  // restate "any throw here becomes this failure".
+  rescue,
+  type Rescued,
   isErrno,
 } from './try.ts';
 

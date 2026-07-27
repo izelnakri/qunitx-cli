@@ -66,6 +66,10 @@ export type Err<E> = {
  */
 export type Caught<T, E = unknown> = Ok<T> | Err<E>;
 
+// Type-only: rescue()'s classifier is constrained to produce a Failure, keeping the module
+// runtime-free (nothing from failure.ts is evaluated here).
+import type { Any } from './failure.ts';
+
 const okOf = <T>(value: T): Ok<T> => ({ ok: true, value, error: undefined });
 const errOf = <E>(error: E): Err<E> => ({ ok: false, value: undefined, error });
 
@@ -124,6 +128,56 @@ export function tryCatch<T, const A extends readonly unknown[]>(
     ) as Tried<T>;
   }
   return okOf(value) as Tried<T>;
+}
+
+/**
+ * The outcome of `rescue()`: the bare `T | F` union, promise-wrapped when `fn` was async.
+ * A leaking `any` collapses to `unknown` so it cannot pose as an inspected type.
+ */
+export type Rescued<T, F> = 0 extends 1 & T
+  ? unknown
+  : T extends PromiseLike<unknown>
+    ? Promise<Awaited<T> | F>
+    : T | F;
+
+/**
+ * Calls `fn(...args)` and returns the value **bare**, classifying any throw into the
+ * declared Failure `classify` builds — the boundary and the declaration fused into one
+ * expression, producing the bare union directly. The sync sibling of `Task#mapErr`: like
+ * that adapter edge it deliberately catches *everything*, because this IS the edge where a
+ * foreign throw becomes a declared failure — chain the original under `cause`. When the
+ * boundary should stay raw and the declaration should be a separate visible rethrow line,
+ * use `Result.try` instead.
+ *
+ * ```ts
+ * import * as Result from './index.ts';
+ * import * as Failure from './failure.ts';
+ *
+ * const BadRecord = Failure.define('BadRecord', (d: { line: number }) => `bad record at line ${d.line}`);
+ *
+ * Result.rescue(JSON.parse, (cause) => BadRecord({ line: 7 }, { cause }), '{"id":1}'); // { id: 1 } — bare
+ * const failed = Result.rescue(JSON.parse, (cause) => BadRecord({ line: 8 }, { cause }), 'nope');
+ * Failure.is(failed); // true — the throw arrived as the declared failure, bare and typed
+ * ```
+ */
+export function rescue<T, F extends Any, const A extends readonly unknown[]>(
+  fn: (...args: A) => T,
+  classify: (cause: unknown) => F,
+  ...args: A
+): Rescued<T, F> {
+  let value: T;
+  try {
+    value = fn(...args);
+  } catch (cause) {
+    return classify(cause) as Rescued<T, F>;
+  }
+  if (isThenable(value)) {
+    return Promise.resolve(value).then(
+      (resolved) => resolved,
+      (cause) => classify(cause),
+    ) as Rescued<T, F>;
+  }
+  return value as Rescued<T, F>;
 }
 
 /**
