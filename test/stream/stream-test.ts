@@ -142,3 +142,154 @@ module('Stream | observation seam', () => {
     }
   });
 });
+
+// ── Tier-1 sweep: builders ────────────────────────────────────────────────────
+
+module('Stream | builders', { concurrency: true }, () => {
+  test('concat, duplicate and fromIndex compose in order', async (assert) => {
+    assert.deepEqual(await Stream.concat([1], [2, 3]).values(), [1, 2, 3]);
+    assert.deepEqual(await Stream.duplicate('x', 2).values(), ['x', 'x']);
+    assert.deepEqual(await Stream.fromIndex(5).take(2).values(), [5, 6]);
+  });
+
+  test('cycle, iterate and repeatedly are infinite until bounded', async (assert) => {
+    assert.deepEqual(await Stream.cycle([1, 2]).take(5).values(), [1, 2, 1, 2, 1]);
+    assert.deepEqual(
+      await Stream.iterate(1, (n) => n * 3)
+        .take(3)
+        .values(),
+      [1, 3, 9],
+    );
+    let calls = 0;
+    assert.deepEqual(
+      await Stream.repeatedly(() => ++calls)
+        .take(2)
+        .values(),
+      [1, 2],
+    );
+    assert.deepEqual(await Stream.cycle([]).values(), [], 'an empty cycle ends, never spins');
+  });
+});
+
+// ── Tier-1 sweep: the positional/value rule per transform ────────────────────
+
+module('Stream | tier-1 transforms', { concurrency: true }, () => {
+  const withFailure = () => Stream.from([1, BadRow({ line: 1 }), 2, 3]);
+
+  test('drop is positional — values and failures both count, like take', async (assert) => {
+    const { values, errors } = await withFailure().drop(2).partition();
+    assert.deepEqual(values, [2, 3]);
+    assert.strictEqual(errors.length, 0, 'the dropped prefix included the failure — explicit');
+  });
+
+  test('takeWhile ends at the first refused value; failures pass untested', async (assert) => {
+    const { values, errors } = await withFailure()
+      .takeWhile((n) => n < 2)
+      .partition();
+    assert.deepEqual(values, [1]);
+    assert.strictEqual(errors.length, 1, 'the failure inside the window passed through');
+  });
+
+  test('dropWhile emits failures even during the dropping phase', async (assert) => {
+    const { values, errors } = await withFailure()
+      .dropWhile((n) => n < 3)
+      .partition();
+    assert.deepEqual(values, [3]);
+    assert.strictEqual(errors.length, 1, 'a value predicate never swallows a failure');
+  });
+
+  test('takeEvery/dropEvery/mapEvery count values only', async (assert) => {
+    assert.deepEqual(await Stream.from([0, 1, 2, 3, 4]).takeEvery(2).values(), [0, 2, 4]);
+    assert.deepEqual(await Stream.from([0, 1, 2, 3, 4]).dropEvery(2).values(), [1, 3]);
+    const everied = await withFailure()
+      .mapEvery(2, (n) => n * 10)
+      .partition();
+    assert.deepEqual(everied.values, [10, 2, 30], 'failure did not advance the value counter');
+  });
+
+  test('reject, intersperse and withIndex', async (assert) => {
+    assert.deepEqual(
+      await Stream.from([1, 2, 3])
+        .reject((n) => n === 2)
+        .values(),
+      [1, 3],
+    );
+    assert.deepEqual(await Stream.from([1, 2]).intersperse(0).values(), [1, 0, 2]);
+    const indexed = await withFailure().withIndex().partition();
+    assert.deepEqual(
+      indexed.values,
+      [
+        [1, 0],
+        [2, 1],
+        [3, 2],
+      ],
+      'failures consume no index',
+    );
+  });
+
+  test('dedup is failure-transparent; uniq is stream-wide', async (assert) => {
+    const deduped = await Stream.from([1, BadRow({ line: 2 }), 1, 2])
+      .dedup()
+      .partition();
+    assert.deepEqual(deduped.values, [1, 2], 'equal values around a failure stay consecutive');
+    assert.strictEqual(deduped.errors.length, 1);
+    assert.deepEqual(await Stream.from([1, 2, 1, 3]).uniq().values(), [1, 2, 3]);
+  });
+
+  test('scan folds values, seeded or seeded-by-first, and passes failures', async (assert) => {
+    assert.deepEqual(
+      await Stream.from([1, 2, 3])
+        .scan((a, n) => a + n)
+        .values(),
+      [1, 3, 6],
+    );
+    const seeded = await withFailure()
+      .scan((a, n) => a + n, 10)
+      .partition();
+    assert.deepEqual(seeded.values, [11, 13, 16], 'the failure left the accumulator untouched');
+  });
+});
+
+// ── Tier-2: chunkEvery + through ──────────────────────────────────────────────
+
+module('Stream | chunking and the general engine', { concurrency: true }, () => {
+  test('chunkEvery emits full chunks, a trailing partial, and never breaks a chunk on a failure', async (assert) => {
+    const { values, errors } = await Stream.from([1, BadRow({ line: 7 }), 2, 3])
+      .chunkEvery(2)
+      .partition();
+    assert.deepEqual(values, [[1, 2], [3]], 'the failure passed BETWEEN chunks, batch intact');
+    assert.strictEqual(errors.length, 1);
+  });
+
+  test('through hands the raw flow over — failures included, the ruling is yours', async (assert) => {
+    const codes: string[] = [];
+    const cleaned = Stream.from([1, BadRow({ line: 3 }), 2]).through(async function* (elements) {
+      for await (const element of elements) {
+        if (Failure.is(element))
+          codes.push(element.code); // absorbed by THIS generator
+        else yield element * 10;
+      }
+    });
+    assert.deepEqual(await cleaned.values(), [10, 20]);
+    assert.deepEqual(codes, ['BadRow'], 'through saw the failure raw — no auto-pass');
+  });
+});
+
+// ── Tier-3 pin: early exit runs source cleanup (Elixir resource/3's `after`) ──
+
+module('Stream | cleanup', { concurrency: true }, () => {
+  test('breaking early runs the source generator finally block', async (assert) => {
+    let cleaned = false;
+    const resource = Stream.from(
+      (async function* () {
+        try {
+          for (let n = 0; ; n++) yield n;
+        } finally {
+          cleaned = true; // resource/3's `after`, natively: for-await break → generator.return()
+        }
+      })(),
+    );
+    assert.deepEqual(await resource.take(2).values(), [0, 1]);
+    assert.true(cleaned, 'take() closed the source — no leaked handle');
+  });
+});
