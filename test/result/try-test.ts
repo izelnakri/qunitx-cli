@@ -209,7 +209,7 @@ module('Result | rescue', { concurrency: true }, () => {
     assert.true(BadInput.is(failed));
   });
 
-  test('the synchronous prefix of async work is classified too', async (assert) => {
+  test('the synchronous prefix of async work is classified too', (assert) => {
     const failed = Result.rescue(
       (): Promise<never> => {
         throw new TypeError('sync throw before the promise');
