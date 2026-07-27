@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { tokenize, type QueryToken } from './tokenize.ts';
 import { REPORTERS, type ReporterName } from '../reporters/types.ts';
-import { type Result, ok, err, Failure } from '../result/index.ts';
+import { type Result, Failure } from '../result/index.ts';
 
 /**
  * A flag was given a value this parser will not accept.
@@ -56,10 +56,10 @@ const FILE_LOOKING = /\.(js|ts|jsx|tsx|html)$/;
  * ```ts
  * import * as Args from './index.ts';
  *
- * // Defined, not invoked: the shape is what parse(projectRoot) yields on the ok branch.
+ * // Defined, not invoked: the shape is what parse(projectRoot) yields on the success branch.
  * function flagsOf(projectRoot: string) {
  *   const parsed = Args.parse(projectRoot);
- *   return parsed.ok ? { inputs: parsed.value.inputs, watch: parsed.value.watch } : null;
+ *   return Args.InvalidFlag.is(parsed) ? null : { inputs: parsed.inputs, watch: parsed.watch };
  * }
  * ```
  */
@@ -101,8 +101,8 @@ interface ParsedFlags {
  *
  * // Defined, not invoked: reads the live process.argv.
  * function example(projectRoot: string) {
- *   const parsed = Args.parse(projectRoot); // a Result — a bad flag reports, never exits
- *   return parsed.ok ? parsed.value.inputs : parsed.error.code; // absolute inputs | 'InvalidFlag'
+ *   const parsed = Args.parse(projectRoot); // ParsedFlags | ParseFailure — a bad flag reports, never exits
+ *   return Args.InvalidFlag.is(parsed) ? parsed.code : parsed.inputs; // 'InvalidFlag' | absolute inputs
  * }
  * ```
  * @returns {object}
@@ -121,8 +121,8 @@ export function parse(projectRoot: string): Result<ParsedFlags, ParseFailure> {
       // First bad flag wins, matching the previous exit-on-first-error behaviour. Collecting
       // every complaint would be a different (and arguably better) UX, but it is not what the
       // exits did and is not this change's business.
-      const applied = applyFlag(providedFlags, token.raw);
-      if (!applied.ok) return applied;
+      const failed = applyFlag(providedFlags, token.raw);
+      if (failed) return failed;
     }
   }
 
@@ -132,13 +132,11 @@ export function parse(projectRoot: string): Result<ParsedFlags, ParseFailure> {
   if (!providedFlags.browser && process.env.QUNITX_BROWSER) {
     const envBrowser = process.env.QUNITX_BROWSER;
     if (!BROWSERS.includes(envBrowser)) {
-      return err(
-        InvalidFlag({
-          flag: 'QUNITX_BROWSER',
-          value: envBrowser,
-          expected: `Must be one of: ${BROWSERS.join(', ')}`,
-        }),
-      );
+      return InvalidFlag({
+        flag: 'QUNITX_BROWSER',
+        value: envBrowser,
+        expected: `Must be one of: ${BROWSERS.join(', ')}`,
+      });
     }
     providedFlags.browser = envBrowser as 'chromium' | 'firefox' | 'webkit';
   }
@@ -150,7 +148,7 @@ export function parse(projectRoot: string): Result<ParsedFlags, ParseFailure> {
     providedFlags.debug = true;
   }
 
-  return ok({ ...providedFlags, inputs: Array.from(providedFlags.inputs) });
+  return { ...providedFlags, inputs: Array.from(providedFlags.inputs) };
 }
 
 type Flags = ParsedFlags & { inputs: Set<string> };
@@ -159,7 +157,7 @@ type Flags = ParsedFlags & { inputs: Set<string> };
  * Interprets one non-query flag token (`token.raw` verbatim). This is the original prefix/`=`
  * matching chain, unchanged — the tokenizer only lifted `-t`/`-m` and positional inputs out of it.
  */
-function applyFlag(result: Flags, arg: string): Result<void, ParseFailure> {
+function applyFlag(result: Flags, arg: string): ParseFailure | undefined {
   // Every value flag reads the same `=`-suffix, so split once here. A bare boolean flag has no
   // suffix (value === undefined) and falls back to true via parseBoolean.
   const value = arg.split('=')[1];
@@ -187,21 +185,21 @@ function applyFlag(result: Flags, arg: string): Result<void, ParseFailure> {
     // Fail fast like the other value flags: a bare `--port` (Number(undefined) === NaN) or an
     // out-of-range value would otherwise reach the bind step as a NaN/invalid port.
     if (!Number.isInteger(port) || port < 0 || port > 65535) {
-      return err(
-        InvalidFlag({
-          flag: '--port',
-          value: value ?? '',
-          expected: 'Expected --port=<0-65535> (short: -p).',
-        }),
-      );
+      return InvalidFlag({
+        flag: '--port',
+        value: value ?? '',
+        expected: 'Expected --port=<0-65535> (short: -p).',
+      });
     }
     result.port = port;
     result.portExplicit = true;
   } else if (arg.startsWith('--extensions')) {
     if (!value) {
-      return err(
-        InvalidFlag({ flag: '--extensions', value: '', expected: 'Expected --extensions=js,ts.' }),
-      );
+      return InvalidFlag({
+        flag: '--extensions',
+        value: '',
+        expected: 'Expected --extensions=js,ts.',
+      });
     }
     result.extensions = value
       .split(',')
@@ -209,13 +207,11 @@ function applyFlag(result: Flags, arg: string): Result<void, ParseFailure> {
       .filter(Boolean);
   } else if (arg.startsWith('--browser')) {
     if (!BROWSERS.includes(value)) {
-      return err(
-        InvalidFlag({
-          flag: '--browser',
-          value: value ?? '',
-          expected: `Must be one of: ${BROWSERS.join(', ')}`,
-        }),
-      );
+      return InvalidFlag({
+        flag: '--browser',
+        value: value ?? '',
+        expected: `Must be one of: ${BROWSERS.join(', ')}`,
+      });
     }
     result.browser = value as 'chromium' | 'firefox' | 'webkit';
   } else if (arg.startsWith('--before')) {
@@ -227,9 +223,7 @@ function applyFlag(result: Flags, arg: string): Result<void, ParseFailure> {
     result.changedSince = 'HEAD';
   } else if (arg.startsWith('--since')) {
     if (!value) {
-      return err(
-        InvalidFlag({ flag: '--since', value: '', expected: 'Expected --since=<git-ref>.' }),
-      );
+      return InvalidFlag({ flag: '--since', value: '', expected: 'Expected --since=<git-ref>.' });
     }
     result.changedSince = value;
   } else if (arg.startsWith('--reporter') || arg === '-r' || arg.startsWith('-r=')) {
@@ -237,13 +231,11 @@ function applyFlag(result: Flags, arg: string): Result<void, ParseFailure> {
     // are separate additive flags, so `--reporter=dot --junit` is a coherent combination. Value is
     // glued (`-r=spec`) like every non-query value flag.
     if (!value || !REPORTERS.includes(value as ReporterName)) {
-      return err(
-        InvalidFlag({
-          flag: '--reporter',
-          value: value ?? '',
-          expected: `Must be one of: ${REPORTERS.join(', ')}`,
-        }),
-      );
+      return InvalidFlag({
+        flag: '--reporter',
+        value: value ?? '',
+        expected: `Must be one of: ${REPORTERS.join(', ')}`,
+      });
     }
     result.reporter = value as ReporterName;
   } else if (arg.startsWith('--junit')) {
@@ -260,13 +252,11 @@ function applyFlag(result: Flags, arg: string): Result<void, ParseFailure> {
       : [];
     const invalid = formats.filter((format) => !COVERAGE_FORMATS.includes(format));
     if (invalid.length > 0) {
-      return err(
-        InvalidFlag({
-          flag: '--coverage',
-          value: invalid.join(', '),
-          expected: 'Must be one of: lcov, html',
-        }),
-      );
+      return InvalidFlag({
+        flag: '--coverage',
+        value: invalid.join(', '),
+        expected: 'Must be one of: lcov, html',
+      });
     }
     result.coverage = true;
     result.coverageFormats = formats.filter((format) => format !== 'text');
@@ -277,7 +267,7 @@ function applyFlag(result: Flags, arg: string): Result<void, ParseFailure> {
     // promoting it would reject argv that older scripts and CI configs still pass.
     console.warn(`# Warning: Unknown flag "${arg}" — ignored`);
   }
-  return ok();
+  return undefined;
 }
 
 /** Adds a positional target: an `.html` fixture, or a test path with an optional `#34` line suffix. */

@@ -34,7 +34,7 @@ module('Task | lazy', { concurrency: true }, () => {
       .expect('never fails here')
       .result();
     assert.false(ran, 'building the whole chain ran nothing');
-    assert.strictEqual((await chain).value, 3);
+    assert.strictEqual(await chain, 3, '.result() settles to the bare value');
     assert.true(ran, 'awaiting the chain ran it');
   });
 
@@ -72,7 +72,7 @@ module('Task | lazy', { concurrency: true }, () => {
     const id = user.map((u) => u.id);
     assert.strictEqual(await name, 'u7');
     assert.strictEqual(await id, 7);
-    assert.strictEqual(await user.result().then((r) => r.value?.id), 7);
+    assert.strictEqual(await user.result().then((r) => (Failure.is(r) ? undefined : r.id)), 7);
     assert.strictEqual(fetches, 1, 'three consumers, one fetch');
   });
 });
@@ -97,7 +97,7 @@ module('Task | call form', { concurrency: true }, () => {
     const task = Task(Promise.resolve(7));
     assert.true(task instanceof Task);
     assert.strictEqual(await task, 7);
-    assert.strictEqual((await task.result()).value, 7);
+    assert.strictEqual(await task.result(), 7, 'the bare union is the value itself on success');
   });
 
   test('new Task(promise) — the constructor takes the same union', async (assert) => {
@@ -298,7 +298,7 @@ module('Task | combinators', { concurrency: true }, () => {
   test('Task.results keeps every outcome, positionally, with typed errors', async (assert) => {
     const results = await Task.results([loadUser(1), loadUser(0), loadUser(3)]);
     assert.deepEqual(
-      results.map((r) => (r.ok ? r.value.name : 'FAIL:' + r.error.code)),
+      results.map((r) => (Failure.is(r) ? 'FAIL:' + r.code : r.name)),
       ['u1', 'FAIL:NotFound', 'u3'],
     );
   });
@@ -319,10 +319,7 @@ module('Task | combinators', { concurrency: true }, () => {
     assert.deepEqual(await all, [1, 2]);
     // Without the snapshot, restart() re-iterates the exhausted generator and resolves [].
     assert.deepEqual(await all.restart(), [1, 2]);
-    assert.deepEqual(await Task.results(gen()).restart(), [
-      { ok: true, value: 1, error: undefined },
-      { ok: true, value: 2, error: undefined },
-    ]);
+    assert.deepEqual(await Task.results(gen()).restart(), [1, 2]);
   });
 });
 
@@ -417,16 +414,14 @@ module('Task | two-tier', { concurrency: true }, () => {
     await assert.rejects(buggy().match({ ok: () => 'ok', err: () => 'err' }), TypeError);
   });
 
-  test('result reflects Ok / Err and RE-THROWS a bug', async (assert) => {
+  test('result settles to the bare value or the bare Failure, and RE-THROWS a bug', async (assert) => {
     const success = await loadUser(1).result();
-    assert.true(success.ok);
-    assert.deepEqual(success.value, { id: 1, name: 'u1' });
-    assert.strictEqual(success.error, undefined);
+    assert.false(Failure.is(success), 'a success is the value itself — nothing boxed');
+    assert.deepEqual(success, { id: 1, name: 'u1' });
 
-    const { ok, value, error } = await loadUser(0).result();
-    assert.false(ok);
-    assert.strictEqual(value, undefined);
-    assert.strictEqual(error?.code, 'NotFound');
+    const failed = await loadUser(0).result();
+    assert.true(Failure.is(failed), 'a declared failure arrives bare, as a value');
+    assert.strictEqual(Failure.is(failed) ? failed.code : undefined, 'NotFound');
 
     await assert.rejects(buggy().result(), TypeError);
   });
@@ -463,9 +458,9 @@ module('Task | retry & restart', { concurrency: true }, () => {
       if (attempts === 1) throw NotFound({ id: attempts });
       return 'ok@' + attempts;
     }).result();
-    assert.false((await reflected).ok, 'first run failed');
+    assert.true(Failure.is(await reflected), 'first run failed — the bare failure came back');
     const second = await reflected.restart();
-    assert.strictEqual(second.value, 'ok@2', 'restart re-ran the source, not the reflection');
+    assert.strictEqual(second, 'ok@2', 'restart re-ran the source, not the reflection');
   });
 
   test('retry() defaults to one fresh re-run after the first failure', async (assert) => {
@@ -545,9 +540,9 @@ module('Task | data-first statics', { concurrency: true }, () => {
       await Task.match(loadUser(1), { ok: (u) => u.name, err: (e) => e.code }),
       'u1',
     );
-    const { ok, error } = await Task.result(loadUser(0));
-    assert.false(ok);
-    assert.strictEqual(error?.code, 'NotFound');
+    const failed = await Task.result(loadUser(0));
+    assert.true(Failure.is(failed), 'the failure arrives bare');
+    assert.strictEqual(Failure.is(failed) ? failed.code : undefined, 'NotFound');
   });
 
   test('perform / restart / retry delegate — lineage stays deep', async (assert) => {

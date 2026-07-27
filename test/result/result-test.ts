@@ -1,157 +1,98 @@
 import { module, test } from 'qunitx';
 import * as Result from '../../lib/result/index.ts';
+import * as Failure from '../../lib/result/failure.ts';
 
-// ── ok / err ──────────────────────────────────────────────────────────────────
+const NotFound = Failure.define('NotFound', (d: { id: number }) => `no user ${d.id}`);
+const Denied = Failure.define('Denied', (d: { user: string }) => `denied: ${d.user}`);
 
-module('Result | ok/err', { concurrency: true }, () => {
-  test('ok(value) carries the value and reports success', (assert) => {
-    const result = Result.ok(42);
-    assert.true(result.ok);
-    assert.strictEqual(result.value, 42);
-    assert.strictEqual(result.error, undefined);
+// ── The bare union ────────────────────────────────────────────────────────────
+
+module('Result | the bare union', { concurrency: true }, () => {
+  test('a success is the value itself — nothing to unwrap on the happy path', (assert) => {
+    const outcome: Result.Result<number, Failure.Of<typeof NotFound>> = 42;
+    assert.strictEqual(outcome, 42);
   });
 
-  test('err(error) carries the error and reports failure', (assert) => {
-    const boom = new Error('boom');
-    const result = Result.err(boom);
-    assert.false(result.ok);
-    assert.strictEqual(result.error, boom);
-    assert.strictEqual(result.value, undefined);
+  test('a failure is the Failure itself — Failure.is discriminates', (assert) => {
+    const outcome: Result.Result<number, Failure.Of<typeof NotFound>> = NotFound({ id: 7 });
+    assert.true(Failure.is(outcome));
+    if (Failure.is(outcome)) {
+      assert.strictEqual(outcome.code, 'NotFound');
+      assert.strictEqual(outcome.data.id, 7);
+    }
   });
 
-  test('both variants share one key order, so `.ok` stays a monomorphic load', (assert) => {
-    // The perf claim in result.ts is exactly this: same key set, same insertion order, so V8
-    // assigns both constructors the same hidden class. If a refactor ever writes the natural
-    // `{ ok: false, error }` instead, this is what notices.
-    assert.deepEqual(Object.keys(Result.ok(1)), ['ok', 'value', 'error']);
-    assert.deepEqual(Object.keys(Result.err(1)), ['ok', 'value', 'error']);
-  });
-
-  test('ok() with no argument returns a shared frozen singleton', (assert) => {
-    assert.strictEqual(Result.ok(), Result.ok());
-    assert.true(Object.isFrozen(Result.ok()));
-  });
-
-  test('ok(undefined) allocates rather than sharing the singleton', (assert) => {
-    // Passing a variable that happens to hold undefined must not silently alias the frozen
-    // singleton — callers who then compare Results by identity would get a wrong answer.
-    assert.notStrictEqual(Result.ok(undefined), Result.ok());
-  });
-
-  test('err(undefined) is still a failure', (assert) => {
-    // `throw undefined` is legal JS and does occur, so an undefined error must not be
-    // mistaken for success by any code path.
-    const result = Result.err(undefined);
-    assert.false(result.ok);
-  });
-});
-
-// ── Narrowing ─────────────────────────────────────────────────────────────────
-
-module('Result | narrowing', { concurrency: true }, () => {
-  test('a truthiness check on .ok narrows both branches', (assert) => {
-    const result: Result.Result<number, string> = Result.ok(1);
-    if (result.ok) {
-      assert.strictEqual(result.value + 1, 2);
-    } else {
+  test('narrowing works on both branches of an if', (assert) => {
+    const parse = (raw: string): Result.Result<number, Failure.Of<typeof NotFound>> =>
+      /^\d+$/.test(raw) ? Number(raw) : NotFound({ id: -1 });
+    const outcome = parse('8080');
+    if (Failure.is(outcome)) {
       assert.true(false, 'unreachable');
-    }
-  });
-
-  test('destructuring narrows too, so no intermediate variable is needed', (assert) => {
-    // TypeScript 4.6+ narrows destructured discriminated unions. This is what lets the
-    // object form compete with tuple destructuring on brevity without giving up narrowing.
-    const { ok, value, error } = Result.err<string>('nope') as Result.Result<number, string>;
-    if (ok) {
-      assert.strictEqual(value, 0, 'unreachable');
     } else {
-      assert.strictEqual(error.toUpperCase(), 'NOPE');
+      assert.strictEqual(outcome + 1, 8081); // narrowed to number
     }
   });
 
-  test('a plain `.ok` arrow narrows through filter — why there is no isOk/isErr helper', (assert) => {
-    // TypeScript 5.5+ infers a type predicate for `(r) => r.ok`, so even the one place a
-    // guard *function* used to be needed (Array#filter) narrows without a named helper.
-    const results: Result.Result<number, string>[] = [Result.ok(1), Result.err('bad')];
-    assert.deepEqual(
-      results.filter((r) => r.ok).map((r) => r.value),
-      [1],
-    );
-    assert.deepEqual(
-      results.filter((r) => !r.ok).map((r) => r.error),
-      ['bad'],
-    );
+  test('a factory guard narrows to the exact failure kind', (assert) => {
+    const outcome: Result.Result<string, Failure.Any> = Denied({ user: 'root' });
+    assert.true(Denied.is(outcome));
+    assert.false(NotFound.is(outcome));
   });
 
-  test('isResult recognises a Result that arrived as plain data', (assert) => {
-    // The whole point of the plain-object representation: a Result survives JSON and is
-    // still a Result on the other side. A class-based Result arrives as a shapeless object.
-    const revived = JSON.parse(JSON.stringify(Result.ok({ id: 1 })));
-    assert.true(Result.isResult(revived));
-    assert.deepEqual(revived.value, { id: 1 });
-  });
-
-  test('isResult rejects lookalikes that are not Results', (assert) => {
-    assert.false(Result.isResult(null));
-    assert.false(Result.isResult({ ok: 'yes' }));
-    assert.false(Result.isResult('ok'));
+  test('the known trap, pinned: a success type that IS a Failure is indistinguishable', (assert) => {
+    // The one rule of the union style — documented in result.ts — is that T must never
+    // itself be a Failure. This pins the failure mode so its existence stays visible: a
+    // function that fetches failures as *data* cannot use the bare union.
+    const fetchedAsData: Result.Result<Failure.Any, Failure.Any> = NotFound({ id: 1 });
+    assert.true(Failure.is(fetchedAsData), 'the fetched value tests as the failure channel');
   });
 });
 
-// ── unwrap / expect ───────────────────────────────────────────────────────────
+// ── unwrap / expect / unwrapOr ────────────────────────────────────────────────
 
 module('Result | unwrap', { concurrency: true }, () => {
-  test('returns the value of a success', (assert) => {
-    assert.strictEqual(Result.unwrap(Result.ok('x')), 'x');
+  test('returns a success value untouched', (assert) => {
+    assert.strictEqual(Result.unwrap('x' as Result.Result<string, Failure.Any>), 'x');
   });
 
-  test('rethrows an Error failure by identity, preserving its stack', (assert) => {
-    const boom = new Error('boom');
+  test('throws a failure by identity, preserving its stack', (assert) => {
+    const boom = NotFound({ id: 3 });
     try {
-      Result.unwrap(Result.err(boom));
+      Result.unwrap(boom as Result.Result<string, Failure.Of<typeof NotFound>>);
       assert.true(false, 'should have thrown');
     } catch (error) {
-      // Identity, not equality: the original stack still points at where `boom` was created
-      // rather than at this unwrap. `expect()` is the opposite trade.
+      // Identity, not equality: the stack still points at where `boom` was created rather
+      // than at this unwrap. `expect()` is the opposite trade.
       assert.strictEqual(error, boom);
     }
   });
 
-  test('wraps a non-Error failure so something with a stack always propagates', (assert) => {
-    try {
-      Result.unwrap(Result.err('just a string'));
-      assert.true(false, 'should have thrown');
-    } catch (error) {
-      assert.true(error instanceof Error);
-      assert.true((error as Error).message.includes('just a string'));
-      assert.strictEqual((error as Error).cause, 'just a string');
-    }
-  });
-
-  test('describes an unserializable failure instead of throwing while reporting it', (assert) => {
-    // A circular object breaks JSON.stringify, and a null-prototype object breaks String().
-    // Either one throwing here would replace the failure being reported with a different one.
-    const circular: Record<string, unknown> = {};
-    circular.self = circular;
-    assert.throws(() => Result.unwrap(Result.err(circular)), /unwrap\(\) on a failed Result/);
-    assert.throws(() => Result.unwrap(Result.err(Object.create(null))), /unwrap\(\)/);
-    assert.throws(() => Result.unwrap(Result.err(Symbol('s'))), /unwrap\(\)/);
-  });
-
   test('expect() throws at the demand site and files the original under cause', (assert) => {
-    const boom = new Error('boom');
+    const boom = NotFound({ id: 9 });
     try {
-      Result.expect(Result.err(boom), 'config must load');
+      Result.expect(boom as Result.Result<string, Failure.Of<typeof NotFound>>, 'must load');
       assert.true(false, 'should have thrown');
     } catch (error) {
-      assert.strictEqual((error as Error).message, 'config must load');
+      assert.strictEqual((error as Error).message, 'must load');
       assert.strictEqual((error as Error).cause, boom);
     }
   });
 
-  test('unwrapOr substitutes a fallback', (assert) => {
-    assert.strictEqual(Result.unwrapOr(Result.err('e'), 'fallback'), 'fallback');
-    assert.strictEqual(Result.unwrapOr(Result.ok('v'), 'fallback'), 'v');
+  test('expect() throws a plain Error, never a Failure — the promotion is permanent', (assert) => {
+    try {
+      Result.expect(NotFound({ id: 2 }) as Result.Result<number, Failure.Any>, 'promoted');
+      assert.true(false, 'should have thrown');
+    } catch (error) {
+      assert.false(Failure.is(error), 'a promoted bug cannot be re-absorbed as declared');
+    }
+  });
+
+  test('unwrapOr substitutes a fallback for a failure only', (assert) => {
+    assert.strictEqual(
+      Result.unwrapOr(NotFound({ id: 1 }) as Result.Result<string, Failure.Any>, 'fallback'),
+      'fallback',
+    );
+    assert.strictEqual(Result.unwrapOr('v' as Result.Result<string, Failure.Any>, 'fallback'), 'v');
   });
 });
 
@@ -159,29 +100,30 @@ module('Result | unwrap', { concurrency: true }, () => {
 
 module('Result | collections', { concurrency: true }, () => {
   test('all collects every value when nothing failed', (assert) => {
-    const collected = Result.all([Result.ok(1), Result.ok(2), Result.ok(3)]);
-    assert.deepEqual(Result.unwrap(collected), [1, 2, 3]);
+    const outcomes: Result.Result<number, Failure.Any>[] = [1, 2, 3];
+    assert.deepEqual(Result.all(outcomes), [1, 2, 3]);
   });
 
-  test('all returns the first failure and stops', (assert) => {
-    const collected = Result.all([Result.ok(1), Result.err('first'), Result.err('second')]);
-    assert.strictEqual(collected.error, 'first');
+  test('all returns the first failure, bare, and stops', (assert) => {
+    const first = NotFound({ id: 1 });
+    const outcomes: Result.Result<number, Failure.Any>[] = [1, first, NotFound({ id: 2 })];
+    assert.strictEqual(Result.all(outcomes), first);
   });
 
   test('all on an empty array succeeds with an empty array', (assert) => {
-    assert.deepEqual(Result.unwrap(Result.all([])), []);
+    assert.deepEqual(Result.all([]), []);
   });
 
   test('partition keeps successes and failures together', (assert) => {
     // The shape Promise.all cannot give you: a rejected Promise.all discards the successes
     // that had already settled along with every failure but the first.
-    const { values, errors } = Result.partition([
-      Result.ok(1),
-      Result.err('a'),
-      Result.ok(2),
-      Result.err('b'),
-    ]);
+    const a = NotFound({ id: 1 });
+    const b = Denied({ user: 'x' });
+    const { values, errors } = Result.partition([1, a, 2, b] as Result.Result<
+      number,
+      Failure.Any
+    >[]);
     assert.deepEqual(values, [1, 2]);
-    assert.deepEqual(errors, ['a', 'b']);
+    assert.deepEqual(errors, [a, b]);
   });
 });

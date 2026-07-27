@@ -7,28 +7,19 @@
 //   import * as Result from './lib/result/index.ts';
 //   Result.try(JSON.parse, raw);
 //
-//   import { tryCatch, ok, err, type Result } from './lib/result/index.ts';
+//   import { tryCatch, unwrap, type Result } from './lib/result/index.ts';
 //   tryCatch(JSON.parse, raw);
 //
 // The type `Result<T, E>` and the namespace `Result` coexist deliberately: TypeScript keeps
 // type and value namespaces separate, so `Result.ok()` and `const r: Result<T, E>` both
 // resolve even when the same identifier is bound to each.
-export {
-  type Result,
-  type Ok,
-  type Err,
-  ok,
-  err,
-  isResult,
-  unwrap,
-  unwrapOr,
-  expect,
-  all,
-  partition,
-} from './result.ts';
+export { type Result, unwrap, unwrapOr, expect, all, partition } from './result.ts';
 
 export {
   type ErrnoError,
+  type Ok,
+  type Err,
+  type Caught,
   tryCatch,
   // `Result.try(fn, ...args)` is the primary spelling — `Promise.try`'s shape, reflecting
   // into a Result; `tryCatch` is the same function under a name that also survives a bare

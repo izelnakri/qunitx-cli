@@ -105,7 +105,7 @@ Three modules, no dependencies.
 
 ```ts
 import * as Result from './lib/result/index.ts';
-// or: import { ok, err, unwrap, tryCatch, type Result } from './lib/result/index.ts';
+// or: import { unwrap, expect, unwrapOr, all, partition, tryCatch, type Result } from './lib/result/index.ts';
 //     ( Result.try is the primary spelling; `tryCatch` is its bare-importable alias — `try`
 //       alone is a reserved word, so `import { try }` is illegal while `Result.try` is fine. )
 ```
@@ -113,24 +113,41 @@ import * as Result from './lib/result/index.ts';
 ### `Result<T, E>` — the value
 
 ```ts
-type Ok<T> = { readonly ok: true; readonly value: T; readonly error?: undefined };
-type Err<E> = { readonly ok: false; readonly value?: undefined; readonly error: E };
-type Result<T, E = unknown> = Ok<T> | Err<E>;
+type Result<T, E = Failure.Any> = T | E;
+```
+
+A bare union, not a box. The success value travels as itself; the failure — always a branded
+`Failure` — _is_ the error arm. There is no wrapper object, because a container around the
+pair would restate what the brand already answers: a producer returns the value or returns
+the failure, and a consumer asks `Failure.is()` once, which narrows both branches:
+
+```ts
+const InvalidPort = Result.Failure.define(
+  'InvalidPort',
+  (d: { raw: string }) => `not a port: ${d.raw}`,
+);
+
+const parsePort = (raw: string): Result.Result<number, Result.Failure.Of<typeof InvalidPort>> =>
+  /^\d+$/.test(raw) ? Number(raw) : InvalidPort({ raw });
+
+const port = parsePort('8080');
+if (Result.Failure.is(port))
+  port.code; // narrowed to the failure here…
+else port + 1; // …and to number here
 ```
 
 ```ts
-Result.ok(42); // { ok: true,  value: 42, error: undefined }
-Result.err(failure); // { ok: false, value: undefined, error: failure }
-
-Result.isResult; // structural guard for Results arriving as plain data
 Result.unwrap / expect / unwrapOr; // the three ways out of the Result world
 Result.all / partition; // the two batch helpers
 ```
 
-That is the whole surface. There is deliberately no `isOk`/`isErr` (`result.ok` already
-narrows, and since TS 5.5 a plain `(r) => r.ok` arrow narrows through `filter` too) and no
-`map`/`mapErr`/`andThen`/`match` — §4.6 explains why combinators on a settled value lost
-their seat.
+That is the whole surface. There is deliberately no `ok()`/`err()` constructor pair and no
+`isOk`/`isErr`: the value is already itself, the failure is already itself, and `Failure.is`
+is the one guard — the producers' entire vocabulary is `return value` and
+`return TheFailure({ … })`. This is Lua's `nil, err` with the discrimination moved onto the
+error itself. There is also no `map`/`mapErr`/`andThen`/`match` — §4.6 explains why
+combinators on a settled value lost their seat. What the union costs — one rule, and its
+consequences for generic code — is §4.2's story.
 
 ### `Failure` — the taxonomy
 
@@ -197,13 +214,16 @@ delete.
 
 ```ts
 const parsed = Result.try(JSON.parse, raw);
-//    ^? Result<unknown, unknown>
+//    ^? Caught<unknown>
 if (!parsed.ok && !(parsed.error instanceof SyntaxError)) throw parsed.error; // the declaration
 ```
 
 `Result.try(fn, ...args)` mirrors `Promise.try`'s signature: it calls `fn(...args)` **now** and
-reflects the outcome — a return is `Ok`, a throw is `Err`, and a thenable return yields a
-`Promise<Result>` that **never rejects**. It boxes everything, because it is the raw edge
+reflects the outcome into a `Caught<T>` — a return is `Ok`, a throw is `Err`, and a thenable
+return yields a `Promise<Caught>` that **never rejects**. `Caught<T> = Ok<T> | Err<unknown>`
+is the one box left in the system: this boundary catches `unknown`, which has no `Failure`
+brand to discriminate on, so success-vs-caught needs an explicit `ok` flag where the declared
+world does not (§4.2). It boxes everything, because it is the raw edge
 (Lua's `pcall`); the declaration of what was _expected_ is the flat rethrow line that follows,
 built from whatever guard the call site already has — `instanceof`, a `Failure` factory's
 `.is`, or `Result.isErrno(error, 'ENOENT')` for Node system errors. §4.4 explains why the
@@ -212,10 +232,10 @@ declaration lives _outside_ the boundary. This is also the one place in a progra
 
 ### `Task<T, E>` — the async half
 
-The sync `Result` is inert plain data, which is load-bearing (§4.1) but costs the awaitable,
+The sync `Result` is inert — a bare settled value — which is load-bearing (§4.1) but costs the awaitable,
 left-to-right ergonomics of a promise. Those ergonomics live on `Task` (`lib/task/`): a real,
-lazy, retryable `Promise` whose `.result()` settles to the plain `Result` above — one async
-abstraction, not two. §10 is its full story.
+lazy, retryable `Promise` whose `.result()` settles to the bare `Result` union above — one
+async abstraction, not two. §10 is its full story.
 
 The invariant that keeps the two halves sound, stated once: **the value you get after awaiting
 is plain; only the thing you put `await` in front of is thenable.** A `Task` is the thenable
@@ -228,11 +248,12 @@ and every `Promise<Result<T, E>>` collapses to `Promise<T>` at the first `await`
 
 Each of these is a place where the obvious choice is wrong.
 
-### 4.1 The Result is plain data, not a class
+### 4.1 The value is bare; the failure is the only object
 
 This is the decision with the largest practical consequences, and almost every JS Result
-library gets it wrong. `neverthrow`, `true-myth`, `Effect` and the `class Ok {}` / `class Err {}`
-sketch from the design thread all represent a Result as a **class instance with methods**.
+library gets it wrong in the same direction. `neverthrow`, `true-myth`, `Effect` and the
+`class Ok {}` / `class Err {}` sketch from the design thread all represent a Result as a
+**class instance with methods**.
 
 A class instance does not survive a boundary:
 
@@ -247,7 +268,7 @@ await (await fetch(url)).json(); // plain object
 
 `structuredClone` (and therefore `postMessage`, `IndexedDB`, and the WebSocket/Worker paths)
 copies own enumerable properties and **discards the prototype**. Methods live on the
-prototype. So `result.ok` survives and `result.unwrap()` does not.
+prototype. So the data survives and `result.unwrap()` does not.
 
 That is not a hypothetical for the framework in the design thread — it is a contradiction at
 its centre. Its `Actor.ask` returns `Result.Err(new AppError(…))`, a class instance. Its
@@ -258,54 +279,91 @@ them. Any consumer that calls `.unwrap()` works locally and throws `is not a fun
 the actor moves to a worker — which is precisely the day the actor model was supposed to make
 easy.
 
-Plain objects make the boundary a non-event:
+The bare union makes the boundary a non-event by having nothing there to lose. A success
+_is_ the value — there is nothing to serialize but the value itself, no wrapper whose methods
+could go missing over a wire, no envelope to unwrap on arrival. The failure is the only
+object the system owns, and it owns its own wire format: `Failure` carries
+`toJSON`/`fromJSON`, and `Failure.is` still recognises the revived object. An earlier
+iteration of this design shipped a plain-data `{ ok, value, error }` box for the same
+survives-the-wire reason — plain data crosses where instances break — but the A/B against the
+union showed the envelope restating what the brand already answers, so the box was removed
+everywhere failures are _declared_. It survives only at the `Result.try` boundary, where a
+caught `unknown` has no brand (§4.2 keeps score of what the removal costs; §4.3 is the box's
+post-mortem).
 
-```ts
-// test/result/result-test.ts
-const revived = JSON.parse(JSON.stringify(Result.ok({ id: 1 })));
-Result.isResult(revived); // true
-revived.value; // { id: 1 }
-```
-
-The cost is that a plain object can have no methods, so there is no `r.map(f)` on a settled
-Result at all. See §4.6 — this is a much smaller loss than it appears, because the settled
+The cost is that a bare value can carry no methods, so there is no `r.map(f)` on a settled
+outcome at all. See §4.6 — this is a much smaller loss than it appears, because the settled
 side branches with `if` and the chaining side lives on `Task`.
 
-The error _inside_ the Result is a different matter: `Failure` deliberately _is_ a class,
-because too much of the ecosystem keys off `instanceof Error` (Node's `util.inspect`, devtools
+The error arm is the deliberate exception to "no objects": `Failure` _is_ a class, because
+too much of the ecosystem keys off `instanceof Error` (Node's `util.inspect`, devtools
 stack expansion, `unhandledRejection` reporting, every logger's error branch). That is why
 `Failure.toJSON`/`fromJSON` exist and why using them is mandatory at a boundary. §9 covers
 what happens if you forget.
 
-### 4.2 Both variants have the same hidden class
+### 4.2 Channel identity: envelope vs payload — the honest cost
+
+The box carried channel identity in the **envelope**: the `.ok` slot was authoritative
+whatever `T` looked like. The union infers channel identity from the **payload** —
+`Failure.is` asks the value itself which channel it came in on. That inference is sound
+exactly as long as one precondition holds, and this section states it plainly, because its
+violation fails silently. Three consequences, in increasing order of subtlety.
+
+**The one rule.** `T` must never itself be — or include — a `Failure`. TypeScript cannot
+enforce this: there are no negated types, so `Result<T, E>` cannot say "any `T` except a
+branded one", and an instantiation that violates the rule compiles without complaint. It is a
+convention, held by review — and `test/result/result-test.ts` pins the failure mode ("the
+known trap, pinned") so its existence stays visible rather than becoming folklore.
+
+**Generic code is where violations bite.** Application code with concrete types knows its `T`
+and knows it is not a Failure — every call site swept in this repository's conversion is that
+case, which is why the diff shows no issue. Generic middleware — retry, cache, memoize,
+queue, dead-letter — never looks at `T`, so the brand check is the _only_ discrimination it
+can write:
 
 ```ts
-export function ok<T>(value: T): Ok<T> {
-  return { ok: true, value, error: undefined };
+function withRetry<T>(fn: () => Result<T, Failure.Any>, retries: number): Result<T, Failure.Any> {
+  let last: Result<T, Failure.Any> | undefined;
+  for (let i = 0; i <= retries; i++) {
+    last = fn();
+    if (!Failure.is(last)) return last; // infers the channel from the payload
+  }
+  return last as Result<T, Failure.Any>;
 }
-export function err<E>(error: E): Err<E> {
-  return { ok: false, value: undefined, error };
-}
+
+// A legitimate producer whose VALUE is a failure report, fetched as data:
+const report = withRetry(() => fetchStoredFailureReport(), 3);
+// every fetch SUCCEEDED, yet: N non-idempotent RPCs were made ("retrying" successes),
+// and the fetched report comes back on the error channel. No error anywhere.
 ```
 
-`err` writes `value: undefined` it does not need. The reason is V8's object model: a hidden
-class (map) is assigned per **key set × insertion order**. Writing the natural
-`{ ok: false, error }` produces a second shape, so every `result.ok` load site that sees both
-variants degrades from monomorphic to polymorphic inline caching.
+A producer that fetches stored failure reports _as data_ — qunitx's own domain: the browser
+ships test failures over the WebSocket and the CLI revives them with `Failure.fromJSON` — is
+entirely legitimate, and under a generic retry it breaks twice with no error in sight: the
+middleware re-runs a non-idempotent call N times because every success tests as a failure,
+then routes the data it fetched onto the error channel. With the box, the same middleware was
+correct by construction for every `T`, because the envelope answered without consulting the
+payload. The escape is one convention: **failures-as-data never travel bare** — wrap them
+(`{ report }`) or carry them in arrays, where the brand check never sees them.
+`demo-issue.ts` at the repository root is the runnable version of this trade.
 
-Measured (Node 24.16.0, x86-64, 100 alternating reads per iteration):
+**On the wire, the brand degrades.** In-process, `Failure.is` tests a `Symbol.for` brand that
+JSON cannot counterfeit. A revived wire failure has no symbol, so the guard falls back to a
+structural marker — `failure: true` plus a string `code` (§8.4) — which any JSON producer can
+emit. At wire crossings prefer the factory guards (`FileMissing.is`), which also match the
+specific `code`; at protocol boundaries prefer a typed envelope over shipping the bare union —
+the daemon protocol already does this, discriminating every frame on an explicit `type` field
+rather than asking the payload what it is.
 
-|                    | ns per `.ok` read |
-| ------------------ | ----------------- |
-| one hidden class   | 2.43              |
-| two hidden classes | 2.98              |
+One shape note survives from the box era. `try.ts`'s `Caught` — the box that remains — keeps
+the old hidden-class discipline: both variants write the same key set in the same insertion
+order (`Err` carries a `value: undefined` it does not need), because V8 assigns a hidden
+class per **key set × insertion order** and a second shape would degrade every `outcome.ok`
+load site from monomorphic to polymorphic inline caching — a real but tiny effect, measured
+at ~0.5 ns per read. The union has no equivalent concern: its happy path allocates nothing at
+all, so there is no object whose shape could vary.
 
-~0.5 ns. This is a real effect and an almost totally unimportant one — it is included because
-the claim is frequently made without a number, and the number turns out to be small. The
-honest justification for the uniform shape is not speed; it is that `{ ok, value, error }`
-destructures uniformly and `Object.keys()` is stable, which the test suite asserts.
-
-### 4.3 An object, not a `[value, error]` tuple
+### 4.3 Neither a `[value, error]` tuple nor a box
 
 The Lua/Go-shaped answer is a tuple, and `await-to-js` has made it popular:
 
@@ -319,21 +377,32 @@ Three problems, in increasing order of severity.
    return `[data, err]`. Both conventions are in wide use. Nothing catches a swap where the
    types are compatible.
 2. **`T | null` collides with the sentinel.** If `T` can legitimately be `null` or `undefined`
-   — a cache lookup, an optional field — `[null, null]` is ambiguous. The object form has a
-   dedicated `ok` boolean that no payload can impersonate.
+   — a cache lookup, an optional field — `[null, null]` is ambiguous. The union has no
+   sentinel to collide with: the failure arm is always a branded `Failure`, so a legitimate
+   `null` or `undefined` success is unambiguous.
 3. **Narrowing is fragile.** It _can_ work: TypeScript 4.6+ narrows destructured discriminated
    unions, so `[E, null] | [null, T]` does narrow. But it narrows only for `const`
    destructuring in the same scope, breaks if the tuple is passed through a function, and
    silently degrades to `T | null` (with no error) rather than failing loudly.
 
-The object form narrows everywhere, including destructured:
+The union narrows everywhere — across function boundaries, in `filter` callbacks, on values
+revived from JSON — because the discriminant travels _inside_ the failure rather than in a
+container positioned around it:
 
 ```ts
-const { ok, value, error } = someResult;
-if (ok)
-  value.toFixed(); // number
-else error.code; // narrowed
+const outcome = parsePort(raw);
+if (Failure.is(outcome))
+  outcome.code; // narrowed to the failure
+else outcome.toFixed(); // number
 ```
+
+The boxed `{ ok, value, error }` object — this design's own earlier answer — fixes the
+tuple's defects too, which is why it lasted as long as it did. What it did not survive was
+the A/B against the union: the producers' ceremony (`ok(value)` at every success, `err(f)` at
+every failure, `.value` at every consumer) bought nothing the brand did not already provide.
+The one thing the envelope genuinely bought — channel identity independent of the payload,
+which generic code needs — is priced honestly in §4.2; and the one place it is still
+irreplaceable, a caught `unknown` with no brand, still has it: `Result.try`'s `Caught`.
 
 ### 4.4 The declaration is a flat line at the call site — the core discipline
 
@@ -409,26 +478,28 @@ are still shorter than the `try`/`catch` they replace, and `grep 'throw .*\.erro
 every declaration in the codebase.
 
 **The propagation line.** The flat family has a third member, and it is the first thing a
-reviewer trips on. `ok()`/`err()` appear only where an outcome is **born** — the code that
-discovered the failure (or produced the value) wraps it, once. Everywhere the boxed outcome
-merely **travels**, the spelling is a bare pass-through:
+reviewer trips on. A failure is **born** exactly once — at the factory call,
+`return TheFailure({ … })`, which is the union's entire origin ceremony (the factory call
+_is_ what `err()` used to be). Everywhere the outcome merely **travels**, the spelling is a
+bare pass-through:
 
 ```ts
-const applied = applyFlag(flags, token.raw); // applyFlag already wrapped its failure in err()
-if (!applied.ok) return applied; // hand the SAME box up — do not re-wrap it
+const failed = applyFlag(flags, token.raw); // applyFlag: ParseFailure | undefined
+if (failed) return failed; // hand the SAME failure up — nothing to re-wrap
 ```
 
-`return err(applied.error)` would compile too, but it opens the box only to seal an identical
-one — an allocation that tells the reader something changed here when nothing did. The
-pass-through typechecks against _any_ caller's Result because an `Err` carries no success
-value: a failure box fits every function whose failure half matches, whatever its success type
-(`applyFlag` succeeds with `void`, `parse` with `ParsedFlags`; the same `Err<ParseFailure>`
-serves both). This is Rust's grammar without the sugar — `Ok(v)`/`Err(e)` at the origin, `?`
-for propagation — and the two-token line is the JS floor for it: a helper cannot early-return
-on its caller's behalf, generator do-notation buys ceremony and a trampoline (§5.1's Effect
-objection), and a thrown short-circuit smuggles expected failures back onto the exception
-channel. In async code the propagation line disappears entirely: a `Task` failure is a
-rejection, and rejections propagate themselves.
+There is nothing to open and nothing to re-seal: the failure that was created _is_ the value
+being returned, allocation-free at every hop. The pass-through typechecks against _any_
+caller's Result because a `Failure` is a union arm, not a container bound to one success
+type: the same `ParseFailure` serves `applyFlag` (which succeeds with `undefined`) and
+`parse` (which succeeds with `ParsedFlags`), whatever the success half looks like. This is
+Go's grammar almost verbatim — `if err != nil { return err }` — and Rust's without the sugar:
+the factory at the origin, `if (failed) return failed;` for propagation. The two-token line
+is the JS floor for it: a helper cannot early-return on its caller's behalf, generator
+do-notation buys ceremony and a trampoline (§5.1's Effect objection), and a thrown
+short-circuit smuggles expected failures back onto the exception channel. In async code the
+propagation line disappears entirely: a `Task` failure is a rejection, and rejections
+propagate themselves.
 
 ### 4.5 Discriminate on a string `code`, never `instanceof`
 
@@ -459,8 +530,8 @@ identity check that survives where `instanceof` does not.
 
 ### 4.6 There are no Result combinators — chaining lives on Task
 
-Because a Result is plain data, `map`/`mapErr`/`andThen` could only ever be free functions,
-and free-function composition reads inside-out:
+Because a Result is a bare value with no methods to hang anything on, `map`/`mapErr`/`andThen`
+could only ever be free functions, and free-function composition reads inside-out:
 
 ```ts
 andThen(map(parse(raw), normalize), validate); // vs. parse(raw).map(normalize).andThen(validate)
@@ -478,9 +549,9 @@ if (!config.ok) return defaults;
 
 const parsed = Result.try(JSON.parse, config.value);
 if (!parsed.ok && !(parsed.error instanceof SyntaxError)) throw parsed.error;
-if (!parsed.ok) return err(Invalid({ path }, { cause: parsed.error }));
+if (!parsed.ok) return Invalid({ path }, { cause: parsed.error });
 
-return ok(normalize(parsed.value));
+return normalize(parsed.value);
 ```
 
 Flat, debuggable, breakpoint-able, and every failure is visibly handled. Where a pipeline is
@@ -523,13 +594,13 @@ This is also what makes the OpenAPI generation work properly — see §6.
 | `true-myth`             | ✓                       | ✗                | **✗**               | partial      | one instance    | moderate      |
 | `fp-ts` `Either`        | ✓                       | ✗                | **✗**               | ✗            | one instance    | high          |
 | `Effect`                | ✓ (in signature)        | ✓ (typed errors) | ✗                   | ✓            | fiber runtime   | very high     |
-| **this design**         | ✓                       | ✓                | ✓                   | ✓            | one literal     | low           |
+| **this design**         | ✓                       | ✓                | ✓                   | ✓            | zero            | low           |
 
 Two columns deserve elaboration.
 
 **"Survives worker/RPC"** is §4.1. It is marked as a hard failure for the class-based
-libraries because the failure is _silent_: the object arrives, `.ok` reads correctly, and only
-the method call throws — often on a rarely-taken branch.
+libraries because the failure is _silent_: the object arrives, the data reads correctly, and
+only the method call throws — often on a rarely-taken branch.
 
 **Effect** is the only entry that is genuinely more powerful. `Effect<A, E, R>` puts the error
 type _and the dependency set_ in the signature, gives real structured concurrency,
@@ -546,10 +617,12 @@ month, it is not.
 The question that prompted this was whether Lua's approach is better for JavaScript. Mostly
 yes, and it is what §2 adopts. Two things do not transfer:
 
-**Multiple return values.** `local ok, err = pcall(f)` costs nothing in Lua because the VM has
-genuine multiple returns. JavaScript has no such thing; every equivalent allocates a container
-(array or object). This is why the JS version must think about the container's shape (§4.2)
-where Lua does not.
+**Multiple return values.** `local ok, err = pcall(f)` costs nothing in Lua because the VM
+has genuine multiple returns. JavaScript has no such thing, so a `pcall` equivalent must
+allocate a container — which is why `Result.try`'s `Caught` box exists and must think about
+its shape (§4.2). The declared-failure path escapes the tax entirely: the bare union returns
+one value like any other return, which is as close to Lua's costless second return as JS
+gets.
 
 **`xpcall`'s message handler runs before unwinding.** This is the real loss:
 
@@ -614,8 +687,10 @@ layer. Concrete defects, in priority order:
    ```
 
    `Ok(x)` is typed `Result<T, AppError>`, so it does not fit a `Result<T, ValidationError>`
-   slot. Constructors must return the _variant_, not the union: `ok<T>(v): Ok<T>`, so `E` stays
-   free to unify with whatever the failing branch produces.
+   slot. If you keep a box, constructors must return the _variant_, not the union
+   (`ok<T>(v): Ok<T>`), so `E` stays free to unify with whatever the failing branch produces.
+   The bare union sidesteps the whole class of bug: there are no constructors to mistype —
+   the success value and the failure each _are_ their own arm, and unify freely.
 
 5. **`errors: ['USER_NOT_FOUND', 'PARTIAL_FAILURE']` is hand-maintained and unenforced.**
    Nothing checks that the actor can actually produce those, or that it produces no others.
@@ -645,7 +720,7 @@ layer. Concrete defects, in priority order:
    suspension point.
 
 Zod is the right call for validation, and it composes cleanly here — `safeParse` already
-returns a Result in all but name:
+reflects the outcome instead of throwing, so the adapter is one conditional onto the union:
 
 ```ts
 export function validate<T>(
@@ -653,9 +728,7 @@ export function validate<T>(
   input: unknown,
 ): Result<T, Failure.Of<typeof Invalid>> {
   const parsed = schema.safeParse(input);
-  return parsed.success
-    ? Result.ok(parsed.data)
-    : Result.err(Invalid({ issues: parsed.error.issues }));
+  return parsed.success ? parsed.data : Invalid({ issues: parsed.error.issues });
 }
 ```
 
@@ -674,15 +747,22 @@ Reproduce with `lib/result/` and the harness in this document's commit message.
 |                                | ns/op |
 | ------------------------------ | ----- |
 | return the value directly      | 71.6  |
-| `return ok(value)`             | 72.7  |
+| `return ok(value)` (boxed)     | 72.7  |
 | `try`/`catch` around a success | 65.7  |
 | `Result.try(fn)` on a success  | 60.8  |
 
-All within noise of each other. **A Result costs nothing on the success path**, and `try/catch`
-has not been a deoptimization barrier in V8 since TurboFan (2017). Any argument for or against
-this design on happy-path performance grounds is unfounded in both directions.
+All within noise of each other. The first row _is_ the union's happy path: a bare return, no
+allocation per outcome, indistinguishable from code with no error handling — because on the
+success path it is code with no error handling. The boxed row was measured on the earlier
+`{ ok, value, error }` representation and now describes only the `Result.try` boundary, the
+one place the box survives; its monomorphism discipline (§4.2) applies there and nowhere
+else. `try/catch` has not been a deoptimization barrier in V8 since TurboFan (2017). Any
+argument for or against this design on happy-path performance grounds is unfounded in both
+directions.
 
-**Failure path:**
+**Failure path** (measured on the boxed form; the union drops the box literal, whose full
+cost the last row — a box around a bare string — bounds at ~67 ns, noise against the stack
+capture that dominates every other row):
 
 |                                               | depth 10 | depth 60  |
 | --------------------------------------------- | -------- | --------- |
@@ -703,8 +783,8 @@ this design on happy-path performance grounds is unfounded in both directions.
 frames eagerly in the `Error` constructor and only _formats_ them lazily on first `.stack`
 access. This has three consequences:
 
-1. "Exceptions are slow" is really "`new Error()` is slow". Returning an `Err` carrying a
-   `Failure` is not meaningfully cheaper than throwing one, because both pay the capture.
+1. "Exceptions are slow" is really "`new Error()` is slow". Returning a `Failure` is not
+   meaningfully cheaper than throwing one, because both pay the capture.
 2. The saving is available to either style via `{ stackless: true }` — a 10× reduction — and
    the trade is real: no stack means no debuggability, so it is worth it only for failures
    produced in a hot loop and consumed immediately.
@@ -731,10 +811,13 @@ Everything below is either covered by a test in `test/result/` or is a documente
 
 `throw 'string'`, `throw null`, `throw undefined`, `throw { code: 42 }` are all legal and all
 occur — most often as `Promise.reject(nonError)` from DOM and legacy callbacks.
-`Failure.from()` normalises any of them, preserving the original under `cause`. `unwrap()` on a
-non-`Error` failure wraps it so that something with a `.stack` always propagates.
+`Failure.from()` normalises any of them, preserving the original under `cause`. In the union
+world a failure is always a `Failure` — an `Error` with a stack — so `unwrap()` can throw it
+by identity and something with a `.stack` always propagates.
 
-`Result.err(undefined)` is still a failure — `ok` is the discriminant, not truthiness.
+At the boundary, a caught `undefined` is still a failure — `Caught`'s `ok` flag is the
+discriminant, not truthiness. This is one more reason the boundary keeps its box: in the
+declared world a failure must be branded, and `undefined` could never be one.
 
 ### 8.2 `JSON.stringify(new Error('boom'))` is `{}`
 
@@ -815,17 +898,21 @@ This repo has the pattern already: `closeWithGrace()` uses `Promise.allSettled` 
 close cannot displace the original error — though it also discards every close failure
 unreported, which is the opposite mistake.
 
-### 8.10 `Promise.all` discards successes; `Result.try` does not
+### 8.10 `Promise.all` discards successes; `Task.results` does not
 
 `Promise.all` rejects on the first failure and throws away every success that had already
-settled, plus every other failure. Because `Result.try`'s promise never rejects, this is safe
-and lossless:
+settled, plus every other failure. The union-world batch is `Task.results` +
+`Result.partition` — every outcome kept, positionally, as the bare union:
 
 ```ts
-const results = await Promise.all(files.map((f) => Result.try(() => readFile(f, 'utf8'))));
-const { values, errors } = Result.partition(results);
+const outcomes = await Task.results(paths.map(load)); // (Config | LoadFailure)[]
+const { values, errors } = Result.partition(outcomes); // split by the Failure brand
 ```
 
+There is a seam at the try boundary: `partition` discriminates by brand, so the `Caught`
+boxes that `Result.try` produces must be split by hand — `results.filter((r) => r.ok)` — a
+box's `error` is an unbranded `unknown` that `partition` cannot classify. Because
+`Result.try`'s promise never rejects, `Promise.all` over it is still safe and lossless.
 `Promise.allSettled` gets you the same completeness with `{ status, value, reason }` and an
 untyped `reason`.
 
@@ -843,7 +930,7 @@ retry, an alert, or a 500. This design models it as a failure with a dedicated c
 preserved at the boundary:
 
 ```ts
-if (!result.ok && result.error.code === 'Aborted') return; // not an error to report
+if (Failure.is(outcome) && outcome.code === 'Aborted') return; // not an error to report
 ```
 
 Note also that `AbortSignal` rejects with a `DOMException` named `AbortError`, not an
@@ -866,21 +953,25 @@ exactly that reason.
 
 ### 8.14 `unwrap` vs `expect` — whose stack do you want?
 
-`unwrap` rethrows an `Error` failure **by identity**, so the stack still points at the origin.
-`expect(result, message)` throws a fresh error with the original under `cause`, so the stack
-points at the code that demanded the value. Neither is right in general; pick per site.
+`unwrap` throws the bare failure **by identity** — a `Failure` is an `Error`, so the stack
+still points at the origin. `expect(outcome, message)` throws a fresh error with the original
+under `cause`, so the stack points at the code that demanded the value. Neither is right in
+general; pick per site.
 
 ### 8.15 Exhaustiveness
 
 ```ts
-switch (failure.code) {
-  case 'FileMissing':
-    return 404;
-  case 'Denied':
-    return 403;
-  default: {
-    const _exhaustive: never = failure; // compile error if a code is added and unhandled
-    return 500;
+const outcome = await load(path); // Config | LoadFailure
+if (Failure.is(outcome)) {
+  switch (outcome.code) {
+    case 'FileMissing':
+      return 404;
+    case 'Denied':
+      return 403;
+    default: {
+      const _exhaustive: never = outcome; // compile error if a code is added and unhandled
+      return 500;
+    }
   }
 }
 ```
@@ -935,7 +1026,7 @@ export const Denied = Failure.define(
 ### Step 2 — put the failures in the signature
 
 ```ts
-import { type Result, ok, err, isErrno, Failure } from '../result/index.ts';
+import { type Result, isErrno, Failure } from '../result/index.ts';
 
 type LoadFailure = Failure.Of<typeof NotFound | typeof Invalid | typeof Denied>;
 
@@ -951,11 +1042,9 @@ mechanics.
 const read = await Result.try(() => fs.readFile(path, 'utf8'));
 if (!read.ok && !isErrno(read.error, 'ENOENT', 'EACCES')) throw read.error;
 if (!read.ok) {
-  return err(
-    read.error.code === 'ENOENT'
-      ? NotFound({ path }, { cause: read.error })
-      : Denied({ path }, { cause: read.error }),
-  );
+  return read.error.code === 'ENOENT'
+    ? NotFound({ path }, { cause: read.error })
+    : Denied({ path }, { cause: read.error });
 }
 ```
 
@@ -969,10 +1058,10 @@ a sensible local response. `cause` keeps the original errno error and its stack.
   const parsed = Result.try(JSON.parse, read.value);
   if (!parsed.ok && !(parsed.error instanceof SyntaxError)) throw parsed.error;
   if (!parsed.ok) {
-    return err(Invalid({ path, reason: parsed.error.message }, { cause: parsed.error }));
+    return Invalid({ path, reason: parsed.error.message }, { cause: parsed.error });
   }
 
-  return ok(parsed.value as Config);
+  return parsed.value as Config;
 }
 ```
 
@@ -983,8 +1072,8 @@ The caller sees three codes, not three libraries' worth of error types.
 
 ```ts
 const config = await load('./qunitx.json');
-if (!config.ok) {
-  switch (config.error.code) {
+if (Failure.is(config)) {
+  switch (config.code) {
     case 'ConfigNotFound':
       return DEFAULTS;
     case 'ConfigDenied':
@@ -994,13 +1083,13 @@ if (!config.ok) {
       process.exitCode = 78;
       break;
     default: {
-      const _: never = config.error;
+      const _: never = config;
     }
   }
-  console.error(Failure.format(config.error)); // renders the whole cause chain
+  console.error(Failure.format(config)); // renders the whole cause chain
   return;
 }
-use(config.value);
+use(config); // narrowed to Config — the value was never wrapped
 ```
 
 Adding a fourth code to `LoadFailure` now fails to compile here. That is the guarantee.
@@ -1009,21 +1098,24 @@ Adding a fourth code to `LoadFailure` now fails to compile here. That is the gua
 
 ```ts
 // producer (browser page, worker, service)
-socket.send(JSON.stringify(result.ok ? result : err(Failure.toJSON(result.error))));
+socket.send(JSON.stringify(Failure.is(outcome) ? Failure.toJSON(outcome) : outcome));
 
 // consumer (node)
-const wire = JSON.parse(frame) as Result<Config, Failure.SerializedFailure>;
-const result = wire.ok ? wire : err(Failure.fromJSON(wire.error));
-if (!result.ok) console.error(Failure.format(result.error, { stacks: true }));
+const wire = JSON.parse(frame) as Config | Failure.SerializedFailure;
+const result = Failure.is(wire) ? Failure.fromJSON(wire) : wire;
+if (Failure.is(result)) console.error(Failure.format(result, { stacks: true }));
 ```
 
-The Result itself needs no conversion — it is plain data. Only the error inside does.
+The success needs no conversion — it is nothing but the value. Only the failure does, and it
+carries its own `toJSON`/`fromJSON`. Note that the consumer's first `Failure.is` runs
+structurally here — the `failure: true` marker plus `code` (§8.4) — which is the degraded
+wire form of the brand; at a real protocol boundary prefer a typed envelope (§4.2).
 
 ### Step 7 — batch work without losing anything
 
 ```ts
-const results = await Promise.all(paths.map((p) => load(p)));
-const { values, errors } = Result.partition(results);
+const outcomes = await Promise.all(paths.map((p) => load(p))); // (Config | LoadFailure)[]
+const { values, errors } = Result.partition(outcomes); // split by the Failure brand
 console.error(`${errors.length} of ${paths.length} configs failed`);
 ```
 
@@ -1061,9 +1153,10 @@ task.perform(); // start NOW without suspending — a later `await task` joins t
 ```
 
 `await task` yields the **value**, never a wrapper — the JS standard. That is deliberate:
-`await` _is_ `.then`, so making `await` yield `{ ok, value, error }` would force `.then`,
+`await` _is_ `.then`, so making `await` yield some outcome wrapper would force `.then`,
 `.map` and `Promise.all` to yield the wrapper too. A Promise whose `.then` is not the value is
-the biggest surprise this design can inflict, so the shape lives behind one method instead.
+the biggest surprise this design can inflict, so the reflection lives behind one method
+instead.
 
 Because every Task keeps its recipe **and its derivation lineage**, `.restart()` and
 `.retry(times = 1)` spawn fresh executions of the _whole chain_ —
@@ -1077,18 +1170,22 @@ observe nothing until the combined Task is awaited), plus `Task.try(fn, ...args)
 `Promise.try` — `Task.from`, `Task.fail(typedReason)`, `Task.withResolvers()`, and
 `Task.results(tasks)`, the positional batch that keeps every outcome as a typed `Result`.
 
-### 10.2 `.result()` is the one bridge to `{ ok, value, error }`
+### 10.2 `.result()` is the one bridge to the bare union
 
 ```ts
-const { ok, value, error } = await task.result();
+const scan = await task.result(); // T | E — the bare union
+if (Failure.is(scan))
+  degradeToFullRun(scan); // typed E
+else scan.has('lib/a.ts'); // typed T
 ```
 
-It reflects a declared `Failure` to a typed `Err<E>` and **re-throws a bug**, so the two-tier
-rule of §3 survives the crossing — and the same rule threads through every consuming method:
+It reflects a declared `Failure` into the value world as itself — bare, typed `E` — and
+**re-throws a bug**, so the two-tier rule of §3 survives the crossing — and the same rule
+threads through every consuming method:
 
 | method                      | declared `Failure`                                    | bug (any other rejection)                                   |
 | --------------------------- | ----------------------------------------------------- | ----------------------------------------------------------- |
-| `result()`                  | typed `Err<E>`                                        | re-thrown                                                   |
+| `result()`                  | the failure as a bare, typed value                    | re-thrown                                                   |
 | `match({ ok, err })`        | `err` branch, typed `E`                               | re-thrown                                                   |
 | `unwrapOr(fallback)`        | fallback                                              | re-thrown                                                   |
 | `expect(message)`           | re-thrown with context — same `code`/`data`, `cause`d | passes through untouched                                    |
@@ -1118,7 +1215,8 @@ export function scanChanges(root: string, ref: string): Task<ChangeScan, GitScan
 Everything downstream of the `mapErr` — `expect`, `result`, `match` — can then trust that a
 rejection is either a declared `Failure` or a genuine bug. The live example is
 `lib/utils/get-changed-file-paths-in-git-since.ts`, consumed by `lib/setup/get-changed-fs-tree.ts`
-as `await getChanged(…).result()` — a typed `GitScanFailure`, no narrowing step.
+as `await getChanged(…).result()` — one `Failure.is` branch away from a typed
+`GitScanFailure`, no `instanceof` ladder.
 
 ### 10.4 When a `Task` is _not_ the answer
 

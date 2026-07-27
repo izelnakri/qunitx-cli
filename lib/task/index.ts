@@ -4,8 +4,8 @@
 //
 // `Task<T, E>` is the awaitable — a lazy, retryable Promise superset whose declared failures
 // are `Failure` rejections. `Failure` is the taxonomy namespace (`Failure.define`,
-// `Failure.is`, …). `Result` / `ok` / `err` / `partition` are the plain `{ ok, value, error }`
-// value that `task.result()` reflects to — the value half, reused from lib/result unchanged.
+// `Failure.is`, …). `Result<T, E>` is the bare `T | E` union that `task.result()` settles
+// to — the value half, reused from lib/result unchanged; discriminate it with `Failure.is`.
 export { Task } from './task.ts';
 
 /**
@@ -19,4 +19,4 @@ export { Task } from './task.ts';
  */
 export * as Failure from '../result/failure.ts';
 
-export { type Result, type Ok, type Err, ok, err, isResult, partition } from '../result/result.ts';
+export { type Result, unwrap, partition } from '../result/result.ts';

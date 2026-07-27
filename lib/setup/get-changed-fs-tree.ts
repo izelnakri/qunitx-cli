@@ -1,6 +1,7 @@
 import { getChangedFiles } from '../utils/get-changed-files.ts';
 import { getChangedFilePathsInGitSince } from '../utils/get-changed-file-paths-in-git-since.ts';
 import * as MetafileCache from '../utils/metafile-cache.ts';
+import * as Failure from '../result/failure.ts';
 import type { FSTree } from '../types.ts';
 
 /**
@@ -54,29 +55,29 @@ export async function getChangedFsTree(
   // discriminated by `instanceof` — with the `null` branch ("run everything") adjacent to the
   // `size === 0` branch ("run nothing").
   //
-  // `.result()` is the Task's own bridge to `{ ok, value, error }`, and it carries the
-  // *declared* failure type: `scan.error` is a typed `GitScanFailure`, not a `Failure.Any`
-  // that would need narrowing. The two-tier gate holds — a declared scan failure flows here
-  // as a value, while a bug in the scanner still rejects and crashes the run loudly.
+  // `.result()` is the Task's own bridge to the value world: it settles to the bare
+  // `ChangeScan | GitScanFailure` union, and one `Failure.is` check discriminates it. The
+  // two-tier gate holds — a declared scan failure flows here as a value, while a bug in the
+  // scanner still rejects and crashes the run loudly.
   const scan = await getChanged(projectRoot, changedSince).result();
-  if (!scan.ok) {
+  if (Failure.is(scan)) {
     process.stdout.write(
-      `# --changed: ${scan.error.message} — running all ${testFiles.length} test files\n`,
+      `# --changed: ${scan.message} — running all ${testFiles.length} test files\n`,
     );
     return fsTree;
-  } else if (scan.value.scope === 'everything') {
+  } else if (scan.scope === 'everything') {
     process.stdout.write(
-      `# --changed: blast-radius file changed (${scan.value.trigger}) — running all ${testFiles.length} test files\n`,
+      `# --changed: blast-radius file changed (${scan.trigger}) — running all ${testFiles.length} test files\n`,
     );
     return fsTree;
-  } else if (scan.value.paths.size === 0) {
+  } else if (scan.paths.size === 0) {
     process.stdout.write(
       `# --changed: 0 files changed since ${changedSince} — running 0 test files\n`,
     );
     return {};
   }
 
-  const affected = getChangedFiles(cache.metafile, cache.esbuildCwd, scan.value.paths, testFiles);
+  const affected = getChangedFiles(cache.metafile, cache.esbuildCwd, scan.paths, testFiles);
   process.stdout.write(
     `# --changed: ${affected.size} of ${testFiles.length} test files affected by changes since ${changedSince}\n`,
   );

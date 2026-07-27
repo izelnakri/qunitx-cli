@@ -594,7 +594,7 @@ function withArgv(args, fn) {
 /**
  * Parses `args` and returns the flags, throwing if the parse was rejected.
  *
- * `Args.parse` returns `Result<ParsedFlags, InvalidFlag>`, so the happy path unwraps. A
+ * `Args.parse` returns the bare `ParsedFlags | ParseFailure` union, so the happy path unwraps. A
  * rejection here surfaces as a normal test failure naming the flag — where it previously
  * called `process.exit(1)` and took the whole test worker with it.
  */
@@ -612,6 +612,8 @@ function parseFlags(args) {
  */
 function parseFailure(args) {
   const result = withArgv(args, () => Args.parse(PROJECT_ROOT));
-  if (result.ok) throw new Error(`expected \`${args.join(' ')}\` to be rejected, but it parsed`);
-  return result.error;
+  if (!Args.InvalidFlag.is(result)) {
+    throw new Error(`expected \`${args.join(' ')}\` to be rejected, but it parsed`);
+  }
+  return result;
 }

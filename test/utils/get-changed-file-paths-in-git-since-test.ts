@@ -7,6 +7,7 @@ import {
   BLAST_RADIUS_PATTERNS,
   type ChangeScan,
   getChangedFilePathsInGitSince,
+  GitScanFailed,
   runGit,
 } from '../../lib/utils/get-changed-file-paths-in-git-since.ts';
 
@@ -102,13 +103,13 @@ module('Utils | getChangedFilePathsInGitSince | git interaction', { concurrency:
     const root = await makeRepo({ 'a.ts': '' });
     const scan = await getChangedFilePathsInGitSince(root, 'no-such-ref').result();
 
-    assert.notOk(scan.ok, 'a bad ref settles as a Failure, never a thrown bug');
-    if (scan.ok) return;
-    // `.result()` is typed `Result<ChangeScan, GitScanFailure>`, so `.error.data` reads straight
-    // through — no `GitScanFailed.is(...)` narrowing needed. That is what the Task's `E` buys.
-    assert.equal(scan.error.code, 'GitScanFailed');
-    assert.equal(scan.error.data.ref, 'no-such-ref');
-    assert.ok(scan.error.cause instanceof Error, "git's own error is kept as the cause");
+    assert.ok(GitScanFailed.is(scan), 'a bad ref settles as a bare Failure, never a thrown bug');
+    if (!GitScanFailed.is(scan)) return;
+    // `.result()` settles to the bare `ChangeScan | GitScanFailure` union; the factory guard
+    // narrows it, and `.data` reads straight through — typed by the Task's `E`.
+    assert.equal(scan.code, 'GitScanFailed');
+    assert.equal(scan.data.ref, 'no-such-ref');
+    assert.ok(scan.cause instanceof Error, "git's own error is kept as the cause");
   });
 });
 

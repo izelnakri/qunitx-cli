@@ -47,8 +47,8 @@ function metafileFor(graph: Record<string, string[]>): AffectedMetafile {
 
 // Injected git seams: the Task `getChangedFilePathsInGitSince` would have returned. The
 // call-form `Task(recipe)` is a resolved scan, `Task.fail` a declared failure — the caller
-// `.result()`s them, so the branch under test stays a plain `if (!scan.ok)` rather than a
-// `.catch` funnelling an Error.
+// `.result()`s them, so the branch under test stays a plain `Failure.is(scan)` check rather
+// than a `.catch` funnelling an Error.
 type Scan = ReturnType<typeof getChangedFilePathsInGitSince>;
 
 const gitChanged = (root: string, files: string[]) => (): Scan =>

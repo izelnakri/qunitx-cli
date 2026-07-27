@@ -33,10 +33,44 @@
  * the same guard you would have written in a `catch`, on the flat path.
  */
 
-import { type Result, ok, err } from './result.ts';
+// The box lives HERE, and only here. Everywhere failures are *declared*, the bare
+// `Result<T, E>` union replaces it — but this boundary catches `unknown`, which has no
+// Failure brand to discriminate on, so success-vs-caught needs an explicit `ok` flag.
+// Both variants share one key set and insertion order deliberately: V8 assigns a hidden
+// class per (keys × order), so `outcome.ok` reads stay monomorphic.
+
+/** The success variant of a caught outcome. `error` is present-but-undefined for shape stability. */
+export type Ok<T> = {
+  readonly ok: true;
+  readonly value: T;
+  readonly error?: undefined;
+};
+
+/** The caught variant. `value` is present-but-undefined for shape stability. */
+export type Err<E> = {
+  readonly ok: false;
+  readonly value?: undefined;
+  readonly error: E;
+};
 
 /**
- * `Result` for a synchronous source, a never-rejecting `Promise<Result>` for an async one.
+ * What the boundary hands back: the value, or whatever was caught — `unknown`, honestly,
+ * because a `catch` binding is exactly as untrustworthy.
+ *
+ * ```ts
+ * import { tryCatch } from './try.ts';
+ *
+ * const parsed = tryCatch(JSON.parse, '{"n":1}');
+ * if (parsed.ok) parsed.value; // narrowed; the else branch holds the caught unknown
+ * ```
+ */
+export type Caught<T, E = unknown> = Ok<T> | Err<E>;
+
+const okOf = <T>(value: T): Ok<T> => ({ ok: true, value, error: undefined });
+const errOf = <E>(error: E): Err<E> => ({ ok: false, value: undefined, error });
+
+/**
+ * `Caught` for a synchronous source, a never-rejecting `Promise<Caught>` for an async one.
  *
  * The first arm handles an `any`-typed source — `JSON.parse`, the flagship caller. A
  * conditional type applied to `any` resolves to the *union* of both branches, which would
@@ -45,10 +79,10 @@ import { type Result, ok, err } from './result.ts';
  * value as `unknown` — the honest reading of `any`, and what the call site can branch on.
  */
 type Tried<T> = 0 extends 1 & T
-  ? Result<unknown, unknown>
+  ? Caught<unknown>
   : T extends PromiseLike<unknown>
-    ? Promise<Result<Awaited<T>, unknown>>
-    : Result<T, unknown>;
+    ? Promise<Caught<Awaited<T>>>
+    : Caught<T>;
 
 /**
  * Calls `fn(...args)` and reflects the outcome into a `Result` — `Result.try`, shaped like
@@ -77,7 +111,7 @@ export function tryCatch<T, const A extends readonly unknown[]>(
   try {
     value = fn(...args);
   } catch (error) {
-    return err(error) as Tried<T>;
+    return errOf(error) as Tried<T>;
   }
 
   if (isThenable(value)) {
@@ -85,11 +119,11 @@ export function tryCatch<T, const A extends readonly unknown[]>(
     // throws from `.then`) is normalised by the spec's resolution algorithm instead of being
     // trusted to behave. Both callbacks return, so the promise can never reject.
     return Promise.resolve(value).then(
-      (resolved) => ok(resolved),
-      (thrown) => err(thrown),
+      (resolved) => okOf(resolved),
+      (thrown) => errOf(thrown),
     ) as Tried<T>;
   }
-  return ok(value) as Tried<T>;
+  return okOf(value) as Tried<T>;
 }
 
 /**

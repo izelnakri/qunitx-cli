@@ -23,11 +23,11 @@ module('Result | portability', { concurrency: true }, () => {
       `const parsed = Result.try(JSON.parse, '{"n":1}');` +
       `const FileMissing = Failure.define('FileMissing', (d) => 'no ' + d.path);` +
       `const doubled = await Task(() => 21).map((n) => n * 2);` +
-      `const { ok, error } = await Task(() => { throw FileMissing({ path: 'a.ts' }); }).result();` +
+      `const failed = await Task(() => { throw FileMissing({ path: 'a.ts' }); }).result();` +
       `Failure.setDebug(true);` + // debug line must fall back to console.error, not crash
       `Task(() => Promise.reject(new Error('gone'))).ignore('browser cleanup');` +
       `await new Promise((res) => setTimeout(res, 10));` +
-      `console.log('OK', parsed.value.n, doubled, ok, error.code);`;
+      `console.log('OK', parsed.value.n, doubled, Failure.is(failed), failed.code);`;
     const child = spawn(process.execPath, ['--input-type=module', '-e', script]);
     let stdout = '';
     let stderr = '';
@@ -35,7 +35,7 @@ module('Result | portability', { concurrency: true }, () => {
     child.stderr.on('data', (chunk) => (stderr += chunk));
     const code = await new Promise<number | null>((resolve) => child.on('close', resolve));
     assert.strictEqual(code, 0, `clean exit, got stderr: ${stderr}`);
-    assert.true(stdout.includes('OK 1 42 false FileMissing'), 'the full surface worked');
+    assert.true(stdout.includes('OK 1 42 true FileMissing'), 'the full surface worked');
     assert.true(
       stderr.includes('ignored (browser cleanup)'),
       'the debug line reached console.error without a process.stderr',

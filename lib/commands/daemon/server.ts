@@ -758,12 +758,12 @@ async function runOnce(
   // A bad flag from one client is that client's problem, not the daemon's. This is the whole
   // reason config assembly returns instead of exiting: `process.exit(1)` inside `Args.parse`
   // would have taken down a daemon serving every other invocation in the project.
-  if (!configured.ok) {
+  if (Failure.is(configured)) {
     process.env = envSnapshot;
-    process.stderr.write(`${Failure.format(configured.error)}\n`);
+    process.stderr.write(`${Failure.format(configured)}\n`);
     return 1;
   }
-  const config = configured.value;
+  const config = configured;
 
   // Lending the daemon's persistent handles to this run also marks it as a daemon run:
   // a non-null state.daemon makes run() reuse the browser rather than launching one, throw

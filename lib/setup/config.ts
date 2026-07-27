@@ -68,26 +68,27 @@ export type ConfigFailure =
  * Builds the merged qunitx config from package.json settings and CLI flags.
  * `package.json#qunitx.plugins` entries are dynamic-imported into esbuild plugin objects.
  *
- * Resolves to a plain `Result<Config, ConfigFailure>` — a *declared* failure is a value the
- * caller branches on, never a rejection. It reports rather than exits so the daemon — which
+ * Resolves to the bare `Result<Config, ConfigFailure>` union — the Config itself, or a
+ * *declared* failure the caller branches on with `Failure.is`, never a rejection. It reports rather than exits so the daemon — which
  * assembles a config per client request — can reject one bad flag and stay up; `cli.ts`
  * turns a failure into an exit.
  *
  * ```ts
  * import * as Config from './config.ts';
+ * import * as Result from '../result/index.ts';
  *
  * // Defined, not invoked: reads package.json and walks the real fs.
  * async function example() {
  *   const config = await Config.setup();
- *   return config.ok ? config.value : config.error; // Config out, or a ConfigFailure to report
+ *   return Result.Failure.is(config) ? config.code : config.inputs; // ConfigFailure, or the Config
  * }
  * ```
  */
 export async function setup(): Promise<Result.Result<Config, ConfigFailure>> {
   const projectRoot = await findProjectRoot();
   const flags = Args.parse(projectRoot);
-  if (!flags.ok) return flags;
-  const cliConfigFlags = flags.value;
+  if (Result.Failure.is(flags)) return flags;
+  const cliConfigFlags = flags;
   const projectPackageJSON = await readConfigFromPackageJSON(projectRoot);
   const { plugins: rawPlugins, ...userQunitx } =
     (projectPackageJSON.qunitx as Partial<Config> & {
@@ -120,8 +121,8 @@ export async function setup(): Promise<Result.Result<Config, ConfigFailure>> {
     FSTree.build(config.testFileLookupPaths, config),
     pluginsPromise,
   ]);
-  if (!plugins.ok) return plugins;
-  [config.fsTree, config.plugins] = [fsTree, plugins.value];
+  if (Result.Failure.is(plugins)) return plugins;
+  [config.fsTree, config.plugins] = [fsTree, plugins];
 
   pruneSupersededLineTargets(config);
 
@@ -144,7 +145,7 @@ export async function setup(): Promise<Result.Result<Config, ConfigFailure>> {
   // by every concurrent group via the group-config spread in run.ts.
   config.state.reporters = Reporter.create(config);
 
-  return Result.ok(config);
+  return config;
 }
 
 /**
@@ -247,8 +248,8 @@ async function resolvePlugins(
 ): Promise<
   Result.Result<EsbuildPlugin[], Result.Failure.Of<typeof InvalidPlugins | typeof PluginLoadFailed>>
 > {
-  if (raw == null) return Result.ok([]);
-  if (!Array.isArray(raw)) return Result.err(InvalidPlugins({ received: typeof raw }));
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) return InvalidPlugins({ received: typeof raw });
 
   const projectRequire = createRequire(`${projectRoot}/package.json`);
   // `Result.try` per entry rather than around the whole `Promise.all`, so the failure can
@@ -262,12 +263,12 @@ async function resolvePlugins(
         const exported = mod.default ?? mod;
         return (typeof exported === 'function' ? exported(options) : exported) as EsbuildPlugin;
       });
-      if (imported.ok) return imported;
+      if (imported.ok) return imported.value;
       // Only a resolution/import error (a Node error carrying `code`, e.g.
       // ERR_MODULE_NOT_FOUND) is the declared "could not load" failure. A plugin factory
       // that throws while building its own options is a bug and stays one.
       if (!Result.isErrno(imported.error)) throw imported.error;
-      return Result.err(PluginLoadFailed({ specifier: String(spec) }, { cause: imported.error }));
+      return PluginLoadFailed({ specifier: String(spec) }, { cause: imported.error });
     }),
   );
   return Result.all(loaded);

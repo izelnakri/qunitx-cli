@@ -194,7 +194,7 @@ export type Any = Failure<string, unknown>;
  * type GitScanFailure = Failure.Of<typeof GitScanFailed>;
  * //   ^? Failure<'GitScanFailed', { ref: string }>
  * const scan = (ref: string): Result.Result<string[], GitScanFailure> =>
- *   Result.err(GitScanFailed({ ref }));
+ *   GitScanFailed({ ref }); // the failure IS the Result's failure arm — no wrapper
  * ```
  */
 export type Of<F> = F extends FailureFactory<infer Code, infer Data> ? Failure<Code, Data> : never;

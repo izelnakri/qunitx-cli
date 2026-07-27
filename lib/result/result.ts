@@ -1,154 +1,64 @@
 /**
- * `Result<T, E>` — a value that is either a success or a declared failure.
+ * `Result<T, E>` — the success value itself, or the declared `Failure`. Bare. No box.
  *
  * This is the *value* half of the error system; `try.ts` is the *boundary* half and
  * `failure.ts` is the *taxonomy* half. The split mirrors Lua, where `error()`/`pcall()`
  * (boundary) and the `nil, err` return convention (value) are deliberately different
  * mechanisms used for different classes of problem — see `docs/error-handling.md`.
  *
- * Design constraints, in priority order:
+ * There is no wrapper object. A `Failure` is branded and self-describing, so a container
+ * around the pair would restate what the brand already answers: a producer returns the value
+ * or returns the failure, and a consumer asks `Failure.is()` once and branches. This is Lua's
+ * `nil, err` with the discrimination moved onto the error itself.
  *
- *  1. **Plain data.** A Result is an object literal — no class, no prototype, no methods.
- *     It survives `structuredClone`, `postMessage`, `JSON.stringify` and a WebSocket hop
- *     unchanged. Every class-based Result library (neverthrow, true-myth, Effect) arrives
- *     at the other side of such a boundary as a shapeless object with its methods gone.
- *  2. **Narrowing that always works.** A discriminated union on a boolean literal narrows
- *     under `if`, under destructuring, and in `switch` — with no `as`, no assertion
- *     function, and no dependence on how the value was produced.
- *  3. **One hidden class.** `ok()` and `err()` emit the same three keys in the same order,
- *     so `result.ok` stays a monomorphic load site instead of degrading to polymorphic the
- *     first time both variants flow through the same code. See the perf notes below.
- *
- * The `readonly` markers are compile-time only; nothing is frozen at runtime except the
- * shared `ok()` void singleton (freezing every Result would cost more than it protects,
- * and the type already forbids assignment).
+ *  1. **The value travels naked.** No `.value` on the happy path, no allocation per outcome,
+ *     nothing extra to serialize — the value is itself; the failure owns `toJSON`.
+ *  2. **The discriminant is the Failure brand.** `Failure.is(x)` narrows both branches, and
+ *     it keeps working on a value that crossed a WebSocket or a worker (failure.ts).
+ *  3. **The one rule this buys nothing without:** the success type must never itself be a
+ *     `Failure`. A function that *fetches failures as data* cannot use this shape — the two
+ *     channels would be indistinguishable. The boundary (`try.ts`) keeps its `{ ok, value,
+ *     error }` box for exactly that reason: a caught `unknown` has no brand to discriminate.
  */
 
-// ── The type ─────────────────────────────────────────────────────────────────
-
-/** A successful Result carrying `value`. `error` is present-but-undefined to keep the shape stable. */
-export type Ok<T> = {
-  readonly ok: true;
-  readonly value: T;
-  readonly error?: undefined;
-};
-
-/** A failed Result carrying `error`. `value` is present-but-undefined to keep the shape stable. */
-export type Err<E> = {
-  readonly ok: false;
-  readonly value?: undefined;
-  readonly error: E;
-};
+import { isFailure, type Any } from './failure.ts';
 
 /**
- * Either an `Ok<T>` or an `Err<E>`.
+ * The success value or a declared failure — a bare union, discriminated by the `Failure`
+ * brand.
  *
- * `E` defaults to `unknown` rather than `Error` on purpose: an un-narrowed error is exactly
- * as untrustworthy as a `catch` binding, and typing it `unknown` makes the type checker say
- * so at the use site instead of letting a wrong assumption compile.
+ * `E` should always be a `Failure` type: the brand is the only discriminant, so a
+ * non-Failure `E` cannot be told apart from a success. It defaults to `Any` — the honest
+ * "some declared failure" — rather than `unknown`, which would collapse the union.
  *
  * ```ts
  * import * as Result from './index.ts';
  *
- * const parsePort = (raw: string): Result.Result<number, string> =>
- *   /^\d+$/.test(raw) ? Result.ok(Number(raw)) : Result.err(`not a port: ${raw}`);
+ * const InvalidPort = Result.Failure.define('InvalidPort', (d: { raw: string }) => `not a port: ${d.raw}`);
+ *
+ * const parsePort = (raw: string): Result.Result<number, Result.Failure.Of<typeof InvalidPort>> =>
+ *   /^\d+$/.test(raw) ? Number(raw) : InvalidPort({ raw });
  *
  * const port = parsePort('8080');
- * if (port.ok) port.value; // narrowed to number; the else branch narrows to string
+ * if (Result.Failure.is(port)) port.code; // narrowed to the failure here…
+ * else port + 1; // …and to number here
  * ```
  */
-export type Result<T, E = unknown> = Ok<T> | Err<E>;
+export type Result<T, E = Any> = T | E;
 
-// ── Constructors ─────────────────────────────────────────────────────────────
-
-// `ok()` with no argument is by far the most common Result in void-returning code
-// (a write succeeded, a lock released). Returning one frozen singleton makes that path
-// allocation-free. Freezing is what makes the sharing safe, and it happens exactly once.
-const OK_VOID: Ok<void> = Object.freeze({ ok: true, value: undefined, error: undefined });
-
-/**
- * A successful Result carrying no value. Returns a shared frozen singleton.
- *
- * ```ts
- * import * as Result from './index.ts';
- *
- * Result.ok(); // shared frozen Result.Ok<void> — the allocation-free "it worked" for void-returning code
- * Result.ok(42); // { ok: true, value: 42, error: undefined } — the value-carrying overload
- * ```
- */
-export function ok(): Ok<void>;
-/** A successful Result carrying `value`. */
-export function ok<const T>(value: T): Ok<T>;
-export function ok(value?: unknown): Ok<unknown> {
-  // `arguments.length` rather than `value === undefined` so an explicit `ok(undefined)`
-  // still allocates: callers who pass a variable that happens to be undefined should not
-  // silently share the frozen singleton and then be surprised it cannot be narrowed apart.
-  return arguments.length === 0 ? OK_VOID : { ok: true, value, error: undefined };
-}
-
-/**
- * A failed Result carrying `error`.
- *
- * Key order matches `ok()` exactly. This is not cosmetic: V8 assigns a hidden class per
- * (key set × insertion order), so `{ok, value, error}` from both constructors means every
- * `result.ok` read in the program sees one map and stays monomorphic. Writing the natural
- * `{ok: false, error}` instead produces a second shape and pushes shared call sites into
- * polymorphic (and, mixed with a third shape, megamorphic) inline-cache states.
- *
- * ```ts
- * import * as Result from './index.ts';
- * import * as Failure from './failure.ts';
- *
- * const FileMissing = Failure.define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
- *
- * Result.err(FileMissing({ path: 'a.ts' })); // { ok: false, value: undefined, error: Failure<…> }
- * ```
- */
-export function err<const E>(error: E): Err<E> {
-  return { ok: false, value: undefined, error };
-}
-
-// ── Guards ───────────────────────────────────────────────────────────────────
-
-// There is deliberately no `isOk`/`isErr` pair here: `result.ok` already narrows both
-// branches under `if`, destructuring, and `switch` (design constraint 2 above), so a guard
-// function would only add a call to spell the same check.
-
-/**
- * Whether `value` is any Result at all — a structural check for values arriving from
- * outside the program (a WebSocket frame, a worker message, a cached JSON blob).
- *
- * Deliberately structural rather than branded. A Result is plain data whose whole purpose
- * is to cross realms intact, so a check that a foreign realm could fail would defeat it.
- *
- * ```ts
- * import * as Result from './index.ts';
- *
- * const frame = JSON.stringify(Result.ok({ id: 1 })); // a Result that crossed a WebSocket
- *
- * const wire = JSON.parse(frame);
- * if (Result.isResult(wire) && !wire.ok) console.error(wire.error);
- * ```
- */
-export function isResult(value: unknown): value is Result<unknown, unknown> {
-  return (
-    typeof value === 'object' && value !== null && typeof (value as Ok<unknown>).ok === 'boolean'
-  );
-}
+// There is deliberately no `ok()`/`err()` pair and no `isOk`/`isErr`: the value is already
+// itself, the failure is already itself, and `Failure.is()` is the one guard. The producers'
+// entire vocabulary is `return value` and `return TheFailure({ … })`.
 
 // ── Leaving the Result world ─────────────────────────────────────────────────
 
 /**
  * Returns the success value, or throws the failure.
  *
- * The failure is rethrown **by identity** when it is already an `Error`, so the stack keeps
- * pointing at where the failure was created rather than at this line. That is usually what
- * you want while debugging; when you would rather record the unwrap site, use `expect()`,
- * which builds a fresh error and files the original under `cause`.
- *
- * Non-`Error` failures (a string, a `{code}` object, `null` — all legal `throw` operands in
- * JS, and all common in wire payloads) are wrapped so that whatever propagates upward is
- * guaranteed to have a `.stack` and a readable `.message`.
+ * The failure is thrown **by identity** — a `Failure` is an `Error`, so the stack keeps
+ * pointing at where it was created rather than at this line. That is usually what you want
+ * while debugging; when you would rather record the unwrap site, use `expect()`, which
+ * builds a fresh error and files the original under `cause`.
  *
  * ```ts
  * import * as Result from './index.ts';
@@ -158,16 +68,13 @@ export function isResult(value: unknown): value is Result<unknown, unknown> {
  * const flags = Result.unwrap(Args.parse('/repo')); // ParsedFlags, or the ParseFailure throws
  * ```
  */
-export function unwrap<T>(result: Result<T, unknown>): T {
-  if (result.ok) return result.value;
-  if (result.error instanceof Error) throw result.error;
-  throw new Error(`unwrap() on a failed Result: ${describe(result.error)}`, {
-    cause: result.error,
-  });
+export function unwrap<O>(outcome: O): Exclude<O, Any> {
+  if (isFailure(outcome)) throw outcome;
+  return outcome as Exclude<O, Any>;
 }
 
 /**
- * Returns the success value, or throws `new Error(message, { cause: error })`.
+ * Returns the success value, or throws `new Error(message, { cause: failure })`.
  *
  * The counterpart to `unwrap()`: the thrown error's stack points *here*, at the code that
  * demanded a value, while `cause` preserves the original failure and its own stack. Use it
@@ -190,35 +97,37 @@ export function unwrap<T>(result: Result<T, unknown>): T {
  * }
  * ```
  */
-export function expect<T>(result: Result<T, unknown>, message: string): T {
-  if (result.ok) return result.value;
-  throw new Error(message, { cause: result.error });
+export function expect<O>(outcome: O, message: string): Exclude<O, Any> {
+  if (isFailure(outcome)) throw new Error(message, { cause: outcome });
+  return outcome as Exclude<O, Any>;
 }
 
 /**
- * Returns the success value, or `fallback` if the Result failed.
+ * Returns the success value, or `fallback` if the outcome is a failure.
  *
  * ```ts
  * import * as Result from './index.ts';
  *
- * const parsePort = (raw: string): Result.Result<number, unknown> => Result.ok(Number(raw));
+ * const TooBig = Result.Failure.define('TooBig', (d: { raw: string }) => `${d.raw} > 65535`);
+ * const parsePort = (raw: string): Result.Result<number, Result.Failure.Of<typeof TooBig>> =>
+ *   Number(raw) > 65535 ? TooBig({ raw }) : Number(raw);
  *
- * const port = Result.unwrapOr(parsePort('8080'), 3000);
+ * Result.unwrapOr(parsePort('99999'), 3000); // 3000
  * ```
  */
-export function unwrapOr<T, U>(result: Result<T, unknown>, fallback: U): T | U {
-  return result.ok ? result.value : fallback;
+export function unwrapOr<O, U>(outcome: O, fallback: U): Exclude<O, Any> | U {
+  return isFailure(outcome) ? fallback : (outcome as Exclude<O, Any>);
 }
 
 // There is deliberately no `map`/`mapErr`/`andThen`/`match` on a plain Result. A settled
-// Result is branched on with an `if`, which reads better and allocates nothing (see the
+// outcome is branched on with an `if`, which reads better and allocates nothing (see the
 // "combinators are not the point" section of `docs/error-handling.md`); the *async* pipeline
 // — where combinators earn their keep because the value is not here yet — lives on `Task`.
 
 // ── Collections ──────────────────────────────────────────────────────────────
 
 /**
- * Collects an array of Results into a Result of an array, short-circuiting on the first
+ * Collects an array of outcomes into an array of values, short-circuiting on the first
  * failure — the Result-shaped analogue of `Promise.all`.
  *
  * Unlike `Promise.all`, nothing is in flight while this runs: the work already happened, so
@@ -229,77 +138,54 @@ export function unwrapOr<T, U>(result: Result<T, unknown>, fallback: U): T | U {
  * import * as Result from './index.ts';
  *
  * import * as Failure from './failure.ts';
- * const loaded: Result.Result<{ name: string }, Failure.Any>[] = [Result.ok({ name: 'esbuild-css' })];
+ * const loaded: Result.Result<{ name: string }, Failure.Any>[] = [{ name: 'esbuild-css' }];
  *
- * const plugins = Result.all(loaded); // as in Config's resolvePlugins: Result.Result<Plugin[], LoadFailed>
- * if (!plugins.ok) console.error(plugins.error.message); // the first failure, context intact
+ * const plugins = Result.all(loaded); // as in Config's resolvePlugins
+ * if (Failure.is(plugins)) console.error(plugins.message); // the first failure, context intact
  * ```
  */
-export function all<T, E>(results: ReadonlyArray<Result<T, E>>): Result<T[], E> {
-  const values: T[] = new Array(results.length);
-  for (let i = 0; i < results.length; i++) {
-    const result = results[i];
-    if (!result.ok) return result;
-    values[i] = result.value;
+export function all<O>(outcomes: ReadonlyArray<O>): Result<Exclude<O, Any>[], Extract<O, Any>> {
+  const values: Exclude<O, Any>[] = new Array(outcomes.length);
+  for (let i = 0; i < outcomes.length; i++) {
+    const outcome = outcomes[i];
+    if (isFailure(outcome)) return outcome as Extract<O, Any>;
+    values[i] = outcome as Exclude<O, Any>;
   }
-  return ok(values);
+  return values;
 }
 
 /**
- * Splits Results into their successes and their failures, keeping both.
+ * Splits outcomes into their successes and their failures, keeping both.
  *
  * This is the shape most batch work actually wants, and the one `Promise.all` cannot give
  * you: a rejected `Promise.all` discards the settled successes alongside the other
- * failures. Combine with `Result.try` — whose returned promise never rejects — to get
- * `Promise.allSettled` semantics with the outcomes already reflected:
+ * failures. `Task.results` produces exactly the array this consumes.
  *
  * ```ts
- * import { readFile } from 'node:fs/promises';
  * import * as Result from './index.ts';
- * const files = ['a.json', 'b.json'];
+ * import { Task } from '../task/index.ts';
+ * import * as Failure from './failure.ts';
  *
- * // never rejects — Result.try boxes each outcome, so even a denied read is an Err
- * const results = await Promise.all(files.map((f) => Result.try(() => readFile(f, 'utf8'))));
- * const { values, errors } = Result.partition(results);
+ * const Rejected = Failure.define('Rejected', (d: { path: string }) => `rejected ${d.path}`);
+ * const load = (path: string) =>
+ *   Task<string, Failure.Of<typeof Rejected>>(() => {
+ *     if (!path.startsWith('a')) throw Rejected({ path });
+ *     return path;
+ *   });
+ *
+ * const outcomes = await Task.results(['a.json', 'b.json'].map(load));
+ * const { values, errors } = Result.partition(outcomes); // ['a.json'] / [Failure(Rejected)]
  * ```
  */
-export function partition<T, E>(
-  results: ReadonlyArray<Result<T, E>>,
-): { values: T[]; errors: E[] } {
-  const values: T[] = [];
-  const errors: E[] = [];
-  for (const result of results) {
-    if (result.ok) values.push(result.value);
-    else errors.push(result.error);
+export function partition<O>(outcomes: ReadonlyArray<O>): {
+  values: Exclude<O, Any>[];
+  errors: Extract<O, Any>[];
+} {
+  const values: Exclude<O, Any>[] = [];
+  const errors: Extract<O, Any>[] = [];
+  for (const outcome of outcomes) {
+    if (isFailure(outcome)) errors.push(outcome as Extract<O, Any>);
+    else values.push(outcome as Exclude<O, Any>);
   }
   return { values, errors };
-}
-
-// ── Internals ────────────────────────────────────────────────────────────────
-
-/**
- * Best-effort one-line rendering of an arbitrary thrown value, used only in the message of
- * the wrapper `unwrap()` builds for non-`Error` failures.
- *
- * `String(value)` alone is not enough: it produces the useless `[object Object]` for plain
- * objects and *throws* for a null-prototype object or a Symbol, which would replace the
- * failure we are reporting with a different one.
- */
-function describe(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (value === null) return 'null';
-  if (typeof value === 'object') {
-    try {
-      return JSON.stringify(value) ?? Object.prototype.toString.call(value);
-    } catch {
-      // Circular structure, a BigInt field, or a throwing `toJSON`.
-      return Object.prototype.toString.call(value);
-    }
-  }
-  try {
-    return String(value);
-  } catch {
-    // `String(Symbol())` throws; so does a null-prototype object with no `toString`.
-    return typeof value;
-  }
 }

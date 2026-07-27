@@ -62,10 +62,13 @@ module('Result | try | sync', { concurrency: true }, () => {
     assert.strictEqual(boxedUndefined.error, undefined);
   });
 
-  test('returning a Result does not flatten — the inner Result stays intact inside Ok', (assert) => {
-    const nested = Result.try(() => Result.err('inner'));
+  test('returning a Failure does not flatten — a returned failure is a VALUE inside Ok', (assert) => {
+    // The boundary reflects throw-vs-return only. A bare-union producer that RETURNS its
+    // failure still lands on the ok side here — the box does not second-guess the value.
+    const Inner = Result.Failure.define('Inner', 'inner failure as data');
+    const nested = Result.try(() => Inner());
     assert.true(nested.ok, 'the outer try succeeded');
-    assert.false(nested.value.ok, 'the inner Result is untouched');
+    assert.true(Result.Failure.is(nested.value), 'the returned failure is untouched, as data');
   });
 });
 
@@ -75,7 +78,7 @@ module('Result | try | async', { concurrency: true }, () => {
   test('a thenable return yields a Promise of a Result', async (assert) => {
     const outcome = Result.try((n: number) => Promise.resolve(n * 2), 21);
     assert.true(outcome instanceof Promise, 'async source, promise out');
-    assert.deepEqual(await outcome, Result.ok(42));
+    assert.deepEqual(await outcome, { ok: true, value: 42, error: undefined });
   });
 
   test('a rejection resolves to Err — the returned promise NEVER rejects', async (assert) => {
@@ -111,7 +114,12 @@ module('Result | try | async', { concurrency: true }, () => {
         return Promise.resolve(n);
       });
     const results = await Promise.all([1, 2, 3, 4].map(work));
-    const { values, errors } = Result.partition(results);
+    // `Result.partition` discriminates by the Failure brand, so it cannot split the
+    // boundary's boxes — the box/union seam is crossed by hand here. This is a cost the
+    // bare-union style pays: the boundary's `{ ok, value, error }` and the declared-failure
+    // union no longer share one vocabulary.
+    const values = results.filter((r) => r.ok).map((r) => r.value);
+    const errors = results.filter((r) => !r.ok).map((r) => r.error);
     assert.deepEqual(values, [1, 3]);
     assert.deepEqual(
       errors.map((e) => (e as Error).message),

@@ -1,4 +1,4 @@
-import { type Result, ok, err } from '../result/result.ts';
+import { type Result } from '../result/result.ts';
 import {
   Failure,
   ignore as failureIgnore,
@@ -13,7 +13,8 @@ import {
  * expects when it fails, and what {@link TaskClass#result} surfaces as the `Err`. It is advisory
  * (JS rejections are untyped, so `await` still throws `unknown`) but self-documenting — a
  * `Task<Config, ConfigFailure>` reads like a `Result<Config, ConfigFailure>` signature did, and
- * `.result()` returns a typed `Result<T, E>` so callers skip the `Failure.is` narrowing.
+ * `.result()` settles to the bare `Result<T, E>` union — the value itself, or the typed
+ * `Failure` — which one `Failure.is()` check discriminates.
  *
  * A `Task` is a real `Promise` (`instanceof Promise` holds, and the Promises/A+ suite passes —
  * see test/task/promises-aplus.ts) built from a **recipe** — a thunk `() => T | PromiseLike<T>`
@@ -229,7 +230,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * const Denied = define('Denied', (d: { user: string }) => `denied: ${d.user}`);
    *
    * const denied = Task.fail(Denied({ user: 'root' })); // Task<never, Failure<'Denied', …>>
-   * (await denied.result()).error?.code; // 'Denied' — typed end to end
+   * (await denied.result()).code; // 'Denied' — the failure arrives bare, typed end to end
    * ```
    */
   static fail<F>(reason: F): TaskClass<never, F> {
@@ -350,7 +351,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * const paths = ['a.json', 'b.json'];
    * const load = (path: string) => Task<object, LoadFailure>(() => ({ path }));
    *
-   * const outcomes = await Task.results(paths.map(load)); // Result<object, LoadFailure>[]
+   * const outcomes = await Task.results(paths.map(load)); // (object | LoadFailure)[] — bare unions
    * const { values, errors } = partition(outcomes); // nothing lost, everything typed
    * ```
    */
@@ -358,8 +359,11 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     tasks: Iterable<TaskClass<T, E> | PromiseLike<T>>,
   ): TaskClass<Result<T, E>[], never> {
     const members = snapshotOnce(tasks);
-    return new TaskClass(() =>
-      Promise.all(members().map((task) => TaskClass.from<T, E>(task).result())),
+    return new TaskClass(
+      () =>
+        Promise.all(members().map((task) => TaskClass.from<T, E>(task).result())) as Promise<
+          Result<T, E>[]
+        >,
     );
   }
 
@@ -497,10 +501,10 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   }
 
   /**
-   * Data-first twin of {@link TaskClass#result} — the `{ ok, value, error }` bridge.
+   * Data-first twin of {@link TaskClass#result} — the bridge to the bare `Result` union.
    *
    * ```ts
-   * const { ok, value } = await Task.result(Task(() => 21 * 2));
+   * const value = await Task.result(Task(() => 21 * 2)); // 42 — or the declared Failure, bare
    * ```
    */
   static result<T, E>(task: TaskClass<T, E>): TaskClass<Result<T, E>, never> {
@@ -778,11 +782,11 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   // ── The one bridge to the value world ────────────────────────────────────────
 
   /**
-   * Reflects the outcome to a plain `{ ok, value, error }` that never rejects for a declared
-   * failure — the source of the `const { ok, value, error } = await task.result()` ergonomics,
-   * and the way to drop `try`/`catch` where a caller branches on failure inline. **The two-tier
-   * gate:** a declared `Failure` becomes a typed `Err<E>`; a *bug* is re-thrown, so it lands at
-   * the program's one crash boundary instead of being silently boxed.
+   * Settles to the bare `Result<T, E>` union — the value itself, or the declared `Failure` as
+   * a **value** — so a caller branches with one `Failure.is()` check and no `try`/`catch`.
+   * **The two-tier gate:** only a declared `Failure` is reflected into the value world; a *bug*
+   * is re-thrown, so it lands at the program's one crash boundary instead of being silently
+   * returned.
    *
    * Classifying a failure also reports it to the observation seam (`Failure.observed` — the
    * `qunitx.failure.observed` channel plus `Failure.onObserved`), as do `match`/`unwrapOr`/
@@ -793,27 +797,25 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * re-runs the chain and reflects the fresh outcome.
    *
    * ```ts
-   * import type { Any as GitScanFailure } from '../result/failure.ts';
-   * const scan = Task<Set<string>, GitScanFailure>(() => new Set(['lib/a.ts']));
+   * import { isFailure, type Any as GitScanFailure } from '../result/failure.ts';
+   * const scanTask = Task<Set<string>, GitScanFailure>(() => new Set(['lib/a.ts']));
    * const degradeToFullRun = (_failure: GitScanFailure) => new Set<string>();
    *
-   * const { ok, value, error } = await scan.result();
-   * if (!ok) degradeToFullRun(error); // error: GitScanFailure — typed, no narrowing
+   * const scan = await scanTask.result(); // Set<string> | GitScanFailure — bare
+   * if (isFailure(scan)) degradeToFullRun(scan); // scan: GitScanFailure — typed
+   * else scan.has('lib/a.ts'); // scan: Set<string>
    * ```
    */
   result(): TaskClass<Result<T, E>, never> {
     return this.#derive<Result<T, E>, never>(
       () =>
-        this.then(
-          (value): Result<T, E> => ok(value),
-          (error: unknown): Result<T, E> => {
-            if (isFailure(error)) {
-              failureObserved(error);
-              return err(error as E & AnyFailure);
-            }
-            throw error;
-          },
-        ),
+        this.then<Result<T, E>, Result<T, E>>(undefined, (error: unknown) => {
+          if (isFailure(error)) {
+            failureObserved(error);
+            return error as E & AnyFailure;
+          }
+          throw error;
+        }),
       (fresh) => fresh.result(),
     );
   }

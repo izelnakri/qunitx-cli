@@ -5,7 +5,7 @@ import * as Paths from './paths.ts';
 import { CLEANUP_GRACE_MS } from '../../utils/close-with-grace.ts';
 import * as Args from '../../args/index.ts';
 import * as Socket from './socket.ts';
-import { type Result, ok, err, Failure } from '../../result/index.ts';
+import { type Result, Failure } from '../../result/index.ts';
 import type { Request, ResponseChunk } from './protocol.ts';
 
 const CONNECT_TIMEOUT_MS = 1_000;
@@ -208,17 +208,18 @@ export type RunViaFailure = Failure.Of<typeof DaemonUnreachable | typeof DaemonD
  *
  * ```ts
  * import * as Client from './client.ts';
+ * import * as Failure from '../../result/failure.ts';
  *
  * // Defined, not invoked: streams the daemon's TAP output to this process's stdio.
  * async function runOnDaemon() {
- *   const outcome = await Client.runVia(['test/foo-test.ts']);
- *   return outcome.ok ? outcome.value : null; // exit code, or a RunViaFailure to act on
+ *   const outcome = await Client.runVia(['test/foo-test.ts']); // number | RunViaFailure — bare
+ *   return Failure.is(outcome) ? null : outcome; // exit code out; a failure the caller acts on
  * }
  * ```
  */
 export async function runVia(argv: string[]): Promise<Result<number, RunViaFailure>> {
   const socket = await tryConnect();
-  if (!socket) return err(DaemonUnreachable());
+  if (!socket) return DaemonUnreachable();
 
   // Per protocol.ts: exactly one terminal message ('done' or 'fatal') ends the
   // stream. close/error here are last-resort fallbacks for a daemon that drops
@@ -228,16 +229,16 @@ export async function runVia(argv: string[]): Promise<Result<number, RunViaFailu
     Socket.readMessages<ResponseChunk>(socket, (chunk) => {
       if (chunk.type === 'stdout') process.stdout.write(chunk.data);
       else if (chunk.type === 'stderr') process.stderr.write(chunk.data);
-      else if (chunk.type === 'done') resolve(ok(chunk.exitCode));
+      else if (chunk.type === 'done') resolve(chunk.exitCode);
       else if (chunk.type === 'fatal') {
         // A reported fatal IS a terminal result: the daemon ran, decided the run failed, and
         // said so. That is an exit code, not a transport failure.
         process.stderr.write(`# [qunitx daemon] ${chunk.message}\n`);
-        resolve(ok(1));
+        resolve(1);
       }
     });
-    socket.once('close', () => resolve(err(DaemonDisconnected({ reason: 'close' }))));
-    socket.once('error', () => resolve(err(DaemonDisconnected({ reason: 'error' }))));
+    socket.once('close', () => resolve(DaemonDisconnected({ reason: 'close' })));
+    socket.once('error', () => resolve(DaemonDisconnected({ reason: 'error' })));
   });
 
   const onSigint = () => {

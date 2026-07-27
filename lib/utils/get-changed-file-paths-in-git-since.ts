@@ -149,13 +149,16 @@ export type GitScanFailure = Failure.Of<typeof GitScanFailed>;
  * derivation lineage means a retry re-runs this whole chain, git calls included. The git
  * boundary is the only throwing step, so `.mapErr` remaps *any* rejection there to a declared
  * `GitScanFailed`; a parsing bug in `.map` below is downstream of it and stays a bug, never
- * masked as a Failure. Callers await the value, or `.result()` for `{ ok, value, error }`.
+ * masked as a Failure. Callers await the value, or `.result()` for the bare
+ * `ChangeScan | GitScanFailure` union.
  *
  * ```ts
+ * import * as Failure from '../result/failure.ts';
+ *
  * // Defined, not invoked: awaiting the Task spawns the git subprocesses.
  * async function scan(projectRoot: string): Promise<ChangeScan | 'run-all'> {
  *   const result = await getChangedFilePathsInGitSince(projectRoot, 'main').result();
- *   return result.ok ? result.value : 'run-all'; // GitScanFailed degrades to a full run
+ *   return Failure.is(result) ? 'run-all' : result; // GitScanFailed degrades to a full run
  * }
  * ```
  */

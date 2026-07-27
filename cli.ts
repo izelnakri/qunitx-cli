@@ -56,12 +56,12 @@ process.title = 'qunitx';
     // being erased. Both transport failures fall through to a local run; only the one that means
     // "the daemon died mid-run" says so, because it used to be indistinguishable from exit 1.
     const routed = await tryCatch(() => Client.runVia(process.argv.slice(2)));
-    if (routed.ok && routed.value.ok) {
-      const exitCode = routed.value.value;
+    if (routed.ok && !Failure.is(routed.value)) {
+      const exitCode = routed.value;
       process.stdout.write('', () => process.exit(exitCode));
       return;
     }
-    const failure = Failure.from(routed.ok ? routed.value.error : routed.error);
+    const failure = Failure.from(routed.ok ? routed.value : routed.error);
     if (failure.code !== 'DaemonUnreachable') {
       process.stderr.write(`# [qunitx] ${Failure.format(failure)} — running locally\n`);
     }
@@ -78,12 +78,12 @@ process.title = 'qunitx';
   // assembly used to do this itself, at eight separate `console.error` + `process.exit(1)`
   // pairs buried in a pure argv transform.
   const configured = await Config.setup();
-  if (!configured.ok) {
-    console.error(Failure.format(configured.error));
+  if (Failure.is(configured)) {
+    console.error(Failure.format(configured));
     await shutdownPrelaunch();
     return process.stderr.write('', () => process.exit(1));
   }
-  const config = configured.value;
+  const config = configured;
 
   // --search/--print lists what the filter matches and exits: no browser, no bundle, no tests.
   // Chrome was pre-launched at module load, so shut it back down rather than leaking it.
