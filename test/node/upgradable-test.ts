@@ -36,7 +36,7 @@ module('Node | hot upgrades', () => {
     assert.strictEqual(await cli.call('svc@memory', 'greeter.hello', 'ada'), 'Hello ada');
     assert.strictEqual(await cli.call('svc@memory', 'greeter.hello', 'bo'), 'Hello bo');
 
-    served.upgrade({
+    await served.upgrade({
       version: '1.1.0',
       handlers: {
         hello: (state, name) => ({
@@ -89,7 +89,7 @@ module('Node | hot upgrades', () => {
     await ops.call('svc@memory', 'greeter.sys.upgrade', { url: V2_URL });
     await ops.call('svc@memory', 'greeter.hello', 'ada');
 
-    served.upgrade({
+    await served.upgrade({
       ...v1(),
       codeChange: (fromVersion, old) => {
         assert.strictEqual(fromVersion, '2.0.0', 'codeChange knows which way it came');
@@ -108,5 +108,66 @@ module('Node | hot upgrades', () => {
     );
     svc.stop();
     ops.stop();
+  });
+});
+
+module('Node | mailbox serialization', () => {
+  test('overlapping ASYNC handlers run strictly one at a time — gen_server semantics', async (assert) => {
+    const hub = Node.memoryHub();
+    const svc = Node.start('svc@memory', hub.transport());
+    const cli = Node.start('cli@memory', hub.transport());
+    const trace: string[] = [];
+    const served = Node.serve(svc, 'acct', {
+      version: '1',
+      init: () => 0,
+      handlers: {
+        deposit: async (state, amount) => {
+          trace.push(`start:${amount}`);
+          await new Promise((r) => setTimeout(r, 20)); // the await that USED to interleave
+          trace.push(`end:${amount}`);
+          return { state: state + (amount as number), reply: state + (amount as number) };
+        },
+      },
+    });
+    const [a, b] = await Promise.all([
+      cli.call('svc@memory', 'acct.deposit', 100),
+      cli.call('svc@memory', 'acct.deposit', 1),
+    ]);
+    assert.deepEqual(trace, ['start:100', 'end:100', 'start:1', 'end:1'], 'no interleave');
+    assert.deepEqual([a, b], [100, 101], 'the second saw the first COMMITTED state');
+    assert.strictEqual(served.state(), 101);
+    svc.stop();
+    cli.stop();
+  });
+
+  test('an upgrade queues BEHIND an in-flight async handler — swaps land between messages', async (assert) => {
+    const hub = Node.memoryHub();
+    const svc = Node.start('svc@memory', hub.transport());
+    const cli = Node.start('cli@memory', hub.transport());
+    const served = Node.serve(svc, 'slow', {
+      version: '1',
+      init: () => 'v1-state',
+      handlers: {
+        work: async (state) => {
+          await new Promise((r) => setTimeout(r, 30));
+          return { state, reply: `worked on ${state}` };
+        },
+      },
+    });
+    const inFlight = cli.call('svc@memory', 'slow.work', null);
+    // Genuinely in flight: wait for the frame to reach the unit's mailbox before swapping.
+    for (let i = 0; i < 100 && served.mailbox() === 0; i++)
+      await new Promise((r) => setTimeout(r, 1));
+    assert.strictEqual(served.mailbox(), 1, 'the work message is being pumped');
+    const swap = served.upgrade({
+      version: '2',
+      handlers: { work: (state) => ({ state, reply: `v2 ${state}` }) },
+      codeChange: (_from, old) => `${old}→migrated`,
+    });
+    assert.strictEqual(await inFlight, 'worked on v1-state', 'in-flight completed on OLD code');
+    assert.strictEqual(await swap, '2');
+    assert.strictEqual(await cli.call('svc@memory', 'slow.work', null), 'v2 v1-state→migrated');
+    svc.stop();
+    cli.stop();
   });
 });

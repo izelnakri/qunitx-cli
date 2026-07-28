@@ -48,10 +48,16 @@ export interface Behavior<S> {
   version: string;
   /** First-boot state. Ignored on upgrade — `codeChange` owns that path. */
   init?: () => S;
-  /** Message handlers; each returns the next state and (for calls) the reply. */
+  /** Message handlers — sync or async; each returns the next state and (for calls) the reply.
+   *  Handlers run through the unit's MAILBOX: strictly one at a time, each awaited to
+   *  completion before the next dequeues — gen_server's serialization, even for async work. */
   handlers: Record<
     string,
-    (state: S, payload: unknown, from: string) => { state: S; reply?: unknown }
+    (
+      state: S,
+      payload: unknown,
+      from: string,
+    ) => { state: S; reply?: unknown } | Promise<{ state: S; reply?: unknown }>
   >;
   /** Erlang's `code_change/3`: migrate the previous version's state into this version's shape. */
   codeChange?: (fromVersion: string, oldState: unknown) => S;
@@ -70,7 +76,7 @@ export interface Behavior<S> {
  *   init: () => 0,
  *   handlers: { bump: (state) => ({ state: state + 1, reply: state + 1 }) },
  * });
- * served.upgrade({
+ * await served.upgrade({
  *   version: '2',
  *   handlers: { bump: (state) => ({ state: state + 10, reply: state + 10 }) },
  *   codeChange: (_from, old) => (old as number) * 100, // the state CROSSED, migrated
@@ -82,10 +88,12 @@ export interface Behavior<S> {
 export interface Served<S> {
   /** The currently running version. */
   version(): string;
-  /** Swap now — atomic between messages by run-to-completion. Returns the new version. */
-  upgrade(next: Behavior<S>): string;
+  /** Swap via the mailbox — lands strictly BETWEEN messages, even async ones. Resolves to the new version. */
+  upgrade(next: Behavior<S>): Promise<string>;
   /** The current state (for checkpointing before risky upgrades). */
   state(): S;
+  /** Messages queued or in flight — what observer tooling reads as mailbox depth. */
+  mailbox(): number;
 }
 
 /**
@@ -118,14 +126,39 @@ export function serve<S>(node: NodeHandle, name: string, behavior: Behavior<S>):
   let current = behavior;
   let state: S = behavior.init ? behavior.init() : (undefined as S);
 
-  const register = (key: string) =>
-    node.handle(`${name}.${key}`, (payload, from) => {
-      // Run-to-completion IS Erlang's suspend: this whole block executes atomically, so a
-      // swap can never interleave with a half-applied message.
-      const outcome = current.handlers[key](state, payload, from);
-      state = outcome.state;
-      return outcome.reply;
+  // THE MAILBOX — gen_server's real guarantee, which run-to-completion alone cannot give
+  // once handlers are async: every message (and every swap) enqueues, and ONE pump drains
+  // strictly serially, awaiting each to completion. Nothing interleaves, ever.
+  type Envelope = { run: () => unknown; settle: (v: unknown) => void; fail: (e: unknown) => void };
+  const queue: Envelope[] = [];
+  let pumping = false;
+  const enqueue = <R>(run: () => R | Promise<R>): Promise<R> =>
+    new Promise<R>((settle, fail) => {
+      queue.push({ run, settle: settle as (v: unknown) => void, fail });
+      void pump();
     });
+  const pump = async (): Promise<void> => {
+    if (pumping) return;
+    pumping = true;
+    while (queue.length > 0) {
+      const envelope = queue.shift()!;
+      try {
+        envelope.settle(await envelope.run());
+      } catch (thrown) {
+        envelope.fail(thrown); // the caller gets RemoteCrash; the unit keeps serving
+      }
+    }
+    pumping = false;
+  };
+
+  const register = (key: string) =>
+    node.handle(`${name}.${key}`, (payload, from) =>
+      enqueue(async () => {
+        const outcome = await current.handlers[key](state, payload, from);
+        state = outcome.state;
+        return outcome.reply;
+      }),
+    );
 
   const apply = (next: Behavior<S>): string => {
     const fromVersion = current.version;
@@ -137,11 +170,18 @@ export function serve<S>(node: NodeHandle, name: string, behavior: Behavior<S>):
 
   for (const key of Object.keys(behavior.handlers)) register(key);
   node.handle(`${name}.sys.version`, () => current.version);
-  node.handle(`${name}.sys.upgrade`, async (payload) => {
-    const { url } = payload as { url: string };
-    const module = (await import(url)) as { default: Behavior<S> };
-    return apply(module.default);
-  });
+  node.handle(`${name}.sys.upgrade`, (payload) =>
+    enqueue(async () => {
+      const { url } = payload as { url: string };
+      const module = (await import(url)) as { default: Behavior<S> };
+      return apply(module.default);
+    }),
+  );
 
-  return { version: () => current.version, upgrade: apply, state: () => state };
+  return {
+    version: () => current.version,
+    upgrade: (next) => enqueue(() => apply(next)),
+    state: () => state,
+    mailbox: () => queue.length + (pumping ? 1 : 0),
+  };
 }
