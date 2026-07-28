@@ -282,3 +282,79 @@ module('Node | mailbox backpressure', () => {
     cli.stop();
   });
 });
+
+// ── persistence seam — restore + persist-before-ack (the delta-loss fix) ─────
+
+module('Node | persistence', () => {
+  const counter = (): Node.Behavior<{ n: number }> => ({
+    version: '1',
+    init: () => ({ n: 0 }),
+    handlers: {
+      bump: (s) => ({ state: { n: s.n + 1 }, reply: s.n + 1 }),
+      read: (s) => ({ state: s, reply: s.n, persist: false }), // read: no write
+    },
+  });
+
+  test('state rehydrates from the store on a fresh serve() — survives a restart', async (assert) => {
+    const store = Node.memoryStore();
+    const hub = Node.memoryHub();
+    const cli = Node.start('cli@memory', hub.transport());
+
+    const first = Node.start('svc@memory', hub.transport());
+    Node.serve(first, 'ctr', counter(), { store, storeKey: 'ctr' });
+    await cli.call('svc@memory', 'ctr.bump');
+    await cli.call('svc@memory', 'ctr.bump'); // n = 2, both persisted before ack
+    first.stop();
+
+    // A brand-new node + serve() over the SAME store — like a supervised restart / new pod.
+    const second = Node.start('svc2@memory', hub.transport());
+    Node.serve(second, 'ctr', counter(), { store, storeKey: 'ctr' });
+    assert.strictEqual(
+      await cli.call('svc2@memory', 'ctr.read'),
+      2,
+      'the count survived — rehydrated',
+    );
+    second.stop();
+    cli.stop();
+  });
+
+  test('persist happens BEFORE the reply is released (durable-before-ack)', async (assert) => {
+    const writes: number[] = [];
+    const store: Node.Store = {
+      load: () => Promise.resolve(undefined),
+      save: async (_k, s) => {
+        await new Promise((r) => setTimeout(r, 15)); // a slow durable write
+        writes.push((s as { n: number }).n);
+      },
+      clear: () => Promise.resolve(),
+    };
+    const hub = Node.memoryHub();
+    const cli = Node.start('cli@memory', hub.transport());
+    const svc = Node.start('svc@memory', hub.transport());
+    Node.serve(svc, 'ctr', counter(), { store });
+    const reply = await cli.call('svc@memory', 'ctr.bump');
+    assert.strictEqual(reply, 1);
+    assert.deepEqual(writes, [1], 'the write had completed by the time the caller got its ack');
+    svc.stop();
+    cli.stop();
+  });
+
+  test('reads (persist:false) do not write', async (assert) => {
+    let saves = 0;
+    const store: Node.Store = {
+      load: () => Promise.resolve(undefined),
+      save: () => (saves++, Promise.resolve()),
+      clear: () => Promise.resolve(),
+    };
+    const hub = Node.memoryHub();
+    const cli = Node.start('cli@memory', hub.transport());
+    const svc = Node.start('svc@memory', hub.transport());
+    Node.serve(svc, 'ctr', counter(), { store });
+    await cli.call('svc@memory', 'ctr.bump'); // writes
+    await cli.call('svc@memory', 'ctr.read'); // must not write
+    await cli.call('svc@memory', 'ctr.read');
+    assert.strictEqual(saves, 1, 'only the mutating call persisted');
+    svc.stop();
+    cli.stop();
+  });
+});

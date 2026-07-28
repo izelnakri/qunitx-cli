@@ -22,4 +22,4 @@ export { wsTransport, traceTransport, binaryCodec, jsonCodec, type Codec } from 
 // Hot code upgrades: Erlang's release mechanics on web standards — import() as the code
 // server, run-to-completion as suspend/resume, codeChange as code_change/3, and the
 // `<name>.sys.upgrade` subject as the relup that reaches remote nodes.
-export { serve, type Behavior, type Served } from './upgradable.ts';
+export { serve, memoryStore, type Behavior, type Served, type Store } from './upgradable.ts';

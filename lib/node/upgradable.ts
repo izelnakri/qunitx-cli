@@ -31,6 +31,49 @@ import { Failure, type Any as AnyFailure } from '../result/failure.ts';
 import type { NodeHandle } from './node.ts';
 
 /**
+ * A durable backing for a unit's state — Elixir would reach for mnesia or an external DB; this
+ * is the seam, and you bring the backend (an in-memory {@link memoryStore} for tests, a
+ * Postgres store for real durability — see examples/realtime-chat). State handed to `save`
+ * must be structured-clone/JSON-safe for a real store.
+ *
+ * ```ts
+ * const store = memoryStore();
+ * await store.save('room:lobby', { members: ['ada'] });
+ * await store.load('room:lobby'); // { members: ['ada'] }
+ * ```
+ */
+export interface Store {
+  /** The persisted state for `key`, or `undefined` if none — read once on (re)start. */
+  load(key: string): Promise<unknown | undefined>;
+  /** Durably persist `state` for `key`. Awaited BEFORE a reply is released (persist-before-ack). */
+  save(key: string, state: unknown): Promise<void>;
+  /** Forget `key` entirely. */
+  clear(key: string): Promise<void>;
+}
+
+/**
+ * An in-memory {@link Store} — for tests, doctests, and a single-process demo. Survives a
+ * SUPERVISED restart of a unit within one process, but not process death (that needs a real
+ * durable store). Snapshots by JSON round-trip so a later mutation can't change a saved copy.
+ *
+ * ```ts
+ * const store = memoryStore();
+ * await store.save('k', { n: 1 });
+ * await store.load('k'); // { n: 1 }
+ * await store.clear('k');
+ * await store.load('k'); // undefined
+ * ```
+ */
+export function memoryStore(): Store {
+  const data = new Map<string, string>();
+  return {
+    load: (key) => Promise.resolve(data.has(key) ? JSON.parse(data.get(key)!) : undefined),
+    save: (key, state) => (data.set(key, JSON.stringify(state)), Promise.resolve()),
+    clear: (key) => (data.delete(key), Promise.resolve()),
+  };
+}
+
+/**
  * A versioned GenServer-ish unit: pure-ish handlers over owned state, plus the migration
  * hook. `codeChange` runs on the INCOMING behavior (like Erlang: the new module knows how to
  * read old state), for upgrades and downgrades alike — `fromVersion` says which way you came.
@@ -51,14 +94,19 @@ export interface Behavior<S> {
   init?: () => S;
   /** Message handlers — sync or async; each returns the next state and (for calls) the reply.
    *  Handlers run through the unit's MAILBOX: strictly one at a time, each awaited to
-   *  completion before the next dequeues — gen_server's serialization, even for async work. */
+   *  completion before the next dequeues — gen_server's serialization, even for async work.
+   *  When a `store` is configured (see {@link serve}), the returned state is persisted BEFORE
+   *  the reply is released (durable-before-ack — no delta loss). A read-only handler should
+   *  return `persist: false` to skip the write. */
   handlers: Record<
     string,
     (
       state: S,
       payload: unknown,
       from: string,
-    ) => { state: S; reply?: unknown } | Promise<{ state: S; reply?: unknown }>
+    ) =>
+      | { state: S; reply?: unknown; persist?: boolean }
+      | Promise<{ state: S; reply?: unknown; persist?: boolean }>
   >;
   /** Erlang's `code_change/3`: migrate the previous version's state into this version's shape. */
   codeChange?: (fromVersion: string, oldState: unknown) => S;
@@ -148,10 +196,20 @@ export function serve<S>(
   node: NodeHandle,
   name: string,
   behavior: Behavior<S>,
-  options: { maxMailbox?: number } = {},
+  options: { maxMailbox?: number; store?: Store; storeKey?: string } = {},
 ): Served<S> {
   let current = behavior;
   let state: S = behavior.init ? behavior.init() : (undefined as S);
+  const storeKey = options.storeKey ?? name;
+
+  // RESTORE — if a store is configured, the unit rehydrates its last durable state before
+  // processing anything. The pump awaits this gate, so messages that arrive during restore
+  // queue rather than run against a fresh (empty) state.
+  const ready: Promise<void> = options.store
+    ? options.store.load(storeKey).then((loaded) => {
+        if (loaded !== undefined) state = loaded as S;
+      })
+    : Promise.resolve();
 
   // THE MAILBOX — gen_server's real guarantee, which run-to-completion alone cannot give
   // once handlers are async: every message (and every swap) enqueues, and ONE pump drains
@@ -167,6 +225,8 @@ export function serve<S>(
   const pump = async (): Promise<void> => {
     if (pumping) return;
     pumping = true;
+    if (options.store) await ready; // never process a message against un-restored state
+    // (skipped without a store so the pump shifts synchronously — maxMailbox depth stays exact)
     while (queue.length > 0) {
       const envelope = queue.shift()!;
       try {
@@ -195,6 +255,11 @@ export function serve<S>(
           return downReason ?? new Failure('UnitDown', `${name} is down`, { name, from: name });
         const outcome = await current.handlers[key](state, payload, from);
         state = outcome.state;
+        // PERSIST-BEFORE-ACK — the delta-loss fix: the durable write completes (inside the
+        // serial pump, so ordering holds) BEFORE the reply is released. A caller's ack means
+        // the state change is durable; there is no periodic-snapshot window to lose. Reads
+        // opt out with `persist: false`.
+        if (options.store && outcome.persist !== false) await options.store.save(storeKey, state);
         return outcome.reply;
       });
     });
