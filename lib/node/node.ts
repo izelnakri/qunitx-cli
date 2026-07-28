@@ -30,6 +30,25 @@ import {
 } from '../result/failure.ts';
 import { Task } from '../task/task.ts';
 import { ORSet, type CrdtState, type CausalContext } from './crdt.ts';
+import { execute as emit } from '../telemetry/telemetry.ts';
+
+/**
+ * A distributed trace context — OpenTelemetry's shape, sized for this wire. Every `call`/`cast`
+ * carries one: `id` names the whole request tree, `span` this hop, `parent` the hop that caused
+ * it. A handler's nested calls continue the trace automatically (same `id`, `parent` = the
+ * incoming span), so a metrics sink attached to the `['node','call','stop']` telemetry event can
+ * reassemble cross-node request trees without any app code.
+ */
+export interface Trace {
+  /** The whole request tree — constant across every hop. */
+  id: string;
+  /** This hop. */
+  span: string;
+  /** The hop that caused this one (absent at the root). */
+  parent?: string;
+}
+
+const newSpan = (): string => crypto.randomUUID().slice(0, 8);
 
 /** One frame on the wire. Payloads must be structured-clone-safe; Failures ride `$failure`. */
 export type Frame = {
@@ -65,6 +84,8 @@ export type Frame = {
   full?: boolean;
   /** A node's causal context for a 'sync' request — the peer replies with what's beyond it. */
   cc?: CausalContext;
+  /** The distributed trace this call/cast belongs to — see {@link Trace}. */
+  trace?: Trace;
 };
 
 /**
@@ -160,8 +181,17 @@ export interface NodeHandle {
    * un-monitor.
    */
   monitorNodes(fn: (event: { node: string; status: 'up' | 'down' }) => void): () => void;
-  /** Registers the handler for a subject; the reply (value or Failure) travels back to callers. */
-  handle(subject: string, handler: (payload: unknown, from: string) => unknown): void;
+  /** Registers the handler for a subject; the reply (value or Failure) travels back to callers.
+   *  `meta.trace` is the incoming {@link Trace} — nested calls in the SYNCHRONOUS handler body
+   *  continue it automatically; async continuations wrap nested calls in {@link NodeHandle.withTrace}. */
+  handle(
+    subject: string,
+    handler: (payload: unknown, from: string, meta?: { trace?: Trace }) => unknown,
+  ): void;
+  /** The trace of the message currently being handled (synchronous window), if any. */
+  trace(): Trace | undefined;
+  /** Runs `fn` with `trace` ambient, so nested `call`/`cast` continue it — for async handler bodies. */
+  withTrace<T>(trace: Trace | undefined, fn: () => T): T;
   /** Request/response with a deadline. `to` may be a node name, `'group:<name>'` (round-robin
    *  the members — a service), or `'via:<registry>/<key>'` (route to the ONE owner of a key —
    *  an entity). Empty group → declared `NoGroupMembers`; unowned key → `NotRegistered`.
@@ -249,7 +279,10 @@ export function start(
   } = {},
 ): NodeHandle {
   const peers = new Set<string>();
-  const handlers = new Map<string, (payload: unknown, from: string) => unknown>();
+  const handlers = new Map<
+    string,
+    (payload: unknown, from: string, meta?: { trace?: Trace }) => unknown
+  >();
   const monitors = new Set<(name: string) => void>();
   const nodeListeners = new Set<(event: { node: string; status: 'up' | 'down' }) => void>();
   const pending = new Map<number, (frame: Frame) => void>();
@@ -324,6 +357,23 @@ export function start(
   let ref = 0;
   let alive = true;
 
+  // The trace of the message being handled RIGHT NOW (synchronous window) — nested call/cast
+  // inherit it, which is what threads one correlation id across every hop of a request tree.
+  let ambientTrace: Trace | undefined;
+  const childTrace = (): Trace =>
+    ambientTrace
+      ? { id: ambientTrace.id, span: newSpan(), parent: ambientTrace.span }
+      : { id: crypto.randomUUID(), span: newSpan() };
+  const handling = <R>(trace: Trace | undefined, fn: () => R): R => {
+    const prior = ambientTrace;
+    ambientTrace = trace;
+    try {
+      return fn();
+    } finally {
+      ambientTrace = prior;
+    }
+  };
+
   const encode = (value: unknown): Pick<Frame, 'payload' | '$failure'> =>
     isFailure(value) ? { $failure: toJSON(value) } : { payload: value };
   const decode = (frame: Frame): unknown =>
@@ -369,12 +419,28 @@ export function start(
     } else if (frame.kind === 'pong' || frame.kind === 'reply') {
       pending.get(frame.ref!)?.(frame);
     } else if (frame.kind === 'cast') {
-      handlers.get(frame.subject!)?.(decode(frame), frame.from);
+      emit(
+        ['node', 'handle'],
+        {},
+        { subject: frame.subject, from: frame.from, trace: frame.trace },
+      );
+      handling(frame.trace, () =>
+        handlers.get(frame.subject!)?.(decode(frame), frame.from, { trace: frame.trace }),
+      );
     } else if (frame.kind === 'call') {
       const handler = handlers.get(frame.subject!);
+      emit(
+        ['node', 'handle'],
+        {},
+        { subject: frame.subject, from: frame.from, trace: frame.trace },
+      );
       const outcome = handler
         ? Promise.resolve()
-            .then(() => handler(decode(frame), frame.from))
+            .then(() =>
+              handling(frame.trace, () =>
+                handler(decode(frame), frame.from, { trace: frame.trace }),
+              ),
+            )
             .catch((thrown: unknown) =>
               isFailure(thrown)
                 ? thrown
@@ -537,14 +603,26 @@ export function start(
     },
     handle: (subject, handler) => void handlers.set(subject, handler),
     call<T>(to: string, subject: string, payload?: unknown, timeoutMs = 5000) {
+      const trace = childTrace();
+      const started = performance.now();
       const task = awaitRef<T>(
         timeoutMs,
         (frame) => {
+          emit(
+            ['node', 'call', 'stop'],
+            { duration: performance.now() - started },
+            { to, subject, trace },
+          );
           const value = decode(frame);
           if (isFailure(value)) throw value; // a remote DECLARED failure stays declared here
           return value as T;
         },
         () => {
+          emit(
+            ['node', 'call', 'timeout'],
+            { duration: performance.now() - started },
+            { to, subject, trace },
+          );
           throw new Failure(
             'CallTimeout',
             `call ${subject} to ${to} timed out after ${timeoutMs}ms`,
@@ -567,16 +645,20 @@ export function start(
       // spurious unhandled rejection. This passive handler marks it handled; the caller's own
       // await/.result() still sees the settlement (a Task memoises to all consumers).
       task.then(undefined, () => {});
+      emit(['node', 'call', 'start'], {}, { to: target.node, subject, trace });
       dispatch({
         kind: 'call',
         from: name,
         to: target.node,
         subject,
         ref: task.ref,
+        trace,
         ...encode(payload),
       });
       return task as Task<T, AnyFailure>;
     },
+    trace: () => ambientTrace,
+    withTrace: (trace, fn) => handling(trace, fn),
     inspect(unit, report) {
       inspectors.set(unit, report);
       return () => inspectors.delete(unit);
@@ -590,8 +672,9 @@ export function start(
         const resolved = resolveTarget(to);
         targets = 'node' in resolved ? [resolved.node] : [];
       } else targets = [to];
+      const trace = childTrace();
       for (const target of targets)
-        dispatch({ kind: 'cast', from: name, to: target, subject, ...encode(payload) });
+        dispatch({ kind: 'cast', from: name, to: target, subject, trace, ...encode(payload) });
     },
     stop() {
       if (!alive) return;

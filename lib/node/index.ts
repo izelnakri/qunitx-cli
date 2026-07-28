@@ -9,6 +9,7 @@ export {
   memoryHub,
   fromPort,
   type Frame,
+  type Trace,
   type Transport,
   type NodeHandle,
 } from './node.ts';
