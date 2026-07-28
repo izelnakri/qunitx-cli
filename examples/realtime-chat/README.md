@@ -42,10 +42,12 @@ join("lobby"):
 
 Two design choices make this correct and simple:
 
-- **`Registry` gives single-owner routing.** `call('via:rooms/lobby', ...)` resolves the _one_
-  node that owns key `lobby` and routes there — unlike a process **group** (`group:`), which
-  round-robins _many_ members. Groups are for services (any worker will do); the Registry is
-  for entities (there is exactly one #lobby).
+- **`Registry` gives single-owner routing.** A room is served with `serve(..., { via: { registry:
+'rooms', key } })` — Elixir's `{:via, Registry, {Reg, key}}`: the unit registers itself and
+  `call('via:rooms/lobby', ...)` routes to the _one_ owner. Unlike a process **group** (`group:`),
+  which round-robins _many_ members — groups are for services (any worker will do), the Registry
+  is for entities (there is exactly one #lobby). If two hosts race the same key during a
+  partition, the loser's unit **self-terminates** and everyone converges on the survivor.
 - **A deterministic hash makes cold-start race-free without a lock.** Every gateway hashes
   `"lobby"` to the _same_ host, so two users creating #lobby simultaneously both hit one host,
   whose local `start_child` check serializes them. No distributed coordination, no double room.
@@ -95,12 +97,34 @@ host) instead of reshuffling the whole keyspace. A live room keeps serving from 
 entry regardless; only _future_ cold-starts of relocated keys pick the new owner, and they
 rehydrate from the store.
 
-### The one gap we deliberately leave to Horde: LIVE handoff
+### Hardenings, and the Elixir/Horde API alignment
 
-We do **not** stream a running room's in-memory state to a new owner during a _graceful_ host
-drain — Elixir's Horde does this, and it's the genuinely research-grade piece (handoff races,
-split-brain during membership flux, reconciliation). We skip it on purpose, because **persistence
-makes it largely unnecessary**: a relocated room simply rehydrates from the shared store on first
-access. Live handoff buys only "zero-downtime migration without a store round-trip" — a narrow
-win for a large correctness cost. That is the honest boundary: routing, supervision, and
-durability are here; live state migration is where you'd reach for Horde.
+The distributed layer is hardened against the failure modes a stateful cluster actually hits,
+with APIs aligned to Elixir/Horde where they touch the developer surface:
+
+| Concern              | Here                                                         | Elixir/Horde analogue                   | Divergence & mitigation                                                                                                                                                                                 |
+| -------------------- | ------------------------------------------------------------ | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| entity registration  | `serve(..., { via: { registry, key } })`                     | `{:via, Registry, {Reg, key}}`          | ours is **optimistic-AP** (can't be synchronous under gossip lag like Elixir's _local_ Registry); on a race the loser self-terminates and callers re-resolve via `whereis` — Horde.Registry's behaviour |
+| single-owner routing | `call('via:reg/key', ...)`                                   | `GenServer.call({:via, ...})`           | same shape                                                                                                                                                                                              |
+| pool routing         | `call('group:svc', ...)`                                     | `:pg` round-robin                       | same shape                                                                                                                                                                                              |
+| find-or-start        | rendezvous hash → one host → local `start_child`             | Horde.DynamicSupervisor + registry      | deterministic host pick makes cold-start race-free without a distributed lock                                                                                                                           |
+| minimal churn        | `rendezvous(key, hosts)`                                     | Horde's consistent hashing              | HRW moves ~1/N keys on churn, no virtual nodes                                                                                                                                                          |
+| dead/zombie owner    | automatic **net-tick** evicts a wedged host; Registry prunes | Erlang `net_ticktime` + `:global` prune | catches app-level wedges the socket can't see                                                                                                                                                           |
+| call-plane scale     | point-to-point hub routing                                   | Erlang's point-to-point mesh            | our hub is a relay, not a mesh; directed frames route point-to-point, gossip still broadcasts                                                                                                           |
+
+### The gaps we deliberately leave — and why
+
+Two remain, both honest and both where Elixir spends real complexity:
+
+1. **Membership gossip is still O(N) broadcast.** Every `join`/`register` broadcasts to all
+   nodes, and every node holds the full membership/registry. Fine to tens of nodes; a large
+   keyspace across hundreds needs a **delta-CRDT** registry (what Horde actually is). We route the
+   _data_ plane point-to-point but the _control_ plane still gossips.
+2. **LIVE handoff.** We do not stream a running room's in-memory state to a new owner during a
+   _graceful_ drain — the research-grade piece (handoff races, reconciliation). **Persistence
+   makes it largely unnecessary**: a relocated room rehydrates from the shared store on first
+   access. Live handoff buys only "zero-downtime migration without a store round-trip" — a narrow
+   win for a large correctness cost.
+
+That is the honest boundary: routing, supervision, durability, split-brain healing, and zombie
+eviction are here; a delta-CRDT registry and live handoff are where you'd reach for Horde.

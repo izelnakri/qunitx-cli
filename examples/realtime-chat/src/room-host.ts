@@ -49,9 +49,10 @@ export function startRoomHost(name: string, transport: Transport, store: Store):
   };
 }
 
-// One room's lifecycle: register the key, then serve the actor WITH THE STORE (so it rehydrates
-// its members+history on start and persists every change before ack). A transient exit
-// (empty-room close) unregisters and does not restart; a crash restarts it, rehydrated.
+// One room's lifecycle. `via` ties the Registry entry to the unit: it registers on start,
+// unregisters on exit, AND self-terminates if a smaller-named host wins the same key (so a
+// split-brain during a partition heals to one owner). `store` rehydrates state on start and
+// persists every change before ack. A transient exit (empty-room close) does not restart.
 function runRoom(
   node: NodeHandle,
   key: string,
@@ -60,15 +61,15 @@ function runRoom(
   signal: AbortSignal,
 ): Promise<void> {
   return new Promise<void>((exited) => {
-    node.register('rooms', key);
     // storeKey is stable across hosts, so a room re-created on ANOTHER host loads the same state.
-    Node.serve(node, `room:${key}`, makeRoomBehavior(), {
+    const room = Node.serve(node, `room:${key}`, makeRoomBehavior(), {
+      via: { registry: 'rooms', key },
       store,
       storeKey: `room:${key}`,
       maxMailbox: 256,
     });
     signal.addEventListener('abort', () => {
-      node.unregister('rooms', key);
+      room.exit(); // unregisters via the Registry
       live.delete(key);
       exited();
     });
