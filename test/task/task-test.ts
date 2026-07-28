@@ -648,3 +648,50 @@ module('Task | failure observation seam', () => {
     }
   });
 });
+
+// ── ensure — the declared invariant on the success value ───────────────────────
+
+module('Task | ensure', { concurrency: true }, () => {
+  const TooSmall = Failure.define('TooSmall', (d: { got: number }) => `too small: ${d.got}`);
+
+  test('passes the value through when the predicate holds', async (assert) => {
+    assert.strictEqual(
+      await Task(() => 5).ensure(
+        (n) => n > 3,
+        (n) => TooSmall({ got: n }),
+      ),
+      5,
+    );
+  });
+
+  test('rejects with the declared failure built FROM the value otherwise', async (assert) => {
+    const failed = await Task(() => 2)
+      .ensure(
+        (n) => n > 3,
+        (n) => TooSmall({ got: n }),
+      )
+      .result();
+    assert.true(TooSmall.is(failed));
+    assert.strictEqual((failed as Failure.Of<typeof TooSmall>).data.got, 2);
+  });
+
+  test('stays lazy, carries lineage, and the static twin agrees', async (assert) => {
+    let ran = 0;
+    const guarded = Task(() => ++ran).ensure(
+      (n) => n === 1,
+      (n) => TooSmall({ got: n }),
+    );
+    assert.strictEqual(ran, 0, 'ensure built lazily');
+    assert.strictEqual(await guarded, 1);
+    const failedSecond = await guarded.restart().result(); // re-runs the WHOLE chain: ran → 2
+    assert.true(TooSmall.is(failedSecond), 'lineage re-ran the recipe, invariant re-checked');
+    assert.strictEqual(
+      await Task.ensure(
+        Task(() => 9),
+        (n) => n > 3,
+        (n) => TooSmall({ got: n }),
+      ),
+      9,
+    );
+  });
+});

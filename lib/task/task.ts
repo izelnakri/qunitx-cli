@@ -391,6 +391,25 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   }
 
   /**
+   * Data-first twin of {@link TaskClass#ensure} — the invariant, receiver-first.
+   *
+   * ```ts
+   * import { define } from '../result/failure.ts';
+   * const Empty = define('Empty', 'no rows');
+   *
+   * const rows = Task(() => [1, 2]);
+   * await Task.ensure(rows, (r) => r.length > 0, () => Empty()); // [1, 2]
+   * ```
+   */
+  static ensure<T, E, F extends AnyFailure>(
+    task: TaskClass<T, E>,
+    predicate: (value: T) => boolean,
+    toFailure: (value: T) => F,
+  ): TaskClass<T, E | F> {
+    return task.ensure(predicate, toFailure);
+  }
+
+  /**
    * Data-first twin of {@link TaskClass#mapErr} — the adapter edge, receiver-first.
    *
    * ```ts
@@ -542,6 +561,35 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     return this.#derive(
       () => this.then(fn),
       (fresh) => fresh.map(fn),
+    );
+  }
+
+  /**
+   * Declares an invariant on the success value: the value passes through when `predicate`
+   * holds, otherwise the Task rejects with the declared failure built **from the value** —
+   * which is what makes it the one-line spelling of the HTTP envelope check:
+   *
+   * ```ts
+   * import { define, is } from '../result/failure.ts';
+   * const PageFailed = define('PageFailed', (d: { status: number }) => `page failed: HTTP ${d.status}`);
+   * const respond = (status: number) => Task(() => new Response(null, { status }));
+   *
+   * const checked = await respond(404).ensure((res) => res.ok, (res) => PageFailed({ status: res.status })).result();
+   * is(checked) && checked.code; // 'PageFailed' — declared, typed, one line
+   * await respond(200).ensure((res) => res.ok, (res) => PageFailed({ status: res.status })).map((r) => r.status); // 200
+   * ```
+   */
+  ensure<F extends AnyFailure>(
+    predicate: (value: T) => boolean,
+    toFailure: (value: T) => F,
+  ): TaskClass<T, E | F> {
+    return this.#derive<T, E | F>(
+      () =>
+        this.then((value) => {
+          if (!predicate(value)) throw toFailure(value);
+          return value;
+        }),
+      (fresh) => fresh.ensure(predicate, toFailure),
     );
   }
 
