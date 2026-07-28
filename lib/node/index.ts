@@ -19,6 +19,10 @@ export {
 // barrel: it stands on the `ws` package, and the barrel stays browser-safe.
 export { wsTransport, traceTransport, binaryCodec, jsonCodec, type Codec } from './ws.ts';
 
+// Rendezvous (HRW) hashing: pick THE owner of a key with minimal reshuffling on membership
+// change — the routing primitive for distributed stateful entities (see examples/realtime-chat).
+export { rendezvous } from './rendezvous.ts';
+
 // Hot code upgrades: Erlang's release mechanics on web standards — import() as the code
 // server, run-to-completion as suspend/resume, codeChange as code_change/3, and the
 // `<name>.sys.upgrade` subject as the relup that reaches remote nodes.
