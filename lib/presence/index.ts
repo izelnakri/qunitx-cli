@@ -11,3 +11,8 @@ export {
   type PresenceList,
   type PresenceDiff,
 } from './presence.ts';
+
+// shardedPresence: the partitioned counterpart — each topic's presence lives on one rendezvous-
+// chosen coordinator (memory scales with the cluster), re-homing on membership change. The first
+// concrete consumer of the sharded-registry idea (#1), scoped to presence.
+export { shardedPresence, type ShardedPresence } from './sharded.ts';
