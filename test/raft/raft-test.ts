@@ -3,6 +3,7 @@ import * as Node from '../../lib/node/index.ts';
 import { raft, type Raft } from '../../lib/raft/index.ts';
 import { isFailure, type Any as AnyFailure } from '../../lib/result/failure.ts';
 
+const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const until = async (cond: () => boolean, ms = 5000) => {
   const deadline = Date.now() + ms;
   while (!cond() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 15));
@@ -344,5 +345,132 @@ module('Raft | compaction + membership', () => {
     );
     rest.forEach((m) => m.stop());
     nodes.forEach((n, i) => i !== goneIdx && n.stop());
+  });
+});
+
+module('Raft | pre-vote, read-index, leadership transfer', () => {
+  test('pre-vote: a partitioned node does NOT inflate its term and cannot disrupt on return', async (assert) => {
+    const hub = partitionableHub();
+    const names = ['r0@pv', 'r1@pv', 'r2@pv'];
+    const nodes = names.map((n) => Node.start(n, hub.transport(n)));
+    const members = names.map((_, i) =>
+      raft<number[]>(nodes[i], {
+        peers: names,
+        init: () => [],
+        apply: (c, s) => ({ state: [...s, c as number] }),
+        electionTimeoutMs: () => TIMEOUTS[i] + Math.random() * 40,
+        heartbeatMs: 25,
+      }),
+    );
+    await until(() => members.some((m) => m.role() === 'leader'));
+    const leader = members.find((m) => m.role() === 'leader')!;
+    await leader.propose(1);
+    const isolated = members.find((m) => m.role() !== 'leader')!;
+    const isoIdx = members.indexOf(isolated);
+    const termBefore = isolated.term();
+
+    // Isolate a FOLLOWER. THE pre-vote property, stated deterministically: while partitioned it
+    // runs pre-vote rounds no reachable peer can answer, so it never starts a real election and
+    // its term never inflates — without pre-vote it would race its term upward every timeout, and
+    // return with a term high enough to depose the healthy leader. That inflation is the disruption
+    // pre-vote exists to prevent, and its absence is the observable, deterministic guarantee.
+    hub.partition([names[isoIdx]]);
+    await settle(400); // several election timeouts elapse in isolation
+    assert.true(
+      isolated.term() <= termBefore + 1,
+      `pre-vote kept the isolated node's term from inflating (${termBefore} -> ${isolated.term()})`,
+    );
+    assert.notEqual(
+      isolated.role(),
+      'leader',
+      'a partitioned minority node cannot reach a majority, so it never becomes leader',
+    );
+    // Who leads AFTER the heal is a normal election: under real-timer jitter any healthy node's
+    // timeout may legitimately fire and win — even the returner, once it is caught up — so
+    // leadership identity is not an invariant to assert. The term-not-inflating check above IS
+    // pre-vote's guarantee; the returner rejoins unable to out-term anyone.
+    hub.heal();
+    members.forEach((m) => m.stop());
+    nodes.forEach((n) => n.stop());
+  });
+
+  test('read-index: linearizableRead returns applied state on the leader, rejects off it', async (assert) => {
+    const hub = partitionableHub();
+    const names = ['r0@ri', 'r1@ri', 'r2@ri'];
+    const nodes = names.map((n) => Node.start(n, hub.transport(n)));
+    const members = names.map((_, i) =>
+      raft<number[]>(nodes[i], {
+        peers: names,
+        init: () => [],
+        apply: (c, s) => ({ state: [...s, c as number] }),
+        electionTimeoutMs: () => TIMEOUTS[i] + Math.random() * 40,
+        heartbeatMs: 25,
+      }),
+    );
+    await until(() => members.some((m) => m.role() === 'leader'));
+    const leader = members.find((m) => m.role() === 'leader')!;
+    await leader.propose(10);
+    await leader.propose(20);
+
+    const read = await leader.linearizableRead();
+    assert.deepEqual(read, [10, 20], 'the leader served a strongly-consistent read, no log append');
+
+    const follower = members.find((m) => m.role() !== 'leader')!;
+    const rejection = await follower.linearizableRead().then(
+      () => null,
+      (e) => e,
+    );
+    assert.true(
+      isFailure(rejection) && (rejection as AnyFailure).code === 'NotLeader',
+      'a follower refuses a linearizable read with the leader hint',
+    );
+    members.forEach((m) => m.stop());
+    nodes.forEach((n) => n.stop());
+  });
+
+  test('leadership transfer: transferTo hands leadership to the target immediately', async (assert) => {
+    const hub = partitionableHub();
+    const names = ['r0@lt', 'r1@lt', 'r2@lt'];
+    const nodes = names.map((n) => Node.start(n, hub.transport(n)));
+    const members = names.map((_, i) =>
+      raft<number[]>(nodes[i], {
+        peers: names,
+        init: () => [],
+        apply: (c, s) => ({ state: [...s, c as number] }),
+        electionTimeoutMs: () => 500 + Math.random() * 200, // long — only a transfer should elect fast
+        heartbeatMs: 25,
+      }),
+    );
+    // Force a deterministic first leader by giving r0 a tiny timeout head start.
+    members.forEach((m) => m.stop());
+    nodes.forEach((n) => n.stop());
+    const nodes2 = names.map((n) => Node.start(n, hub.transport(n)));
+    const members2 = names.map((_, i) =>
+      raft<number[]>(nodes2[i], {
+        peers: names,
+        init: () => [],
+        apply: (c, s) => ({ state: [...s, c as number] }),
+        electionTimeoutMs: () => (i === 0 ? 40 : 600 + Math.random() * 200),
+        heartbeatMs: 25,
+      }),
+    );
+    await until(() => members2[0].role() === 'leader', 3000);
+    assert.equal(members2[0].role(), 'leader', 'r0 is the leader');
+    await members2[0].propose(1);
+
+    const target = names[1];
+    await members2[0].transferTo(target);
+    assert.true(
+      await until(() => members2[1].role() === 'leader', 2000),
+      'the target became leader promptly (no election-timeout wait)',
+    );
+    assert.notEqual(members2[0].role(), 'leader', 'the old leader stepped down');
+    await members2[1].propose(2);
+    assert.true(
+      await until(() => members2.every((m) => m.state().length === 2)),
+      'the new leader keeps committing',
+    );
+    members2.forEach((m) => m.stop());
+    nodes2.forEach((n) => n.stop());
   });
 });

@@ -81,8 +81,22 @@ export interface Raft<S> {
   leader(): string | null;
   /** The current term. */
   term(): number;
-  /** The applied state — local, may lag the leader; a linearizable read is a proposed no-op. */
+  /** The applied state — local, may lag the leader; for a strongly-consistent read use
+   *  {@link Raft.linearizableRead}. */
   state(): S;
+  /**
+   * A **linearizable read** (Raft's read-index): confirm we're still leader via a heartbeat round
+   * to a majority (this term), then return the applied state — a strongly-consistent read WITHOUT
+   * appending to the log. Rejects `NotLeader` off the leader, or `NotLeader` if leadership can't be
+   * confirmed (a partition may have replaced us).
+   */
+  linearizableRead(): Promise<S>;
+  /**
+   * Gracefully hand leadership to `target` (leader only): bring its log fully up to date, then
+   * prompt it (TimeoutNow) to elect IMMEDIATELY — no election-timeout gap. For rolling maintenance
+   * of the current leader. Rejects `NotLeader` off the leader, or if `target` isn't a member.
+   */
+  transferTo(target: string): Promise<void>;
   /** The highest committed log index (1-based; 0 = nothing committed). */
   committedIndex(): number;
   /** The last log index folded into the snapshot (0 = never compacted). */
@@ -132,8 +146,10 @@ export function raft<S>(
   const heartbeatMs = options.heartbeatMs ?? 50;
   const snapshotThreshold = options.snapshotThreshold ?? 1000;
   const VOTE = `raft.${group}.vote`;
+  const PREVOTE = `raft.${group}.prevote`;
   const APPEND = `raft.${group}.append`;
   const SNAPSHOT = `raft.${group}.snapshot`;
+  const TIMEOUTNOW = `raft.${group}.timeoutnow`;
   const storeKey = options.storeKey ?? `raft:${group}:${self}`;
 
   // ---- Persistent state (saved via the Store seam before answering, per the paper) ----
@@ -153,6 +169,7 @@ export function raft<S>(
   let lastApplied = 0;
   let state = options.init();
   let alive = true;
+  let lastAppendAt = 0; // when we last heard a valid leader — pre-vote uses this to detect a live leader
   const nextIndex = new Map<string, number>();
   const matchIndex = new Map<string, number>();
   const pending = new Map<
@@ -169,6 +186,13 @@ export function raft<S>(
     if (index <= snapIndex) return index === snapIndex ? snapTerm : snapTerm; // compacted — committed history
     return entryAt(index).term;
   };
+  // §5.4.1 up-to-date test: a candidate's log must be at least as current as ours to earn a vote.
+  const candidateUpToDate = (lastTerm: number, lastIndex: number): boolean =>
+    lastTerm > termAt(lastLogIndex()) ||
+    (lastTerm === termAt(lastLogIndex()) && lastIndex >= lastLogIndex());
+  // Do we currently believe a leader is alive? Pre-vote won't disrupt a healthy cluster.
+  const leaderIsAlive = (): boolean =>
+    leaderId !== null && Date.now() - lastAppendAt < heartbeatMs * 3;
   // The membership in force: the last config entry anywhere in the log, else the snapshot's,
   // else the boot list. Recomputed after truncation and on load.
   const recomputePeers = (): void => {
@@ -389,8 +413,37 @@ export function raft<S>(
   };
 
   // ---- Candidate: election ----
-  const startElection = async (): Promise<void> => {
+  // `force` skips the pre-vote round — used by a TimeoutNow leadership transfer, where the current
+  // leader has already vouched for this node and its log is caught up.
+  const startElection = async (force = false): Promise<void> => {
     if (!alive || role === 'leader' || !peers.includes(self)) return; // a removed member never campaigns
+    if (!force && others().length > 0) {
+      // Pre-vote round at term+1, WITHOUT touching our own term/vote. Only a majority of "yes"
+      // (peers that also see no live leader and accept our log) earns a real election.
+      const electionTerm = currentTerm + 1;
+      const preVotes = await Promise.all(
+        others().map((peer) =>
+          node
+            .call(
+              peer,
+              PREVOTE,
+              {
+                term: electionTerm,
+                lastLogIndex: lastLogIndex(),
+                lastLogTerm: termAt(lastLogIndex()),
+              },
+              Math.max(heartbeatMs * 3, 60),
+            )
+            .then((r) => r as { term: number; granted: boolean })
+            .catch(() => ({ term: 0, granted: false })),
+        ),
+      );
+      if (!alive) return;
+      const higher = preVotes.find((v) => v.term > currentTerm);
+      if (higher) return void (await stepDown(higher.term, null));
+      const preGranted = 1 + preVotes.filter((v) => v.granted).length;
+      if (preGranted < majority()) return void resetElectionTimer(); // didn't win pre-vote — don't disrupt
+    }
     role = 'candidate';
     currentTerm++;
     votedFor = self;
@@ -434,16 +487,36 @@ export function raft<S>(
     };
     if (req.term < currentTerm) return { term: currentTerm, granted: false };
     if (req.term > currentTerm) await stepDown(req.term, null);
-    const upToDate =
-      req.lastLogTerm > termAt(lastLogIndex()) ||
-      (req.lastLogTerm === termAt(lastLogIndex()) && req.lastLogIndex >= lastLogIndex());
-    const granted = (votedFor === null || votedFor === req.candidate) && upToDate;
+    const granted =
+      (votedFor === null || votedFor === req.candidate) &&
+      candidateUpToDate(req.lastLogTerm, req.lastLogIndex);
     if (granted) {
       votedFor = req.candidate;
       await persist();
       resetElectionTimer(); // granting a vote defers our own candidacy
     }
     return { term: currentTerm, granted };
+  });
+
+  // Pre-vote (the disruption fix): grant iff the candidate's log is current AND we DON'T see a
+  // live leader — and crucially WITHOUT changing our term or vote. A node partitioned away can
+  // campaign forever without inflating its term, so it can't force a re-election when it returns.
+  node.handle(PREVOTE, async (raw) => {
+    await loaded;
+    const req = raw as { term: number; lastLogIndex: number; lastLogTerm: number };
+    const granted =
+      req.term > currentTerm &&
+      !leaderIsAlive() &&
+      candidateUpToDate(req.lastLogTerm, req.lastLogIndex);
+    return { term: currentTerm, granted };
+  });
+
+  // TimeoutNow (leadership transfer): the current leader authorizes us to elect IMMEDIATELY,
+  // skipping the election timeout and pre-vote — our log is already caught up, so we win at once.
+  node.handle(TIMEOUTNOW, async (raw) => {
+    await loaded;
+    const req = raw as { term: number };
+    if (req.term >= currentTerm && peers.includes(self)) void startElection(true);
   });
 
   node.handle(APPEND, async (raw) => {
@@ -458,6 +531,7 @@ export function raft<S>(
     };
     if (req.term < currentTerm) return { term: currentTerm, success: false };
     await stepDown(req.term, req.leader); // a valid leader's append always re-follows + resets the timer
+    lastAppendAt = Date.now(); // we heard from the leader — pre-vote grantors key on this
     // Everything at or below our snapshot is committed history — already matched.
     if (req.prevIndex < snapIndex)
       return { term: currentTerm, success: true, matchIndex: snapIndex };
@@ -557,6 +631,37 @@ export function raft<S>(
     return result as Promise<string[]>;
   };
 
+  // A confirmation heartbeat round: send an empty AppendEntries to every peer and count how many
+  // acknowledge at our current term. A majority (self included) means we are still the leader RIGHT
+  // NOW — the basis for a read-index linearizable read (no log append needed).
+  const confirmLeadership = async (): Promise<boolean> => {
+    if (role !== 'leader') return false;
+    const term = currentTerm;
+    const acks = await Promise.all(
+      others().map((peer) =>
+        node
+          .call(
+            peer,
+            APPEND,
+            {
+              term,
+              leader: self,
+              prevIndex: lastLogIndex(),
+              prevTerm: termAt(lastLogIndex()),
+              entries: [],
+              leaderCommit: commitIndex,
+            },
+            heartbeatMs * 4,
+          )
+          .then((r) => (r as { term: number; success: boolean }).term <= term)
+          .catch(() => false),
+      ),
+    );
+    return (
+      role === 'leader' && currentTerm === term && 1 + acks.filter(Boolean).length >= majority()
+    );
+  };
+
   return {
     propose(command) {
       if (role !== 'leader') {
@@ -582,6 +687,26 @@ export function raft<S>(
     leader: () => leaderId,
     term: () => currentTerm,
     state: () => state,
+    async linearizableRead() {
+      if (role !== 'leader')
+        throw new Failure(NOT_LEADER, `${self} is not the leader`, { leader: leaderId });
+      const readIndex = commitIndex;
+      if (!(await confirmLeadership()))
+        throw new Failure(NOT_LEADER, 'leadership could not be confirmed', { leader: leaderId });
+      // Wait until our state machine has applied everything committed as of the read point.
+      while (lastApplied < readIndex && alive) await new Promise((r) => setTimeout(r, heartbeatMs));
+      return state;
+    },
+    async transferTo(target) {
+      if (role !== 'leader')
+        throw new Failure(NOT_LEADER, `${self} is not the leader`, { leader: leaderId });
+      if (!peers.includes(target) || target === self)
+        throw new Failure('NotMember', `${target} is not a transfer target`, { target });
+      // Catch the target's log fully up (bounded), so its immediate election wins on log recency.
+      for (let i = 0; i < 20 && (matchIndex.get(target) ?? 0) < lastLogIndex(); i++)
+        await replicateTo(target);
+      node.cast(target, TIMEOUTNOW, { term: currentTerm }); // elect now — we step down on its higher-term append
+    },
     committedIndex: () => commitIndex,
     snapshotIndex: () => snapIndex,
     stop() {
