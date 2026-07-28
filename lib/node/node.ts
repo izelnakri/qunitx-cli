@@ -517,12 +517,20 @@ export function start(name: string, transport: Transport): NodeHandle {
  */
 export function memoryHub(): { transport(): Transport } {
   const members = new Set<(frame: Frame) => void>();
+  // node name -> its member's deliver fn, learned from each frame's `from`. A frame WITH a `to`
+  // routes only there (point-to-point — no O(N) fan-out per call); frames without a `to`
+  // (hello/bye/join/register gossip) broadcast; an unknown `to` falls back to broadcast so a
+  // pre-hello race can never drop a frame.
+  const owner = new Map<string, (frame: Frame) => void>();
   return {
     transport() {
       let deliver: (frame: Frame) => void = () => {};
       return {
         send(frame) {
-          for (const member of members) if (member !== deliver) queueMicrotask(() => member(frame));
+          owner.set(frame.from, deliver); // this member is `frame.from`
+          const direct = frame.to !== undefined ? owner.get(frame.to) : undefined;
+          const targets = direct ? [direct] : members;
+          for (const member of targets) if (member !== deliver) queueMicrotask(() => member(frame));
         },
         onFrame(handler) {
           deliver = handler;
@@ -530,6 +538,7 @@ export function memoryHub(): { transport(): Transport } {
         },
         close() {
           members.delete(deliver);
+          for (const [key, value] of owner) if (value === deliver) owner.delete(key);
         },
       };
     },

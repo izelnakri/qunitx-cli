@@ -35,24 +35,34 @@ export function startHub(options: { port?: number; codec?: Codec } = {}): {
 } {
   const codec = options.codec ?? binaryCodec;
   const wss = new WebSocketServer({ port: options.port ?? 4369 });
+  // node name -> the socket hosting it, so a frame WITH a `to` routes point-to-point instead
+  // of broadcasting to the whole cluster (the O(N^2) call-traffic wall). Frames without a `to`
+  // (hello/bye/join/register gossip) still broadcast; an unknown `to` falls back to broadcast.
+  const ownerSocket = new Map<string, WsSocket>();
 
   wss.on('connection', (socket: WsSocket) => {
     const names = new Set<string>();
     socket.on('message', (data: Buffer, isBinary: boolean) => {
+      let frame;
       try {
-        const frame = codec.decode(isBinary ? new Uint8Array(data) : data.toString());
-        if (frame.kind === 'hello') names.add(frame.from);
-        else if (frame.kind === 'bye') names.delete(frame.from);
+        frame = codec.decode(isBinary ? new Uint8Array(data) : data.toString());
       } catch {
         return; // not our wire — drop it rather than relay garbage
       }
-      for (const peer of wss.clients) {
+      names.add(frame.from);
+      ownerSocket.set(frame.from, socket); // learn where each node lives
+      if (frame.kind === 'bye') (names.delete(frame.from), ownerSocket.delete(frame.from));
+
+      const direct = frame.to !== undefined ? ownerSocket.get(frame.to) : undefined;
+      const targets = direct ? [direct] : wss.clients;
+      for (const peer of targets) {
         if (peer !== socket && peer.readyState === 1) peer.send(data, { binary: isBinary });
       }
     });
     // Erlang's nodedown: a dropped socket gets its byes said for it.
     socket.on('close', () => {
       for (const name of names) {
+        ownerSocket.delete(name);
         const bye = codec.encode({ kind: 'bye', from: name });
         for (const peer of wss.clients) {
           if (peer.readyState === 1) peer.send(bye, { binary: typeof bye !== 'string' });

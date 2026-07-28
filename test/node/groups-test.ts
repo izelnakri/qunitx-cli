@@ -95,3 +95,42 @@ module('Node | process groups', () => {
     solo.stop();
   });
 });
+
+// ── point-to-point routing — the O(N^2) fix ──────────────────────────────────
+
+module('Node | point-to-point routing', () => {
+  test('a directed call reaches ONLY its target; gossip still reaches everyone', async (assert) => {
+    const hub = Node.memoryHub();
+    // A spy transport joins the hub and records every frame it is delivered.
+    const seen: string[] = [];
+    const spyTransport = hub.transport();
+    spyTransport.onFrame((frame) => seen.push(`${frame.kind}:${frame.to ?? '*'}`));
+    // The spy must announce itself so the hub learns names; send a hello as a bystander node.
+    spyTransport.send({ kind: 'hello', from: 'spy@memory' });
+
+    const a = Node.start('a@memory', hub.transport());
+    const b = Node.start('b@memory', hub.transport());
+    b.handle('echo', (x) => x);
+    await new Promise((r) => setTimeout(r, 20));
+    seen.length = 0; // ignore the join-time gossip; measure the call
+
+    assert.strictEqual(await a.call('b@memory', 'echo', 1), 1);
+    await new Promise((r) => setTimeout(r, 10));
+    // The call frame and its reply are addressed a<->b; the SPY (an uninterested node) must
+    // not have seen either — that is the point-to-point property.
+    assert.false(
+      seen.some((s) => s.startsWith('call:') || s.startsWith('reply:')),
+      `spy saw: ${seen.join(',')}`,
+    );
+
+    // But a gossip frame (no `to`) DOES reach the spy — membership still converges cluster-wide.
+    a.join('workers');
+    await new Promise((r) => setTimeout(r, 10));
+    assert.true(
+      seen.some((s) => s.startsWith('join:')),
+      'gossip broadcasts to all',
+    );
+    a.stop();
+    b.stop();
+  });
+});
