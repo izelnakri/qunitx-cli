@@ -1,33 +1,37 @@
-// The report behavior — a `serve()`able unit whose `generate` handler is CPU-BOUND. This is
-// the ONE piece of the app that must never share the API's event loop: aggregating a month of
-// rows and rendering a summary is synchronous CPU work that would freeze every HTTP request
-// on the same thread (see preemption-demo.mjs at the repo root, and the README's §3).
-//
-// It lives here as a Behavior so it can run EITHER as a Worker thread (Topology A) OR in a
-// separate process/pod (Topology B) — same code, placement is a deployment decision.
+// The report behavior — CPU-bound, and now it OWNS its data access. The API used to read a
+// month of rows into memory and ship them here (an OOM waiting to happen on a big month);
+// instead the worker streams its OWN cursor and folds incrementally, so nothing buffers on
+// either side. The fold is the synchronous work that must not share the API's event loop.
 import type { Behavior } from '../../../lib/node/index.ts';
+import type { DB } from './db.ts';
 
-type Row = { amount_cents: number; currency: string };
 type ReportState = { generated: number };
 type Summary = { month: string; count: number; totalsByCurrency: Record<string, number> };
 
-const reportBehavior: Behavior<ReportState> = {
-  version: '1.0.0',
-  init: () => ({ generated: 0 }),
-  handlers: {
-    // Payload: { month, rows } — the API node reads the cursor (I/O) and ships the ROWS here,
-    // so the CPU work (the fold + any rendering) happens on THIS node's thread, not the API's.
-    generate: (state, payload) => {
-      const { month, rows } = payload as { month: string; rows: Row[] };
-      const totalsByCurrency: Record<string, number> = {};
-      // The synchronous hot loop — the thing that must not run on the API thread.
-      for (const row of rows) {
-        totalsByCurrency[row.currency] = (totalsByCurrency[row.currency] ?? 0) + row.amount_cents;
-      }
-      const summary: Summary = { month, count: rows.length, totalsByCurrency };
-      return { state: { generated: state.generated + 1 }, reply: summary };
+// A factory: the worker injects its DB handle, so the behavior holds its own resource — the
+// gen_server pattern (state + owned deps), not a pure function fed everything by the caller.
+export function makeReportBehavior(db: DB): Behavior<ReportState> {
+  return {
+    version: '1.0.0',
+    init: () => ({ generated: 0 }),
+    handlers: {
+      // Payload is just { month } now — the worker queries and folds on ITS thread.
+      generate: async (state, payload) => {
+        const { month } = payload as { month: string };
+        const totalsByCurrency: Record<string, number> = {};
+        let count = 0;
+        for await (const rows of db.monthRows(month)) {
+          // The synchronous hot loop — on the worker's thread, never the API's. Flat memory:
+          // the cursor yields ~500 rows at a time and we fold them away immediately.
+          for (const row of rows) {
+            totalsByCurrency[row.currency] =
+              (totalsByCurrency[row.currency] ?? 0) + row.amount_cents;
+            count += 1;
+          }
+        }
+        const summary: Summary = { month, count, totalsByCurrency };
+        return { state: { generated: state.generated + 1 }, reply: summary };
+      },
     },
-  },
-};
-
-export default reportBehavior;
+  };
+}

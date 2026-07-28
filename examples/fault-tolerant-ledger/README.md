@@ -77,12 +77,23 @@ in this folder — one CPU-bound handler made a hello-world request take 2001ms 
 timer completely.)
 
 So `POST /reports/monthly`'s aggregation lives in `report-behavior.ts` and runs on a **separate
-thread** — a Worker node. The API reads the rows (I/O, on its loop) and hands them to the report
-node via `api.call('reports@worker', ...)`; the fold runs on the worker's thread; the API loop
-stays free. If the worker wedges, only _its_ thread freezes, and `call`'s timeout returns a
-declared `ReportUnavailable` → `503`, while the supervised heartbeat has already flipped
-readiness. **This is the mitigation for the one thing BEAM has that we don't: the process — not
-the in-realm supervisor — is the CPU fault domain.**
+thread** — a report node. The API delegates with `api.call('group:reports', ...)`; the chosen
+worker **streams its own DB cursor and folds incrementally** (nothing buffers on either side —
+an earlier version shipped the rows through the payload, an OOM waiting to happen), all on the
+worker's thread. The API loop only awaits. **This is the mitigation for the one thing BEAM has
+that we don't: the process — not the in-realm supervisor — is the CPU fault domain.**
+
+Three details make the pool robust, each with an existing primitive:
+
+- **A POOL, not one worker.** The workers form the `reports` process group; `call('group:reports')`
+  round-robins them, so N threads give N-core report parallelism and one slow report never
+  head-of-line-blocks the next. (One named worker would just relocate the blocking to its mailbox.)
+- **Group membership is the liveness signal.** A worker `join`s on start; a crash makes its node
+  leave (nodedown), which the API sees immediately — no separate heartbeat needed. Readiness =
+  `groupMembers('reports').length > 0`.
+- **Fail-fast.** The report route checks readiness at request time and returns `ReportUnavailable`
+  → `503` _immediately_ when the pool is empty, instead of waiting the full call timeout. And each
+  worker's `serve(..., { maxMailbox: 64 })` sheds under overload rather than growing unboundedly.
 
 The signal you're in tier 2: you catch yourself thinking "this endpoint is sometimes slow for
 no I/O reason," or a p99 spike correlates with a particular input size. That's loop starvation.
