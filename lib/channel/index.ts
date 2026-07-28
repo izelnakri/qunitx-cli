@@ -28,3 +28,13 @@ export {
   type WireCodec,
   type ChannelClient,
 } from './client.ts';
+
+// The long-poll fallback (Phoenix.Transports.LongPoll): the same channel protocol over plain
+// POSTs — a pure request→response endpoint server-side, a Wire client-side, so channelClient
+// works unchanged where a WebSocket can't be had.
+export {
+  longPollEndpoint,
+  longPollWire,
+  type LongPollRequest,
+  type LongPollResponse,
+} from './longpoll.ts';
