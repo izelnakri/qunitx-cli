@@ -1,5 +1,6 @@
 import { module, test } from 'qunitx';
 import * as Node from '../../lib/node/index.ts';
+import { rendezvous } from '../../lib/node/index.ts';
 import { startRoomHost } from '../../examples/realtime-chat/src/room-host.ts';
 import { chat } from '../../examples/realtime-chat/src/chat-client.ts';
 
@@ -42,6 +43,45 @@ module('Examples | realtime-chat handoff', () => {
 
     if (hostA) await hostA.stop();
     if (hostB) await hostB.stop();
+    gw.stop();
+  });
+
+  test('a joining host pulls its rendezvous share of existing rooms (scale-up rebalance)', async (assert) => {
+    const hub = Node.memoryHub();
+    const store = Node.memoryStore();
+    const h1 = startRoomHost('h1@chat', hub.transport(), store);
+    const gw = Node.start('gw@chat', hub.transport());
+    await settle();
+
+    // Every room cold-starts on the sole host.
+    const keys = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel'];
+    for (const k of keys) await chat(gw, k).join('ada');
+    for (const k of keys)
+      assert.equal(gw.whereis('rooms', k), 'h1@chat', `${k} starts on the sole host`);
+
+    // A second host joins → each room re-homes to its rendezvous owner over BOTH hosts.
+    const h2 = startRoomHost('h2@chat', hub.transport(), store);
+    await settle();
+    await settle();
+
+    const hosts = ['h1@chat', 'h2@chat'];
+    let moved = 0;
+    for (const k of keys) {
+      const expected = rendezvous(k, hosts);
+      assert.equal(
+        gw.whereis('rooms', k),
+        expected,
+        `${k} lives on its rendezvous owner after rebalance`,
+      );
+      if (expected === 'h2@chat') moved++;
+    }
+    assert.true(
+      moved > 0,
+      `at least one room migrated to the newcomer (${moved} of ${keys.length})`,
+    );
+
+    await h1.stop();
+    await h2.stop();
     gw.stop();
   });
 

@@ -47,6 +47,25 @@ export function startRoomHost(name: string, transport: Transport, store: Store):
     return true;
   });
 
+  // Rebalance on scale-UP — the other half of Horde.DynamicSupervisor's redistribution (drain is
+  // scale-down). When a new host joins (Erlang nodeup), any room whose rendezvous owner is now the
+  // newcomer is handed off to it, so the keyspace re-spreads as the cluster grows — HRW moves only
+  // ~1/N of each host's rooms, not the whole keyspace. Same re-home-by-key as drain: release first,
+  // then pre-warm, so the split-brain guard can't tear the fresh room down.
+  node.monitorNodes(async ({ node: peer, status }) => {
+    if (status !== 'up') return;
+    // Wait (bounded) for the newcomer's 'room-hosts' membership to converge before deciding.
+    for (let i = 0; i < 50 && !node.groupMembers('room-hosts').includes(peer); i++)
+      await new Promise((r) => setTimeout(r, 5));
+    const hosts = node.groupMembers('room-hosts');
+    if (!hosts.includes(peer)) return; // the newcomer is a gateway, not a host — nothing to hand off
+    for (const key of [...live]) {
+      if (rendezvous(key, hosts) !== peer) continue;
+      await rooms.terminateChild(`room:${key}`); // release: the room exits + unregisters
+      await node.call(peer, 'host.ensureRoom', { key }); // pre-warm the newcomer
+    }
+  });
+
   return {
     node,
     stop: async () => {
