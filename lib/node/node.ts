@@ -208,7 +208,11 @@ export function heartbeat(
  * right.stop();
  * ```
  */
-export function start(name: string, transport: Transport): NodeHandle {
+export function start(
+  name: string,
+  transport: Transport,
+  options: { tick?: { everyMs?: number; missAfter?: number } | false } = {},
+): NodeHandle {
   const peers = new Set<string>();
   const handlers = new Map<string, (payload: unknown, from: string) => unknown>();
   const monitors = new Set<(name: string) => void>();
@@ -235,6 +239,14 @@ export function start(name: string, transport: Transport): NodeHandle {
   const pruneOwner = (owner: string): void => {
     for (const table of registries.values())
       for (const [key, held] of [...table]) if (held === owner) table.delete(key);
+  };
+
+  // A peer is gone (a polite bye, a dropped socket, OR a net-tick timeout): prune it from
+  // every group and registry and fire monitors — Erlang's nodedown, one place.
+  const declareDown = (peer: string): void => {
+    for (const group of [...groups.keys()]) memberLeft(group, peer);
+    pruneOwner(peer);
+    if (peers.delete(peer)) for (const fn of monitors) fn(peer);
   };
   const inspectors = new Map<string, () => Record<string, unknown>>();
   let ref = 0;
@@ -293,9 +305,7 @@ export function start(name: string, transport: Transport): NodeHandle {
     } else if (frame.kind === 'unregister') {
       release(frame.registry!, frame.key!, frame.from);
     } else if (frame.kind === 'bye') {
-      for (const group of [...groups.keys()]) memberLeft(group, frame.from); // prune everywhere
-      pruneOwner(frame.from); // a dead node owns no keys
-      if (peers.delete(frame.from)) for (const fn of monitors) fn(frame.from);
+      declareDown(frame.from);
     } else if (frame.kind === 'ping') {
       dispatch({ kind: 'pong', from: name, to: frame.from, ref: frame.ref });
     } else if (frame.kind === 'pong' || frame.kind === 'reply') {
@@ -408,7 +418,7 @@ export function start(name: string, transport: Transport): NodeHandle {
     return Object.assign(task, { ref: id }) as Task<R, never> & { ref: number };
   };
 
-  return {
+  const nodeHandle: NodeHandle = {
     self: () => name,
     alive: () => alive,
     list: () => [...peers],
@@ -513,10 +523,37 @@ export function start(name: string, transport: Transport): NodeHandle {
     stop() {
       if (!alive) return;
       alive = false;
+      clearInterval(tickTimer);
       transport.send({ kind: 'bye', from: name });
       transport.close?.();
     },
   };
+
+  // Erlang's net_ticktime — automatic cluster liveness. Periodically ping every peer; one
+  // that misses `missAfter` consecutive ticks is declared DOWN, even if its socket never
+  // dropped (an app-level wedge the transport can't see). This is what evicts a "zombie
+  // owner" so registry/group routing fails over instead of timing out forever. O(N peers).
+  const tick = options.tick;
+  let tickTimer: ReturnType<typeof setInterval> | undefined;
+  if (tick !== false) {
+    const everyMs = tick?.everyMs ?? 15000;
+    const missAfter = tick?.missAfter ?? 3;
+    const misses = new Map<string, number>();
+    tickTimer = setInterval(() => {
+      for (const peer of [...peers]) {
+        void nodeHandle.ping(peer, everyMs).then((answer) => {
+          if (!alive || !peers.has(peer)) return;
+          if (answer === 'pong') return void misses.delete(peer);
+          const missed = (misses.get(peer) ?? 0) + 1;
+          if (missed >= missAfter) (misses.delete(peer), declareDown(peer));
+          else misses.set(peer, missed);
+        });
+      }
+    }, everyMs);
+    (tickTimer as { unref?: () => void }).unref?.();
+  }
+
+  return nodeHandle;
 }
 
 /**

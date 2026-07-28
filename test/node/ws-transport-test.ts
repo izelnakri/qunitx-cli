@@ -190,3 +190,55 @@ module('Node | heartbeat', () => {
     b.stop();
   });
 });
+
+// ── automatic net-tick — evicting a zombie owner (Erlang net_ticktime) ───────
+
+module('Node | net-tick', () => {
+  const until = async (cond: () => boolean, ms = 2000) => {
+    const deadline = Date.now() + ms;
+    while (!cond() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
+    return cond();
+  };
+
+  test('a wedged peer (no bye, ignores ping) is declared down; its registry key is pruned', async (assert) => {
+    const hub = Node.memoryHub();
+    const watcher = Node.start('watcher@memory', hub.transport(), {
+      tick: { everyMs: 20, missAfter: 2 },
+    });
+
+    // A zombie: it announces itself and registers a key, then goes silent — it RECEIVES frames
+    // (incl. ping) but never answers. Its socket never drops, so only net-tick can catch it.
+    const zombie = hub.transport();
+    zombie.onFrame(() => {});
+    zombie.send({ kind: 'hello', from: 'zombie@memory' });
+    zombie.send({ kind: 'register', from: 'zombie@memory', registry: 'rooms', key: 'lobby' });
+    await new Promise((r) => setTimeout(r, 40));
+    assert.strictEqual(watcher.whereis('rooms', 'lobby'), 'zombie@memory', 'owner known at first');
+
+    const downs: string[] = [];
+    watcher.monitor((p) => downs.push(p));
+    assert.true(
+      await until(() => downs.includes('zombie@memory')),
+      'net-tick declared the wedge down',
+    );
+    assert.strictEqual(
+      watcher.whereis('rooms', 'lobby'),
+      null,
+      'the zombie’s registry key was pruned',
+    );
+    watcher.stop();
+  });
+
+  test('a healthy peer is never falsely declared down', async (assert) => {
+    const hub = Node.memoryHub();
+    const a = Node.start('a@memory', hub.transport(), { tick: { everyMs: 20, missAfter: 2 } });
+    const b = Node.start('b@memory', hub.transport()); // answers ping normally
+    await new Promise((r) => setTimeout(r, 20));
+    const downs: string[] = [];
+    a.monitor((p) => downs.push(p));
+    await new Promise((r) => setTimeout(r, 120)); // several ticks
+    assert.deepEqual(downs, [], 'a responsive peer stays up');
+    a.stop();
+    b.stop();
+  });
+});
