@@ -12,3 +12,13 @@ export {
   type Socket,
   type JoinResult,
 } from './channel.ts';
+
+// The WebSocket edge: serveSocket bridges a client wire into the server; channelClient is the
+// browser-side handle with heartbeat + auto-rejoin; webSocketWire adapts a native WebSocket.
+export {
+  serveSocket,
+  channelClient,
+  webSocketWire,
+  type Wire,
+  type ChannelClient,
+} from './client.ts';
