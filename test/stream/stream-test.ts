@@ -427,3 +427,68 @@ module('Stream | tap and run', { concurrency: true }, () => {
     assert.deepEqual(seen, [1, 2]);
   });
 });
+
+// ── asyncStream — Task.async_stream/3 at its JS home ─────────────────────────
+
+module('Stream | asyncStream', { concurrency: true }, () => {
+  test('bounds concurrency and keeps source order by default', async (assert) => {
+    let inFlight = 0;
+    let peak = 0;
+    const out = await Stream.asyncStream(
+      [30, 10, 20, 5],
+      async (ms) => {
+        peak = Math.max(peak, ++inFlight);
+        await new Promise((r) => setTimeout(r, ms));
+        inFlight--;
+        return ms;
+      },
+      { maxConcurrency: 2 },
+    ).values();
+    assert.deepEqual(out, [30, 10, 20, 5], 'source order, whatever finished first');
+    assert.strictEqual(peak, 2, 'never more than maxConcurrency in flight');
+  });
+
+  test('ordered: false yields completion order', async (assert) => {
+    const out = await Stream.asyncStream(
+      [50, 5],
+      async (ms) => (await new Promise((r) => setTimeout(r, ms)), ms),
+      { maxConcurrency: 2, ordered: false },
+    ).values();
+    assert.deepEqual(out, [5, 50], 'the fast element surfaced first');
+  });
+
+  test('a per-element deadline becomes a declared AsyncTimeout ELEMENT', async (assert) => {
+    const { values, errors } = await Stream.asyncStream(
+      [1, 999, 2],
+      async (ms) => (await new Promise((r) => setTimeout(r, ms)), ms),
+      { maxConcurrency: 3, timeoutMs: 100 },
+    ).partition();
+    assert.deepEqual(values, [1, 2], 'the survivors landed');
+    assert.strictEqual(errors.length, 1);
+    assert.strictEqual(errors[0].code, 'AsyncTimeout', 'the slow element became data, not a crash');
+  });
+
+  test('source failure elements pass through unmapped; a throw stays a bug', async (assert) => {
+    const { values, errors } = await Stream.asyncStream(
+      [1, BadRow({ line: 3 }), 2],
+      (n) => (n as number) * 10,
+      { maxConcurrency: 2 },
+    ).partition();
+    assert.deepEqual(values, [10, 20]);
+    assert.strictEqual(errors.length, 1, 'the failure rode the railway past fn');
+    await assert.rejects(
+      Stream.asyncStream([1], () => {
+        throw new TypeError('boom');
+      }).values(),
+      TypeError,
+    );
+  });
+
+  test('lazy: nothing starts until a consumer pulls', async (assert) => {
+    let started = 0;
+    const stream = Stream.asyncStream([1, 2, 3], (n) => (started++, n));
+    assert.strictEqual(started, 0, 'building the pipeline ran nothing');
+    await stream.values();
+    assert.strictEqual(started, 3);
+  });
+});

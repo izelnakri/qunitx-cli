@@ -33,7 +33,7 @@
  * errors.map((failure) => failure.data.line); // [2]
  * ```
  */
-import { isFailure, observed, type Any as AnyFailure } from '../result/failure.ts';
+import { Failure, isFailure, observed, type Any as AnyFailure } from '../result/failure.ts';
 import { Task } from '../task/task.ts';
 import { partition, type Result } from '../result/result.ts';
 
@@ -332,6 +332,81 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
         }
       } finally {
         await after(last);
+      }
+    }) as never;
+  }
+
+  /**
+   * Elixir's `Task.async_stream/3`, living at its JS-idiomatic home: maps `fn` over the
+   * source with at most `maxConcurrency` invocations in flight, lazily — nothing starts
+   * until a consumer pulls, and the window refills only as results are taken. Results keep
+   * source order by default (`ordered: false` yields completion order — faster when element
+   * durations vary). Each element may deadline (`timeoutMs`) into a declared
+   * `Failure('AsyncTimeout')` **element** — the railway, not a crash; the element's signal
+   * fires so cancellation-aware work stops. A throw from `fn` stays a bug. Failure elements
+   * from the source pass through unmapped.
+   *
+   * ```ts
+   * const doubled = await Stream.asyncStream([1, 2, 3, 4], (n) => n * 2, { maxConcurrency: 2 }).values();
+   * doubled; // [2, 4, 6, 8] — at most 2 in flight at any moment
+   * ```
+   */
+  static asyncStream<U, R>(
+    source: Source<U>,
+    fn: (value: Exclude<U, AnyFailure>, signal: AbortSignal) => R | PromiseLike<R>,
+    options: { maxConcurrency?: number; timeoutMs?: number; ordered?: boolean } = {},
+  ): StreamClass<Exclude<R, AnyFailure>, Extract<U | R, AnyFailure> | AnyFailure> {
+    const { maxConcurrency = 4, timeoutMs, ordered = true } = options;
+    const runOne = (element: Exclude<U, AnyFailure>): Promise<unknown> => {
+      const work = new Task<unknown>((signal) => fn(element, signal)).perform();
+      if (timeoutMs === undefined) return Promise.resolve(work);
+      return work.yield(timeoutMs).then((settled) => {
+        if (settled !== null) return isFailure(settled) ? settled : settled;
+        work.shutdown(0).then(
+          () => undefined,
+          () => undefined,
+        );
+        return new Failure('AsyncTimeout', `element timed out after ${timeoutMs}ms`, {
+          ms: timeoutMs,
+        });
+      });
+    };
+    return new StreamClass(async function* () {
+      const iterator = iterate(source);
+      if (ordered) {
+        const inflight: Promise<unknown>[] = [];
+        for (;;) {
+          while (inflight.length < maxConcurrency) {
+            const { value, done } = await iterator.next();
+            if (done) break;
+            inflight.push(isFailure(value) ? Promise.resolve(value) : runOne(value as never));
+          }
+          if (inflight.length === 0) return;
+          yield (await inflight.shift()!) as never;
+        }
+      } else {
+        // Completion order: race a tagged window, refill as slots free up.
+        const window = new Map<number, Promise<[number, unknown]>>();
+        let nextId = 0;
+        let exhausted = false;
+        for (;;) {
+          while (!exhausted && window.size < maxConcurrency) {
+            const { value, done } = await iterator.next();
+            if (done) exhausted = true;
+            else {
+              const id = nextId++;
+              const run = isFailure(value) ? Promise.resolve(value) : runOne(value as never);
+              window.set(
+                id,
+                run.then((out) => [id, out]),
+              );
+            }
+          }
+          if (window.size === 0) return;
+          const [id, out] = await Promise.race(window.values());
+          window.delete(id);
+          yield out as never;
+        }
       }
     }) as never;
   }
