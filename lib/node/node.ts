@@ -110,6 +110,12 @@ export interface NodeHandle {
   cast(to: string, subject: string, payload?: unknown): void;
   /** Says bye to peers and closes the transport — Elixir's `Node.stop/0`. */
   stop(): void;
+  /**
+   * Registers a live introspection source under `name` — what `sys.node.info` (and thus an
+   * observer dashboard) reports. `serve()` calls this for you; call it yourself to surface
+   * any custom unit. Returns the un-register.
+   */
+  inspect(name: string, report: () => Record<string, unknown>): () => void;
 }
 
 /**
@@ -176,6 +182,7 @@ export function start(name: string, transport: Transport): NodeHandle {
   const groups = new Map<string, Set<string>>(); // group -> members (peers and self)
   const myGroups = new Set<string>();
   const roundRobin = new Map<string, number>();
+  const inspectors = new Map<string, () => Record<string, unknown>>();
   let ref = 0;
   let alive = true;
 
@@ -252,6 +259,15 @@ export function start(name: string, transport: Transport): NodeHandle {
   };
   transport.onFrame((frame) => receive(frame));
   transport.send({ kind: 'hello', from: name });
+
+  // The observer protocol — one subject any node (or a browser dashboard node) can call to
+  // read this node's live state. Erlang's :observer, reduced to data over the same wire.
+  handlers.set('sys.node.info', () => ({
+    name,
+    peers: [...peers],
+    groups: Object.fromEntries([...groups].map(([g, m]) => [g, [...m]])),
+    units: [...inspectors].map(([unit, report]) => ({ name: unit, ...report() })),
+  }));
 
   // Group-aware addressing: 'group:<name>' round-robins the members — call a SERVICE, not a
   // node. A frame addressed to SELF loops back through receive (transports skip own sends).
@@ -367,6 +383,10 @@ export function start(name: string, transport: Transport): NodeHandle {
         ...encode(payload),
       });
       return task.perform() as Task<T, AnyFailure>;
+    },
+    inspect(unit, report) {
+      inspectors.set(unit, report);
+      return () => inspectors.delete(unit);
     },
     cast(to, subject, payload) {
       // A group cast reaches EVERY member (pg-style broadcast); a node cast reaches one.

@@ -231,3 +231,38 @@ export function wsTransport(
     },
   };
 }
+
+/**
+ * Wraps a transport to observe every frame in and out — Erlang's `:dbg` seam, toggled like a
+ * flag. Pure passthrough; `onFrame(direction, frame)` sees a structured clone-safe copy for
+ * logging, recording, or a live trace view. Compose it around any transport.
+ *
+ * ```ts
+ * import { memoryHub } from './node.ts';
+ *
+ * const log: string[] = [];
+ * const hub = memoryHub();
+ * const traced = traceTransport(hub.transport(), (dir, frame) => log.push(`${dir}:${frame.kind}`));
+ * traced.send({ kind: 'hello', from: 'a@traced' });
+ * log; // ['out:hello']
+ * ```
+ */
+export function traceTransport(
+  inner: Transport,
+  onFrame: (direction: 'in' | 'out', frame: Frame) => void,
+): Transport {
+  return {
+    send(frame) {
+      onFrame('out', frame);
+      inner.send(frame);
+    },
+    onFrame(handler) {
+      inner.onFrame((frame) => {
+        onFrame('in', frame);
+        handler(frame);
+      });
+    },
+    onReopen: inner.onReopen ? (cb) => inner.onReopen!(cb) : undefined,
+    close: inner.close ? () => inner.close!() : undefined,
+  };
+}

@@ -17,7 +17,7 @@ export {
 // length-prefixed, ETF-in-spirit (Erlang never base64s its distribution); jsonCodec is the
 // devtools-readable reference. The relay hub lives in ./hub.ts, deliberately OUTSIDE this
 // barrel: it stands on the `ws` package, and the barrel stays browser-safe.
-export { wsTransport, binaryCodec, jsonCodec, type Codec } from './ws.ts';
+export { wsTransport, traceTransport, binaryCodec, jsonCodec, type Codec } from './ws.ts';
 
 // Hot code upgrades: Erlang's release mechanics on web standards — import() as the code
 // server, run-to-completion as suspend/resume, codeChange as code_change/3, and the

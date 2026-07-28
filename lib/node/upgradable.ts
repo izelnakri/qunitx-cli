@@ -254,6 +254,12 @@ export function serve<S>(node: NodeHandle, name: string, behavior: Behavior<S>):
   };
   exitPorts.set(handle, { name, deliverExit });
   otherLinks.set(exitPorts.get(handle)!, links);
+  // Surface this unit to sys.node.info / the observer — version, mailbox depth, liveness.
+  node.inspect(name, () => ({
+    version: current.version,
+    mailboxDepth: queue.length + (pumping ? 1 : 0),
+    alive: unitAlive,
+  }));
   return handle;
 }
 
