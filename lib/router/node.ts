@@ -12,6 +12,7 @@
  * ```
  */
 import { createServer, type IncomingMessage } from 'node:http';
+import { Readable } from 'node:stream';
 import type { Router } from './router.ts';
 
 const toRequest = (req: IncomingMessage): Request => {
@@ -46,9 +47,13 @@ export function nodeListen(
   const server = createServer((req, res) => {
     void app
       .fetch(toRequest(req))
-      .then(async (response) => {
+      .then((response) => {
         res.writeHead(response.status, Object.fromEntries(response.headers));
-        res.end(response.body ? Buffer.from(await response.arrayBuffer()) : undefined);
+        // STREAM the body — never buffer it. This is what makes Server-Sent Events and large
+        // responses work on Node exactly as they do under Deno.serve: each chunk flushes as the
+        // handler's ReadableStream produces it, with node:stream handling backpressure.
+        if (response.body) Readable.fromWeb(response.body as never).pipe(res);
+        else res.end();
       })
       .catch(() => {
         res.writeHead(500, { 'content-type': 'application/json' });
