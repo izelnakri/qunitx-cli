@@ -74,6 +74,19 @@ module('Node | memory cluster', () => {
     assert.deepEqual(downs, ['b@memory'], 'the monitor fired on bye');
     a.stop();
   });
+
+  test('monitorNodes reports both nodeup and nodedown (net_kernel.monitor_nodes)', async (assert) => {
+    const hub = Node.memoryHub();
+    const a = Node.start('a@memory', hub.transport());
+    const events: string[] = [];
+    a.monitorNodes(({ node, status }) => void events.push(`${status}:${node}`));
+    const b = Node.start('b@memory', hub.transport()); // joins → nodeup
+    await new Promise((r) => setTimeout(r, 10));
+    b.stop(); // says bye → nodedown
+    await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(events, ['up:b@memory', 'down:b@memory'], 'up then down, in order');
+    a.stop();
+  });
 });
 
 module('Node | worker transport', () => {

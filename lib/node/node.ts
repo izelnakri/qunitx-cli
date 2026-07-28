@@ -137,6 +137,14 @@ export interface NodeHandle {
   ping(name: string, timeoutMs?: number): Task<'pong' | 'pang', never>;
   /** Fires `fn(name)` when a peer says bye or its transport drops — Elixir's `Node.monitor/2`. Returns the un-monitor. */
   monitor(fn: (name: string) => void): () => void;
+  /**
+   * Reports every peer coming UP and going DOWN — Erlang's `:net_kernel.monitor_nodes(true)`
+   * (`{nodeup, node}` / `{nodedown, node}`). Unlike {@link NodeHandle.monitor} (down only), this
+   * also fires on a first hello and on a reconnect, so membership-driven work — rebalancing a
+   * key range onto a newly-joined host, warming a cache — can react to scale-up too. Returns the
+   * un-monitor.
+   */
+  monitorNodes(fn: (event: { node: string; status: 'up' | 'down' }) => void): () => void;
   /** Registers the handler for a subject; the reply (value or Failure) travels back to callers. */
   handle(subject: string, handler: (payload: unknown, from: string) => unknown): void;
   /** Request/response with a deadline. `to` may be a node name, `'group:<name>'` (round-robin
@@ -228,6 +236,7 @@ export function start(
   const peers = new Set<string>();
   const handlers = new Map<string, (payload: unknown, from: string) => unknown>();
   const monitors = new Set<(name: string) => void>();
+  const nodeListeners = new Set<(event: { node: string; status: 'up' | 'down' }) => void>();
   const pending = new Map<number, (frame: Frame) => void>();
   // Membership + registry live in ONE convergent CRDT (ORSet of facts) — a dropped
   // join/register self-heals via anti-entropy, and a healed partition reconciles.
@@ -291,7 +300,10 @@ export function start(
   // entries are hidden at once and monitors fire; the CRDT is left intact so it recovers
   // cleanly if it returns.
   const declareDown = (peer: string): void => {
-    if (peers.delete(peer)) for (const fn of monitors) fn(peer);
+    if (peers.delete(peer)) {
+      for (const fn of monitors) fn(peer);
+      for (const fn of nodeListeners) fn({ node: peer, status: 'down' }); // Erlang nodedown
+    }
   };
   const inspectors = new Map<string, () => Record<string, unknown>>();
   let ref = 0;
@@ -314,6 +326,7 @@ export function start(
     if (frame.kind === 'hello') {
       if (!peers.has(frame.from)) {
         peers.add(frame.from);
+        for (const fn of nodeListeners) fn({ node: frame.from, status: 'up' }); // Erlang nodeup
         transport.send({ kind: 'hello', from: name, to: frame.from }); // answer so both sides list()
         // Hand the newcomer my full CRDT state — anti-entropy on join, so it converges at once.
         transport.send({
@@ -499,6 +512,10 @@ export function start(
     monitor(fn) {
       monitors.add(fn);
       return () => monitors.delete(fn);
+    },
+    monitorNodes(fn) {
+      nodeListeners.add(fn);
+      return () => nodeListeners.delete(fn);
     },
     handle: (subject, handler) => void handlers.set(subject, handler),
     call<T>(to: string, subject: string, payload?: unknown, timeoutMs = 5000) {
