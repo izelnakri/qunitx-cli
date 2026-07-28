@@ -39,6 +39,18 @@ export { cluster, type Cluster } from './cluster.ts';
 // Universal routing core over an injected per-peer link factory; meshNetwork is the in-process test rig.
 export { meshTransport, meshNetwork, type MeshLink } from './mesh.ts';
 
+// Convergent counters + LWW register map — riak_dt's emcntr/LWW family, for distributed
+// metrics, gauges, and settings that merge without coordination.
+export {
+  GCounter,
+  PNCounter,
+  LWWMap,
+  type GCounterState,
+  type PNCounterState,
+  type LWWEntry,
+  type LWWMapState,
+} from './counters.ts';
+
 // The delta-state OR-Set: the CRDT that makes membership/registry converge under frame loss
 // and partition heal (anti-entropy), the way Horde's registry does.
 export { ORSet, type Dot, type VersionVector, type CausalContext, type CrdtState } from './crdt.ts';
