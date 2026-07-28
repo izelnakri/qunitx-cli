@@ -12,11 +12,12 @@
  * test helper that runs everything runnable to completion). Telemetry mirrors Oban's:
  * `['jobs','execute','start'|'stop'|'exception']` with worker/queue/attempt metadata.
  *
- * Divergences, stated: recurring cron plugins are out of scope (schedule the next run from inside
- * a worker); and the executor is per-process — Oban coordinates competing nodes through Postgres
- * row locks, which a plain key-value {@link Store} cannot express. To run ONE queue across a
- * cluster, make the queue a singleton with the primitives already here: claim a registry key
- * (`node.register('jobs', 'runner', onConflict)`) and only `resumeQueue` while you own it.
+ * **Recurring cron** (Oban's Cron plugin): pass `cron` — each expression enqueues its job every
+ * matching UTC minute. Divergence: the executor is per-process — Oban coordinates competing nodes
+ * through Postgres row locks, which a plain key-value {@link Store} cannot express. To run ONE
+ * queue (or its cron) across a cluster, make it a singleton with the primitives already here:
+ * claim a registry key (`node.register('jobs', 'runner', onConflict)`) and only `resumeQueue`
+ * while you own it.
  *
  * ```ts
  * import { memoryStore } from '../node/index.ts';
@@ -33,7 +34,20 @@
  */
 import { isFailure } from '../result/failure.ts';
 import { execute as emit } from '../telemetry/telemetry.ts';
+import { cronMatch } from './cron.ts';
 import type { Store } from '../node/upgradable.ts';
+
+/** A recurring schedule entry — a cron expression mapped to the job it enqueues. */
+export interface CronEntry {
+  /** The worker to run on each fire. */
+  worker: string;
+  /** Arguments for each enqueued run. */
+  args?: unknown;
+  /** The queue to enqueue on (default 'default'). */
+  queue?: string;
+  /** Priority of the enqueued job (default 0). */
+  priority?: number;
+}
 
 /** A job's lifecycle state — Oban's states, minus its `cancelled` (a cancelled job is removed). */
 export type JobState = 'available' | 'scheduled' | 'executing' | 'retryable' | 'discarded';
@@ -118,10 +132,19 @@ export function jobQueue(options: {
   backoff?: (attempt: number) => number;
   pollMs?: number;
   keyPrefix?: string;
+  /** Recurring jobs — Oban's Cron plugin: a cron expression (UTC) enqueues its job each time it
+   *  matches. A schedule fires at most once per matching minute. Cron is out of scope for a
+   *  clustered singleton — run the queue's cron on ONE node (claim a registry key). Give an
+   *  expression a LIST of entries to run several workers on the same schedule (Oban allows duplicate
+   *  crontab rows; a record key can't repeat, so the array value is the JS-shaped equivalent). */
+  cron?: Record<string, CronEntry | CronEntry[]>;
+  /** Injectable wall-clock (epoch ms) — for deterministic scheduling/cron/backoff tests. */
+  now?: () => number;
 }): JobQueue {
   const queues = options.queues ?? { default: 10 };
   const backoff = options.backoff ?? ((attempt) => 1000 * attempt ** 4 + 15_000);
   const pollMs = options.pollMs ?? 50;
+  const now = options.now ?? (() => Date.now());
   const prefix = options.keyPrefix ?? 'jobs';
   const jobKey = (id: string) => `${prefix}:${id}`;
   const INDEX = `${prefix}:index`;
@@ -178,13 +201,13 @@ export function jobQueue(options: {
       job.errors.push({
         attempt: job.attempt,
         error: isFailure(error) ? `${error.code}: ${error.message}` : String(error),
-        at: Date.now(),
+        at: now(),
       });
       if (job.attempt >= job.maxAttempts) {
         job.state = 'discarded'; // kept, with its errors — the dead-letter record
       } else {
         job.state = 'retryable';
-        job.scheduledAt = Date.now() + backoff(job.attempt);
+        job.scheduledAt = now() + backoff(job.attempt);
       }
       await persistJob(job);
     } finally {
@@ -192,12 +215,70 @@ export function jobQueue(options: {
     }
   };
 
-  // The scheduler: fill each queue's free slots with due jobs, most urgent first.
+  // Enqueue a job durably — shared by the public insert() and the cron scheduler.
+  const doInsert = async (
+    worker: string,
+    args: unknown,
+    opts: {
+      queue?: string;
+      maxAttempts?: number;
+      scheduleIn?: number;
+      scheduledAt?: number;
+      priority?: number;
+      unique?: boolean;
+    },
+  ): Promise<Job> => {
+    if (opts.unique) {
+      const signature = JSON.stringify([worker, args]);
+      for (const existing of jobs.values()) {
+        if (JSON.stringify([existing.worker, existing.args]) === signature) return existing;
+      }
+    }
+    const job: Job = {
+      id: crypto.randomUUID(),
+      worker,
+      args,
+      queue: opts.queue ?? 'default',
+      state: opts.scheduleIn || opts.scheduledAt ? 'scheduled' : 'available',
+      attempt: 0,
+      maxAttempts: opts.maxAttempts ?? 3,
+      priority: opts.priority ?? 0,
+      scheduledAt: opts.scheduledAt ?? (opts.scheduleIn ? now() + opts.scheduleIn : 0),
+      errors: [],
+    };
+    jobs.set(job.id, job);
+    await persistJob(job); // durable BEFORE the caller is told "queued"
+    await persistIndex();
+    queueMicrotask(tick); // run it now if a slot is free — the poll is only the backstop
+    return job;
+  };
+
+  // Cron: at most one enqueue per schedule per matching UTC minute (tracked by minute bucket).
+  const cronFired = new Map<string, number>();
+  const evaluateCron = (clock: number): void => {
+    if (!options.cron) return;
+    const minute = Math.floor(clock / 60000);
+    const at = new Date(clock);
+    for (const [expr, value] of Object.entries(options.cron)) {
+      if (cronFired.get(expr) === minute || !cronMatch(expr, at)) continue;
+      cronFired.set(expr, minute);
+      for (const entry of Array.isArray(value) ? value : [value]) {
+        void doInsert(entry.worker, entry.args ?? {}, {
+          queue: entry.queue,
+          priority: entry.priority,
+          unique: true, // a second tick in the same minute can't double-enqueue
+        });
+      }
+    }
+  };
+
+  // The scheduler: fire due cron schedules, then fill each queue's free slots, most urgent first.
   const tick = (): void => {
     if (!alive) return;
-    const now = Date.now();
+    const clock = now();
+    evaluateCron(clock);
     const due = [...jobs.values()]
-      .filter((job) => runnable(job, now))
+      .filter((job) => runnable(job, clock))
       .sort((a, b) => a.priority - b.priority || a.scheduledAt - b.scheduledAt);
     for (const job of due) {
       const limit = queues[job.queue] ?? queues.default ?? 10;
@@ -212,29 +293,7 @@ export function jobQueue(options: {
   return {
     async insert(worker, args = {}, opts = {}) {
       await loaded;
-      if (opts.unique) {
-        const signature = JSON.stringify([worker, args]);
-        for (const existing of jobs.values()) {
-          if (JSON.stringify([existing.worker, existing.args]) === signature) return existing;
-        }
-      }
-      const job: Job = {
-        id: crypto.randomUUID(),
-        worker,
-        args,
-        queue: opts.queue ?? 'default',
-        state: opts.scheduleIn || opts.scheduledAt ? 'scheduled' : 'available',
-        attempt: 0,
-        maxAttempts: opts.maxAttempts ?? 3,
-        priority: opts.priority ?? 0,
-        scheduledAt: opts.scheduledAt ?? (opts.scheduleIn ? Date.now() + opts.scheduleIn : 0),
-        errors: [],
-      };
-      jobs.set(job.id, job);
-      await persistJob(job); // durable BEFORE the caller is told "queued"
-      await persistIndex();
-      queueMicrotask(tick); // run it now if a slot is free — the poll is only the backstop
-      return job;
+      return doInsert(worker, args, opts);
     },
     job: (id) => jobs.get(id),
     async cancelJob(id) {
@@ -250,9 +309,9 @@ export function jobQueue(options: {
       await loaded;
       for (;;) {
         tick();
-        const now = Date.now();
+        const clock = now();
         const busy = [...executing.values()].some((count) => count > 0);
-        const pending = [...jobs.values()].some((job) => runnable(job, now));
+        const pending = [...jobs.values()].some((job) => runnable(job, clock));
         if (!busy && !pending) return;
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
