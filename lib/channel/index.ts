@@ -13,12 +13,18 @@ export {
   type JoinResult,
 } from './channel.ts';
 
-// The WebSocket edge: serveSocket bridges a client wire into the server; channelClient is the
-// browser-side handle with heartbeat + auto-rejoin; webSocketWire adapts a native WebSocket.
+// The WebSocket edge: serveSocket bridges a client wire into the server (with slow-client +
+// inbound-throttle guards); channelClient is the browser-side handle with heartbeat + auto-rejoin;
+// webSocketWire adapts a native WebSocket with a codec seam (JSON reference, binary optional).
+// The ws SERVER binding lives in ./ws.ts, deliberately OUTSIDE this barrel: it stands on the `ws`
+// package, and the barrel stays browser-safe.
 export {
   serveSocket,
   channelClient,
   webSocketWire,
+  jsonWireCodec,
+  binaryWireCodec,
   type Wire,
+  type WireCodec,
   type ChannelClient,
 } from './client.ts';

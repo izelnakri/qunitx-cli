@@ -22,6 +22,9 @@
  * ```
  */
 import type { ChannelServer, JoinResult } from './channel.ts';
+import { execute as emit } from '../telemetry/telemetry.ts';
+import { binaryCodec } from '../node/ws.ts';
+import type { Frame } from '../node/node.ts';
 
 /** An abstract bidirectional message pipe — a WebSocket, a MessagePort, or an in-memory link. */
 export interface Wire {
@@ -31,6 +34,8 @@ export interface Wire {
   onMessage(handler: (msg: unknown) => void): void;
   /** Register a handler for the pipe closing (a real socket's `close` event), if the pipe reports it. */
   onClose?(handler: () => void): void;
+  /** Bytes/messages queued but not yet flushed to the peer (a WebSocket's `bufferedAmount`), if known. */
+  pending?(): number;
   /** Close the pipe. */
   close(): void;
 }
@@ -60,19 +65,50 @@ let socketSeq = 0;
  * node.stop();
  * ```
  */
-export function serveSocket(server: ChannelServer, wire: Wire): () => void {
+export function serveSocket(
+  server: ChannelServer,
+  wire: Wire,
+  options: {
+    /** Disconnect a client whose outbound backlog (`wire.pending()`) exceeds this — the Phoenix
+     *  slow-client policy: a consumer that can't keep up is dropped, not allowed to grow an
+     *  unbounded queue. Emits `['channel','slow-client']` telemetry and calls `onSlowClient`. */
+    maxPending?: number;
+    /** Fired when a slow client is dropped. */
+    onSlowClient?: () => void;
+    /** Inbound throttle — anything with `tryAcquire()` (a `rateLimiter` from the node barrel).
+     *  An `event` beyond the limit is answered `{ error: 'throttled' }` and never reaches
+     *  `handleIn`. */
+    inbound?: { tryAcquire(n?: number): boolean };
+  } = {},
+): () => void {
   const id = `sock:${++socketSeq}`;
+  let dropped = false;
+  const drop = (): void => {
+    if (dropped) return;
+    dropped = true;
+    conn.disconnect();
+    wire.close();
+    emit(['channel', 'slow-client'], { pending: wire.pending?.() ?? 0 }, { socket: id });
+    options.onSlowClient?.();
+  };
   const conn = server.connect({
     id,
-    push: (topic, event, payload) => wire.send({ t: 'push', topic, event, payload }),
+    push: (topic, event, payload) => {
+      // The slow-client guard: a backlog past maxPending means the client isn't draining.
+      if (options.maxPending !== undefined && (wire.pending?.() ?? 0) > options.maxPending)
+        return drop();
+      wire.send({ t: 'push', topic, event, payload });
+    },
   });
   wire.onMessage((raw) => {
     const m = raw as Inbound;
     if (m.t === 'join')
       wire.send({ t: 'reply', ref: m.ref, result: conn.join(m.topic, m.payload) });
-    else if (m.t === 'event')
+    else if (m.t === 'event') {
+      if (options.inbound && !options.inbound.tryAcquire())
+        return wire.send({ t: 'reply', ref: m.ref, result: { error: 'throttled' } });
       wire.send({ t: 'reply', ref: m.ref, result: conn.push(m.topic, m.event, m.payload) ?? null });
-    else if (m.t === 'leave') conn.leave(m.topic);
+    } else if (m.t === 'leave') conn.leave(m.topic);
     else if (m.t === 'hb') wire.send({ t: 'hb' });
   });
   wire.onClose?.(() => conn.disconnect()); // client dropped → free its subscriptions
@@ -200,35 +236,78 @@ export function channelClient(options: {
   };
 }
 
+/** How channel messages are serialized on a wire — the codec seam of {@link webSocketWire}. */
+export interface WireCodec {
+  /** Encode one message for the socket. */
+  encode(msg: unknown): string | Uint8Array;
+  /** Decode what arrived. */
+  decode(data: string | Uint8Array): unknown;
+}
+
 /**
- * Adapt a native `WebSocket` (a web standard — no dependency) into a {@link Wire}: JSON on the
- * wire, sends buffered until the socket opens. Pass `() => webSocketWire(url)` as
- * {@link channelClient}'s `connect` to talk to a server over a real socket.
+ * The reference codec: JSON text — readable in devtools, the default.
+ *
+ * ```ts
+ * jsonWireCodec.decode(jsonWireCodec.encode({ t: 'hb' }) as string); // { t: 'hb' }
+ * ```
+ */
+export const jsonWireCodec: WireCodec = {
+  encode: (msg) => JSON.stringify(msg),
+  decode: (data) => JSON.parse(typeof data === 'string' ? data : new TextDecoder().decode(data)),
+};
+
+/**
+ * The binary codec: the node leg's tagged, length-prefixed encoding (ETF-in-spirit — bytes cross
+ * as bytes, no base64 detour, smaller frames than JSON). Pass to {@link webSocketWire} on both
+ * ends for a binary channel wire.
+ *
+ * ```ts
+ * const wire = binaryWireCodec.encode({ t: 'push', topic: 'room:1' });
+ * (binaryWireCodec.decode(wire as Uint8Array) as { topic: string }).topic; // 'room:1'
+ * ```
+ */
+export const binaryWireCodec: WireCodec = {
+  // The node codec's encoder is structurally generic (tagged terms); Frame is its nominal type.
+  encode: (msg) => binaryCodec.encode(msg as Frame),
+  decode: (data) => binaryCodec.decode(data),
+};
+
+/**
+ * Adapt a native `WebSocket` (a web standard — no dependency) into a {@link Wire}: `codec` on the
+ * wire (JSON by default, {@link binaryWireCodec} for binary), sends buffered until the socket
+ * opens, and `pending()` = `bufferedAmount` (what the slow-client guard reads). Pass
+ * `() => webSocketWire(url)` as {@link channelClient}'s `connect` to talk to a server over a
+ * real socket.
  *
  * ```ts
  * typeof webSocketWire; // 'function'
  * ```
  */
-export function webSocketWire(url: string): Wire {
+export function webSocketWire(url: string, codec: WireCodec = jsonWireCodec): Wire {
   const socket = new WebSocket(url);
-  const backlog: string[] = [];
+  socket.binaryType = 'arraybuffer';
+  const backlog: (string | Uint8Array)[] = [];
   socket.addEventListener('open', () => {
     for (const msg of backlog.splice(0)) socket.send(msg);
   });
   return {
     send(msg) {
-      const data = JSON.stringify(msg);
+      const data = codec.encode(msg);
       if (socket.readyState === WebSocket.OPEN) socket.send(data);
       else backlog.push(data);
     },
     onMessage(handler) {
-      socket.addEventListener('message', (event) =>
-        handler(JSON.parse((event as MessageEvent).data)),
-      );
+      socket.addEventListener('message', (event) => {
+        const data = (event as MessageEvent).data;
+        handler(
+          codec.decode(typeof data === 'string' ? data : new Uint8Array(data as ArrayBuffer)),
+        );
+      });
     },
     onClose(handler) {
       socket.addEventListener('close', () => handler());
     },
+    pending: () => socket.bufferedAmount,
     close: () => socket.close(),
   };
 }
