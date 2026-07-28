@@ -34,6 +34,10 @@ export { rateLimiter, type RateLimiter } from './rate-limiter.ts';
 // manager diffs it against the connected set to converge the topology.
 export { cluster, type Cluster } from './cluster.ts';
 
+// Mesh transport: talk peer-to-peer instead of through the relay hub — retires the hub SPOF.
+// Universal routing core over an injected per-peer link factory; meshNetwork is the in-process test rig.
+export { meshTransport, meshNetwork, type MeshLink } from './mesh.ts';
+
 // The delta-state OR-Set: the CRDT that makes membership/registry converge under frame loss
 // and partition heal (anti-entropy), the way Horde's registry does.
 export { ORSet, type Dot, type VersionVector, type CausalContext, type CrdtState } from './crdt.ts';
