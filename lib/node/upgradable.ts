@@ -144,7 +144,12 @@ const exitPorts = new WeakMap<object, ExitPort>();
  * cli.stop();
  * ```
  */
-export function serve<S>(node: NodeHandle, name: string, behavior: Behavior<S>): Served<S> {
+export function serve<S>(
+  node: NodeHandle,
+  name: string,
+  behavior: Behavior<S>,
+  options: { maxMailbox?: number } = {},
+): Served<S> {
   let current = behavior;
   let state: S = behavior.init ? behavior.init() : (undefined as S);
 
@@ -174,15 +179,25 @@ export function serve<S>(node: NodeHandle, name: string, behavior: Behavior<S>):
   };
 
   const register = (key: string) =>
-    node.handle(`${name}.${key}`, (payload, from) =>
-      enqueue(async () => {
+    node.handle(`${name}.${key}`, (payload, from) => {
+      // Load shedding — BEAM mailboxes are unbounded (a real footgun under overload); this is
+      // the disciplined floor. A full mailbox rejects new work as a declared Overloaded, which
+      // crosses the wire as a failure the caller can back off on, instead of growing without
+      // bound. The reply is a VALUE (a Failure); call() on the far side rejects with it.
+      if (options.maxMailbox !== undefined && queue.length >= options.maxMailbox) {
+        return new Failure('Overloaded', `${name} mailbox full (${queue.length})`, {
+          unit: name,
+          depth: queue.length,
+        });
+      }
+      return enqueue(async () => {
         if (!unitAlive)
           return downReason ?? new Failure('UnitDown', `${name} is down`, { name, from: name });
         const outcome = await current.handlers[key](state, payload, from);
         state = outcome.state;
         return outcome.reply;
-      }),
-    );
+      });
+    });
 
   const apply = (next: Behavior<S>): string => {
     const fromVersion = current.version;

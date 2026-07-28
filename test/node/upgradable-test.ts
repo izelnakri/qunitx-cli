@@ -242,3 +242,43 @@ module('Node | links', () => {
     cli.stop();
   });
 });
+
+// ── maxMailbox — load shedding, BEAM's unbounded-mailbox footgun made disciplined ─
+
+module('Node | mailbox backpressure', () => {
+  test('a full mailbox sheds new work as a declared Overloaded', async (assert) => {
+    const hub = Node.memoryHub();
+    const svc = Node.start('svc@memory', hub.transport());
+    const cli = Node.start('cli@memory', hub.transport());
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    Node.serve(
+      svc,
+      'slow',
+      {
+        version: '1',
+        init: () => 0,
+        handlers: { work: async (s) => (await gate, { state: s + 1, reply: 'ok' }) },
+      },
+      { maxMailbox: 2 }, // 1 in flight + at most 2 queued
+    );
+
+    // Fire five concurrently: #1 pumps, #2 #3 queue (depth 1,2), #4 #5 see depth>=2 → shed.
+    const pending = [1, 2, 3, 4, 5].map(() => cli.call('svc@memory', 'slow.work', null).result());
+    await new Promise((r) => setTimeout(r, 20)); // let all five reach the mailbox and settle depth
+    release(); // NOW let the queued handlers finish (releasing before awaiting avoids deadlock)
+    const outcomes = await Promise.all(pending);
+
+    const shed = outcomes.filter((o) => Failure.is(o) && (o as Failure.Any).code === 'Overloaded');
+    const ok = outcomes.filter((o) => o === 'ok');
+    assert.strictEqual(shed.length, 2, 'two requests shed rather than queued unboundedly');
+    assert.strictEqual(ok.length, 3, 'the in-flight one plus the two that fit were served');
+    assert.strictEqual(
+      (shed[0] as Failure.Any).data.unit,
+      'slow',
+      'the shed failure names the overloaded unit',
+    );
+    svc.stop();
+    cli.stop();
+  });
+});

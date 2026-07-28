@@ -374,6 +374,13 @@ export function start(name: string, transport: Transport): NodeHandle {
           throw new Failure('NoGroupMembers', `no members in ${to}`, { group: to });
         });
       }
+      task.perform(); // sets up the reply resolver NOW, before the frame goes out
+      // Claim the eager reply's rejection. call() is request/response — the returned Task is
+      // always consumed (await or .result()) — but a FAST rejection (e.g. an Overloaded shed)
+      // can settle before a lazy `.result()` attaches its handler, which would surface as a
+      // spurious unhandled rejection. This passive handler marks it handled; the caller's own
+      // await/.result() still sees the settlement (a Task memoises to all consumers).
+      task.then(undefined, () => {});
       dispatch({
         kind: 'call',
         from: name,
@@ -382,7 +389,7 @@ export function start(name: string, transport: Transport): NodeHandle {
         ref: task.ref,
         ...encode(payload),
       });
-      return task.perform() as Task<T, AnyFailure>;
+      return task as Task<T, AnyFailure>;
     },
     inspect(unit, report) {
       inspectors.set(unit, report);
