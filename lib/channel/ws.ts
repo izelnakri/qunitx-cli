@@ -18,6 +18,7 @@
  * ```
  */
 import { WebSocketServer, type WebSocket as WsSocket } from 'ws';
+import type { Server } from 'node:http';
 import { serveSocket, jsonWireCodec, type Wire, type WireCodec } from './client.ts';
 import type { ChannelServer } from './channel.ts';
 
@@ -37,14 +38,24 @@ import type { ChannelServer } from './channel.ts';
 export function serveChannelsOverWs(
   server: ChannelServer,
   options: {
-    port: number;
+    port?: number;
+    /**
+     * Attach to an existing `http`/`https.Server` instead of binding `port` — how Channels run
+     * over **TLS (`wss://`)**: pass an `https.createServer({ cert, key })` and connect clients
+     * with `webSocketWire('wss://…')` (the native `WebSocket` does TLS from the URL). Lib doesn't
+     * manage certs; you bring the server and own its lifecycle. Also lets Channels and a REST
+     * router share ONE port (attach both to the same server).
+     */
+    server?: Server;
     codec?: WireCodec;
     maxPending?: number;
     inbound?: () => { tryAcquire(n?: number): boolean };
   },
 ): { port: () => number; close: () => Promise<void> } {
   const codec = options.codec ?? jsonWireCodec;
-  const wss = new WebSocketServer({ port: options.port });
+  const wss = new WebSocketServer(
+    options.server ? { server: options.server } : { port: options.port ?? 0 },
+  );
 
   wss.on('connection', (socket: WsSocket) => {
     const wire: Wire = {
@@ -72,11 +83,11 @@ export function serveChannelsOverWs(
   });
 
   return {
-    port: () => (wss.address() as { port: number }).port,
+    port: () => ((options.server ?? wss).address() as { port: number }).port,
     close: () =>
       new Promise<void>((done) => {
         for (const client of wss.clients) client.terminate();
-        wss.close(() => done());
+        wss.close(() => done()); // closes the WS layer; an injected server stays the caller's to close
       }),
   };
 }

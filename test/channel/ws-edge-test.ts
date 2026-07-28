@@ -64,4 +64,34 @@ module('Channel | WebSocket end-to-end', () => {
     await edge.close();
     node.stop();
   });
+  test('serves Channels over an INJECTED http server (the wss path uses https identically)', async (assert) => {
+    const { createServer } = await import('node:http');
+    const node = Node.start('gw@wsi', Node.memoryHub().transport());
+    const bus = pubsub(node);
+    const server = channelServer(node, bus, {});
+    const http = createServer();
+    await new Promise<void>((r) => http.listen(0, r));
+    const edge = serveChannelsOverWs(server, { server: http });
+    const client = channelClient({
+      connect: () => webSocketWire(`ws://127.0.0.1:${edge.port()}`),
+      heartbeatMs: false,
+    });
+    const got: unknown[] = [];
+    client.on('room:1', 'msg', (p) => got.push(p));
+    try {
+      assert.deepEqual(await client.join('room:1'), { ok: true }, 'joined over the shared server');
+      bus.broadcast('room:1', 'msg', 'via-injected');
+      await settle();
+      assert.deepEqual(
+        got,
+        ['via-injected'],
+        'delivery works — the wss path is identical with https',
+      );
+    } finally {
+      client.close();
+      await edge.close();
+      await new Promise<void>((r) => http.close(() => r())); // the server is ours to close
+      node.stop();
+    }
+  });
 });
