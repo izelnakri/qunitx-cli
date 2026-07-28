@@ -192,3 +192,157 @@ module('Raft | CP consensus', () => {
     nodes.forEach((n) => n.stop());
   });
 });
+
+module('Raft | compaction + membership', () => {
+  test('the log compacts past snapshotThreshold and the state machine stays exact', async (assert) => {
+    const hub = partitionableHub();
+    const names = ['r0@rc', 'r1@rc', 'r2@rc'];
+    const nodes = names.map((n) => Node.start(n, hub.transport(n)));
+    const members = names.map((_, i) =>
+      raft<number[]>(nodes[i], {
+        peers: names,
+        init: () => [],
+        apply: (c, s) => ({ state: [...s, c as number], reply: (s as number[]).length + 1 }),
+        electionTimeoutMs: () => TIMEOUTS[i] + Math.random() * 40,
+        heartbeatMs: 25,
+        snapshotThreshold: 5,
+      }),
+    );
+    await until(() => members.some((m) => m.role() === 'leader'));
+    const leader = members.find((m) => m.role() === 'leader')!;
+
+    for (let n = 1; n <= 12; n++) await leader.propose(n);
+    assert.true(
+      await until(() => members.every((m) => m.state().length === 12)),
+      'all 12 commands applied everywhere',
+    );
+    assert.true(
+      await until(() => members.every((m) => m.snapshotIndex() > 0)),
+      'every member compacted its log (snapshots taken)',
+    );
+    for (const m of members)
+      assert.deepEqual(
+        m.state(),
+        Array.from({ length: 12 }, (_, i) => i + 1),
+        'state is exact after compaction',
+      );
+    members.forEach((m) => m.stop());
+    nodes.forEach((n) => n.stop());
+  });
+
+  test('a member cut off past compaction catches up via InstallSnapshot', async (assert) => {
+    const hub = partitionableHub();
+    const names = ['r0@rs', 'r1@rs', 'r2@rs'];
+    const nodes = names.map((n) => Node.start(n, hub.transport(n)));
+    const members = names.map((_, i) =>
+      raft<number[]>(nodes[i], {
+        peers: names,
+        init: () => [],
+        apply: (c, s) => ({ state: [...s, c as number] }),
+        electionTimeoutMs: () => TIMEOUTS[i] + Math.random() * 40,
+        heartbeatMs: 25,
+        snapshotThreshold: 4,
+      }),
+    );
+    await until(() => members.some((m) => m.role() === 'leader'));
+    const leader = members.find((m) => m.role() === 'leader')!;
+    const leaderIdx = members.indexOf(leader);
+    const laggard = (leaderIdx + 1) % 3;
+
+    await leader.propose(1);
+    hub.partition([names[laggard]]); // one follower falls behind
+    // The majority commits enough to compact PAST the laggard's log.
+    for (let n = 2; n <= 10; n++) await leader.propose(n);
+    assert.true(leader.snapshotIndex() > 0, 'the leader compacted while the laggard was away');
+
+    hub.heal();
+    assert.true(await until(() => members[laggard].state().length === 10), 'the laggard caught up');
+    assert.true(
+      members[laggard].snapshotIndex() > 0,
+      'and it got there via InstallSnapshot (its missing entries were compacted away)',
+    );
+    members.forEach((m) => m.stop());
+    nodes.forEach((n) => n.stop());
+  });
+
+  test('addMember: a fourth member joins, catches up, and COUNTS toward the majority', async (assert) => {
+    const hub = partitionableHub();
+    const names = ['r0@rm', 'r1@rm', 'r2@rm'];
+    const nodes = names.map((n) => Node.start(n, hub.transport(n)));
+    const make = (i: number, peers: string[]) =>
+      raft<number[]>(nodes[i], {
+        peers,
+        init: () => [],
+        apply: (c, s) => ({ state: [...s, c as number] }),
+        electionTimeoutMs: () => TIMEOUTS[i % 3] + 120 + Math.random() * 40,
+        heartbeatMs: 25,
+        group: 'm',
+      });
+    const members = names.map((_, i) => make(i, names));
+    await until(() => members.some((m) => m.role() === 'leader'));
+    const leader = members.find((m) => m.role() === 'leader')!;
+    await leader.propose(1);
+
+    // Boot the new member FIRST (current membership + itself), then commit the config change.
+    const n3 = Node.start('r3@rm', hub.transport('r3@rm'));
+    nodes.push(n3);
+    const m3 = raft<number[]>(n3, {
+      peers: [...names, 'r3@rm'],
+      init: () => [],
+      apply: (c, s) => ({ state: [...s, c as number] }),
+      electionTimeoutMs: () => 600, // patient — it should be led, not lead
+      heartbeatMs: 25,
+      group: 'm',
+    });
+    assert.deepEqual(await leader.addMember('r3@rm'), [...names, 'r3@rm'], 'the config committed');
+    await leader.propose(2);
+    assert.true(await until(() => m3.state().length === 2), 'the new member caught up and applies');
+
+    // The proof it COUNTS: kill one original follower — 3 of 4 remain, still a majority.
+    const follower = members.find((m) => m.role() !== 'leader')!;
+    const fIdx = members.indexOf(follower);
+    follower.stop();
+    nodes[fIdx].stop();
+    await leader.propose(3);
+    assert.true(
+      await until(() => m3.state().length === 3),
+      'the group of four kept committing with one member down — the newcomer is in the quorum',
+    );
+    [...members.filter((_, i) => i !== fIdx), m3].forEach((m) => m.stop());
+    nodes.forEach((n, i) => i !== fIdx && n.stop());
+  });
+
+  test('removeMember: the group shrinks and keeps committing under the smaller majority', async (assert) => {
+    const hub = partitionableHub();
+    const names = ['r0@rr', 'r1@rr', 'r2@rr'];
+    const nodes = names.map((n) => Node.start(n, hub.transport(n)));
+    const members = names.map((_, i) =>
+      raft<number[]>(nodes[i], {
+        peers: names,
+        init: () => [],
+        apply: (c, s) => ({ state: [...s, c as number] }),
+        electionTimeoutMs: () => TIMEOUTS[i] + Math.random() * 40,
+        heartbeatMs: 25,
+      }),
+    );
+    await until(() => members.some((m) => m.role() === 'leader'));
+    const leader = members.find((m) => m.role() === 'leader')!;
+    const gone = members.find((m) => m.role() !== 'leader')!;
+    const goneIdx = members.indexOf(gone);
+    const goneName = names[goneIdx];
+
+    const newMembers = await leader.removeMember(goneName);
+    assert.false(newMembers.includes(goneName), 'the config committed without the removed member');
+    gone.stop();
+    nodes[goneIdx].stop(); // it leaves for real
+
+    await leader.propose(7);
+    const rest = members.filter((_, i) => i !== goneIdx);
+    assert.true(
+      await until(() => rest.every((m) => m.state().length === 1)),
+      'the two survivors commit under the 2-member majority',
+    );
+    rest.forEach((m) => m.stop());
+    nodes.forEach((n, i) => i !== goneIdx && n.stop());
+  });
+});
