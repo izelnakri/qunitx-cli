@@ -82,3 +82,68 @@ module('Node | registry', () => {
     cli.stop();
   });
 });
+
+// ── {:via, Registry} — split-brain closure ───────────────────────────────────
+
+module('Node | via registration', () => {
+  const settle = (ms = 20) => new Promise((r) => setTimeout(r, ms));
+
+  test('two nodes serve the SAME via key → exactly one survives; the loser is torn down', async (assert) => {
+    const hub = Node.memoryHub();
+    const zed = Node.start('zed@memory', hub.transport());
+    const abe = Node.start('abe@memory', hub.transport());
+    const cli = Node.start('cli@memory', hub.transport());
+    await settle();
+
+    // Both start a unit under the SAME registry key — a split-brain race.
+    const behavior = (who: string): Node.Behavior<number> => ({
+      version: '1',
+      init: () => 0,
+      handlers: { who: (s) => ({ state: s, reply: who }) },
+    });
+    const zedUnit = Node.serve(zed, 'room:lobby', behavior('zed'), {
+      via: { registry: 'rooms', key: 'lobby' },
+    });
+    const abeUnit = Node.serve(abe, 'room:lobby', behavior('abe'), {
+      via: { registry: 'rooms', key: 'lobby' },
+    });
+    await settle();
+
+    // The smaller name (abe) wins; zed's unit self-terminated.
+    assert.true(zedUnit.isAlive() !== abeUnit.isAlive(), 'exactly one is alive');
+    assert.true(abeUnit.isAlive(), 'the smaller-named node kept the key');
+    assert.false(zedUnit.isAlive(), 'the loser tore itself down (UnitDown/Conflict)');
+    assert.strictEqual(
+      cli.whereis('rooms', 'lobby'),
+      'abe@memory',
+      'everyone converges on the survivor',
+    );
+    assert.strictEqual(
+      await cli.call('via:rooms/lobby', 'room:lobby.who'),
+      'abe',
+      'routes to the survivor',
+    );
+    zed.stop();
+    abe.stop();
+    cli.stop();
+  });
+
+  test('exit() on a via unit releases the key', async (assert) => {
+    const hub = Node.memoryHub();
+    const host = Node.start('host@memory', hub.transport());
+    const cli = Node.start('cli@memory', hub.transport());
+    const unit = Node.serve(
+      host,
+      'room:x',
+      { version: '1', init: () => 0, handlers: {} },
+      { via: { registry: 'rooms', key: 'x' } },
+    );
+    await settle();
+    assert.strictEqual(cli.whereis('rooms', 'x'), 'host@memory');
+    unit.exit();
+    await settle();
+    assert.strictEqual(cli.whereis('rooms', 'x'), null, 'exit unregistered the key');
+    host.stop();
+    cli.stop();
+  });
+});

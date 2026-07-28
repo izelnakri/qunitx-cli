@@ -110,8 +110,14 @@ export interface NodeHandle {
    * Claims `key` in `registry` for this node — Elixir's `Registry.register/3` (unique keys).
    * A single owner per key: on a conflict the lexicographically-smallest node name wins, so
    * every node converges on the same owner. Released on bye/nodedown.
+   *
+   * Distributed registration is OPTIMISTIC (unlike Elixir's local Registry, which rejects a
+   * duplicate synchronously — impossible under gossip lag). If a smaller-named node later
+   * claims the same key, THIS node loses it and `onConflict` fires — the caller should tear
+   * down whatever it was serving under the key (see `serve`'s `via` option, which does this
+   * automatically). Callers then re-resolve via {@link NodeHandle.whereis} and retry.
    */
-  register(registry: string, key: string): void;
+  register(registry: string, key: string, onConflict?: () => void): void;
   /** Releases a key this node owns — Elixir's `Registry.unregister/2`. */
   unregister(registry: string, key: string): void;
   /** The node that owns `key` in `registry`, or `null` — Elixir's `Registry.lookup/2`. */
@@ -214,6 +220,7 @@ export function start(name: string, transport: Transport): NodeHandle {
   // deterministically (smallest node name) so every node converges. myKeys = what I own.
   const registries = new Map<string, Map<string, string>>();
   const myKeys = new Set<string>(); // "registry\u0000key"
+  const conflictHandlers = new Map<string, () => void>(); // rk -> fire when superseded
   const claim = (registry: string, key: string, owner: string): void => {
     if (!registries.has(registry)) registries.set(registry, new Map());
     const table = registries.get(registry)!;
@@ -274,6 +281,14 @@ export function start(name: string, transport: Transport): NodeHandle {
     } else if (frame.kind === 'leave') {
       memberLeft(frame.group!, frame.from);
     } else if (frame.kind === 'register') {
+      const rk = `${frame.registry}\u0000${frame.key}`;
+      // I am superseded if I hold this key and a SMALLER-named node now claims it.
+      if (myKeys.has(rk) && frame.from < name) {
+        myKeys.delete(rk);
+        const onConflict = conflictHandlers.get(rk);
+        conflictHandlers.delete(rk);
+        onConflict?.(); // the loser tears down its unit
+      }
       claim(frame.registry!, frame.key!, frame.from);
     } else if (frame.kind === 'unregister') {
       release(frame.registry!, frame.key!, frame.from);
@@ -408,13 +423,17 @@ export function start(name: string, transport: Transport): NodeHandle {
       transport.send({ kind: 'leave', from: name, group });
     },
     groupMembers: (group) => [...(groups.get(group) ?? [])],
-    register(registry, key) {
-      myKeys.add(`${registry} ${key}`);
+    register(registry, key, onConflict) {
+      const rk = `${registry} ${key}`;
+      myKeys.add(rk);
+      if (onConflict) conflictHandlers.set(rk, onConflict);
       claim(registry, key, name);
       transport.send({ kind: 'register', from: name, registry, key });
     },
     unregister(registry, key) {
-      myKeys.delete(`${registry} ${key}`);
+      const rk = `${registry} ${key}`;
+      myKeys.delete(rk);
+      conflictHandlers.delete(rk);
       release(registry, key, name);
       transport.send({ kind: 'unregister', from: name, registry, key });
     },

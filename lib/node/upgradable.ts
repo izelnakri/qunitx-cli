@@ -175,6 +175,12 @@ const exitPorts = new WeakMap<object, ExitPort>();
  * REMOTE node's running code — Node.js, Deno, or a browser tab alike, since `import()` and
  * run-to-completion are web standards.
  *
+ * With `{ via: { registry, key } }` the unit registers itself under that key (Elixir's
+ * `{:via, Registry, {Reg, key}}`): callers reach it as `via:<registry>/<key>`, and if a
+ * smaller-named node wins the same key the unit self-terminates (UnitDown) — optimistic-AP
+ * conflict resolution, so callers re-resolve to the survivor. `{ store }` makes its state
+ * durable (persist-before-ack + restore).
+ *
  * ```ts
  * import { start, memoryHub } from './node.ts';
  *
@@ -196,7 +202,12 @@ export function serve<S>(
   node: NodeHandle,
   name: string,
   behavior: Behavior<S>,
-  options: { maxMailbox?: number; store?: Store; storeKey?: string } = {},
+  options: {
+    maxMailbox?: number;
+    store?: Store;
+    storeKey?: string;
+    via?: { registry: string; key: string };
+  } = {},
 ): Served<S> {
   let current = behavior;
   let state: S = behavior.init ? behavior.init() : (undefined as S);
@@ -307,6 +318,7 @@ export function serve<S>(
     if (!unitAlive) return;
     unitAlive = false;
     downReason = reason;
+    if (options.via) node.unregister(options.via.registry, options.via.key); // release the name
     for (const peer of links) peer.deliverExit(name, reason);
     links.clear();
   };
@@ -334,6 +346,19 @@ export function serve<S>(
   };
   exitPorts.set(handle, { name, deliverExit });
   otherLinks.set(exitPorts.get(handle)!, links);
+  // {:via, Registry, {Reg, key}} — register the entity key, and self-terminate if a
+  // smaller-named node wins the same key (optimistic-AP conflict resolution). The loser's
+  // handlers stop answering (UnitDown); callers re-resolve via whereis to the survivor.
+  if (options.via) {
+    node.register(options.via.registry, options.via.key, () =>
+      down(
+        new Failure('Conflict', `${name} lost ${options.via!.key} to another node`, {
+          name,
+          key: options.via!.key,
+        }),
+      ),
+    );
+  }
   // Surface this unit to sys.node.info / the observer — version, mailbox depth, liveness.
   node.inspect(name, () => ({
     version: current.version,
