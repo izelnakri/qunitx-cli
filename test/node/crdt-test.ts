@@ -92,3 +92,34 @@ module('Node | ORSet CRDT', { concurrency: true }, () => {
     assert.deepEqual(c.values().sort(), expected, 'all three converge');
   });
 });
+
+module('Node | ORSet delta', { concurrency: true }, () => {
+  test('mergeDelta reconciles only its element — others are untouched', (assert) => {
+    const a = new ORSet('a@n');
+    const b = new ORSet('b@n');
+    b.add('keep');
+    a.add('x');
+    b.mergeDelta(a.delta('x'));
+    assert.deepEqual(b.values().sort(), ['keep', 'x'], 'keep survived a partial delta');
+  });
+
+  test('a delta of a removed element (empty dots) propagates the remove', (assert) => {
+    const a = new ORSet('a@n');
+    const b = new ORSet('b@n');
+    a.add('x');
+    b.mergeDelta(a.delta('x'));
+    a.remove('x');
+    b.mergeDelta(a.delta('x')); // empty dots + advanced context
+    assert.false(b.has('x'), 'the remove crossed as a delta');
+  });
+
+  test('delta broadcast + full-state anti-entropy agree', (assert) => {
+    const a = new ORSet('a@n');
+    const b = new ORSet('b@n');
+    a.add('x');
+    b.mergeDelta(a.delta('x'));
+    a.add('y');
+    b.merge(a.state()); // anti-entropy backstop
+    assert.deepEqual(b.values().sort(), ['x', 'y']);
+  });
+});
