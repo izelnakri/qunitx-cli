@@ -105,4 +105,34 @@ module('Node | mesh over real WebSockets', () => {
       await meshB2?.close(); // a failed assertion must NOT leak listeners (it hung CI for 25min)
     }
   });
+  test('attaches to an INJECTED http server (the wss/TLS path uses https the same way)', async (assert) => {
+    const { createServer } = await import('node:http');
+    const urls: Record<string, string> = {};
+    const httpA = createServer();
+    const httpB = createServer();
+    await new Promise<void>((r) => httpA.listen(0, r));
+    await new Promise<void>((r) => httpB.listen(0, r));
+    const meshA = wsMeshTransport('a@wss', { server: httpA, peers: () => urls, pollMs: 25 });
+    const meshB = wsMeshTransport('b@wss', { server: httpB, peers: () => urls, pollMs: 25 });
+    const a = Node.start('a@wss', meshA.transport);
+    const b = Node.start('b@wss', meshB.transport);
+    try {
+      b.handle('hi', () => 'from-b');
+      urls['a@wss'] = `ws://127.0.0.1:${meshA.port()}`;
+      urls['b@wss'] = `ws://127.0.0.1:${meshB.port()}`;
+      assert.true(await until(() => a.list().length === 1), 'connected over the injected server');
+      assert.equal(
+        await tryCall(a, 'b@wss', 'hi'),
+        'from-b',
+        'routes over the bring-your-own server',
+      );
+    } finally {
+      a.stop();
+      b.stop();
+      await meshA.close();
+      await meshB.close();
+      await new Promise<void>((r) => httpA.close(() => r())); // the server is OURS to close
+      await new Promise<void>((r) => httpB.close(() => r()));
+    }
+  });
 });

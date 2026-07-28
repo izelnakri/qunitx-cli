@@ -16,6 +16,7 @@
  * ```
  */
 import { WebSocketServer, type WebSocket as WsSocket } from 'ws';
+import type { Server } from 'node:http';
 import { meshTransport, webSocketMeshLink } from './mesh.ts';
 import { binaryCodec, type Codec } from './ws.ts';
 import type { Transport, Frame } from './node.ts';
@@ -37,14 +38,24 @@ import type { Transport, Frame } from './node.ts';
 export function wsMeshTransport(
   self: string,
   options: {
-    port: number;
+    port?: number;
+    /**
+     * Attach to an existing `http`/`https.Server` instead of binding `port` — this is how the
+     * mesh runs over **TLS (`wss://`)**: pass an `https.createServer({ cert, key })` here and
+     * give peers `wss://…` URLs (the {@link webSocketMeshLink} dialer already does TLS from a
+     * `wss` URL — the native `WebSocket` handles it). Lib doesn't manage certs; you bring the
+     * server, and you own its lifecycle (`close()` here shuts the socket layer, not your server).
+     */
+    server?: Server;
     peers: () => Record<string, string>;
     codec?: Codec;
     pollMs?: number;
   },
 ): { transport: Transport; port: () => number; close: () => Promise<void> } {
   const codec = options.codec ?? binaryCodec;
-  const wss = new WebSocketServer({ port: options.port });
+  const wss = new WebSocketServer(
+    options.server ? { server: options.server } : { port: options.port ?? 0 },
+  );
   let inbound: (frame: Frame) => void = () => {};
 
   // The listening half: every inbound socket's frames fan into the node. Frames carry `from`,
@@ -76,14 +87,15 @@ export function wsMeshTransport(
     close: () => inner.close?.(),
   };
 
+  const address = (): { port: number } => (options.server ?? wss).address() as { port: number };
   return {
     transport,
-    port: () => (wss.address() as { port: number }).port,
+    port: () => address().port,
     close: () =>
       new Promise<void>((done) => {
         inner.close?.();
         for (const client of wss.clients) client.terminate();
-        wss.close(() => done());
+        wss.close(() => done()); // closes the WS layer; an injected server stays the caller's to close
       }),
   };
 }
