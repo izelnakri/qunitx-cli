@@ -1,0 +1,265 @@
+/**
+ * `jobQueue` — Elixir's **Oban**: the durable background-job queue every production web service
+ * grows ("send this email, retry 3 times, run it at 9am"). Jobs are persisted through the
+ * {@link Store} seam BEFORE `insert` resolves (a `memoryStore` in tests, Postgres in production —
+ * the same durability contract as persist-before-ack actors), executed by named workers under
+ * per-queue concurrency limits, retried on failure with backoff until `maxAttempts` (then kept as
+ * `discarded`, errors attached), and **rescued after a crash**: a job found `executing` on load
+ * was orphaned by a dead process and runs again.
+ *
+ * Oban's surface, JS-shaped: `insert(worker, args, { queue, maxAttempts, scheduleIn, priority,
+ * unique })`, `cancelJob`, `pauseQueue`/`resumeQueue`, and `drain()` (Oban's `drain_queue` — the
+ * test helper that runs everything runnable to completion). Telemetry mirrors Oban's:
+ * `['jobs','execute','start'|'stop'|'exception']` with worker/queue/attempt metadata.
+ *
+ * Divergences, stated: recurring cron plugins are out of scope (schedule the next run from inside
+ * a worker); and the executor is per-process — Oban coordinates competing nodes through Postgres
+ * row locks, which a plain key-value {@link Store} cannot express. To run ONE queue across a
+ * cluster, make the queue a singleton with the primitives already here: claim a registry key
+ * (`node.register('jobs', 'runner', onConflict)`) and only `resumeQueue` while you own it.
+ *
+ * ```ts
+ * import { memoryStore } from '../node/index.ts';
+ * const sent: string[] = [];
+ * const jobs = jobQueue({
+ *   store: memoryStore(),
+ *   workers: { 'email.welcome': (args) => void sent.push((args as { to: string }).to) },
+ * });
+ * await jobs.insert('email.welcome', { to: 'ada@example.com' });
+ * await jobs.drain();
+ * sent; // ['ada@example.com']
+ * jobs.stop();
+ * ```
+ */
+import { isFailure } from '../result/failure.ts';
+import { execute as emit } from '../telemetry/telemetry.ts';
+import type { Store } from '../node/upgradable.ts';
+
+/** A job's lifecycle state — Oban's states, minus its `cancelled` (a cancelled job is removed). */
+export type JobState = 'available' | 'scheduled' | 'executing' | 'retryable' | 'discarded';
+
+/** One durable job. */
+export interface Job {
+  /** Unique id (assigned at insert). */
+  id: string;
+  /** The worker name that executes it. */
+  worker: string;
+  /** The worker's arguments — structured-clone-safe. */
+  args: unknown;
+  /** The queue it runs on (its concurrency lane). */
+  queue: string;
+  /** Where it is in the lifecycle. */
+  state: JobState;
+  /** Attempts made so far. */
+  attempt: number;
+  /** Attempts allowed before it is discarded. */
+  maxAttempts: number;
+  /** Lower runs first when contending (Oban's priority, 0 = most urgent). */
+  priority: number;
+  /** Not runnable before this time (epoch ms) — scheduling and retry backoff both live here. */
+  scheduledAt: number;
+  /** One entry per failed attempt. */
+  errors: { attempt: number; error: string; at: number }[];
+}
+
+/** A worker: receives the job's args (and the job record); throwing marks the attempt failed. */
+export type Worker = (args: unknown, job: Job) => unknown | Promise<unknown>;
+
+/** A running job queue — see {@link jobQueue}. */
+export interface JobQueue {
+  /**
+   * Durably enqueue a job — persisted BEFORE the promise resolves. Options mirror Oban's:
+   * `queue` (default 'default'), `maxAttempts` (default 3), `scheduleIn` ms / `scheduledAt`
+   * epoch-ms, `priority` (0 = most urgent), and `unique` (skip if an identical worker+args job
+   * is already pending — returns the existing job). Resolves with the job record.
+   */
+  insert(
+    worker: string,
+    args?: unknown,
+    options?: {
+      queue?: string;
+      maxAttempts?: number;
+      scheduleIn?: number;
+      scheduledAt?: number;
+      priority?: number;
+      unique?: boolean;
+    },
+  ): Promise<Job>;
+  /** The current record for a job id, or undefined (completed jobs are removed). */
+  job(id: string): Job | undefined;
+  /** Remove a pending job — Oban's `cancel_job`. A job already executing finishes its attempt. */
+  cancelJob(id: string): Promise<void>;
+  /** Stop starting jobs on `queue` (executing ones finish) — Oban's `pause_queue`. */
+  pauseQueue(queue: string): void;
+  /** Resume a paused queue. */
+  resumeQueue(queue: string): void;
+  /** Run everything currently runnable to completion — Oban's `drain_queue`, the test helper. */
+  drain(): Promise<void>;
+  /** Stop the scheduler (executing attempts finish; nothing new starts). */
+  stop(): void;
+}
+
+/**
+ * Build a {@link JobQueue}. `workers` maps worker names to functions; `queues` sets per-queue
+ * concurrency (default `{ default: 10 }`); `backoff` maps a failed attempt count to a retry
+ * delay in ms (default Oban's `attempt⁴ + 15s` shape); `pollMs` is the scheduler tick.
+ *
+ * ```ts
+ * import { memoryStore } from '../node/index.ts';
+ * const jobs = jobQueue({ store: memoryStore(), workers: {} });
+ * typeof jobs.insert; // 'function'
+ * jobs.stop();
+ * ```
+ */
+export function jobQueue(options: {
+  store: Store;
+  workers: Record<string, Worker>;
+  queues?: Record<string, number>;
+  backoff?: (attempt: number) => number;
+  pollMs?: number;
+  keyPrefix?: string;
+}): JobQueue {
+  const queues = options.queues ?? { default: 10 };
+  const backoff = options.backoff ?? ((attempt) => 1000 * attempt ** 4 + 15_000);
+  const pollMs = options.pollMs ?? 50;
+  const prefix = options.keyPrefix ?? 'jobs';
+  const jobKey = (id: string) => `${prefix}:${id}`;
+  const INDEX = `${prefix}:index`;
+
+  // The in-memory truth; the store mirrors it durably (job first, then index — an orphaned job
+  // key from a crash between the two writes is simply ignored on load).
+  const jobs = new Map<string, Job>();
+  const executing = new Map<string, number>(); // queue -> running count
+  const paused = new Set<string>();
+  let alive = true;
+
+  const persistJob = (job: Job): Promise<void> => options.store.save(jobKey(job.id), job);
+  const persistIndex = (): Promise<void> => options.store.save(INDEX, [...jobs.keys()]);
+  const removeJob = async (id: string): Promise<void> => {
+    jobs.delete(id);
+    await persistIndex(); // index first — a crash leaves an ignorable orphan key, never a ghost id
+    await options.store.clear(jobKey(id));
+  };
+
+  // Crash recovery: reload every indexed job; one stuck `executing` was orphaned by a dead
+  // process — rescue it back to available so it runs again (Oban's rescuer).
+  const loaded: Promise<void> = (async () => {
+    const ids = ((await options.store.load(INDEX)) as string[] | undefined) ?? [];
+    for (const id of ids) {
+      const job = (await options.store.load(jobKey(id))) as Job | undefined;
+      if (!job) continue;
+      if (job.state === 'executing') {
+        job.state = 'available';
+        await persistJob(job);
+      }
+      jobs.set(job.id, job);
+    }
+  })();
+
+  const runnable = (job: Job, now: number): boolean =>
+    (job.state === 'available' || job.state === 'scheduled' || job.state === 'retryable') &&
+    job.scheduledAt <= now &&
+    !paused.has(job.queue);
+
+  const run = async (job: Job): Promise<void> => {
+    job.state = 'executing';
+    job.attempt++;
+    executing.set(job.queue, (executing.get(job.queue) ?? 0) + 1);
+    await persistJob(job); // an attempt is on the record before it runs — that's what rescue keys on
+    const meta = { worker: job.worker, queue: job.queue, id: job.id, attempt: job.attempt };
+    const started = performance.now();
+    emit(['jobs', 'execute', 'start'], {}, meta);
+    try {
+      await options.workers[job.worker]?.(job.args, job);
+      emit(['jobs', 'execute', 'stop'], { duration: performance.now() - started }, meta);
+      await removeJob(job.id); // completed jobs are removed — the queue stays bounded
+    } catch (error) {
+      emit(['jobs', 'execute', 'exception'], { duration: performance.now() - started }, meta);
+      job.errors.push({
+        attempt: job.attempt,
+        error: isFailure(error) ? `${error.code}: ${error.message}` : String(error),
+        at: Date.now(),
+      });
+      if (job.attempt >= job.maxAttempts) {
+        job.state = 'discarded'; // kept, with its errors — the dead-letter record
+      } else {
+        job.state = 'retryable';
+        job.scheduledAt = Date.now() + backoff(job.attempt);
+      }
+      await persistJob(job);
+    } finally {
+      executing.set(job.queue, (executing.get(job.queue) ?? 1) - 1);
+    }
+  };
+
+  // The scheduler: fill each queue's free slots with due jobs, most urgent first.
+  const tick = (): void => {
+    if (!alive) return;
+    const now = Date.now();
+    const due = [...jobs.values()]
+      .filter((job) => runnable(job, now))
+      .sort((a, b) => a.priority - b.priority || a.scheduledAt - b.scheduledAt);
+    for (const job of due) {
+      const limit = queues[job.queue] ?? queues.default ?? 10;
+      if ((executing.get(job.queue) ?? 0) >= limit) continue;
+      void run(job);
+    }
+  };
+  const timer = setInterval(tick, pollMs);
+  (timer as { unref?: () => void }).unref?.();
+  void loaded.then(tick); // rescued work starts as soon as the reload finishes
+
+  return {
+    async insert(worker, args = {}, opts = {}) {
+      await loaded;
+      if (opts.unique) {
+        const signature = JSON.stringify([worker, args]);
+        for (const existing of jobs.values()) {
+          if (JSON.stringify([existing.worker, existing.args]) === signature) return existing;
+        }
+      }
+      const job: Job = {
+        id: crypto.randomUUID(),
+        worker,
+        args,
+        queue: opts.queue ?? 'default',
+        state: opts.scheduleIn || opts.scheduledAt ? 'scheduled' : 'available',
+        attempt: 0,
+        maxAttempts: opts.maxAttempts ?? 3,
+        priority: opts.priority ?? 0,
+        scheduledAt: opts.scheduledAt ?? (opts.scheduleIn ? Date.now() + opts.scheduleIn : 0),
+        errors: [],
+      };
+      jobs.set(job.id, job);
+      await persistJob(job); // durable BEFORE the caller is told "queued"
+      await persistIndex();
+      queueMicrotask(tick); // run it now if a slot is free — the poll is only the backstop
+      return job;
+    },
+    job: (id) => jobs.get(id),
+    async cancelJob(id) {
+      const job = jobs.get(id);
+      if (job && job.state !== 'executing') await removeJob(id);
+    },
+    pauseQueue: (queue) => void paused.add(queue),
+    resumeQueue(queue) {
+      paused.delete(queue);
+      tick();
+    },
+    async drain() {
+      await loaded;
+      for (;;) {
+        tick();
+        const now = Date.now();
+        const busy = [...executing.values()].some((count) => count > 0);
+        const pending = [...jobs.values()].some((job) => runnable(job, now));
+        if (!busy && !pending) return;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    },
+    stop() {
+      alive = false;
+      clearInterval(timer);
+    },
+  };
+}
