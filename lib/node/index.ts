@@ -26,6 +26,10 @@ export { rendezvous } from './rendezvous.ts';
 // Circuit breaker (Erlang :fuse / Akka): fail fast past a flaky peer and let it recover.
 export { circuitBreaker, type CircuitBreaker, type CircuitState } from './circuit-breaker.ts';
 
+// Token-bucket rate limiter: throttle work to a sustained rate + burst — the third load-protection
+// leg alongside GenStage backpressure and the circuit breaker.
+export { rateLimiter, type RateLimiter } from './rate-limiter.ts';
+
 // Automatic cluster formation (Elixir libcluster): a polling strategy discovers peers and the
 // manager diffs it against the connected set to converge the topology.
 export { cluster, type Cluster } from './cluster.ts';
