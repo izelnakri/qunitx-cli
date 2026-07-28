@@ -88,6 +88,8 @@ export type Frame = {
   trace?: Trace;
   /** Transport-internal epidemic-gossip envelope (mesh `gossipFanout`): dedup id + hops left. */
   gossip?: { id: string; ttl: number };
+  /** Absolute epoch-ms when the ROOT caller gives up — nested calls inherit and never outlive it. */
+  deadline?: number;
 };
 
 /**
@@ -184,16 +186,24 @@ export interface NodeHandle {
    */
   monitorNodes(fn: (event: { node: string; status: 'up' | 'down' }) => void): () => void;
   /** Registers the handler for a subject; the reply (value or Failure) travels back to callers.
-   *  `meta.trace` is the incoming {@link Trace} — nested calls in the SYNCHRONOUS handler body
-   *  continue it automatically; async continuations wrap nested calls in {@link NodeHandle.withTrace}. */
+   *  `meta.trace` is the incoming {@link Trace} and `meta.deadline` the root caller's absolute
+   *  budget — nested calls in the SYNCHRONOUS handler body continue both automatically (a nested
+   *  call's timeout is CAPPED at the remaining budget, gRPC-style, so doomed downstream work
+   *  stops when the root gives up); async continuations wrap nested calls in
+   *  {@link NodeHandle.withTrace}, passing the whole `meta`. */
   handle(
     subject: string,
-    handler: (payload: unknown, from: string, meta?: { trace?: Trace }) => unknown,
+    handler: (
+      payload: unknown,
+      from: string,
+      meta?: { trace?: Trace; deadline?: number },
+    ) => unknown,
   ): void;
   /** The trace of the message currently being handled (synchronous window), if any. */
   trace(): Trace | undefined;
-  /** Runs `fn` with `trace` ambient, so nested `call`/`cast` continue it — for async handler bodies. */
-  withTrace<T>(trace: Trace | undefined, fn: () => T): T;
+  /** Runs `fn` with the given context ambient — a bare {@link Trace} or a handler's whole `meta`
+   *  (trace + deadline) — so nested `call`/`cast` continue it in async handler bodies. */
+  withTrace<T>(context: Trace | { trace?: Trace; deadline?: number } | undefined, fn: () => T): T;
   /** Request/response with a deadline. `to` may be a node name, `'group:<name>'` (round-robin
    *  the members — a service), or `'via:<registry>/<key>'` (route to the ONE owner of a key —
    *  an entity). Empty group → declared `NoGroupMembers`; unowned key → `NotRegistered`.
@@ -283,7 +293,7 @@ export function start(
   const peers = new Set<string>();
   const handlers = new Map<
     string,
-    (payload: unknown, from: string, meta?: { trace?: Trace }) => unknown
+    (payload: unknown, from: string, meta?: { trace?: Trace; deadline?: number }) => unknown
   >();
   const monitors = new Set<(name: string) => void>();
   const nodeListeners = new Set<(event: { node: string; status: 'up' | 'down' }) => void>();
@@ -359,20 +369,24 @@ export function start(
   let ref = 0;
   let alive = true;
 
-  // The trace of the message being handled RIGHT NOW (synchronous window) — nested call/cast
-  // inherit it, which is what threads one correlation id across every hop of a request tree.
-  let ambientTrace: Trace | undefined;
+  // The context of the message being handled RIGHT NOW (synchronous window) — nested call/cast
+  // inherit it: the trace threads one correlation id across every hop of a request tree, and the
+  // deadline caps every nested timeout so downstream work never outlives the root caller.
+  let ambient: { trace?: Trace; deadline?: number } | undefined;
   const childTrace = (): Trace =>
-    ambientTrace
-      ? { id: ambientTrace.id, span: newSpan(), parent: ambientTrace.span }
+    ambient?.trace
+      ? { id: ambient.trace.id, span: newSpan(), parent: ambient.trace.span }
       : { id: crypto.randomUUID(), span: newSpan() };
-  const handling = <R>(trace: Trace | undefined, fn: () => R): R => {
-    const prior = ambientTrace;
-    ambientTrace = trace;
+  const handling = <R>(
+    context: { trace?: Trace; deadline?: number } | undefined,
+    fn: () => R,
+  ): R => {
+    const prior = ambient;
+    ambient = context;
     try {
       return fn();
     } finally {
-      ambientTrace = prior;
+      ambient = prior;
     }
   };
 
@@ -426,23 +440,34 @@ export function start(
         {},
         { subject: frame.subject, from: frame.from, trace: frame.trace },
       );
-      handling(frame.trace, () =>
-        handlers.get(frame.subject!)?.(decode(frame), frame.from, { trace: frame.trace }),
-      );
+      const meta = { trace: frame.trace, deadline: frame.deadline };
+      handling(meta, () => handlers.get(frame.subject!)?.(decode(frame), frame.from, meta));
     } else if (frame.kind === 'call') {
+      // Shed doomed work: a call that arrives PAST its root deadline is answered with the
+      // failure the caller already concluded — the handler never runs (gRPC's deadline shed).
+      if (frame.deadline !== undefined && Date.now() > frame.deadline) {
+        return void dispatch({
+          kind: 'reply',
+          from: name,
+          to: frame.from,
+          ref: frame.ref,
+          ...encode(
+            new Failure('DeadlineExceeded', `${frame.subject} arrived past its deadline`, {
+              subject: frame.subject,
+            }),
+          ),
+        });
+      }
       const handler = handlers.get(frame.subject!);
       emit(
         ['node', 'handle'],
         {},
         { subject: frame.subject, from: frame.from, trace: frame.trace },
       );
+      const meta = { trace: frame.trace, deadline: frame.deadline };
       const outcome = handler
         ? Promise.resolve()
-            .then(() =>
-              handling(frame.trace, () =>
-                handler(decode(frame), frame.from, { trace: frame.trace }),
-              ),
-            )
+            .then(() => handling(meta, () => handler(decode(frame), frame.from, meta)))
             .catch((thrown: unknown) =>
               isFailure(thrown)
                 ? thrown
@@ -607,8 +632,24 @@ export function start(
     call<T>(to: string, subject: string, payload?: unknown, timeoutMs = 5000) {
       const trace = childTrace();
       const started = performance.now();
+      // gRPC-style budget: a nested call never outlives the ROOT caller. The effective timeout
+      // is capped at the ambient remaining budget; an already-spent budget fails fast, before
+      // the wire — no doomed downstream work.
+      const deadline =
+        ambient?.deadline !== undefined
+          ? Math.min(Date.now() + timeoutMs, ambient.deadline)
+          : Date.now() + timeoutMs;
+      const effectiveMs = deadline - Date.now();
+      if (effectiveMs <= 0) {
+        return new Task<T, AnyFailure>(() => {
+          throw new Failure('DeadlineExceeded', `call ${subject} to ${to}: budget already spent`, {
+            to,
+            subject,
+          });
+        });
+      }
       const task = awaitRef<T>(
-        timeoutMs,
+        effectiveMs,
         (frame) => {
           emit(
             ['node', 'call', 'stop'],
@@ -627,7 +668,7 @@ export function start(
           );
           throw new Failure(
             'CallTimeout',
-            `call ${subject} to ${to} timed out after ${timeoutMs}ms`,
+            `call ${subject} to ${to} timed out after ${effectiveMs}ms`,
             { to, subject },
           );
         },
@@ -655,12 +696,14 @@ export function start(
         subject,
         ref: task.ref,
         trace,
+        deadline,
         ...encode(payload),
       });
       return task as Task<T, AnyFailure>;
     },
-    trace: () => ambientTrace,
-    withTrace: (trace, fn) => handling(trace, fn),
+    trace: () => ambient?.trace,
+    withTrace: (context, fn) =>
+      handling(context && 'id' in context ? { trace: context } : context, fn),
     inspect(unit, report) {
       inspectors.set(unit, report);
       return () => inspectors.delete(unit);
@@ -675,8 +718,17 @@ export function start(
         targets = 'node' in resolved ? [resolved.node] : [];
       } else targets = [to];
       const trace = childTrace();
+      const deadline = ambient?.deadline; // fire-and-forget still tells downstream when to give up
       for (const target of targets)
-        dispatch({ kind: 'cast', from: name, to: target, subject, trace, ...encode(payload) });
+        dispatch({
+          kind: 'cast',
+          from: name,
+          to: target,
+          subject,
+          trace,
+          deadline,
+          ...encode(payload),
+        });
     },
     stop() {
       if (!alive) return;
