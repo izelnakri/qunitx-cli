@@ -58,6 +58,8 @@ export function chatGateway(gateway: NodeHandle): ChatGateway {
           const msg = await gateway.call(`via:rooms/${key}`, `room:${key}.message`, payload);
           bus.broadcast(topic, 'message', msg);
         })().catch(() => {});
+      } else if (event === 'presence') {
+        return { reply: pres.list(topic) }; // who's in the room, from the CRDT tracker
       } else if (event === 'leave') {
         pres.untrack(topic, socket.id);
       }
