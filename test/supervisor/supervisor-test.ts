@@ -3,6 +3,13 @@ import * as Supervisor from '../../lib/supervisor/index.ts';
 import { Failure } from '../../lib/task/index.ts';
 
 const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
+// Poll for a condition instead of sleeping-then-asserting — robust under a loaded full suite
+// where restarts (microtasks + intensity accounting) take variable wall time.
+const until = async (cond: () => boolean, timeoutMs = 2000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (!cond() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
+  return cond();
+};
 
 // A controllable child: runs until aborted; crash() makes the CURRENT incarnation reject.
 function worker(log: string[], id: string) {
@@ -159,6 +166,79 @@ module('Supervisor | lifecycle', () => {
     await sup.stop();
     await sup.done; // resolves — a clean stop is not a failure
     assert.deepEqual(log, ['start:a', 'start:b', 'abort:b', 'abort:a']);
+    assert.strictEqual(sup.count(), 0);
+  });
+});
+
+// ── DynamicSupervisor — OTP's runtime children ────────────────────────────────
+
+module('Supervisor | dynamic', () => {
+  test('startChild runs it now; terminateChild aborts and removes it', async (assert) => {
+    const log: string[] = [];
+    const sup = Supervisor.dynamic({ maxRestarts: 5 });
+    const spec = (id: string): Supervisor.ChildSpec => ({
+      id,
+      restart: 'transient',
+      start: (signal) =>
+        new Promise<void>((resolve) => {
+          log.push(`start:${id}`);
+          signal.addEventListener('abort', () => (log.push(`abort:${id}`), resolve()));
+        }),
+    });
+    sup.startChild(spec('a'));
+    sup.startChild(spec('b'));
+    await tick();
+    assert.deepEqual(sup.children(), ['a', 'b']);
+    assert.strictEqual(sup.count(), 2);
+    await sup.terminateChild('a');
+    assert.deepEqual(sup.children(), ['b'], 'a is gone, b untouched — one_for_one');
+    assert.deepEqual(log, ['start:a', 'start:b', 'abort:a']);
+    await sup.stop();
+    assert.deepEqual(log, ['start:a', 'start:b', 'abort:a', 'abort:b'], 'stop drains the rest');
+  });
+
+  test('transient restarts on crash only; temporary never; a sibling crash is isolated', async (assert) => {
+    let flakyRuns = 0;
+    let tempRuns = 0;
+    const sup = Supervisor.dynamic({ maxRestarts: 5, maxSeconds: 5 });
+    sup.startChild({
+      id: 'flaky',
+      restart: 'transient',
+      start: (signal) => {
+        flakyRuns += 1;
+        if (flakyRuns < 3) throw new Error('crash');
+        return new Promise<void>((r) => signal.addEventListener('abort', () => r()));
+      },
+    });
+    sup.startChild({
+      id: 'temp',
+      restart: 'temporary',
+      start: () => {
+        tempRuns += 1;
+        throw new Error('boom');
+      },
+    });
+    assert.true(
+      await until(() => flakyRuns === 3),
+      'transient restarted through 2 crashes, then parked',
+    );
+    await tick(20); // give temporary any chance to (wrongly) restart
+    assert.strictEqual(tempRuns, 1, 'temporary never restarted — and did NOT take flaky down');
+    await sup.stop();
+  });
+
+  test('the shared intensity budget ends the whole dynamic tree', async (assert) => {
+    const sup = Supervisor.dynamic({ maxRestarts: 2, maxSeconds: 5 });
+    sup.startChild({
+      id: 'loop',
+      restart: 'permanent',
+      start: () => {
+        throw new Error('loop');
+      },
+    });
+    const outcome = await sup.done.result();
+    assert.true(Failure.is(outcome));
+    assert.strictEqual((outcome as Failure.Any).code, 'SupervisorShutdown');
     assert.strictEqual(sup.count(), 0);
   });
 });

@@ -6,4 +6,11 @@
 // Same failure vocabulary throughout — a child crash is classified into a Failure, reported
 // to the observation seam, and answered with a restart until the intensity budget ends the
 // tree loudly.
-export { start, type ChildSpec, type Options, type SupervisorHandle } from './supervisor.ts';
+export {
+  start,
+  dynamic,
+  type ChildSpec,
+  type Options,
+  type SupervisorHandle,
+  type DynamicSupervisorHandle,
+} from './supervisor.ts';

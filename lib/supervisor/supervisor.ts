@@ -213,3 +213,143 @@ export function start(children: ChildSpec[], options: Options = {}): SupervisorH
     done,
   };
 }
+
+/**
+ * The handle of a {@link dynamic} supervisor — OTP's `DynamicSupervisor`. Children are added
+ * and removed at RUNTIME (`startChild`/`terminateChild`), unlike {@link start}'s fixed list.
+ *
+ * ```ts
+ * const sup = dynamic();
+ * const id = sup.startChild({ id: 'job-1', restart: 'temporary', start: () => 'done' });
+ * sup.count(); // 1
+ * await sup.stop();
+ * ```
+ */
+export interface DynamicSupervisorHandle {
+  /** Starts and supervises a child NOW — Elixir's `start_child/2`. Returns its id. */
+  startChild(spec: ChildSpec): string;
+  /** Aborts and removes one child — Elixir's `terminate_child/2`. */
+  terminateChild(id: string): Promise<void>;
+  /** Running child ids. */
+  children(): string[];
+  /** How many children are currently running. */
+  count(): number;
+  /** Aborts every child (reverse start order) and ends supervision. */
+  stop(): Promise<void>;
+  /** Settles when supervision ends — resolves on `stop()`, rejects `SupervisorShutdown` on intensity. */
+  done: Task<void, AnyFailure>;
+}
+
+/**
+ * A dynamic supervisor — OTP's `DynamicSupervisor`: no static child list, children come and go
+ * at runtime, always `one_for_one` (a child's crash never touches its siblings — the whole
+ * point of dynamic supervision). The restart intensity budget is shared across all children;
+ * exceeding it ends the tree loudly, exactly like {@link start}.
+ *
+ * The canonical use is one supervised process per live thing — a session, a job, a chat room
+ * (see examples/realtime-chat) — usually paired with a registry so callers can find the child
+ * for a key.
+ *
+ * ```ts
+ * let ran = 0;
+ * const sup = dynamic({ maxRestarts: 5, maxSeconds: 5 });
+ * sup.startChild({ id: 'w', restart: 'permanent', start: () => void (ran += 1) });
+ * await new Promise((r) => setTimeout(r, 20)); // it exits and restarts (permanent)
+ * ran > 1; // true
+ * await sup.stop();
+ * ```
+ */
+export function dynamic(
+  options: { maxRestarts?: number; maxSeconds?: number } = {},
+): DynamicSupervisorHandle {
+  const { maxRestarts = 3, maxSeconds = 5 } = options;
+  const running = new Map<string, Running>();
+  const insertion: string[] = []; // start order, for reverse teardown
+  const restarts: number[] = [];
+  let ended = false;
+  let endSupervision!: (outcome?: AnyFailure) => void;
+  const done = new Task<void, AnyFailure>(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        endSupervision = (outcome) => (outcome ? reject(outcome) : resolve());
+      }),
+  ).perform();
+
+  const spawn = (spec: Required<ChildSpec>): void => {
+    const controller = new AbortController();
+    const entry: Running = { spec, controller, exited: Promise.resolve() };
+    entry.exited = Promise.resolve()
+      .then(() => spec.start(controller.signal))
+      .then(
+        () => onExit(entry, null),
+        (crash: unknown) => onExit(entry, classifyThrown(crash)),
+      );
+    running.set(spec.id, entry);
+  };
+
+  const onExit = async (entry: Running, crash: AnyFailure | null): Promise<void> => {
+    if (ended || running.get(entry.spec.id) !== entry) return; // stale
+    running.delete(entry.spec.id);
+    if (crash) observed(crash);
+    const policy = entry.spec.restart;
+    const wantsRestart = policy === 'permanent' || (policy === 'transient' && crash !== null);
+    if (!wantsRestart) {
+      const at = insertion.indexOf(entry.spec.id);
+      if (at !== -1) insertion.splice(at, 1);
+      return;
+    }
+    const now = Date.now();
+    restarts.push(now);
+    while (restarts.length > 0 && restarts[0] < now - maxSeconds * 1000) restarts.shift();
+    if (restarts.length > maxRestarts) {
+      await shutdown(
+        new Failure(
+          'SupervisorShutdown',
+          `restart intensity exceeded: ${restarts.length} restarts in ${maxSeconds}s`,
+          { id: entry.spec.id },
+          crash ? { cause: crash } : {},
+        ),
+      );
+      return;
+    }
+    spawn(entry.spec); // one_for_one: only this child comes back
+  };
+
+  const shutdown = async (outcome?: AnyFailure): Promise<void> => {
+    if (ended) return;
+    ended = true;
+    for (const id of [...insertion].reverse()) {
+      const peer = running.get(id);
+      if (peer) {
+        peer.controller.abort();
+        await peer.exited.catch(() => undefined);
+        running.delete(id);
+      }
+    }
+    insertion.length = 0;
+    endSupervision(outcome);
+  };
+
+  return {
+    startChild(spec) {
+      if (ended) throw new Failure('SupervisorShutdown', 'supervisor has ended', { id: spec.id });
+      const full: Required<ChildSpec> = { restart: 'permanent', ...spec };
+      insertion.push(full.id);
+      spawn(full);
+      return full.id;
+    },
+    async terminateChild(id) {
+      const peer = running.get(id);
+      if (!peer) return;
+      peer.controller.abort();
+      await peer.exited.catch(() => undefined);
+      running.delete(id);
+      const at = insertion.indexOf(id);
+      if (at !== -1) insertion.splice(at, 1);
+    },
+    children: () => insertion.filter((id) => running.has(id)),
+    count: () => running.size,
+    stop: () => shutdown(),
+    done,
+  };
+}
