@@ -252,10 +252,16 @@ export interface DynamicSupervisorHandle {
  *
  * ```ts
  * let ran = 0;
- * const sup = dynamic({ maxRestarts: 5, maxSeconds: 5 });
- * sup.startChild({ id: 'w', restart: 'permanent', start: () => void (ran += 1) });
- * await new Promise((r) => setTimeout(r, 20)); // it exits and restarts (permanent)
- * ran > 1; // true
+ * const sup = dynamic();
+ * sup.startChild({
+ *   id: 'w',
+ *   restart: 'permanent',
+ *   // exits once (permanent restarts it), then parks on the abort signal
+ *   start: (signal) =>
+ *     ++ran === 1 ? undefined : new Promise<void>((r) => signal.addEventListener('abort', () => r())),
+ * });
+ * await new Promise((r) => setTimeout(r, 30));
+ * ran; // 2 — restarted once, then held
  * await sup.stop();
  * ```
  */

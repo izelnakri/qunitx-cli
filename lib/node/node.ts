@@ -32,12 +32,27 @@ import { Task } from '../task/task.ts';
 
 /** One frame on the wire. Payloads must be structured-clone-safe; Failures ride `$failure`. */
 export type Frame = {
-  kind: 'hello' | 'bye' | 'join' | 'leave' | 'cast' | 'call' | 'reply' | 'ping' | 'pong';
+  kind:
+    | 'hello'
+    | 'bye'
+    | 'join'
+    | 'leave'
+    | 'register'
+    | 'unregister'
+    | 'cast'
+    | 'call'
+    | 'reply'
+    | 'ping'
+    | 'pong';
   from: string;
   to?: string;
   subject?: string;
   /** Process-group name for join/leave frames. */
   group?: string;
+  /** Registry name for register/unregister frames. */
+  registry?: string;
+  /** Registry key for register/unregister frames. */
+  key?: string;
   ref?: number;
   payload?: unknown;
   $failure?: SerializedFailure;
@@ -91,15 +106,28 @@ export interface NodeHandle {
   leave(group: string): void;
   /** Current members of a group, self included when joined — `:pg.get_members/1`. */
   groupMembers(group: string): string[];
+  /**
+   * Claims `key` in `registry` for this node — Elixir's `Registry.register/3` (unique keys).
+   * A single owner per key: on a conflict the lexicographically-smallest node name wins, so
+   * every node converges on the same owner. Released on bye/nodedown.
+   */
+  register(registry: string, key: string): void;
+  /** Releases a key this node owns — Elixir's `Registry.unregister/2`. */
+  unregister(registry: string, key: string): void;
+  /** The node that owns `key` in `registry`, or `null` — Elixir's `Registry.lookup/2`. */
+  whereis(registry: string, key: string): string | null;
+  /** Every registered key in `registry` — `Registry.keys`. */
+  registered(registry: string): string[];
   /** Round-trip liveness — Elixir's `Node.ping/1`: `'pong'` or, after `timeoutMs`, `'pang'`. */
   ping(name: string, timeoutMs?: number): Task<'pong' | 'pang', never>;
   /** Fires `fn(name)` when a peer says bye or its transport drops — Elixir's `Node.monitor/2`. Returns the un-monitor. */
   monitor(fn: (name: string) => void): () => void;
   /** Registers the handler for a subject; the reply (value or Failure) travels back to callers. */
   handle(subject: string, handler: (payload: unknown, from: string) => unknown): void;
-  /** Request/response with a deadline. `to` may be a node name OR `'group:<name>'` — group
-   *  calls round-robin the members (a service, not a node); empty groups reject with a
-   *  declared `NoGroupMembers`. Declared failures cross intact. */
+  /** Request/response with a deadline. `to` may be a node name, `'group:<name>'` (round-robin
+   *  the members — a service), or `'via:<registry>/<key>'` (route to the ONE owner of a key —
+   *  an entity). Empty group → declared `NoGroupMembers`; unowned key → `NotRegistered`.
+   *  Declared failures cross intact. */
   call<T = unknown>(
     to: string,
     subject: string,
@@ -182,6 +210,25 @@ export function start(name: string, transport: Transport): NodeHandle {
   const groups = new Map<string, Set<string>>(); // group -> members (peers and self)
   const myGroups = new Set<string>();
   const roundRobin = new Map<string, number>();
+  // Registry: registry -> (key -> owner node). Unique key = single owner, conflicts resolved
+  // deterministically (smallest node name) so every node converges. myKeys = what I own.
+  const registries = new Map<string, Map<string, string>>();
+  const myKeys = new Set<string>(); // "registry\u0000key"
+  const claim = (registry: string, key: string, owner: string): void => {
+    if (!registries.has(registry)) registries.set(registry, new Map());
+    const table = registries.get(registry)!;
+    const held = table.get(key);
+    // Deterministic tiebreak: the smaller node name wins, so a race converges everywhere.
+    if (held === undefined || owner < held) table.set(key, owner);
+  };
+  const release = (registry: string, key: string, owner: string): void => {
+    const table = registries.get(registry);
+    if (table?.get(key) === owner) table.delete(key);
+  };
+  const pruneOwner = (owner: string): void => {
+    for (const table of registries.values())
+      for (const [key, held] of [...table]) if (held === owner) table.delete(key);
+  };
   const inspectors = new Map<string, () => Record<string, unknown>>();
   let ref = 0;
   let alive = true;
@@ -213,16 +260,26 @@ export function start(name: string, transport: Transport): NodeHandle {
       if (!peers.has(frame.from)) {
         peers.add(frame.from);
         transport.send({ kind: 'hello', from: name, to: frame.from }); // answer so both sides list()
-        // Gossip my group memberships to the newcomer — how a late joiner learns the topology.
+        // Gossip my group memberships AND registry keys to the newcomer — a late joiner learns
+        // the whole topology from the hello answer.
         for (const group of myGroups)
           transport.send({ kind: 'join', from: name, to: frame.from, group });
+        for (const rk of myKeys) {
+          const [registry, key] = rk.split('\u0000');
+          transport.send({ kind: 'register', from: name, to: frame.from, registry, key });
+        }
       }
     } else if (frame.kind === 'join') {
       memberJoined(frame.group!, frame.from);
     } else if (frame.kind === 'leave') {
       memberLeft(frame.group!, frame.from);
+    } else if (frame.kind === 'register') {
+      claim(frame.registry!, frame.key!, frame.from);
+    } else if (frame.kind === 'unregister') {
+      release(frame.registry!, frame.key!, frame.from);
     } else if (frame.kind === 'bye') {
       for (const group of [...groups.keys()]) memberLeft(group, frame.from); // prune everywhere
+      pruneOwner(frame.from); // a dead node owns no keys
       if (peers.delete(frame.from)) for (const fn of monitors) fn(frame.from);
     } else if (frame.kind === 'ping') {
       dispatch({ kind: 'pong', from: name, to: frame.from, ref: frame.ref });
@@ -275,20 +332,33 @@ export function start(name: string, transport: Transport): NodeHandle {
     if (frame.to === name) queueMicrotask(() => receive(frame, true));
     else transport.send(frame);
   };
-  const resolveTarget = (to: string): string | null => {
-    if (!to.startsWith('group:')) return to;
-    const group = to.slice('group:'.length);
-    const members = [...(groups.get(group) ?? [])];
-    if (members.length === 0) return null;
-    const at = roundRobin.get(group) ?? 0;
-    roundRobin.set(group, at + 1);
-    return members[at % members.length];
+  const resolveTarget = (to: string): { node: string } | { empty: 'group' | 'via' } => {
+    if (to.startsWith('group:')) {
+      const group = to.slice('group:'.length);
+      const members = [...(groups.get(group) ?? [])];
+      if (members.length === 0) return { empty: 'group' };
+      const at = roundRobin.get(group) ?? 0;
+      roundRobin.set(group, at + 1);
+      return { node: members[at % members.length] };
+    }
+    if (to.startsWith('via:')) {
+      const slash = to.indexOf('/', 'via:'.length);
+      const registry = to.slice('via:'.length, slash);
+      const key = to.slice(slash + 1);
+      const owner = registries.get(registry)?.get(key);
+      return owner === undefined ? { empty: 'via' } : { node: owner };
+    }
+    return { node: to };
   };
   // Erlang reconnects re-run the handshake; so do we: a transport that redials (wsTransport
   // with reconnect) re-announces this node, and peers answer hello, rebuilding list().
   transport.onReopen?.(() => {
     transport.send({ kind: 'hello', from: name });
     for (const group of myGroups) transport.send({ kind: 'join', from: name, group }); // re-announce
+    for (const rk of myKeys) {
+      const [registry, key] = rk.split('\u0000');
+      transport.send({ kind: 'register', from: name, registry, key });
+    }
   });
 
   const awaitRef = <R>(
@@ -338,6 +408,18 @@ export function start(name: string, transport: Transport): NodeHandle {
       transport.send({ kind: 'leave', from: name, group });
     },
     groupMembers: (group) => [...(groups.get(group) ?? [])],
+    register(registry, key) {
+      myKeys.add(`${registry} ${key}`);
+      claim(registry, key, name);
+      transport.send({ kind: 'register', from: name, registry, key });
+    },
+    unregister(registry, key) {
+      myKeys.delete(`${registry} ${key}`);
+      release(registry, key, name);
+      transport.send({ kind: 'unregister', from: name, registry, key });
+    },
+    whereis: (registry, key) => registries.get(registry)?.get(key) ?? null,
+    registered: (registry) => [...(registries.get(registry)?.keys() ?? [])],
     ping(peer, timeoutMs = 5000) {
       const task = awaitRef<'pong' | 'pang'>(
         timeoutMs,
@@ -369,9 +451,11 @@ export function start(name: string, transport: Transport): NodeHandle {
         },
       ) as Task<T, never> & { ref: number };
       const target = resolveTarget(to);
-      if (target === null) {
+      if ('empty' in target) {
         return new Task<T, AnyFailure>(() => {
-          throw new Failure('NoGroupMembers', `no members in ${to}`, { group: to });
+          throw target.empty === 'group'
+            ? new Failure('NoGroupMembers', `no members in ${to}`, { group: to })
+            : new Failure('NotRegistered', `no owner for ${to}`, { via: to });
         });
       }
       task.perform(); // sets up the reply resolver NOW, before the frame goes out
@@ -384,7 +468,7 @@ export function start(name: string, transport: Transport): NodeHandle {
       dispatch({
         kind: 'call',
         from: name,
-        to: target,
+        to: target.node,
         subject,
         ref: task.ref,
         ...encode(payload),
@@ -396,10 +480,14 @@ export function start(name: string, transport: Transport): NodeHandle {
       return () => inspectors.delete(unit);
     },
     cast(to, subject, payload) {
-      // A group cast reaches EVERY member (pg-style broadcast); a node cast reaches one.
-      const targets = to.startsWith('group:')
-        ? [...(groups.get(to.slice('group:'.length)) ?? [])]
-        : [to];
+      // A group cast reaches EVERY member (pg-style broadcast); a via: cast reaches the key's
+      // owner; a node cast reaches one node.
+      let targets: string[];
+      if (to.startsWith('group:')) targets = [...(groups.get(to.slice('group:'.length)) ?? [])];
+      else if (to.startsWith('via:')) {
+        const resolved = resolveTarget(to);
+        targets = 'node' in resolved ? [resolved.node] : [];
+      } else targets = [to];
       for (const target of targets)
         dispatch({ kind: 'cast', from: name, to: target, subject, ...encode(payload) });
     },
