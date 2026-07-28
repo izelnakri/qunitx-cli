@@ -37,7 +37,7 @@ export { cluster, type Cluster } from './cluster.ts';
 
 // Mesh transport: talk peer-to-peer instead of through the relay hub — retires the hub SPOF.
 // Universal routing core over an injected per-peer link factory; meshNetwork is the in-process test rig.
-export { meshTransport, meshNetwork, type MeshLink } from './mesh.ts';
+export { meshTransport, meshNetwork, webSocketMeshLink, type MeshLink } from './mesh.ts';
 
 // Convergent counters + LWW register map — riak_dt's emcntr/LWW family, for distributed
 // metrics, gauges, and settings that merge without coordination.
