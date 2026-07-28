@@ -27,6 +27,7 @@
  * node.stop();
  * ```
  */
+import { Failure, type Any as AnyFailure } from '../result/failure.ts';
 import type { NodeHandle } from './node.ts';
 
 /**
@@ -94,7 +95,28 @@ export interface Served<S> {
   state(): S;
   /** Messages queued or in flight — what observer tooling reads as mailbox depth. */
   mailbox(): number;
+  /** Whether the unit still serves — false after {@link Served#exit}. */
+  isAlive(): boolean;
+  /**
+   * Erlang's `exit/2` on this unit: stop serving (subjects now reply a declared
+   * `Failure('UnitDown')`) and propagate the exit signal to every linked unit — which dies
+   * with the same reason unless it traps.
+   */
+  exit(reason?: AnyFailure): void;
+  /** Links this unit to another served unit, bidirectionally — Erlang's `link/1`: exits propagate both ways. */
+  link(other: object): void;
+  /**
+   * Erlang's `trap_exit`: instead of dying with a linked unit, receive `(from, reason)` —
+   * THROUGH the mailbox, so trap handling serializes with ordinary messages. Pass `null` to
+   * un-trap.
+   */
+  trapExit(fn: ((from: string, reason: AnyFailure) => void) | null): void;
 }
+
+// Link wiring lives OUTSIDE the public shape: units exchange exit signals through this
+// registry, keyed by handle identity — a pid table in miniature.
+type ExitPort = { name: string; deliverExit: (from: string, reason: AnyFailure) => void };
+const exitPorts = new WeakMap<object, ExitPort>();
 
 /**
  * Serves a behavior on `node` under `name`: every handler key becomes the subject
@@ -154,6 +176,8 @@ export function serve<S>(node: NodeHandle, name: string, behavior: Behavior<S>):
   const register = (key: string) =>
     node.handle(`${name}.${key}`, (payload, from) =>
       enqueue(async () => {
+        if (!unitAlive)
+          return downReason ?? new Failure('UnitDown', `${name} is down`, { name, from: name });
         const outcome = await current.handlers[key](state, payload, from);
         state = outcome.state;
         return outcome.reply;
@@ -178,10 +202,60 @@ export function serve<S>(node: NodeHandle, name: string, behavior: Behavior<S>):
     }),
   );
 
-  return {
+  let unitAlive = true;
+  let downReason: AnyFailure | null = null;
+  const links = new Set<ExitPort>();
+  let trap: ((from: string, reason: AnyFailure) => void) | null = null;
+
+  const deliverExit = (from: string, reason: AnyFailure): void => {
+    if (!unitAlive) return;
+    if (trap) {
+      const handler = trap;
+      void enqueue(() => handler(from, reason)); // trap handling SERIALIZES with messages
+    } else {
+      down(
+        new Failure(
+          'UnitDown',
+          `${name} exited: linked to ${from}`,
+          { name, from },
+          { cause: reason },
+        ),
+      );
+    }
+  };
+  const down = (reason: AnyFailure): void => {
+    if (!unitAlive) return;
+    unitAlive = false;
+    downReason = reason;
+    for (const peer of links) peer.deliverExit(name, reason);
+    links.clear();
+  };
+
+  const handle: Served<S> = {
     version: () => current.version,
     upgrade: (next) => enqueue(() => apply(next)),
     state: () => state,
     mailbox: () => queue.length + (pumping ? 1 : 0),
+    isAlive: () => unitAlive,
+    exit: (reason) =>
+      down(reason ?? new Failure('UnitDown', `${name} exited`, { name, from: name })),
+    link(other) {
+      const port = exitPorts.get(other);
+      if (!port) throw new TypeError('link target is not a served unit');
+      links.add(port);
+      const mine = exitPorts.get(handle)!;
+      // reach into the other side's link set via its port: exits are symmetric, so the other
+      // unit must also know us — modeled as: its deliverExit is OUR outbound, ours is its.
+      otherLinks.get(port)?.add(mine);
+    },
+    trapExit(fn) {
+      trap = fn;
+    },
   };
+  exitPorts.set(handle, { name, deliverExit });
+  otherLinks.set(exitPorts.get(handle)!, links);
+  return handle;
 }
+
+// Maps a unit's port to its link set so link() can wire BOTH directions.
+const otherLinks = new WeakMap<ExitPort, Set<ExitPort>>();

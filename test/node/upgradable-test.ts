@@ -1,5 +1,6 @@
 import { module, test } from 'qunitx';
 import * as Node from '../../lib/node/index.ts';
+import { Failure } from '../../lib/task/index.ts';
 
 // A next version as a MODULE, the way a real relup ships one: data: URLs make the "code
 // server" runnable on both lanes with no filesystem — in production this is an https:// or
@@ -167,6 +168,76 @@ module('Node | mailbox serialization', () => {
     assert.strictEqual(await inFlight, 'worked on v1-state', 'in-flight completed on OLD code');
     assert.strictEqual(await swap, '2');
     assert.strictEqual(await cli.call('svc@memory', 'slow.work', null), 'v2 v1-state→migrated');
+    svc.stop();
+    cli.stop();
+  });
+});
+
+// ── Links + trapExit — Erlang's exit signals between served units ─────────────
+
+module('Node | links', () => {
+  test('linked units die together; callers get a declared UnitDown', async (assert) => {
+    const hub = Node.memoryHub();
+    const svc = Node.start('svc@memory', hub.transport());
+    const cli = Node.start('cli@memory', hub.transport());
+    const a = Node.serve(svc, 'a', {
+      version: '1',
+      init: () => 0,
+      handlers: { ping: (s) => ({ state: s, reply: 'a' }) },
+    });
+    const b = Node.serve(svc, 'b', {
+      version: '1',
+      init: () => 0,
+      handlers: { ping: (s) => ({ state: s, reply: 'b' }) },
+    });
+    a.link(b);
+    a.exit();
+    assert.false(a.isAlive());
+    assert.false(b.isAlive(), 'the exit signal propagated through the link');
+    const down = await cli.call('svc@memory', 'b.ping', null).result();
+    assert.strictEqual(
+      (down as Failure.Any).code,
+      'UnitDown',
+      'a dead unit answers declared, never hangs',
+    );
+    svc.stop();
+    cli.stop();
+  });
+
+  test('trapExit survives the signal and receives (from, reason) through the MAILBOX', async (assert) => {
+    const hub = Node.memoryHub();
+    const svc = Node.start('svc@memory', hub.transport());
+    const worker = Node.serve(svc, 'worker', { version: '1', init: () => 0, handlers: {} });
+    const boss = Node.serve(svc, 'boss', { version: '1', init: () => 0, handlers: {} });
+    const trapped: string[] = [];
+    boss.trapExit((from, reason) => void trapped.push(`${from}:${reason.code}`));
+    boss.link(worker);
+    worker.exit(Failure.define('OOM', 'out of memory')());
+    await new Promise((r) => setTimeout(r, 10)); // trap rides the mailbox
+    assert.true(boss.isAlive(), 'the trapping unit survived');
+    assert.deepEqual(trapped, ['worker:OOM'], 'and learned who died and why');
+    svc.stop();
+  });
+
+  test('exit reasons chain: the linked death carries the original as cause', async (assert) => {
+    const hub = Node.memoryHub();
+    const svc = Node.start('svc@memory', hub.transport());
+    const cli = Node.start('cli@memory', hub.transport());
+    const a = Node.serve(svc, 'x', { version: '1', init: () => 0, handlers: {} });
+    const b = Node.serve(svc, 'y', {
+      version: '1',
+      init: () => 0,
+      handlers: { ping: (s) => ({ state: s, reply: 1 }) },
+    });
+    b.link(a);
+    const Boom = Failure.define('Boom', 'kaboom');
+    a.exit(Boom());
+    const down = await cli.call('svc@memory', 'y.ping', null).result();
+    assert.strictEqual((down as Failure.Any).code, 'UnitDown');
+    assert.true(
+      Boom.is((down as Failure.Any).cause),
+      'the original reason crossed the wire, revived',
+    );
     svc.stop();
     cli.stop();
   });
