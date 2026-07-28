@@ -41,27 +41,30 @@ export function chatGateway(gateway: NodeHandle): ChatGateway {
   const pres = presence(gateway, bus);
 
   const server = channelServer(gateway, bus, {
-    join(topic, payload, socket) {
+    join(topic) {
       if (!topic.startsWith('room:')) return { error: 'unknown topic' };
       void ensureRoom(gateway, keyOf(topic)); // warm the room; the message path re-ensures anyway
-      pres.track(topic, socket.id, { user: (payload as { user?: string })?.user ?? 'anon' });
       return { ok: true };
     },
-    handleIn(topic, event, payload, socket) {
+    // The lifecycle hooks own the Presence bookkeeping — including a socket that just VANISHES
+    // (disconnect fires onLeave per topic), so who's-here can't leak ghost members.
+    onJoin(topic, payload, socket) {
+      pres.track(topic, socket.id, { user: (payload as { user?: string })?.user ?? 'anon' });
+    },
+    onLeave(topic, socket) {
+      pres.untrack(topic, socket.id);
+    },
+    async handleIn(topic, event, payload) {
       const key = keyOf(topic);
       if (event === 'message') {
-        // Append to the durable room actor (persist-before-ack), THEN broadcast the stored
-        // message to every joined client. Fire-and-forget: the message arrives as a push, not a
-        // synchronous reply — the natural chat flow.
-        void (async () => {
-          await ensureRoom(gateway, key);
-          const msg = await gateway.call(`via:rooms/${key}`, `room:${key}.message`, payload);
-          bus.broadcast(topic, 'message', msg);
-        })().catch(() => {});
+        // ASYNC reply: the sender's ack arrives only after the durable append (persist-before-
+        // ack) — and the stored message still broadcasts to every joined client.
+        await ensureRoom(gateway, key);
+        const msg = await gateway.call(`via:rooms/${key}`, `room:${key}.message`, payload);
+        bus.broadcast(topic, 'message', msg);
+        return { reply: msg };
       } else if (event === 'presence') {
         return { reply: pres.list(topic) }; // who's in the room, from the CRDT tracker
-      } else if (event === 'leave') {
-        pres.untrack(topic, socket.id);
       }
     },
   });

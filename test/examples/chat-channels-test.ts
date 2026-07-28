@@ -24,7 +24,6 @@ module('Examples | chat over Channels + Presence', () => {
     const s2 = fakeSocket('c2');
     const ada = gw.connect(s1);
     const bo = gw.connect(s2);
-    ada.push('room:lobby', 'join', undefined); // no-op event; real join below
     assert.deepEqual(ada.join('room:lobby', { user: 'ada' }), { ok: true }, 'ada joined');
     assert.deepEqual(bo.join('room:lobby', { user: 'bo' }), { ok: true }, 'bo joined');
     await settle();
@@ -37,7 +36,12 @@ module('Examples | chat over Channels + Presence', () => {
     );
 
     // ada sends a message → appended to the durable room actor → broadcast to every joined client.
-    ada.push('room:lobby', 'message', { user: 'ada', text: 'hi bo 👋' });
+    const ack = await ada.push('room:lobby', 'message', { user: 'ada', text: 'hi bo 👋' });
+    assert.equal(
+      (ack as { reply: { text: string } }).reply.text,
+      'hi bo 👋',
+      'the ASYNC reply carries the stored message',
+    );
     await settle();
 
     const gotText = (s: typeof s1) =>

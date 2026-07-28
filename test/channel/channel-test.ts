@@ -41,7 +41,7 @@ module('Channel | Phoenix Channels', () => {
     node.stop();
   });
 
-  test('handleIn returns a reply to the sender', (assert) => {
+  test('handleIn returns a reply to the sender', async (assert) => {
     const node = Node.start('gw@ch', Node.memoryHub().transport());
     const server = channelServer(node, pubsub(node), {
       handleIn: (_topic, event, payload) => ({
@@ -50,7 +50,9 @@ module('Channel | Phoenix Channels', () => {
     });
     const conn = server.connect(fakeSocket('c1'));
     conn.join('room:1');
-    assert.deepEqual(conn.push('room:1', 'calc', 21), { reply: { event: 'calc', doubled: 42 } });
+    assert.deepEqual(await conn.push('room:1', 'calc', 21), {
+      reply: { event: 'calc', doubled: 42 },
+    });
     node.stop();
   });
 
@@ -95,6 +97,48 @@ module('Channel | Phoenix Channels', () => {
       ['c1', 'c2'],
       'both joined clients are present in the topic',
     );
+    node.stop();
+  });
+});
+
+module('Channel | lifecycle hooks', () => {
+  test('onJoin/onLeave fire — including for a socket that just disconnects', (assert) => {
+    const node = Node.start('gw@hooks', Node.memoryHub().transport());
+    const events: string[] = [];
+    const server = channelServer(node, pubsub(node), {
+      onJoin: (topic, _payload, socket) => void events.push(`join:${topic}:${socket.id}`),
+      onLeave: (topic, socket) => void events.push(`leave:${topic}:${socket.id}`),
+    });
+    const conn = server.connect(fakeSocket('c1'));
+    conn.join('room:1');
+    conn.join('room:2');
+    conn.leave('room:1'); // explicit leave
+    conn.disconnect(); // a vanished socket — room:2 must be released too
+    assert.deepEqual(events, [
+      'join:room:1:c1',
+      'join:room:2:c1',
+      'leave:room:1:c1',
+      'leave:room:2:c1',
+    ]);
+    assert.equal(events.filter((e) => e === 'leave:room:1:c1').length, 1, 'no double-leave');
+    node.stop();
+  });
+
+  test('an async handleIn resolves the reply AFTER its awaited work', async (assert) => {
+    const node = Node.start('gw@hooks', Node.memoryHub().transport());
+    let settledFirst = '';
+    const server = channelServer(node, pubsub(node), {
+      handleIn: async () => {
+        await new Promise((r) => setTimeout(r, 20));
+        settledFirst ||= 'work';
+        return { reply: 'done-after-work' };
+      },
+    });
+    const conn = server.connect(fakeSocket('c1'));
+    conn.join('t');
+    const reply = conn.push('t', 'e').then((r) => ((settledFirst ||= 'reply'), r));
+    assert.deepEqual(await reply, { reply: 'done-after-work' });
+    assert.equal(settledFirst, 'work', 'the awaited work finished before the reply settled');
     node.stop();
   });
 });

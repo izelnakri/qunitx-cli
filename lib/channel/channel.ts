@@ -42,25 +42,31 @@ export interface Socket {
 /** The result of a join attempt — authorize with `ok`, deny with `error`. */
 export type JoinResult = { ok: true; response?: unknown } | { error: unknown };
 
-/** The server-side behavior of a channel — Phoenix's `join`/`handle_in`. */
+/** The server-side behavior of a channel — Phoenix's `join`/`handle_in` + lifecycle hooks. */
 export interface ChannelDef {
   /** Authorize a client joining `topic`. Omit to allow all joins. */
   join?(topic: string, payload: unknown, socket: Socket): JoinResult;
-  /** Handle an inbound client event; return `{ reply }` to answer that client. */
+  /** Fires after a SUCCESSFUL join — the Presence-track point (Phoenix's `after_join`). */
+  onJoin?(topic: string, payload: unknown, socket: Socket): void;
+  /** Fires when a client leaves a topic — including via `disconnect`, so a dropped socket
+   *  releases everything (the Presence-untrack point). */
+  onLeave?(topic: string, socket: Socket): void;
+  /** Handle an inbound client event; return `{ reply }` — or a PROMISE of one — to answer that
+   *  client (an async reply awaits the durable write/actor call before answering). */
   handleIn?(
     topic: string,
     event: string,
     payload: unknown,
     socket: Socket,
-  ): { reply?: unknown } | void;
+  ): { reply?: unknown } | void | Promise<{ reply?: unknown } | void>;
 }
 
 /** One client's live connection to the channel server — see {@link ChannelServer.connect}. */
 export interface Connection {
   /** Join `topic` (runs the server's `join` authorizer); the socket then receives its broadcasts. */
   join(topic: string, payload?: unknown): JoinResult;
-  /** Send an inbound event on `topic` (runs `handleIn`); returns its optional reply. */
-  push(topic: string, event: string, payload?: unknown): { reply?: unknown } | void;
+  /** Send an inbound event on `topic` (runs `handleIn`); resolves with its optional reply. */
+  push(topic: string, event: string, payload?: unknown): Promise<{ reply?: unknown } | void>;
   /** Leave `topic` — stop receiving its broadcasts. */
   leave(topic: string): void;
   /** Broadcast to every client subscribed to `topic` cluster-wide (this client included). */
@@ -129,21 +135,27 @@ export function channelServer(node: NodeHandle, bus: PubSub, def: ChannelDef): C
             subscribeTopic(topic);
             topicSockets.get(topic)!.add(socket);
             joined.add(topic);
+            def.onJoin?.(topic, payload, socket); // lifecycle hook — the Presence-track point
           }
           return result;
         },
         push(topic, event, payload) {
-          return def.handleIn?.(topic, event, payload, socket);
+          return Promise.resolve(def.handleIn?.(topic, event, payload, socket));
         },
         leave(topic) {
-          joined.delete(topic);
+          if (joined.delete(topic)) def.onLeave?.(topic, socket);
           leaveTopic(topic, socket);
         },
         broadcast(topic, event, payload) {
           bus.broadcast(topic, event, payload); // fans out to all nodes → local sockets everywhere
         },
         disconnect() {
-          for (const topic of [...joined]) leaveTopic(topic, socket);
+          // A dropped socket releases everything — onLeave fires per topic, so Presence and any
+          // other join-scoped state can't leak when a client just vanishes.
+          for (const topic of [...joined]) {
+            def.onLeave?.(topic, socket);
+            leaveTopic(topic, socket);
+          }
           joined.clear();
         },
       };

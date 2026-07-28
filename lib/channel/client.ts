@@ -107,7 +107,11 @@ export function serveSocket(
     else if (m.t === 'event') {
       if (options.inbound && !options.inbound.tryAcquire())
         return wire.send({ t: 'reply', ref: m.ref, result: { error: 'throttled' } });
-      wire.send({ t: 'reply', ref: m.ref, result: conn.push(m.topic, m.event, m.payload) ?? null });
+      // An async handleIn is awaited — the client's reply arrives after the durable write.
+      void conn
+        .push(m.topic, m.event, m.payload)
+        .then((result) => wire.send({ t: 'reply', ref: m.ref, result: result ?? null }))
+        .catch(() => wire.send({ t: 'reply', ref: m.ref, result: { error: 'internal error' } }));
     } else if (m.t === 'leave') conn.leave(m.topic);
     else if (m.t === 'hb') wire.send({ t: 'hb' });
   });
