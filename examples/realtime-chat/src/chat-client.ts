@@ -3,25 +3,20 @@
 // that. The one subtlety is the COLD path (room not yet started), solved by a deterministic
 // hash so concurrent "create lobby" requests all reach the same host — making find-or-start
 // race-free without any distributed lock.
+import { rendezvous } from '../../../lib/node/index.ts';
 import type { NodeHandle } from '../../../lib/node/index.ts';
 import type { ChatMessage } from './room-behavior.ts';
-
-// djb2 — a tiny stable string hash. Deterministic host selection is the whole trick: every
-// node hashes a key to the SAME host, so the cold-start of a room serialises on one node.
-function hashKey(key: string): number {
-  let h = 5381;
-  for (let i = 0; i < key.length; i++) h = (h * 33) ^ key.charCodeAt(i);
-  return h >>> 0;
-}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function ensureRoom(node: NodeHandle, key: string): Promise<string> {
   const known = node.whereis('rooms', key);
   if (known) return known; // hot path: the Registry already knows the owner
-  const hosts = node.groupMembers('room-hosts').sort();
-  if (hosts.length === 0) throw new Error('no room hosts available');
-  const host = hosts[hashKey(key) % hosts.length]; // deterministic → race-free cold start
+  const hosts = node.groupMembers('room-hosts');
+  // Rendezvous hashing: every gateway picks the SAME host for this key (race-free cold start),
+  // AND a host leaving/joining relocates only ~1/N rooms — not the whole keyspace (README §4).
+  const host = rendezvous(key, hosts);
+  if (!host) throw new Error('no room hosts available');
   await node.call(host, 'host.ensureRoom', { key }); // that host starts + registers the room
   for (let i = 0; i < 100 && !node.whereis('rooms', key); i++) await sleep(5); // await registry gossip
   const owner = node.whereis('rooms', key);

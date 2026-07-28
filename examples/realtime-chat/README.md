@@ -64,26 +64,43 @@ DynamicSupervisor is the textbook combination); this is the same, on web-standar
   `terminate_child`s the room (a clean exit → no restart) and `unregister`s the key. Rooms cost
   nothing when idle. (`demo.ts` shows `whereis` going `null` after the room empties.)
 
-## 4. Distribution and the honest limitations
+## 4. Durability — how state survives a host dying, and minimal churn
 
-Run the demo and you'll see #lobby and #random land on _different_ hosts by hash, both gateways
-agreeing on where each lives, and one actor serializing a shared conversation. In production the
-hosts and gateways are separate pods over a real hub (`wsTransport` + `hub.ts`) — the code is
-identical; only the transport changes.
+The two hard problems of distributed stateful systems, both closed here (the demo proves the
+first end-to-end):
 
-Two limitations are deliberate and worth stating (they're where a production system adds work,
-and where Elixir's Horde/`:global` earn their complexity):
+### State survives host death — persist-before-ack + rehydrate-on-access
 
-1. **In-memory room state dies with its host.** If a room host crashes, its rooms' member lists
-   and history are gone; the next `join` re-creates the room (empty) on a surviving host — the
-   `Registry` prunes the dead owner, the hash re-selects. Availability is preserved; _state_ is
-   not. A real system persists room state (Postgres, like the ledger's checkpoints) or replicates
-   it, so a restarted room rehydrates. The abstraction gives you the routing and supervision; the
-   durability is your call.
-2. **No rebalancing when the host set changes.** Adding/removing a host reshuffles the hash for
-   _new_ rooms only; existing rooms stay put (their `Registry` entry still routes correctly). This
-   is fine and simple; consistent-hashing with handoff (Horde) is the next step if you need
-   even load after scale events.
+Each room is served **with a `store`** (`serve(..., { store, storeKey })`), so:
 
-Neither is a gap in the abstractions — they are the two decisions every distributed stateful
-system must make, surfaced honestly instead of hidden.
+- **Persist-before-ack**: every mutating message (join/leave/say) writes the new state durably
+  _before_ the caller is acked. A "sent" message is on disk before the sender hears "ok" — there
+  is no periodic-snapshot window to lose deltas in. (Reads use `persist: false`.)
+- **Rehydrate-on-access**: when a room's host dies, the `Registry` prunes it and rendezvous
+  hashing re-selects a survivor; the next `join` re-creates the room _there_, and `serve`'s
+  restore loads its members and history from the **shared store**. Availability _and_ state are
+  preserved.
+
+`demo.ts` shows exactly this: chat in #lobby, kill its host, reconnect → the room comes back on a
+**different** host with its history intact. The store in the demo is one `memoryStore()` shared
+by both hosts (simulating a shared DB); in production it is `postgresStore(DATABASE_URL)`
+(`store-postgres.ts`) — a shared Postgres, so durability survives real process/pod death, not
+just an in-process restart. The code is identical; only the store backend changes.
+
+### Minimal churn on scale events — rendezvous (HRW) hashing
+
+Cold-start routing uses `rendezvous(key, hosts)`, not `hash(key) % hosts.length`. Adding or
+removing a host relocates only **~1/N** of rooms (the ones that scored highest for the changed
+host) instead of reshuffling the whole keyspace. A live room keeps serving from its `Registry`
+entry regardless; only _future_ cold-starts of relocated keys pick the new owner, and they
+rehydrate from the store.
+
+### The one gap we deliberately leave to Horde: LIVE handoff
+
+We do **not** stream a running room's in-memory state to a new owner during a _graceful_ host
+drain — Elixir's Horde does this, and it's the genuinely research-grade piece (handoff races,
+split-brain during membership flux, reconciliation). We skip it on purpose, because **persistence
+makes it largely unnecessary**: a relocated room simply rehydrates from the shared store on first
+access. Live handoff buys only "zero-downtime migration without a store round-trip" — a narrow
+win for a large correctness cost. That is the honest boundary: routing, supervision, and
+durability are here; live state migration is where you'd reach for Horde.
