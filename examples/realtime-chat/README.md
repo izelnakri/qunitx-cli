@@ -111,20 +111,24 @@ with APIs aligned to Elixir/Horde where they touch the developer surface:
 | minimal churn        | `rendezvous(key, hosts)`                                     | Horde's consistent hashing              | HRW moves ~1/N keys on churn, no virtual nodes                                                                                                                                                          |
 | dead/zombie owner    | automatic **net-tick** evicts a wedged host; Registry prunes | Erlang `net_ticktime` + `:global` prune | catches app-level wedges the socket can't see                                                                                                                                                           |
 | call-plane scale     | point-to-point hub routing                                   | Erlang's point-to-point mesh            | our hub is a relay, not a mesh; directed frames route point-to-point, gossip still broadcasts                                                                                                           |
+| registry convergence | delta-state **CRDT** (ORSWOT) + periodic **anti-entropy**    | Horde's `DeltaCrdt` registry            | a dropped `join`/`register` and a healed partition both self-heal; a per-op delta carries only its own dots (dot-cloud causal context) so it can't poison a peer that missed an earlier op              |
+| graceful hand-off    | `RoomHost.drain()` re-homes each room to its successor       | `Horde.DynamicSupervisor` redistribution | we re-home BY KEY and rehydrate from the shared store (persist-before-ack already made state durable) instead of streaming live process state — the store is the handoff channel                        |
 
-### The gaps we deliberately leave — and why
+### What's built now — and the one honest frontier that remains
 
-Two remain, both honest and both where Elixir spends real complexity:
+The two gaps an earlier draft left open are closed:
 
-1. **Membership gossip is still O(N) broadcast.** Every `join`/`register` broadcasts to all
-   nodes, and every node holds the full membership/registry. Fine to tens of nodes; a large
-   keyspace across hundreds needs a **delta-CRDT** registry (what Horde actually is). We route the
-   _data_ plane point-to-point but the _control_ plane still gossips.
-2. **LIVE handoff.** We do not stream a running room's in-memory state to a new owner during a
-   _graceful_ drain — the research-grade piece (handoff races, reconciliation). **Persistence
-   makes it largely unnecessary**: a relocated room rehydrates from the shared store on first
-   access. Live handoff buys only "zero-downtime migration without a store round-trip" — a narrow
-   win for a large correctness cost.
+1. **Convergent membership/registry.** `join`/`register` are facts in an OR-Set CRDT: a per-op
+   delta broadcasts for immediacy, and a round-robin **anti-entropy** pull is the backstop, so a
+   dropped update or a partition split-and-heal converges to one owner (proven in
+   `test/node/chaos-test.ts` under 40% frame loss). Liveness is tracked separately from
+   registrations, so a false nodedown only _hides_ a peer's entries — it never loses them.
+2. **Graceful hand-off.** `drain()` proactively re-homes rooms to their successor before a host
+   leaves, so the next caller sees no cold start (`realtime-chat-handoff-test.ts`).
 
-That is the honest boundary: routing, supervision, durability, split-brain healing, and zombie
-eviction are here; a delta-CRDT registry and live handoff are where you'd reach for Horde.
+The remaining frontier is **partitioning the registry itself**. Like Horde, ours is _fully
+replicated_ — every node holds every entry, and anti-entropy is O(entries) per sync. That scales
+to a large cluster but not to a billion-key registry; true horizontal scale needs a **sharded**
+registry (a DHT / hash ring), which neither Elixir's `Registry` nor Horde does. That is the honest
+boundary now: routing, supervision, durability, split-brain healing, zombie eviction, CRDT
+convergence, and graceful hand-off are here; sharding the keyspace is where you'd go beyond Horde.
