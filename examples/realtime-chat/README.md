@@ -114,6 +114,8 @@ with APIs aligned to Elixir/Horde where they touch the developer surface:
 | registry convergence | delta-state **CRDT** (ORSWOT) + periodic **anti-entropy**    | Horde's `DeltaCrdt` registry            | a dropped `join`/`register` and a healed partition both self-heal; a per-op delta carries only its own dots (dot-cloud causal context) so it can't poison a peer that missed an earlier op              |
 | redistribution       | `drain()` on scale-down + `monitorNodes` rebalance on scale-up | `Horde.DynamicSupervisor` on any membership change | symmetric: a leaving host hands rooms to their successor, a joining host pulls its rendezvous share — both re-home BY KEY and rehydrate from the shared store (persist-before-ack made state durable), not a live process-state stream |
 | node up/down         | `monitorNodes` (nodeup + nodedown)                           | `:net_kernel.monitor_nodes(true)`       | `monitor` alone was down-only; the up half is what drives scale-up rebalancing                                                                                                                          |
+| overload protection  | `circuitBreaker({ maxFailures, resetTimeoutMs })`            | Erlang `:fuse` / Akka `CircuitBreaker`  | closed→open→half-open; guards a `call` to a flaky peer, fast-fails with a declared `CircuitOpen` while open, probes once after cooldown                                                                  |
+| cluster formation    | `cluster({ strategy, connect })` — polling discovery         | Elixir `libcluster` (`Strategy.poll`)   | the strategy (env/DNS/K8s) stays platform-specific; the diff/connect loop is universal, so a node auto-forms the mesh instead of a hardcoded peer list                                                   |
 
 ### What's built now — and the one honest frontier that remains
 
@@ -135,5 +137,5 @@ replicated_ — every node holds every entry, and anti-entropy is O(entries) per
 to a large cluster but not to a billion-key registry; true horizontal scale needs a **sharded**
 registry (a DHT / hash ring), which neither Elixir's `Registry` nor Horde does. That is the honest
 boundary now: routing, supervision, durability, split-brain healing, zombie eviction, CRDT
-convergence, and symmetric redistribution (scale-up + scale-down) are here; sharding the keyspace
-is where you'd go beyond Horde.
+convergence, symmetric redistribution (scale-up + scale-down), overload protection (circuit
+breaker), and cluster auto-formation are here; sharding the keyspace is where you'd go beyond Horde.

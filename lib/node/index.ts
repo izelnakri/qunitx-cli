@@ -23,6 +23,13 @@ export { wsTransport, traceTransport, binaryCodec, jsonCodec, type Codec } from 
 // change — the routing primitive for distributed stateful entities (see examples/realtime-chat).
 export { rendezvous } from './rendezvous.ts';
 
+// Circuit breaker (Erlang :fuse / Akka): fail fast past a flaky peer and let it recover.
+export { circuitBreaker, type CircuitBreaker, type CircuitState } from './circuit-breaker.ts';
+
+// Automatic cluster formation (Elixir libcluster): a polling strategy discovers peers and the
+// manager diffs it against the connected set to converge the topology.
+export { cluster, type Cluster } from './cluster.ts';
+
 // The delta-state OR-Set: the CRDT that makes membership/registry converge under frame loss
 // and partition heal (anti-entropy), the way Horde's registry does.
 export { ORSet, type Dot, type VersionVector, type CausalContext, type CrdtState } from './crdt.ts';
