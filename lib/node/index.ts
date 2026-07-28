@@ -25,7 +25,7 @@ export { rendezvous } from './rendezvous.ts';
 
 // The delta-state OR-Set: the CRDT that makes membership/registry converge under frame loss
 // and partition heal (anti-entropy), the way Horde's registry does.
-export { ORSet, type Dot, type VersionVector, type CrdtState } from './crdt.ts';
+export { ORSet, type Dot, type VersionVector, type CausalContext, type CrdtState } from './crdt.ts';
 
 // Hot code upgrades: Erlang's release mechanics on web standards — import() as the code
 // server, run-to-completion as suspend/resume, codeChange as code_change/3, and the

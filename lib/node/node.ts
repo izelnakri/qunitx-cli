@@ -29,7 +29,7 @@ import {
   type Any as AnyFailure,
 } from '../result/failure.ts';
 import { Task } from '../task/task.ts';
-import { ORSet, type CrdtState, type VersionVector } from './crdt.ts';
+import { ORSet, type CrdtState, type CausalContext } from './crdt.ts';
 
 /** One frame on the wire. Payloads must be structured-clone-safe; Failures ride `$failure`. */
 export type Frame = {
@@ -63,8 +63,8 @@ export type Frame = {
   crdt?: CrdtState;
   /** Whether a 'crdt' frame carries FULL state (anti-entropy) vs a one-op delta. */
   full?: boolean;
-  /** A node's causal context for a 'sync' request. */
-  vv?: VersionVector;
+  /** A node's causal context for a 'sync' request — the peer replies with what's beyond it. */
+  cc?: CausalContext;
 };
 
 /**
@@ -266,15 +266,10 @@ export function start(
   const ownersOf = (registry: string, key: string): string[] =>
     factsWithPrefix(`r\u001f${registry}\u001f${key}\u001f`).filter(isLive);
 
-  const broadcastFact = (fact: string): void =>
-    transport.send({ kind: 'crdt', from: name, crdt: crdt.delta(fact), full: false });
-
-  // True if I hold any op beyond `vv` (so replying to a sync is worthwhile).
-  const hasBeyond = (vv: { [node: string]: number }): boolean => {
-    const mine = crdt.versionVector();
-    for (const node in mine) if (mine[node] > (vv[node] ?? 0)) return true;
-    return false;
-  };
+  // Broadcast a one-op CRDT delta (from crdt.add/remove) to every peer — immediate propagation;
+  // anti-entropy (full state) backstops any that's dropped.
+  const broadcastDelta = (delta: CrdtState): void =>
+    transport.send({ kind: 'crdt', from: name, crdt: delta, full: false });
 
   // After any merge: a key I own may now have a smaller LIVE owner — fire its conflict handler
   // (drives serve({via}) self-terminate). A partition that elected two owners heals to one.
@@ -335,9 +330,9 @@ export function start(
       else crdt.mergeDelta(frame.crdt!);
       checkConflicts();
     } else if (frame.kind === 'sync') {
-      // A peer asked what it is missing (its version vector) — reply with full state iff I hold
+      // A peer asked what it is missing (its causal context) — reply with full state iff I know
       // anything beyond it (otherwise the sync is a no-op).
-      if (hasBeyond(frame.vv!))
+      if (crdt.hasBeyond(frame.cc!))
         dispatch({ kind: 'crdt', from: name, to: frame.from, crdt: crdt.state(), full: true });
     } else if (frame.kind === 'bye') {
       declareDown(frame.from);
@@ -458,29 +453,25 @@ export function start(
     list: () => [...peers],
     join(group) {
       myGroups.add(group);
-      crdt.add(gfact(group, name));
-      broadcastFact(gfact(group, name));
+      broadcastDelta(crdt.add(gfact(group, name)));
     },
     leave(group) {
       myGroups.delete(group);
-      crdt.remove(gfact(group, name));
-      broadcastFact(gfact(group, name));
+      broadcastDelta(crdt.remove(gfact(group, name)));
     },
     groupMembers: (group) => groupMembersOf(group),
     register(registry, key, onConflict) {
       const rk = `${registry}\u0000${key}`;
       myKeys.add(rk);
       if (onConflict) conflictHandlers.set(rk, onConflict);
-      crdt.add(rfact(registry, key, name));
-      broadcastFact(rfact(registry, key, name));
+      broadcastDelta(crdt.add(rfact(registry, key, name)));
       checkConflicts();
     },
     unregister(registry, key) {
       const rk = `${registry}\u0000${key}`;
       myKeys.delete(rk);
       conflictHandlers.delete(rk);
-      crdt.remove(rfact(registry, key, name));
-      broadcastFact(rfact(registry, key, name));
+      broadcastDelta(crdt.remove(rfact(registry, key, name)));
     },
     whereis: (registry, key) => {
       const owners = ownersOf(registry, key);
@@ -612,7 +603,7 @@ export function start(
       const list = [...peers];
       if (list.length === 0) return;
       const peer = list[cursor++ % list.length];
-      dispatch({ kind: 'sync', from: name, to: peer, vv: crdt.versionVector() });
+      dispatch({ kind: 'sync', from: name, to: peer, cc: crdt.context() });
     }, antiEntropyMs ?? 10000);
     (syncTimer as { unref?: () => void }).unref?.();
   }

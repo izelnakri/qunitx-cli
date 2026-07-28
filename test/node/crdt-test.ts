@@ -98,28 +98,39 @@ module('Node | ORSet delta', { concurrency: true }, () => {
     const a = new ORSet('a@n');
     const b = new ORSet('b@n');
     b.add('keep');
-    a.add('x');
-    b.mergeDelta(a.delta('x'));
+    b.mergeDelta(a.add('x'));
     assert.deepEqual(b.values().sort(), ['keep', 'x'], 'keep survived a partial delta');
   });
 
   test('a delta of a removed element (empty dots) propagates the remove', (assert) => {
     const a = new ORSet('a@n');
     const b = new ORSet('b@n');
-    a.add('x');
-    b.mergeDelta(a.delta('x'));
-    a.remove('x');
-    b.mergeDelta(a.delta('x')); // empty dots + advanced context
+    b.mergeDelta(a.add('x'));
+    b.mergeDelta(a.remove('x')); // empty dots + the removed dot as context
     assert.false(b.has('x'), 'the remove crossed as a delta');
   });
 
   test('delta broadcast + full-state anti-entropy agree', (assert) => {
     const a = new ORSet('a@n');
     const b = new ORSet('b@n');
-    a.add('x');
-    b.mergeDelta(a.delta('x'));
+    b.mergeDelta(a.add('x'));
     a.add('y');
     b.merge(a.state()); // anti-entropy backstop
     assert.deepEqual(b.values().sort(), ['x', 'y']);
+  });
+
+  test('a delta cannot poison a peer that missed an earlier op (no phantom remove)', (assert) => {
+    // c adds two facts; a peer sees only the SECOND delta, then full-merges another peer that
+    // also only saw the second. The first must survive — a minimal-context delta never lets the
+    // gap masquerade as "seen and removed".
+    const c = new ORSet('c@n');
+    const first = c.add('first');
+    const second = c.add('second');
+    void first; // dropped in flight — the peer never receives it
+    const a = new ORSet('a@n');
+    a.mergeDelta(second); // a saw only 'second' (dot c@n:2), with a gap at c@n:1
+    c.merge(a.state()); // full-state merge back into the origin
+    assert.true(c.has('first'), 'the origin keeps its own live entry (no phantom remove)');
+    assert.true(c.has('second'), 'and still holds the second');
   });
 });
