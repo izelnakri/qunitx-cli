@@ -63,6 +63,11 @@ export function startHub(options: { port?: number; codec?: Codec } = {}): {
 
   return {
     port: () => (wss.address() as { port: number }).port,
-    close: () => new Promise<void>((done) => wss.close(() => done())),
+    close: () =>
+      new Promise<void>((done) => {
+        // ws's close() waits for clients that may never leave — sever them first, then close.
+        for (const client of wss.clients) client.terminate();
+        wss.close(() => done());
+      }),
   };
 }

@@ -59,6 +59,8 @@ export interface Transport {
   onFrame(handler: (frame: Frame) => void): void;
   /** Release the pipe (leave the hub, close the port). */
   close?(): void;
+  /** Fires after a RE-connection (not the first open) — the node re-announces itself here. */
+  onReopen?(cb: () => void): void;
 }
 
 /**
@@ -98,6 +100,48 @@ export interface NodeHandle {
   cast(to: string, subject: string, payload?: unknown): void;
   /** Says bye to peers and closes the transport — Elixir's `Node.stop/0`. */
   stop(): void;
+}
+
+/**
+ * A liveness watcher shaped exactly like a Supervisor child — Erlang's net ticks. Pings
+ * `peer` every `everyMs`; after `missAfter` consecutive pangs it reports the peer down and
+ * exits (pair with `restart: 'permanent'` to keep watching forever, `'transient'` to stop
+ * once down is reported).
+ *
+ * ```ts
+ * const hub = memoryHub();
+ * const watcher = start('watcher@memory', hub.transport());
+ * const downs: string[] = [];
+ * await heartbeat(watcher, 'ghost@memory', { everyMs: 5, missAfter: 2, onDown: (p) => void downs.push(p) })(
+ *   new AbortController().signal,
+ * );
+ * downs; // ['ghost@memory'] — two missed ticks, reported down
+ * watcher.stop();
+ * ```
+ */
+export function heartbeat(
+  node: NodeHandle,
+  peer: string,
+  options: { everyMs?: number; missAfter?: number; onDown: (peer: string) => void },
+): (signal: AbortSignal) => Promise<void> {
+  const { everyMs = 1000, missAfter = 2, onDown } = options;
+  return async (signal) => {
+    let misses = 0;
+    while (!signal.aborted) {
+      const answer = await node.ping(peer, everyMs);
+      if (signal.aborted) return;
+      if (answer === 'pang') {
+        if (++misses >= missAfter) {
+          onDown(peer);
+          return;
+        }
+      } else misses = 0;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, everyMs);
+        signal.addEventListener('abort', () => (clearTimeout(timer), resolve()), { once: true });
+      });
+    }
+  };
 }
 
 /**
@@ -169,6 +213,9 @@ export function start(name: string, transport: Transport): NodeHandle {
     }
   });
   transport.send({ kind: 'hello', from: name });
+  // Erlang reconnects re-run the handshake; so do we: a transport that redials (wsTransport
+  // with reconnect) re-announces this node, and peers answer hello, rebuilding list().
+  transport.onReopen?.(() => transport.send({ kind: 'hello', from: name }));
 
   const awaitRef = <R>(
     timeoutMs: number,

@@ -3,7 +3,15 @@
 // Node.fromPort(worker). Message passing (call/cast/handle) replaces remote spawns —
 // JS cannot ship closures — and the Failure envelope codec keeps channel identity across
 // every hop: declared failures arrive declared, never as clone-gutted Errors.
-export { start, memoryHub, fromPort, type Frame, type Transport, type NodeHandle } from './node.ts';
+export {
+  start,
+  heartbeat,
+  memoryHub,
+  fromPort,
+  type Frame,
+  type Transport,
+  type NodeHandle,
+} from './node.ts';
 
 // The socket wire: universal (native WebSocket). The default codec is binary — tagged,
 // length-prefixed, ETF-in-spirit (Erlang never base64s its distribution); jsonCodec is the
