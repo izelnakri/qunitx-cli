@@ -207,7 +207,11 @@ export interface NodeHandle {
   /** Request/response with a deadline. `to` may be a node name, `'group:<name>'` (round-robin
    *  the members — a service), or `'via:<registry>/<key>'` (route to the ONE owner of a key —
    *  an entity). Empty group → declared `NoGroupMembers`; unowned key → `NotRegistered`.
-   *  Declared failures cross intact. */
+   *  Declared failures cross intact. The send is eager (in flight before the returned Task is
+   *  awaited), but the Task is also **retryable**: `.retry(n)` re-runs the whole round-trip —
+   *  re-resolving `to` (a group retry can land on a different member) and re-checking the
+   *  remaining deadline — so it re-sends, not just re-waits. Retry only calls the caller wants,
+   *  since a retried non-idempotent write executes twice. */
   call<T = unknown>(
     to: string,
     subject: string,
@@ -639,67 +643,83 @@ export function start(
         ambient?.deadline !== undefined
           ? Math.min(Date.now() + timeoutMs, ambient.deadline)
           : Date.now() + timeoutMs;
-      const effectiveMs = deadline - Date.now();
-      if (effectiveMs <= 0) {
-        return new Task<T, AnyFailure>(() => {
-          throw new Failure('DeadlineExceeded', `call ${subject} to ${to}: budget already spent`, {
-            to,
-            subject,
-          });
-        });
-      }
-      const task = awaitRef<T>(
-        effectiveMs,
-        (frame) => {
+      // The recipe does the WHOLE round-trip — re-resolve the target, allocate a fresh ref, arm
+      // the deadline timer, register the reply waiter, dispatch — and RETURNS the deferred reply.
+      // Folding the send INTO the recipe (rather than firing it once, outside) is what makes
+      // .retry()/.restart() actually re-send: each attempt re-resolves `to` (so a group retry
+      // lands on a live member) and re-checks the REMAINING budget (so retries never outlive the
+      // deadline). `perform()` below keeps the send eager — the recipe runs, and dispatches, now.
+      const task = new Task<T, AnyFailure>(() => {
+        const { promise, resolve, reject } = Task.withResolvers<T>();
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) {
+          reject(
+            new Failure('DeadlineExceeded', `call ${subject} to ${to}: budget already spent`, {
+              to,
+              subject,
+            }),
+          );
+          return promise;
+        }
+        const target = resolveTarget(to);
+        if ('empty' in target) {
+          reject(
+            target.empty === 'group'
+              ? new Failure('NoGroupMembers', `no members in ${to}`, { group: to })
+              : new Failure('NotRegistered', `no owner for ${to}`, { via: to }),
+          );
+          return promise;
+        }
+        const id = ++ref;
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          emit(
+            ['node', 'call', 'timeout'],
+            { duration: performance.now() - started },
+            { to, subject, trace },
+          );
+          reject(
+            new Failure(
+              'CallTimeout',
+              `call ${subject} to ${to} timed out after ${remainingMs}ms`,
+              { to, subject },
+            ),
+          );
+        }, remainingMs);
+        pending.set(id, (frame) => {
+          clearTimeout(timer);
+          pending.delete(id);
           emit(
             ['node', 'call', 'stop'],
             { duration: performance.now() - started },
             { to, subject, trace },
           );
           const value = decode(frame);
-          if (isFailure(value)) throw value; // a remote DECLARED failure stays declared here
-          return value as T;
-        },
-        () => {
-          emit(
-            ['node', 'call', 'timeout'],
-            { duration: performance.now() - started },
-            { to, subject, trace },
-          );
-          throw new Failure(
-            'CallTimeout',
-            `call ${subject} to ${to} timed out after ${effectiveMs}ms`,
-            { to, subject },
-          );
-        },
-      ) as Task<T, never> & { ref: number };
-      const target = resolveTarget(to);
-      if ('empty' in target) {
-        return new Task<T, AnyFailure>(() => {
-          throw target.empty === 'group'
-            ? new Failure('NoGroupMembers', `no members in ${to}`, { group: to })
-            : new Failure('NotRegistered', `no owner for ${to}`, { via: to });
+          if (isFailure(value))
+            reject(value); // a remote DECLARED failure stays declared here
+          else resolve(value as T);
         });
-      }
-      task.perform(); // sets up the reply resolver NOW, before the frame goes out
+        emit(['node', 'call', 'start'], {}, { to: target.node, subject, trace });
+        dispatch({
+          kind: 'call',
+          from: name,
+          to: target.node,
+          subject,
+          ref: id,
+          trace,
+          deadline,
+          ...encode(payload),
+        });
+        return promise;
+      });
+      task.perform(); // eager send preserved — the recipe runs (and dispatches) NOW
       // Claim the eager reply's rejection. call() is request/response — the returned Task is
       // always consumed (await or .result()) — but a FAST rejection (e.g. an Overloaded shed)
       // can settle before a lazy `.result()` attaches its handler, which would surface as a
       // spurious unhandled rejection. This passive handler marks it handled; the caller's own
       // await/.result() still sees the settlement (a Task memoises to all consumers).
       task.then(undefined, () => {});
-      emit(['node', 'call', 'start'], {}, { to: target.node, subject, trace });
-      dispatch({
-        kind: 'call',
-        from: name,
-        to: target.node,
-        subject,
-        ref: task.ref,
-        trace,
-        deadline,
-        ...encode(payload),
-      });
-      return task as Task<T, AnyFailure>;
+      return task;
     },
     trace: () => ambient?.trace,
     withTrace: (context, fn) =>

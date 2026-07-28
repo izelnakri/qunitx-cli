@@ -57,6 +57,39 @@ module('Node | memory cluster', () => {
     server.stop();
   });
 
+  test('a call Task is retryable — .retry() RE-SENDS the request, not just re-waits', async (assert) => {
+    const hub = Node.memoryHub();
+    const client = Node.start('c@memory', hub.transport());
+    const server = Node.start('s@memory', hub.transport());
+    let attempts = 0;
+    server.handle('flaky', (payload) => {
+      attempts += 1;
+      if (attempts < 3) throw new Error('transient'); // fail the first two, succeed on the third
+      return (payload as { n: number }).n * 2;
+    });
+
+    const answer = await client.call<number>('s@memory', 'flaky', { n: 21 }).retry(5);
+    assert.strictEqual(answer, 42, 'retry re-dispatched until the handler succeeded');
+    assert.strictEqual(
+      attempts,
+      3,
+      'the server saw a fresh send per attempt (not one send re-awaited)',
+    );
+
+    // A retry budget that runs out still surfaces the last failure, not a hang.
+    server.handle('always', () => {
+      throw new Error('never works');
+    });
+    const givenUp = await client.call('s@memory', 'always').retry(2).result();
+    assert.strictEqual(
+      (givenUp as Failure.Any).code,
+      'RemoteCrash',
+      'exhausted retry (3 attempts) surfaces the last reason instead of hanging',
+    );
+    client.stop();
+    server.stop();
+  });
+
   test('cast is fire-and-forget; ping answers pong or pang; monitor fires on bye', async (assert) => {
     const hub = Node.memoryHub();
     const a = Node.start('a@memory', hub.transport());
