@@ -133,6 +133,21 @@ export interface NodeHandle {
   whereis(registry: string, key: string): string | null;
   /** Every registered key in `registry` — `Registry.keys`. */
   registered(registry: string): string[];
+  /**
+   * Add an arbitrary `fact` to the cluster-wide convergent set and gossip it — the low-level
+   * primitive that `join`/`register` are conveniences over. A fact converges under frame loss and
+   * partition heal (same CRDT + anti-entropy), so higher layers like Presence get distribution for
+   * free. The fact string carries whatever structure the caller wants (topic, key, owner, meta).
+   */
+  putFact(fact: string): void;
+  /** Remove a replicated `fact` (observed-remove) and gossip the removal. */
+  dropFact(fact: string): void;
+  /**
+   * Every replicated fact currently present with `prefix` — RAW, with no liveness filter: the
+   * caller decides which segment is the owning node and intersects with {@link NodeHandle.list} /
+   * {@link NodeHandle.self} to hide facts owned by a downed peer (as the registry does internally).
+   */
+  facts(prefix: string): string[];
   /** Round-trip liveness — Elixir's `Node.ping/1`: `'pong'` or, after `timeoutMs`, `'pang'`. */
   ping(name: string, timeoutMs?: number): Task<'pong' | 'pang', never>;
   /** Fires `fn(name)` when a peer says bye or its transport drops — Elixir's `Node.monitor/2`. Returns the un-monitor. */
@@ -500,6 +515,9 @@ export function start(
       );
       return [...keys];
     },
+    putFact: (fact) => broadcastDelta(crdt.add(fact)),
+    dropFact: (fact) => broadcastDelta(crdt.remove(fact)),
+    facts: (prefix) => crdt.values().filter((f) => f.startsWith(prefix)),
     ping(peer, timeoutMs = 5000) {
       const task = awaitRef<'pong' | 'pang'>(
         timeoutMs,
