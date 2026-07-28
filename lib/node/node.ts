@@ -86,6 +86,8 @@ export type Frame = {
   cc?: CausalContext;
   /** The distributed trace this call/cast belongs to — see {@link Trace}. */
   trace?: Trace;
+  /** Transport-internal epidemic-gossip envelope (mesh `gossipFanout`): dedup id + hops left. */
+  gossip?: { id: string; ttl: number };
 };
 
 /**

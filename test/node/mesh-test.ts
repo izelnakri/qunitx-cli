@@ -59,3 +59,54 @@ module('Node | mesh transport', () => {
     b.stop();
   });
 });
+
+module('Node | mesh gossip fan-out', () => {
+  test('with gossipFanout the sender pays O(k) and the whole mesh still converges', async (assert) => {
+    const names = Array.from({ length: 9 }, (_, i) => `n${i}@fan`);
+    const net = meshNetwork(names);
+    // Count how many links the SENDER pushes each crdt broadcast onto.
+    let senderCrdtSends = 0;
+    const counted = (base: ReturnType<typeof net.for>) => ({
+      ...base,
+      link: (peer: string) => {
+        const inner = base.link(peer);
+        return {
+          ...inner,
+          send: (f: Node.Frame) => {
+            if (f.kind === 'crdt' && f.from === 'n0@fan' && f.to === undefined) senderCrdtSends++;
+            inner.send(f);
+          },
+        };
+      },
+    });
+    const nodes = names.map((n, i) =>
+      Node.start(
+        n,
+        meshTransport(n, {
+          ...(i === 0 ? counted(net.for(n)) : net.for(n)),
+          gossipFanout: 2,
+          pollMs: 20,
+        }),
+        { antiEntropyMs: 100, tick: false }, // gossip spreads fast; anti-entropy guarantees completeness
+      ),
+    );
+    await new Promise((r) => setTimeout(r, 150)); // hellos + full-state pushes settle
+
+    senderCrdtSends = 0; // measure ONLY the register broadcast below
+    nodes[0].register('rooms', 'lobby');
+    const deadline = Date.now() + 4000;
+    while (!nodes.every((n) => n.whereis('rooms', 'lobby') === 'n0@fan') && Date.now() < deadline)
+      await new Promise((r) => setTimeout(r, 20));
+
+    assert.deepEqual(
+      nodes.map((n) => n.whereis('rooms', 'lobby')),
+      names.map(() => 'n0@fan'),
+      'all nine nodes learned the registration through epidemic relay',
+    );
+    assert.true(
+      senderCrdtSends <= 4,
+      `the sender fanned out to ~k links, not all 8 (sent ${senderCrdtSends})`,
+    );
+    for (const n of nodes) n.stop();
+  });
+});
