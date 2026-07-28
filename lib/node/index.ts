@@ -39,6 +39,11 @@ export { cluster, type Cluster } from './cluster.ts';
 // Universal routing core over an injected per-peer link factory; meshNetwork is the in-process test rig.
 export { meshTransport, meshNetwork, webSocketMeshLink, type MeshLink } from './mesh.ts';
 
+// The PARTITIONED registry (frontier #1): each key lives on one rendezvous-chosen coordinator,
+// so memory/sync scale with the cluster (beyond Horde's fully-replicated design) — and claims
+// serialize through the coordinator, restoring Elixir's synchronous duplicate rejection.
+export { shardedRegistry, type ShardedRegistry, type ClaimResult } from './sharded-registry.ts';
+
 // Convergent counters + LWW register map — riak_dt's emcntr/LWW family, for distributed
 // metrics, gauges, and settings that merge without coordination.
 export {
