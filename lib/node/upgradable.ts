@@ -66,6 +66,15 @@ export interface Store {
     now: number,
     limit: number,
   ): Promise<unknown[]>;
+  /**
+   * Atomically acquire or renew a lease on `key` for `candidate` for `ttlMs` — Elixir's `Oban.Peer`
+   * leadership (a Postgres advisory lock, or the `:global` singleton). If `key` is unheld, expired,
+   * or already `candidate`'s, it becomes `candidate`'s until `now + ttlMs`; either way the CURRENT
+   * holder is returned (`=== candidate` ⇒ you lead). One turn (memoryStore) or one statement
+   * (Postgres), so exactly one candidate ever holds it — the coordinator for cluster-once work (cron)
+   * or, with no {@link Store.claim}, for electing a single drainer.
+   */
+  lease?(key: string, candidate: string, now: number, ttlMs: number): Promise<string>;
 }
 
 /**
@@ -112,6 +121,15 @@ export function memoryStore(): Store {
           return marked;
         });
       return Promise.resolve(claimed);
+    },
+    lease: (key, candidate, now, ttlMs) => {
+      const raw = data.get(key);
+      const held = raw ? (JSON.parse(raw) as { owner: string; expiresAt: number }) : undefined;
+      if (!held || held.expiresAt <= now || held.owner === candidate) {
+        data.set(key, JSON.stringify({ owner: candidate, expiresAt: now + ttlMs }));
+        return Promise.resolve(candidate);
+      }
+      return Promise.resolve(held.owner);
     },
   };
 }
