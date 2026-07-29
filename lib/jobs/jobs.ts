@@ -12,12 +12,16 @@
  * test helper that runs everything runnable to completion). Telemetry mirrors Oban's:
  * `['jobs','execute','start'|'stop'|'exception']` with worker/queue/attempt metadata.
  *
+ * **Distributed like Oban, by default.** Run the same queue on every node against one shared
+ * {@link Store}: each node polls and drains, and the store's atomic {@link Store.claim} (Oban's
+ * `SELECT … FOR UPDATE SKIP LOCKED`) hands each job to exactly one node — no leader election, no
+ * `pollStore` flag, no double execution. A `memoryStore` claims in one event-loop turn (in-process
+ * clustering); a Postgres store would use row locks. Without a `claim` a queue simply drains its
+ * own inserts (single process). Cron is the exception — every node would fire it, so a schedule
+ * must run on ONE node; that leader election is a follow-up (Oban's `Peer`), not here yet.
+ *
  * **Recurring cron** (Oban's Cron plugin): pass `cron` — each expression enqueues its job every
- * matching UTC minute. Divergence: the executor is per-process — Oban coordinates competing nodes
- * through Postgres row locks, which a plain key-value {@link Store} cannot express. To run ONE
- * queue (or its cron) across a cluster, make it a singleton with the primitives already here:
- * claim a registry key (`node.register('jobs', 'runner', onConflict)`) and only `resumeQueue`
- * while you own it.
+ * matching UTC minute; a schedule fires at most once per matching minute per instance.
  *
  * ```ts
  * import { memoryStore } from '../node/index.ts';
@@ -156,6 +160,7 @@ export function jobQueue(options: {
   const jobs = new Map<string, Job>();
   const executing = new Map<string, number>(); // queue -> running count
   const paused = new Set<string>();
+  const seenQueues = new Set<string>(['default']); // queues to poll (configured + inserted-into)
   let alive = true;
 
   const persistJob = (job: Job): Promise<void> => options.store.save(jobKey(job.id), job);
@@ -187,10 +192,9 @@ export function jobQueue(options: {
     !paused.has(job.queue);
 
   const run = async (job: Job): Promise<void> => {
-    job.state = 'executing';
-    job.attempt++;
+    // `job` arrives already marked `executing` with `attempt` incremented — the claim did that
+    // atomically (that mark is also what a crash-rescue keys on). Here we only run it.
     executing.set(job.queue, (executing.get(job.queue) ?? 0) + 1);
-    await persistJob(job); // an attempt is on the record before it runs — that's what rescue keys on
     const meta = { worker: job.worker, queue: job.queue, id: job.id, attempt: job.attempt };
     const started = performance.now();
     emit(['jobs', 'execute', 'start'], {}, meta);
@@ -249,9 +253,10 @@ export function jobQueue(options: {
       errors: [],
     };
     jobs.set(job.id, job);
+    seenQueues.add(job.queue); // so the drain loop polls this queue even if it wasn't configured
     await persistJob(job); // durable BEFORE the caller is told "queued"
     await persistIndex();
-    queueMicrotask(tick); // run it now if a slot is free — the poll is only the backstop
+    queueMicrotask(() => void tick()); // run it now if a slot is free — the poll is only the backstop
     return job;
   };
 
@@ -274,23 +279,64 @@ export function jobQueue(options: {
     }
   };
 
-  // The scheduler: fire due cron schedules, then fill each queue's free slots, most urgent first.
-  const tick = (): void => {
-    if (!alive) return;
-    const clock = now();
-    evaluateCron(clock);
-    const due = [...jobs.values()]
-      .filter((job) => runnable(job, clock))
-      .sort((a, b) => a.priority - b.priority || a.scheduledAt - b.scheduledAt);
-    for (const job of due) {
-      const limit = queues[job.queue] ?? queues.default ?? 10;
-      if ((executing.get(job.queue) ?? 0) >= limit) continue;
-      void run(job);
+  const READY: readonly JobState[] = ['available', 'scheduled', 'retryable'];
+
+  // Claim up to `demand` runnable jobs for `queue`, atomically MARKING them executing so no other
+  // drainer runs them too. `store.claim` does this across the whole cluster (every node polls, the
+  // claim partitions the work — Oban's model, no leader election); without it we claim from this
+  // instance's own in-memory jobs (single-writer). Either way the mark is synchronous-before-await,
+  // so overlapping ticks never grab the same job.
+  const claimJobs = async (queue: string, demand: number): Promise<Job[]> => {
+    if (options.store.claim) {
+      const claimed = (await options.store.claim(prefix, queue, READY, now(), demand)) as Job[];
+      for (const job of claimed) jobs.set(job.id, job); // reflect the store's mark in the local view
+      return claimed;
     }
+    const due = [...jobs.values()]
+      .filter((job) => job.queue === queue && runnable(job, now()))
+      .sort((a, b) => a.priority - b.priority || a.scheduledAt - b.scheduledAt)
+      .slice(0, demand);
+    for (const job of due) {
+      job.state = 'executing';
+      job.attempt++;
+      await persistJob(job);
+    }
+    return due;
   };
-  const timer = setInterval(tick, pollMs);
+
+  // Queues to poll: the configured ones plus any an insert has used (an ad-hoc queue name).
+  const drainQueues = (): string[] => [...new Set([...Object.keys(queues), ...seenQueues])];
+
+  // The scheduler: fire due cron schedules, then for each queue claim its free slots and run them.
+  // Returns how many jobs it started (drain uses it to know when the store is quiescent).
+  const runTick = async (): Promise<number> => {
+    if (!alive) return 0;
+    evaluateCron(now());
+    let started = 0;
+    for (const queue of drainQueues()) {
+      if (paused.has(queue)) continue;
+      const limit = queues[queue] ?? queues.default ?? 10;
+      const demand = limit - (executing.get(queue) ?? 0);
+      if (demand <= 0) continue;
+      for (const job of await claimJobs(queue, demand)) {
+        void run(job); // run() bumps the executing count synchronously — the next queue sees it
+        started += 1;
+      }
+    }
+    return started;
+  };
+  // Serialise ticks. Overlapping polls would each read a stale `executing` across the `await claim`
+  // and over-claim past the concurrency limit; the atomic claim stops two ticks taking the SAME
+  // job, not the count. Chaining runs one tick at a time; a failed tick can't break the ones after.
+  let tail: Promise<unknown> = Promise.resolve();
+  const tick = (): Promise<number> => {
+    const result = tail.then(runTick);
+    tail = result.catch(() => {});
+    return result;
+  };
+  const timer = setInterval(() => void tick(), pollMs);
   (timer as { unref?: () => void }).unref?.();
-  void loaded.then(tick); // rescued work starts as soon as the reload finishes
+  void loaded.then(() => tick()); // rescued + peer work starts once reload finishes
 
   return {
     insert(worker, args = {}, opts = {}) {
@@ -309,17 +355,18 @@ export function jobQueue(options: {
     pauseQueue: (queue) => void paused.add(queue),
     resumeQueue(queue) {
       paused.delete(queue);
-      tick();
+      void tick();
     },
     drain() {
       return Task(async () => {
         await loaded;
         for (;;) {
-          tick();
-          const clock = now();
+          // A tick claims (from the store) and starts everything runnable now; quiescent = nothing
+          // started AND nothing still executing. Scheduled-future jobs aren't claimed, so — as
+          // before — drain returns without waiting for them.
+          const started = await tick();
           const busy = [...executing.values()].some((count) => count > 0);
-          const pending = [...jobs.values()].some((job) => runnable(job, clock));
-          if (!busy && !pending) return;
+          if (started === 0 && !busy) return;
           await new Promise((resolve) => setTimeout(resolve, 5));
         }
       }).perform();

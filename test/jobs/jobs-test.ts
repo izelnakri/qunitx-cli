@@ -196,4 +196,40 @@ module('Jobs | Oban-shaped durable queue', () => {
     await jobs.drain();
     jobs.stop();
   });
+
+  test('multi-node: two drainers on ONE store split the work, never double-run (atomic claim)', async (assert) => {
+    const store = memoryStore(); // one shared store; two independent queue instances, both active
+    const ranBy: Record<string, string> = {}; // jobId -> node that ran it, or 'DUP' if two did
+    const make = (node: string) =>
+      jobQueue({
+        store,
+        pollMs: 5,
+        queues: { default: 3 }, // each runs at most 3 at once — neither can grab all 12
+        workers: {
+          work: async (a) => {
+            const id = (a as { id: string }).id;
+            ranBy[id] = ranBy[id] ? 'DUP' : node;
+            await new Promise((r) => setTimeout(r, 25));
+          },
+        },
+      });
+    const a = make('A');
+    const b = make('B');
+    for (let i = 0; i < 12; i++) await a.insert('work', { id: `j${i}` });
+
+    await Promise.all([a.drain(), b.drain()]); // both drain concurrently — no leader election
+    const outcomes = Object.values(ranBy);
+    assert.equal(Object.keys(ranBy).length, 12, 'every job ran exactly once');
+    assert.equal(
+      outcomes.filter((v) => v === 'DUP').length,
+      0,
+      'no job ran twice — the claim is atomic',
+    );
+    assert.true(
+      outcomes.includes('A') && outcomes.includes('B'),
+      'both nodes drained a share — SKIP-LOCKED-style, no singleton',
+    );
+    a.stop();
+    b.stop();
+  });
 });
