@@ -40,6 +40,7 @@ import { isFailure, type Any as AnyFailure } from '../result/failure.ts';
 import { Task } from '../task/task.ts';
 import { execute as emit } from '../telemetry/telemetry.ts';
 import { cronMatch } from './cron.ts';
+import type { Leader } from './leader.ts';
 import type { Store } from '../node/upgradable.ts';
 
 /** A recurring schedule entry — a cron expression mapped to the job it enqueues. */
@@ -139,11 +140,14 @@ export function jobQueue(options: {
   pollMs?: number;
   keyPrefix?: string;
   /** Recurring jobs — Oban's Cron plugin: a cron expression (UTC) enqueues its job each time it
-   *  matches. A schedule fires at most once per matching minute. Cron is out of scope for a
-   *  clustered singleton — run the queue's cron on ONE node (claim a registry key). Give an
-   *  expression a LIST of entries to run several workers on the same schedule (Oban allows duplicate
-   *  crontab rows; a record key can't repeat, so the array value is the JS-shaped equivalent). */
+   *  matches. A schedule fires at most once per matching minute per instance; across a cluster,
+   *  pass `leader` so only ONE node fires each schedule (else every node would). Give an expression a
+   *  LIST of entries to run several workers on the same schedule (Oban allows duplicate crontab
+   *  rows; a record key can't repeat, so the array value is the JS-shaped equivalent). */
   cron?: Record<string, CronEntry | CronEntry[]>;
+  /** Cluster leadership for cron — Oban's `Peer`. When set, this instance evaluates cron only while
+   *  it holds the lease, so a schedule enqueues exactly once cluster-wide. See {@link leader}. */
+  leader?: Leader;
   /** Injectable wall-clock (epoch ms) — for deterministic scheduling/cron/backoff tests. */
   now?: () => number;
 }): JobQueue {
@@ -264,6 +268,8 @@ export function jobQueue(options: {
   const cronFired = new Map<string, number>();
   const evaluateCron = (clock: number): void => {
     if (!options.cron) return;
+    if (options.leader && !options.leader.isLeader()) return; // cluster-once: only the leader fires
+
     const minute = Math.floor(clock / 60000);
     const at = new Date(clock);
     for (const [expr, value] of Object.entries(options.cron)) {
