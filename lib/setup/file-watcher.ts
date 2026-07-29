@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { Task } from '../task/index.ts';
-import { readdir, readFile, stat, lstat } from 'node:fs/promises';
+import { readdir, readFile, stat, lstat, realpath } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 // See lib/commands/run.ts: node:timers preserves .unref() across Node and Deno.
@@ -582,6 +582,8 @@ export interface RescanDeps {
   readdir: typeof readdir;
   /** Resolves a path (follows symlinks). Used to drop entries that are genuinely gone. */
   stat: typeof stat;
+  /** Resolves the symlink chain — throws on a broken target where `stat` may not (Windows). */
+  realpath?: typeof realpath;
 }
 
 /**
@@ -640,7 +642,7 @@ export async function rescanDirectoryForDelta(
       // *transient* stat error (EMFILE/EACCES under load) is not ENOENT, so a real, existing
       // file stays present and is never spuriously unlinked. FSTree.build and
       // classifyRenameEvent already stat-and-skip on their own paths; this aligns the rescan.
-      if (await isMissing(entryPath, deps.stat)) continue;
+      if (await isMissing(entryPath, deps.stat, deps.realpath ?? realpath)) continue;
       presentPaths.add(entryPath);
       if (!(entryPath in config.fsTree)) {
         if (entry.isSymbolicLink()) trackSymlinkFn?.(entryPath);
@@ -735,13 +737,23 @@ export function mutateFSTree(fsTree: FSTree, event: string, filePath: string): v
  * than only readdir-typed symlinks — without a blanket "drop anything that fails to stat"
  * spuriously unlinking a file under momentary fs pressure.
  */
-function isMissing(filePath: string, statFn: typeof stat): Task<boolean, never> {
-  // The recover stays a predicate, and that is load-bearing: ENOENT means the path is genuinely
-  // gone, while EACCES or a transient EMFILE mean it is still there and we simply could not look.
-  // Collapsing them to `true` is the Windows CI flake this guards.
+function isMissing(
+  filePath: string,
+  statFn: typeof stat,
+  realpathFn: typeof realpath,
+): Task<boolean, never> {
+  // Both stages ask the same question of a different call, and both keep the predicate rather
+  // than collapsing to `true`: ENOENT is genuinely gone, while EACCES or a transient EMFILE mean
+  // the path is still there and we simply could not look. That distinction is the Windows CI
+  // flake fix — a real file must never be spuriously unlinked.
+  const gone = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT';
+
   return Task(() => statFn(filePath))
-    .map(() => false)
-    .recover((error) => (error as NodeJS.ErrnoException).code === 'ENOENT');
+    // stat succeeded — but a DANGLING symlink stats OK on Windows (a reparse point, not ENOENT).
+    // realpath resolves the whole chain and throws ENOENT on a broken target on every platform.
+    .map(() => Task(() => realpathFn(filePath)).map(() => false).recover(gone))
+    .recover(gone);
+}
 }
 
 async function classifyRenameEvent(
@@ -753,6 +765,10 @@ async function classifyRenameEvent(
     try {
       const statResult = await stat(fullPath);
       if (statResult.isDirectory()) return 'addDir';
+      // A DANGLING symlink `stat`s OK on Windows (it returns the reparse point, not ENOENT), which
+      // would classify it 'add' and feed a broken entry point to esbuild ("Could not resolve").
+      // realpath resolves the whole chain and throws on a broken target on every platform.
+      await realpath(fullPath);
       return fsTree && fullPath in fsTree ? 'change' : 'add';
     } catch {
       // File/dir not yet available — retry or fall through to unlink classification.

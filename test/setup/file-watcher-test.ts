@@ -855,6 +855,39 @@ module('Setup | FileWatcher.rescanDirectoryForDelta', { concurrency: true }, () 
     assert.notOk(danglingPath in config.fsTree, 'the broken path never enters the tree');
   });
 
+  test('drops a dangling symlink that STATS OK but does not resolve (Windows reparse point)', async (assert) => {
+    // The other Windows shape (CI job 90478496471): stat SUCCEEDS on a dangling symlink — it returns
+    // the reparse point, not ENOENT — so the ENOENT check alone lets the broken path in, and every
+    // rebuild then fails "Could not resolve dangling.ts". realpath resolves the whole chain and
+    // throws on the broken target where stat did not.
+    const dir = path.join(process.cwd(), 'tmp', 'rescan-win-reparse');
+    const danglingPath = path.join(dir, 'dangling.ts');
+    const deps = {
+      readdir: (() =>
+        Promise.resolve([fileDirent(dir, 'dangling.ts')])) as unknown as RescanDeps['readdir'],
+      stat: (() => Promise.resolve({ mtimeMs: 0 })) as unknown as RescanDeps['stat'], // succeeds
+      realpath: ((p: string) =>
+        p === danglingPath
+          ? Promise.reject(errno('ENOENT'))
+          : Promise.resolve(p)) as unknown as RescanDeps['realpath'],
+    };
+    const config: Partial<Config> & { fsTree: FSTree } = { fsTree: {}, projectRoot: dir };
+    const events: Array<{ event: string; file: string }> = [];
+
+    await FileWatcher.rescanDirectoryForDelta(
+      dir,
+      asConfig(config),
+      ['ts'],
+      (ev, f) => events.push({ event: ev, file: f }),
+      null,
+      undefined,
+      deps,
+    );
+
+    assert.deepEqual(events, [], 'a stat-OK-but-unresolvable path produces no event');
+    assert.notOk(danglingPath in config.fsTree, 'the broken reparse point never enters the tree');
+  });
+
   test('a transient stat error keeps a tracked file present — no spurious unlink', async (assert) => {
     // The other half of the guard: only ENOENT means "gone". A momentary EACCES/EMFILE under
     // load must not unlink a real, existing file — which a blanket "drop anything that fails to
