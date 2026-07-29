@@ -82,6 +82,14 @@ export interface Store {
    * deduped). `now` here is the in-process/test clock a `memoryStore` trusts.
    */
   lease?(key: string, candidate: string, now: number, ttlMs: number): Promise<string>;
+  /**
+   * Reset jobs stuck `executing` since before `staleBefore` (their `attemptedAt`) back to
+   * `available` — the Stager/rescuer that recovers work orphaned when a node died mid-run (Oban's
+   * rescuer). A job already out of attempts is `discarded` (dead-lettered) instead. Returns how many
+   * were reset. Meant to run gated behind a {@link Leader} (once per cluster). `staleBefore` must be
+   * older than the longest job runtime, or a still-running long job would be wrongly reclaimed.
+   */
+  rescue?(prefix: string, staleBefore: number): Promise<number>;
 }
 
 /**
@@ -123,11 +131,30 @@ export function memoryStore(): Store {
         )
         .slice(0, limit)
         .map(([key, job]) => {
-          const marked = { ...job, state: 'executing', attempt: (job.attempt as number) + 1 };
+          const marked = {
+            ...job,
+            state: 'executing',
+            attempt: (job.attempt as number) + 1,
+            attemptedAt: now, // stamp when it started running — the stager keys on this
+          };
           data.set(key, JSON.stringify(marked));
           return marked;
         });
       return Promise.resolve(claimed);
+    },
+    rescue: (prefix, staleBefore) => {
+      let reset = 0;
+      for (const [key, raw] of data.entries()) {
+        if (!key.startsWith(`${prefix}:`)) continue;
+        const job = JSON.parse(raw) as Record<string, unknown>;
+        const attemptedAt = (job.attemptedAt as number | undefined) ?? Infinity; // unstamped = never stale
+        if (job.state !== 'executing' || attemptedAt > staleBefore) continue;
+        job.state =
+          (job.attempt as number) >= (job.maxAttempts as number) ? 'discarded' : 'available';
+        data.set(key, JSON.stringify(job));
+        reset += 1;
+      }
+      return Promise.resolve(reset);
     },
     lease: (key, candidate, now, ttlMs) => {
       const raw = data.get(key);

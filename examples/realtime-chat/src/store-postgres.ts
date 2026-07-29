@@ -44,7 +44,8 @@ export function postgresStore(databaseUrl: string): Store {
         UPDATE room_state
            SET state = state || jsonb_build_object(
                  'state', 'executing',
-                 'attempt', ((state->>'attempt')::int + 1))
+                 'attempt', ((state->>'attempt')::int + 1),
+                 'attemptedAt', ${now})
          WHERE key IN (
            SELECT key FROM room_state
             WHERE key LIKE ${prefix + ':%'}
@@ -75,6 +76,22 @@ export function postgresStore(databaseUrl: string): Store {
       const [current] =
         await sql<{ owner: string }[]>`SELECT owner FROM job_leases WHERE key = ${key}`;
       return current?.owner ?? candidate; // held by someone else (or just vanished — treat as ours)
+    },
+    // The stager/rescuer (Oban's): jobs stuck `executing` since before `staleBefore` were orphaned
+    // by a dead node — reset them to available (or discarded if out of attempts) so a survivor
+    // re-runs them. Runs gated behind a leader (once per cluster).
+    async rescue(prefix, staleBefore) {
+      const rows = await sql<{ key: string }[]>`
+        UPDATE room_state
+           SET state = state || jsonb_build_object('state',
+                 CASE WHEN (state->>'attempt')::int >= (state->>'maxAttempts')::int
+                      THEN 'discarded' ELSE 'available' END)
+         WHERE key LIKE ${prefix + ':%'}
+           AND state->>'state' = 'executing'
+           AND (state->>'attemptedAt')::bigint <= ${staleBefore}
+        RETURNING key
+      `;
+      return rows.length;
     },
   };
 }

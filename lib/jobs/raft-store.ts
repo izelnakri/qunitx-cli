@@ -17,7 +17,8 @@ type Command =
       now: number;
       limit: number;
     }
-  | { op: 'lease'; key: string; candidate: string; now: number; ttlMs: number };
+  | { op: 'lease'; key: string; candidate: string; now: number; ttlMs: number }
+  | { op: 'rescue'; prefix: string; staleBefore: number };
 
 // The KV state machine — memoryStore's claim/lease semantics, but as DETERMINISTIC Raft commands
 // (every replica applies the same command to the same state), so `now` rides IN the command, never
@@ -50,11 +51,31 @@ function apply(command: unknown, state: KV): { state: KV; reply?: unknown } {
       )
       .slice(0, cmd.limit)
       .map(([key, job]) => {
-        const marked = { ...job, state: 'executing', attempt: (job.attempt as number) + 1 };
+        const marked = {
+          ...job,
+          state: 'executing',
+          attempt: (job.attempt as number) + 1,
+          attemptedAt: cmd.now, // stamp for the stager — replicas apply the same `now`
+        };
         next[key] = marked;
         return marked;
       });
     return { state: next, reply: claimed };
+  }
+  if (cmd.op === 'rescue') {
+    let reset = 0;
+    for (const [key, value] of Object.entries(next)) {
+      if (!key.startsWith(`${cmd.prefix}:`)) continue;
+      const job = value as Record<string, unknown>;
+      const attemptedAt = (job.attemptedAt as number | undefined) ?? Infinity;
+      if (job.state !== 'executing' || attemptedAt > cmd.staleBefore) continue;
+      next[key] = {
+        ...job,
+        state: (job.attempt as number) >= (job.maxAttempts as number) ? 'discarded' : 'available',
+      };
+      reset += 1;
+    }
+    return { state: next, reply: reset };
   }
   // lease
   const held = next[cmd.key] as { owner: string; expiresAt: number } | undefined;
@@ -137,5 +158,7 @@ export function raftStore(
       propose({ op: 'claim', prefix, queue, ready: [...ready], now, limit }) as Promise<unknown[]>,
     lease: (key, candidate, now, ttlMs) =>
       propose({ op: 'lease', key, candidate, now, ttlMs }) as Promise<string>,
+    rescue: (prefix, staleBefore) =>
+      propose({ op: 'rescue', prefix, staleBefore }) as Promise<number>,
   };
 }
