@@ -50,6 +50,22 @@ export interface Store {
   save(key: string, state: unknown): Promise<void>;
   /** Forget `key` entirely. */
   clear(key: string): Promise<void>;
+  /**
+   * Atomically claim up to `limit` runnable jobs for `queue` — the multi-node coordinator of a
+   * work queue, Oban's `SELECT … FOR UPDATE SKIP LOCKED` + mark-executing. Entries under `prefix`
+   * are jobs `{ queue, state, scheduledAt, priority, attempt }`; a candidate has `state` in `ready`
+   * and `scheduledAt <= now`. The first `limit`, ordered priority then scheduledAt, are each marked
+   * `executing` with `attempt + 1`, persisted, and returned — in ONE turn (memoryStore) or ONE
+   * transaction (Postgres), so concurrent drainers on separate nodes never grab the same job.
+   * Omit it and {@link jobQueue} drains only its own in-memory inserts (single-writer).
+   */
+  claim?(
+    prefix: string,
+    queue: string,
+    ready: readonly string[],
+    now: number,
+    limit: number,
+  ): Promise<unknown[]>;
 }
 
 /**
@@ -71,6 +87,32 @@ export function memoryStore(): Store {
     load: (key) => Promise.resolve(data.has(key) ? JSON.parse(data.get(key)!) : undefined),
     save: (key, state) => (data.set(key, JSON.stringify(state)), Promise.resolve()),
     clear: (key) => (data.delete(key), Promise.resolve()),
+    claim: (prefix, queue, ready, now, limit) => {
+      // One synchronous turn — the in-process equivalent of FOR UPDATE SKIP LOCKED: no other tick
+      // can interleave between selecting a candidate and marking it executing, so two drainers on
+      // one store never claim the same job.
+      const claimed = [...data.entries()]
+        .filter(([key]) => key.startsWith(`${prefix}:`))
+        .map(([key, raw]) => [key, JSON.parse(raw)] as [string, Record<string, unknown>])
+        .filter(
+          ([, job]) =>
+            job.queue === queue &&
+            ready.includes(job.state as string) &&
+            (job.scheduledAt as number) <= now,
+        )
+        .sort(
+          ([, a], [, b]) =>
+            (a.priority as number) - (b.priority as number) ||
+            (a.scheduledAt as number) - (b.scheduledAt as number),
+        )
+        .slice(0, limit)
+        .map(([key, job]) => {
+          const marked = { ...job, state: 'executing', attempt: (job.attempt as number) + 1 };
+          data.set(key, JSON.stringify(marked));
+          return marked;
+        });
+      return Promise.resolve(claimed);
+    },
   };
 }
 
