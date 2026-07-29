@@ -34,7 +34,8 @@
  * log; // ['reserve', 'charge', 'release-seat'] — the reserved seat was compensated back
  * ```
  */
-import { isFailure } from '../result/failure.ts';
+import { isFailure, type Any as AnyFailure } from '../result/failure.ts';
+import { Task } from '../task/task.ts';
 import type { Store } from '../node/upgradable.ts';
 
 /** One saga step: a forward action, its compensation, and an optional retry count. */
@@ -55,10 +56,11 @@ export type SagaResult<Ctx> =
 
 /** A prepared saga — see {@link saga}. */
 export interface SagaHandle<Ctx extends object> {
-  /** Run the saga forward from `initial`; on a step failure, compensate completed steps in reverse. */
-  execute(initial: Ctx): Promise<SagaResult<Ctx>>;
+  /** Run the saga forward from `initial`; on a step failure, compensate completed steps in reverse.
+   *  Eager Task: the saga is running before you await, and `.result()`/`.match()` compose. */
+  execute(initial: Ctx): Task<SagaResult<Ctx>, AnyFailure>;
   /** Roll back a saga stranded by a crash: load its durable log and compensate its completed steps. */
-  recover(initial: Ctx): Promise<SagaResult<Ctx>>;
+  recover(initial: Ctx): Task<SagaResult<Ctx>, AnyFailure>;
 }
 
 interface Progress {
@@ -115,43 +117,47 @@ export function saga<Ctx extends object>(
   };
 
   return {
-    async execute(initial) {
-      const ctx = { ...initial } as Ctx;
-      const progress: Progress = { completed: [] };
-      for (const step of steps) {
-        let result: unknown;
-        try {
-          result = await runStep(step, ctx);
-        } catch (error) {
-          const compensated = await rollback(progress.completed, ctx);
-          await forget();
-          return { ok: false, failedAt: step.name, error, compensated };
+    execute(initial) {
+      return Task<SagaResult<Ctx>>(async () => {
+        const ctx = { ...initial } as Ctx;
+        const progress: Progress = { completed: [] };
+        for (const step of steps) {
+          let result: unknown;
+          try {
+            result = await runStep(step, ctx);
+          } catch (error) {
+            const compensated = await rollback(progress.completed, ctx);
+            await forget();
+            return { ok: false, failedAt: step.name, error, compensated };
+          }
+          (ctx as Record<string, unknown>)[step.name] = result;
+          progress.completed.push({ name: step.name, result });
+          await persist(progress); // durable AFTER the forward action, BEFORE the next step
         }
-        (ctx as Record<string, unknown>)[step.name] = result;
-        progress.completed.push({ name: step.name, result });
-        await persist(progress); // durable AFTER the forward action, BEFORE the next step
-      }
-      await forget(); // a fully-committed saga leaves no rollback log
-      return { ok: true, ctx };
+        await forget(); // a fully-committed saga leaves no rollback log
+        return { ok: true, ctx };
+      }).perform();
     },
 
-    async recover(initial) {
-      const progress = (await options.store?.load(storeKey)) as Progress | undefined;
-      if (!progress || progress.completed.length === 0) {
+    recover(initial) {
+      return Task<SagaResult<Ctx>>(async () => {
+        const progress = (await options.store?.load(storeKey)) as Progress | undefined;
+        if (!progress || progress.completed.length === 0) {
+          await forget();
+          return { ok: true, ctx: { ...initial } as Ctx }; // nothing stranded
+        }
+        const ctx = { ...initial } as Ctx;
+        for (const { name, result } of progress.completed)
+          (ctx as Record<string, unknown>)[name] = result;
+        const compensated = await rollback(progress.completed, ctx);
         await forget();
-        return { ok: true, ctx: { ...initial } as Ctx }; // nothing stranded
-      }
-      const ctx = { ...initial } as Ctx;
-      for (const { name, result } of progress.completed)
-        (ctx as Record<string, unknown>)[name] = result;
-      const compensated = await rollback(progress.completed, ctx);
-      await forget();
-      return {
-        ok: false,
-        failedAt: progress.completed.at(-1)!.name,
-        error: isFailure(progress) ? progress : new Error('recovered after crash'),
-        compensated,
-      };
+        return {
+          ok: false,
+          failedAt: progress.completed.at(-1)!.name,
+          error: isFailure(progress) ? progress : new Error('recovered after crash'),
+          compensated,
+        };
+      }).perform();
     },
   };
 }
