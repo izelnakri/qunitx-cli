@@ -60,9 +60,15 @@ export function leader(opts: {
   return {
     isLeader: () => alive && held && now() < heldUntil,
     stop: () => {
+      const wasLeader = alive && held && now() < heldUntil;
       alive = false;
       held = false;
       clearInterval(timer);
+      // Graceful release: expire our OWN lease now (ttl 0) so a survivor takes over immediately
+      // instead of waiting out leaseMs — a planned rolling deploy has no leadership gap. Only when
+      // we actually held it (never touches another node's lease); a CRASH can't do this, so that
+      // failover still waits for the lease to lapse.
+      if (wasLeader && opts.store.lease) void opts.store.lease(opts.key, opts.candidate, now(), 0);
     },
   };
 }

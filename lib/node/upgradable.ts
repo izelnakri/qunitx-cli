@@ -73,6 +73,13 @@ export interface Store {
    * holder is returned (`=== candidate` ⇒ you lead). One turn (memoryStore) or one statement
    * (Postgres), so exactly one candidate ever holds it — the coordinator for cluster-once work (cron)
    * or, with no {@link Store.claim}, for electing a single drainer.
+   *
+   * TWO caveats a real backend must respect: (1) use the store's OWN clock for the expiry check
+   * (Postgres `now()`), NOT the caller's `now` — across skewed node clocks a TTL lease would elect
+   * two holders. (2) A TTL lease has a brief split-brain window if a holder pauses (GC/stall) past
+   * its lease; the strongest backend is a session-scoped lock (a held Postgres advisory lock,
+   * auto-released on disconnect — no TTL). For cron the stakes are low (a duplicate enqueue, mostly
+   * deduped). `now` here is the in-process/test clock a `memoryStore` trusts.
    */
   lease?(key: string, candidate: string, now: number, ttlMs: number): Promise<string>;
 }

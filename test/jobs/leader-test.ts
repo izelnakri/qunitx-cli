@@ -31,6 +31,25 @@ module('Jobs | leader (Oban.Peer — store lease)', () => {
     b.stop();
   });
 
+  test('a graceful stop releases the lease so failover is immediate, not after leaseMs', async (assert) => {
+    const store = memoryStore();
+    const a = leader({ store, key: 'k', candidate: 'a', leaseMs: 1000 });
+    const b = leader({ store, key: 'k', candidate: 'b', leaseMs: 1000 });
+    await settle(30);
+    const held = a.isLeader() ? a : b;
+    const other = held === a ? b : a;
+    assert.true(held.isLeader(), 'one leads');
+
+    held.stop(); // GRACEFUL stop — releases the lease immediately (not just stops renewing)
+    await settle(450); // well under the 1000ms lease — only an immediate release lets `other` take over
+    assert.true(
+      other.isLeader(),
+      'the survivor took over without waiting out the lease — no rolling-deploy gap',
+    );
+    a.stop();
+    b.stop();
+  });
+
   test('cron fires cluster-once: two nodes, a shared leader key, one enqueue', async (assert) => {
     const store = memoryStore(); // shared store: distributed draining + the lease live together
     const AT = Date.parse('2020-06-01T00:00:00Z'); // a fixed UTC minute — cron '* * * * *' matches
