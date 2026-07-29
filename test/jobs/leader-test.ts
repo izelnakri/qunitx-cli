@@ -31,6 +31,19 @@ module('Jobs | leader (Oban.Peer — store lease)', () => {
     b.stop();
   });
 
+  test('leader() throws on a store without lease() — never silently disables cron', (assert) => {
+    const noLease = {
+      load: () => Promise.resolve(undefined),
+      save: () => Promise.resolve(),
+      clear: () => Promise.resolve(),
+    };
+    assert.throws(
+      () => leader({ store: noLease, key: 'k', candidate: 'a' }),
+      /lease\(\)/,
+      'a store that cannot coordinate leadership fails loudly at wiring, not silently at cron',
+    );
+  });
+
   test('a graceful stop releases the lease so failover is immediate, not after leaseMs', async (assert) => {
     const store = memoryStore();
     const a = leader({ store, key: 'k', candidate: 'a', leaseMs: 1000 });

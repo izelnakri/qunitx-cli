@@ -40,6 +40,15 @@ export function leader(opts: {
   leaseMs?: number;
   now?: () => number;
 }): Leader {
+  const lease = opts.store.lease;
+  // Fail loudly: a store with no lease can never coordinate leadership, and a silent leader that
+  // never leads would DISABLE cron (evaluateCron gates on isLeader). Better a clear error at wiring.
+  if (!lease) {
+    throw new TypeError(
+      'leader() needs a Store that implements lease() — memoryStore, raftStore, or a Postgres ' +
+        'store with an advisory lock. Without it, leadership (and cron) can never fire.',
+    );
+  }
   const leaseMs = opts.leaseMs ?? 30_000;
   const now = opts.now ?? (() => Date.now());
   let held = false;
@@ -47,8 +56,8 @@ export function leader(opts: {
   let alive = true;
 
   const renew = async (): Promise<void> => {
-    if (!alive || !opts.store.lease) return;
-    const owner = await opts.store.lease(opts.key, opts.candidate, now(), leaseMs);
+    if (!alive) return;
+    const owner = await lease(opts.key, opts.candidate, now(), leaseMs);
     held = owner === opts.candidate;
     heldUntil = now() + leaseMs;
   };
@@ -68,7 +77,7 @@ export function leader(opts: {
       // instead of waiting out leaseMs — a planned rolling deploy has no leadership gap. Only when
       // we actually held it (never touches another node's lease); a CRASH can't do this, so that
       // failover still waits for the lease to lapse.
-      if (wasLeader && opts.store.lease) void opts.store.lease(opts.key, opts.candidate, now(), 0);
+      if (wasLeader) void lease(opts.key, opts.candidate, now(), 0);
     },
   };
 }
