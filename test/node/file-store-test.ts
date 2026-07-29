@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { mkdtemp, rm, readdir } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileStore } from '../../lib/node/file-store.ts';
@@ -38,6 +38,43 @@ module('Node | fileStore (disk durability, no DB)', () => {
 
       await restarted.clear('room:lobby');
       assert.equal(await fileStore(dir).load('room:lobby'), undefined, 'clear removes it durably');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('fsync mode round-trips, stays durable, and leaves exactly one file per key', async (assert) => {
+    const dir = await mkdtemp(join(tmpdir(), 'qunitx-fsync-'));
+    try {
+      const store = fileStore(dir, { fsync: true });
+      await store.save('k', { durable: true });
+      assert.deepEqual(await store.load('k'), { durable: true }, 'fsync write round-trips');
+      assert.deepEqual(
+        await fileStore(dir).load('k'),
+        { durable: true },
+        'and is durable across a fresh instance',
+      );
+      const files = await readdir(dir);
+      assert.deepEqual(
+        files,
+        ['k.json'],
+        'one file per key — the temp was renamed, no orphan .tmp',
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('startup sweeps orphan .tmp files a crash left behind', async (assert) => {
+    const dir = await mkdtemp(join(tmpdir(), 'qunitx-tmpsweep-'));
+    try {
+      await writeFile(join(dir, 'k.json.abc123.tmp'), 'partial'); // a crash mid-save left this
+      const store = fileStore(dir);
+      await store.load('anything'); // first op triggers init() → the sweep
+      assert.false(
+        (await readdir(dir)).some((f) => f.endsWith('.tmp')),
+        'the orphan temp was swept, so a stale partial write can never resurface',
+      );
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
