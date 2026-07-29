@@ -28,6 +28,7 @@
  * ```
  */
 import { Failure, type Any as AnyFailure } from '../result/failure.ts';
+import { Task } from '../task/task.ts';
 import type { NodeHandle } from './node.ts';
 
 /**
@@ -137,8 +138,9 @@ export interface Behavior<S> {
 export interface Served<S> {
   /** The currently running version. */
   version(): string;
-  /** Swap via the mailbox — lands strictly BETWEEN messages, even async ones. Resolves to the new version. */
-  upgrade(next: Behavior<S>): Promise<string>;
+  /** Swap via the mailbox — lands strictly BETWEEN messages, even async ones. An eager Task
+   *  settling with the new version (`.result()`/`.retry()` compose like every public async result). */
+  upgrade(next: Behavior<S>): Task<string, AnyFailure>;
   /** The current state (for checkpointing before risky upgrades). */
   state(): S;
   /** Messages queued or in flight — what observer tooling reads as mailbox depth. */
@@ -325,7 +327,7 @@ export function serve<S>(
 
   const handle: Served<S> = {
     version: () => current.version,
-    upgrade: (next) => enqueue(() => apply(next)),
+    upgrade: (next) => Task(() => enqueue(() => apply(next))).perform(),
     state: () => state,
     mailbox: () => queue.length + (pumping ? 1 : 0),
     isAlive: () => unitAlive,
