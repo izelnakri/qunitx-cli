@@ -1,6 +1,7 @@
 import { module, test } from 'qunitx';
 import { memoryStore } from '../../lib/node/index.ts';
 import { jobQueue } from '../../lib/jobs/index.ts';
+import { isFailure } from '../../lib/result/failure.ts';
 import * as Telemetry from '../../lib/telemetry/index.ts';
 
 module('Jobs | Oban-shaped durable queue', () => {
@@ -158,5 +159,41 @@ module('Jobs | Oban-shaped durable queue', () => {
     await second.drain();
     assert.deepEqual(done, [{ payload: 7 }], 'the orphaned job was rescued and completed');
     second.stop();
+  });
+
+  test('insert returns an eager Task — a real Promise, and .result() gives the bare union', async (assert) => {
+    const store = memoryStore();
+    const jobs = jobQueue({ store, workers: { 'reports.export': () => 'ok' } });
+    jobs.pauseQueue('default'); // keep jobs enqueued (instant workers would run+remove them)
+
+    const handle = jobs.insert('reports.export', { n: 1 });
+    assert.true(
+      handle instanceof Promise,
+      'a Task IS a Promise — a drop-in for the old return type (so `await`/`.then` just work)',
+    );
+    assert.equal(
+      typeof handle.result,
+      'function',
+      'and it is genuinely a Task, not a bare Promise — `.result()`/`.perform()` are present',
+    );
+    const job = await handle;
+    assert.true(
+      jobs.job(job.id) !== undefined,
+      'the insert was eager — the job is already enqueued',
+    );
+
+    // the uniformity win: .result() settles to the bare Result union (Job | Failure) — no try/catch;
+    // isFailure() is the discriminator. (insert only fails on a store write error; here it succeeds.)
+    const outcome = await jobs.insert('reports.export', { n: 2 }).result();
+    assert.false(isFailure(outcome), 'a successful insert resolves to the Job, not a Failure');
+    assert.deepEqual(
+      (outcome as { args: unknown }).args,
+      { n: 2 },
+      'the enqueued Job came back through result() — carrying its data',
+    );
+
+    jobs.resumeQueue('default');
+    await jobs.drain();
+    jobs.stop();
   });
 });

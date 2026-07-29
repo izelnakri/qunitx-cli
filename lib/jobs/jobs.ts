@@ -32,7 +32,8 @@
  * jobs.stop();
  * ```
  */
-import { isFailure } from '../result/failure.ts';
+import { isFailure, type Any as AnyFailure } from '../result/failure.ts';
+import { Task } from '../task/task.ts';
 import { execute as emit } from '../telemetry/telemetry.ts';
 import { cronMatch } from './cron.ts';
 import type { Store } from '../node/upgradable.ts';
@@ -82,10 +83,11 @@ export type Worker = (args: unknown, job: Job) => unknown | Promise<unknown>;
 /** A running job queue — see {@link jobQueue}. */
 export interface JobQueue {
   /**
-   * Durably enqueue a job — persisted BEFORE the promise resolves. Options mirror Oban's:
+   * Durably enqueue a job — persisted BEFORE the Task settles. Options mirror Oban's:
    * `queue` (default 'default'), `maxAttempts` (default 3), `scheduleIn` ms / `scheduledAt`
    * epoch-ms, `priority` (0 = most urgent), and `unique` (skip if an identical worker+args job
-   * is already pending — returns the existing job). Resolves with the job record.
+   * is already pending — returns the existing job). The returned Task is **eager** (the write is
+   * in flight before you await, exactly as a Promise) and settles with the job record.
    */
   insert(
     worker: string,
@@ -98,17 +100,17 @@ export interface JobQueue {
       priority?: number;
       unique?: boolean;
     },
-  ): Promise<Job>;
+  ): Task<Job, AnyFailure>;
   /** The current record for a job id, or undefined (completed jobs are removed). */
   job(id: string): Job | undefined;
   /** Remove a pending job — Oban's `cancel_job`. A job already executing finishes its attempt. */
-  cancelJob(id: string): Promise<void>;
+  cancelJob(id: string): Task<void, AnyFailure>;
   /** Stop starting jobs on `queue` (executing ones finish) — Oban's `pause_queue`. */
   pauseQueue(queue: string): void;
   /** Resume a paused queue. */
   resumeQueue(queue: string): void;
   /** Run everything currently runnable to completion — Oban's `drain_queue`, the test helper. */
-  drain(): Promise<void>;
+  drain(): Task<void, AnyFailure>;
   /** Stop the scheduler (executing attempts finish; nothing new starts). */
   stop(): void;
 }
@@ -291,30 +293,36 @@ export function jobQueue(options: {
   void loaded.then(tick); // rescued work starts as soon as the reload finishes
 
   return {
-    async insert(worker, args = {}, opts = {}) {
-      await loaded;
-      return doInsert(worker, args, opts);
+    insert(worker, args = {}, opts = {}) {
+      return Task(async () => {
+        await loaded;
+        return doInsert(worker, args, opts);
+      }).perform();
     },
     job: (id) => jobs.get(id),
-    async cancelJob(id) {
-      const job = jobs.get(id);
-      if (job && job.state !== 'executing') await removeJob(id);
+    cancelJob(id) {
+      return Task(async () => {
+        const job = jobs.get(id);
+        if (job && job.state !== 'executing') await removeJob(id);
+      }).perform();
     },
     pauseQueue: (queue) => void paused.add(queue),
     resumeQueue(queue) {
       paused.delete(queue);
       tick();
     },
-    async drain() {
-      await loaded;
-      for (;;) {
-        tick();
-        const clock = now();
-        const busy = [...executing.values()].some((count) => count > 0);
-        const pending = [...jobs.values()].some((job) => runnable(job, clock));
-        if (!busy && !pending) return;
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
+    drain() {
+      return Task(async () => {
+        await loaded;
+        for (;;) {
+          tick();
+          const clock = now();
+          const busy = [...executing.values()].some((count) => count > 0);
+          const pending = [...jobs.values()].some((job) => runnable(job, clock));
+          if (!busy && !pending) return;
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+      }).perform();
     },
     stop() {
       alive = false;
