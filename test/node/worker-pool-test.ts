@@ -1,5 +1,18 @@
 import { module, test } from 'qunitx';
 import { workerPool } from '../../lib/node/worker-pool.ts';
+import { start } from '../../lib/node/index.ts';
+import { startHub } from '../../lib/node/hub.ts';
+import { wsTransport } from '../../lib/node/ws.ts';
+
+const CPU_WORKER = new URL('../fixtures/cpu-worker.ts', import.meta.url);
+const until = async (cond: () => boolean, ms = 8000) => {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (cond()) return true;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  return cond();
+};
 
 module('Node | workerPool (CPU parallelism across threads)', () => {
   test('round-robins CPU work across worker threads; the main loop stays responsive', async (assert) => {
@@ -7,11 +20,7 @@ module('Node | workerPool (CPU parallelism across threads)', () => {
       assert.true(true, 'skipped under Deno — the node lane owns worker_threads');
       return;
     }
-    const pool = workerPool({
-      size: 3,
-      module: new URL('../fixtures/cpu-worker.ts', import.meta.url),
-      group: 'cpu',
-    });
+    const pool = workerPool({ size: 3, module: CPU_WORKER, group: 'cpu' });
     try {
       await pool.ready();
       assert.equal(pool.node.groupMembers('cpu').length, 3, 'all three worker threads joined');
@@ -33,6 +42,62 @@ module('Node | workerPool (CPU parallelism across threads)', () => {
       assert.true(ticks > 50, `main ticked ${ticks} times during the compute — not blocked`);
     } finally {
       await pool.stop();
+    }
+  });
+
+  test('respawns a crashed worker thread — the pool keeps serving (supervised)', async (assert) => {
+    if ('Deno' in globalThis) {
+      assert.true(true, 'skipped under Deno');
+      return;
+    }
+    const pool = workerPool({ size: 3, module: CPU_WORKER, group: 'cpu' });
+    try {
+      await pool.ready();
+      const victim = pool.node.groupMembers('cpu')[0];
+      pool.node.cast(victim, 'crash'); // kill one worker thread
+
+      assert.true(
+        await until(
+          () =>
+            pool.node.groupMembers('cpu').length === 3 &&
+            !pool.node.groupMembers('cpu').includes(victim),
+        ),
+        'the dead worker dropped out and a fresh one respawned — back to full size',
+      );
+      assert.equal(
+        await pool.call('fib', 20, 20000),
+        6765,
+        'the pool still serves after the respawn',
+      );
+    } finally {
+      await pool.stop();
+    }
+  });
+
+  test('cluster mode: threads join a shared ws hub as a global group:cpu', async (assert) => {
+    if ('Deno' in globalThis) {
+      assert.true(true, 'skipped under Deno');
+      return;
+    }
+    const hub = startHub({ port: 0 });
+    const url = `ws://localhost:${hub.port()}`;
+    const app = start('app@cluster', wsTransport(url)); // an ORDINARY cluster node, not the pool
+    const pool = workerPool({ size: 2, module: CPU_WORKER, group: 'cpu', hub: url });
+    try {
+      await pool.ready();
+      assert.true(
+        await until(() => app.groupMembers('cpu').length === 2),
+        'the app node sees the pool threads cluster-wide',
+      );
+      assert.equal(
+        await app.call('group:cpu', 'fib', 20, 20000),
+        6765,
+        'any cluster node reaches the pool via the global group:cpu',
+      );
+    } finally {
+      await pool.stop();
+      app.stop();
+      await hub.close();
     }
   });
 });
