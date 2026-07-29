@@ -16,3 +16,4 @@ export {
 } from './jobs.ts';
 export { cronMatch } from './cron.ts';
 export { leader, type Leader } from './leader.ts';
+export { raftStore } from './raft-store.ts';
