@@ -4,8 +4,8 @@
  * {@link Store} seam BEFORE `insert` resolves (a `memoryStore` in tests, Postgres in production —
  * the same durability contract as persist-before-ack actors), executed by named workers under
  * per-queue concurrency limits, retried on failure with backoff until `maxAttempts` (then kept as
- * `discarded`, errors attached), and **rescued after a crash**: a job found `executing` on load
- * was orphaned by a dead process and runs again.
+ * `discarded`, errors attached), and **rescued after a crash** by the stager (Oban's Lifeline, on by
+ * default): a job left `executing` past the reclaim window by a dead node runs again.
  *
  * Oban's surface, JS-shaped: `insert(worker, args, { queue, maxAttempts, scheduleIn, priority,
  * unique })`, `cancelJob`, `pauseQueue`/`resumeQueue`, and `drain()` (Oban's `drain_queue` — the
@@ -78,6 +78,9 @@ export interface Job {
   priority: number;
   /** Not runnable before this time (epoch ms) — scheduling and retry backoff both live here. */
   scheduledAt: number;
+  /** When the current attempt started executing (epoch ms) — the stager reclaims jobs stuck
+   *  `executing` past a timeout (a node died mid-run). Set by the claim, absent otherwise. */
+  attemptedAt?: number;
   /** One entry per failed attempt. */
   errors: { attempt: number; error: string; at: number }[];
 }
@@ -145,15 +148,24 @@ export function jobQueue(options: {
    *  LIST of entries to run several workers on the same schedule (Oban allows duplicate crontab
    *  rows; a record key can't repeat, so the array value is the JS-shaped equivalent). */
   cron?: Record<string, CronEntry | CronEntry[]>;
-  /** Cluster leadership for cron — Oban's `Peer`. When set, this instance evaluates cron only while
-   *  it holds the lease, so a schedule enqueues exactly once cluster-wide. See {@link leader}. */
+  /** Cluster leadership for cron AND the stager — Oban's `Peer`. When set, this instance evaluates
+   *  cron / runs the stager only while it holds the lease, so each fires once cluster-wide. See
+   *  {@link leader}. */
   leader?: Leader;
+  /** The stager (Oban's Lifeline): reclaim jobs stuck `executing` this many ms — a node died mid-run
+   *  — back to `available` so a survivor re-runs them; the same time gate also drives boot recovery.
+   *  Defaults to 60 min (Oban's `rescue_after`); MUST exceed the longest job runtime or a live long
+   *  job gets reclaimed. Needs a `Store` with `rescue` (memoryStore / raftStore / Postgres). Pass
+   *  `Infinity` to disable — recovery is purely time-gated, never an unconditional boot reset (which
+   *  would double-run a peer's live job on a rolling deploy). */
+  reclaimAfterMs?: number;
   /** Injectable wall-clock (epoch ms) — for deterministic scheduling/cron/backoff tests. */
   now?: () => number;
 }): JobQueue {
   const queues = options.queues ?? { default: 10 };
   const backoff = options.backoff ?? ((attempt) => 1000 * attempt ** 4 + 15_000);
   const pollMs = options.pollMs ?? 50;
+  const reclaimAfterMs = options.reclaimAfterMs ?? 3_600_000; // Oban's Lifeline default (60 min)
   const now = options.now ?? (() => Date.now());
   const prefix = options.keyPrefix ?? 'jobs';
   const jobKey = (id: string) => `${prefix}:${id}`;
@@ -175,17 +187,23 @@ export function jobQueue(options: {
     await options.store.clear(jobKey(id));
   };
 
-  // Crash recovery: reload every indexed job; one stuck `executing` was orphaned by a dead
-  // process — rescue it back to available so it runs again (Oban's rescuer).
+  // Crash recovery is the stager's job (Oban's Lifeline, on by default): rescue on boot with the SAME
+  // time+leader gate the interval uses — a job left `executing` past the reclaim window was orphaned
+  // by a dead node. Never an unconditional reset: with concurrent nodes that would reset a peer's LIVE
+  // job (a rolling deploy → double run). `reclaimAfterMs: Infinity` disables it. Rescue first, then
+  // load, so the in-memory view reflects the reset states.
   const loaded: Promise<void> = (async () => {
+    if (
+      Number.isFinite(reclaimAfterMs) &&
+      options.store.rescue &&
+      !(options.leader && !options.leader.isLeader())
+    ) {
+      await options.store.rescue(prefix, now() - reclaimAfterMs);
+    }
     const ids = ((await options.store.load(INDEX)) as string[] | undefined) ?? [];
     for (const id of ids) {
       const job = (await options.store.load(jobKey(id))) as Job | undefined;
       if (!job) continue;
-      if (job.state === 'executing') {
-        job.state = 'available';
-        await persistJob(job);
-      }
       jobs.set(job.id, job);
     }
   })();
@@ -305,6 +323,7 @@ export function jobQueue(options: {
     for (const job of due) {
       job.state = 'executing';
       job.attempt++;
+      job.attemptedAt = now(); // stamp for the stager, matching store.claim
       await persistJob(job);
     }
     return due;
@@ -344,6 +363,24 @@ export function jobQueue(options: {
   (timer as { unref?: () => void }).unref?.();
   void loaded.then(() => tick()); // rescued + peer work starts once reload finishes
 
+  // The stager (Oban's rescuer): reclaim jobs a dead node left stuck `executing` past the timeout,
+  // back to `available` so a survivor re-runs them. Leader-gated (once per cluster) when a leader is
+  // set; a reclaimed batch triggers a tick to pick the jobs up.
+  let stagerTimer: ReturnType<typeof setInterval> | undefined;
+  if (Number.isFinite(reclaimAfterMs) && options.store.rescue) {
+    const rescueStore = options.store.rescue.bind(options.store);
+    const rescuePass = async (): Promise<void> => {
+      if (!alive) return;
+      if (options.leader && !options.leader.isLeader()) return; // one node rescues
+      if ((await rescueStore(prefix, now() - reclaimAfterMs)) > 0) void tick();
+    };
+    stagerTimer = setInterval(
+      () => void rescuePass().catch(() => {}),
+      Math.max(pollMs, Math.floor(reclaimAfterMs / 3)),
+    );
+    (stagerTimer as { unref?: () => void }).unref?.();
+  }
+
   return {
     insert(worker, args = {}, opts = {}) {
       return Task(async () => {
@@ -380,6 +417,7 @@ export function jobQueue(options: {
     stop() {
       alive = false;
       clearInterval(timer);
+      if (stagerTimer) clearInterval(stagerTimer);
     },
   };
 }

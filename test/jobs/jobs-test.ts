@@ -138,27 +138,42 @@ module('Jobs | Oban-shaped durable queue', () => {
     jobs.stop();
   });
 
-  test('crash rescue: a job left `executing` by a dead process runs again on reload', async (assert) => {
+  test('crash rescue: the stager reclaims a job orphaned `executing` by a dead node', async (assert) => {
+    // ONE logical node, two SEQUENTIAL lives — not two concurrent nodes (that's the multi-node test
+    // below). A real crash can't be spawned in-process, so `first.stop()` + a fresh `second` on the
+    // SAME durable store stands in for "the process died and restarted". Recovery is the stager's job
+    // (Oban's Lifeline): time-gated on `attemptedAt`, so it reclaims a genuinely-stale orphan without
+    // ever resetting a peer's LIVE job. The injectable clock makes "past the reclaim window" exact.
     const store = memoryStore(); // the SHARED durable store (Postgres in production)
+    const clock = { t: Date.UTC(2020, 0, 1, 0, 0, 0) };
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => (release = r));
     const first = jobQueue({
       store,
       workers: { task: () => gate }, // never finishes — the "process" dies mid-attempt
+      now: () => clock.t,
       pollMs: 10,
     });
     const job = await first.insert('task', { payload: 7 });
     const deadline = Date.now() + 2000;
     while (first.job(job.id)?.state !== 'executing' && Date.now() < deadline)
       await new Promise((r) => setTimeout(r, 10));
-    first.stop(); // the process crashes — the job is stranded as `executing` in the store
-    release();
+    first.stop(); // the process crashes — the job is stranded `executing` in the store
+    // do NOT release yet: releasing would let first's in-flight attempt remove the job from the store
 
+    clock.t += 60_000; // a minute later — well past the 30s reclaim window
     const done: unknown[] = [];
-    const second = jobQueue({ store, workers: { task: (a) => void done.push(a) }, pollMs: 10 });
+    const second = jobQueue({
+      store,
+      workers: { task: (a) => void done.push(a) },
+      reclaimAfterMs: 30_000, // the stager (Lifeline): reclaim jobs executing > 30s
+      now: () => clock.t,
+      pollMs: 10,
+    });
     await second.drain();
-    assert.deepEqual(done, [{ payload: 7 }], 'the orphaned job was rescued and completed');
+    assert.deepEqual(done, [{ payload: 7 }], 'the stager rescued the orphan and it completed');
     second.stop();
+    release(); // let first's dangling attempt settle
   });
 
   test('insert returns an eager Task — a real Promise, and .result() gives the bare union', async (assert) => {
