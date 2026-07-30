@@ -6,7 +6,7 @@
 // coordinator; CLUSTER (`hub`) — the threads join a shared ws hub, so `group:<group>` is visible to
 // EVERY node in the cluster. A crashed worker is respawned (a supervised pool).
 import { Worker, parentPort, workerData } from 'node:worker_threads';
-import { start, fromPort } from './node.ts';
+import { Node, fromPort } from './node.ts';
 import { wsTransport } from './ws.ts';
 import { Task } from '../task/task.ts';
 import type { Frame, NodeHandle, Transport } from './node.ts';
@@ -93,7 +93,7 @@ export function workerPool(options: {
             deliver = handler;
           },
         };
-  const coord = start(`coord-${id}@pool`, transport);
+  const coord = Node.start(`coord-${id}@pool`, transport);
   const groupRef = `group:${group}`;
 
   return {
@@ -144,7 +144,7 @@ export function serveWorker(setup: (node: NodeHandle, data: unknown) => void): N
       ? wsTransport(assign.bus.url)
       : // node MessagePort has on()/postMessage(); cast past its DOM addEventListener overload.
         fromPort(parentPort as unknown as Parameters<typeof fromPort>[0]);
-  const node = start(assign.name, transport);
+  const node = Node.start(assign.name, transport);
   node.join(assign.group);
   setup(node, assign.data);
   return node;

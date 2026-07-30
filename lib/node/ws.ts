@@ -162,11 +162,11 @@ export const jsonCodec: Codec = {
  * for one-shot sockets.
  *
  * ```ts
- * import { start } from './node.ts';
+ * import { Node } from './node.ts';
  *
  * // Defined, not invoked: dials a real socket.
  * function join(name: string) {
- *   return start(name, wsTransport('ws://localhost:4369')); // frames ride binary by default
+ *   return Node.start(name, wsTransport('ws://localhost:4369')); // frames ride binary by default
  * }
  * ```
  */

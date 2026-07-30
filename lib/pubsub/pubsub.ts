@@ -12,8 +12,8 @@
  * window); same-node delivery is immediate.
  *
  * ```ts
- * import { start, memoryHub } from '../node/index.ts';
- * const node = start('n@ps', memoryHub().transport());
+ * import { Node, memoryHub } from '../node/index.ts';
+ * const node = Node.start('n@ps', memoryHub().transport());
  * const ps = pubsub(node);
  * const got: string[] = [];
  * ps.subscribe('news', (event, payload) => got.push(`${event}:${payload}`));
@@ -48,8 +48,8 @@ const groupOf = (topic: string) => `pubsub${topic}`;
  * handler); pass the same instance to Channels and Presence so they share the fan-out.
  *
  * ```ts
- * import { start, memoryHub } from '../node/index.ts';
- * const node = start('n@ps2', memoryHub().transport());
+ * import { Node, memoryHub } from '../node/index.ts';
+ * const node = Node.start('n@ps2', memoryHub().transport());
  * typeof pubsub(node).broadcast; // 'function'
  * node.stop();
  * ```

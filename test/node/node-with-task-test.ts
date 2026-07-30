@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { start, memoryHub } from '../../lib/node/index.ts';
+import { Node, memoryHub } from '../../lib/node/index.ts';
 import { Task } from '../../lib/task/index.ts';
 import { isFailure } from '../../lib/result/failure.ts';
 
@@ -12,8 +12,8 @@ module('Node | specific node | Task inside a handler', () => {
   test('(m-p) return/await run + propagate; a dropped lazy task is a no-op', async (assert) => {
     const hub = memoryHub();
     const ran: string[] = [];
-    const server = start('server@c', hub.transport());
-    const client = start('client@c', hub.transport());
+    const server = Node.start('server@c', hub.transport());
+    const client = Node.start('client@c', hub.transport());
 
     server.handle('return-task', () => Task(() => (ran.push('m'), 'v')));
     server.handle('return-task-bad', () =>

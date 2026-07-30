@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import { workerPool } from '../../lib/node/worker-pool.ts';
-import { start } from '../../lib/node/index.ts';
+import { Node } from '../../lib/node/index.ts';
 import { startHub } from '../../lib/node/hub.ts';
 import { wsTransport } from '../../lib/node/ws.ts';
 
@@ -81,7 +81,7 @@ module('Node | workerPool (CPU parallelism across threads)', () => {
     }
     const hub = startHub({ port: 0 });
     const url = `ws://localhost:${hub.port()}`;
-    const app = start('app@cluster', wsTransport(url)); // an ORDINARY cluster node, not the pool
+    const app = Node.start('app@cluster', wsTransport(url)); // an ORDINARY cluster node, not the pool
     const pool = workerPool({ size: 2, module: CPU_WORKER, group: 'cpu', hub: url });
     try {
       await pool.ready();

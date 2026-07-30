@@ -40,9 +40,9 @@ export interface DistributedSupervisor {
  * re-home to survivors within a reconcile tick.
  *
  * ```ts
- * import { start, memoryHub } from './node.ts';
+ * import { Node, memoryHub } from './node.ts';
  * import { shardedRegistry } from './sharded-registry.ts';
- * const node = start('solo@ds', memoryHub().transport());
+ * const node = Node.start('solo@ds', memoryHub().transport());
  * const sup = distributedSupervisor(node, shardedRegistry(node), {
  *   name: 'workers',
  *   start: (key) => ({ key }),

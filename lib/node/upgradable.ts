@@ -15,9 +15,9 @@
  * VM itself (a JS runtime restart still needs a rolling deploy — stated, not hidden).
  *
  * ```ts
- * import { start, memoryHub } from './node.ts';
+ * import { Node, memoryHub } from './node.ts';
  *
- * const node = start('svc@memory', memoryHub().transport());
+ * const node = Node.start('svc@memory', memoryHub().transport());
  * const served = serve(node, 'greeter', {
  *   version: '1.0.0',
  *   init: () => ({ greeted: 0 }),
@@ -212,9 +212,9 @@ export interface Behavior<S> {
  * the auto-registered `<name>.sys.upgrade` / `<name>.sys.version` subjects.
  *
  * ```ts
- * import { start, memoryHub } from './node.ts';
+ * import { Node, memoryHub } from './node.ts';
  *
- * const node = start('u@memory', memoryHub().transport());
+ * const node = Node.start('u@memory', memoryHub().transport());
  * const served = serve(node, 'counter', {
  *   version: '1',
  *   init: () => 0,
@@ -278,11 +278,11 @@ const exitPorts = new WeakMap<object, ExitPort>();
  * durable (persist-before-ack + restore).
  *
  * ```ts
- * import { start, memoryHub } from './node.ts';
+ * import { Node, memoryHub } from './node.ts';
  *
  * const hub = memoryHub();
- * const svc = start('svc@memory', hub.transport());
- * const cli = start('cli@memory', hub.transport());
+ * const svc = Node.start('svc@memory', hub.transport());
+ * const cli = Node.start('cli@memory', hub.transport());
  * serve(svc, 'greeter', {
  *   version: '1.0.0',
  *   init: () => ({ greeted: 0 }),

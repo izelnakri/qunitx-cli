@@ -1,9 +1,10 @@
 // Barrel for the Node leg: import * as Node from '.../lib/node/index.ts'.
-// Elixir's Node module, JS-shaped: Node.start(name, transport), Node.memoryHub(),
-// Node.fromPort(worker). Message passing (call/cast/handle) replaces remote spawns —
-// JS cannot ship closures — and the Failure envelope codec keeps channel identity across
-// every hop: declared failures arrive declared, never as clone-gutted Errors.
+// Elixir's Node module, JS-shaped: Node.start(name, transport), Node.memoryHub(), Node.fromPort(worker).
+// (`Node.start` also ships as a named `Node` namespace for `import { Node }` callers.) Message passing
+// (call/cast/handle) replaces remote spawns — JS cannot ship closures — and the Failure envelope codec
+// keeps channel identity across every hop: declared failures arrive declared, never clone-gutted.
 export {
+  Node,
   start,
   heartbeat,
   memoryHub,

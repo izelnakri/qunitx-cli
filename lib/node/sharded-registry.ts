@@ -17,8 +17,8 @@
  * coordinators — AP across partitions, serialized within one — and heals by re-homing.
  *
  * ```ts
- * import { start, memoryHub } from './node.ts';
- * const node = start('solo@sr', memoryHub().transport());
+ * import { Node, memoryHub } from './node.ts';
+ * const node = Node.start('solo@sr', memoryHub().transport());
  * const registry = shardedRegistry(node);
  * await registry.register('rooms', 'lobby'); // { ok: true }
  * await registry.whereis('rooms', 'lobby'); // 'solo@sr'
@@ -61,8 +61,8 @@ export interface ShardedRegistry {
  * `peers()` is the coordinator roster (default: this node plus its live peers).
  *
  * ```ts
- * import { start, memoryHub } from './node.ts';
- * const node = start('n@sr2', memoryHub().transport());
+ * import { Node, memoryHub } from './node.ts';
+ * const node = Node.start('n@sr2', memoryHub().transport());
  * const registry = shardedRegistry(node);
  * await registry.whereis('rooms', 'nowhere'); // null
  * node.stop();

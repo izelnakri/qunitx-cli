@@ -12,11 +12,11 @@
  * must be strongly consistent, read it from its owning actor (`via:`), not the cache.
  *
  * ```ts
- * import { start, memoryHub } from '../node/index.ts';
+ * import { Node, memoryHub } from '../node/index.ts';
  * import { pubsub } from '../pubsub/index.ts';
  * const hub = memoryHub();
- * const a = start('a@cache', hub.transport());
- * const b = start('b@cache', hub.transport());
+ * const a = Node.start('a@cache', hub.transport());
+ * const b = Node.start('b@cache', hub.transport());
  * const cacheA = distributedCache<number>(a, pubsub(a));
  * const cacheB = distributedCache<number>(b, pubsub(b));
  * cacheA.set('hits', 41);
@@ -55,9 +55,9 @@ interface Entry<V> {
  * per-entry lifetime (each node expires on read).
  *
  * ```ts
- * import { start, memoryHub } from '../node/index.ts';
+ * import { Node, memoryHub } from '../node/index.ts';
  * import { pubsub } from '../pubsub/index.ts';
- * const node = start('n@c', memoryHub().transport());
+ * const node = Node.start('n@c', memoryHub().transport());
  * const cache = distributedCache<string>(node, pubsub(node), { ttlMs: 60000 });
  * cache.set('greeting', 'hi');
  * cache.get('greeting'); // 'hi'

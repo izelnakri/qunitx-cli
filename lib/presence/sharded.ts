@@ -13,10 +13,10 @@
  * its own tracks to the new coordinator — so presence follows the shard.
  *
  * ```ts
- * import { start, memoryHub } from '../node/index.ts';
+ * import { Node, memoryHub } from '../node/index.ts';
  * const hub = memoryHub();
- * const a = start('a@sp', hub.transport());
- * const b = start('b@sp', hub.transport());
+ * const a = Node.start('a@sp', hub.transport());
+ * const b = Node.start('b@sp', hub.transport());
  * await new Promise((r) => setTimeout(r, 40));
  * await shardedPresence(a).track('room:1', 'ada', { role: 'host' });
  * await new Promise((r) => setTimeout(r, 40));
@@ -54,8 +54,8 @@ export interface ShardedPresence {
  * node plus its live peers); rendezvous over it picks each topic's coordinator.
  *
  * ```ts
- * import { start, memoryHub } from '../node/index.ts';
- * const node = start('solo@sp', memoryHub().transport());
+ * import { Node, memoryHub } from '../node/index.ts';
+ * const node = Node.start('solo@sp', memoryHub().transport());
  * await shardedPresence(node).track('t', 'k', { a: 1 });
  * await shardedPresence(node).list('t'); // { k: { metas: [ { a: 1 } ] } }
  * node.stop();

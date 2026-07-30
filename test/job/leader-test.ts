@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { memoryStore, start, memoryHub } from '../../lib/node/index.ts';
+import { memoryStore, Node, memoryHub } from '../../lib/node/index.ts';
 import { Job, leader, raftStore } from '../../lib/job/index.ts';
 
 const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -108,8 +108,8 @@ module('Jobs | leader (Oban.Peer — store lease)', () => {
 
   test('leader() on a raftStore tracks the CP Raft leader — no TTL, no clock-skew split-brain', async (assert) => {
     const hub = memoryHub();
-    const nodeA = start('a@ld', hub.transport());
-    const nodeB = start('b@ld', hub.transport());
+    const nodeA = Node.start('a@ld', hub.transport());
+    const nodeB = Node.start('b@ld', hub.transport());
     const opts = {
       peers: ['a@ld', 'b@ld'],
       heartbeatMs: 15,

@@ -3,7 +3,7 @@ import { mkdtemp, rm, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileStore } from '../../lib/node/file-store.ts';
-import { start, memoryHub } from '../../lib/node/index.ts';
+import { Node, memoryHub } from '../../lib/node/index.ts';
 import { raftStore } from '../../lib/job/index.ts';
 
 const until = async (cond: () => boolean, ms = 4000) => {
@@ -83,7 +83,7 @@ module('Node | fileStore (disk durability, no DB)', () => {
   test('raftStore persists its log/snapshot to disk via fileStore', async (assert) => {
     const dir = await mkdtemp(join(tmpdir(), 'qunitx-raftfile-'));
     const hub = memoryHub();
-    const node = start('n@rf', hub.transport());
+    const node = Node.start('n@rf', hub.transport());
     const store = raftStore(node, {
       peers: ['n@rf'],
       persistence: fileStore(dir),

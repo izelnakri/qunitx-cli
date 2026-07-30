@@ -18,9 +18,9 @@
  * rejoins safely) — in-memory without one.
  *
  * ```ts
- * import { start, memoryHub } from '../node/index.ts';
+ * import { Node, memoryHub } from '../node/index.ts';
  * // A single-member group is a majority of one — it elects itself and commits immediately.
- * const node = start('solo@raft', memoryHub().transport());
+ * const node = Node.start('solo@raft', memoryHub().transport());
  * const counter = raft<number>(node, {
  *   peers: ['solo@raft'],
  *   init: () => 0,
@@ -117,8 +117,8 @@ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
  * and the log prefix dropped.
  *
  * ```ts
- * import { start, memoryHub } from '../node/index.ts';
- * const node = start('m@raft', memoryHub().transport());
+ * import { Node, memoryHub } from '../node/index.ts';
+ * const node = Node.start('m@raft', memoryHub().transport());
  * const member = raft<number>(node, { peers: ['m@raft'], init: () => 0, apply: (c, s) => ({ state: s }) });
  * member.role(); // 'follower' — everyone starts as a follower
  * member.members(); // ['m@raft']

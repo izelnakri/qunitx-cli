@@ -15,8 +15,8 @@
  * subscribers get immediate join/leave deltas; `list` always reflects the converged CRDT truth.
  *
  * ```ts
- * import { start, memoryHub } from '../node/index.ts';
- * const node = start('n@pr', memoryHub().transport());
+ * import { Node, memoryHub } from '../node/index.ts';
+ * const node = Node.start('n@pr', memoryHub().transport());
  * const pr = presence(node);
  * pr.track('room:lobby', 'ada', { typing: false });
  * pr.list('room:lobby'); // { ada: { metas: [ { typing: false } ] } }
@@ -62,8 +62,8 @@ const ownerOf = (presenceId: string) => presenceId.slice(0, presenceId.lastIndex
  * broadcasts (and `subscribe`); without one, `list` still works (poll the converged state).
  *
  * ```ts
- * import { start, memoryHub } from '../node/index.ts';
- * const node = start('n@pr2', memoryHub().transport());
+ * import { Node, memoryHub } from '../node/index.ts';
+ * const node = Node.start('n@pr2', memoryHub().transport());
  * const pr = presence(node);
  * const off = pr.track('game:1', 'p1', { score: 0 });
  * off(); // untrack

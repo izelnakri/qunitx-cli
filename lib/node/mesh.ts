@@ -13,10 +13,10 @@
  * one to every link.
  *
  * ```ts
- * import { start } from './node.ts';
+ * import { Node } from './node.ts';
  * const net = meshNetwork(['a@mesh', 'b@mesh']);
- * const a = start('a@mesh', meshTransport('a@mesh', net.for('a@mesh')));
- * const b = start('b@mesh', meshTransport('b@mesh', net.for('b@mesh')));
+ * const a = Node.start('a@mesh', meshTransport('a@mesh', net.for('a@mesh')));
+ * const b = Node.start('b@mesh', meshTransport('b@mesh', net.for('b@mesh')));
  * b.handle('add', (p) => (p as number[]).reduce((x, y) => x + y, 0));
  * await a.call('b@mesh', 'add', [2, 3]); // 5 — routed peer-to-peer, no hub
  * a.stop();

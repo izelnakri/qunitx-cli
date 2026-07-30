@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { start, memoryHub, shardedRegistry, distributedSupervisor } from '../../lib/node/index.ts';
+import { Node, memoryHub, shardedRegistry, distributedSupervisor } from '../../lib/node/index.ts';
 
 const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const until = async (cond: () => boolean, ms = 4000) => {
@@ -14,8 +14,8 @@ const until = async (cond: () => boolean, ms = 4000) => {
 module('Node | distributedSupervisor (Horde DynamicSupervisor)', () => {
   test('spreads keyed children across nodes, one host each, and re-homes them on node loss', async (assert) => {
     const hub = memoryHub();
-    const nodeA = start('a@ds', hub.transport());
-    const nodeB = start('b@ds', hub.transport());
+    const nodeA = Node.start('a@ds', hub.transport());
+    const nodeB = Node.start('b@ds', hub.transport());
     const keys = ['w1', 'w2', 'w3', 'w4', 'w5', 'w6'];
     const supervised = (node: typeof nodeA) =>
       distributedSupervisor(node, shardedRegistry(node), {
@@ -58,7 +58,7 @@ module('Node | distributedSupervisor (Horde DynamicSupervisor)', () => {
 
   test('restarts a child that crashes IN PLACE (onExit) while its node stays up', async (assert) => {
     const hub = memoryHub();
-    const node = start('solo@ip', hub.transport());
+    const node = Node.start('solo@ip', hub.transport());
     let starts = 0;
     let live: { stop(): void; onExit(fn: (r?: unknown) => void): void; crash(): void } | undefined;
     const sup = distributedSupervisor(node, shardedRegistry(node), {

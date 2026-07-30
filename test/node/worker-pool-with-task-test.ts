@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { start } from '../../lib/node/index.ts';
+import { Node } from '../../lib/node/index.ts';
 import { workerPool } from '../../lib/node/worker-pool.ts';
 import { wsTransport } from '../../lib/node/ws.ts';
 import { startHub } from '../../lib/node/hub.ts';
@@ -84,7 +84,7 @@ module('Node | workerPool | Task inside a worker handler', () => {
     }
     const hub = startHub({ port: 0 });
     const url = `ws://localhost:${hub.port()}`;
-    const app = start('app@cluster', wsTransport(url)); // an ordinary cluster node, not the pool
+    const app = Node.start('app@cluster', wsTransport(url)); // an ordinary cluster node, not the pool
     const pool = workerPool({ size: 1, module: TASK_WORKER, group: 'tk', hub: url });
     try {
       await pool.ready();

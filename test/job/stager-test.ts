@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { start, memoryHub, memoryStore } from '../../lib/node/index.ts';
+import { Node, memoryHub, memoryStore } from '../../lib/node/index.ts';
 import { Job, raftStore } from '../../lib/job/index.ts';
 
 const until = async (cond: () => boolean, ms = 4000) => {
@@ -81,7 +81,7 @@ module('Jobs | stager (Oban rescuer — reclaim jobs orphaned mid-run)', () => {
 
   test('reclaims through raftStore — the rescue is a committed Raft command', async (assert) => {
     const hub = memoryHub();
-    const node = start('n@st', hub.transport());
+    const node = Node.start('n@st', hub.transport());
     const store = raftStore(node, { peers: ['n@st'], electionTimeoutMs: () => 15 });
     const ran: string[] = [];
     try {

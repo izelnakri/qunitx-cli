@@ -15,8 +15,8 @@
  * The API matches {@link PubSub}, so it's a drop-in where a topic needs delivery guarantees.
  *
  * ```ts
- * import { start, memoryHub } from '../node/index.ts';
- * const node = start('n@rps', memoryHub().transport());
+ * import { Node, memoryHub } from '../node/index.ts';
+ * const node = Node.start('n@rps', memoryHub().transport());
  * const rps = reliablePubSub(node, { heartbeatMs: false });
  * const got: number[] = [];
  * rps.subscribe('ticks', (_e, p) => got.push(p as number));
@@ -50,8 +50,8 @@ const streamKey = (topic: string, from: string) => `${topic}${from}`;
  * (default 500; `false` to disable). One per node.
  *
  * ```ts
- * import { start, memoryHub } from '../node/index.ts';
- * const node = start('n@rps2', memoryHub().transport());
+ * import { Node, memoryHub } from '../node/index.ts';
+ * const node = Node.start('n@rps2', memoryHub().transport());
  * typeof reliablePubSub(node).broadcast; // 'function'
  * node.stop();
  * ```

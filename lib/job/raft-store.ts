@@ -98,9 +98,9 @@ function apply(command: unknown, state: KV): { state: KV; reply?: unknown } {
  * consensus round per mutation — fits moderate-throughput queues; a firehose still wants Postgres.
  *
  * ```ts
- * import { start, memoryHub } from '../node/index.ts';
+ * import { Node, memoryHub } from '../node/index.ts';
  *
- * const node = start('n@raft', memoryHub().transport());
+ * const node = Node.start('n@raft', memoryHub().transport());
  * const store = raftStore(node, { peers: ['n@raft'], electionTimeoutMs: () => 15 });
  * await new Promise((r) => setTimeout(r, 60)); // the single-member group elects itself
  * await store.save('greeting', 'hi');

@@ -12,8 +12,8 @@
  *
  * ```ts
  * const hub = memoryHub();
- * const a = start('a@memory', hub.transport());
- * const b = start('b@memory', hub.transport());
+ * const a = Node.start('a@memory', hub.transport());
+ * const b = Node.start('b@memory', hub.transport());
  * b.handle('math.add', (payload) => (payload as number[]).reduce((x, y) => x + y, 0));
  * await a.call('b@memory', 'math.add', [20, 22]); // 42 — across "nodes"
  * a.stop();
@@ -120,7 +120,7 @@ export interface Transport {
  *
  * ```ts
  * const hub = memoryHub();
- * const node = start('worker@memory', hub.transport());
+ * const node = Node.start('worker@memory', hub.transport());
  * node.self(); // 'worker@memory'
  * node.alive(); // true
  * node.stop();
@@ -238,7 +238,7 @@ export interface NodeHandle {
  *
  * ```ts
  * const hub = memoryHub();
- * const watcher = start('watcher@memory', hub.transport());
+ * const watcher = Node.start('watcher@memory', hub.transport());
  * const downs: string[] = [];
  * await heartbeat(watcher, 'ghost@memory', { everyMs: 5, missAfter: 2, onDown: (p) => void downs.push(p) })(
  *   new AbortController().signal,
@@ -278,8 +278,8 @@ export function heartbeat(
  *
  * ```ts
  * const hub = memoryHub();
- * const left = start('left@memory', hub.transport());
- * const right = start('right@memory', hub.transport());
+ * const left = Node.start('left@memory', hub.transport());
+ * const right = Node.start('right@memory', hub.transport());
  * left.list(); // ['right@memory'] — hellos exchanged on start
  * right.list(); // ['left@memory']
  * left.stop();
@@ -809,8 +809,8 @@ export function start(
  *
  * ```ts
  * const hub = memoryHub();
- * const a = start('a@memory', hub.transport());
- * const b = start('b@memory', hub.transport());
+ * const a = Node.start('a@memory', hub.transport());
+ * const b = Node.start('b@memory', hub.transport());
  * const seen: string[] = [];
  * a.monitor((peer) => void seen.push(peer));
  * b.stop();
@@ -882,3 +882,10 @@ export function fromPort(port: {
     close: () => void (port.close?.() ?? port.terminate?.()),
   };
 }
+
+/**
+ * The Node namespace — Elixir's `Node`, JS-shaped. `Node.start(name, transport)` boots a node.
+ * (`heartbeat`, `memoryHub`, `fromPort` remain bare exports — they aren't node-lifecycle entry
+ * points in the same way.)
+ */
+export const Node = { start };
