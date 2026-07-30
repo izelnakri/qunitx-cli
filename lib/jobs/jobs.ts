@@ -48,6 +48,11 @@ import { cronMatch } from './cron.ts';
 import type { Leader } from './leader.ts';
 import type { Store } from '../node/upgradable.ts';
 
+// Tag for the control-flow values a worker RETURNS to steer its own fate (Oban's discard/snooze) —
+// distinct from a THROW, which is always a retryable failure.
+const SIGNAL = Symbol.for('qunitx.jobs.signal');
+type JobControl = { kind: 'discard'; reason?: unknown } | { kind: 'snooze'; ms: number };
+
 /** A recurring schedule entry — a cron expression mapped to the job it enqueues. */
 export interface CronEntry {
   /** The worker to run on each fire. */
@@ -262,9 +267,25 @@ export function jobQueue(options: {
     const started = performance.now();
     emit(['jobs', 'execute', 'start'], {}, meta);
     try {
-      await options.workers[job.worker]?.(job.args, job, controller.signal);
+      const outcome = await options.workers[job.worker]?.(job.args, job, controller.signal);
       emit(['jobs', 'execute', 'stop'], { duration: performance.now() - started }, meta);
-      await removeJob(job.id); // completed jobs are removed — the queue stays bounded
+      const signal = jobSignal(outcome);
+      if (signal?.kind === 'discard') {
+        // The worker decided this failure is TERMINAL — dead-letter it now, skipping remaining
+        // attempts (Oban's {:discard}). A Failure reason lands in errors, routable by its code.
+        job.state = 'discarded';
+        if (signal.reason !== undefined)
+          job.errors.push(errorRecord(signal.reason, job.attempt, now()));
+        await persistJob(job);
+      } else if (signal?.kind === 'snooze') {
+        // Reschedule (Oban's {:snooze}); bump maxAttempts so the snooze doesn't consume a retry.
+        job.maxAttempts += 1;
+        job.state = 'scheduled';
+        job.scheduledAt = now() + signal.ms;
+        await persistJob(job);
+      } else {
+        await removeJob(job.id); // real success — completed jobs are removed, the queue stays bounded
+      }
     } catch (error) {
       emit(['jobs', 'execute', 'exception'], { duration: performance.now() - started }, meta);
       if (cancelled.has(job.id)) {
@@ -508,4 +529,28 @@ export function jobQueue(options: {
 // JSON.stringify) and is revived to a live Failure on load — see `loaded`.
 function errorRecord(error: unknown, attempt: number, at: number): JobError {
   return { attempt, at, error: toFailure(error) };
+}
+
+/**
+ * Return this from a {@link Worker} to DISCARD the job now — dead-letter it terminally, skipping any
+ * remaining `maxAttempts` (Oban's `{:discard, reason}`). A `Failure` reason is recorded in the job's
+ * `errors` (routable by its `code`); a THROW, by contrast, always retries.
+ */
+export function discard(reason?: unknown): unknown {
+  return { [SIGNAL]: { kind: 'discard', reason } satisfies JobControl };
+}
+
+/**
+ * Return this from a {@link Worker} to RESCHEDULE the job `ms` in the future (Oban's `{:snooze}`)
+ * without consuming a retry — `maxAttempts` is bumped so the snooze is free.
+ */
+export function snooze(ms: number): unknown {
+  return { [SIGNAL]: { kind: 'snooze', ms } satisfies JobControl };
+}
+
+// The control value a worker returned, or undefined for an ordinary success.
+function jobSignal(value: unknown): JobControl | undefined {
+  return value !== null && typeof value === 'object' && SIGNAL in value
+    ? ((value as Record<symbol, unknown>)[SIGNAL] as JobControl)
+    : undefined;
 }

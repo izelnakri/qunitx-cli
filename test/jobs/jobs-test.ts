@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import { memoryStore } from '../../lib/node/index.ts';
-import { jobQueue } from '../../lib/jobs/index.ts';
+import { jobQueue, discard, snooze } from '../../lib/jobs/index.ts';
 import { isFailure, define } from '../../lib/result/failure.ts';
 import * as Telemetry from '../../lib/telemetry/index.ts';
 
@@ -80,7 +80,11 @@ module('Jobs | Oban-shaped durable queue', () => {
     );
     assert.equal(discardedJob.attempt, 2, 'it stopped at exactly maxAttempts attempts');
     assert.equal(discardedJob.errors.length, 2, 'one error per attempt');
-    assert.true(discardedJob.errors[0].error.includes('always'));
+    assert.equal(discardedJob.errors[0].error.code, 'Unknown', 'a bug is coerced to a Failure');
+    assert.true(
+      String((discardedJob.errors[0].error.cause as Error)?.message).includes('always'),
+      'the original error preserved in .cause',
+    );
     jobs.stop();
   });
 
@@ -113,30 +117,67 @@ module('Jobs | Oban-shaped durable queue', () => {
     await jobs.drain();
 
     const typedError = jobs.job(typed.id)!.errors[0];
-    assert.equal(
-      typedError.code,
-      'RateLimited',
-      'a Failure contributes its code — for dead-letter routing',
-    );
-    assert.deepEqual(typedError.meta, { retryAfter: 30 }, 'and its safe-serializable data as meta');
-    assert.true(
-      typedError.error.includes('slow down'),
-      'error carries the human string (its stack)',
+    assert.true(isFailure(typedError.error), 'errors[].error is a LIVE Failure');
+    assert.equal(typedError.error.code, 'RateLimited', 'a declared throw keeps its code');
+    assert.deepEqual(
+      typedError.error.data,
+      { retryAfter: 30 },
+      'and its data — the full Failure API',
     );
 
     const plainError = jobs.job(plain.id)!.errors[0];
-    assert.equal(plainError.code, undefined, 'a plain throw has no code');
-    assert.true(plainError.error.includes('kaboom'), 'error carries the message');
-    assert.true(plainError.error.includes('at '), 'and the stacktrace — the debugging gold');
+    assert.equal(
+      plainError.error.code,
+      'Unknown',
+      'a plain throw (a bug) is coerced to code `Unknown`',
+    );
+    assert.true(
+      String((plainError.error.cause as Error)?.message).includes('kaboom'),
+      'with the original error preserved in .cause',
+    );
 
     const badError = jobs.job(bad.id)!.errors[0];
-    assert.equal(badError.code, 'RateLimited', 'still captures the code');
-    assert.equal(
-      badError.meta,
-      undefined,
-      'but drops non-serializable data — the persist never crashes',
+    assert.equal(badError.error.code, 'RateLimited', 'still a Failure with its code');
+    assert.true(
+      jobs.job(bad.id)!.state === 'discarded',
+      'and it persisted (discarded) despite non-serializable data — no crash',
     );
     jobs.stop();
+  });
+
+  test('errors survive a reload as live Failures — uniform on fresh AND reloaded jobs', async (assert) => {
+    const RateLimited = define('RateLimited', (d: { n: number }) => `rate ${d.n}`);
+    const store = memoryStore(); // the SHARED durable store
+    const first = jobQueue({
+      store,
+      backoff: () => 0,
+      pollMs: 10,
+      workers: {
+        doomed: () => {
+          throw RateLimited({ n: 7 });
+        },
+      },
+    });
+    const job = await first.insert('doomed', {}, { maxAttempts: 1 });
+    await first.drain();
+    assert.true(
+      isFailure(first.job(job.id)!.errors[0].error),
+      'fresh: the error is a live Failure',
+    );
+    first.stop();
+
+    // reload on the SAME store — the error came off disk as a wire form and must be revived.
+    const second = jobQueue({ store, pollMs: 10 });
+    await second.drain(); // awaits `loaded`, which rehydrates
+    const reloaded = second.job(job.id)!;
+    assert.equal(reloaded.state, 'discarded', 'the dead-letter job reloaded');
+    assert.true(
+      isFailure(reloaded.errors[0].error),
+      'reloaded: STILL a live Failure — not a plain object',
+    );
+    assert.equal(reloaded.errors[0].error.code, 'RateLimited', 'with its code');
+    assert.deepEqual(reloaded.errors[0].error.data, { n: 7 }, 'and its data');
+    second.stop();
   });
 
   test('scheduleIn parks a job in `scheduled` until its time, then it runs and is removed', async (assert) => {
@@ -353,7 +394,10 @@ module('Jobs | Oban-shaped durable queue', () => {
       retryable.scheduledAt > clock.t,
       'its next run is scheduled in the future (backoff)',
     );
-    assert.true(retryable.errors[0].error.includes('boom'), 'the failure is recorded on the job');
+    assert.true(
+      String((retryable.errors[0].error.cause as Error)?.message).includes('boom'),
+      'the failure is recorded on the job',
+    );
     jobs.stop();
   });
 
@@ -513,6 +557,98 @@ module('Jobs | Oban-shaped durable queue', () => {
     await settle(50);
     assert.equal(crashes.length, 1, 'the scheduler failure was reported once via onExit');
     assert.true(String(crashes[0]).includes('store down'), 'carrying the underlying error');
+    jobs.stop();
+  });
+
+  test('dead-letter routing: a discarded job’s errors.code discriminates a declared Failure from a bug', async (assert) => {
+    const RateLimited = define('RateLimited', () => 'slow down');
+    const jobs = jobQueue({
+      store: memoryStore(),
+      backoff: () => 0,
+      pollMs: 10,
+      workers: {
+        declared: () => {
+          throw RateLimited({}); // a DECLARED failure — expected, carries a code
+        },
+        buggy: () => {
+          throw new TypeError('undefined is not a function'); // a BUG — unexpected, no code
+        },
+      },
+    });
+    await jobs.insert('declared', {}, { maxAttempts: 1 });
+    await jobs.insert('buggy', {}, { maxAttempts: 1 });
+    await jobs.drain();
+
+    const discarded = jobs.list({ state: 'discarded' });
+    assert.equal(discarded.length, 2, 'both failures are in the dead-letter queue');
+    const codeOf = (worker: string) =>
+      discarded.find((job) => job.worker === worker)!.errors.at(-1)?.error?.code;
+    assert.equal(
+      codeOf('declared'),
+      'RateLimited',
+      'a declared Failure carries its code — route/handle it',
+    );
+    assert.equal(
+      codeOf('buggy'),
+      'Unknown',
+      'a bug is coerced to code `Unknown` — that is your "page on-call" signal',
+    );
+    jobs.stop();
+  });
+
+  test('a worker can discard() a job — terminal now, skipping remaining attempts, routable by code', async (assert) => {
+    const PaymentDeclined = define(
+      'PaymentDeclined',
+      (d: { card: string }) => `declined ${d.card}`,
+    );
+    const jobs = jobQueue({
+      store: memoryStore(),
+      backoff: () => 0,
+      pollMs: 10,
+      workers: { charge: () => discard(PaymentDeclined({ card: '***1' })) },
+    });
+    const job = await jobs.insert('charge', {}, { maxAttempts: 5 });
+    await jobs.drain();
+    const dead = jobs.job(job.id)!;
+    assert.equal(dead.state, 'discarded', 'discarded immediately — not retried');
+    assert.equal(dead.attempt, 1, 'only one attempt — the 5-attempt budget was NOT spent');
+    assert.equal(
+      dead.errors.at(-1)?.error?.code,
+      'PaymentDeclined',
+      'the discard reason is routable by code',
+    );
+    jobs.stop();
+  });
+
+  test('a worker can snooze() a job — reschedule without burning an attempt', async (assert) => {
+    const clock = { t: Date.UTC(2021, 0, 1, 0, 0, 0) };
+    let calls = 0;
+    const jobs = jobQueue({
+      store: memoryStore(),
+      now: () => clock.t,
+      pollMs: 10,
+      workers: {
+        poll: () => {
+          calls += 1;
+          return calls === 1 ? snooze(50_000) : undefined; // snooze once, then succeed
+        },
+      },
+    });
+    const job = await jobs.insert('poll', {}, { maxAttempts: 2 });
+    await jobs.drain();
+    const snoozed = jobs.job(job.id)!;
+    assert.equal(snoozed.state, 'scheduled', 'rescheduled by the snooze');
+    assert.true(snoozed.scheduledAt > clock.t, 'to the future');
+    assert.equal(
+      snoozed.maxAttempts,
+      3,
+      'maxAttempts bumped so the snooze did not consume a retry',
+    );
+
+    clock.t += 60_000; // past the snooze window
+    await jobs.drain();
+    assert.equal(calls, 2, 'it ran again after the snooze');
+    assert.equal(jobs.job(job.id), undefined, 'and then completed');
     jobs.stop();
   });
 });

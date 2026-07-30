@@ -8,8 +8,11 @@
 // (Oban's Peer — a store lease).
 export {
   jobQueue,
+  discard,
+  snooze,
   type JobQueue,
   type Job,
+  type JobError,
   type JobState,
   type Worker,
   type CronEntry,
