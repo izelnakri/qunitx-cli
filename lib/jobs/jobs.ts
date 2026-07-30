@@ -17,8 +17,8 @@
  * `SELECT … FOR UPDATE SKIP LOCKED`) hands each job to exactly one node — no leader election, no
  * `pollStore` flag, no double execution. A `memoryStore` claims in one event-loop turn (in-process
  * clustering); a Postgres store would use row locks. Without a `claim` a queue simply drains its
- * own inserts (single process). Cron is the exception — every node would fire it, so a schedule
- * must run on ONE node; that leader election is a follow-up (Oban's `Peer`), not here yet.
+ * own inserts (single process). Cron is the exception — every node would fire it, so pass a
+ * `leader` (Oban's `Peer`, see {@link leader}) and exactly one node fires each schedule.
  *
  * **Recurring cron** (Oban's Cron plugin): pass `cron` — each expression enqueues its job every
  * matching UTC minute; a schedule fires at most once per matching minute per instance.
@@ -36,7 +36,12 @@
  * jobs.stop();
  * ```
  */
-import { isFailure, type Any as AnyFailure } from '../result/failure.ts';
+import {
+  from as toFailure,
+  fromJSON as reviveFailure,
+  type Any as AnyFailure,
+  type SerializedFailure,
+} from '../result/failure.ts';
 import { Task } from '../task/task.ts';
 import { execute as emit } from '../telemetry/telemetry.ts';
 import { cronMatch } from './cron.ts';
@@ -57,6 +62,19 @@ export interface CronEntry {
 
 /** A job's lifecycle state — Oban's states, minus its `cancelled` (a cancelled job is removed). */
 export type JobState = 'available' | 'scheduled' | 'executing' | 'retryable' | 'discarded';
+
+/** One entry in a job's failure log. `error` is a live {@link Failure} — a declared throw keeps its
+ *  `code`/`data`; a plain throw (a bug) is coerced to code `'Unknown'` with the original in `.cause`.
+ *  Uniform on fresh AND reloaded jobs: the queue serializes it (a Failure's `toJSON` is auto-invoked
+ *  by the Store's `JSON.stringify`) and revives it with `Failure.fromJSON` on load — so a reader
+ *  always gets a real Failure (`isFailure(entry.error)`, `.code`, `.data`, `.match`), never the wire
+ *  form. Storing a live instance is impossible (its `Symbol.for` brand doesn't survive JSON); the
+ *  serialize/revive round-trip is how you get one back anyway. */
+export interface JobError {
+  attempt: number;
+  at: number;
+  error: AnyFailure;
+}
 
 /** One durable job. */
 export interface Job {
@@ -81,20 +99,23 @@ export interface Job {
   /** When the current attempt started executing (epoch ms) — the stager reclaims jobs stuck
    *  `executing` past a timeout (a node died mid-run). Set by the claim, absent otherwise. */
   attemptedAt?: number;
-  /** One entry per failed attempt. */
-  errors: { attempt: number; error: string; at: number }[];
+  /** Free-form metadata (Oban's `meta`), structured-clone-safe. Cron-inserted jobs carry
+   *  `{ cron: <expression> }`; it also participates in the `unique` identity (see insert). */
+  meta?: Record<string, unknown>;
+  /** One entry per failed attempt — see {@link JobError}. */
+  errors: JobError[];
 }
 
 /** A worker: receives the job's args (and the job record); throwing marks the attempt failed. */
-export type Worker = (args: unknown, job: Job) => unknown | Promise<unknown>;
+export type Worker = (args: unknown, job: Job, signal: AbortSignal) => unknown | Promise<unknown>;
 
 /** A running job queue — see {@link jobQueue}. */
 export interface JobQueue {
   /**
    * Durably enqueue a job — persisted BEFORE the Task settles. Options mirror Oban's:
    * `queue` (default 'default'), `maxAttempts` (default 3), `scheduleIn` ms / `scheduledAt`
-   * epoch-ms, `priority` (0 = most urgent), and `unique` (skip if an identical worker+args job
-   * is already pending — returns the existing job). The returned Task is **eager** (the write is
+   * epoch-ms, `priority` (0 = most urgent), `meta` (free-form tags), and `unique` (skip if a job
+   * with the same worker+args+meta is already pending — returns the existing one). The Task is **eager** (the write is
    * in flight before you await, exactly as a Promise) and settles with the job record.
    */
   insert(
@@ -107,11 +128,17 @@ export interface JobQueue {
       scheduledAt?: number;
       priority?: number;
       unique?: boolean;
+      meta?: Record<string, unknown>;
     },
   ): Task<Job, AnyFailure>;
   /** The current record for a job id, or undefined (completed jobs are removed). */
   job(id: string): Job | undefined;
-  /** Remove a pending job — Oban's `cancel_job`. A job already executing finishes its attempt. */
+  /** A read-only snapshot of jobs, optionally filtered by queue/state/worker — for admin and
+   *  observability (Oban queries its table; this reads this instance's in-memory view). */
+  list(filter?: { queue?: string; state?: JobState; worker?: string }): Job[];
+  /** Cancel a job — Oban's `cancel_job`. A PENDING job is removed; an EXECUTING one has its
+   *  {@link Worker}'s `AbortSignal` aborted (cooperative — a worker that ignores it finishes), and
+   *  ends terminal (removed), not retried. */
   cancelJob(id: string): Task<void, AnyFailure>;
   /** Stop starting jobs on `queue` (executing ones finish) — Oban's `pause_queue`. */
   pauseQueue(queue: string): void;
@@ -121,6 +148,10 @@ export interface JobQueue {
   drain(): Task<void, AnyFailure>;
   /** Stop the scheduler (executing attempts finish; nothing new starts). */
   stop(): void;
+  /** Report a CATASTROPHIC scheduler failure (not a job failure — those retry) so a {@link
+   *  supervisor} can restart the queue wholesale; the fresh instance re-reads the Store. Registering
+   *  a handler opts the queue into fail-fast: an unsupervised queue keeps swallowing tick errors. */
+  onExit(handler: (reason?: unknown) => void): void;
 }
 
 /**
@@ -141,7 +172,9 @@ export function jobQueue(options: {
   queues?: Record<string, number>;
   backoff?: (attempt: number) => number;
   pollMs?: number;
-  keyPrefix?: string;
+  /** Namespaces this queue's store keys (Oban's `prefix` — its Postgres schema). Two queues on one
+   *  store with different prefixes are isolated. Default `'jobs'`. */
+  prefix?: string;
   /** Recurring jobs — Oban's Cron plugin: a cron expression (UTC) enqueues its job each time it
    *  matches. A schedule fires at most once per matching minute per instance; across a cluster,
    *  pass `leader` so only ONE node fires each schedule (else every node would). Give an expression a
@@ -167,7 +200,7 @@ export function jobQueue(options: {
   const pollMs = options.pollMs ?? 50;
   const reclaimAfterMs = options.reclaimAfterMs ?? 3_600_000; // Oban's Lifeline default (60 min)
   const now = options.now ?? (() => Date.now());
-  const prefix = options.keyPrefix ?? 'jobs';
+  const prefix = options.prefix ?? 'jobs';
   const jobKey = (id: string) => `${prefix}:${id}`;
   const INDEX = `${prefix}:index`;
 
@@ -175,6 +208,8 @@ export function jobQueue(options: {
   // key from a crash between the two writes is simply ignored on load).
   const jobs = new Map<string, Job>();
   const executing = new Map<string, number>(); // queue -> running count
+  const running = new Map<string, AbortController>(); // id -> abort handle for the live attempt
+  const cancelled = new Set<string>(); // ids cancelled mid-attempt — end terminal, don't retry
   const paused = new Set<string>();
   const seenQueues = new Set<string>(['default']); // queues to poll (configured + inserted-into)
   let alive = true;
@@ -204,6 +239,10 @@ export function jobQueue(options: {
     for (const id of ids) {
       const job = (await options.store.load(jobKey(id))) as Job | undefined;
       if (!job) continue;
+      // Errors round-tripped through the Store as wire forms — revive each to a live Failure so a
+      // reloaded job's errors are Failures too (the whole point: uniform on fresh AND reloaded).
+      for (const entry of job.errors)
+        entry.error = reviveFailure(entry.error as unknown as SerializedFailure);
       jobs.set(job.id, job);
     }
   })();
@@ -217,29 +256,33 @@ export function jobQueue(options: {
     // `job` arrives already marked `executing` with `attempt` incremented — the claim did that
     // atomically (that mark is also what a crash-rescue keys on). Here we only run it.
     executing.set(job.queue, (executing.get(job.queue) ?? 0) + 1);
+    const controller = new AbortController(); // aborted by cancelJob to interrupt this attempt
+    running.set(job.id, controller);
     const meta = { worker: job.worker, queue: job.queue, id: job.id, attempt: job.attempt };
     const started = performance.now();
     emit(['jobs', 'execute', 'start'], {}, meta);
     try {
-      await options.workers[job.worker]?.(job.args, job);
+      await options.workers[job.worker]?.(job.args, job, controller.signal);
       emit(['jobs', 'execute', 'stop'], { duration: performance.now() - started }, meta);
       await removeJob(job.id); // completed jobs are removed — the queue stays bounded
     } catch (error) {
       emit(['jobs', 'execute', 'exception'], { duration: performance.now() - started }, meta);
-      job.errors.push({
-        attempt: job.attempt,
-        error: isFailure(error) ? `${error.code}: ${error.message}` : String(error),
-        at: now(),
-      });
-      if (job.attempt >= job.maxAttempts) {
-        job.state = 'discarded'; // kept, with its errors — the dead-letter record
+      if (cancelled.has(job.id)) {
+        await removeJob(job.id); // cancelled mid-attempt → terminal (removed), never retried
       } else {
-        job.state = 'retryable';
-        job.scheduledAt = now() + backoff(job.attempt);
+        job.errors.push(errorRecord(error, job.attempt, now()));
+        if (job.attempt >= job.maxAttempts) {
+          job.state = 'discarded'; // kept, with its errors — the dead-letter record
+        } else {
+          job.state = 'retryable';
+          job.scheduledAt = now() + backoff(job.attempt);
+        }
+        await persistJob(job);
       }
-      await persistJob(job);
     } finally {
       executing.set(job.queue, (executing.get(job.queue) ?? 1) - 1);
+      running.delete(job.id);
+      cancelled.delete(job.id);
     }
   };
 
@@ -254,12 +297,16 @@ export function jobQueue(options: {
       scheduledAt?: number;
       priority?: number;
       unique?: boolean;
+      meta?: Record<string, unknown>;
     },
   ): Promise<Job> => {
     if (opts.unique) {
-      const signature = JSON.stringify([worker, args]);
+      // Identity includes `meta`, so two cron schedules that share a worker+args (each tagged with
+      // its own `{ cron: expr }`) don't collapse into one — while a single schedule still dedupes.
+      const signature = JSON.stringify([worker, args, opts.meta ?? null]);
       for (const existing of jobs.values()) {
-        if (JSON.stringify([existing.worker, existing.args]) === signature) return existing;
+        if (JSON.stringify([existing.worker, existing.args, existing.meta ?? null]) === signature)
+          return existing;
       }
     }
     const job: Job = {
@@ -272,6 +319,7 @@ export function jobQueue(options: {
       maxAttempts: opts.maxAttempts ?? 3,
       priority: opts.priority ?? 0,
       scheduledAt: opts.scheduledAt ?? (opts.scheduleIn ? now() + opts.scheduleIn : 0),
+      ...(opts.meta ? { meta: opts.meta } : {}),
       errors: [],
     };
     jobs.set(job.id, job);
@@ -297,7 +345,8 @@ export function jobQueue(options: {
         void doInsert(entry.worker, entry.args ?? {}, {
           queue: entry.queue,
           priority: entry.priority,
-          unique: true, // a second tick in the same minute can't double-enqueue
+          unique: true, // dedupe a backed-up schedule (and a second tick in the same minute)
+          meta: { cron: expr }, // tag the job with its originating schedule; also scopes `unique`
         });
       }
     }
@@ -354,14 +403,27 @@ export function jobQueue(options: {
   // and over-claim past the concurrency limit; the atomic claim stops two ticks taking the SAME
   // job, not the count. Chaining runs one tick at a time; a failed tick can't break the ones after.
   let tail: Promise<unknown> = Promise.resolve();
+  let crashHandler: ((reason?: unknown) => void) | undefined; // set by onExit — see below
   const tick = (): Promise<number> => {
     const result = tail.then(runTick);
-    tail = result.catch(() => {});
+    tail = result.catch((error) => {
+      // A throw here is SCHEDULER-level (worker errors are caught in run()) — a store outage or a
+      // bug. Supervised (a handler is registered): fail fast so the supervisor restarts us fresh.
+      // Unsupervised: swallow and keep ticking, the queue's own resilience.
+      if (crashHandler && alive) {
+        alive = false;
+        clearInterval(timer);
+        if (stagerTimer) clearInterval(stagerTimer);
+        crashHandler(error);
+      }
+    });
     return result;
   };
   const timer = setInterval(() => void tick(), pollMs);
   (timer as { unref?: () => void }).unref?.();
-  void loaded.then(() => tick()); // rescued + peer work starts once reload finishes
+  // rescued + peer work starts once reload finishes; the trailing catch keeps a boot-time scheduler
+  // failure from surfacing as an unhandled rejection (it's already reported through tick's onExit path).
+  void loaded.then(() => tick()).catch(() => {});
 
   // The stager (Oban's rescuer): reclaim jobs a dead node left stuck `executing` past the timeout,
   // back to `available` so a survivor re-runs them. Leader-gated (once per cluster) when a leader is
@@ -389,10 +451,26 @@ export function jobQueue(options: {
       }).perform();
     },
     job: (id) => jobs.get(id),
+    list: (filter = {}) =>
+      // One pass: filter-and-copy folded together. Shallow copies so a caller can't corrupt state.
+      [...jobs.values()].reduce<Job[]>((matches, job) => {
+        if (
+          (filter.queue === undefined || job.queue === filter.queue) &&
+          (filter.state === undefined || job.state === filter.state) &&
+          (filter.worker === undefined || job.worker === filter.worker)
+        )
+          matches.push({ ...job });
+        return matches;
+      }, []),
     cancelJob(id) {
       return Task(async () => {
-        const job = jobs.get(id);
-        if (job && job.state !== 'executing') await removeJob(id);
+        const controller = running.get(id);
+        if (controller) {
+          cancelled.add(id); // the attempt ends terminal (removed), not retried
+          controller.abort();
+          return;
+        }
+        if (jobs.get(id)) await removeJob(id); // a pending job is removed outright
       }).perform();
     },
     pauseQueue: (queue) => void paused.add(queue),
@@ -419,5 +497,15 @@ export function jobQueue(options: {
       clearInterval(timer);
       if (stagerTimer) clearInterval(stagerTimer);
     },
+    onExit(handler) {
+      crashHandler = handler;
+    },
   };
+}
+
+// A failure-log entry: coerce ANY throw to a live Failure (a bug becomes code 'Unknown', the
+// original preserved in `.cause`). It serializes on save (toJSON, auto-invoked by the Store's
+// JSON.stringify) and is revived to a live Failure on load — see `loaded`.
+function errorRecord(error: unknown, attempt: number, at: number): JobError {
+  return { attempt, at, error: toFailure(error) };
 }
