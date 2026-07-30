@@ -2,24 +2,24 @@ import { module, test } from 'qunitx';
 import { memoryStore } from '../../lib/node/index.ts';
 import { jobQueue, cronMatch } from '../../lib/jobs/index.ts';
 
-const settle = (ms = 40) => new Promise((r) => setTimeout(r, ms));
+const settle = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms));
 
 module('Jobs | cron scheduling', { concurrency: true }, () => {
   test('cronMatch handles stars, numbers, ranges, lists, and steps (UTC)', (assert) => {
-    const at = (iso: string) => new Date(iso);
-    assert.true(cronMatch('30 9 * * *', at('2020-01-02T09:30:00Z')), 'exact minute + hour');
-    assert.false(cronMatch('30 9 * * *', at('2020-01-02T09:31:00Z')), 'wrong minute');
+    const date = (iso: string) => new Date(iso);
+    assert.true(cronMatch('30 9 * * *', date('2020-01-02T09:30:00Z')), 'exact minute + hour');
+    assert.false(cronMatch('30 9 * * *', date('2020-01-02T09:31:00Z')), 'wrong minute');
     assert.true(
-      cronMatch(['*' + '/15', '*', '*', '*', '*'].join(' '), at('2020-01-02T10:45:00Z')),
+      cronMatch(['*' + '/15', '*', '*', '*', '*'].join(' '), date('2020-01-02T10:45:00Z')),
       'every 15m',
     );
     assert.false(
-      cronMatch(['*' + '/15', '*', '*', '*', '*'].join(' '), at('2020-01-02T10:46:00Z')),
+      cronMatch(['*' + '/15', '*', '*', '*', '*'].join(' '), date('2020-01-02T10:46:00Z')),
       'off the step',
     );
-    assert.true(cronMatch('0 0 * * 1-5', at('2020-01-06T00:00:00Z')), 'weekday range (a Monday)');
-    assert.false(cronMatch('0 0 * * 1-5', at('2020-01-04T00:00:00Z')), 'a Saturday is excluded');
-    assert.true(cronMatch('0 9,17 * * *', at('2020-01-02T17:00:00Z')), 'a list of hours');
+    assert.true(cronMatch('0 0 * * 1-5', date('2020-01-06T00:00:00Z')), 'weekday range (a Monday)');
+    assert.false(cronMatch('0 0 * * 1-5', date('2020-01-04T00:00:00Z')), 'a Saturday is excluded');
+    assert.true(cronMatch('0 9,17 * * *', date('2020-01-02T17:00:00Z')), 'a list of hours');
   });
 
   test('a schedule enqueues its job each matching minute — and only once per minute', async (assert) => {
@@ -52,7 +52,7 @@ module('Jobs | cron scheduling', { concurrency: true }, () => {
     const jobs = jobQueue({
       store: memoryStore(),
       queues: { critical: 5, default: 5 },
-      workers: { beat: (_a, job) => void seen.push(job.queue) },
+      workers: { beat: (_args, job) => void seen.push(job.queue) },
       cron: { '* * * * *': { worker: 'beat', queue: 'critical' } }, // every minute
       now: () => clock.t,
       pollMs: 10,
@@ -106,8 +106,8 @@ module('Jobs | cron scheduling', { concurrency: true }, () => {
       store: memoryStore(),
       queues: { default: 5, analytics: 5 },
       workers: {
-        'reports.daily': (_a, job) => void seen.push(`daily:${job.queue}`),
-        'metrics.snapshot': (_a, job) => void seen.push(`metrics:${job.queue}`),
+        'reports.daily': (_args, job) => void seen.push(`daily:${job.queue}`),
+        'metrics.snapshot': (_args, job) => void seen.push(`metrics:${job.queue}`),
       },
       cron: {
         '0 9 * * *': [
@@ -150,6 +150,45 @@ module('Jobs | cron scheduling', { concurrency: true }, () => {
       [...seen].sort(),
       ['daily', 'heartbeat'],
       'both schedules fired at 09:30 — exactly one job per schedule, no cross-blocking',
+    );
+    jobs.stop();
+  });
+
+  test('a cron-enqueued job is tagged with meta.cron — the schedule that spawned it', async (assert) => {
+    const clock = { t: Date.UTC(2020, 0, 1, 9, 30, 0) };
+    const metas: (Record<string, unknown> | undefined)[] = [];
+    const jobs = jobQueue({
+      store: memoryStore(),
+      workers: { 'reports.daily': (_args, job) => void metas.push(job.meta) },
+      cron: { '30 9 * * *': { worker: 'reports.daily' } },
+      now: () => clock.t,
+      pollMs: 10,
+    });
+    await settle(60);
+    assert.deepEqual(metas, [{ cron: '30 9 * * *' }], 'the job carries meta.cron = its schedule');
+    jobs.stop();
+  });
+
+  test('two schedules with the SAME worker+args both run — meta.cron scopes the unique key', async (assert) => {
+    // Without meta in the `unique` identity these would collapse (identical worker+empty args) to one
+    // run/minute. Tagging each with its own `{ cron: expr }` keeps them distinct — the rare-case fix.
+    const clock = { t: Date.UTC(2020, 0, 1, 9, 30, 0) }; // 09:30 matches BOTH
+    let runs = 0;
+    const jobs = jobQueue({
+      store: memoryStore(),
+      workers: { beat: () => void (runs += 1) },
+      cron: {
+        '30 9 * * *': { worker: 'beat' }, // same worker, same (empty) args …
+        '* * * * *': { worker: 'beat' }, // … as this one
+      },
+      now: () => clock.t,
+      pollMs: 10,
+    });
+    await settle(60);
+    assert.equal(
+      runs,
+      2,
+      'both schedules enqueued and ran — not collapsed by a [worker, args]-only key',
     );
     jobs.stop();
   });

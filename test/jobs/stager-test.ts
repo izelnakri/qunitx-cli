@@ -6,7 +6,7 @@ const until = async (cond: () => boolean, ms = 4000) => {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     if (cond()) return true;
-    await new Promise((r) => setTimeout(r, 15));
+    await new Promise((resolve) => setTimeout(resolve, 15));
   }
   return cond();
 };
@@ -35,11 +35,16 @@ module('Jobs | stager (Oban rescuer — reclaim jobs orphaned mid-run)', () => {
       store,
       pollMs: 10,
       reclaimAfterMs: 50, // executing longer than 50ms → the owner is presumed dead
-      workers: { work: (a) => void ran.push((a as { id: string }).id) },
+      workers: { work: (args) => void ran.push((args as { id: string }).id) },
     });
     assert.true(
       await until(() => ran.includes('orphan')),
       'the orphaned job was reclaimed and re-run',
+    );
+    assert.equal(
+      await store.load('jobs:orphan'),
+      undefined,
+      'the reclaimed job completed and was removed from the store',
     );
     jobs.stop();
   });
@@ -52,9 +57,9 @@ module('Jobs | stager (Oban rescuer — reclaim jobs orphaned mid-run)', () => {
       store,
       pollMs: 10,
       reclaimAfterMs: 50,
-      workers: { work: (a) => void ran.push((a as { id: string }).id) },
+      workers: { work: (args) => void ran.push((args as { id: string }).id) },
     });
-    await new Promise((r) => setTimeout(r, 150)); // let the stager pass run
+    await new Promise((resolve) => setTimeout(resolve, 150)); // let the stager pass run
     assert.deepEqual(ran, [], 'an exhausted orphan is dead-lettered, never re-run');
     assert.equal(
       ((await store.load('jobs:dead')) as { state: string }).state,
@@ -79,7 +84,7 @@ module('Jobs | stager (Oban rescuer — reclaim jobs orphaned mid-run)', () => {
         store,
         pollMs: 15,
         reclaimAfterMs: 50,
-        workers: { work: (a) => void ran.push((a as { id: string }).id) },
+        workers: { work: (args) => void ran.push((args as { id: string }).id) },
       });
       assert.true(
         await until(() => ran.includes('orphan')),

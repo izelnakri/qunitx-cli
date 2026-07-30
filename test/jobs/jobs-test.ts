@@ -1,12 +1,13 @@
 import { module, test } from 'qunitx';
 import { memoryStore } from '../../lib/node/index.ts';
 import { jobQueue } from '../../lib/jobs/index.ts';
-import { isFailure } from '../../lib/result/failure.ts';
+import { isFailure, define } from '../../lib/result/failure.ts';
 import * as Telemetry from '../../lib/telemetry/index.ts';
+
+const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 module('Jobs | Oban-shaped durable queue', () => {
   test('a job executes, completes, and is removed — with telemetry', async (assert) => {
-    const store = memoryStore();
     const done: unknown[] = [];
     const events: string[] = [];
     Telemetry.attachMany(
@@ -15,9 +16,12 @@ module('Jobs | Oban-shaped durable queue', () => {
         ['jobs', 'execute', 'start'],
         ['jobs', 'execute', 'stop'],
       ],
-      (e) => void events.push(e.at(-1)!),
+      (event) => void events.push(event.at(-1)!),
     );
-    const jobs = jobQueue({ store, workers: { work: (args) => void done.push(args) } });
+    const jobs = jobQueue({
+      store: memoryStore(),
+      workers: { work: (args) => void done.push(args) },
+    });
 
     const job = await jobs.insert('work', { n: 1 });
     await jobs.drain();
@@ -26,17 +30,16 @@ module('Jobs | Oban-shaped durable queue', () => {
     assert.equal(
       jobs.job(job.id),
       undefined,
-      'completed jobs are removed — the queue stays bounded',
+      'a completed job is removed — the queue stays bounded',
     );
     assert.deepEqual(events, ['start', 'stop'], 'execution was instrumented');
     jobs.stop();
   });
 
   test('a failing job retries with backoff, then succeeds — attempts and errors on the record', async (assert) => {
-    const store = memoryStore();
     let calls = 0;
     const jobs = jobQueue({
-      store,
+      store: memoryStore(),
       workers: {
         flaky: () => {
           if (++calls < 3) throw new Error(`boom ${calls}`);
@@ -45,16 +48,20 @@ module('Jobs | Oban-shaped durable queue', () => {
       backoff: () => 0, // retry immediately — deterministic tests
       pollMs: 10,
     });
-    await jobs.insert('flaky');
+    const job = await jobs.insert('flaky');
     await jobs.drain();
     assert.equal(calls, 3, 'two failures, then the third attempt succeeded');
+    assert.equal(
+      jobs.job(job.id),
+      undefined,
+      'the succeeded job is removed — no dead-letter left behind',
+    );
     jobs.stop();
   });
 
   test('maxAttempts exhausted → discarded, kept with its error history', async (assert) => {
-    const store = memoryStore();
     const jobs = jobQueue({
-      store,
+      store: memoryStore(),
       workers: {
         doomed: () => {
           throw new Error('always');
@@ -65,45 +72,105 @@ module('Jobs | Oban-shaped durable queue', () => {
     });
     const job = await jobs.insert('doomed', {}, { maxAttempts: 2 });
     await jobs.drain();
-    const record = jobs.job(job.id)!;
-    assert.equal(record.state, 'discarded', 'the dead-letter record survives');
-    assert.equal(record.errors.length, 2, 'one error per attempt');
-    assert.true(record.errors[0].error.includes('always'));
+    const discardedJob = jobs.job(job.id)!;
+    assert.equal(
+      discardedJob.state,
+      'discarded',
+      'the dead-letter record survives in state `discarded`',
+    );
+    assert.equal(discardedJob.attempt, 2, 'it stopped at exactly maxAttempts attempts');
+    assert.equal(discardedJob.errors.length, 2, 'one error per attempt');
+    assert.true(discardedJob.errors[0].error.includes('always'));
     jobs.stop();
   });
 
-  test('scheduleIn: not before its time; runs after', async (assert) => {
-    const store = memoryStore();
+  test('errors capture the stack; a thrown Failure adds its code + safe data, a bad payload is dropped', async (assert) => {
+    const RateLimited = define(
+      'RateLimited',
+      (d: { retryAfter: number }) => `slow down (${d.retryAfter}s)`,
+    );
+    const jobs = jobQueue({
+      store: memoryStore(),
+      backoff: () => 0,
+      pollMs: 10,
+      workers: {
+        typed: () => {
+          throw RateLimited({ retryAfter: 30 });
+        },
+        plain: () => {
+          throw new Error('kaboom');
+        },
+        bad: () => {
+          const cyclic: Record<string, unknown> = { retryAfter: 1 };
+          cyclic.self = cyclic; // non-serializable data (a cycle)
+          throw RateLimited(cyclic as { retryAfter: number });
+        },
+      },
+    });
+    const typed = await jobs.insert('typed', {}, { maxAttempts: 1 });
+    const plain = await jobs.insert('plain', {}, { maxAttempts: 1 });
+    const bad = await jobs.insert('bad', {}, { maxAttempts: 1 });
+    await jobs.drain();
+
+    const typedError = jobs.job(typed.id)!.errors[0];
+    assert.equal(
+      typedError.code,
+      'RateLimited',
+      'a Failure contributes its code — for dead-letter routing',
+    );
+    assert.deepEqual(typedError.meta, { retryAfter: 30 }, 'and its safe-serializable data as meta');
+    assert.true(
+      typedError.error.includes('slow down'),
+      'error carries the human string (its stack)',
+    );
+
+    const plainError = jobs.job(plain.id)!.errors[0];
+    assert.equal(plainError.code, undefined, 'a plain throw has no code');
+    assert.true(plainError.error.includes('kaboom'), 'error carries the message');
+    assert.true(plainError.error.includes('at '), 'and the stacktrace — the debugging gold');
+
+    const badError = jobs.job(bad.id)!.errors[0];
+    assert.equal(badError.code, 'RateLimited', 'still captures the code');
+    assert.equal(
+      badError.meta,
+      undefined,
+      'but drops non-serializable data — the persist never crashes',
+    );
+    jobs.stop();
+  });
+
+  test('scheduleIn parks a job in `scheduled` until its time, then it runs and is removed', async (assert) => {
     const ran: number[] = [];
     const jobs = jobQueue({
-      store,
+      store: memoryStore(),
       workers: { later: () => void ran.push(Date.now()) },
       pollMs: 10,
     });
-    await jobs.insert('later', {}, { scheduleIn: 80 });
+    const job = await jobs.insert('later', {}, { scheduleIn: 80 });
+    assert.equal(jobs.job(job.id)?.state, 'scheduled', 'parked in `scheduled` — not runnable yet');
     await jobs.drain(); // drains what is runnable NOW — the scheduled job is not
     assert.deepEqual(ran, [], 'not executed before its time');
-    await new Promise((r) => setTimeout(r, 120));
+    await settle(120);
     await jobs.drain();
-    assert.equal(ran.length, 1, 'executed once due');
+    assert.equal(ran.length, 1, 'executed once, after its time');
+    assert.equal(jobs.job(job.id), undefined, 'and then removed');
     jobs.stop();
   });
 
   test('per-queue concurrency limits hold; priority 0 beats 9', async (assert) => {
-    const store = memoryStore();
     let inFlight = 0;
     let peak = 0;
     const order: string[] = [];
     const jobs = jobQueue({
-      store,
+      store: memoryStore(),
       queues: { mailers: 2 },
       workers: {
         mail: async (args) => {
           order.push((args as { tag: string }).tag);
-          inFlight++;
+          inFlight += 1;
           peak = Math.max(peak, inFlight);
-          await new Promise((r) => setTimeout(r, 20));
-          inFlight--;
+          await settle(20);
+          inFlight -= 1;
         },
       },
       pollMs: 5,
@@ -111,8 +178,8 @@ module('Jobs | Oban-shaped durable queue', () => {
     jobs.pauseQueue('mailers'); // stage everything first, then release — deterministic ordering
     await jobs.insert('mail', { tag: 'low' }, { queue: 'mailers', priority: 9 });
     await jobs.insert('mail', { tag: 'urgent' }, { queue: 'mailers', priority: 0 });
-    for (let i = 0; i < 3; i++)
-      await jobs.insert('mail', { tag: `bulk${i}` }, { queue: 'mailers', priority: 5 });
+    for (let index = 0; index < 3; index += 1)
+      await jobs.insert('mail', { tag: `bulk${index}` }, { queue: 'mailers', priority: 5 });
     jobs.resumeQueue('mailers');
     await jobs.drain();
     assert.equal(peak, 2, 'never more than the queue limit in flight');
@@ -122,16 +189,20 @@ module('Jobs | Oban-shaped durable queue', () => {
   });
 
   test('unique inserts dedupe; cancelJob removes a pending job', async (assert) => {
-    const store = memoryStore();
     const ran: unknown[] = [];
-    const jobs = jobQueue({ store, workers: { once: (a) => void ran.push(a) }, pollMs: 10 });
+    const jobs = jobQueue({
+      store: memoryStore(),
+      workers: { once: (args) => void ran.push(args) },
+      pollMs: 10,
+    });
     jobs.pauseQueue('default');
-    const first = await jobs.insert('once', { key: 'x' }, { unique: true });
-    const second = await jobs.insert('once', { key: 'x' }, { unique: true });
-    assert.equal(second.id, first.id, 'the duplicate returned the existing job');
+    const jobA = await jobs.insert('once', { key: 'x' }, { unique: true });
+    const jobB = await jobs.insert('once', { key: 'x' }, { unique: true });
+    assert.equal(jobB.id, jobA.id, 'the duplicate returned the existing job — no second row');
 
-    const doomed = await jobs.insert('once', { key: 'y' });
-    await jobs.cancelJob(doomed.id);
+    const jobToCancel = await jobs.insert('once', { key: 'y' });
+    await jobs.cancelJob(jobToCancel.id);
+    assert.equal(jobs.job(jobToCancel.id), undefined, 'a cancelled pending job is removed');
     jobs.resumeQueue('default');
     await jobs.drain();
     assert.deepEqual(ran, [{ key: 'x' }], 'deduped ran once; cancelled never ran');
@@ -147,7 +218,7 @@ module('Jobs | Oban-shaped durable queue', () => {
     const store = memoryStore(); // the SHARED durable store (Postgres in production)
     const clock = { t: Date.UTC(2020, 0, 1, 0, 0, 0) };
     let release: () => void = () => {};
-    const gate = new Promise<void>((r) => (release = r));
+    const gate = new Promise<void>((resolve) => (release = resolve));
     const first = jobQueue({
       store,
       workers: { task: () => gate }, // never finishes — the "process" dies mid-attempt
@@ -156,8 +227,12 @@ module('Jobs | Oban-shaped durable queue', () => {
     });
     const job = await first.insert('task', { payload: 7 });
     const deadline = Date.now() + 2000;
-    while (first.job(job.id)?.state !== 'executing' && Date.now() < deadline)
-      await new Promise((r) => setTimeout(r, 10));
+    while (first.job(job.id)?.state !== 'executing' && Date.now() < deadline) await settle(10);
+    assert.equal(
+      first.job(job.id)?.state,
+      'executing',
+      'the attempt is in flight — the job is `executing`',
+    );
     first.stop(); // the process crashes — the job is stranded `executing` in the store
     // do NOT release yet: releasing would let first's in-flight attempt remove the job from the store
 
@@ -165,20 +240,20 @@ module('Jobs | Oban-shaped durable queue', () => {
     const done: unknown[] = [];
     const second = jobQueue({
       store,
-      workers: { task: (a) => void done.push(a) },
+      workers: { task: (args) => void done.push(args) },
       reclaimAfterMs: 30_000, // the stager (Lifeline): reclaim jobs executing > 30s
       now: () => clock.t,
       pollMs: 10,
     });
     await second.drain();
     assert.deepEqual(done, [{ payload: 7 }], 'the stager rescued the orphan and it completed');
+    assert.equal(second.job(job.id), undefined, 'the reclaimed job completed and was removed');
     second.stop();
     release(); // let first's dangling attempt settle
   });
 
   test('insert returns an eager Task — a real Promise, and .result() gives the bare union', async (assert) => {
-    const store = memoryStore();
-    const jobs = jobQueue({ store, workers: { 'reports.export': () => 'ok' } });
+    const jobs = jobQueue({ store: memoryStore(), workers: { 'reports.export': () => 'ok' } });
     jobs.pauseQueue('default'); // keep jobs enqueued (instant workers would run+remove them)
 
     const handle = jobs.insert('reports.export', { n: 1 });
@@ -191,18 +266,19 @@ module('Jobs | Oban-shaped durable queue', () => {
       'function',
       'and it is genuinely a Task, not a bare Promise — `.result()`/`.perform()` are present',
     );
-    const job = await handle;
-    assert.true(
-      jobs.job(job.id) !== undefined,
-      'the insert was eager — the job is already enqueued',
+    const jobA = await handle;
+    assert.equal(
+      jobs.job(jobA.id)?.state,
+      'available',
+      'the insert was eager — the job is already enqueued and `available`',
     );
 
     // the uniformity win: .result() settles to the bare Result union (Job | Failure) — no try/catch;
     // isFailure() is the discriminator. (insert only fails on a store write error; here it succeeds.)
-    const outcome = await jobs.insert('reports.export', { n: 2 }).result();
-    assert.false(isFailure(outcome), 'a successful insert resolves to the Job, not a Failure');
+    const jobB = await jobs.insert('reports.export', { n: 2 }).result();
+    assert.false(isFailure(jobB), 'a successful insert resolves to the Job, not a Failure');
     assert.deepEqual(
-      (outcome as { args: unknown }).args,
+      (jobB as { args: unknown }).args,
       { n: 2 },
       'the enqueued Job came back through result() — carrying its data',
     );
@@ -221,22 +297,22 @@ module('Jobs | Oban-shaped durable queue', () => {
         pollMs: 5,
         queues: { default: 3 }, // each runs at most 3 at once — neither can grab all 12
         workers: {
-          work: async (a) => {
-            const id = (a as { id: string }).id;
-            ranBy[id] = ranBy[id] ? 'DUP' : node;
-            await new Promise((r) => setTimeout(r, 25));
+          work: async (args) => {
+            const jobId = (args as { id: string }).id;
+            ranBy[jobId] = ranBy[jobId] ? 'DUP' : node;
+            await settle(25);
           },
         },
       });
-    const a = make('A');
-    const b = make('B');
-    for (let i = 0; i < 12; i++) await a.insert('work', { id: `j${i}` });
+    const queueA = make('A');
+    const queueB = make('B');
+    for (let index = 0; index < 12; index += 1) await queueA.insert('work', { id: `j${index}` });
 
-    await Promise.all([a.drain(), b.drain()]); // both drain concurrently — no leader election
+    await Promise.all([queueA.drain(), queueB.drain()]); // both drain concurrently — no leader election
     const outcomes = Object.values(ranBy);
     assert.equal(Object.keys(ranBy).length, 12, 'every job ran exactly once');
     assert.equal(
-      outcomes.filter((v) => v === 'DUP').length,
+      outcomes.filter((tag) => tag === 'DUP').length,
       0,
       'no job ran twice — the claim is atomic',
     );
@@ -244,7 +320,199 @@ module('Jobs | Oban-shaped durable queue', () => {
       outcomes.includes('A') && outcomes.includes('B'),
       'both nodes drained a share — SKIP-LOCKED-style, no singleton',
     );
-    a.stop();
-    b.stop();
+    queueA.stop();
+    queueB.stop();
+  });
+
+  test('a failed attempt with tries left parks in `retryable`, its next run scheduled by backoff', async (assert) => {
+    let calls = 0;
+    const clock = { t: Date.UTC(2021, 0, 1, 0, 0, 0) };
+    const jobs = jobQueue({
+      store: memoryStore(),
+      workers: {
+        flaky: () => {
+          calls += 1;
+          throw new Error('boom');
+        },
+      },
+      backoff: (attempt) => 60_000 * attempt, // a real, long backoff — the retry is not due yet
+      now: () => clock.t,
+      pollMs: 10,
+    });
+    const job = await jobs.insert('flaky', {}, { maxAttempts: 3 });
+    await jobs.drain(); // one attempt runs and fails → retryable, parked in the future
+    assert.equal(calls, 1, 'exactly one attempt so far — the retry is not due');
+    const retryable = jobs.job(job.id)!;
+    assert.equal(
+      retryable.state,
+      'retryable',
+      'a failed attempt with tries left parks in `retryable`',
+    );
+    assert.equal(retryable.attempt, 1, 'one attempt used');
+    assert.true(
+      retryable.scheduledAt > clock.t,
+      'its next run is scheduled in the future (backoff)',
+    );
+    assert.true(retryable.errors[0].error.includes('boom'), 'the failure is recorded on the job');
+    jobs.stop();
+  });
+
+  test('cancelJob interrupts a cooperative executing job — it stops, is removed, and is NOT retried', async (assert) => {
+    let started = false;
+    const jobs = jobQueue({
+      store: memoryStore(),
+      workers: {
+        loop: async (_args, _job, signal) => {
+          started = true;
+          for (;;) {
+            if (signal.aborted) throw new Error('aborted'); // cooperative: bail when cancelled
+            await settle(10);
+          }
+        },
+      },
+      backoff: () => 0, // if it were (wrongly) retried, it would re-run immediately
+      pollMs: 10,
+    });
+    const job = await jobs.insert('loop', {}, { maxAttempts: 3 });
+    const deadline = Date.now() + 2000;
+    while (!started && Date.now() < deadline) await settle(10);
+    assert.true(started, 'the worker started');
+
+    await jobs.cancelJob(job.id); // aborts the signal → the worker bails out
+    await settle(50);
+    assert.equal(
+      jobs.job(job.id),
+      undefined,
+      'the cancelled job ended terminal (removed) — not retried despite tries left',
+    );
+    jobs.stop();
+  });
+
+  test('cancelJob on an executing job aborts its signal — a worker that ignores it still finishes', async (assert) => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const done: unknown[] = [];
+    const jobs = jobQueue({
+      store: memoryStore(),
+      workers: {
+        stubborn: async (args) => {
+          await gate; // never checks the signal — the cooperative-cancel fallback
+          done.push(args);
+        },
+      },
+      pollMs: 10,
+    });
+    const job = await jobs.insert('stubborn', { n: 1 });
+    const deadline = Date.now() + 2000;
+    while (jobs.job(job.id)?.state !== 'executing' && Date.now() < deadline) await settle(10);
+    assert.equal(jobs.job(job.id)?.state, 'executing', 'the attempt is in flight');
+
+    await jobs.cancelJob(job.id); // aborts the signal; this worker doesn't look at it
+    assert.equal(
+      jobs.job(job.id)?.state,
+      'executing',
+      'cancel did not force-stop the ignoring worker',
+    );
+
+    release();
+    await settle(50);
+    assert.deepEqual(done, [{ n: 1 }], 'the worker ignored the abort and finished its attempt');
+    assert.equal(jobs.job(job.id), undefined, 'and was removed on completion');
+    jobs.stop();
+  });
+
+  test('list() returns a filtered, copy-safe snapshot of jobs — for admin/observability', async (assert) => {
+    const jobs = jobQueue({
+      store: memoryStore(),
+      queues: { emails: 5, reports: 5 },
+      workers: { send: () => {}, build: () => {} },
+      pollMs: 10,
+    });
+    jobs.pauseQueue('emails');
+    jobs.pauseQueue('reports');
+    await jobs.insert('send', { to: 'a' }, { queue: 'emails' });
+    await jobs.insert('send', { to: 'b' }, { queue: 'emails' });
+    await jobs.insert('build', { id: 1 }, { queue: 'reports' });
+
+    assert.equal(jobs.list().length, 3, 'all pending jobs');
+    assert.equal(jobs.list({ queue: 'emails' }).length, 2, 'filtered by queue');
+    assert.equal(jobs.list({ worker: 'build' }).length, 1, 'filtered by worker');
+    assert.equal(
+      jobs.list({ state: 'available' }).length,
+      3,
+      'filtered by state — all available while paused',
+    );
+    assert.equal(jobs.list({ state: 'executing' }).length, 0, 'none executing while paused');
+
+    const snapshot = jobs.list({ queue: 'emails' });
+    snapshot[0].state = 'discarded'; // mutate the copy
+    assert.equal(
+      jobs.list({ state: 'discarded' }).length,
+      0,
+      'the snapshot is a copy — the queue is untouched',
+    );
+    jobs.stop();
+  });
+
+  test('scheduledAt (absolute epoch) parks in `scheduled` until its time, like scheduleIn', async (assert) => {
+    const clock = { t: Date.UTC(2021, 0, 1, 0, 0, 0) };
+    const ran: number[] = [];
+    const jobs = jobQueue({
+      store: memoryStore(),
+      workers: { later: () => void ran.push(1) },
+      now: () => clock.t,
+      pollMs: 10,
+    });
+    const job = await jobs.insert('later', {}, { scheduledAt: clock.t + 50_000 });
+    assert.equal(
+      jobs.job(job.id)?.state,
+      'scheduled',
+      'parked in `scheduled` until its absolute time',
+    );
+    await jobs.drain();
+    assert.deepEqual(ran, [], 'not before its time');
+    clock.t += 60_000; // now past the scheduledAt instant
+    await jobs.drain();
+    assert.equal(ran.length, 1, 'runs once its time arrives');
+    jobs.stop();
+  });
+
+  test('prefix isolates two queues sharing one store — neither sees the other’s jobs', async (assert) => {
+    const store = memoryStore();
+    const ranA: unknown[] = [];
+    const ranB: unknown[] = [];
+    const queueA = jobQueue({
+      store,
+      prefix: 'appA',
+      workers: { work: (args) => void ranA.push(args) },
+      pollMs: 10,
+    });
+    const queueB = jobQueue({
+      store,
+      prefix: 'appB',
+      workers: { work: (args) => void ranB.push(args) },
+      pollMs: 10,
+    });
+    await queueA.insert('work', { from: 'A' });
+    await queueB.insert('work', { from: 'B' });
+    await Promise.all([queueA.drain(), queueB.drain()]);
+    assert.deepEqual(ranA, [{ from: 'A' }], 'queue A ran only its own prefixed job');
+    assert.deepEqual(ranB, [{ from: 'B' }], 'queue B ran only its own prefixed job');
+    queueA.stop();
+    queueB.stop();
+  });
+
+  test('onExit fires on a scheduler-level failure when supervised — for wholesale restart', async (assert) => {
+    // A store whose claim always throws → the SCHEDULER (not a worker) fails every tick.
+    const store = { ...memoryStore(), claim: () => Promise.reject(new Error('store down')) };
+    const jobs = jobQueue({ store, workers: { work: () => {} }, pollMs: 10 });
+    const crashes: unknown[] = [];
+    jobs.onExit((reason) => crashes.push(reason)); // registering opts into fail-fast
+
+    await jobs.insert('work'); // save works; the tick's claim throws → scheduler failure
+    await settle(50);
+    assert.equal(crashes.length, 1, 'the scheduler failure was reported once via onExit');
+    assert.true(String(crashes[0]).includes('store down'), 'carrying the underlying error');
+    jobs.stop();
   });
 });
