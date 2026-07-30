@@ -40,6 +40,15 @@ export function leader(opts: {
   leaseMs?: number;
   now?: () => number;
 }): Leader {
+  // A CP store (raftStore) elects ONE leader per group through Raft terms + quorum votes — not a
+  // wall-clock TTL — so there is no clock-skew split-brain (the one real weakness of the lease path:
+  // a raft-COMMITTED lease still compares TTL expiry against caller clocks, native Raft leadership
+  // does not). Prefer it: leadership is simply this node's Raft role; `key`/`candidate` are the
+  // group's, not per-key. Nothing to release on stop — leadership belongs to the Raft group.
+  const raft = (opts.store as { raft?: { role?: () => string } }).raft;
+  if (raft && typeof raft.role === 'function') {
+    return { isLeader: () => raft.role!() === 'leader', stop: () => {} };
+  }
   const lease = opts.store.lease;
   // Fail loudly: a store with no lease can never coordinate leadership, and a silent leader that
   // never leads would DISABLE cron (evaluateCron gates on isLeader). Better a clear error at wiring.
