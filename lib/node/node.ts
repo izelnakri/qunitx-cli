@@ -887,5 +887,11 @@ export function fromPort(port: {
  * The Node namespace — Elixir's `Node`, JS-shaped. `Node.start(name, transport)` boots a node.
  * (`heartbeat`, `memoryHub`, `fromPort` remain bare exports — they aren't node-lifecycle entry
  * points in the same way.)
+ *
+ * ```ts
+ * const hub = memoryHub();
+ * const a = Node.start('a@node', hub.transport());
+ * a.stop();
+ * ```
  */
 export const Node = { start };

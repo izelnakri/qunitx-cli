@@ -16,10 +16,18 @@ import type { Store } from './upgradable.ts';
 
 /** The one method a driver must expose — run a parameterized query, return the rows. */
 export interface SqlExecutor {
+  /** Run a parameterized query (`$1`, `$2`, …) and resolve to the rows. */
   query<Row = Record<string, unknown>>(text: string, params?: unknown[]): Promise<Row[]>;
 }
 
-/** DDL for the two tables {@link postgresStore} uses — run once at deploy (idempotent). */
+/**
+ * DDL for the two tables {@link postgresStore} uses — run once at deploy (idempotent).
+ *
+ * ```ts
+ * const ddl = postgresStoreSchema();
+ * ddl.includes('CREATE TABLE'); // true — feed it to your driver once at deploy
+ * ```
+ */
 export function postgresStoreSchema(options: { table?: string; leases?: string } = {}): string {
   const table = options.table ?? 'qunitx_store';
   const leases = options.leases ?? 'qunitx_leases';
@@ -31,7 +39,14 @@ export function postgresStoreSchema(options: { table?: string; leases?: string }
   );
 }
 
-/** Build a {@link Store} over an injected {@link SqlExecutor}. See {@link postgresStoreSchema}. */
+/**
+ * Build a {@link Store} over an injected {@link SqlExecutor}. See {@link postgresStoreSchema}.
+ *
+ * ```ts
+ * const store = postgresStore({ query: async () => [] }); // inject your pg/postgres/pglite driver
+ * typeof store.save; // 'function'
+ * ```
+ */
 export function postgresStore(
   sql: SqlExecutor,
   options: { table?: string; leases?: string } = {},

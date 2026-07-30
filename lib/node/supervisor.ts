@@ -32,7 +32,9 @@ export type Restart = 'permanent' | 'transient' | 'temporary';
 /** A supervised value. `stop` is graceful teardown; `onExit` (optional) lets the child report an
  *  ABNORMAL exit so the supervisor can restart it — a graceful `stop()` must not trigger it. */
 export interface Service {
+  /** Graceful teardown — must NOT trigger `onExit`. */
   stop?(): void | Promise<void>;
+  /** Report an ABNORMAL exit so the supervisor can restart the child. */
   onExit?(handler: (reason?: unknown) => void): void;
 }
 
@@ -42,8 +44,11 @@ export type Strategy = 'one_for_one' | 'rest_for_one' | 'one_for_all';
 /** One child: a `name`, a `start` (given a `get` to look up already-started siblings), and an
  *  optional {@link Restart} policy. */
 export interface ChildSpec<S = unknown> {
+  /** Unique name — used for `get` lookups and restart identity. */
   name: string;
+  /** Boot the child; `get` looks up already-started siblings for dependency wiring. */
   start: (get: <T = unknown>(name: string) => T) => S | Promise<S>;
+  /** When to restart it (default `permanent`) — see {@link Restart}. */
   restart?: Restart;
 }
 

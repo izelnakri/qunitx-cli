@@ -76,12 +76,24 @@ export type JobState = 'available' | 'scheduled' | 'executing' | 'retryable' | '
  *  form. Storing a live instance is impossible (its `Symbol.for` brand doesn't survive JSON); the
  *  serialize/revive round-trip is how you get one back anyway. */
 export interface JobError {
+  /** Which attempt failed (1-based). */
   attempt: number;
+  /** When it failed (epoch ms). */
   at: number;
+  /** The failure — always a live {@link AnyFailure} (revived on reload); route on its `code`. */
   error: AnyFailure;
 }
 
-/** One durable job. */
+/**
+ * One durable job.
+ *
+ * ```ts
+ * import { memoryStore } from '../node/index.ts';
+ * const jobs = Job.queue({ store: memoryStore(), workers: {} });
+ * typeof jobs.insert; // 'function'
+ * jobs.stop();
+ * ```
+ */
 export interface Job {
   /** Unique id (assigned at insert). */
   id: string;
