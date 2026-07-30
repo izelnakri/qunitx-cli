@@ -82,7 +82,7 @@ module('Jobs | leader (Oban.Peer — store lease)', () => {
 
     const make = (candidate: string) => {
       const lead = leader({ store, key: 'jobs:cron', candidate, leaseMs: 500 });
-      const jobs = Job.queue({
+      const queue = Job.queue({
         store,
         leader: lead,
         cron: { '* * * * *': { worker: 'beat' } },
@@ -90,18 +90,18 @@ module('Jobs | leader (Oban.Peer — store lease)', () => {
         now: () => fixedMinute, // deterministic: same minute every tick, so cron fires at most once/instance
         pollMs: 10,
       });
-      return { lead, jobs };
+      return { lead, queue };
     };
     const one = make('one@c');
     const two = make('two@c');
     await settle(40); // elect a leader before cron can fire
 
     await settle(120); // let ticks run: only the leaseholder enqueues the beat; both may drain it
-    await Promise.all([one.jobs.drain(), two.jobs.drain()]);
+    await Promise.all([one.queue.drain(), two.queue.drain()]);
     assert.equal(ran, 1, 'the schedule enqueued and ran exactly once across the cluster');
 
-    one.jobs.stop();
-    two.jobs.stop();
+    one.queue.stop();
+    two.queue.stop();
     one.lead.stop();
     two.lead.stop();
   });

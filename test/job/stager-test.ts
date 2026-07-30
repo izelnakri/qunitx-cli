@@ -31,7 +31,7 @@ module('Jobs | stager (Oban rescuer — reclaim jobs orphaned mid-run)', () => {
     const store = memoryStore();
     const ran: string[] = [];
     await store.save('jobs:orphan', orphan('orphan', Date.now() - 10_000));
-    const jobs = Job.queue({
+    const queue = Job.queue({
       store,
       pollMs: 10,
       reclaimAfterMs: 50, // executing longer than 50ms → the owner is presumed dead
@@ -46,14 +46,14 @@ module('Jobs | stager (Oban rescuer — reclaim jobs orphaned mid-run)', () => {
       undefined,
       'the reclaimed job completed and was removed from the store',
     );
-    jobs.stop();
+    queue.stop();
   });
 
   test('an orphan already out of attempts is discarded, not re-run', async (assert) => {
     const store = memoryStore();
     const ran: string[] = [];
     await store.save('jobs:dead', orphan('dead', Date.now() - 10_000, true)); // attempt 3 / maxAttempts 3
-    const jobs = Job.queue({
+    const queue = Job.queue({
       store,
       pollMs: 10,
       reclaimAfterMs: 50,
@@ -72,11 +72,11 @@ module('Jobs | stager (Oban rescuer — reclaim jobs orphaned mid-run)', () => {
     // `peekAll({ state: 'discarded' })` is per-instance. (An inserted-then-failed job IS in peekAll()
     // — see the dead-letter routing test.)
     assert.equal(
-      jobs.peekAll({ state: 'discarded' }).length,
+      queue.peekAll({ state: 'discarded' }).length,
       0,
       'the app-level peekAll() reflects only this instance — a store-seeded reclaim is not in its view',
     );
-    jobs.stop();
+    queue.stop();
   });
 
   test('reclaims through raftStore — the rescue is a committed Raft command', async (assert) => {
@@ -90,7 +90,7 @@ module('Jobs | stager (Oban rescuer — reclaim jobs orphaned mid-run)', () => {
         'the single-member group elected',
       );
       await store.save('jobs:orphan', orphan('orphan', Date.now() - 10_000));
-      const jobs = Job.queue({
+      const queue = Job.queue({
         store,
         pollMs: 15,
         reclaimAfterMs: 50,
@@ -100,7 +100,7 @@ module('Jobs | stager (Oban rescuer — reclaim jobs orphaned mid-run)', () => {
         await until(() => ran.includes('orphan')),
         'the raftStore stager reclaimed and re-ran it',
       );
-      jobs.stop();
+      queue.stop();
     } finally {
       store.stop();
       node.stop();
