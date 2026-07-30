@@ -4,7 +4,11 @@
 // NO database and NO dependency. Behavioral correctness against real Postgres is the opt-in pglite
 // integration (portable, and it moves to actorboy with the store).
 import { module, test } from 'qunitx';
-import { postgresStore, postgresStoreSchema, type SqlExecutor } from '../../lib/node/postgres-store.ts';
+import {
+  postgresStore,
+  postgresStoreSchema,
+  type SqlExecutor,
+} from '../../lib/node/postgres-store.ts';
 
 function recorder(responses: Record<string, unknown[]> = {}) {
   const calls: { sql: string; params?: unknown[] }[] = [];
@@ -31,7 +35,11 @@ module('Node | postgresStore (driver-injected, no dependency)', () => {
     await postgresStore(sql).save('jobs:1', { n: 2 });
     assert.true(calls[0].sql.includes('ON CONFLICT'), 'an upsert');
     assert.true(calls[0].sql.includes('::jsonb'), 'casts to jsonb');
-    assert.deepEqual(calls[0].params, ['jobs:1', JSON.stringify({ n: 2 })], 'key + serialized state');
+    assert.deepEqual(
+      calls[0].params,
+      ['jobs:1', JSON.stringify({ n: 2 })],
+      'key + serialized state',
+    );
   });
 
   test('clear DELETEs the key', async (assert) => {
@@ -57,7 +65,11 @@ module('Node | postgresStore (driver-injected, no dependency)', () => {
 
   test('lease uses the DB clock now() as authority, not the caller now', async (assert) => {
     const { sql, calls } = recorder({ RETURNING: [{ owner: 'a@c' }] });
-    assert.equal(await postgresStore(sql).lease!('k', 'a@c', 999, 30000), 'a@c', 'the winning owner');
+    assert.equal(
+      await postgresStore(sql).lease!('k', 'a@c', 999, 30000),
+      'a@c',
+      'the winning owner',
+    );
     assert.true(calls[0].sql.includes('now()'), 'expiry is compared against the DB clock');
     assert.deepEqual(
       calls[0].params,
