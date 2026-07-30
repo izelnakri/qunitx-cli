@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import { memoryStore, start, memoryHub } from '../../lib/node/index.ts';
-import { jobQueue, leader, raftStore } from '../../lib/jobs/index.ts';
+import { Job, leader, raftStore } from '../../lib/job/index.ts';
 
 const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const until = async (cond: () => boolean, ms = 4000) => {
@@ -82,7 +82,7 @@ module('Jobs | leader (Oban.Peer — store lease)', () => {
 
     const make = (candidate: string) => {
       const lead = leader({ store, key: 'jobs:cron', candidate, leaseMs: 500 });
-      const jobs = jobQueue({
+      const jobs = Job.queue({
         store,
         leader: lead,
         cron: { '* * * * *': { worker: 'beat' } },

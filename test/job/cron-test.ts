@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import { memoryStore } from '../../lib/node/index.ts';
-import { jobQueue, cronMatch } from '../../lib/jobs/index.ts';
+import { Job, cronMatch } from '../../lib/job/index.ts';
 
 const settle = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -25,7 +25,7 @@ module('Jobs | cron scheduling', { concurrency: true }, () => {
   test('a schedule enqueues its job each matching minute — and only once per minute', async (assert) => {
     const clock = { t: Date.UTC(2020, 0, 1, 9, 30, 0) }; // 09:30:00 UTC — matches '30 9 * * *'
     let runs = 0;
-    const jobs = jobQueue({
+    const jobs = Job.queue({
       store: memoryStore(),
       workers: { 'reports.daily': () => void runs++ },
       cron: { '30 9 * * *': { worker: 'reports.daily' } },
@@ -49,7 +49,7 @@ module('Jobs | cron scheduling', { concurrency: true }, () => {
   test('cron enqueues onto its configured queue at its priority', async (assert) => {
     const clock = { t: Date.UTC(2020, 0, 1, 0, 0, 0) };
     const seen: string[] = [];
-    const jobs = jobQueue({
+    const jobs = Job.queue({
       store: memoryStore(),
       queues: { critical: 5, default: 5 },
       workers: { beat: (_args, job) => void seen.push(job.queue) },
@@ -66,7 +66,7 @@ module('Jobs | cron scheduling', { concurrency: true }, () => {
     // The worker is `(args, job)`; for a cron run the args come from the entry (`entry.args ?? {}`).
     const clock = { t: Date.UTC(2020, 0, 1, 0, 0, 0) }; // 00:00 — matches '0 * * * *' only
     const seen: unknown[] = [];
-    const jobs = jobQueue({
+    const jobs = Job.queue({
       store: memoryStore(),
       workers: {
         withArgs: (args) => void seen.push(args),
@@ -102,7 +102,7 @@ module('Jobs | cron scheduling', { concurrency: true }, () => {
     // JS-shaped equivalent — every entry under the expression enqueues on each matching minute.
     const clock = { t: Date.UTC(2020, 0, 1, 9, 0, 0) }; // 09:00 — matches '0 9 * * *'
     const seen: string[] = [];
-    const jobs = jobQueue({
+    const jobs = Job.queue({
       store: memoryStore(),
       queues: { default: 5, analytics: 5 },
       workers: {
@@ -131,7 +131,7 @@ module('Jobs | cron scheduling', { concurrency: true }, () => {
   test('distinct expressions matching the same minute each fire independently', async (assert) => {
     const clock = { t: Date.UTC(2020, 0, 1, 9, 30, 0) }; // 09:30 matches BOTH schedules below
     const seen: string[] = [];
-    const jobs = jobQueue({
+    const jobs = Job.queue({
       store: memoryStore(),
       workers: {
         'reports.daily': () => void seen.push('daily'),
@@ -157,7 +157,7 @@ module('Jobs | cron scheduling', { concurrency: true }, () => {
   test('a cron-enqueued job is tagged with meta.cron — the schedule that spawned it', async (assert) => {
     const clock = { t: Date.UTC(2020, 0, 1, 9, 30, 0) };
     const metas: (Record<string, unknown> | undefined)[] = [];
-    const jobs = jobQueue({
+    const jobs = Job.queue({
       store: memoryStore(),
       workers: { 'reports.daily': (_args, job) => void metas.push(job.meta) },
       cron: { '30 9 * * *': { worker: 'reports.daily' } },
@@ -174,7 +174,7 @@ module('Jobs | cron scheduling', { concurrency: true }, () => {
     // run/minute. Tagging each with its own `{ cron: expr }` keeps them distinct — the rare-case fix.
     const clock = { t: Date.UTC(2020, 0, 1, 9, 30, 0) }; // 09:30 matches BOTH
     let runs = 0;
-    const jobs = jobQueue({
+    const jobs = Job.queue({
       store: memoryStore(),
       workers: { beat: () => void (runs += 1) },
       cron: {

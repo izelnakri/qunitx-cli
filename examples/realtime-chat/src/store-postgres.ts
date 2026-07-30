@@ -2,7 +2,7 @@
 // jobs. Lives in the example (not lib) because `postgres` is an app dependency; lib defines the
 // Store seam, apps bring the backend. Every host in the cluster shares ONE of these (a shared DB),
 // which is what lets a room rehydrate on a NEW host after its old one died — and lets every node
-// run the same jobQueue, coordinated by the DB (claim = SKIP LOCKED, lease = a leases row).
+// run the same Job.queue, coordinated by the DB (claim = SKIP LOCKED, lease = a leases row).
 //
 // Schema:
 //   CREATE TABLE room_state (key text PRIMARY KEY, state jsonb NOT NULL,
@@ -73,8 +73,9 @@ export function postgresStore(databaseUrl: string): Store {
         RETURNING owner
       `;
       if (acquired) return acquired.owner; // acquired or renewed
-      const [current] =
-        await sql<{ owner: string }[]>`SELECT owner FROM job_leases WHERE key = ${key}`;
+      const [current] = await sql<
+        { owner: string }[]
+      >`SELECT owner FROM job_leases WHERE key = ${key}`;
       return current?.owner ?? candidate; // held by someone else (or just vanished — treat as ours)
     },
     // The stager/rescuer (Oban's): jobs stuck `executing` since before `staleBefore` were orphaned

@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import { start, memoryHub } from '../../lib/node/index.ts';
-import { jobQueue, raftStore } from '../../lib/jobs/index.ts';
+import { Job, raftStore } from '../../lib/job/index.ts';
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const until = async (cond: () => boolean, ms = 5000) => {
@@ -34,7 +34,7 @@ module('Jobs | raftStore (external-DB-free distributed store)', () => {
 
     const runByNode: Record<string, string> = {}; // jobId -> node, or 'DUP' if two ran it
     const makeQueue = (store: typeof storeA, tag: string) =>
-      jobQueue({
+      Job.queue({
         store,
         pollMs: 20,
         queues: { default: 2 }, // each node runs at most 2 at once — neither can take all 8

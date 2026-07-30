@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileStore } from '../../lib/node/file-store.ts';
 import { start, memoryHub } from '../../lib/node/index.ts';
-import { raftStore } from '../../lib/jobs/index.ts';
+import { raftStore } from '../../lib/job/index.ts';
 
 const until = async (cond: () => boolean, ms = 4000) => {
   const deadline = Date.now() + ms;

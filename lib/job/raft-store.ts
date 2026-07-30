@@ -90,7 +90,7 @@ function apply(command: unknown, state: KV): { state: KV; reply?: unknown } {
  * A {@link Store} whose state is a Raft-replicated KV — the in-house, external-DB-free distributed
  * store. Every save/clear/claim/lease is a committed Raft command, so `claim` and `lease` are
  * LINEARIZABLE across the cluster: Raft's atomicity replaces Postgres's `SKIP LOCKED` / advisory
- * lock, so every node runs the same {@link jobQueue} against it and the claim hands each job to
+ * lock, so every node runs the same {@link Job.queue} against it and the claim hands each job to
  * exactly one node — no leader election bolted on, no double execution. Durability is
  * majority-replicated (each member persists its Raft log via `persistence`, default in-memory).
  * Reads (`load`) are LOCAL (eventually consistent — the linearizable ops are the ones that matter).

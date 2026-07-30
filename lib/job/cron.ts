@@ -1,5 +1,5 @@
 /**
- * A minimal standard-cron matcher for {@link jobQueue}'s recurring jobs — five fields
+ * A minimal standard-cron matcher for {@link Job.queue}'s recurring jobs — five fields
  * `minute hour day-of-month month day-of-week`, each supporting a star, a number, a `a-b` range, a
  * `,` list, and a `/n` step (e.g. `9-17/2`, or a star-slash-15 for every 15 minutes). Evaluated in
  * **UTC** (so a server's timezone can't shift a schedule), the common convention for backend work.

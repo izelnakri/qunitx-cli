@@ -1,4 +1,4 @@
-// A Postgres-backed {@link Store} — the durable, multi-node backend for jobQueue and leader(). It
+// A Postgres-backed {@link Store} — the durable, multi-node backend for Job.queue and leader(). It
 // imports NO sql package: the developer injects a driver (a ~3-line adapter over `postgres`,
 // node-`pg`, or pglite), so this project declares no database dependency and runs no DB in CI.
 //

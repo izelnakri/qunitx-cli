@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import { memoryStore } from '../../lib/node/index.ts';
-import { jobQueue, type JobQueue } from '../../lib/jobs/index.ts';
+import { Job } from '../../lib/job/index.ts';
 import { Task } from '../../lib/task/index.ts';
 import { isFailure, define } from '../../lib/result/failure.ts';
 
@@ -12,7 +12,6 @@ const Overloaded = define(
   'Overloaded',
   (d: { retryAfter: number }) => `overloaded, retry in ${d.retryAfter}s`,
 );
-const lastError = (jobs: JobQueue, id: string) => jobs.job(id)?.errors.at(-1)?.error;
 
 // A job worker's return is AWAITED by the queue (`await worker(args)`), and a rejection marks the
 // job failed (retryable → discarded). So: RETURN or AWAIT a Task → it runs and its error propagates,
@@ -25,7 +24,7 @@ const lastError = (jobs: JobQueue, id: string) => jobs.job(id)?.errors.at(-1)?.e
 module('Jobs | Task inside a worker handler', () => {
   test('(a) return task — the Task runs and its failure propagates to the job', async (assert) => {
     const ran: string[] = [];
-    const jobs = jobQueue({
+    const jobs = Job.queue({
       store: memoryStore(),
       backoff: () => 0,
       workers: {
@@ -45,9 +44,13 @@ module('Jobs | Task inside a worker handler', () => {
     const typed = await jobs.insert('typed', {}, { maxAttempts: 1 });
     await jobs.drain();
     assert.deepEqual(ran, ['a'], 'the returned Task RAN — the queue awaits the worker return');
-    assert.equal(jobs.job(bad.id)?.state, 'discarded', 'and its error PROPAGATED — the job failed');
+    assert.equal(
+      jobs.peek(bad.id)?.state,
+      'discarded',
+      'and its error PROPAGATED — the job failed',
+    );
 
-    const rawError = lastError(jobs, bad.id);
+    const rawError = jobs.peek(bad.id)?.errors.at(-1)?.error;
     assert.true(isFailure(rawError), 'a raw Error propagates through the Task as a live Failure');
     assert.equal(rawError?.code, 'Unknown', 'a bug is coerced to code Unknown');
     assert.true(
@@ -55,7 +58,7 @@ module('Jobs | Task inside a worker handler', () => {
       'with the original Error preserved in .cause',
     );
 
-    const typedError = lastError(jobs, typed.id);
+    const typedError = jobs.peek(typed.id)?.errors.at(-1)?.error;
     assert.true(isFailure(typedError), 'a thrown Failure stays a live Failure');
     assert.equal(typedError?.code, 'Overloaded', 'a declared Failure keeps its code');
     assert.deepEqual(typedError?.data, { retryAfter: 5 }, 'and its data survives');
@@ -64,7 +67,7 @@ module('Jobs | Task inside a worker handler', () => {
 
   test('(b) return await task — identical: runs, failure propagates', async (assert) => {
     const ran: string[] = [];
-    const jobs = jobQueue({
+    const jobs = Job.queue({
       store: memoryStore(),
       backoff: () => 0,
       workers: {
@@ -84,9 +87,9 @@ module('Jobs | Task inside a worker handler', () => {
     const typed = await jobs.insert('typed', {}, { maxAttempts: 1 });
     await jobs.drain();
     assert.deepEqual(ran, ['b'], 'await ran the Task');
-    assert.equal(jobs.job(bad.id)?.state, 'discarded', 'the await threw → job failed');
+    assert.equal(jobs.peek(bad.id)?.state, 'discarded', 'the await threw → job failed');
 
-    const rawError = lastError(jobs, bad.id);
+    const rawError = jobs.peek(bad.id)?.errors.at(-1)?.error;
     assert.true(isFailure(rawError), 'a raw Error propagates as a live Failure');
     assert.equal(rawError?.code, 'Unknown', 'a bug is coerced to code Unknown');
     assert.true(
@@ -94,7 +97,7 @@ module('Jobs | Task inside a worker handler', () => {
       'with the original Error preserved in .cause',
     );
 
-    const typedError = lastError(jobs, typed.id);
+    const typedError = jobs.peek(typed.id)?.errors.at(-1)?.error;
     assert.true(isFailure(typedError), 'a thrown Failure stays a live Failure');
     assert.equal(typedError?.code, 'Overloaded', 'a declared Failure keeps its code');
     assert.deepEqual(typedError?.data, { retryAfter: 5 }, 'and its data survives');
@@ -103,7 +106,7 @@ module('Jobs | Task inside a worker handler', () => {
 
   test('(c) create-and-drop — a LAZY task never runs; an EAGER one runs but is orphaned', async (assert) => {
     const ran: string[] = [];
-    const jobs = jobQueue({
+    const jobs = Job.queue({
       store: memoryStore(),
       backoff: () => 0,
       workers: {
@@ -137,7 +140,7 @@ module('Jobs | Task inside a worker handler', () => {
       'a dropped EAGER task DOES run (already performing) — but orphaned',
     );
     assert.equal(
-      jobs.job(lazyBad.id),
+      jobs.peek(lazyBad.id),
       undefined,
       'the dropped throwing task never ran → the job SUCCEEDED (removed); not even a Failure escapes a dropped lazy Task',
     );
@@ -146,7 +149,7 @@ module('Jobs | Task inside a worker handler', () => {
 
   test('(d) await task; return something — runs, failure propagates, result discarded', async (assert) => {
     const ran: string[] = [];
-    const jobs = jobQueue({
+    const jobs = Job.queue({
       store: memoryStore(),
       backoff: () => 0,
       workers: {
@@ -173,14 +176,14 @@ module('Jobs | Task inside a worker handler', () => {
     const typed = await jobs.insert('typed', {}, { maxAttempts: 1 });
     await jobs.drain();
     assert.deepEqual(ran, ['d'], 'await triggered the Task');
-    assert.equal(jobs.job(okJob.id), undefined, 'the ok worker returned x and the job completed');
+    assert.equal(jobs.peek(okJob.id), undefined, 'the ok worker returned x and the job completed');
     assert.equal(
-      jobs.job(bad.id)?.state,
+      jobs.peek(bad.id)?.state,
       'discarded',
       'the await threw before the return → job failed',
     );
 
-    const rawError = lastError(jobs, bad.id);
+    const rawError = jobs.peek(bad.id)?.errors.at(-1)?.error;
     assert.true(isFailure(rawError), 'a raw Error propagates as a live Failure');
     assert.equal(rawError?.code, 'Unknown', 'a bug is coerced to code Unknown');
     assert.true(
@@ -188,7 +191,7 @@ module('Jobs | Task inside a worker handler', () => {
       'with the original Error preserved in .cause',
     );
 
-    const typedError = lastError(jobs, typed.id);
+    const typedError = jobs.peek(typed.id)?.errors.at(-1)?.error;
     assert.true(isFailure(typedError), 'a thrown Failure stays a live Failure');
     assert.equal(typedError?.code, 'Overloaded', 'a declared Failure keeps its code');
     assert.deepEqual(typedError?.data, { retryAfter: 5 }, 'and its data survives');

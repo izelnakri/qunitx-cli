@@ -1,5 +1,5 @@
 /**
- * `jobQueue` — Elixir's **Oban**: the durable background-job queue every production web service
+ * `Job.queue` — Elixir's **Oban**: the durable background-job queue every production web service
  * grows ("send this email, retry 3 times, run it at 9am"). Jobs are persisted through the
  * {@link Store} seam BEFORE `insert` resolves (a `memoryStore` in tests, Postgres in production —
  * the same durability contract as persist-before-ack actors), executed by named workers under
@@ -26,7 +26,7 @@
  * ```ts
  * import { memoryStore } from '../node/index.ts';
  * const sent: string[] = [];
- * const jobs = jobQueue({
+ * const jobs = Job.queue({
  *   store: memoryStore(),
  *   workers: { 'email.welcome': (args) => void sent.push((args as { to: string }).to) },
  * });
@@ -114,7 +114,7 @@ export interface Job {
 /** A worker: receives the job's args (and the job record); throwing marks the attempt failed. */
 export type Worker = (args: unknown, job: Job, signal: AbortSignal) => unknown | Promise<unknown>;
 
-/** A running job queue — see {@link jobQueue}. */
+/** A running job queue — see {@link Job.queue}. */
 export interface JobQueue {
   /**
    * Durably enqueue a job — persisted BEFORE the Task settles. Options mirror Oban's:
@@ -136,11 +136,13 @@ export interface JobQueue {
       meta?: Record<string, unknown>;
     },
   ): Task<Job, AnyFailure>;
-  /** The current record for a job id, or undefined (completed jobs are removed). */
-  job(id: string): Job | undefined;
-  /** A read-only snapshot of jobs, optionally filtered by queue/state/worker — for admin and
-   *  observability (Oban queries its table; this reads this instance's in-memory view). */
-  list(filter?: { queue?: string; state?: JobState; worker?: string }): Job[];
+  /** Peek at the current record for a job id, or undefined (completed jobs are removed). Read-only —
+   *  the multi-job twin is {@link JobQueue.peekAll}. (Oban has no single-job getter; this is ours.) */
+  peek(id: string): Job | undefined;
+  /** Peek at a read-only snapshot of this instance's jobs, optionally filtered by queue/state/worker —
+   *  for admin and observability. A pure in-memory read (NO store/SQL query, even on postgresStore):
+   *  Oban queries its table; this reads only THIS instance's view. `peek`'s multi-job twin. */
+  peekAll(filter?: { queue?: string; state?: JobState; worker?: string }): Job[];
   /** Cancel a job — Oban's `cancel_job`. A PENDING job is removed; an EXECUTING one has its
    *  {@link Worker}'s `AbortSignal` aborted (cooperative — a worker that ignores it finishes), and
    *  ends terminal (removed), not retried. */
@@ -166,12 +168,12 @@ export interface JobQueue {
  *
  * ```ts
  * import { memoryStore } from '../node/index.ts';
- * const jobs = jobQueue({ store: memoryStore(), workers: {} });
+ * const jobs = Job.queue({ store: memoryStore(), workers: {} });
  * typeof jobs.insert; // 'function'
  * jobs.stop();
  * ```
  */
-export function jobQueue(options: {
+function jobQueue(options: {
   store: Store;
   workers: Record<string, Worker>;
   queues?: Record<string, number>;
@@ -471,8 +473,8 @@ export function jobQueue(options: {
         return doInsert(worker, args, opts);
       }).perform();
     },
-    job: (id) => jobs.get(id),
-    list: (filter = {}) =>
+    peek: (id) => jobs.get(id),
+    peekAll: (filter = {}) =>
       // One pass: filter-and-copy folded together. Shallow copies so a caller can't corrupt state.
       [...jobs.values()].reduce<Job[]>((matches, job) => {
         if (
@@ -536,7 +538,7 @@ function errorRecord(error: unknown, attempt: number, at: number): JobError {
  * remaining `maxAttempts` (Oban's `{:discard, reason}`). A `Failure` reason is recorded in the job's
  * `errors` (routable by its `code`); a THROW, by contrast, always retries.
  */
-export function discard(reason?: unknown): unknown {
+function discard(reason?: unknown): unknown {
   return { [SIGNAL]: { kind: 'discard', reason } satisfies JobControl };
 }
 
@@ -544,9 +546,16 @@ export function discard(reason?: unknown): unknown {
  * Return this from a {@link Worker} to RESCHEDULE the job `ms` in the future (Oban's `{:snooze}`)
  * without consuming a retry — `maxAttempts` is bumped so the snooze is free.
  */
-export function snooze(ms: number): unknown {
+function snooze(ms: number): unknown {
   return { [SIGNAL]: { kind: 'snooze', ms } satisfies JobControl };
 }
+
+/**
+ * The Jobs namespace — Elixir's Oban, JS-shaped. `Job.queue(...)` builds a durable {@link JobQueue};
+ * `Job.discard(reason)` / `Job.snooze(ms)` are the values a {@link Worker} returns to dead-letter or
+ * reschedule itself. (`Job` is also the record type — the value and the type share the name.)
+ */
+export const Job = { queue: jobQueue, discard, snooze };
 
 // The control value a worker returned, or undefined for an ordinary success.
 function jobSignal(value: unknown): JobControl | undefined {

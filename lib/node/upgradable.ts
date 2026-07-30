@@ -57,7 +57,7 @@ export interface Store {
    * and `scheduledAt <= now`. The first `limit`, ordered priority then scheduledAt, are each marked
    * `executing` with `attempt + 1`, persisted, and returned — in ONE turn (memoryStore) or ONE
    * transaction (Postgres), so concurrent drainers on separate nodes never grab the same job.
-   * Omit it and {@link jobQueue} drains only its own in-memory inserts (single-writer).
+   * Omit it and {@link Job.queue} drains only its own in-memory inserts (single-writer).
    */
   claim?(
     prefix: string,

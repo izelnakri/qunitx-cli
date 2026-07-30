@@ -6,9 +6,9 @@ and **Horde**), in universal TypeScript. This guide is the map; the API docs liv
 ## Jobs
 
 ```ts
-import { jobQueue, memoryStore } from 'qunitx/node';
+import { Job, memoryStore } from 'qunitx/node';
 
-const jobs = jobQueue({
+const jobs = Job.queue({
   store: memoryStore(),
   workers: { 'email.welcome': (args, job, signal) => send(args, { signal }) },
 });
@@ -35,7 +35,7 @@ scheduled ─(its time)→ available
 `discarded` jobs are kept as the **dead-letter record** (with their `errors`); everything else is
 removed on completion so the queue stays bounded.
 
-**Inspect the queue** — `jobs.job(id)` (one), `jobs.list({ queue?, state?, worker? })` (a filtered,
+**Inspect the queue** — `jobs.peek(id)` (one), `jobs.peekAll({ queue?, state?, worker? })` (a filtered,
 copy-safe snapshot for admin/observability), `jobs.cancelJob(id)`, `jobs.pauseQueue`/`resumeQueue`,
 `jobs.drain()` (run everything runnable — the test helper).
 
@@ -43,9 +43,10 @@ copy-safe snapshot for admin/observability), `jobs.cancelJob(id)`, `jobs.pauseQu
 worker's `AbortSignal` (cooperative — a worker that checks `signal.aborted` stops; one that ignores
 it finishes) and ends it terminal, not retried.
 
-**Dead-letter routing** — each `errors[]` entry is `{ attempt, at, error, code?, meta? }`: `error`
-always has the stack; a thrown `Failure` also contributes `code` + safe-serialized `data`. Route on
-it: `jobs.list({ state: 'discarded' }).filter(j => j.errors.at(-1)?.code === 'RateLimited')`.
+**Dead-letter routing** — each `errors[]` entry is `{ attempt, at, error }`, where `error` is always
+a live `Failure` (even after a store reload): a thrown `Failure` keeps its `code` + `data`; a raw
+throw is coerced to code `'Unknown'` with the original in `.cause`. Route on it:
+`jobs.peekAll({ state: 'discarded' }).filter(j => j.errors.at(-1)?.error.code === 'RateLimited')`.
 
 ## Fault tolerance — three layers, and what triggers each
 
@@ -58,7 +59,7 @@ a supervisor.**
 | a **node dies** mid-job           | the **stager** reclaims it; a survivor re-runs (`SKIP LOCKED`, never twice) | `reclaimAfterMs` — on by default, 60 min (Oban's Lifeline) |
 | a **service** crashes _as a unit_ | a **`supervisor`** restarts it — _if it exposes `onExit`_                   | wrap it in a `supervisor`                                  |
 
-A bare `jobQueue(...)` already has layers 1–2 — a failing job is retried, a dead node's work is
+A bare `Job.queue(...)` already has layers 1–2 — a failing job is retried, a dead node's work is
 reclaimed — **with no supervisor involved.** The supervisor is an _optional_ top layer.
 
 ## Stores — pick your durability
@@ -77,7 +78,7 @@ no coordination. But **cron** would fire on every node, so pass a `leader`:
 
 ```ts
 const lead = leader({ store, key: 'jobs:cron', candidate: nodeName });
-const jobs = jobQueue({ store, leader: lead, cron: { '0 9 * * *': { worker: 'report.daily' } } });
+const jobs = Job.queue({ store, leader: lead, cron: { '0 9 * * *': { worker: 'report.daily' } } });
 ```
 
 On a `raftStore`, `leader()` uses **CP** leadership (terms + quorum — no split-brain); elsewhere a
@@ -101,7 +102,7 @@ const app = supervisor(
     { name: 'store', start: () => fileStore('./data') },
     {
       name: 'jobs',
-      start: (get) => jobQueue({ store: get('store'), workers }),
+      start: (get) => Job.queue({ store: get('store'), workers }),
       restart: 'permanent',
     },
     { name: 'web', start: (get) => serveHttp({ jobs: get('jobs') }) },
@@ -155,8 +156,8 @@ function wsClient(url: string) {
 }
 ```
 
-Omit `onExit` only for a service that **self-heals** (a `jobQueue` retries its own jobs) or can't
-crash as a unit — then use `restart: 'temporary'`. `jobQueue` _does_ expose `onExit` for the rare
+Omit `onExit` only for a service that **self-heals** (a `Job.queue` retries its own jobs) or can't
+crash as a unit — then use `restart: 'temporary'`. `Job.queue` _does_ expose `onExit` for the rare
 catastrophic scheduler failure, so it can be supervised without the warning.
 
 **The one rule that keeps restart honest** (this is a real JS limit, not OTP's): a service's state

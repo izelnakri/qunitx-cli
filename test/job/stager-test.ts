@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import { start, memoryHub, memoryStore } from '../../lib/node/index.ts';
-import { jobQueue, raftStore } from '../../lib/jobs/index.ts';
+import { Job, raftStore } from '../../lib/job/index.ts';
 
 const until = async (cond: () => boolean, ms = 4000) => {
   const deadline = Date.now() + ms;
@@ -31,7 +31,7 @@ module('Jobs | stager (Oban rescuer — reclaim jobs orphaned mid-run)', () => {
     const store = memoryStore();
     const ran: string[] = [];
     await store.save('jobs:orphan', orphan('orphan', Date.now() - 10_000));
-    const jobs = jobQueue({
+    const jobs = Job.queue({
       store,
       pollMs: 10,
       reclaimAfterMs: 50, // executing longer than 50ms → the owner is presumed dead
@@ -53,7 +53,7 @@ module('Jobs | stager (Oban rescuer — reclaim jobs orphaned mid-run)', () => {
     const store = memoryStore();
     const ran: string[] = [];
     await store.save('jobs:dead', orphan('dead', Date.now() - 10_000, true)); // attempt 3 / maxAttempts 3
-    const jobs = jobQueue({
+    const jobs = Job.queue({
       store,
       pollMs: 10,
       reclaimAfterMs: 50,
@@ -64,7 +64,17 @@ module('Jobs | stager (Oban rescuer — reclaim jobs orphaned mid-run)', () => {
     assert.equal(
       ((await store.load('jobs:dead')) as { state: string }).state,
       'discarded',
-      'kept as discarded',
+      'kept as discarded — the durable dead-letter record in the STORE',
+    );
+    // The rescue is a store-level fact. This queue never had `dead` in its own index (it was seeded
+    // straight into the store, as a dead node would leave it), so the app-facing `peekAll()` — which
+    // reads THIS instance's in-memory view — can't see it. `store.load` is the durable truth;
+    // `peekAll({ state: 'discarded' })` is per-instance. (An inserted-then-failed job IS in peekAll()
+    // — see the dead-letter routing test.)
+    assert.equal(
+      jobs.peekAll({ state: 'discarded' }).length,
+      0,
+      'the app-level peekAll() reflects only this instance — a store-seeded reclaim is not in its view',
     );
     jobs.stop();
   });
@@ -80,7 +90,7 @@ module('Jobs | stager (Oban rescuer — reclaim jobs orphaned mid-run)', () => {
         'the single-member group elected',
       );
       await store.save('jobs:orphan', orphan('orphan', Date.now() - 10_000));
-      const jobs = jobQueue({
+      const jobs = Job.queue({
         store,
         pollMs: 15,
         reclaimAfterMs: 50,

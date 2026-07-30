@@ -1,4 +1,4 @@
-// Barrel for the Jobs leg: import { jobQueue } from '.../lib/jobs/index.ts'.
+// Barrel for the Job leg: import { Job } from '.../lib/job/index.ts'; Job.queue({ ... }).
 //
 // Elixir's Oban — the durable background-job queue: jobs persist through the Store seam BEFORE
 // insert resolves, run under per-queue concurrency limits, retry with backoff to maxAttempts
@@ -7,16 +7,13 @@
 // the atomic Store.claim (SKIP LOCKED) partitions the work. Cron runs cluster-once via a `leader`
 // (Oban's Peer — a store lease).
 export {
-  jobQueue,
-  discard,
-  snooze,
+  Job, // the value namespace (Job.queue/discard/snooze) AND the job record type — same name
   type JobQueue,
-  type Job,
   type JobError,
   type JobState,
   type Worker,
   type CronEntry,
-} from './jobs.ts';
+} from './job.ts';
 export { cronMatch } from './cron.ts';
 export { leader, type Leader } from './leader.ts';
 export { raftStore } from './raft-store.ts';
