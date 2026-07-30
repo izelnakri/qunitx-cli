@@ -72,3 +72,4 @@ export {
   type Strategy,
   type Restart,
 } from './supervisor.ts';
+export { distributedSupervisor, type DistributedSupervisor } from './distributed-supervisor.ts';
