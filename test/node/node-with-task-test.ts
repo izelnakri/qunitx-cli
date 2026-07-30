@@ -1,91 +1,172 @@
 import { module, test } from 'qunitx';
 import { Node, memoryHub } from '../../lib/node/index.ts';
-import { Task } from '../../lib/task/index.ts';
-import { isFailure } from '../../lib/result/failure.ts';
+import { Task, Failure } from '../../lib/task/index.ts';
 
-// The specific-node case (m-p): `client.call('server@c', subject)` addressed to ONE named node,
-// not a group. node.handle awaits the handler's return, so the same rule holds as everywhere:
-// RETURN/AWAIT a Task → it runs and its error crosses back as a Failure; a dropped LAZY task is a
-// no-op. In-process nodes share one memoryHub, so the handler's side effect lands in a shared `ran`
-// array we can read directly — no counter round-trip needed. Runs on BOTH lanes (no worker threads).
+// A declared failure a handler throws on purpose — its `code` + `data` must survive the node hop
+// intact ("declared failures arrive declared"); `shape` marks which variation raised it.
+const Boom = Failure.define('Boom', (d: { shape: string }) => `boom in ${d.shape}`);
+
+// `client.call('server@c', subject)` returns a `Task<T, AnyFailure>` addressed to ONE named node.
+// `node.handle` awaits the handler, so the Task rule holds: RETURN or AWAIT a Task → it runs, and on
+// failure the returned Task REJECTS with the Failure. We read that with `.result()` (settles to
+// `T | Failure` WITHOUT throwing — a bare `await call(...)` would throw). A CREATED-AND-DROPPED lazy
+// Task is a no-op. In-process nodes share one memoryHub, so a handler's side effect lands in a shared
+// `ran` array we read directly. Runs on BOTH lanes (no worker threads).
+//
+// One test per Task-in-a-handler shape (m–p) + the raw-throw path — a failure in one no longer masks
+// the rest. Nothing here throws (good calls resolve, failing ones are read via `.result()`), so each
+// test just `stop()`s its two nodes at the end.
 module('Node | specific node | Task inside a handler', () => {
-  test('(m-p) return/await run + propagate; a dropped lazy task is a no-op', async (assert) => {
+  // A linked server+client pair on a fresh in-process hub (isolated per test) + a `stop()` for cleanup.
+  const prepare = () => {
     const hub = memoryHub();
     const ran: string[] = [];
     const server = Node.start('server@c', hub.transport());
     const client = Node.start('client@c', hub.transport());
+    return {
+      ran,
+      server,
+      call: (subject: string) => client.call('server@c', subject),
+      stop: () => {
+        client.stop();
+        server.stop();
+      },
+    };
+  };
 
-    server.handle('return-task', () => Task(() => (ran.push('m'), 'v')));
-    server.handle('return-task-bad', () =>
+  test('(m) return task — runs on the server; its Failure crosses back with code + data', async (assert) => {
+    const { ran, server, call, stop } = prepare();
+    server.handle('ok', () =>
       Task(() => {
-        throw new Error('boom');
+        ran.push('m');
+        return 'v';
       }),
     );
-    server.handle('return-await', async () => await Task(() => (ran.push('n'), 'v')));
+    server.handle('bad', () =>
+      Task(() => {
+        throw Boom({ shape: 'm' });
+      }),
+    );
+    assert.equal(await call('ok'), 'v', 'the returned Task ran → its value crossed back');
+    assert.true(ran.includes('m'), 'the Task RAN on the server node');
+
+    const failure = await call('bad').result();
+    assert.true(Failure.is(failure), 'the handler failure crossed back as a Failure');
+    if (Failure.is(failure)) {
+      assert.equal(
+        failure.code,
+        'Boom',
+        'a DECLARED failure arrives declared — code survives the hop',
+      );
+      assert.deepEqual(failure.data, { shape: 'm' }, 'and its data survives the codec round-trip');
+    }
+    stop();
+  });
+
+  test('(n) return await task — identical: runs, Failure crosses back with code + data', async (assert) => {
+    const { ran, server, call, stop } = prepare();
     server.handle(
-      'return-await-bad',
+      'ok',
       async () =>
         await Task(() => {
-          throw new Error('boom');
+          ran.push('n');
+          return 'v';
         }),
     );
-    server.handle('drop-lazy', () => (Task(() => ran.push('o')), 'x'));
     server.handle(
-      'drop-lazy-bad',
-      () => (
-        Task(() => {
-          throw new Error('boom');
+      'bad',
+      async () =>
+        await Task(() => {
+          throw Boom({ shape: 'n' });
         }),
-        'x'
-      ),
     );
-    server.handle('await-task', async () => {
-      await Task(() => ran.push('p'));
+    assert.equal(await call('ok'), 'v', 'the awaited Task’s value crossed back');
+    assert.true(ran.includes('n'), 'the Task RAN');
+
+    const failure = await call('bad').result();
+    assert.true(Failure.is(failure), 'the await threw → crossed back as a Failure');
+    if (Failure.is(failure)) {
+      assert.equal(failure.code, 'Boom', 'declared → code survives the hop');
+      assert.deepEqual(failure.data, { shape: 'n' }, 'and its data survives the codec round-trip');
+    }
+    stop();
+  });
+
+  test('(o) create-and-drop — a dropped LAZY task never runs, so the handler just succeeds', async (assert) => {
+    const { ran, server, call, stop } = prepare();
+    server.handle('ok', () => {
+      Task(() => ran.push('o')); // created, never awaited → lazy → dropped
       return 'x';
     });
-    server.handle('await-task-bad', async () => {
-      await Task(() => {
-        throw new Error('boom');
+    server.handle('bad', () => {
+      Task(() => {
+        throw Boom({ shape: 'o' }); // even a declared failure, dropped lazily, never fires
       });
       return 'x';
     });
+    // Neither handler propagates — both just return 'x' — so nothing here throws; no `.result()` needed.
+    assert.equal(await call('ok'), 'x', 'the handler returned x');
+    assert.false(ran.includes('o'), 'the dropped LAZY task did NOT run — nothing triggered it');
+    assert.equal(
+      await call('bad'),
+      'x',
+      'the dropped throwing task never ran → the call SUCCEEDED with x, no Failure',
+    );
+    stop();
+  });
 
-    const call = (s: string) => client.call('server@c', s);
-    try {
-      // (m) return task
-      assert.equal(await call('return-task'), 'v', 'return task → value crossed back');
-      assert.true(ran.includes('m'), 'the returned Task RAN on the server node');
-      assert.true(
-        isFailure(await call('return-task-bad').result()),
-        'return task error → PROPAGATED as a Failure',
-      );
+  test('(p) await task; return x — a throwing await short-circuits: the return + everything after never runs', async (assert) => {
+    const { ran, server, call, stop } = prepare();
+    server.handle('ok', async () => {
+      await Task(() => ran.push('p'));
+      return 'x';
+    });
+    server.handle('bad', async () => {
+      await Task(() => {
+        throw Boom({ shape: 'p' });
+      });
+      ran.push('p:after'); // MUST NOT run — the awaited Task threw, unwinding the handler
+      return 'x';
+    });
+    assert.equal(await call('ok'), 'x', 'the handler returned x');
+    assert.true(ran.includes('p'), 'await triggered the Task');
 
-      // (n) return await task
-      assert.equal(await call('return-await'), 'v', 'return await task → value crossed');
-      assert.true(ran.includes('n'), 'return await → RAN');
-      assert.true(
-        isFailure(await call('return-await-bad').result()),
-        'return await error → propagated',
-      );
-
-      // (o) { task; return x } — dropped lazy
-      assert.equal(await call('drop-lazy'), 'x', 'task; return x → returns x');
-      assert.false(ran.includes('o'), 'a dropped LAZY task did NOT run — nothing triggered it');
-      assert.false(
-        isFailure(await call('drop-lazy-bad').result()),
-        'a dropped throwing lazy task never ran → NO error propagated',
-      );
-
-      // (p) { await task; return x }
-      assert.equal(await call('await-task'), 'x', 'await task; return x → returns x');
-      assert.true(ran.includes('p'), 'await triggered the Task');
-      assert.true(
-        isFailure(await call('await-task-bad').result()),
-        'await task error → propagated',
-      );
-    } finally {
-      client.stop();
-      server.stop();
+    const failure = await call('bad').result();
+    assert.true(Failure.is(failure), 'the await threw → crossed back as a Failure');
+    if (Failure.is(failure)) {
+      assert.equal(failure.code, 'Boom', 'declared → code survives the hop');
+      assert.deepEqual(failure.data, { shape: 'p' }, 'and its data survives the codec round-trip');
     }
+    assert.false(
+      ran.includes('p:after'),
+      'the throwing await STOPPED execution — the code after it (and `return x`) never ran',
+    );
+    stop();
+  });
+
+  test('(raw) a non-Failure throw (a bug) crosses as a RemoteCrash Failure, not the raw Error', async (assert) => {
+    const { server, call, stop } = prepare();
+    server.handle('bug', () =>
+      Task(() => {
+        throw new Error('kaboom'); // a plain Error — a bug, not a declared failure
+      }),
+    );
+    const failure = await call('bug').result();
+    assert.true(
+      Failure.is(failure),
+      'a plain Error still crosses as a Failure (never a clone-gutted Error)',
+    );
+    if (Failure.is(failure)) {
+      assert.equal(
+        failure.code,
+        'RemoteCrash',
+        'an undeclared throw is coerced to code RemoteCrash',
+      );
+      assert.true(
+        String(failure.message).includes('kaboom'),
+        'the original error text is preserved in the message',
+      );
+    }
+    stop();
   });
 });
