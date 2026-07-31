@@ -400,6 +400,7 @@ export function genServer<S, K extends string = string>(
       );
     }
   };
+  const myPort: ExitPort = { name, deliverExit };
   const down = (reason: AnyFailure): void => {
     if (!unitAlive) return;
     unitAlive = false;
@@ -407,7 +408,10 @@ export function genServer<S, K extends string = string>(
     if (options.via) node.unregister(options.via.registry, options.via.key); // release the name
     for (const timer of timers) clearTimeout(timer); // a dead unit fires no scheduled messages
     timers.clear();
-    for (const peer of links) peer.deliverExit(name, reason);
+    for (const peer of links) {
+      otherLinks.get(peer)?.delete(myPort); // drop the link on the PEER's side too (Erlang unlinks
+      peer.deliverExit(name, reason); // both ends on any exit) — no dead port lingers in a survivor
+    }
     links.clear();
     stopInspect?.(); // leave the node's local-unit table — a dead name is no longer served here
     options.onDown?.(reason); // AFTER links propagate — observers see a fully-settled death
@@ -462,17 +466,16 @@ export function genServer<S, K extends string = string>(
       const port = exitPorts.get(other);
       if (!port) throw new TypeError('link target is not a served unit');
       links.add(port);
-      const mine = exitPorts.get(handle)!;
       // reach into the other side's link set via its port: exits are symmetric, so the other
       // unit must also know us — modeled as: its deliverExit is OUR outbound, ours is its.
-      otherLinks.get(port)?.add(mine);
+      otherLinks.get(port)?.add(myPort);
     },
     trapExit(fn) {
       trap = fn;
     },
   };
-  exitPorts.set(handle, { name, deliverExit });
-  otherLinks.set(exitPorts.get(handle)!, links);
+  exitPorts.set(handle, myPort);
+  otherLinks.set(myPort, links);
   // {:via, Registry, {Reg, key}} — register the entity key, and self-terminate if a
   // smaller-named node wins the same key (optimistic-AP conflict resolution). The loser's
   // handlers stop answering (UnitDown); callers re-resolve via whereis to the survivor.
@@ -534,15 +537,6 @@ export function spawnProcess(
   let alive = true;
   const links = new Set<ExitPort>();
   const stopInspect = node.inspect(name, () => ({ kind: 'process', alive }));
-  const down = (reason: AnyFailure | null): void => {
-    if (!alive) return;
-    alive = false;
-    // reason === null is a NORMAL exit (Erlang `:normal`) — links are left untouched; only an
-    // abnormal reason is delivered onward.
-    if (reason !== null) for (const peer of links) peer.deliverExit(name, reason);
-    links.clear();
-    stopInspect();
-  };
   // A bare process does not trap exits — a linked death takes it down and propagates onward.
   const deliverExit = (from: string, reason: AnyFailure): void => {
     if (alive)
@@ -555,6 +549,19 @@ export function spawnProcess(
         ),
       );
   };
+  const myPort: ExitPort = { name, deliverExit };
+  const down = (reason: AnyFailure | null): void => {
+    if (!alive) return;
+    alive = false;
+    for (const peer of links) {
+      otherLinks.get(peer)?.delete(myPort); // unlink on the PEER's side too (Erlang: any exit unlinks)
+      // reason === null is a NORMAL exit (Erlang `:normal`) — the link is dropped but no signal is
+      // delivered; only an abnormal reason propagates onward.
+      if (reason !== null) peer.deliverExit(name, reason);
+    }
+    links.clear();
+    stopInspect();
+  };
   const pid: Pid = {
     name,
     isAlive: () => alive,
@@ -564,11 +571,11 @@ export function spawnProcess(
       const port = exitPorts.get(other);
       if (!port) throw new TypeError('link target is not a served unit');
       links.add(port);
-      otherLinks.get(port)?.add(exitPorts.get(pid)!);
+      otherLinks.get(port)?.add(myPort);
     },
   };
-  exitPorts.set(pid, { name, deliverExit });
-  otherLinks.set(exitPorts.get(pid)!, links);
+  exitPorts.set(pid, myPort);
+  otherLinks.set(myPort, links);
   if (options.link) pid.link(options.link);
   // Drive the body on a microtask so the caller gets the pid first; normal completion → :normal exit,
   // a throw → an abnormal exit carrying the cause.

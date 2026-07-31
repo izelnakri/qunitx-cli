@@ -191,4 +191,126 @@ module('Node | Process.spawn (bare processes — Erlang spawn/1,3)', () => {
     assert.false(Process.alive(p), 'and it exited on completion');
     node.stop();
   });
+
+  test('a process can exit itself early via self.exit', async (assert) => {
+    const node = Node.start('a@proc', memoryHub().transport());
+    const p = Process.spawn(node, (self) => self.exit());
+    await settle();
+    assert.false(Process.alive(p), 'self.exit terminated it');
+    node.stop();
+  });
+
+  test('a throwing process delivers ProcessCrashed (with the cause) to a trapping linked unit', async (assert) => {
+    const node = Node.start('a@proc', memoryHub().transport());
+    const trapped: { code: string; causeMessage: string }[] = [];
+    const guard = Process.spawn(node, guardBehavior());
+    guard.trapExit((_from, reason) =>
+      trapped.push({
+        code: (reason as Failure.Any).code,
+        causeMessage: String((reason as Failure.Any).cause),
+      }),
+    );
+    Process.spawn(
+      node,
+      () => {
+        throw new Error('kaboom');
+      },
+      { link: guard },
+    );
+    await settle();
+
+    assert.true(Process.alive(guard), 'the trapping unit survived the linked crash');
+    assert.strictEqual(trapped.length, 1, 'and received exactly one exit signal');
+    assert.strictEqual(trapped[0].code, 'ProcessCrashed', 'the reason is ProcessCrashed');
+    assert.true(trapped[0].causeMessage.includes('kaboom'), 'carrying the original error as cause');
+    node.stop();
+  });
+
+  test('a trapping unit survives a NORMAL linked exit SILENTLY, but is signalled on an ABNORMAL one', async (assert) => {
+    const node = Node.start('a@proc', memoryHub().transport());
+    const signals: string[] = [];
+    const guard = Process.spawn(node, guardBehavior());
+    guard.trapExit((_from, reason) => signals.push((reason as Failure.Any).code));
+
+    Process.spawn(node, () => {}, { link: guard }); // normal exit
+    await settle();
+    assert.true(Process.alive(guard), 'guard survives the normal exit');
+    assert.deepEqual(signals, [], 'a normal exit is SILENT even to a trapper (Erlang :normal)');
+
+    Process.spawn(
+      node,
+      () => {
+        throw new Error('boom');
+      },
+      { link: guard },
+    ); // abnormal exit
+    await settle();
+    assert.true(Process.alive(guard), 'guard still alive (it traps)');
+    assert.deepEqual(signals, ['ProcessCrashed'], 'the abnormal exit DID signal');
+    node.stop();
+  });
+
+  test('links are symmetric: exiting the linked unit takes the bare process down too', async (assert) => {
+    const node = Node.start('a@proc', memoryHub().transport());
+    const owner = Process.spawn(node, guardBehavior());
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const p = Process.spawn(node, async () => await gate, { link: owner }); // long-lived, linked
+
+    await settle();
+    assert.true(Process.alive(p), 'the bare process is running');
+    Process.exit(owner, Failure.define('OwnerDown', 'boom')());
+    await settle();
+    assert.false(
+      Process.alive(p),
+      'the linked bare process died with the owner (reverse direction)',
+    );
+    release();
+    node.stop();
+  });
+
+  test('a bare process links to another bare process — one crash fells the other (Pid ↔ Pid)', async (assert) => {
+    const node = Node.start('a@proc', memoryHub().transport());
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const b = Process.spawn(node, async () => await gate); // long-lived
+    Process.spawn(
+      node,
+      () => {
+        throw new Error('a-crash');
+      },
+      { link: b },
+    );
+    await settle();
+    assert.false(Process.alive(b), 'b died when its linked partner crashed');
+    release();
+    node.stop();
+  });
+
+  test('a live bare process is whereis-able and listed by its auto-name; gone after it exits', async (assert) => {
+    const node = Node.start('a@proc', memoryHub().transport());
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const p = Process.spawn(node, async () => await gate);
+
+    assert.strictEqual(
+      Process.whereis(node, p.name),
+      'a@proc',
+      'found locally by name while alive',
+    );
+    assert.true(Process.list(node).includes(p.name), 'and present in the local process list');
+    release();
+    await settle();
+    assert.strictEqual(Process.whereis(node, p.name), null, 'no longer whereis-able once it exits');
+    assert.false(Process.list(node).includes(p.name), 'and gone from the list');
+    node.stop();
+  });
+
+  test('many bare spawns get distinct auto-names — no collision at volume', (assert) => {
+    const node = Node.start('a@proc', memoryHub().transport());
+    const names = new Set<string>();
+    for (let i = 0; i < 1000; i += 1) names.add(Process.spawn(node, () => {}).name);
+    assert.strictEqual(names.size, 1000, '1000 spawns → 1000 unique names');
+    node.stop();
+  });
 });
