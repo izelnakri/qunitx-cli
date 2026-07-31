@@ -25,17 +25,19 @@ type Command =
 // read from each node's clock during apply. A committed claim/lease is thus atomic cluster-wide.
 function apply(command: unknown, state: KV): { state: KV; reply?: unknown } {
   const cmd = command as Command;
-  const next: KV = { ...state };
+  // Mutate the state machine IN PLACE — Raft replaces its single state ref each apply (state =
+  // outcome.state) and snapshots take their own clone(), so no old state is retained. Was `{...state}`
+  // per command: an O(total-keys) copy on EVERY save/clear/lease, not just claim/rescue.
   if (cmd.op === 'save') {
-    next[cmd.key] = cmd.value;
-    return { state: next };
+    state[cmd.key] = cmd.value;
+    return { state };
   }
   if (cmd.op === 'clear') {
-    delete next[cmd.key];
-    return { state: next };
+    delete state[cmd.key];
+    return { state };
   }
   if (cmd.op === 'claim') {
-    const claimed = Object.entries(next)
+    const claimed = Object.entries(state)
       .filter(([key]) => key.startsWith(`${cmd.prefix}:`))
       .map(([key, job]) => [key, job as Record<string, unknown>] as const)
       .filter(
@@ -57,33 +59,33 @@ function apply(command: unknown, state: KV): { state: KV; reply?: unknown } {
           attempt: (job.attempt as number) + 1,
           attemptedAt: cmd.now, // stamp for the stager — replicas apply the same `now`
         };
-        next[key] = marked;
+        state[key] = marked;
         return marked;
       });
-    return { state: next, reply: claimed };
+    return { state, reply: claimed };
   }
   if (cmd.op === 'rescue') {
     let reset = 0;
-    for (const [key, value] of Object.entries(next)) {
+    for (const [key, value] of Object.entries(state)) {
       if (!key.startsWith(`${cmd.prefix}:`)) continue;
       const job = value as Record<string, unknown>;
       const attemptedAt = (job.attemptedAt as number | undefined) ?? Infinity;
       if (job.state !== 'executing' || attemptedAt > cmd.staleBefore) continue;
-      next[key] = {
+      state[key] = {
         ...job,
         state: (job.attempt as number) >= (job.maxAttempts as number) ? 'discarded' : 'available',
       };
       reset += 1;
     }
-    return { state: next, reply: reset };
+    return { state, reply: reset };
   }
   // lease
-  const held = next[cmd.key] as { owner: string; expiresAt: number } | undefined;
+  const held = state[cmd.key] as { owner: string; expiresAt: number } | undefined;
   if (!held || held.expiresAt <= cmd.now || held.owner === cmd.candidate) {
-    next[cmd.key] = { owner: cmd.candidate, expiresAt: cmd.now + cmd.ttlMs };
-    return { state: next, reply: cmd.candidate };
+    state[cmd.key] = { owner: cmd.candidate, expiresAt: cmd.now + cmd.ttlMs };
+    return { state, reply: cmd.candidate };
   }
-  return { state: next, reply: held.owner };
+  return { state, reply: held.owner };
 }
 
 /**
