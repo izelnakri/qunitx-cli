@@ -37,7 +37,7 @@
 import { Failure } from '../result/index.ts';
 import type { Any as AnyFailure } from '../result/failure.ts';
 import { Task } from '../task/task.ts';
-import type { Store } from '../node/upgradable.ts';
+import type { Store } from '../node/store.ts';
 
 /** One saga step: a forward action, its compensation, and an optional retry count. */
 export interface Step<Ctx extends object> {

@@ -46,7 +46,7 @@ import { Task } from '../task/task.ts';
 import { execute as emit } from '../telemetry/telemetry.ts';
 import { cronMatch } from './cron.ts';
 import type { Leader } from './leader.ts';
-import type { Store } from '../node/upgradable.ts';
+import type { Store } from '../node/store.ts';
 
 // Tag for the control-flow values a worker RETURNS to steer its own fate (Oban's discard/snooze) —
 // distinct from a THROW, which is always a retryable failure.

@@ -1,7 +1,7 @@
 import { Failure, isFailure, type Any as AnyFailure } from '../result/failure.ts';
 import { raft, type Raft } from '../raft/raft.ts';
 import type { NodeHandle } from '../node/node.ts';
-import type { Store } from '../node/upgradable.ts';
+import type { Store } from '../node/store.ts';
 
 /** The replicated state: a plain KV (JSON-safe, so Raft can snapshot it). */
 type KV = Record<string, unknown>;

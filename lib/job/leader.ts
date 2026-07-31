@@ -1,4 +1,4 @@
-import type { Store } from '../node/upgradable.ts';
+import type { Store } from '../node/store.ts';
 
 /**
  * "Am I the one node that should run this?" — Elixir's `Oban.Peer` (or a `Highlander` singleton).

@@ -12,7 +12,7 @@
 // can't elect two holders) — no advisory lock is needed, since the CP leadership path is
 // {@link leader} over a raftStore. Verified behaviorally against real Postgres via the opt-in pglite
 // lane (test/pg/*.pg.ts, never in CI); the in-repo tests verify the driver-injection contract.
-import type { Store } from './upgradable.ts';
+import type { Store } from './store.ts';
 
 /** The one method a driver must expose — run a parameterized query, return the rows. */
 export interface SqlExecutor {

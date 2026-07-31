@@ -35,7 +35,7 @@
  */
 import { Failure } from '../result/failure.ts';
 import type { NodeHandle } from '../node/node.ts';
-import type { Store } from '../node/upgradable.ts';
+import type { Store } from '../node/store.ts';
 
 /** One replicated log entry: the term it was proposed in, and the command to apply. */
 export interface LogEntry {

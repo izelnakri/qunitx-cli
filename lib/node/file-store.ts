@@ -11,7 +11,7 @@
 // that outgrow memory, use Postgres (jobs on disk, queried with LIMIT), not a file-backed raftStore.
 import { mkdir, readFile, writeFile, rename, unlink, open, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Store } from './upgradable.ts';
+import type { Store } from './store.ts';
 
 /**
  * A {@link Store} persisted to JSON files under `dir` — for durable `genServer()` state, single-host
