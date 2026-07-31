@@ -232,7 +232,7 @@ function jobQueue(options: {
   const paused = new Set<string>();
   const seenQueues = new Set<string>(['default']); // queues to poll (configured + inserted-into)
   const uniqueIndex = new Map<string, Set<string>>(); // signature -> ids: O(1) `unique` dedup
-  const queueCounts = new Map<string, number>(); // queue -> live job count (evict seenQueues at 0)
+  const queueJobs = new Map<string, Set<string>>(); // queue -> its job ids: scoped claim + seenQueues evict
   const signatureOf = (worker: string, args: unknown, meta?: Record<string, unknown>): string =>
     JSON.stringify([worker, args, meta ?? null]);
   const indexAdd = (job: Job): void => {
@@ -240,7 +240,9 @@ function jobQueue(options: {
     let ids = uniqueIndex.get(sig);
     if (!ids) uniqueIndex.set(sig, (ids = new Set()));
     ids.add(job.id);
-    queueCounts.set(job.queue, (queueCounts.get(job.queue) ?? 0) + 1);
+    let q = queueJobs.get(job.queue);
+    if (!q) queueJobs.set(job.queue, (q = new Set()));
+    q.add(job.id);
   };
   const indexRemove = (job: Job): void => {
     const sig = signatureOf(job.worker, job.args, job.meta);
@@ -249,11 +251,14 @@ function jobQueue(options: {
       ids.delete(job.id);
       if (ids.size === 0) uniqueIndex.delete(sig);
     }
-    const n = (queueCounts.get(job.queue) ?? 1) - 1;
-    if (n <= 0) {
-      queueCounts.delete(job.queue);
-      seenQueues.delete(job.queue); // last job in an ad-hoc queue gone — stop tracking its name
-    } else queueCounts.set(job.queue, n);
+    const q = queueJobs.get(job.queue);
+    if (q) {
+      q.delete(job.id);
+      if (q.size === 0) {
+        queueJobs.delete(job.queue);
+        seenQueues.delete(job.queue); // last job in an ad-hoc queue gone — stop tracking its name
+      }
+    }
   };
   let alive = true;
 
@@ -436,8 +441,10 @@ function jobQueue(options: {
       for (const job of claimed) jobs.set(job.id, job); // reflect the store's mark in the local view
       return claimed;
     }
-    const due = [...jobs.values()]
-      .filter((job) => job.queue === queue && runnable(job, now()))
+    // Scan only THIS queue's jobs (via the index), not every job in every queue, per tick.
+    const due = [...(queueJobs.get(queue) ?? [])]
+      .map((id) => jobs.get(id)!)
+      .filter((job) => runnable(job, now()))
       .sort((a, b) => a.priority - b.priority || a.scheduledAt - b.scheduledAt)
       .slice(0, demand);
     for (const job of due) {
