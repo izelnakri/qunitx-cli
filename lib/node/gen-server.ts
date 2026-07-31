@@ -493,6 +493,100 @@ export function genServer<S, K extends string = string>(
 const otherLinks = new WeakMap<ExitPort, Set<ExitPort>>();
 
 /**
+ * A bare process — Erlang's `spawn(fun)`: a running body with an identity, no mailbox (no handlers to
+ * `call`/`cast`). It lives while its function runs and can be linked/exited like any unit. This is the
+ * subset of the unit handle a {@link spawnProcess} exposes.
+ */
+export interface Pid {
+  /** This process's name — its identity in the node's local table (auto-assigned by `Process.spawn`). */
+  readonly name: string;
+  /** Whether the body is still running — Erlang's `Process.alive?/1`. */
+  isAlive(): boolean;
+  /** Terminate it — Erlang's `Process.exit/2`. A reason propagates to links (an abnormal exit). */
+  exit(reason?: AnyFailure): void;
+  /** Link bidirectionally to another unit/process — Erlang's `link/1`. */
+  link(other: object): void;
+}
+
+/**
+ * Run `fun(self)` as a bare process on `node` — Erlang's `spawn`. It is alive while `fun` runs and
+ * leaves the node's local table when it settles. Erlang's exit-signal rule holds: returning normally
+ * is a `:normal` exit that does NOT disturb linked units, while a throw (or an explicit
+ * {@link Pid#exit} with a reason) is an abnormal exit that propagates. `Process.spawn` picks the
+ * name and is the public door; this is the primitive it delegates the function/MFA forms to.
+ *
+ * ```ts
+ * import { Node, memoryHub } from './node.ts';
+ * import { spawnProcess } from './gen-server.ts';
+ *
+ * const node = Node.start('a@proc', memoryHub().transport());
+ * const p = spawnProcess(node, 'worker:1', () => {});
+ * p.isAlive(); // true — the body runs on a microtask, then it exits
+ * node.stop();
+ * ```
+ */
+export function spawnProcess(
+  node: NodeHandle,
+  name: string,
+  fun: (self: Pid) => void | Promise<void>,
+  options: { link?: object } = {},
+): Pid {
+  let alive = true;
+  const links = new Set<ExitPort>();
+  const stopInspect = node.inspect(name, () => ({ kind: 'process', alive }));
+  const down = (reason: AnyFailure | null): void => {
+    if (!alive) return;
+    alive = false;
+    // reason === null is a NORMAL exit (Erlang `:normal`) — links are left untouched; only an
+    // abnormal reason is delivered onward.
+    if (reason !== null) for (const peer of links) peer.deliverExit(name, reason);
+    links.clear();
+    stopInspect();
+  };
+  // A bare process does not trap exits — a linked death takes it down and propagates onward.
+  const deliverExit = (from: string, reason: AnyFailure): void => {
+    if (alive)
+      down(
+        new Failure(
+          'ProcessDown',
+          `${name} exited: linked to ${from}`,
+          { name, from },
+          { cause: reason },
+        ),
+      );
+  };
+  const pid: Pid = {
+    name,
+    isAlive: () => alive,
+    exit: (reason) =>
+      down(reason ?? new Failure('ProcessDown', `${name} exited`, { name, from: name })),
+    link(other) {
+      const port = exitPorts.get(other);
+      if (!port) throw new TypeError('link target is not a served unit');
+      links.add(port);
+      otherLinks.get(port)?.add(exitPorts.get(pid)!);
+    },
+  };
+  exitPorts.set(pid, { name, deliverExit });
+  otherLinks.set(exitPorts.get(pid)!, links);
+  if (options.link) pid.link(options.link);
+  // Drive the body on a microtask so the caller gets the pid first; normal completion → :normal exit,
+  // a throw → an abnormal exit carrying the cause.
+  Promise.resolve()
+    .then(() => fun(pid))
+    .then(
+      () => down(null),
+      (thrown) =>
+        down(
+          isFailure(thrown)
+            ? thrown
+            : new Failure('ProcessCrashed', String(thrown), { name }, { cause: thrown }),
+        ),
+    );
+  return pid;
+}
+
+/**
  * A {@link genServer} wrapped as a supervisable {@link Service} — the bridge that lets a stateful
  * gen_server be a child of a {@link distributedSupervisor} (or a local `supervisor`). It wires the
  * two things the raw handle lacks: `stop()` (graceful teardown → `exit()`, which does NOT report as

@@ -1,10 +1,18 @@
 // Elixir's `Process` module, JS-shaped: the process operations that are NOT about an existing
-// `self`. `spawn` CREATES a unit (so it can't hang off a self), and the free-function forms
+// `self`. `spawn` CREATES a process — a bare function (`spawn(fun)` / `spawn(mod, fun, args)`) or a
+// gen_server (`spawn(behavior)`) — so it can't hang off a self. The free-function forms
 // (`link`/`exit`/`alive`) mirror Elixir's `Process.link(pid)` / `Process.exit(pid, reason)` /
 // `Process.alive?(pid)` for callers who hold a handle. Bound-to-self ops live on the handle itself
 // (`unit.cast`, `unit.exit`, …) and on the `self` a handler receives — this module is the static side.
 import type { Any as AnyFailure } from '../result/failure.ts';
-import { genServer, type Behavior, type GenServer, type GenServerOptions } from './gen-server.ts';
+import {
+  genServer,
+  spawnProcess,
+  type Behavior,
+  type GenServer,
+  type GenServerOptions,
+  type Pid,
+} from './gen-server.ts';
 import type { NodeHandle } from './node.ts';
 
 // The minimal handle shape the free functions touch — picked so ANY GenServer<S, K> qualifies
@@ -17,11 +25,15 @@ type Unit = Pick<GenServer<unknown, string>, 'link' | 'exit' | 'isAlive'>;
  * `link`/`exit`/`alive` operate on handles, so they pass through unchanged.
  */
 export interface BoundProcess {
-  /** {@link Process.spawn} on the bound node. */
+  /** {@link Process.spawn} of a gen_server, on the bound node. */
   spawn<S, K extends string = string>(
     behavior: Behavior<S, K>,
     options?: GenServerOptions,
   ): GenServer<S, K>;
+  /** {@link Process.spawn} of a bare function (Erlang `spawn/1,2`), on the bound node. */
+  spawn(fun: (self: Pid) => void | Promise<void>, options?: { link?: object }): Pid;
+  /** {@link Process.spawn} of a module function (Erlang `spawn/3,4`), on the bound node. */
+  spawn(mod: object, fun: string, args?: unknown[], options?: { link?: object }): Pid;
   /** {@link Process.link} — handle-based, unchanged. */
   link(a: Unit, b: object): void;
   /** {@link Process.exit} — handle-based, unchanged. */
@@ -44,7 +56,10 @@ let spawnCount = 0;
  * Elixir's `Process` module — the static side of process management, the operations that aren't a
  * method on some existing `self`:
  *
- * - `spawn` CREATES a unit (an anonymous {@link genServer} — no name to invent), returning its handle.
+ * - `spawn` CREATES a process, auto-named (no name to invent). Give it a **function** for a bare
+ *   process (Erlang `spawn/1`: runs to completion, no mailbox) — `Process.spawn(node, (self) => …)`
+ *   or the module form `Process.spawn(node, mod, 'fn', [args])` — or a **behavior** for an anonymous
+ *   {@link genServer} (a process WITH a mailbox). Returns a {@link Pid} or a {@link GenServer}.
  * - `link` / `exit` / `alive` are the free-function forms of Elixir's `Process.link(pid)` /
  *   `Process.exit(pid, reason)` / `Process.alive?(pid)`, for code that holds a handle.
  * - `whereis` / `list` read the LOCAL process table — units served on THIS node (Elixir's
@@ -67,6 +82,9 @@ let spawnCount = 0;
  * Process.alive(counter); // true
  * Process.list(node).length; // 1 — one unit served here
  *
+ * const proc = Process.spawn(node, () => {}); // a BARE process — Erlang spawn/1
+ * typeof proc.name; // 'string'
+ *
  * // Or bind the node once and drop the repeated argument:
  * const P = Process.of(node);
  * P.list().length; // 1 — same table, node-free
@@ -78,17 +96,59 @@ let spawnCount = 0;
 export const Process = { spawn, link, exit, alive, whereis, whereisName, list, of };
 
 /**
- * Spawn an ANONYMOUS unit on `node` — Elixir's `spawn`: a running process with no name you had to
- * invent. Identical to {@link genServer} but the name is auto-assigned (`<node>:proc:<n>`), so you
- * address it by the returned handle. Pass `{ via }` in `options` if you later want it name-reachable.
+ * Spawn an anonymous process on `node`, auto-named `<node>:proc:<n>`, addressed by the returned
+ * handle — Elixir's `spawn`. A **behavior** starts a gen_server (a {@link GenServer}, mailbox +
+ * handlers); a **function** starts a bare process (a {@link Pid}: runs `fun(self)` to completion,
+ * no mailbox); `(mod, 'fn', args)` is the module form, sugar for `spawn(node, (self) => mod.fn(self,
+ * …args))`. `{ link }` links it on spawn (Erlang `spawn_link`); pass `{ via }` on a behavior to make
+ * it name-reachable.
  */
 function spawn<S, K extends string = string>(
   node: NodeHandle,
   behavior: Behavior<S, K>,
   options?: GenServerOptions,
-): GenServer<S, K> {
+): GenServer<S, K>;
+function spawn(
+  node: NodeHandle,
+  fun: (self: Pid) => void | Promise<void>,
+  options?: { link?: object },
+): Pid;
+function spawn(
+  node: NodeHandle,
+  mod: object,
+  fun: string,
+  args?: unknown[],
+  options?: { link?: object },
+): Pid;
+function spawn(
+  node: NodeHandle,
+  second: unknown,
+  third?: unknown,
+  fourth?: unknown,
+  fifth?: unknown,
+): GenServer<unknown> | Pid {
   spawnCount += 1;
-  return genServer(node, `${node.self()}:proc:${spawnCount}`, behavior, options);
+  const name = `${node.self()}:proc:${spawnCount}`;
+  if (typeof second === 'function') {
+    return spawnProcess(
+      node,
+      name,
+      second as (self: Pid) => void | Promise<void>,
+      third as { link?: object },
+    );
+  }
+  if (typeof third === 'string') {
+    // MFA (Erlang spawn/3,4): mod[fun](self, ...args). Sugar over the function form.
+    const mod = second as Record<string, (self: Pid, ...args: unknown[]) => void | Promise<void>>;
+    const args = (fourth as unknown[]) ?? [];
+    return spawnProcess(
+      node,
+      name,
+      (self) => mod[third](self, ...args),
+      fifth as { link?: object },
+    );
+  }
+  return genServer(node, name, second as Behavior<unknown>, third as GenServerOptions);
 }
 
 /** `Process.link(pid)` — link two units bidirectionally; an exit in either propagates to the other. */
@@ -136,8 +196,16 @@ function whereisName(node: NodeHandle, registry: string, key: string): string | 
  * is no ambient node to default to — several nodes coexist in one process — so `of` is that choice.
  */
 function of(node: NodeHandle): BoundProcess {
+  const boundSpawn = ((second: unknown, third?: unknown, fourth?: unknown, fifth?: unknown) =>
+    (spawn as (n: NodeHandle, ...rest: unknown[]) => GenServer<unknown> | Pid)(
+      node,
+      second,
+      third,
+      fourth,
+      fifth,
+    )) as BoundProcess['spawn'];
   return {
-    spawn: (behavior, options) => spawn(node, behavior, options),
+    spawn: boundSpawn,
     link, // handle-based — no node to bind, so they pass straight through
     exit,
     alive,

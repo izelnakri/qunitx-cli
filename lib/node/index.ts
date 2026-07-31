@@ -67,10 +67,12 @@ export { ORSet, type Dot, type VersionVector, type CausalContext, type CrdtState
 export { memoryStore, type Store } from './store.ts';
 export {
   genServer,
+  spawnProcess,
   superviseGenServer,
   type Behavior,
   type GenServer,
   type GenServerOptions,
+  type Pid,
   type Self,
   type TimerRef,
 } from './gen-server.ts';

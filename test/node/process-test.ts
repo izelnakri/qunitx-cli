@@ -2,6 +2,8 @@ import { module, test } from 'qunitx';
 import { Node, memoryHub, Process } from '../../lib/node/index.ts';
 import { Failure } from '../../lib/result/index.ts';
 
+const settle = (ms = 15) => new Promise((r) => setTimeout(r, ms));
+
 const counter = () => ({
   version: '1',
   init: () => 0,
@@ -105,6 +107,88 @@ module('Node | Process (Elixir Process module)', () => {
 
     P.exit(unit);
     assert.deepEqual(P.list(), [], 'a dead unit leaves the table, seen through the bound view too');
+    node.stop();
+  });
+});
+
+const guardBehavior = () => ({
+  version: '1',
+  init: () => 0,
+  handlers: { noop: (n: number) => ({ state: n, reply: n }) },
+});
+
+module('Node | Process.spawn (bare processes — Erlang spawn/1,3)', () => {
+  test('spawn(fun) runs the body, receives self, and exits when it returns', async (assert) => {
+    const node = Node.start('a@proc', memoryHub().transport());
+    let seenName = '';
+    const p = Process.spawn(node, (self) => {
+      seenName = self.name;
+    });
+    assert.true(Process.alive(p), 'alive immediately — the body runs on a microtask');
+    assert.true(String(p.name).startsWith('a@proc:proc:'), 'auto-named like any spawn');
+    await settle();
+    assert.strictEqual(seenName, p.name, 'the body received self (its own name)');
+    assert.false(Process.alive(p), 'it exited when the body returned');
+    node.stop();
+  });
+
+  test('an async body stays alive until it settles; it is in the local table meanwhile', async (assert) => {
+    const node = Node.start('a@proc', memoryHub().transport());
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const p = Process.spawn(node, async () => {
+      await gate;
+    });
+    await settle();
+    assert.true(Process.alive(p), 'still alive while the body awaits');
+    assert.true(Process.list(node).includes(p.name), 'and listed in the local process table');
+    release();
+    await settle();
+    assert.false(Process.alive(p), 'exits once the body resolves');
+    assert.false(Process.list(node).includes(p.name), 'and leaves the table');
+    node.stop();
+  });
+
+  test('a NORMAL exit (body returns) does not disturb a linked unit — Erlang :normal', async (assert) => {
+    const node = Node.start('a@proc', memoryHub().transport());
+    const guard = Process.spawn(node, guardBehavior());
+    const p = Process.spawn(node, () => {}, { link: guard }); // spawn_link
+    await settle();
+    assert.false(Process.alive(p), 'the process finished');
+    assert.true(
+      Process.alive(guard),
+      'the linked unit SURVIVED — a normal exit does not propagate',
+    );
+    node.stop();
+  });
+
+  test('an ABNORMAL exit (body throws) propagates to a linked unit', async (assert) => {
+    const node = Node.start('a@proc', memoryHub().transport());
+    const guard = Process.spawn(node, guardBehavior());
+    Process.spawn(
+      node,
+      () => {
+        throw new Error('boom');
+      },
+      { link: guard },
+    );
+    await settle();
+    assert.false(Process.alive(guard), 'the linked unit died — an abnormal exit propagates');
+    node.stop();
+  });
+
+  test('the module form runs mod.fn(self, ...args) — Erlang spawn/3', async (assert) => {
+    const node = Node.start('a@proc', memoryHub().transport());
+    const calls: unknown[] = [];
+    const mod = {
+      work: (self: { name: string }, x: number, y: number) => {
+        calls.push([String(self.name).startsWith('a@proc'), x, y]);
+      },
+    };
+    const p = Process.spawn(node, mod, 'work', [1, 2]);
+    await settle();
+    assert.deepEqual(calls, [[true, 1, 2]], 'mod.work got self followed by the args');
+    assert.false(Process.alive(p), 'and it exited on completion');
     node.stop();
   });
 });
