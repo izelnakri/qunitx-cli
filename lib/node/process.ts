@@ -22,7 +22,9 @@ let spawnCount = 0;
  * - `spawn` CREATES a unit (an anonymous {@link genServer} — no name to invent), returning its handle.
  * - `link` / `exit` / `alive` are the free-function forms of Elixir's `Process.link(pid)` /
  *   `Process.exit(pid, reason)` / `Process.alive?(pid)`, for code that holds a handle.
- * - `whereis` looks a registered name up in the cluster (Elixir's `:global.whereis_name` / Registry).
+ * - `whereis` / `list` read the LOCAL process table — units served on THIS node (Elixir's
+ *   `Process.whereis/1` and `Process.registered/0`). `whereisName` is the cluster lookup
+ *   (`:global.whereis_name` / a Registry): which node hosts a via-registered key.
  *
  * ```ts
  * import { Node, memoryHub } from './node.ts';
@@ -36,11 +38,13 @@ let spawnCount = 0;
  * });
  * await counter.call('bump'); // 1 — addressed by the handle, no name to pick
  * Process.alive(counter); // true
+ * Process.list(node).length; // 1 — one unit served here
  * Process.exit(counter);
+ * Process.list(node).length; // 0 — a dead unit leaves the local table
  * node.stop();
  * ```
  */
-export const Process = { spawn, link, exit, alive, whereis };
+export const Process = { spawn, link, exit, alive, whereis, whereisName, list };
 
 /**
  * Spawn an ANONYMOUS unit on `node` — Elixir's `spawn`: a running process with no name you had to
@@ -72,10 +76,24 @@ function alive(unit: Unit): boolean {
 }
 
 /**
- * Look a registered name up across the cluster — Elixir's `:global.whereis_name` / a `Registry`
- * lookup: the node that currently hosts `key` in `registry`, or `null` if none. Works for units
- * registered with `{ via: { registry, key } }`.
+ * Elixir's `Process.whereis(name)` — the LOCAL lookup: is a unit named `name` alive on THIS node?
+ * Returns the node's own name (its "address") if so, else `null`. Reads the local-unit table, so it
+ * is a synchronous, in-process answer — no wire hop, unlike {@link whereisName}.
  */
-function whereis(node: NodeHandle, registry: string, key: string): string | null {
+function whereis(node: NodeHandle, name: string): string | null {
+  return node.unit(name) ? node.self() : null;
+}
+
+/** Elixir's `Process.registered/0` — the names of every unit served locally on `node` right now. */
+function list(node: NodeHandle): string[] {
+  return node.units();
+}
+
+/**
+ * Look a registered name up across the CLUSTER — Elixir's `:global.whereis_name` / a `Registry`
+ * lookup: the node that currently hosts `key` in `registry`, or `null` if none. Works for units
+ * registered with `{ via: { registry, key } }`. Contrast {@link whereis}, which is local-only.
+ */
+function whereisName(node: NodeHandle, registry: string, key: string): string | null {
   return node.whereis(registry, key);
 }

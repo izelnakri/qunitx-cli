@@ -650,3 +650,23 @@ module('Node | persistence', () => {
     cli.stop();
   });
 });
+
+module('Node | local-unit table', () => {
+  test('node.units()/node.unit() expose locally-served units; death removes them', (assert) => {
+    const node = Node.start('a@u', Node.memoryHub().transport());
+    const noop = { init: () => 0, handlers: { noop: (n: number) => ({ state: n, reply: n }) } };
+    Node.genServer(node, 'alpha', { version: '2', ...noop });
+    const beta = Node.genServer(node, 'beta', { version: '1', ...noop });
+
+    assert.deepEqual(node.units().sort(), ['alpha', 'beta'], 'both units are in the local table');
+    const info = node.unit('alpha');
+    assert.strictEqual(info?.version, '2', 'node.unit() returns the live report (version)');
+    assert.strictEqual(info?.alive, true, 'and liveness');
+    assert.strictEqual(node.unit('ghost'), undefined, 'an unserved name is undefined');
+
+    beta.exit();
+    assert.deepEqual(node.units(), ['alpha'], 'a dead unit left the table');
+    assert.strictEqual(node.unit('beta'), undefined, 'gone — no lingering entry');
+    node.stop();
+  });
+});

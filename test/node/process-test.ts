@@ -53,17 +53,36 @@ module('Node | Process (Elixir Process module)', () => {
     node.stop();
   });
 
-  test('whereis resolves a via-registered name to its host node', (assert) => {
+  test('whereis / list read the LOCAL table; a dead unit leaves it (no leak)', async (assert) => {
+    const node = Node.start('a@proc', memoryHub().transport());
+    const unit = Process.spawn(node, counter());
+    const name = String(await unit.call('whoami')); // its auto-assigned name
+
+    assert.strictEqual(
+      Process.whereis(node, name),
+      'a@proc',
+      'the live unit is found on this node',
+    );
+    assert.strictEqual(Process.whereis(node, 'ghost'), null, 'an unknown name resolves to null');
+    assert.deepEqual(Process.list(node), [name], 'list reports the one unit served here');
+
+    Process.exit(unit);
+    assert.strictEqual(Process.whereis(node, name), null, 'a dead unit is no longer whereis-able');
+    assert.deepEqual(Process.list(node), [], 'and it left the local table — no dead-entry leak');
+    node.stop();
+  });
+
+  test('whereisName resolves a via-registered name to its host node (cluster lookup)', (assert) => {
     const node = Node.start('a@proc', memoryHub().transport());
     Process.spawn(node, counter(), { via: { registry: 'reg', key: 'k1' } });
 
     assert.strictEqual(
-      Process.whereis(node, 'reg', 'k1'),
+      Process.whereisName(node, 'reg', 'k1'),
       'a@proc',
       'the registered unit is hosted here',
     );
     assert.strictEqual(
-      Process.whereis(node, 'reg', 'nope'),
+      Process.whereisName(node, 'reg', 'nope'),
       null,
       'an unknown key resolves to null',
     );

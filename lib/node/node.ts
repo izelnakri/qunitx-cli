@@ -229,6 +229,17 @@ export interface NodeHandle {
    * any custom unit. Returns the un-register.
    */
   inspect(name: string, report: () => Record<string, unknown>): () => void;
+  /**
+   * The names of the units served LOCALLY on this node right now — the local process table (Elixir's
+   * `Process.registered/0`). A unit joins on {@link inspect} and leaves when its un-register runs
+   * (`genServer` does this on death), so a name here means it is alive on THIS node.
+   */
+  units(): string[];
+  /**
+   * The live introspection report for a LOCAL unit (`{ version, mailboxDepth, alive, … }`), or
+   * `undefined` if no unit named `name` is served here — the local `Process.whereis/1` lookup.
+   */
+  unit(name: string): Record<string, unknown> | undefined;
 }
 
 /**
@@ -735,6 +746,8 @@ export function start(
       inspectors.set(unit, report);
       return () => inspectors.delete(unit);
     },
+    units: () => [...inspectors.keys()],
+    unit: (name) => inspectors.get(name)?.(),
     cast(to, subject, payload) {
       // A group cast reaches EVERY member (pg-style broadcast); a via: cast reaches the key's
       // owner; a node cast reaches one node.

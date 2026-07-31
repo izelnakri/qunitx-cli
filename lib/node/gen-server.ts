@@ -376,6 +376,14 @@ export function genServer<S, K extends string = string>(
   const timers = new Set<ReturnType<typeof setTimeout>>(); // pending sendAfter timers, cleared on down
   let trap: ((from: string, reason: AnyFailure) => void) | null = null;
 
+  // Surface this unit to sys.node.info / the observer AND the node's local-unit table — version,
+  // mailbox depth, liveness. down() calls the un-register, so a dead name leaves node.units()/unit().
+  const stopInspect = node.inspect(name, () => ({
+    version: current.version,
+    mailboxDepth: queue.length + (pumping ? 1 : 0),
+    alive: unitAlive,
+  }));
+
   const deliverExit = (from: string, reason: AnyFailure): void => {
     if (!unitAlive) return;
     if (trap) {
@@ -401,6 +409,7 @@ export function genServer<S, K extends string = string>(
     timers.clear();
     for (const peer of links) peer.deliverExit(name, reason);
     links.clear();
+    stopInspect?.(); // leave the node's local-unit table — a dead name is no longer served here
     options.onDown?.(reason); // AFTER links propagate — observers see a fully-settled death
   };
 
@@ -477,12 +486,6 @@ export function genServer<S, K extends string = string>(
       ),
     );
   }
-  // Surface this unit to sys.node.info / the observer — version, mailbox depth, liveness.
-  node.inspect(name, () => ({
-    version: current.version,
-    mailboxDepth: queue.length + (pumping ? 1 : 0),
-    alive: unitAlive,
-  }));
   return handle;
 }
 
