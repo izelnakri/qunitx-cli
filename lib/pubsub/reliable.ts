@@ -58,15 +58,26 @@ const streamKey = (topic: string, from: string) => `${topic}${from}`;
  */
 export function reliablePubSub(
   node: NodeHandle,
-  options: { bufferSize?: number; heartbeatMs?: number | false } = {},
+  options: {
+    bufferSize?: number;
+    heartbeatMs?: number | false;
+    /** Idle window before a topic with NO local subscriber has its send-state GC'd (default 30s). */
+    staleTopicMs?: number;
+    /** Injectable clock (tests). */
+    now?: () => number;
+  } = {},
 ): PubSub {
   const bufferSize = options.bufferSize ?? 256;
+  const now = options.now ?? Date.now;
+  const staleTopicMs = options.staleTopicMs ?? 30_000;
   const self = node.self();
   const local = new Map<string, Set<PubSubHandler>>();
   const outSeq = new Map<string, number>(); // my next seq per topic
   const outBuf = new Map<string, Map<number, Msg>>(); // my recent sent msgs per topic
+  const lastSend = new Map<string, number>(); // topic -> last broadcast time (for send-state GC)
   const inNext = new Map<string, number>(); // next expected seq per (topic,sender)
   const inPending = new Map<string, Map<number, Msg>>(); // held out-of-order msgs
+  const topicStreams = new Map<string, Set<string>>(); // topic -> its (topic,sender) keys, for cleanup
 
   const deliver = (msg: Msg): void => {
     const subs = local.get(msg.topic);
@@ -95,6 +106,9 @@ export function reliablePubSub(
   const onMsg = (msg: Msg): void => {
     if (msg.from === self) return; // my own messages are delivered locally at broadcast time
     const key = streamKey(msg.topic, msg.from);
+    let streams = topicStreams.get(msg.topic);
+    if (!streams) topicStreams.set(msg.topic, (streams = new Set()));
+    streams.add(key);
     const next = inNext.get(key);
     if (next === undefined) return accept(key, msg); // first seen from this sender = baseline
     if (msg.seq < next) return; // duplicate/old — de-dup
@@ -139,8 +153,20 @@ export function reliablePubSub(
   let hbTimer: ReturnType<typeof setInterval> | undefined;
   if (options.heartbeatMs !== false) {
     hbTimer = setInterval(() => {
-      for (const [topic, seq] of outSeq)
+      const t = now();
+      for (const [topic, seq] of outSeq) {
+        // Bound send-state for ephemeral topics: GC a topic with NO local subscriber that hasn't been
+        // broadcast to within staleTopicMs. (Re-publishing to a GC'd name restarts its seq — fine for
+        // unique ephemeral names; keep a subscriber, or publish within the window, to preserve a
+        // reused stream.) Was: iterate outSeq forever, one entry per topic-ever-sent.
+        if (!local.has(topic) && t - (lastSend.get(topic) ?? 0) > staleTopicMs) {
+          outSeq.delete(topic);
+          outBuf.delete(topic);
+          lastSend.delete(topic);
+          continue;
+        }
         node.cast(`group:${groupOf(topic)}`, HEARTBEAT, { topic, from: self, latest: seq });
+      }
     }, options.heartbeatMs ?? 500);
     (hbTimer as { unref?: () => void }).unref?.();
   }
@@ -152,12 +178,24 @@ export function reliablePubSub(
     if (subs.size === 0) {
       local.delete(topic);
       node.leave(groupOf(topic));
+      // No local handler will deliver this topic again — drop its receive-state (per-(topic,sender)),
+      // in O(senders) via the index. Safe: a re-subscribe restarts from baseline; messages missed
+      // while unsubscribed are gone regardless.
+      const streams = topicStreams.get(topic);
+      if (streams) {
+        for (const key of streams) {
+          inNext.delete(key);
+          inPending.delete(key);
+        }
+        topicStreams.delete(topic);
+      }
     }
   };
 
   const send = (topic: string, event: string, payload: unknown, toSelf: boolean): void => {
     const seq = (outSeq.get(topic) ?? 0) + 1;
     outSeq.set(topic, seq);
+    lastSend.set(topic, now());
     const msg: Msg = { topic, event, payload, from: self, seq };
     const buf = outBuf.get(topic) ?? outBuf.set(topic, new Map()).get(topic)!;
     buf.set(seq, msg);

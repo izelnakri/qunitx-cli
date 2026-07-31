@@ -88,4 +88,22 @@ module('PubSub | reliable delivery', () => {
     a.stop();
     b.stop();
   });
+
+  test('send-state is GC-ed for an idle, unsubscribed topic — delivery still works after', async (assert) => {
+    let clock = 1000;
+    const node = Node.start('n@rps', Node.memoryHub().transport());
+    const rps = reliablePubSub(node, { heartbeatMs: 10, staleTopicMs: 50, now: () => clock });
+
+    rps.broadcast('ephemeral', 'e', 1); // creates send-state; no local subscriber
+    clock += 200; // idle past staleTopicMs
+    await settle(40); // let the heartbeat sweep GC it
+
+    // Re-publish: seq restarts (send-state was reclaimed). A fresh subscriber still receives it.
+    const got: number[] = [];
+    rps.subscribe('ephemeral', (_e, p) => got.push(p as number));
+    rps.broadcast('ephemeral', 'e', 2);
+    await settle(20);
+    assert.deepEqual(got, [2], 'GC of idle send-state does not break subsequent delivery');
+    node.stop();
+  });
 });
