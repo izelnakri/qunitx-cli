@@ -8,6 +8,7 @@ import {
   superviseGenServer,
   type GenServer,
 } from '../../lib/node/index.ts';
+import { Failure } from '../../lib/result/index.ts';
 
 const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const until = async (cond: () => boolean, ms = 4000) => {
@@ -130,7 +131,7 @@ module('Node | distributedSupervisor (Horde DynamicSupervisor)', () => {
     }
   });
 
-  test('crashOnError: a handler bug crashes the unit and the supervisor restarts it, rehydrated', async (assert) => {
+  test('a handler bug crashes a supervised unit and it restarts, rehydrated (crashOnError default)', async (assert) => {
     const hub = memoryHub();
     const store = memoryStore();
     const node = Node.start('solo@crash', hub.transport());
@@ -155,7 +156,7 @@ module('Node | distributedSupervisor (Horde DynamicSupervisor)', () => {
               },
             },
           },
-          { store, storeKey: key, crashOnError: true }, // let it crash → supervisor restarts it
+          { store, storeKey: key }, // no crashOnError — superviseGenServer defaults it ON
         );
       },
     });
@@ -182,6 +183,48 @@ module('Node | distributedSupervisor (Horde DynamicSupervisor)', () => {
         50,
         'the restarted unit rehydrated its balance from the store',
       );
+    } finally {
+      await sup.stop();
+      node.stop();
+    }
+  });
+
+  test('crashOnError: false overrides the supervised default — bugs are answered, not fatal', async (assert) => {
+    const hub = memoryHub();
+    const node = Node.start('solo@lenient', hub.transport());
+    let starts = 0;
+    const sup = distributedSupervisor(node, shardedRegistry(node), {
+      name: 'svc',
+      desired: ['s1'],
+      reconcileMs: 20,
+      start: (key) => {
+        starts += 1;
+        return superviseGenServer(
+          node,
+          key,
+          {
+            version: '1',
+            init: () => 0,
+            handlers: {
+              ok: (n) => ({ state: n + 1, reply: n + 1 }),
+              boom: () => {
+                throw new Error('bug');
+              },
+            },
+          },
+          { crashOnError: false }, // opt back out of the supervised default
+        );
+      },
+    });
+    const unit = () => sup.local('s1') as GenServer<number, 'ok' | 'boom'>;
+    try {
+      assert.true(await until(() => sup.hosted().includes('s1')), 's1 hosted');
+      const before = starts;
+      const crashed = (await unit().call('boom').result()) as Failure.Any;
+      assert.equal(crashed.code, 'RemoteCrash', 'the bug came back as a reply, not a crash');
+      await settle(60); // give any (unwanted) restart a chance to happen
+      assert.equal(starts, before, 'the unit did NOT restart — it never crashed');
+      assert.equal(await unit().call('ok'), 1, 'still the same live unit, serving');
     } finally {
       await sup.stop();
       node.stop();

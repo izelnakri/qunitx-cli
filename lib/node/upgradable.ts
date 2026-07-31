@@ -288,10 +288,14 @@ export interface GenServerOptions {
   /**
    * OTP's "let it crash": a handler throwing a **bug** (a non-`Failure`) TERMINATES the unit —
    * `down()` fires the exit signal (links → `onExit` → a supervisor restarts it) and the in-flight
-   * caller gets a `UnitCrashed` failure (the bug as its `.cause`). OFF (the default), that same throw
-   * is answered as a `RemoteCrash` reply and the unit keeps serving. Either way a thrown or returned
+   * caller gets a `UnitCrashed` failure (the bug as its `.cause`). When off, that same throw is
+   * answered as a `RemoteCrash` reply and the unit keeps serving. Either way a thrown or returned
    * declared `Failure` is an EXPECTED outcome and never crashes — only bugs do. Pair with a `store`
    * (and a supervisor) so the restarted unit rehydrates instead of losing state.
+   *
+   * DEFAULT depends on whether a restarter exists: a bare {@link genServer} defaults **off** (an
+   * unsupervised unit shouldn't self-destruct permanently on one bug — it degrades by replying the
+   * error), while {@link superviseGenServer} defaults it **on** (you supervised it, so let it crash).
    */
   crashOnError?: boolean;
   /**
@@ -480,11 +484,20 @@ export function genServer<S, K extends string = string>(
   };
 
   const handle: GenServer<S, K> = {
-    // The typed local client — invoke a handler in-process, no wire hop. A declared Failure reply
-    // (or a thrown Failure) rejects the Task, mirroring what a remote `node.call` sees.
+    // The typed local client — invoke a handler in-process, no wire hop. Whatever the remote
+    // `node.call` path would surface, this does too: a declared Failure (returned OR thrown) rejects
+    // the Task as itself; a bug (a non-Failure throw) rejects as RemoteCrash — so Task<_, AnyFailure>
+    // never leaks a bare Error, local or remote.
     call: (subject, payload) =>
       Task<unknown, AnyFailure>(async () => {
-        const reply = await invoke(subject, payload, name);
+        let reply: unknown;
+        try {
+          reply = await invoke(subject, payload, name);
+        } catch (thrown) {
+          throw isFailure(thrown)
+            ? thrown
+            : new Failure('RemoteCrash', String(thrown), { subject });
+        }
         if (isFailure(reply)) throw reply;
         return reply;
       }).perform(),
@@ -549,6 +562,10 @@ const otherLinks = new WeakMap<ExitPort, Set<ExitPort>>();
  * survivor, whose fresh unit rehydrates from the same store (persist-before-ack) — the OTP/Horde story,
  * minus a live process migration (a JS runtime can't hand a running closure across nodes).
  *
+ * Because it IS supervised, `crashOnError` defaults **on** here (unlike a bare `genServer`): a handler
+ * bug crashes the unit and the supervisor restarts it — the reason you supervised it. Pass
+ * `crashOnError: false` to keep it answering bugs as replies instead.
+ *
  * ```ts
  * import { Node, memoryHub } from './node.ts';
  * import { shardedRegistry } from './sharded-registry.ts';
@@ -586,6 +603,11 @@ export function superviseGenServer<S, K extends string = string>(
   let stopping = false;
   const handle = genServer(node, name, behavior, {
     ...options,
+    // Supervised → "let it crash" by DEFAULT (OTP): a handler bug should restart the unit, since a
+    // restarter is the whole reason you supervised it. Bare genServer defaults the other way (no
+    // restarter → don't self-destruct on one bug). Override with `crashOnError: false` to keep a
+    // supervised unit answering bugs instead of crashing.
+    crashOnError: options.crashOnError ?? true,
     // A graceful stop() flips `stopping` first, so its own down() must NOT report as a crash
     // (the Service contract). Any other death — linked crash, via conflict, external exit — does.
     onDown: (reason) => {

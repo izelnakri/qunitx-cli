@@ -152,12 +152,15 @@ the cluster's ability to _re-home_, and the state's survival is the store, not a
 you truly need multiple copies accepting writes at once, that's consensus (`raftStore` — CP) or a
 CRDT (AP) — a deliberate step up in cost, for when one active owner isn't enough.
 
-**Let it crash** — by default a handler bug is answered as a `RemoteCrash` reply and the unit keeps
-serving (a distributed-systems choice: a remote caller usually wants an error back, not a silent
-death). Add `{ crashOnError: true }` for OTP's default instead: a **bug** (a non-`Failure` throw)
-terminates the unit — its supervisor restarts a fresh one that rehydrates from the store, and the
-in-flight caller gets a `UnitCrashed` failure with the bug as `.cause`. A thrown or returned declared
-`Failure` is always an expected reply, never a crash — only bugs crash, so domain errors stay cheap.
+**Let it crash** — a **bug** (a non-`Failure` throw) can either terminate the unit (OTP "let it
+crash": the supervisor restarts a fresh one that rehydrates from the store, and the in-flight caller
+gets a `UnitCrashed` failure with the bug as `.cause`) or be answered as a `RemoteCrash` reply while
+the unit keeps serving. Which one is the `crashOnError` option — and **its default tracks whether a
+restarter exists**: `superviseGenServer` defaults it **on** (you supervised it, so a bug should
+restart it — the whole point of the supervisor), while a bare `genServer` defaults it **off** (an
+unsupervised unit shouldn't self-destruct permanently on one bug — it degrades by replying the
+error). Override either way with `{ crashOnError: … }`. A thrown or returned declared `Failure` is
+always an expected reply, never a crash — only bugs crash, so domain errors stay cheap.
 
 For a single named process rather than a keyspace, `genServer(node, name, behavior, { via: { registry,
 key } })` registers it under a cluster-wide name (Elixir's `{:via, Registry, {Reg, key}}`); any node
