@@ -270,7 +270,7 @@ export function dynamic(
 ): DynamicSupervisorHandle {
   const { maxRestarts = 3, maxSeconds = 5 } = options;
   const running = new Map<string, Running>();
-  const insertion: string[] = []; // start order, for reverse teardown
+  const insertion = new Set<string>(); // start order (Set = ordered + O(1) removal)
   const restarts: number[] = [];
   let ended = false;
   let endSupervision!: (outcome?: AnyFailure) => void;
@@ -300,8 +300,7 @@ export function dynamic(
     const policy = entry.spec.restart;
     const wantsRestart = policy === 'permanent' || (policy === 'transient' && crash !== null);
     if (!wantsRestart) {
-      const at = insertion.indexOf(entry.spec.id);
-      if (at !== -1) insertion.splice(at, 1);
+      insertion.delete(entry.spec.id); // O(1) — was indexOf+splice (O(n) → O(n^2) churn)
       return;
     }
     const now = Date.now();
@@ -332,7 +331,7 @@ export function dynamic(
         running.delete(id);
       }
     }
-    insertion.length = 0;
+    insertion.clear();
     endSupervision(outcome);
   };
 
@@ -340,7 +339,7 @@ export function dynamic(
     startChild(spec) {
       if (ended) throw new Failure('SupervisorShutdown', 'supervisor has ended', { id: spec.id });
       const full: Required<ChildSpec> = { restart: 'permanent', ...spec };
-      insertion.push(full.id);
+      insertion.add(full.id);
       spawn(full);
       return full.id;
     },
@@ -350,10 +349,9 @@ export function dynamic(
       peer.controller.abort();
       await peer.exited.catch(() => undefined);
       running.delete(id);
-      const at = insertion.indexOf(id);
-      if (at !== -1) insertion.splice(at, 1);
+      insertion.delete(id); // O(1)
     },
-    children: () => insertion.filter((id) => running.has(id)),
+    children: () => [...insertion].filter((id) => running.has(id)),
     count: () => running.size,
     stop: () => shutdown(),
     done,
