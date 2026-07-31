@@ -1,7 +1,8 @@
 import { module, test } from 'qunitx';
 import * as Node from '../../lib/node/index.ts';
 import { raft, type Raft } from '../../lib/raft/index.ts';
-import { isFailure, type Any as AnyFailure } from '../../lib/result/failure.ts';
+import { Failure } from '../../lib/result/index.ts';
+import type { Any as AnyFailure } from '../../lib/result/failure.ts';
 
 const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const until = async (cond: () => boolean, ms = 5000) => {
@@ -102,7 +103,7 @@ module('Raft | CP consensus', () => {
       (e) => e,
     );
     assert.true(
-      isFailure(rejection) && (rejection as AnyFailure).code === 'NotLeader',
+      Failure.is(rejection) && (rejection as AnyFailure).code === 'NotLeader',
       'a follower rejects with NotLeader',
     );
     assert.equal(
@@ -421,7 +422,7 @@ module('Raft | pre-vote, read-index, leadership transfer', () => {
       (e) => e,
     );
     assert.true(
-      isFailure(rejection) && (rejection as AnyFailure).code === 'NotLeader',
+      Failure.is(rejection) && (rejection as AnyFailure).code === 'NotLeader',
       'a follower refuses a linearizable read with the leader hint',
     );
     members.forEach((m) => m.stop());

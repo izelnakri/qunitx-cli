@@ -2,13 +2,13 @@ import { module, test } from 'qunitx';
 import { memoryStore } from '../../lib/node/index.ts';
 import { Job } from '../../lib/job/index.ts';
 import { Task } from '../../lib/task/index.ts';
-import { isFailure, define } from '../../lib/result/failure.ts';
+import { Failure } from '../../lib/result/index.ts';
 
 const settle = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // A declared failure — the kind a worker throws on purpose (its code + data are captured for
 // dead-letter routing); contrast with a raw `new Error(...)`, which is a *bug*.
-const Overloaded = define(
+const Overloaded = Failure.define(
   'Overloaded',
   (d: { retryAfter: number }) => `overloaded, retry in ${d.retryAfter}s`,
 );
@@ -51,7 +51,7 @@ module('Jobs | Task inside a worker handler', () => {
     );
 
     const rawError = queue.peek(bad.id)?.errors.at(-1)?.error;
-    assert.true(isFailure(rawError), 'a raw Error propagates through the Task as a live Failure');
+    assert.true(Failure.is(rawError), 'a raw Error propagates through the Task as a live Failure');
     assert.equal(rawError?.code, 'Unknown', 'a bug is coerced to code Unknown');
     assert.true(
       String((rawError?.cause as Error)?.message).includes('boom'),
@@ -59,7 +59,7 @@ module('Jobs | Task inside a worker handler', () => {
     );
 
     const typedError = queue.peek(typed.id)?.errors.at(-1)?.error;
-    assert.true(isFailure(typedError), 'a thrown Failure stays a live Failure');
+    assert.true(Failure.is(typedError), 'a thrown Failure stays a live Failure');
     assert.equal(typedError?.code, 'Overloaded', 'a declared Failure keeps its code');
     assert.deepEqual(typedError?.data, { retryAfter: 5 }, 'and its data survives');
     queue.stop();
@@ -90,7 +90,7 @@ module('Jobs | Task inside a worker handler', () => {
     assert.equal(queue.peek(bad.id)?.state, 'discarded', 'the await threw → job failed');
 
     const rawError = queue.peek(bad.id)?.errors.at(-1)?.error;
-    assert.true(isFailure(rawError), 'a raw Error propagates as a live Failure');
+    assert.true(Failure.is(rawError), 'a raw Error propagates as a live Failure');
     assert.equal(rawError?.code, 'Unknown', 'a bug is coerced to code Unknown');
     assert.true(
       String((rawError?.cause as Error)?.message).includes('boom'),
@@ -98,7 +98,7 @@ module('Jobs | Task inside a worker handler', () => {
     );
 
     const typedError = queue.peek(typed.id)?.errors.at(-1)?.error;
-    assert.true(isFailure(typedError), 'a thrown Failure stays a live Failure');
+    assert.true(Failure.is(typedError), 'a thrown Failure stays a live Failure');
     assert.equal(typedError?.code, 'Overloaded', 'a declared Failure keeps its code');
     assert.deepEqual(typedError?.data, { retryAfter: 5 }, 'and its data survives');
     queue.stop();
@@ -184,7 +184,7 @@ module('Jobs | Task inside a worker handler', () => {
     );
 
     const rawError = queue.peek(bad.id)?.errors.at(-1)?.error;
-    assert.true(isFailure(rawError), 'a raw Error propagates as a live Failure');
+    assert.true(Failure.is(rawError), 'a raw Error propagates as a live Failure');
     assert.equal(rawError?.code, 'Unknown', 'a bug is coerced to code Unknown');
     assert.true(
       String((rawError?.cause as Error)?.message).includes('boom'),
@@ -192,7 +192,7 @@ module('Jobs | Task inside a worker handler', () => {
     );
 
     const typedError = queue.peek(typed.id)?.errors.at(-1)?.error;
-    assert.true(isFailure(typedError), 'a thrown Failure stays a live Failure');
+    assert.true(Failure.is(typedError), 'a thrown Failure stays a live Failure');
     assert.equal(typedError?.code, 'Overloaded', 'a declared Failure keeps its code');
     assert.deepEqual(typedError?.data, { retryAfter: 5 }, 'and its data survives');
     queue.stop();

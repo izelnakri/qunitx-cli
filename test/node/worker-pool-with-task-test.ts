@@ -3,7 +3,7 @@ import { Node } from '../../lib/node/index.ts';
 import { workerPool } from '../../lib/node/worker-pool.ts';
 import { wsTransport } from '../../lib/node/ws.ts';
 import { startHub } from '../../lib/node/hub.ts';
-import { isFailure } from '../../lib/result/failure.ts';
+import { Failure } from '../../lib/result/index.ts';
 
 const TASK_WORKER = new URL('../fixtures/task-worker.ts', import.meta.url);
 const until = async (cond: () => boolean, ms = 8000) => {
@@ -25,7 +25,7 @@ async function assertPatterns(
   call: (subject: string) => Promise<unknown> & { result(): Promise<unknown> },
 ) {
   const val = (s: string) => call(s) as Promise<unknown>;
-  const failed = async (s: string) => isFailure(await call(s).result());
+  const failed = async (s: string) => Failure.is(await call(s).result());
 
   await val('reset');
   // (e/i) return task

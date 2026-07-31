@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import { memoryStore } from '../../lib/node/index.ts';
 import { Job } from '../../lib/job/index.ts';
-import { isFailure, define } from '../../lib/result/failure.ts';
+import { Failure } from '../../lib/result/index.ts';
 import * as Telemetry from '../../lib/telemetry/index.ts';
 
 const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -89,7 +89,7 @@ module('Jobs | Oban-shaped durable queue', () => {
   });
 
   test('errors capture the stack; a thrown Failure adds its code + safe data, a bad payload is dropped', async (assert) => {
-    const RateLimited = define(
+    const RateLimited = Failure.define(
       'RateLimited',
       (d: { retryAfter: number }) => `slow down (${d.retryAfter}s)`,
     );
@@ -117,7 +117,7 @@ module('Jobs | Oban-shaped durable queue', () => {
     await queue.drain();
 
     const typedError = queue.peek(typed.id)!.errors[0];
-    assert.true(isFailure(typedError.error), 'errors[].error is a LIVE Failure');
+    assert.true(Failure.is(typedError.error), 'errors[].error is a LIVE Failure');
     assert.equal(typedError.error.code, 'RateLimited', 'a declared throw keeps its code');
     assert.deepEqual(
       typedError.error.data,
@@ -146,7 +146,7 @@ module('Jobs | Oban-shaped durable queue', () => {
   });
 
   test('errors survive a reload as live Failures — uniform on fresh AND reloaded jobs', async (assert) => {
-    const RateLimited = define('RateLimited', (d: { n: number }) => `rate ${d.n}`);
+    const RateLimited = Failure.define('RateLimited', (d: { n: number }) => `rate ${d.n}`);
     const store = memoryStore(); // the SHARED durable store
     const first = Job.queue({
       store,
@@ -161,7 +161,7 @@ module('Jobs | Oban-shaped durable queue', () => {
     const job = await first.insert('doomed', {}, { maxAttempts: 1 });
     await first.drain();
     assert.true(
-      isFailure(first.peek(job.id)!.errors[0].error),
+      Failure.is(first.peek(job.id)!.errors[0].error),
       'fresh: the error is a live Failure',
     );
     first.stop();
@@ -172,7 +172,7 @@ module('Jobs | Oban-shaped durable queue', () => {
     const reloaded = second.peek(job.id)!;
     assert.equal(reloaded.state, 'discarded', 'the dead-letter job reloaded');
     assert.true(
-      isFailure(reloaded.errors[0].error),
+      Failure.is(reloaded.errors[0].error),
       'reloaded: STILL a live Failure — not a plain object',
     );
     assert.equal(reloaded.errors[0].error.code, 'RateLimited', 'with its code');
@@ -319,9 +319,9 @@ module('Jobs | Oban-shaped durable queue', () => {
     );
 
     // the uniformity win: .result() settles to the bare Result union (Job | Failure) — no try/catch;
-    // isFailure() is the discriminator. (insert only fails on a store write error; here it succeeds.)
+    // Failure.is() is the discriminator. (insert only fails on a store write error; here it succeeds.)
     const jobB = await queue.insert('reports.export', { n: 2 }).result();
-    assert.false(isFailure(jobB), 'a successful insert resolves to the Job, not a Failure');
+    assert.false(Failure.is(jobB), 'a successful insert resolves to the Job, not a Failure');
     assert.deepEqual(
       (jobB as { args: unknown }).args,
       { n: 2 },
@@ -565,7 +565,7 @@ module('Jobs | Oban-shaped durable queue', () => {
   });
 
   test('dead-letter routing: a discarded job’s errors.code discriminates a declared Failure from a bug', async (assert) => {
-    const RateLimited = define('RateLimited', () => 'slow down');
+    const RateLimited = Failure.define('RateLimited', () => 'slow down');
     const queue = Job.queue({
       store: memoryStore(),
       backoff: () => 0,
@@ -601,7 +601,7 @@ module('Jobs | Oban-shaped durable queue', () => {
   });
 
   test('a worker can Job.discard() a job — terminal now, skipping remaining attempts, routable by code', async (assert) => {
-    const PaymentDeclined = define(
+    const PaymentDeclined = Failure.define(
       'PaymentDeclined',
       (d: { card: string }) => `declined ${d.card}`,
     );

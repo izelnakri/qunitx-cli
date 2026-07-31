@@ -1,6 +1,7 @@
 import { module, test } from 'qunitx';
 import * as Node from '../../lib/node/index.ts';
-import { isFailure, type Any as AnyFailure } from '../../lib/result/failure.ts';
+import { Failure } from '../../lib/result/index.ts';
+import type { Any as AnyFailure } from '../../lib/result/failure.ts';
 
 module('Node | deadline propagation', () => {
   test('a nested call inherits the ROOT budget — capped, not the default 5s', async (assert) => {
@@ -57,7 +58,7 @@ module('Node | deadline propagation', () => {
     await gw.call('a@dl', 'mid', undefined, 50).catch(() => {}); // the root times out — expected
     await new Promise((r) => setTimeout(r, 200)); // let the handler finish its doomed work
     assert.true(
-      isFailure(nestedRejection) && (nestedRejection as AnyFailure).code === 'DeadlineExceeded',
+      Failure.is(nestedRejection) && (nestedRejection as AnyFailure).code === 'DeadlineExceeded',
       'the nested call failed fast with DeadlineExceeded',
     );
     assert.equal(leafCalls, 0, 'the doomed downstream hop was NEVER invoked');
@@ -94,7 +95,7 @@ module('Node | deadline propagation', () => {
     );
     await new Promise((r) => setTimeout(r, 150)); // the delayed frame lands — after the deadline
     assert.equal(ran, 0, 'the callee shed the doomed call — no wasted work');
-    assert.true(isFailure(rejection), 'the caller saw a declared failure');
+    assert.true(Failure.is(rejection), 'the caller saw a declared failure');
     a.stop();
     b.stop();
   });
