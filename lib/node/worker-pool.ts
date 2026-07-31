@@ -69,13 +69,19 @@ export function workerPool(options: {
   const slots: { name: string; worker: Worker }[] = [];
 
   const spawn = (i: number, gen: number): void => {
-    const name = `w${i}g${gen}-${id}@pool`;
+    // Stable per-slot identity, REUSED across respawns (no `gen` in the name) — an Erlang named
+    // process keeps its name through a restart. Minting a fresh name per generation would leak a
+    // CRDT vv/counter entry forever under crash-churn. A respawn (`gen > 0`) instead waits to merge
+    // the cluster's context before its first registration, so its reused dots don't collide with the
+    // dead incarnation's (see NodeHandle.synced).
+    const name = `w${i}-${id}@pool`;
     const worker = new Worker(WORKER_BOOTSTRAP, {
       workerData: {
         __pool: {
           name,
           group,
           bus: busSpec,
+          waitForSync: gen > 0,
           data: options.workerData,
           module: String(options.module), // the user module the bootstrap imports for its `worker`
         },
@@ -152,7 +158,9 @@ export function workerPool(options: {
 export function serveWorker(setup: (node: NodeHandle, data: unknown) => void): NodeHandle {
   if (!parentPort) throw new Error('serveWorker() must run inside a worker_threads Worker');
   const assign = (
-    workerData as { __pool?: { name: string; group: string; bus: BusSpec; data: unknown } }
+    workerData as {
+      __pool?: { name: string; group: string; bus: BusSpec; waitForSync?: boolean; data: unknown };
+    }
   ).__pool;
   if (!assign) throw new Error('serveWorker() worker was not spawned by workerPool()');
   const transport =
@@ -161,7 +169,16 @@ export function serveWorker(setup: (node: NodeHandle, data: unknown) => void): N
       : // node MessagePort has on()/postMessage(); cast past its DOM addEventListener overload.
         fromPort(parentPort as unknown as Parameters<typeof fromPort>[0]);
   const node = Node.start(assign.name, transport);
-  node.join(assign.group);
-  setup(node, assign.data);
+  // A respawn REUSES its dead predecessor's name, so it must merge the cluster's context (learning
+  // its own high-water dot) before minting ANY dot — the group join AND whatever `setup` registers —
+  // else the fresh dots collide with the dead incarnation's and are dropped as already-seen. Handler
+  // wiring waits too, so the slot is briefly unavailable mid-restart (correct: it was just dead). A
+  // first-generation worker has no predecessor and starts immediately.
+  const start = (): void => {
+    node.join(assign.group);
+    setup(node, assign.data);
+  };
+  if (assign.waitForSync) node.synced().then(start);
+  else start();
   return node;
 }

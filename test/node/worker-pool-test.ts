@@ -56,13 +56,18 @@ module('Node | workerPool (CPU parallelism across threads)', () => {
       const victim = pool.node.groupMembers('cpu')[0];
       pool.node.cast(victim, 'crash'); // kill one worker thread
 
+      // The slot respawns under its STABLE name (a fresh generation would leak a CRDT vv entry
+      // per crash) — so watch for the group to first shrink (the crash dropped it) and then recover
+      // to full size WITH the same name back. A respawn waits for cluster sync before rejoining, so
+      // the dip is observable rather than instantaneous.
+      let sawDrop = false;
       assert.true(
-        await until(
-          () =>
-            pool.node.groupMembers('cpu').length === 3 &&
-            !pool.node.groupMembers('cpu').includes(victim),
-        ),
-        'the dead worker dropped out and a fresh one respawned — back to full size',
+        await until(() => {
+          const members = pool.node.groupMembers('cpu');
+          if (!members.includes(victim)) sawDrop = true;
+          return sawDrop && members.length === 3 && members.includes(victim);
+        }),
+        'the slot dropped on crash and respawned under its stable name — back to full size',
       );
       assert.equal(
         await pool.call('fib', 20, 20000),

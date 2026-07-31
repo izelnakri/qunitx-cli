@@ -155,6 +155,13 @@ export interface NodeHandle {
   /** Whether the node participates in the cluster — Elixir's `Node.alive?/0`. */
   alive(): boolean;
   /**
+   * Resolves once this node has merged a peer's full state (the hello handshake), or after a short
+   * grace window if no peer answers. A node REUSING a name (a respawned worker pool slot) must await
+   * this before it mints its own CRDT dots — otherwise a fresh dot collides with the dead
+   * incarnation's and its registrations are silently dropped as already-seen.
+   */
+  synced(): Promise<void>;
+  /**
    * Connected peers — Erlang's `Node.list/0,1`. Defaults to `visible` (non-hidden members); pass a
    * {@link NodeListKind} for `hidden` / `connected` / `this` / `known`. Excludes peers that said bye
    * or went nodedown.
@@ -388,6 +395,18 @@ export function start(
   // join/register self-heals via anti-entropy, and a healed partition reconciles.
   const crdt = new ORSet(name);
   const appliedFrom = new Map<string, number>(); // peer -> last seq of ITS deltas I have applied
+  // First-sync gate: a node REUSING a name (a respawned worker) must merge the cluster's context —
+  // learning its own high-water dot — BEFORE it mints a fresh dot, or that dot collides with the dead
+  // incarnation's and its registrations are silently dropped. `synced()` resolves on the first
+  // full-state a peer hands back (hello anti-entropy), or a timeout if none comes (no peers / fresh).
+  let firstSyncDone = false;
+  let onFirstSync = (): void => {};
+  const syncedPromise = new Promise<void>((resolve) => (onFirstSync = resolve));
+  const markSynced = (): void => {
+    if (firstSyncDone) return;
+    firstSyncDone = true;
+    onFirstSync();
+  };
   const myGroups = new Set<string>();
   const roundRobin = new Map<string, number>();
   const myKeys = new Set<string>(); // "registry\u0000key" — what I own
@@ -593,8 +612,10 @@ export function start(
       // A convergent update: a one-op delta (broadcast) or full state (anti-entropy / hello).
       if (frame.deltas)
         for (const d of frame.deltas) crdt.mergeDelta(d); // anti-entropy catch-up
-      else if (frame.full) crdt.merge(frame.crdt!);
-      else crdt.mergeDelta(frame.crdt!); // one-op broadcast
+      else if (frame.full) {
+        crdt.merge(frame.crdt!);
+        markSynced(); // got the cluster's context (incl. my own high-water) — safe to mint dots
+      } else crdt.mergeDelta(frame.crdt!); // one-op broadcast
       if (frame.upto !== undefined) appliedFrom.set(frame.from, frame.upto);
       checkConflicts();
     } else if (frame.kind === 'sync') {
@@ -683,6 +704,10 @@ export function start(
   };
   transport.onFrame((frame) => receive(frame));
   transport.send({ kind: 'hello', from: name, hidden });
+  // If no peer answers with state within the grace window (no cluster, or a whole-cluster restart
+  // where every vv is fresh anyway), unblock `synced()` so a waiting join doesn't hang.
+  const syncGraceTimer = setTimeout(markSynced, 1000);
+  (syncGraceTimer as { unref?: () => void }).unref?.();
 
   // The observer protocol — one subject any node (or a browser dashboard node) can call to
   // read this node's live state. Erlang's :observer, reduced to data over the same wire.
@@ -762,6 +787,7 @@ export function start(
   const nodeHandle: NodeHandle = {
     self: () => name,
     alive: () => alive,
+    synced: () => syncedPromise,
     list: (kind = 'visible') => {
       if (kind === 'this') return [name];
       if (kind === 'known') return [name, ...peers.keys()];
