@@ -231,12 +231,38 @@ function jobQueue(options: {
   const cancelled = new Set<string>(); // ids cancelled mid-attempt — end terminal, don't retry
   const paused = new Set<string>();
   const seenQueues = new Set<string>(['default']); // queues to poll (configured + inserted-into)
+  const uniqueIndex = new Map<string, Set<string>>(); // signature -> ids: O(1) `unique` dedup
+  const queueCounts = new Map<string, number>(); // queue -> live job count (evict seenQueues at 0)
+  const signatureOf = (worker: string, args: unknown, meta?: Record<string, unknown>): string =>
+    JSON.stringify([worker, args, meta ?? null]);
+  const indexAdd = (job: Job): void => {
+    const sig = signatureOf(job.worker, job.args, job.meta);
+    let ids = uniqueIndex.get(sig);
+    if (!ids) uniqueIndex.set(sig, (ids = new Set()));
+    ids.add(job.id);
+    queueCounts.set(job.queue, (queueCounts.get(job.queue) ?? 0) + 1);
+  };
+  const indexRemove = (job: Job): void => {
+    const sig = signatureOf(job.worker, job.args, job.meta);
+    const ids = uniqueIndex.get(sig);
+    if (ids) {
+      ids.delete(job.id);
+      if (ids.size === 0) uniqueIndex.delete(sig);
+    }
+    const n = (queueCounts.get(job.queue) ?? 1) - 1;
+    if (n <= 0) {
+      queueCounts.delete(job.queue);
+      seenQueues.delete(job.queue); // last job in an ad-hoc queue gone — stop tracking its name
+    } else queueCounts.set(job.queue, n);
+  };
   let alive = true;
 
   const persistJob = (job: Job): Promise<void> => options.store.save(jobKey(job.id), job);
   const persistIndex = (): Promise<void> => options.store.save(INDEX, [...jobs.keys()]);
   const removeJob = async (id: string): Promise<void> => {
+    const job = jobs.get(id);
     jobs.delete(id);
+    if (job) indexRemove(job);
     await persistIndex(); // index first — a crash leaves an ignorable orphan key, never a ghost id
     await options.store.clear(jobKey(id));
   };
@@ -263,6 +289,7 @@ function jobQueue(options: {
       for (const entry of job.errors)
         entry.error = reviveFailure(entry.error as unknown as SerializedFailure);
       jobs.set(job.id, job);
+      indexAdd(job);
     }
   })();
 
@@ -338,11 +365,12 @@ function jobQueue(options: {
     if (opts.unique) {
       // Identity includes `meta`, so two cron schedules that share a worker+args (each tagged with
       // its own `{ cron: expr }`) don't collapse into one — while a single schedule still dedupes.
-      const signature = JSON.stringify([worker, args, opts.meta ?? null]);
-      for (const existing of jobs.values()) {
-        if (JSON.stringify([existing.worker, existing.args, existing.meta ?? null]) === signature)
-          return existing;
-      }
+      const ids = uniqueIndex.get(signatureOf(worker, args, opts.meta));
+      if (ids)
+        for (const id of ids) {
+          const existing = jobs.get(id);
+          if (existing) return existing; // a pending twin already exists — dedupe to it
+        }
     }
     const job: Job = {
       id: crypto.randomUUID(),
@@ -359,6 +387,7 @@ function jobQueue(options: {
     };
     jobs.set(job.id, job);
     seenQueues.add(job.queue); // so the drain loop polls this queue even if it wasn't configured
+    indexAdd(job);
     await persistJob(job); // durable BEFORE the caller is told "queued"
     await persistIndex();
     queueMicrotask(() => void tick()); // run it now if a slot is free — the poll is only the backstop
