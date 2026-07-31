@@ -75,7 +75,7 @@ export function startCrudHost(name: string, transport: Node.Transport, store: St
       restart: 'transient',
       start: (signal) =>
         new Promise<void>((exited) => {
-          const served = Node.serve(node, unit, behavior, {
+          const served = Node.genServer(node, unit, behavior, {
             via: { registry, key },
             store,
             storeKey: unit,
