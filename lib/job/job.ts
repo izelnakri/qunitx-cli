@@ -258,7 +258,11 @@ function jobQueue(options: {
   let alive = true;
 
   const persistJob = (job: Job): Promise<void> => options.store.save(jobKey(job.id), job);
-  const persistIndex = (): Promise<void> => options.store.save(INDEX, [...jobs.keys()]);
+  const canList = typeof options.store.keys === 'function';
+  // When the store can list keys by prefix, the job keys themselves ARE the index — so skip the
+  // rewrite-the-whole-id-array-on-every-insert/complete blob (was O(total jobs) per op).
+  const persistIndex = (): Promise<void> =>
+    canList ? Promise.resolve() : options.store.save(INDEX, [...jobs.keys()]);
   const removeJob = async (id: string): Promise<void> => {
     const job = jobs.get(id);
     jobs.delete(id);
@@ -280,10 +284,13 @@ function jobQueue(options: {
     ) {
       await options.store.rescue(prefix, now() - reclaimAfterMs);
     }
-    const ids = ((await options.store.load(INDEX)) as string[] | undefined) ?? [];
-    for (const id of ids) {
-      const job = (await options.store.load(jobKey(id))) as Job | undefined;
-      if (!job) continue;
+    const keys = canList
+      ? await options.store.keys!(`${prefix}:`)
+      : (((await options.store.load(INDEX)) as string[] | undefined) ?? []).map(jobKey);
+    for (const key of keys) {
+      const job = (await options.store.load(key)) as Job | undefined;
+      // A prefix scan also surfaces the INDEX blob / lease keys — skip anything that isn't a job.
+      if (!job || typeof job !== 'object' || !('id' in job) || !('worker' in job)) continue;
       // Errors round-tripped through the Store as wire forms — revive each to a live Failure so a
       // reloaded job's errors are Failures too (the whole point: uniform on fresh AND reloaded).
       for (const entry of job.errors)

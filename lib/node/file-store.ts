@@ -105,5 +105,13 @@ export function fileStore(dir: string, options: { fsync?: boolean } = {}): Store
         if ((error as { code?: string }).code !== 'ENOENT') throw error; // already gone is fine
       }
     },
+    async keys(prefix) {
+      await ensure();
+      // Each key is stored as `encodeURIComponent(key).json`; recover the keys and filter by prefix.
+      return (await readdir(dir))
+        .filter((name) => name.endsWith('.json'))
+        .map((name) => decodeURIComponent(name.slice(0, -'.json'.length)))
+        .filter((key) => key.startsWith(prefix));
+    },
   };
 }

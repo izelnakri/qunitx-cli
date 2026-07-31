@@ -66,15 +66,14 @@ module('Jobs | stager (Oban rescuer — reclaim jobs orphaned mid-run)', () => {
       'discarded',
       'kept as discarded — the durable dead-letter record in the STORE',
     );
-    // The rescue is a store-level fact. This queue never had `dead` in its own index (it was seeded
-    // straight into the store, as a dead node would leave it), so the app-facing `peekAll()` — which
-    // reads THIS instance's in-memory view — can't see it. `store.load` is the durable truth;
-    // `peekAll({ state: 'discarded' })` is per-instance. (An inserted-then-failed job IS in peekAll()
-    // — see the dead-letter routing test.)
+    // Boot enumerates the store by key prefix (Store.keys) and rehydrates the FULL durable state —
+    // including an orphan a dead node left straight in the store. So after rescue+load this reclaimed,
+    // dead-lettered job IS in the in-memory view. (The store is the truth and the queue loads all of
+    // it — unlike the old per-instance index, which a second instance sharing the store would clobber.)
     assert.equal(
       queue.peekAll({ state: 'discarded' }).length,
-      0,
-      'the app-level peekAll() reflects only this instance — a store-seeded reclaim is not in its view',
+      1,
+      'the boot-time store scan loaded the reclaimed orphan into the in-memory view',
     );
     queue.stop();
   });

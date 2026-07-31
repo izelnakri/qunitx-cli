@@ -62,6 +62,12 @@ export interface Store {
    * older than the longest job runtime, or a still-running long job would be wrongly reclaimed.
    */
   rescue?(prefix: string, staleBefore: number): Promise<number>;
+  /**
+   * Every key beginning with `prefix`. Lets a caller enumerate its own keyspace (e.g. {@link Job.queue}
+   * loading its jobs on boot) WITHOUT a separate rewrite-on-every-write index — the keys themselves
+   * are the index. Optional: a store that can't cheaply list keys omits it, and callers fall back.
+   */
+  keys?(prefix: string): Promise<string[]>;
 }
 
 /**
@@ -83,6 +89,7 @@ export function memoryStore(): Store {
     load: (key) => Promise.resolve(data.has(key) ? JSON.parse(data.get(key)!) : undefined),
     save: (key, state) => (data.set(key, JSON.stringify(state)), Promise.resolve()),
     clear: (key) => (data.delete(key), Promise.resolve()),
+    keys: (prefix) => Promise.resolve([...data.keys()].filter((k) => k.startsWith(prefix))),
     claim: (prefix, queue, ready, now, limit) => {
       // One synchronous turn — the in-process equivalent of FOR UPDATE SKIP LOCKED: no other tick
       // can interleave between selecting a candidate and marking it executing, so two drainers on

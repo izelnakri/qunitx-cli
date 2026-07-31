@@ -75,6 +75,13 @@ export function postgresStore(
       await sql.query(`DELETE FROM ${table} WHERE key = $1`, [key]);
     },
 
+    async keys(prefix) {
+      const rows = await sql.query<{ key: string }>(`SELECT key FROM ${table} WHERE key LIKE $1`, [
+        `${prefix}%`,
+      ]);
+      return rows.map((r) => r.key);
+    },
+
     // SKIP LOCKED: concurrent drainers on separate nodes each grab a disjoint batch; mark them
     // executing with attempt+1 in the same statement, so no job is ever claimed twice.
     async claim(prefix, queue, ready, now, limit) {

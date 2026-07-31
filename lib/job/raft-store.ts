@@ -154,6 +154,7 @@ export function raftStore(
     raft: r,
     stop: () => r.stop(),
     load: (key) => Promise.resolve(r.state()[key]),
+    keys: (prefix) => Promise.resolve(Object.keys(r.state()).filter((k) => k.startsWith(prefix))), // local read, no consensus
     save: (key, value) => propose({ op: 'save', key, value }).then(() => undefined),
     clear: (key) => propose({ op: 'clear', key }).then(() => undefined),
     claim: (prefix, queue, ready, now, limit) =>
