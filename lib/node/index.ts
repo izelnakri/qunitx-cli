@@ -74,6 +74,10 @@ export {
   type Self,
   type TimerRef,
 } from './gen-server.ts';
+
+// Elixir's Process module — the static side: Process.spawn (anonymous units) + free-function
+// link/exit/alive/whereis. Per-unit ops live on the handle and the `self` a handler gets.
+export { Process } from './process.ts';
 export {
   supervisor,
   type Supervisor,
