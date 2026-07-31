@@ -12,7 +12,7 @@
 //   -- helps the claim's ordered SKIP LOCKED scan under load:
 //   CREATE INDEX room_state_jobs ON room_state ((state->>'queue'), (state->>'state'));
 //
-// Persist-before-ack (serve()'s durability) means each mutating message does one UPSERT here
+// Persist-before-ack (genServer()'s durability) means each mutating message does one UPSERT here
 // before the caller is acked — so a "sent" message is on disk. That is the delta-loss fix: the
 // snapshot IS the latest committed state, written synchronously, not a periodic checkpoint.
 import postgres from 'postgres';

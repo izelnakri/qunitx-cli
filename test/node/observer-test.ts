@@ -9,7 +9,7 @@ module('Node | observer protocol', () => {
     const hub = Node.memoryHub();
     const svc = Node.start('svc@memory', hub.transport());
     const ops = Node.start('ops@memory', hub.transport());
-    Node.serve(svc, 'greeter', {
+    Node.genServer(svc, 'greeter', {
       version: '1.2.3',
       init: () => 0,
       handlers: { hi: (s) => ({ state: s, reply: 'hi' }) },
@@ -39,8 +39,8 @@ module('Node | observer protocol', () => {
     const a = Node.start('a@memory', hub.transport());
     const b = Node.start('b@memory', hub.transport());
     const dash = Node.start('dash@memory', hub.transport()); // a browser tab, in prod
-    Node.serve(a, 'svcA', { version: '1', init: () => 0, handlers: {} });
-    Node.serve(b, 'svcB', { version: '2', init: () => 0, handlers: {} });
+    Node.genServer(a, 'svcA', { version: '1', init: () => 0, handlers: {} });
+    Node.genServer(b, 'svcB', { version: '2', init: () => 0, handlers: {} });
     await settleMs();
 
     const cluster = await Promise.all(

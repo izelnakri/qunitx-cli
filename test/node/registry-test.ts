@@ -101,10 +101,10 @@ module('Node | via registration', () => {
       init: () => 0,
       handlers: { who: (s) => ({ state: s, reply: who }) },
     });
-    const zedUnit = Node.serve(zed, 'room:lobby', behavior('zed'), {
+    const zedUnit = Node.genServer(zed, 'room:lobby', behavior('zed'), {
       via: { registry: 'rooms', key: 'lobby' },
     });
-    const abeUnit = Node.serve(abe, 'room:lobby', behavior('abe'), {
+    const abeUnit = Node.genServer(abe, 'room:lobby', behavior('abe'), {
       via: { registry: 'rooms', key: 'lobby' },
     });
     await settle();
@@ -132,7 +132,7 @@ module('Node | via registration', () => {
     const hub = Node.memoryHub();
     const host = Node.start('host@memory', hub.transport());
     const cli = Node.start('cli@memory', hub.transport());
-    const unit = Node.serve(
+    const unit = Node.genServer(
       host,
       'room:x',
       { version: '1', init: () => 0, handlers: {} },

@@ -1,4 +1,4 @@
-// A disk-backed {@link Store} — durable serve() state, jobs, or raftStore persistence WITHOUT a
+// A disk-backed {@link Store} — durable genServer() state, jobs, or raftStore persistence WITHOUT a
 // database. Lives OUTSIDE the universal barrel (like hub.ts): it stands on `node:fs`, so the barrel
 // stays browser-safe. `node:` specifiers work on Node and on Deno's node-compat, so this one file
 // runs on both. One JSON file per key (URL-encoded to a safe filename); writes go through a temp
@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import type { Store } from './upgradable.ts';
 
 /**
- * A {@link Store} persisted to JSON files under `dir` — for durable `serve()` state, single-host
+ * A {@link Store} persisted to JSON files under `dir` — for durable `genServer()` state, single-host
  * jobs, or `raftStore` persistence, none of which need an external database. Only load/save/clear
  * (the durability seam); the atomic `claim`/`lease` belong to distributed backends (Postgres,
  * raftStore), not a single host.

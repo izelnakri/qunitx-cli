@@ -18,5 +18,5 @@ const transport = parentPort
 
 const db = createDb(config);
 const node = Node.start(name, transport);
-Node.serve(node, 'reports', makeReportBehavior(db), { maxMailbox: 64 }); // shed under overload
+Node.genServer(node, 'reports', makeReportBehavior(db), { maxMailbox: 64 }); // shed under overload
 node.join('reports'); // enrol in the pool — the API routes to 'group:reports'

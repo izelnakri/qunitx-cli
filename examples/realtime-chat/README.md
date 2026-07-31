@@ -16,7 +16,7 @@ node src/demo.ts   # two hosts + two gateways in one process, over an in-process
 | Node role                               | What it is                   | Holds                                                               |
 | --------------------------------------- | ---------------------------- | ------------------------------------------------------------------- |
 | **room host** (`room-host.ts`)          | where rooms live             | a `DynamicSupervisor` of room actors + their `Registry` entries     |
-| **room actor** (`room-behavior.ts`)     | one `serve()`d unit per room | `{ members, recent }`, mutated one message at a time by its mailbox |
+| **room actor** (`room-behavior.ts`)     | one `genServer()`d unit per room | `{ members, recent }`, mutated one message at a time by its mailbox |
 | **gateway** (a browser/websocket front) | where users connect          | nothing — it routes to rooms it doesn't host                        |
 
 A room is a **stateful actor**: its mailbox serializes every join/leave/message, so its member
@@ -42,7 +42,7 @@ join("lobby"):
 
 Two design choices make this correct and simple:
 
-- **`Registry` gives single-owner routing.** A room is served with `serve(..., { via: { registry:
+- **`Registry` gives single-owner routing.** A room is served with `genServer(..., { via: { registry:
 'rooms', key } })` — Elixir's `{:via, Registry, {Reg, key}}`: the unit registers itself and
   `call('via:rooms/lobby', ...)` routes to the _one_ owner. Unlike a process **group** (`group:`),
   which round-robins _many_ members — groups are for services (any worker will do), the Registry
@@ -73,7 +73,7 @@ first end-to-end):
 
 ### State survives host death — persist-before-ack + rehydrate-on-access
 
-Each room is served **with a `store`** (`serve(..., { store, storeKey })`), so:
+Each room is served **with a `store`** (`genServer(..., { store, storeKey })`), so:
 
 - **Persist-before-ack**: every mutating message (join/leave/say) writes the new state durably
   _before_ the caller is acked. A "sent" message is on disk before the sender hears "ok" — there
@@ -104,7 +104,7 @@ with APIs aligned to Elixir/Horde where they touch the developer surface:
 
 | Concern              | Here                                                         | Elixir/Horde analogue                   | Divergence & mitigation                                                                                                                                                                                 |
 | -------------------- | ------------------------------------------------------------ | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| entity registration  | `serve(..., { via: { registry, key } })`                     | `{:via, Registry, {Reg, key}}`          | ours is **optimistic-AP** (can't be synchronous under gossip lag like Elixir's _local_ Registry); on a race the loser self-terminates and callers re-resolve via `whereis` — Horde.Registry's behaviour |
+| entity registration  | `genServer(..., { via: { registry, key } })`                     | `{:via, Registry, {Reg, key}}`          | ours is **optimistic-AP** (can't be synchronous under gossip lag like Elixir's _local_ Registry); on a race the loser self-terminates and callers re-resolve via `whereis` — Horde.Registry's behaviour |
 | single-owner routing | `call('via:reg/key', ...)`                                   | `GenServer.call({:via, ...})`           | same shape                                                                                                                                                                                              |
 | pool routing         | `call('group:svc', ...)`                                     | `:pg` round-robin                       | same shape                                                                                                                                                                                              |
 | find-or-start        | rendezvous hash → one host → local `start_child`             | Horde.DynamicSupervisor + registry      | deterministic host pick makes cold-start race-free without a distributed lock                                                                                                                           |

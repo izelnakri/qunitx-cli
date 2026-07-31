@@ -39,7 +39,7 @@ src/
   config.ts          env config — and the one switch that picks Topology A vs B
   db.ts              the database ADAPTER: raw driver throws classified into Failures here, nowhere else
   http.ts            a tiny express-like router over node:http; the single Reply write-point
-  report-behavior.ts the CPU-bound unit, as a serve()able Behavior (runs on ITS node's thread)
+  report-behavior.ts the CPU-bound unit, as a genServer()able Behavior (runs on ITS node's thread)
   report-worker.ts   the report NODE entry — a Worker thread (A) or a standalone process (B)
   api-node.ts        the API process: HTTP server + the supervision tree + the topology switch
 k8s/
@@ -93,7 +93,7 @@ Three details make the pool robust, each with an existing primitive:
   `groupMembers('reports').length > 0`.
 - **Fail-fast.** The report route checks readiness at request time and returns `ReportUnavailable`
   → `503` _immediately_ when the pool is empty, instead of waiting the full call timeout. And each
-  worker's `serve(..., { maxMailbox: 64 })` sheds under overload rather than growing unboundedly.
+  worker's `genServer(..., { maxMailbox: 64 })` sheds under overload rather than growing unboundedly.
 
 The signal you're in tier 2: you catch yourself thinking "this endpoint is sometimes slow for
 no I/O reason," or a p99 spike correlates with a particular input size. That's loop starvation.

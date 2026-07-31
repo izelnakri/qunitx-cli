@@ -18,7 +18,7 @@
  * import { Node, memoryHub } from './node.ts';
  *
  * const node = Node.start('svc@memory', memoryHub().transport());
- * const served = serve(node, 'greeter', {
+ * const served = genServer(node, 'greeter', {
  *   version: '1.0.0',
  *   init: () => ({ greeted: 0 }),
  *   handlers: { hello: (state, name) => ({ state: { greeted: state.greeted + 1 }, reply: `Hello ${name}` }) },
@@ -190,7 +190,7 @@ export interface Behavior<S> {
   /** Message handlers — sync or async; each returns the next state and (for calls) the reply.
    *  Handlers run through the unit's MAILBOX: strictly one at a time, each awaited to
    *  completion before the next dequeues — gen_server's serialization, even for async work.
-   *  When a `store` is configured (see {@link serve}), the returned state is persisted BEFORE
+   *  When a `store` is configured (see {@link genServer}), the returned state is persisted BEFORE
    *  the reply is released (durable-before-ack — no delta loss). A read-only handler should
    *  return `persist: false` to skip the write. */
   handlers: Record<
@@ -215,7 +215,7 @@ export interface Behavior<S> {
  * import { Node, memoryHub } from './node.ts';
  *
  * const node = Node.start('u@memory', memoryHub().transport());
- * const served = serve(node, 'counter', {
+ * const served = genServer(node, 'counter', {
  *   version: '1',
  *   init: () => 0,
  *   handlers: { bump: (state) => ({ state: state + 1, reply: state + 1 }) },
@@ -229,7 +229,7 @@ export interface Behavior<S> {
  * node.stop();
  * ```
  */
-export interface Served<S> {
+export interface GenServer<S> {
   /** The currently running version. */
   version(): string;
   /** Swap via the mailbox — lands strictly BETWEEN messages, even async ones. An eager Task
@@ -239,7 +239,7 @@ export interface Served<S> {
   state(): S;
   /** Messages queued or in flight — what observer tooling reads as mailbox depth. */
   mailbox(): number;
-  /** Whether the unit still serves — false after {@link Served#exit}. */
+  /** Whether the unit still serves — false after {@link GenServer#exit}. */
   isAlive(): boolean;
   /**
    * Erlang's `exit/2` on this unit: stop serving (subjects now reply a declared
@@ -283,7 +283,7 @@ const exitPorts = new WeakMap<object, ExitPort>();
  * const hub = memoryHub();
  * const svc = Node.start('svc@memory', hub.transport());
  * const cli = Node.start('cli@memory', hub.transport());
- * serve(svc, 'greeter', {
+ * genServer(svc, 'greeter', {
  *   version: '1.0.0',
  *   init: () => ({ greeted: 0 }),
  *   handlers: { hello: (state, name) => ({ state: { greeted: state.greeted + 1 }, reply: `Hello ${name}` }) },
@@ -294,7 +294,7 @@ const exitPorts = new WeakMap<object, ExitPort>();
  * cli.stop();
  * ```
  */
-export function serve<S>(
+export function genServer<S>(
   node: NodeHandle,
   name: string,
   behavior: Behavior<S>,
@@ -304,7 +304,7 @@ export function serve<S>(
     storeKey?: string;
     via?: { registry: string; key: string };
   } = {},
-): Served<S> {
+): GenServer<S> {
   let current = behavior;
   let state: S = behavior.init ? behavior.init() : (undefined as S);
   const storeKey = options.storeKey ?? name;
@@ -419,7 +419,7 @@ export function serve<S>(
     links.clear();
   };
 
-  const handle: Served<S> = {
+  const handle: GenServer<S> = {
     version: () => current.version,
     upgrade: (next) => Task(() => enqueue(() => apply(next))).perform(),
     state: () => state,

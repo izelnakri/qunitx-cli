@@ -224,7 +224,7 @@ export interface NodeHandle {
   stop(): void;
   /**
    * Registers a live introspection source under `name` — what `sys.node.info` (and thus an
-   * observer dashboard) reports. `serve()` calls this for you; call it yourself to surface
+   * observer dashboard) reports. `genServer()` calls this for you; call it yourself to surface
    * any custom unit. Returns the un-register.
    */
   inspect(name: string, report: () => Record<string, unknown>): () => void;
@@ -345,7 +345,7 @@ export function start(
     transport.send({ kind: 'crdt', from: name, crdt: delta, full: false });
 
   // After any merge: a key I own may now have a smaller LIVE owner — fire its conflict handler
-  // (drives serve({via}) self-terminate). A partition that elected two owners heals to one.
+  // (drives genServer({via}) self-terminate). A partition that elected two owners heals to one.
   const checkConflicts = (): void => {
     for (const rk of [...myKeys]) {
       const [registry, key] = rk.split('\u0000');

@@ -32,7 +32,7 @@ module('Node | hot upgrades', () => {
     const hub = Node.memoryHub();
     const svc = Node.start('svc@memory', hub.transport());
     const cli = Node.start('cli@memory', hub.transport());
-    const served = Node.serve(svc, 'greeter', v1());
+    const served = Node.genServer(svc, 'greeter', v1());
 
     assert.strictEqual(await cli.call('svc@memory', 'greeter.hello', 'ada'), 'Hello ada');
     assert.strictEqual(await cli.call('svc@memory', 'greeter.hello', 'bo'), 'Hello bo');
@@ -60,7 +60,7 @@ module('Node | hot upgrades', () => {
     const hub = Node.memoryHub();
     const svc = Node.start('svc@memory', hub.transport());
     const ops = Node.start('ops@memory', hub.transport());
-    Node.serve(svc, 'greeter', v1());
+    Node.genServer(svc, 'greeter', v1());
 
     await ops.call('svc@memory', 'greeter.hello', 'ada');
     assert.strictEqual(await ops.call('svc@memory', 'greeter.sys.version'), '1.0.0');
@@ -85,7 +85,7 @@ module('Node | hot upgrades', () => {
     const hub = Node.memoryHub();
     const svc = Node.start('svc@memory', hub.transport());
     const ops = Node.start('ops@memory', hub.transport());
-    const served = Node.serve(svc, 'greeter', v1());
+    const served = Node.genServer(svc, 'greeter', v1());
 
     await ops.call('svc@memory', 'greeter.sys.upgrade', { url: V2_URL });
     await ops.call('svc@memory', 'greeter.hello', 'ada');
@@ -118,7 +118,7 @@ module('Node | mailbox serialization', () => {
     const svc = Node.start('svc@memory', hub.transport());
     const cli = Node.start('cli@memory', hub.transport());
     const trace: string[] = [];
-    const served = Node.serve(svc, 'acct', {
+    const served = Node.genServer(svc, 'acct', {
       version: '1',
       init: () => 0,
       handlers: {
@@ -145,7 +145,7 @@ module('Node | mailbox serialization', () => {
     const hub = Node.memoryHub();
     const svc = Node.start('svc@memory', hub.transport());
     const cli = Node.start('cli@memory', hub.transport());
-    const served = Node.serve(svc, 'slow', {
+    const served = Node.genServer(svc, 'slow', {
       version: '1',
       init: () => 'v1-state',
       handlers: {
@@ -180,12 +180,12 @@ module('Node | links', () => {
     const hub = Node.memoryHub();
     const svc = Node.start('svc@memory', hub.transport());
     const cli = Node.start('cli@memory', hub.transport());
-    const a = Node.serve(svc, 'a', {
+    const a = Node.genServer(svc, 'a', {
       version: '1',
       init: () => 0,
       handlers: { ping: (s) => ({ state: s, reply: 'a' }) },
     });
-    const b = Node.serve(svc, 'b', {
+    const b = Node.genServer(svc, 'b', {
       version: '1',
       init: () => 0,
       handlers: { ping: (s) => ({ state: s, reply: 'b' }) },
@@ -207,8 +207,8 @@ module('Node | links', () => {
   test('trapExit survives the signal and receives (from, reason) through the MAILBOX', async (assert) => {
     const hub = Node.memoryHub();
     const svc = Node.start('svc@memory', hub.transport());
-    const worker = Node.serve(svc, 'worker', { version: '1', init: () => 0, handlers: {} });
-    const boss = Node.serve(svc, 'boss', { version: '1', init: () => 0, handlers: {} });
+    const worker = Node.genServer(svc, 'worker', { version: '1', init: () => 0, handlers: {} });
+    const boss = Node.genServer(svc, 'boss', { version: '1', init: () => 0, handlers: {} });
     const trapped: string[] = [];
     boss.trapExit((from, reason) => void trapped.push(`${from}:${reason.code}`));
     boss.link(worker);
@@ -223,8 +223,8 @@ module('Node | links', () => {
     const hub = Node.memoryHub();
     const svc = Node.start('svc@memory', hub.transport());
     const cli = Node.start('cli@memory', hub.transport());
-    const a = Node.serve(svc, 'x', { version: '1', init: () => 0, handlers: {} });
-    const b = Node.serve(svc, 'y', {
+    const a = Node.genServer(svc, 'x', { version: '1', init: () => 0, handlers: {} });
+    const b = Node.genServer(svc, 'y', {
       version: '1',
       init: () => 0,
       handlers: { ping: (s) => ({ state: s, reply: 1 }) },
@@ -252,7 +252,7 @@ module('Node | mailbox backpressure', () => {
     const cli = Node.start('cli@memory', hub.transport());
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
-    Node.serve(
+    Node.genServer(
       svc,
       'slow',
       {
@@ -295,20 +295,20 @@ module('Node | persistence', () => {
     },
   });
 
-  test('state rehydrates from the store on a fresh serve() — survives a restart', async (assert) => {
+  test('state rehydrates from the store on a fresh genServer() — survives a restart', async (assert) => {
     const store = Node.memoryStore();
     const hub = Node.memoryHub();
     const cli = Node.start('cli@memory', hub.transport());
 
     const first = Node.start('svc@memory', hub.transport());
-    Node.serve(first, 'ctr', counter(), { store, storeKey: 'ctr' });
+    Node.genServer(first, 'ctr', counter(), { store, storeKey: 'ctr' });
     await cli.call('svc@memory', 'ctr.bump');
     await cli.call('svc@memory', 'ctr.bump'); // n = 2, both persisted before ack
     first.stop();
 
-    // A brand-new node + serve() over the SAME store — like a supervised restart / new pod.
+    // A brand-new node + genServer() over the SAME store — like a supervised restart / new pod.
     const second = Node.start('svc2@memory', hub.transport());
-    Node.serve(second, 'ctr', counter(), { store, storeKey: 'ctr' });
+    Node.genServer(second, 'ctr', counter(), { store, storeKey: 'ctr' });
     assert.strictEqual(
       await cli.call('svc2@memory', 'ctr.read'),
       2,
@@ -331,7 +331,7 @@ module('Node | persistence', () => {
     const hub = Node.memoryHub();
     const cli = Node.start('cli@memory', hub.transport());
     const svc = Node.start('svc@memory', hub.transport());
-    Node.serve(svc, 'ctr', counter(), { store });
+    Node.genServer(svc, 'ctr', counter(), { store });
     const reply = await cli.call('svc@memory', 'ctr.bump');
     assert.strictEqual(reply, 1);
     assert.deepEqual(writes, [1], 'the write had completed by the time the caller got its ack');
@@ -349,7 +349,7 @@ module('Node | persistence', () => {
     const hub = Node.memoryHub();
     const cli = Node.start('cli@memory', hub.transport());
     const svc = Node.start('svc@memory', hub.transport());
-    Node.serve(svc, 'ctr', counter(), { store });
+    Node.genServer(svc, 'ctr', counter(), { store });
     await cli.call('svc@memory', 'ctr.bump'); // writes
     await cli.call('svc@memory', 'ctr.read'); // must not write
     await cli.call('svc@memory', 'ctr.read');

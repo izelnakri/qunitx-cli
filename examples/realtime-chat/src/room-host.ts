@@ -110,7 +110,7 @@ function runRoom(
 ): Promise<void> {
   return new Promise<void>((exited) => {
     // storeKey is stable across hosts, so a room re-created on ANOTHER host loads the same state.
-    const room = Node.serve(node, `room:${key}`, makeRoomBehavior(), {
+    const room = Node.genServer(node, `room:${key}`, makeRoomBehavior(), {
       via: { registry: 'rooms', key },
       store,
       storeKey: `room:${key}`,

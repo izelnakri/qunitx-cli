@@ -47,7 +47,7 @@ startHub({ port: 4369 });
 import { Node, wsTransport } from './lib/node/index.ts';
 
 const svc = Node.start('svc@cluster', wsTransport('ws://localhost:4369'));
-Node.serve(svc, 'greeter', {
+Node.genServer(svc, 'greeter', {
   version: '1.0.0',
   init: () => ({ greeted: 0 }),
   handlers: {
