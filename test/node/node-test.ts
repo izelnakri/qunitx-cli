@@ -4,6 +4,7 @@ import * as Node from '../../lib/node/index.ts';
 import { Failure } from '../../lib/task/index.ts';
 
 const NotFound = Failure.define('NotFound', (d: { id: number }) => `no user ${d.id}`);
+const OriginObserved = Failure.define('OriginObserved', 'origin-observe test');
 
 module('Node | memory cluster', () => {
   test('start/hello/list/self/alive — the cluster sees itself', async (assert) => {
@@ -119,6 +120,41 @@ module('Node | memory cluster', () => {
     await new Promise((r) => setTimeout(r, 10));
     assert.deepEqual(events, ['up:b@memory', 'down:b@memory'], 'up then down, in order');
     a.stop();
+  });
+
+  test('a handler that THROWS a declared Failure is routed to Failure.onObserved at its origin', async (assert) => {
+    const hub = Node.memoryHub();
+    const svc = Node.start('svc@memory', hub.transport());
+    const cli = Node.start('cli@memory', hub.transport());
+    svc.handle('charge', () => {
+      throw OriginObserved(); // a bare throw — the handler never `.result()`s it for observability
+    });
+    const seen: string[] = [];
+    Failure.onObserved((failure) => void seen.push(failure.code));
+    try {
+      // Consume the reply WITHOUT `.result()` — a bare `await` doesn't observe — so `seen` can only
+      // reflect the ORIGIN observation the serving node did on the throw, never a caller-side one.
+      let reply: unknown;
+      try {
+        await cli.call('svc@memory', 'charge', null);
+      } catch (thrown) {
+        reply = thrown;
+      }
+      assert.strictEqual(
+        (reply as Failure.Any).code,
+        'OriginObserved',
+        'the caller still gets the thrown Failure back',
+      );
+      assert.strictEqual(
+        seen.filter((code) => code === 'OriginObserved').length,
+        1,
+        'and it hit Failure.onObserved exactly once — at origin, no `.result()` in the handler',
+      );
+    } finally {
+      Failure.onObserved(null); // detach the process-wide observer
+      svc.stop();
+      cli.stop();
+    }
   });
 });
 

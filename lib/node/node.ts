@@ -23,6 +23,7 @@
 import {
   Failure,
   isFailure,
+  observed,
   toJSON,
   fromJSON,
   type SerializedFailure,
@@ -472,11 +473,17 @@ export function start(
       const outcome = handler
         ? Promise.resolve()
             .then(() => handling(meta, () => handler(decode(frame), frame.from, meta)))
-            .catch((thrown: unknown) =>
-              isFailure(thrown)
-                ? thrown
-                : new Failure('RemoteCrash', String(thrown), { subject: frame.subject }),
-            )
+            .catch((thrown: unknown) => {
+              // A DECLARED failure a handler throws is routed to the observation seam HERE, at its
+              // origin — so a bare `throw SomeFailure()` reaches Failure.onObserved / a trace span
+              // without the handler having to `.result()` purely for observability. No-op unless an
+              // observer is installed; a bug (non-Failure throw) becomes RemoteCrash, unobserved.
+              if (isFailure(thrown)) {
+                observed(thrown);
+                return thrown;
+              }
+              return new Failure('RemoteCrash', String(thrown), { subject: frame.subject });
+            })
         : Promise.resolve(
             new Failure('NoHandler', `no handler for ${frame.subject} on ${name}`, {
               subject: frame.subject,
