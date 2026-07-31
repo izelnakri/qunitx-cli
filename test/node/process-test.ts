@@ -88,4 +88,23 @@ module('Node | Process (Elixir Process module)', () => {
     );
     node.stop();
   });
+
+  test('Process.of(node) binds the node — same behavior, node-free calls', async (assert) => {
+    const node = Node.start('a@proc', memoryHub().transport());
+    const P = Process.of(node);
+
+    const unit = P.spawn(counter()); // no node argument
+    const name = String(await unit.call('whoami'));
+    assert.strictEqual(await unit.call('bump'), 1, 'spawned via the bound namespace');
+    assert.strictEqual(P.whereis(name), 'a@proc', 'bound whereis finds it — no node passed');
+    assert.deepEqual(P.list(), [name], 'bound list reads the same local table');
+    assert.true(P.alive(unit), 'handle-based ops pass through unchanged');
+
+    // The bound namespace and the free functions are two views of ONE node.
+    assert.deepEqual(P.list(), Process.list(node), 'P.list() === Process.list(node)');
+
+    P.exit(unit);
+    assert.deepEqual(P.list(), [], 'a dead unit leaves the table, seen through the bound view too');
+    node.stop();
+  });
 });

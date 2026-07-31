@@ -11,6 +11,31 @@ import type { NodeHandle } from './node.ts';
 // regardless of its state/key types (none of these members mention S or K).
 type Unit = Pick<GenServer<unknown, string>, 'link' | 'exit' | 'isAlive'>;
 
+/**
+ * The {@link Process} module with one node pre-applied — what {@link Process.of} returns. The
+ * node-first functions (`spawn`/`whereis`/`list`/`whereisName`) drop their `node` argument;
+ * `link`/`exit`/`alive` operate on handles, so they pass through unchanged.
+ */
+export interface BoundProcess {
+  /** {@link Process.spawn} on the bound node. */
+  spawn<S, K extends string = string>(
+    behavior: Behavior<S, K>,
+    options?: GenServerOptions,
+  ): GenServer<S, K>;
+  /** {@link Process.link} — handle-based, unchanged. */
+  link(a: Unit, b: object): void;
+  /** {@link Process.exit} — handle-based, unchanged. */
+  exit(unit: Unit, reason?: AnyFailure): void;
+  /** {@link Process.alive} — handle-based, unchanged. */
+  alive(unit: Unit): boolean;
+  /** {@link Process.whereis} on the bound node. */
+  whereis(name: string): string | null;
+  /** {@link Process.list} on the bound node. */
+  list(): string[];
+  /** {@link Process.whereisName} on the bound node. */
+  whereisName(registry: string, key: string): string | null;
+}
+
 // Monotonic across the process — anonymous names only need to be unique, and the node prefix keeps
 // them readable/attributable. Not Math.random/Date.now (a counter is enough and stays deterministic).
 let spawnCount = 0;
@@ -25,6 +50,8 @@ let spawnCount = 0;
  * - `whereis` / `list` read the LOCAL process table — units served on THIS node (Elixir's
  *   `Process.whereis/1` and `Process.registered/0`). `whereisName` is the cluster lookup
  *   (`:global.whereis_name` / a Registry): which node hosts a via-registered key.
+ * - `of(node)` binds all of the above to one node, recovering Elixir's node-free feel (there is no
+ *   ambient "current node" here — many nodes share one process — so `of` is how you pick one).
  *
  * ```ts
  * import { Node, memoryHub } from './node.ts';
@@ -39,12 +66,16 @@ let spawnCount = 0;
  * await counter.call('bump'); // 1 — addressed by the handle, no name to pick
  * Process.alive(counter); // true
  * Process.list(node).length; // 1 — one unit served here
+ *
+ * // Or bind the node once and drop the repeated argument:
+ * const P = Process.of(node);
+ * P.list().length; // 1 — same table, node-free
  * Process.exit(counter);
- * Process.list(node).length; // 0 — a dead unit leaves the local table
+ * P.list().length; // 0 — a dead unit leaves the local table
  * node.stop();
  * ```
  */
-export const Process = { spawn, link, exit, alive, whereis, whereisName, list };
+export const Process = { spawn, link, exit, alive, whereis, whereisName, list, of };
 
 /**
  * Spawn an ANONYMOUS unit on `node` — Elixir's `spawn`: a running process with no name you had to
@@ -96,4 +127,22 @@ function list(node: NodeHandle): string[] {
  */
 function whereisName(node: NodeHandle, registry: string, key: string): string | null {
   return node.whereis(registry, key);
+}
+
+/**
+ * Bind every node-first `Process` function to `node`, returning a {@link BoundProcess} whose calls
+ * omit the repeated argument (`P.spawn(behavior)`, `P.whereis(name)`, `P.list()`). The `// before`
+ * free functions still exist; this is just the ergonomic form for when you work with one node. There
+ * is no ambient node to default to — several nodes coexist in one process — so `of` is that choice.
+ */
+function of(node: NodeHandle): BoundProcess {
+  return {
+    spawn: (behavior, options) => spawn(node, behavior, options),
+    link, // handle-based — no node to bind, so they pass straight through
+    exit,
+    alive,
+    whereis: (name) => whereis(node, name),
+    list: () => list(node),
+    whereisName: (registry, key) => whereisName(node, registry, key),
+  };
 }
