@@ -344,9 +344,9 @@ export function start(
   // Fire nodeup/nodedown only to listeners whose node_type matches the peer's visibility — Erlang's
   // `net_kernel:monitor_nodes(Pid, [{node_type, visible|hidden|all}])`; the default is visible-only.
   const notifyNode = (peer: string, peerHidden: boolean, status: 'up' | 'down'): void => {
-    for (const l of nodeListeners)
-      if (l.nodeType === 'all' || (l.nodeType === 'hidden') === peerHidden)
-        l.fn({ node: peer, status });
+    for (const listener of nodeListeners)
+      if (listener.nodeType === 'all' || (listener.nodeType === 'hidden') === peerHidden)
+        listener.fn({ node: peer, status });
   };
   const pending = new Map<number, (frame: Frame) => void>();
   // Membership + registry live in ONE convergent CRDT (ORSet of facts) — a dropped
