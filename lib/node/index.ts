@@ -73,7 +73,7 @@ export {
   type GenServerOptions,
   type Self,
   type TimerRef,
-} from './upgradable.ts';
+} from './gen-server.ts';
 export {
   supervisor,
   type Supervisor,
