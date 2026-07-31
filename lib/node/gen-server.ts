@@ -162,7 +162,9 @@ export interface GenServer<S, K extends string = string> {
    * with the same reason unless it traps.
    */
   exit(reason?: AnyFailure): void;
-  /** Links this unit to another served unit, bidirectionally — Erlang's `link/1`: exits propagate both ways. */
+  /** Links this unit bidirectionally — Erlang's `link/1`: exits propagate both ways. Pass another local
+   *  handle for an in-process link, or a remote ref `{ node, name }` for a DISTRIBUTED link (a unit
+   *  on another node — its exit, or that node going down, signals this unit). */
   link(other: object): void;
   /**
    * Erlang's `trap_exit`: instead of dying with a linked unit, receive `(from, reason)` —
@@ -403,6 +405,9 @@ export function genServer<S, K extends string = string>(
     }
   };
   const myPort: ExitPort = { name, deliverExit };
+  // Register with the node so a DISTRIBUTED link (a unit on another node) can deliver an exit here,
+  // and a nodedown can synthesize one — the cross-wire half of link/1.
+  const stopLinkTarget = node.registerLinkTarget?.(name, deliverExit);
   const down = (reason: AnyFailure): void => {
     if (!unitAlive) return;
     unitAlive = false;
@@ -415,6 +420,8 @@ export function genServer<S, K extends string = string>(
       peer.deliverExit(name, reason); // both ends on any exit) — no dead port lingers in a survivor
     }
     links.clear();
+    stopLinkTarget?.(); // stop receiving remote exits
+    node.notifyRemoteLinks?.(name, reason); // signal units linked to me from other nodes
     stopInspect?.(); // leave the node's local-unit table — a dead name is no longer served here
     options.onDown?.(reason); // AFTER links propagate — observers see a fully-settled death
   };
@@ -465,6 +472,17 @@ export function genServer<S, K extends string = string>(
     exit: (reason) =>
       down(reason ?? new Failure('UnitDown', `${name} exited`, { name, from: name })),
     link(other) {
+      // A remote ref `{ node, name }` links across the wire (Erlang's link to a remote pid); a local
+      // handle links in-process via the shared exitPorts.
+      const remote = other as { node?: unknown; name?: unknown };
+      if (
+        typeof remote.node === 'string' &&
+        typeof remote.name === 'string' &&
+        !exitPorts.has(other)
+      ) {
+        node.linkUnit(name, remote.node, remote.name);
+        return;
+      }
       const port = exitPorts.get(other);
       if (!port) throw new TypeError('link target is not a served unit');
       links.add(port);

@@ -66,11 +66,17 @@ export type Frame = {
     | 'call'
     | 'reply'
     | 'ping'
-    | 'pong';
+    | 'pong'
+    | 'link'
+    | 'unitexit';
   from: string;
   to?: string;
   /** On a `hello`: whether the sender is a HIDDEN node — attached but not a full member. */
   hidden?: boolean;
+  /** On a `link`/`unitexit` frame: the target unit's name on the RECEIVING node. */
+  unit?: string;
+  /** On a `link`/`unitexit` frame: the peer unit's name on the SENDING node (`from`). */
+  peer?: string;
   subject?: string;
   /** Process-group name for join/leave frames. */
   group?: string;
@@ -181,6 +187,18 @@ export interface NodeHandle {
   putFact(fact: string): void;
   /** Remove a replicated `fact` (observed-remove) and gossip the removal. */
   dropFact(fact: string): void;
+  /**
+   * DISTRIBUTED-LINK plumbing (used by `genServer`; rarely called directly). A unit registers its
+   * exit-delivery under its `name` so a remote link can reach it; `unlink` runs on the unit's death.
+   */
+  registerLinkTarget(name: string, deliver: (from: string, reason: AnyFailure) => void): () => void;
+  /**
+   * Link a LOCAL unit to a REMOTE one — Erlang's `link/1` across the wire. An exit on either side (or
+   * `remoteNode` going nodedown) signals the other. Symmetric: the far node records the reverse link.
+   */
+  linkUnit(localName: string, remoteNode: string, remoteName: string): void;
+  /** A local unit died — signal its remote linkers (called by `genServer` on `down`). */
+  notifyRemoteLinks(localName: string, reason: AnyFailure): void;
   /**
    * Every replicated fact currently present with `prefix` — RAW, with no liveness filter: the
    * caller decides which segment is the owning node and intersects with {@link NodeHandle.list} /
@@ -349,6 +367,17 @@ export function start(
         listener.fn({ node: peer, status });
   };
   const pending = new Map<number, (frame: Frame) => void>();
+  // Distributed links: a local unit registers its exit-delivery by name; `remoteLinks` maps a local
+  // unit to the remote units it is linked to (`node<NUL>unit`), so a unit death or a nodedown signals
+  // the far side. In-process links stay in gen-server's exitPorts; THIS is the cross-wire half.
+  const LINKSEP = String.fromCharCode(0);
+  const linkTargets = new Map<string, (from: string, reason: AnyFailure) => void>();
+  const remoteLinks = new Map<string, Set<string>>();
+  const addRemoteLink = (localUnit: string, remoteNode: string, remoteUnit: string): void => {
+    let set = remoteLinks.get(localUnit);
+    if (!set) remoteLinks.set(localUnit, (set = new Set()));
+    set.add(`${remoteNode}${LINKSEP}${remoteUnit}`);
+  };
   // Membership + registry live in ONE convergent CRDT (ORSet of facts) — a dropped
   // join/register self-heals via anti-entropy, and a healed partition reconciles.
   const crdt = new ORSet(name);
@@ -462,6 +491,20 @@ export function start(
     if (peers.delete(peer)) {
       for (const fn of monitors) fn(peer);
       notifyNode(peer, wasHidden, 'down'); // Erlang nodedown, node_type-filtered
+      // A distributed link to a unit on the dead peer fires as if that unit exited (Erlang: nodedown
+      // breaks remote links). Synthesize the exit for each local unit linked across.
+      const prefix = `${peer}${LINKSEP}`;
+      for (const [localUnit, set] of remoteLinks) {
+        for (const key of [...set]) {
+          if (!key.startsWith(prefix)) continue;
+          set.delete(key);
+          linkTargets.get(localUnit)?.(
+            `${key.slice(prefix.length)}@${peer}`,
+            new Failure('NodeDown', `${peer} went down`, { node: peer }),
+          );
+        }
+        if (set.size === 0) remoteLinks.delete(localUnit);
+      }
     }
   };
   const inspectors = new Map<string, () => Record<string, unknown>>();
@@ -518,6 +561,25 @@ export function start(
           full: true,
         });
       }
+    } else if (frame.kind === 'link') {
+      // A remote unit `frame.peer@frame.from` links to my local unit `frame.unit`. Record the reverse
+      // link if the unit exists; otherwise tell them it is already down (noproc), so their link fires.
+      const local = frame.unit!;
+      if (linkTargets.has(local)) addRemoteLink(local, frame.from, frame.peer!);
+      else
+        dispatch({
+          kind: 'unitexit',
+          from: name,
+          to: frame.from,
+          unit: frame.peer,
+          peer: local,
+          ...encode(new Failure('NoProc', `no unit ${local} on ${name}`, { unit: local })),
+        });
+    } else if (frame.kind === 'unitexit') {
+      // The remote unit `frame.peer@frame.from` exited — signal my local unit `frame.unit`.
+      const local = frame.unit!;
+      remoteLinks.get(local)?.delete(`${frame.from}${LINKSEP}${frame.peer}`);
+      linkTargets.get(local)?.(`${frame.peer}@${frame.from}`, decode(frame) as AnyFailure);
     } else if (frame.kind === 'crdt') {
       // A convergent update: a one-op delta (broadcast) or full state (anti-entropy / hello).
       if (frame.full) crdt.merge(frame.crdt!);
@@ -725,6 +787,30 @@ export function start(
     },
     putFact: (fact) => broadcastDelta(crdt.add(fact)),
     dropFact: (fact) => broadcastDelta(crdt.remove(fact)),
+    registerLinkTarget: (unitName, deliver) => {
+      linkTargets.set(unitName, deliver);
+      return () => linkTargets.delete(unitName);
+    },
+    linkUnit: (localName, remoteNode, remoteName) => {
+      addRemoteLink(localName, remoteNode, remoteName);
+      dispatch({ kind: 'link', from: name, to: remoteNode, unit: remoteName, peer: localName });
+    },
+    notifyRemoteLinks: (localName, reason) => {
+      const set = remoteLinks.get(localName);
+      if (!set) return;
+      for (const key of set) {
+        const sep = key.indexOf(LINKSEP);
+        dispatch({
+          kind: 'unitexit',
+          from: name,
+          to: key.slice(0, sep),
+          unit: key.slice(sep + 1),
+          peer: localName,
+          ...encode(reason),
+        });
+      }
+      remoteLinks.delete(localName);
+    },
     facts: (prefix) => crdt.values().filter((f) => f.startsWith(prefix)),
     ping(peer, timeoutMs = 5000) {
       const task = awaitRef<'pong' | 'pang'>(
