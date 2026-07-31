@@ -286,9 +286,18 @@ export interface GenServerOptions {
   /** Register under a cluster-wide name — Elixir's `{:via, Registry, {Reg, key}}`. */
   via?: { registry: string; key: string };
   /**
-   * Fired ONCE when the unit goes down — via `exit()`, a linked unit's death, or a `via` conflict.
-   * The seam {@link superviseGenServer} uses to bridge a unit's death to a supervisor's `onExit`;
-   * most code reaches for {@link GenServer#link}/`trapExit` instead of observing this directly.
+   * OTP's "let it crash": a handler throwing a **bug** (a non-`Failure`) TERMINATES the unit —
+   * `down()` fires the exit signal (links → `onExit` → a supervisor restarts it) and the in-flight
+   * caller gets a `UnitCrashed` failure (the bug as its `.cause`). OFF (the default), that same throw
+   * is answered as a `RemoteCrash` reply and the unit keeps serving. Either way a thrown or returned
+   * declared `Failure` is an EXPECTED outcome and never crashes — only bugs do. Pair with a `store`
+   * (and a supervisor) so the restarted unit rehydrates instead of losing state.
+   */
+  crashOnError?: boolean;
+  /**
+   * Fired ONCE when the unit goes down — via `exit()`, a linked unit's death, a `via` conflict, or a
+   * `crashOnError` bug. The seam {@link superviseGenServer} uses to bridge a unit's death to a
+   * supervisor's `onExit`; most code reaches for {@link GenServer#link}/`trapExit` instead.
    */
   onDown?: (reason: AnyFailure) => void;
 }
@@ -389,7 +398,25 @@ export function genServer<S, K extends string = string>(
     return enqueue(async () => {
       if (!unitAlive)
         return downReason ?? new Failure('UnitDown', `${name} is down`, { name, from: name });
-      const outcome = await current.handlers[key](state, payload, from);
+      let outcome: { state: S; reply?: unknown; persist?: boolean };
+      try {
+        outcome = await current.handlers[key](state, payload, from);
+      } catch (thrown) {
+        // "Let it crash": a BUG (non-Failure throw) terminates the unit when crashOnError is set —
+        // down() propagates the exit (links → onExit → supervisor restart). A declared Failure is an
+        // expected reply, never a crash; a bug WITHOUT the flag rejects as RemoteCrash, unit alive.
+        if (options.crashOnError && !isFailure(thrown)) {
+          const reason = new Failure(
+            'UnitCrashed',
+            `${name} crashed handling ${key}: ${String(thrown)}`,
+            { name, subject: key },
+            { cause: thrown },
+          );
+          down(reason);
+          throw reason; // the in-flight caller learns the unit died (bug carried as .cause)
+        }
+        throw thrown;
+      }
       state = outcome.state;
       // PERSIST-BEFORE-ACK — the delta-loss fix: the durable write completes (inside the serial
       // pump, so ordering holds) BEFORE the reply is released. A caller's ack means the state

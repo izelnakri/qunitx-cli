@@ -226,6 +226,77 @@ module('Node | typed local client', () => {
   });
 });
 
+module('Node | crashOnError (let it crash)', () => {
+  test('a handler BUG terminates the unit; a declared Failure is just a reply', async (assert) => {
+    const hub = Node.memoryHub();
+    const svc = Node.start('svc@memory', hub.transport());
+    const Rejected = Failure.define('Rejected', 'declared + expected — not a crash');
+    const unit = Node.genServer(
+      svc,
+      'risky',
+      {
+        version: '1',
+        init: () => 0,
+        handlers: {
+          ok: (n) => ({ state: n + 1, reply: n + 1 }),
+          deny: () => {
+            throw Rejected(); // a DECLARED Failure — an expected outcome
+          },
+          boom: () => {
+            throw new TypeError('a genuine bug'); // a non-Failure — a crash
+          },
+        },
+      },
+      { crashOnError: true },
+    );
+
+    assert.strictEqual(await unit.call('ok'), 1, 'serves normally');
+
+    // A thrown declared Failure is an expected reply — it does NOT crash the unit.
+    const denied = await unit.call('deny').result();
+    assert.true(Rejected.is(denied), 'a thrown declared Failure came back as a reply');
+    assert.true(unit.isAlive(), 'a declared Failure did NOT crash the unit');
+    assert.strictEqual(await unit.call('ok'), 2, 'still serving; state intact (1 → 2)');
+
+    // A bug (non-Failure throw) crashes: the caller gets UnitCrashed, the unit terminates.
+    const crashed = (await unit.call('boom').result()) as Failure.Any;
+    assert.strictEqual(crashed.code, 'UnitCrashed', 'the in-flight caller learns the unit crashed');
+    assert.true(
+      String(crashed.message).includes('a genuine bug'),
+      'the crash reason carries the original bug text',
+    );
+    assert.false(unit.isAlive(), 'the unit terminated on the bug — let it crash');
+    assert.strictEqual(
+      ((await unit.call('ok').result()) as Failure.Any).code,
+      'UnitCrashed',
+      'subsequent calls hit the dead unit and get its crash reason back',
+    );
+    svc.stop();
+  });
+
+  test('OFF by default: a bug is answered, not fatal — the unit keeps serving', async (assert) => {
+    const hub = Node.memoryHub();
+    const svc = Node.start('svc@memory', hub.transport());
+    const cli = Node.start('cli@memory', hub.transport());
+    Node.genServer(svc, 'lenient', {
+      version: '1',
+      init: () => 0,
+      handlers: {
+        ok: (n) => ({ state: n + 1, reply: n + 1 }),
+        boom: () => {
+          throw new Error('bug');
+        },
+      },
+    }); // no crashOnError
+
+    const crashed = (await cli.call('svc@memory', 'lenient.boom').result()) as Failure.Any;
+    assert.strictEqual(crashed.code, 'RemoteCrash', 'a bug is a RemoteCrash reply by default');
+    assert.strictEqual(await cli.call('svc@memory', 'lenient.ok'), 1, 'the unit is still serving');
+    svc.stop();
+    cli.stop();
+  });
+});
+
 // ── Links + trapExit — Erlang's exit signals between served units ─────────────
 
 module('Node | links', () => {

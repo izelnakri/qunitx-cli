@@ -130,6 +130,64 @@ module('Node | distributedSupervisor (Horde DynamicSupervisor)', () => {
     }
   });
 
+  test('crashOnError: a handler bug crashes the unit and the supervisor restarts it, rehydrated', async (assert) => {
+    const hub = memoryHub();
+    const store = memoryStore();
+    const node = Node.start('solo@crash', hub.transport());
+    let starts = 0;
+    const sup = distributedSupervisor(node, shardedRegistry(node), {
+      name: 'accts',
+      desired: ['a1'],
+      reconcileMs: 20,
+      start: (key) => {
+        starts += 1;
+        return superviseGenServer(
+          node,
+          key,
+          {
+            version: '1',
+            init: () => 0,
+            handlers: {
+              deposit: (n, by) => ({ state: n + (by as number), reply: n + (by as number) }),
+              balance: (n) => ({ state: n, reply: n }),
+              boom: () => {
+                throw new Error('bug in handler'); // a non-Failure — a crash
+              },
+            },
+          },
+          { store, storeKey: key, crashOnError: true }, // let it crash → supervisor restarts it
+        );
+      },
+    });
+    const unit = () => sup.local('a1') as GenServer<number, 'deposit' | 'balance' | 'boom'>;
+
+    try {
+      assert.true(await until(() => sup.hosted().includes('a1')), 'a1 hosted');
+      const before = starts;
+      await unit().call('deposit', 50);
+      assert.equal(await store.load('a1'), 50, 'the deposit is durable before the crash');
+
+      // A bug crashes the unit; superviseGenServer's onExit tells the supervisor to restart it.
+      const crashed = (await unit().call('boom').result()) as Failure.Any;
+      assert.equal(crashed.code, 'UnitCrashed', 'the crashing caller got UnitCrashed');
+      assert.true(
+        await until(() => starts > before),
+        'the supervisor restarted the crashed unit (a new start)',
+      );
+      assert.true(await until(() => sup.hosted().includes('a1')), 'a1 hosted again after restart');
+
+      // The restarted unit rehydrated from the shared store — the balance survived the crash.
+      assert.equal(
+        await unit().call('balance'),
+        50,
+        'the restarted unit rehydrated its balance from the store',
+      );
+    } finally {
+      await sup.stop();
+      node.stop();
+    }
+  });
+
   test('restarts a child that crashes IN PLACE (onExit) while its node stays up', async (assert) => {
     const hub = memoryHub();
     const node = Node.start('solo@ip', hub.transport());
