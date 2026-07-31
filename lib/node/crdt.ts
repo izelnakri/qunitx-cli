@@ -66,10 +66,29 @@ export class ORSet {
   #dots = new Map<string, Set<Dot>>(); // element -> its live dots
   #vv: VersionVector = {}; // contiguous counter prefix per node
   #cloud = new Set<Dot>(); // dots seen above the prefix (a gap not yet filled)
+  #onChange?: (added: readonly string[], removed: readonly string[]) => void;
 
   /** `node` is this replica's id — it stamps the dots this node mints, so they stay unique. */
   constructor(node: string) {
     this.#node = node;
+  }
+
+  /**
+   * Subscribe to element presence TRANSITIONS — fired (once per op) with the elements that went
+   * absent→present and present→absent, from local `add`/`remove` and from `merge`/`mergeDelta`
+   * alike. A caller builds a secondary index off this (e.g. group→members) so hot-path lookups are
+   * O(matching entries), not O(every element). One subscriber; a later call replaces it.
+   *
+   * ```ts
+   * const s = new ORSet('n@1');
+   * const seen: string[] = [];
+   * s.onChange((added) => seen.push(...added));
+   * s.add('x');
+   * seen; // ['x']
+   * ```
+   */
+  onChange(fn: (added: readonly string[], removed: readonly string[]) => void): void {
+    this.#onChange = fn;
   }
 
   // A dot is observed iff it is under this node's contiguous prefix or sits in the cloud.
@@ -96,8 +115,10 @@ export class ORSet {
    */
   add(element: string): CrdtState {
     const dot = this.#freshDot();
-    if (!this.#dots.has(element)) this.#dots.set(element, new Set());
+    const wasPresent = this.#dots.has(element);
+    if (!wasPresent) this.#dots.set(element, new Set());
     this.#dots.get(element)!.add(dot);
+    if (!wasPresent) this.#onChange?.([element], []);
     return { dots: [[element, [dot]]], context: { vv: {}, cloud: [dot] } };
   }
 
@@ -117,6 +138,7 @@ export class ORSet {
     const removed = this.#dots.get(element);
     const dots = removed ? [...removed] : [];
     this.#dots.delete(element);
+    if (removed) this.#onChange?.([], [element]);
     return { dots: [[element, []]], context: { vv: {}, cloud: dots } };
   }
 
@@ -268,7 +290,10 @@ export class ORSet {
     const theirSeen = (dot: Dot): boolean =>
       dotCount(dot) <= (other.context.vv[dotNode(dot)] ?? 0) || theirCloud.has(dot);
     const theirDots = new Map(other.dots.map(([element, dots]) => [element, new Set(dots)]));
+    const added: string[] = [];
+    const removed: string[] = [];
     for (const element of new Set(elements)) {
+      const wasPresent = this.#dots.has(element);
       const mine = this.#dots.get(element) ?? new Set<Dot>();
       const theirs = theirDots.get(element) ?? new Set<Dot>();
       const live = new Set<Dot>();
@@ -276,10 +301,16 @@ export class ORSet {
       for (const dot of mine) if (theirs.has(dot) || !theirSeen(dot)) live.add(dot);
       // Add the peer's dots I have never seen (concurrent adds).
       for (const dot of theirs) if (!this.#seen(dot)) live.add(dot);
-      if (live.size > 0) this.#dots.set(element, live);
-      else this.#dots.delete(element);
+      if (live.size > 0) {
+        this.#dots.set(element, live);
+        if (!wasPresent) added.push(element);
+      } else {
+        this.#dots.delete(element);
+        if (wasPresent) removed.push(element);
+      }
     }
     this.#mergeContext(other.context);
+    if (added.length > 0 || removed.length > 0) this.#onChange?.(added, removed);
   }
 
   // Join causal contexts: version vectors pointwise-max, dot clouds union, then compact any

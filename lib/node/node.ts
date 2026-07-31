@@ -364,27 +364,74 @@ export function start(
   // nodedown HIDES a peer's entries (routing fails over) without touching the CRDT, and they
   // reappear if it returns — no flapping, no lost registrations on a false nodedown.
   const isLive = (node: string) => node === name || peers.has(node);
-  const factsWithPrefix = (prefix: string): string[] =>
-    crdt
-      .values()
-      .filter((f) => f.startsWith(prefix))
-      .map((f) => f.slice(prefix.length));
-  const groupMembersOf = (group: string): string[] =>
-    factsWithPrefix(`g\u001f${group}\u001f`).filter(isLive);
+  // SECONDARY INDEXES over the CRDT facts, so routing is O(matching entries) — not O(all facts).
+  // Every route (`group:`/`via:`), `whereis`, and conflict check reads these instead of scanning
+  // the whole replicated fact set. Kept exactly in step with the CRDT by subscribing to its
+  // presence transitions — local add/remove AND remote merge/delta all flow through `crdt.onChange`.
+  const US = String.fromCharCode(0x1f);
+  const groupIndex = new Map<string, Set<string>>(); // group -> members
+  const registryIndex = new Map<string, Set<string>>(); // `registry${US}key` -> owners
+  const indexFact = (fact: string, present: boolean): void => {
+    if (fact.startsWith(`g${US}`)) {
+      const rest = fact.slice(2);
+      const sep = rest.lastIndexOf(US); // member (a node name) is the LAST segment; the group may
+      const group = rest.slice(0, sep); // itself contain U+001F (e.g. pubsub's `pubsub<topic>`)
+      const member = rest.slice(sep + 1);
+      if (present) {
+        let members = groupIndex.get(group);
+        if (!members) groupIndex.set(group, (members = new Set()));
+        members.add(member);
+      } else {
+        const members = groupIndex.get(group);
+        if (members) {
+          members.delete(member);
+          if (members.size === 0) {
+            groupIndex.delete(group);
+            roundRobin.delete(group); // a group emptied — drop its round-robin cursor (no leak)
+          }
+        }
+      }
+    } else if (fact.startsWith(`r${US}`)) {
+      const rest = fact.slice(2);
+      const firstSep = rest.indexOf(US);
+      const afterReg = rest.slice(firstSep + 1);
+      const lastSep = afterReg.lastIndexOf(US);
+      const rk = `${rest.slice(0, firstSep)}${US}${afterReg.slice(0, lastSep)}`;
+      const owner = afterReg.slice(lastSep + 1);
+      if (present) {
+        let owners = registryIndex.get(rk);
+        if (!owners) registryIndex.set(rk, (owners = new Set()));
+        owners.add(owner);
+      } else {
+        const owners = registryIndex.get(rk);
+        if (owners) {
+          owners.delete(owner);
+          if (owners.size === 0) registryIndex.delete(rk);
+        }
+      }
+    }
+    // Other fact prefixes (e.g. Presence's putFact) aren't indexed here — they read via node.facts().
+  };
+  crdt.onChange((added, removed) => {
+    for (const fact of added) indexFact(fact, true);
+    for (const fact of removed) indexFact(fact, false);
+  });
+  const groupMembersOf = (group: string): string[] => {
+    const members = groupIndex.get(group);
+    return members ? [...members].filter(isLive) : [];
+  };
   const allGroups = (): Record<string, string[]> => {
     const out: Record<string, string[]> = {};
-    for (const fact of crdt.values()) {
-      if (!fact.startsWith('g\u001f')) continue;
-      const rest = fact.slice(2);
-      const sep = rest.indexOf('\u001f');
-      const group = rest.slice(0, sep);
-      const member = rest.slice(sep + 1);
-      if (isLive(member)) (out[group] ??= []).push(member);
+    for (const [group, members] of groupIndex) {
+      const live = [...members].filter(isLive);
+      if (live.length > 0) out[group] = live;
     }
     return out;
   };
-  const ownersOf = (registry: string, key: string): string[] =>
-    factsWithPrefix(`r\u001f${registry}\u001f${key}\u001f`).filter(isLive);
+  const ownersOf = (registry: string, key: string): string[] => {
+    const owners = registryIndex.get(`${registry}${US}${key}`);
+    return owners ? [...owners].filter(isLive) : [];
+  };
 
   // Broadcast a one-op CRDT delta (from crdt.add/remove) to every peer — immediate propagation;
   // anti-entropy (full state) backstops any that's dropped.
