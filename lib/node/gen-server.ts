@@ -388,8 +388,10 @@ export function genServer<S, K extends string = string>(
     if (!unitAlive) return;
     if (trap) {
       const handler = trap;
-      void enqueue(() => handler(from, reason)); // trap handling SERIALIZES with messages
-    } else {
+      void enqueue(() => handler(from, reason)); // a trapper hears EVERY linked exit, Normal included
+    } else if (reason.code !== 'Normal') {
+      // A NON-trapping unit dies WITH an abnormally-exiting link, but a `Normal` exit (a linked
+      // process finishing cleanly) leaves it be — Erlang's exit-signal rule.
       down(
         new Failure(
           'UnitDown',
@@ -537,9 +539,10 @@ export function spawnProcess(
   let alive = true;
   const links = new Set<ExitPort>();
   const stopInspect = node.inspect(name, () => ({ kind: 'process', alive }));
-  // A bare process does not trap exits — a linked death takes it down and propagates onward.
+  // A bare process does not trap exits — an ABNORMAL linked death takes it down; a linked `Normal`
+  // exit (a partner finishing cleanly) does not.
   const deliverExit = (from: string, reason: AnyFailure): void => {
-    if (alive)
+    if (alive && reason.code !== 'Normal')
       down(
         new Failure(
           'ProcessDown',
@@ -553,11 +556,14 @@ export function spawnProcess(
   const down = (reason: AnyFailure | null): void => {
     if (!alive) return;
     alive = false;
+    // A normal exit (fun returned) still SIGNALS links — a `Normal` reason — so a TRAPPING linker is
+    // told the process finished (Erlang's `{'EXIT', _, normal}`, for completion tracking); a
+    // non-trapping linker ignores it. An abnormal reason propagates as itself. Either way both ends
+    // unlink so no dead port lingers.
+    const signal = reason ?? new Failure('Normal', `${name} exited normally`, { name, from: name });
     for (const peer of links) {
-      otherLinks.get(peer)?.delete(myPort); // unlink on the PEER's side too (Erlang: any exit unlinks)
-      // reason === null is a NORMAL exit (Erlang `:normal`) — the link is dropped but no signal is
-      // delivered; only an abnormal reason propagates onward.
-      if (reason !== null) peer.deliverExit(name, reason);
+      otherLinks.get(peer)?.delete(myPort);
+      peer.deliverExit(name, signal);
     }
     links.clear();
     stopInspect();

@@ -226,7 +226,7 @@ module('Node | Process.spawn (bare processes — Erlang spawn/1,3)', () => {
     node.stop();
   });
 
-  test('a trapping unit survives a NORMAL linked exit SILENTLY, but is signalled on an ABNORMAL one', async (assert) => {
+  test('a trapping unit is signalled on BOTH a normal and an abnormal linked exit; survives both', async (assert) => {
     const node = Node.start('a@proc', memoryHub().transport());
     const signals: string[] = [];
     const guard = Process.spawn(node, guardBehavior());
@@ -235,7 +235,11 @@ module('Node | Process.spawn (bare processes — Erlang spawn/1,3)', () => {
     Process.spawn(node, () => {}, { link: guard }); // normal exit
     await settle();
     assert.true(Process.alive(guard), 'guard survives the normal exit');
-    assert.deepEqual(signals, [], 'a normal exit is SILENT even to a trapper (Erlang :normal)');
+    assert.deepEqual(
+      signals,
+      ['Normal'],
+      'a trapper IS told of a normal completion (Erlang {EXIT,_,normal})',
+    );
 
     Process.spawn(
       node,
@@ -246,7 +250,26 @@ module('Node | Process.spawn (bare processes — Erlang spawn/1,3)', () => {
     ); // abnormal exit
     await settle();
     assert.true(Process.alive(guard), 'guard still alive (it traps)');
-    assert.deepEqual(signals, ['ProcessCrashed'], 'the abnormal exit DID signal');
+    assert.deepEqual(signals, ['Normal', 'ProcessCrashed'], 'and of an abnormal one, distinctly');
+    node.stop();
+  });
+
+  test('completion tracking: a trapping coordinator learns when each linked worker finishes', async (assert) => {
+    const node = Node.start('a@proc', memoryHub().transport());
+    let done = 0;
+    const coordinator = Process.spawn(node, guardBehavior());
+    coordinator.trapExit((_from, reason) => {
+      if ((reason as Failure.Any).code === 'Normal') done += 1; // count clean completions
+    });
+    for (let i = 0; i < 5; i += 1)
+      Process.spawn(node, async () => await settle(5), { link: coordinator });
+    await settle(40);
+    assert.strictEqual(
+      done,
+      5,
+      'the coordinator was notified of all 5 completions — link+trap tracks work',
+    );
+    assert.true(Process.alive(coordinator), 'and it stayed up throughout');
     node.stop();
   });
 
