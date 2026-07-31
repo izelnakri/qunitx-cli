@@ -72,13 +72,36 @@ export function shardedPresence(
 
   // Coordinator-side shard state: topic -> presenceId -> entry. Only for topics I coordinate.
   const shard = new Map<string, Map<string, Entry>>();
-  const put = (topic: string, id: string, entry: Entry): void =>
-    void (shard.get(topic) ?? shard.set(topic, new Map()).get(topic)!).set(id, entry);
-  const drop = (topic: string, id: string): void => void shard.get(topic)?.delete(id);
+  // owner -> topic -> its ids, so a nodedown prunes what a peer owned in O(its entries) instead of
+  // scanning every entry in every shard.
+  const ownerEntries = new Map<string, Map<string, Set<string>>>();
+  const put = (topic: string, id: string, entry: Entry): void => {
+    let s = shard.get(topic);
+    if (!s) shard.set(topic, (s = new Map()));
+    s.set(id, entry);
+    let byTopic = ownerEntries.get(entry.owner);
+    if (!byTopic) ownerEntries.set(entry.owner, (byTopic = new Map()));
+    let ids = byTopic.get(topic);
+    if (!ids) byTopic.set(topic, (ids = new Set()));
+    ids.add(id);
+  };
+  const drop = (topic: string, id: string): void => {
+    const entry = shard.get(topic)?.get(id);
+    if (!entry) return;
+    shard.get(topic)!.delete(id);
+    const byTopic = ownerEntries.get(entry.owner);
+    const ids = byTopic?.get(topic);
+    if (ids) {
+      ids.delete(id);
+      if (ids.size === 0) byTopic!.delete(topic);
+      if (byTopic!.size === 0) ownerEntries.delete(entry.owner);
+    }
+  };
   const listLocal = (topic: string): PresenceList => {
     const out: PresenceList = {};
+    const live = new Set(node.list()); // hoist once — was node.list() (a fresh array) per entry
     for (const { owner, key, meta } of shard.get(topic)?.values() ?? []) {
-      if (owner !== self && !node.list().includes(owner)) continue; // hide a downed owner
+      if (owner !== self && !live.has(owner)) continue; // hide a downed owner
       (out[key] ??= { metas: [] }).metas.push(meta);
     }
     return out;
@@ -95,10 +118,16 @@ export function shardedPresence(
   );
   node.handle(LIST, (raw) => listLocal((raw as { topic: string }).topic));
 
-  // Liveness: when a peer goes down, prune every presence it owned from the shards I coordinate.
+  // Liveness: when a peer goes down, prune every presence it owned from the shards I coordinate —
+  // O(entries the down node owned) via the owner index, not O(all entries in every shard).
   node.monitor((down) => {
-    for (const entries of shard.values())
-      for (const [id, e] of [...entries]) if (e.owner === down) entries.delete(id);
+    const byTopic = ownerEntries.get(down);
+    if (!byTopic) return;
+    for (const [topic, ids] of byTopic) {
+      const s = shard.get(topic);
+      if (s) for (const id of ids) s.delete(id);
+    }
+    ownerEntries.delete(down);
   });
 
   // My own tracks, tagged with the coordinator each was last sent to (for re-homing).

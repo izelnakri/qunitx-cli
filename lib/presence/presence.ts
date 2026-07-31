@@ -81,8 +81,6 @@ export function presence(node: NodeHandle, bus?: PubSub): Presence {
   const mineKey = (topic: string, key: string, presenceId: string) =>
     `${topic}${SEP}${key}${SEP}${presenceId}`;
 
-  const isLive = (owner: string): boolean => owner === node.self() || node.list().includes(owner);
-
   const emit = (
     topic: string,
     joins: PresenceDiff['joins'],
@@ -130,6 +128,10 @@ export function presence(node: NodeHandle, bus?: PubSub): Presence {
     list(topic) {
       const out: PresenceList = {};
       const prefix = factPrefix(topic);
+      // Hoist the liveness set ONCE per call — was `node.list()` (a fresh array + O(peers) scan) per
+      // fact, i.e. O(presences × peers) for a hot room. Now O(presences + peers).
+      const live = new Set(node.list());
+      const isLive = (owner: string) => owner === node.self() || live.has(owner);
       for (const fact of node.facts(prefix)) {
         const [key, presenceId, metaJSON] = fact.slice(prefix.length).split(SEP);
         if (!isLive(ownerOf(presenceId))) continue; // hide presences on a downed node
