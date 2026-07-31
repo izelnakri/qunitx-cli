@@ -14,6 +14,10 @@ import type { Any as AnyFailure } from '../result/failure.ts';
 
 type BusSpec = { kind: 'port' } | { kind: 'ws'; url: string };
 
+// Every worker thread runs this bootstrap (not the user's module directly): it imports the user
+// module and calls serveWorker() with its exported `worker`, so the user module stays pure.
+const WORKER_BOOTSTRAP = new URL('./worker-bootstrap.ts', import.meta.url);
+
 /**
  * A pool of worker-thread nodes — Elixir's `Task.Supervisor` over a `poolboy` pool. `call`/`cast`
  * round-robin across the threads, so CPU-bound work parallelises without blocking the main loop.
@@ -34,12 +38,14 @@ export interface WorkerPool {
 }
 
 /**
- * Spawn `size` worker threads, each running the node behavior in `module` (a file that calls
- * {@link serveWorker}); `call`/`cast` round-robin across them. Work is addressed by subject, not by
- * shipping a closure (JS can't) — the same model as the cluster, one hop closer (a thread, not a
- * machine). A crashed worker is respawned (`respawn`, default true). Pass `hub` (a ws hub URL) to
- * run in CLUSTER mode: the threads join that hub, so `pool.group` is reachable from every node in
- * the cluster; omit it for a private, in-process LOCAL pool.
+ * Spawn `size` worker threads, each running the node behavior in `module` — a file that
+ * `export`s a pure `worker` setup, `export function worker(node) { node.handle(…) }` (the pool's
+ * bootstrap imports it and wires it up; the module itself has no top-level side effects). `call`/
+ * `cast` round-robin across them. Work is addressed by subject, not by shipping a closure (JS
+ * can't) — the same model as the cluster, one hop closer (a thread, not a machine). A crashed
+ * worker is respawned (`respawn`, default true). Pass `hub` (a ws hub URL) to run in CLUSTER mode:
+ * the threads join that hub, so `pool.group` is reachable from every node in the cluster; omit it
+ * for a private, in-process LOCAL pool.
  *
  * ```ts
  * typeof workerPool; // 'function' — usage needs a real worker module; see serveWorker
@@ -64,8 +70,16 @@ export function workerPool(options: {
 
   const spawn = (i: number, gen: number): void => {
     const name = `w${i}g${gen}-${id}@pool`;
-    const worker = new Worker(options.module, {
-      workerData: { __pool: { name, group, bus: busSpec, data: options.workerData } },
+    const worker = new Worker(WORKER_BOOTSTRAP, {
+      workerData: {
+        __pool: {
+          name,
+          group,
+          bus: busSpec,
+          data: options.workerData,
+          module: String(options.module), // the user module the bootstrap imports for its `worker`
+        },
+      },
     });
     if (busSpec.kind === 'port') worker.on('message', (frame: Frame) => deliver?.(frame));
     worker.on('exit', () => {
@@ -125,11 +139,13 @@ export function workerPool(options: {
 
 /**
  * The worker-side entry: read the pool's assignment (name + group + bus), start this thread's node,
- * and let `setup` register its handlers. Call it at the top of a {@link workerPool} `module` file.
+ * and let `setup` register its handlers. The pool's bootstrap calls this with your module's exported
+ * `worker` — so you normally write `export function worker(node) { … }` and never call this directly.
+ * (It stays exported for advanced/manual bootstrapping.)
  *
  * ```ts
- * // cpu-worker.ts, inside a worker thread:
- * // serveWorker((node) => node.handle('fib', (n) => fib(n as number)));
+ * // cpu-worker.ts — the whole worker module, pure:
+ * // export function worker(node) { node.handle('fib', (n) => fib(n as number)); }
  * typeof serveWorker; // 'function'
  * ```
  */
