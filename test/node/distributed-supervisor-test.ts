@@ -1,5 +1,13 @@
 import { module, test } from 'qunitx';
-import { Node, memoryHub, shardedRegistry, distributedSupervisor } from '../../lib/node/index.ts';
+import {
+  Node,
+  memoryHub,
+  memoryStore,
+  shardedRegistry,
+  distributedSupervisor,
+  superviseGenServer,
+  type GenServer,
+} from '../../lib/node/index.ts';
 
 const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const until = async (cond: () => boolean, ms = 4000) => {
@@ -50,6 +58,72 @@ module('Node | distributedSupervisor (Horde DynamicSupervisor)', () => {
       for (const key of onB) {
         assert.equal(await supA.whereis(key), 'a@ds', `re-homed ${key} now owned by A`);
       }
+    } finally {
+      await supA.stop();
+      nodeA.stop();
+    }
+  });
+
+  test('a superviseGenServer child re-homes on node loss AND keeps its state via a shared store', async (assert) => {
+    const hub = memoryHub();
+    const store = memoryStore(); // one store shared by both hosts — stands in for a cluster DB
+    const nodeA = Node.start('a@gs', hub.transport());
+    const nodeB = Node.start('b@gs', hub.transport());
+    const keys = ['acct-1', 'acct-2', 'acct-3', 'acct-4'];
+    const counter = (node: typeof nodeA) =>
+      distributedSupervisor(node, shardedRegistry(node), {
+        name: 'ledgers',
+        desired: keys,
+        reconcileMs: 20,
+        start: (key) =>
+          superviseGenServer(
+            node,
+            key,
+            {
+              version: '1',
+              init: () => 0,
+              handlers: {
+                deposit: (n, by) => ({ state: n + (by as number), reply: n + (by as number) }),
+                balance: (n) => ({ state: n, reply: n }),
+              },
+            },
+            { store, storeKey: key }, // durable — persist-before-ack, rehydrated by whoever hosts next
+          ),
+      });
+    const supA = counter(nodeA);
+    const supB = counter(nodeB);
+
+    try {
+      assert.true(
+        await until(() => supA.hosted().length + supB.hosted().length === keys.length),
+        'every ledger hosted exactly once across the cluster',
+      );
+      // Find a key that landed on B, deposit into it through the LOCAL typed handle, and confirm
+      // the deposit persisted (durable-before-ack) so it can survive B's death.
+      const onB = supB.hosted();
+      assert.true(onB.length > 0, 'node B hosts some ledgers');
+      const key = onB[0];
+      const live = supB.local(key) as GenServer<number, 'deposit' | 'balance'>;
+      assert.equal(await live.call('deposit', 100), 100, 'deposited 100 on B');
+      assert.equal(await store.load(key), 100, 'the deposit is durable in the shared store');
+
+      // Node B dies — supB.stop() gracefully tears down its hosts (state already durable), then B
+      // leaves the roster so A re-homes B's keys. A fresh unit spins up on A and rehydrates the store.
+      await supB.stop();
+      nodeB.stop();
+      assert.true(
+        await until(() => supA.hosted().length === keys.length),
+        'the survivor re-homed every ledger — all now on A',
+      );
+      assert.equal(await supA.whereis(key), 'a@gs', `re-homed ${key} now owned by A`);
+
+      const migrated = supA.local(key) as GenServer<number, 'deposit' | 'balance'>;
+      assert.equal(await migrated.call('balance'), 100, 'the re-homed unit rehydrated its balance');
+      assert.equal(
+        await migrated.call('deposit', 5),
+        105,
+        'and it keeps accumulating from the recovered state',
+      );
     } finally {
       await supA.stop();
       nodeA.stop();

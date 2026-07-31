@@ -30,6 +30,7 @@
 import { Failure, isFailure, type Any as AnyFailure } from '../result/failure.ts';
 import { Task } from '../task/task.ts';
 import type { NodeHandle } from './node.ts';
+import type { Service } from './supervisor.ts';
 
 /**
  * A durable backing for a unit's state — Elixir would reach for mnesia or an external DB; this
@@ -274,6 +275,24 @@ export interface GenServer<S, K extends string = string> {
 type ExitPort = { name: string; deliverExit: (from: string, reason: AnyFailure) => void };
 const exitPorts = new WeakMap<object, ExitPort>();
 
+/** Options for {@link genServer}. */
+export interface GenServerOptions {
+  /** Shed new work as a declared `Overloaded` once this many messages are queued (backpressure). */
+  maxMailbox?: number;
+  /** Durable backing — state persists before a reply is released and rehydrates on (re)start. */
+  store?: Store;
+  /** Key under which state is persisted (defaults to `name`). */
+  storeKey?: string;
+  /** Register under a cluster-wide name — Elixir's `{:via, Registry, {Reg, key}}`. */
+  via?: { registry: string; key: string };
+  /**
+   * Fired ONCE when the unit goes down — via `exit()`, a linked unit's death, or a `via` conflict.
+   * The seam {@link superviseGenServer} uses to bridge a unit's death to a supervisor's `onExit`;
+   * most code reaches for {@link GenServer#link}/`trapExit` instead of observing this directly.
+   */
+  onDown?: (reason: AnyFailure) => void;
+}
+
 /**
  * Serves a behavior on `node` under `name`: every handler key becomes the subject
  * `<name>.<key>`, plus the release-handler pair — `<name>.sys.version` answers the running
@@ -311,12 +330,7 @@ export function genServer<S, K extends string = string>(
   node: NodeHandle,
   name: string,
   behavior: Behavior<S, K>,
-  options: {
-    maxMailbox?: number;
-    store?: Store;
-    storeKey?: string;
-    via?: { registry: string; key: string };
-  } = {},
+  options: GenServerOptions = {},
 ): GenServer<S, K> {
   let current: Behavior<S> = behavior; // widen internally to string keys; K is a public-surface detail
   let state: S = behavior.init ? behavior.init() : (undefined as S);
@@ -435,6 +449,7 @@ export function genServer<S, K extends string = string>(
     if (options.via) node.unregister(options.via.registry, options.via.key); // release the name
     for (const peer of links) peer.deliverExit(name, reason);
     links.clear();
+    options.onDown?.(reason); // AFTER links propagate — observers see a fully-settled death
   };
 
   const handle: GenServer<S, K> = {
@@ -494,3 +509,68 @@ export function genServer<S, K extends string = string>(
 
 // Maps a unit's port to its link set so link() can wire BOTH directions.
 const otherLinks = new WeakMap<ExitPort, Set<ExitPort>>();
+
+/**
+ * A {@link genServer} wrapped as a supervisable {@link Service} — the bridge that lets a stateful
+ * gen_server be a child of a {@link distributedSupervisor} (or a local `supervisor`). It wires the
+ * two things the raw handle lacks: `stop()` (graceful teardown → `exit()`, which does NOT report as
+ * a crash) and `onExit(handler)` (an ABNORMAL death — a linked unit's crash, an external `exit(reason)`,
+ * a `via` conflict — so the supervisor restarts it in place). The returned value still IS the handle:
+ * `.call`/`.cast`/`.state`/`.upgrade` all work, so `sup.local(key)` is a usable typed client.
+ *
+ * Pair it with a durable `store` and failover is state-preserving: on node loss the key re-homes to a
+ * survivor, whose fresh unit rehydrates from the same store (persist-before-ack) — the OTP/Horde story,
+ * minus a live process migration (a JS runtime can't hand a running closure across nodes).
+ *
+ * ```ts
+ * import { Node, memoryHub } from './node.ts';
+ * import { shardedRegistry } from './sharded-registry.ts';
+ * import { distributedSupervisor } from './distributed-supervisor.ts';
+ *
+ * const store = memoryStore(); // one shared store stands in for a cluster DB
+ * const node = Node.start('solo@ds', memoryHub().transport());
+ * const sup = distributedSupervisor(node, shardedRegistry(node), {
+ *   name: 'counters',
+ *   desired: ['c1'],
+ *   start: (key) =>
+ *     superviseGenServer(
+ *       node,
+ *       key,
+ *       {
+ *         version: '1',
+ *         init: () => 0,
+ *         handlers: { bump: (n, by) => ({ state: n + (by as number), reply: n + (by as number) }) },
+ *       },
+ *       { store, storeKey: key },
+ *     ),
+ * });
+ * typeof sup.ensure; // 'function'
+ * await sup.stop();
+ * node.stop();
+ * ```
+ */
+export function superviseGenServer<S, K extends string = string>(
+  node: NodeHandle,
+  name: string,
+  behavior: Behavior<S, K>,
+  options: Omit<GenServerOptions, 'onDown'> = {},
+): GenServer<S, K> & Service {
+  let onExit: ((reason?: unknown) => void) | undefined;
+  let stopping = false;
+  const handle = genServer(node, name, behavior, {
+    ...options,
+    // A graceful stop() flips `stopping` first, so its own down() must NOT report as a crash
+    // (the Service contract). Any other death — linked crash, via conflict, external exit — does.
+    onDown: (reason) => {
+      if (!stopping) onExit?.(reason);
+    },
+  });
+  return {
+    ...handle,
+    onExit: (handler) => void (onExit = handler),
+    stop: () => {
+      stopping = true;
+      handle.exit();
+    },
+  };
+}

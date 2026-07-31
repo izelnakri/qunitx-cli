@@ -127,6 +127,37 @@ liveness); wiring the child's `onExit` also restarts it _in place_ on a live nod
 `distributedSupervisor` child is often a local `supervisor` subtree — distributed decides _which
 node_ hosts a key and survives node loss; local decides _what it's made of_ and restarts its parts.
 
+### A stateful gen_server per key, with failover
+
+A `genServer` lives on _one_ node — the same as Elixir, where a pid is bound to its node. To run one
+"anywhere in the cluster, and survive a node dropping," make it a `distributedSupervisor` child with
+**`superviseGenServer`** (which wraps the handle as a supervisable `Service` — `stop()` for graceful
+handoff, `onExit` for an abnormal death) and a **durable `store`**. Placement is by rendezvous (one
+host per key); on node loss the key re-homes to a survivor whose fresh unit rehydrates from the store:
+
+```ts
+const store = postgresStore(pool); // shared by every node — the state that outlives a host
+const ledgers = distributedSupervisor(node, shardedRegistry(node), {
+  name: 'ledgers',
+  desired: ['acct-1', 'acct-2', 'acct-3'],
+  start: (key) => superviseGenServer(node, key, ledgerBehavior, { store, storeKey: key }),
+});
+await ledgers.whereis('acct-1'); // which node hosts it right now
+(ledgers.local('acct-1') as GenServer).call('debit', 100); // if hosted here: the typed local client
+```
+
+This is Horde's `DynamicSupervisor` + a durable store — a singleton _per key_ with state-preserving
+failover, not N live replicas. Only one instance is ever active (no double-debits); "redundancy" is
+the cluster's ability to _re-home_, and the state's survival is the store, not a second live copy. If
+you truly need multiple copies accepting writes at once, that's consensus (`raftStore` — CP) or a
+CRDT (AP) — a deliberate step up in cost, for when one active owner isn't enough.
+
+For a single named process rather than a keyspace, `genServer(node, name, behavior, { via: { registry,
+key } })` registers it under a cluster-wide name (Elixir's `{:via, Registry, {Reg, key}}`); any node
+reaches it as `via:<registry>/<key>`, and if two nodes race the key the loser self-terminates
+(`UnitDown`) so callers re-resolve to the survivor. `via` names and locates; `distributedSupervisor`
+also _places and re-homes_.
+
 ## Building a supervisable service
 
 A supervised value exposes:

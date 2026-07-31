@@ -64,7 +64,15 @@ export { ORSet, type Dot, type VersionVector, type CausalContext, type CrdtState
 // Hot code upgrades: Erlang's release mechanics on web standards — import() as the code
 // server, run-to-completion as suspend/resume, codeChange as code_change/3, and the
 // `<name>.sys.upgrade` subject as the relup that reaches remote nodes.
-export { genServer, memoryStore, type Behavior, type GenServer, type Store } from './upgradable.ts';
+export {
+  genServer,
+  memoryStore,
+  superviseGenServer,
+  type Behavior,
+  type GenServer,
+  type GenServerOptions,
+  type Store,
+} from './upgradable.ts';
 export {
   supervisor,
   type Supervisor,
