@@ -10,15 +10,27 @@ serveWorker((node) => {
   node.handle('ran', () => ran);
   node.handle('reset', () => void (ran = 0));
 
-  // return task
-  node.handle('return-task', () => Task(() => ((ran += 1), 'v')));
+  // (e/i) return task
+  node.handle('return-task', () =>
+    Task(() => {
+      ran += 1;
+      return 'v';
+    }),
+  );
   node.handle('return-task-bad', () =>
     Task(() => {
       throw new Error('boom');
     }),
   );
-  // return await task
-  node.handle('return-await', async () => await Task(() => ((ran += 1), 'v')));
+  // (f/j) return await task
+  node.handle(
+    'return-await',
+    async () =>
+      await Task(() => {
+        ran += 1;
+        return 'v';
+      }),
+  );
   node.handle(
     'return-await-bad',
     async () =>
@@ -26,20 +38,24 @@ serveWorker((node) => {
         throw new Error('boom');
       }),
   );
-  // { task; return x } — created, never awaited (lazy → dropped)
-  node.handle('drop-lazy', () => (Task(() => (ran += 1)), 'x'));
-  node.handle(
-    'drop-lazy-bad',
-    () => (
-      Task(() => {
-        throw new Error('boom');
-      }),
-      'x'
-    ),
-  );
-  // { await task; return x }
+  // (g/k) { task; return x } — created, never awaited (lazy → dropped)
+  node.handle('drop-lazy', () => {
+    Task(() => {
+      ran += 1;
+    });
+    return 'x';
+  });
+  node.handle('drop-lazy-bad', () => {
+    Task(() => {
+      throw new Error('boom');
+    });
+    return 'x';
+  });
+  // (h/l) { await task; return x }
   node.handle('await-task', async () => {
-    await Task(() => (ran += 1));
+    await Task(() => {
+      ran += 1;
+    });
     return 'x';
   });
   node.handle('await-task-bad', async () => {
