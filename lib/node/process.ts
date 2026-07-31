@@ -50,7 +50,9 @@ export interface BoundProcess {
 
 // Monotonic across the process — anonymous names only need to be unique, and the node prefix keeps
 // them readable/attributable. Not Math.random/Date.now (a counter is enough and stays deterministic).
-let spawnCount = 0;
+// A BigInt so the sequence has NO ceiling: `number` would exhaust safe integers at 2^53 (~285 years
+// at 1M spawns/s, but a hard limit); BigInt removes it outright for a long-lived, high-churn runtime.
+let spawnCount = 0n;
 
 /**
  * Elixir's `Process` module — the static side of process management, the operations that aren't a
@@ -127,7 +129,7 @@ function spawn(
   fourth?: unknown,
   fifth?: unknown,
 ): GenServer<unknown> | Pid {
-  spawnCount += 1;
+  spawnCount += 1n;
   const name = `${node.self()}:proc:${spawnCount}`;
   if (typeof second === 'function') {
     return spawnProcess(
