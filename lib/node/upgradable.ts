@@ -29,7 +29,7 @@
  */
 import { Failure, isFailure, type Any as AnyFailure } from '../result/failure.ts';
 import { Task } from '../task/task.ts';
-import type { NodeHandle } from './node.ts';
+import type { NodeHandle, Trace } from './node.ts';
 import type { Service } from './supervisor.ts';
 
 /**
@@ -189,6 +189,14 @@ export interface Self<K extends string = string> {
   /** Who sent the message being handled — a peer node's name over the wire, or this unit for a
    *  self-send/local call. Erlang's `from` (minus the reply ref, which the mailbox owns). */
   readonly from: string;
+  /** The distributed trace context this message carries, if the caller set one — for logging and
+   *  propagating a span downstream. Undefined for a local self-send. */
+  readonly trace?: Trace;
+  /** Epoch-ms deadline after which the CALLER has given up (its call timeout), or undefined if none.
+   *  A long handler can bail — `self.deadline && Date.now() > self.deadline` — instead of computing a
+   *  reply nobody awaits. The transport already sheds a call that ARRIVES past its deadline; this
+   *  catches one that crosses the line mid-work. */
+  readonly deadline?: number;
   /** `GenServer.cast(self(), …)` — enqueue a message to itself; it runs AFTER the current one. */
   cast(subject: K, payload?: unknown): void;
   /** `Process.send_after(self(), msg, ms)` — schedule a self-`cast` after `ms`, through the mailbox. */
@@ -418,7 +426,12 @@ export function genServer<S, K extends string = string>(
   // The one invocation path, shared by the remote handler (node.handle, below) and the typed LOCAL
   // client (handle.call/cast). Returns the reply — a value, or a declared Failure (Overloaded /
   // UnitDown / whatever the handler returns). A handler THROW rejects the enqueue promise.
-  const invoke = (key: string, payload: unknown, from: string): unknown => {
+  const invoke = (
+    key: string,
+    payload: unknown,
+    from: string,
+    meta?: { trace?: Trace; deadline?: number },
+  ): unknown => {
     // Load shedding — BEAM mailboxes are unbounded (a real footgun under overload); this is the
     // disciplined floor. A full mailbox rejects new work as a declared Overloaded the caller can
     // back off on, instead of growing without bound. The reply is a VALUE (a Failure); call()
@@ -432,10 +445,13 @@ export function genServer<S, K extends string = string>(
     return enqueue(async () => {
       if (!unitAlive)
         return downReason ?? new Failure('UnitDown', `${name} is down`, { name, from: name });
-      // The unit's view of itself for THIS message — self() + Process-style ops, plus who sent it.
+      // The unit's view of itself for THIS message — self() + Process-style ops, who sent it, and
+      // the call's trace/deadline (undefined for a local self-send, which has neither).
       const self: Self = {
         name,
         from,
+        trace: meta?.trace,
+        deadline: meta?.deadline,
         cast: castSelf,
         sendAfter,
         exit: (reason) => handle.exit(reason),
@@ -470,7 +486,7 @@ export function genServer<S, K extends string = string>(
   };
 
   const register = (key: string) =>
-    node.handle(`${name}.${key}`, (payload, from) => invoke(key, payload, from));
+    node.handle(`${name}.${key}`, (payload, from, meta) => invoke(key, payload, from, meta));
 
   const apply = (next: Behavior<S>): string => {
     const fromVersion = current.version;

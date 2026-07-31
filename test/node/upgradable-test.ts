@@ -400,6 +400,69 @@ module('Node | self (the process context)', () => {
     assert.false(seppuku.isAlive(), 'the unit terminated itself');
     svc.stop();
   });
+
+  test('self.deadline / self.trace expose the call meta; a handler can bail on doomed work', async (assert) => {
+    const hub = Node.memoryHub();
+    const svc = Node.start('svc@memory', hub.transport());
+    const cli = Node.start('cli@memory', hub.transport());
+    const decisions: string[] = [];
+    const worker = Node.genServer(svc, 'worker', {
+      version: '1',
+      init: () => 0,
+      handlers: {
+        meta: (s, _p, self) => ({
+          state: s,
+          reply: { deadline: self.deadline ?? null, traceId: self.trace?.id ?? null },
+        }),
+        slow: async (s, _p, self) => {
+          await new Promise((r) => setTimeout(r, 55));
+          // The caller may have given up while we worked — don't bother computing a dead reply.
+          const bailed = self.deadline !== undefined && Date.now() > self.deadline;
+          decisions.push(bailed ? 'bailed' : 'done');
+          return { state: s, reply: bailed ? 'bailed' : 'done' };
+        },
+      },
+    });
+
+    const before = Date.now();
+    const seen = (await cli.call('svc@memory', 'worker.meta', null, 5000)) as {
+      deadline: number | null;
+      traceId: string | null;
+    };
+    assert.true(
+      typeof seen.deadline === 'number' &&
+        seen.deadline >= before + 4000 &&
+        seen.deadline <= before + 6000,
+      'self.deadline ≈ now + the call timeout',
+    );
+    assert.true(
+      typeof seen.traceId === 'string' && seen.traceId.length > 0,
+      'self.trace carries the call’s trace id',
+    );
+
+    // A local self-call rides no wire — no deadline, no trace.
+    const local = (await worker.call('meta')) as {
+      deadline: number | null;
+      traceId: string | null;
+    };
+    assert.deepEqual(
+      local,
+      { deadline: null, traceId: null },
+      'a local self-call carries no wire meta',
+    );
+
+    // The bail path: a short-deadline call the handler outlives.
+    await cli.call('svc@memory', 'worker.slow', null, 30).result(); // client CallTimeout at 30ms
+    await new Promise((r) => setTimeout(r, 90)); // let the server-side handler finish its 55ms work
+    assert.deepEqual(
+      decisions,
+      ['bailed'],
+      'the handler saw the passed deadline and bailed instead of computing a dead reply',
+    );
+
+    svc.stop();
+    cli.stop();
+  });
 });
 
 // ── Links + trapExit — Erlang's exit signals between served units ─────────────
