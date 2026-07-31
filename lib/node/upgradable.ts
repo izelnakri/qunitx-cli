@@ -27,7 +27,7 @@
  * node.stop();
  * ```
  */
-import { Failure, type Any as AnyFailure } from '../result/failure.ts';
+import { Failure, isFailure, type Any as AnyFailure } from '../result/failure.ts';
 import { Task } from '../task/task.ts';
 import type { NodeHandle } from './node.ts';
 
@@ -182,7 +182,7 @@ export function memoryStore(): Store {
  * v2.version; // '2.0.0'
  * ```
  */
-export interface Behavior<S> {
+export interface Behavior<S, K extends string = string> {
   /** The release name this behavior IS — what `sys.version` answers and `codeChange` receives. */
   version: string;
   /** First-boot state. Ignored on upgrade — `codeChange` owns that path. */
@@ -192,9 +192,10 @@ export interface Behavior<S> {
    *  completion before the next dequeues — gen_server's serialization, even for async work.
    *  When a `store` is configured (see {@link genServer}), the returned state is persisted BEFORE
    *  the reply is released (durable-before-ack — no delta loss). A read-only handler should
-   *  return `persist: false` to skip the write. */
+   *  return `persist: false` to skip the write. The key set `K` is inferred, so the returned
+   *  {@link GenServer} exposes a typed local `call`/`cast` over exactly these subjects. */
   handlers: Record<
-    string,
+    K,
     (
       state: S,
       payload: unknown,
@@ -229,7 +230,18 @@ export interface Behavior<S> {
  * node.stop();
  * ```
  */
-export interface GenServer<S> {
+export interface GenServer<S, K extends string = string> {
+  /**
+   * The typed LOCAL client — `gen_server:call` for the process holding this handle. Invoke one of
+   * the unit's own handlers by key (`subject` is constrained to the behavior's handler names), get
+   * the reply back as a Task. Runs THROUGH the mailbox and persists like any message, but takes no
+   * wire hop — no `node.call(nodeName, '<name>.<subject>', …)` round-trip. A handler that returns
+   * (or throws) a declared `Failure` rejects the Task; an over-full mailbox rejects with `Overloaded`.
+   */
+  call(subject: K, payload?: unknown): Task<unknown, AnyFailure>;
+  /** Fire-and-forget the local client — `gen_server:cast`. Runs the handler through the mailbox
+   *  (state still mutates + persists), drops the reply. */
+  cast(subject: K, payload?: unknown): void;
   /** The currently running version. */
   version(): string;
   /** Swap via the mailbox — lands strictly BETWEEN messages, even async ones. An eager Task
@@ -283,29 +295,30 @@ const exitPorts = new WeakMap<object, ExitPort>();
  * const hub = memoryHub();
  * const svc = Node.start('svc@memory', hub.transport());
  * const cli = Node.start('cli@memory', hub.transport());
- * genServer(svc, 'greeter', {
+ * const greeter = genServer(svc, 'greeter', {
  *   version: '1.0.0',
  *   init: () => ({ greeted: 0 }),
  *   handlers: { hello: (state, name) => ({ state: { greeted: state.greeted + 1 }, reply: `Hello ${name}` }) },
  * });
- * await cli.call('svc@memory', 'greeter.hello', 'ada'); // 'Hello ada'
+ * await greeter.call('hello', 'ada'); // 'Hello ada' — LOCAL, through the mailbox, no wire hop
+ * await cli.call('svc@memory', 'greeter.hello', 'ada'); // 'Hello ada' — the same handler, over the wire
  * await cli.call('svc@memory', 'greeter.sys.version'); // '1.0.0'
  * svc.stop();
  * cli.stop();
  * ```
  */
-export function genServer<S>(
+export function genServer<S, K extends string = string>(
   node: NodeHandle,
   name: string,
-  behavior: Behavior<S>,
+  behavior: Behavior<S, K>,
   options: {
     maxMailbox?: number;
     store?: Store;
     storeKey?: string;
     via?: { registry: string; key: string };
   } = {},
-): GenServer<S> {
-  let current = behavior;
+): GenServer<S, K> {
+  let current: Behavior<S> = behavior; // widen internally to string keys; K is a public-surface detail
   let state: S = behavior.init ? behavior.init() : (undefined as S);
   const storeKey = options.storeKey ?? name;
 
@@ -345,31 +358,36 @@ export function genServer<S>(
     pumping = false;
   };
 
-  const register = (key: string) =>
-    node.handle(`${name}.${key}`, (payload, from) => {
-      // Load shedding — BEAM mailboxes are unbounded (a real footgun under overload); this is
-      // the disciplined floor. A full mailbox rejects new work as a declared Overloaded, which
-      // crosses the wire as a failure the caller can back off on, instead of growing without
-      // bound. The reply is a VALUE (a Failure); call() on the far side rejects with it.
-      if (options.maxMailbox !== undefined && queue.length >= options.maxMailbox) {
-        return new Failure('Overloaded', `${name} mailbox full (${queue.length})`, {
-          unit: name,
-          depth: queue.length,
-        });
-      }
-      return enqueue(async () => {
-        if (!unitAlive)
-          return downReason ?? new Failure('UnitDown', `${name} is down`, { name, from: name });
-        const outcome = await current.handlers[key](state, payload, from);
-        state = outcome.state;
-        // PERSIST-BEFORE-ACK — the delta-loss fix: the durable write completes (inside the
-        // serial pump, so ordering holds) BEFORE the reply is released. A caller's ack means
-        // the state change is durable; there is no periodic-snapshot window to lose. Reads
-        // opt out with `persist: false`.
-        if (options.store && outcome.persist !== false) await options.store.save(storeKey, state);
-        return outcome.reply;
+  // The one invocation path, shared by the remote handler (node.handle, below) and the typed LOCAL
+  // client (handle.call/cast). Returns the reply — a value, or a declared Failure (Overloaded /
+  // UnitDown / whatever the handler returns). A handler THROW rejects the enqueue promise.
+  const invoke = (key: string, payload: unknown, from: string): unknown => {
+    // Load shedding — BEAM mailboxes are unbounded (a real footgun under overload); this is the
+    // disciplined floor. A full mailbox rejects new work as a declared Overloaded the caller can
+    // back off on, instead of growing without bound. The reply is a VALUE (a Failure); call()
+    // rejects with it.
+    if (options.maxMailbox !== undefined && queue.length >= options.maxMailbox) {
+      return new Failure('Overloaded', `${name} mailbox full (${queue.length})`, {
+        unit: name,
+        depth: queue.length,
       });
+    }
+    return enqueue(async () => {
+      if (!unitAlive)
+        return downReason ?? new Failure('UnitDown', `${name} is down`, { name, from: name });
+      const outcome = await current.handlers[key](state, payload, from);
+      state = outcome.state;
+      // PERSIST-BEFORE-ACK — the delta-loss fix: the durable write completes (inside the serial
+      // pump, so ordering holds) BEFORE the reply is released. A caller's ack means the state
+      // change is durable; there is no periodic-snapshot window to lose. Reads opt out with
+      // `persist: false`.
+      if (options.store && outcome.persist !== false) await options.store.save(storeKey, state);
+      return outcome.reply;
     });
+  };
+
+  const register = (key: string) =>
+    node.handle(`${name}.${key}`, (payload, from) => invoke(key, payload, from));
 
   const apply = (next: Behavior<S>): string => {
     const fromVersion = current.version;
@@ -419,7 +437,17 @@ export function genServer<S>(
     links.clear();
   };
 
-  const handle: GenServer<S> = {
+  const handle: GenServer<S, K> = {
+    // The typed local client — invoke a handler in-process, no wire hop. A declared Failure reply
+    // (or a thrown Failure) rejects the Task, mirroring what a remote `node.call` sees.
+    call: (subject, payload) =>
+      Task<unknown, AnyFailure>(async () => {
+        const reply = await invoke(subject, payload, name);
+        if (isFailure(reply)) throw reply;
+        return reply;
+      }).perform(),
+    cast: (subject, payload) =>
+      void Promise.resolve(invoke(subject, payload, name)).catch(() => {}),
     version: () => current.version,
     upgrade: (next) => Task(() => enqueue(() => apply(next))).perform(),
     state: () => state,

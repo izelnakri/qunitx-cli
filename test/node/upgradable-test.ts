@@ -173,6 +173,59 @@ module('Node | mailbox serialization', () => {
   });
 });
 
+module('Node | typed local client', () => {
+  test('call/cast invoke handlers in-process — through the mailbox, no wire hop', async (assert) => {
+    const hub = Node.memoryHub();
+    const svc = Node.start('svc@memory', hub.transport());
+    const store = Node.memoryStore();
+    const NonPositive = Failure.define('NonPositive', 'bump must be > 0');
+    const counter = Node.genServer(
+      svc,
+      'counter',
+      {
+        version: '1',
+        init: () => 0,
+        handlers: {
+          bump: (state, by) => {
+            const n = by as number;
+            if (n <= 0) return { state, reply: NonPositive() }; // a declared Failure AS the reply
+            return { state: state + n, reply: state + n };
+          },
+          reset: () => ({ state: 0, reply: undefined }),
+        },
+      },
+      { store, storeKey: 'counter:1' },
+    );
+
+    // `subject` is constrained to the handler keys — 'bump'/'reset' typecheck, anything else wouldn't.
+    assert.strictEqual(
+      await counter.call('bump', 2),
+      2,
+      'local call ran the handler, reply crossed',
+    );
+    assert.strictEqual(await counter.call('bump', 3), 5, 'the next call saw the committed state');
+    assert.strictEqual(counter.state(), 5);
+
+    // A declared Failure reply rejects the Task, exactly like a remote call would surface it.
+    const bad = await counter.call('bump', -1).result();
+    assert.true(NonPositive.is(bad), 'a Failure reply rejects the local Task');
+    assert.strictEqual(counter.state(), 5, 'the rejecting handler left state untouched');
+
+    // cast mutates + persists through the same mailbox but drops the reply.
+    counter.cast('reset');
+    await counter.call('bump', 1); // ordering barrier: the cast is pumped before this resolves
+    assert.strictEqual(counter.state(), 1, 'cast ran (reset to 0) ahead of the following bump');
+
+    // Persisted through the store like any message — a fresh genServer rehydrates it.
+    assert.strictEqual(
+      await store.load('counter:1'),
+      1,
+      'cast + call both persisted (durable-before-ack)',
+    );
+    svc.stop();
+  });
+});
+
 // ── Links + trapExit — Erlang's exit signals between served units ─────────────
 
 module('Node | links', () => {
