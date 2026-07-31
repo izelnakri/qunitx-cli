@@ -29,9 +29,17 @@
  */
 import { Failure, isFailure, type Any as AnyFailure } from '../result/failure.ts';
 import { Task } from '../task/task.ts';
+import { yieldWith, type Priority } from './scheduler.ts';
 import type { NodeHandle, Trace } from './node.ts';
 import type { Service } from './supervisor.ts';
 import type { Store } from './store.ts';
+
+// The pump's reduction budget — BEAM preempts a process after ~2000 reductions; here a "reduction"
+// is one processed message. `SLICE_MS` is a wall-clock ceiling for the same slice, so a handful of
+// slow (but awaiting) handlers can't hold the loop for long either. When either trips, the pump
+// yields (see scheduler.ts) so other actors, timers, and I/O run before it resumes draining.
+const REDUCTIONS = 2000;
+const SLICE_MS = 5;
 
 /** A cancellable scheduled message — the handle {@link Self#sendAfter} returns (Erlang's timer ref). */
 export interface TimerRef {
@@ -208,6 +216,13 @@ export interface GenServerOptions {
    * supervisor's `onExit`; most code reaches for {@link GenServer#link}/`trapExit` instead.
    */
   onDown?: (reason: AnyFailure) => void;
+  /**
+   * Scheduling priority — Erlang's process priority. When this unit's mailbox pump exhausts its
+   * reduction slice and yields, a `high`-priority unit resumes before `normal` before `low`, so a
+   * background flood can't delay a latency-sensitive unit. Defaults to `normal`. Ordering only; it
+   * never lets one unit block another (each pump stays an independent async body).
+   */
+  priority?: Priority;
 }
 
 /**
@@ -273,17 +288,28 @@ export function genServer<S, K extends string = string>(
       queue.push({ run, settle: settle as (v: unknown) => void, fail });
       void pump();
     });
+  const priority: Priority = options.priority ?? 'normal';
   const pump = async (): Promise<void> => {
     if (pumping) return;
     pumping = true;
     if (options.store) await ready; // never process a message against un-restored state
     // (skipped without a store so the pump shifts synchronously — maxMailbox depth stays exact)
+    let budget = REDUCTIONS;
+    let sliceStart = performance.now();
     while (queue.length > 0) {
       const envelope = queue.shift()!;
       try {
         envelope.settle(await envelope.run());
       } catch (thrown) {
         envelope.fail(thrown); // the caller gets RemoteCrash; the unit keeps serving
+      }
+      // Spend a reduction; when the slice is exhausted, yield the loop (in priority order) so timers,
+      // I/O, and every OTHER actor's pump run before this one resumes. Under the budget (the common
+      // case — a mailbox under REDUCTIONS deep) nothing yields, so latency is unchanged.
+      if (--budget <= 0 || performance.now() - sliceStart >= SLICE_MS) {
+        await yieldWith(priority);
+        budget = REDUCTIONS;
+        sliceStart = performance.now();
       }
     }
     pumping = false;

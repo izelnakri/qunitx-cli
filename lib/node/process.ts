@@ -13,6 +13,7 @@ import {
   type GenServerOptions,
   type Pid,
 } from './gen-server.ts';
+import { yieldToLoop } from './scheduler.ts';
 import type { NodeHandle } from './node.ts';
 
 // The minimal handle shape the free functions touch — picked so ANY GenServer<S, K> qualifies
@@ -46,6 +47,8 @@ export interface BoundProcess {
   list(): string[];
   /** {@link Process.whereisName} on the bound node. */
   whereisName(registry: string, key: string): string | null;
+  /** {@link Process.yield} — node-independent, unchanged. */
+  yield(): Promise<void>;
 }
 
 // Monotonic across the process — anonymous names only need to be unique, and the node prefix keeps
@@ -94,8 +97,23 @@ let spawnCount = 0n;
  * P.list().length; // 0 — a dead unit leaves the local table
  * node.stop();
  * ```
+ *
+ * - `yield()` cooperatively hands the event loop back mid-handler — BEAM preempts a long computation
+ *   for you; here you spend a reduction voluntarily inside a big loop so the node stays responsive
+ *   (`if (++done % 500 === 0) await Process.yield()`).
  */
-export const Process = { spawn, link, exit, alive, whereis, whereisName, list, of };
+export const Process = {
+  spawn,
+  link,
+  exit,
+  alive,
+  whereis,
+  whereisName,
+  list,
+  of,
+  /** Cooperative yield inside a long handler loop — see {@link BoundProcess.yield}. */
+  yield: yieldToLoop,
+};
 
 /**
  * Spawn an anonymous process on `node`, auto-named `<node>:proc:<n>`, addressed by the returned
@@ -214,5 +232,6 @@ function of(node: NodeHandle): BoundProcess {
     whereis: (name) => whereis(node, name),
     list: () => list(node),
     whereisName: (registry, key) => whereisName(node, registry, key),
+    yield: yieldToLoop, // node-independent — passes straight through
   };
 }

@@ -80,6 +80,11 @@ export {
 // Elixir's Process module — the static side: Process.spawn (anonymous units) + free-function
 // link/exit/alive/whereis. Per-unit ops live on the handle and the `self` a handler gets.
 export { Process, type BoundProcess } from './process.ts';
+
+// The cooperative scheduler — BEAM's reduction-budget fairness on a single-threaded loop. The
+// mailbox pump spends a reduction per message and yields its slice here; `Process.yield` is the
+// in-handler form. Exposed so other runtimes can reuse the yield/priority primitives directly.
+export { yieldToLoop, yieldWith, type Priority } from './scheduler.ts';
 export {
   supervisor,
   type Supervisor,
