@@ -67,6 +67,9 @@ export class ORSet {
   #vv: VersionVector = {}; // contiguous counter prefix per node
   #cloud = new Set<Dot>(); // dots seen above the prefix (a gap not yet filled)
   #onChange?: (added: readonly string[], removed: readonly string[]) => void;
+  #seq = 0; // monotonic cursor: bumped once per APPLIED delta (own op or merged change)
+  #buffer: { seq: number; delta: CrdtState }[] = []; // recent applied deltas, for delta anti-entropy
+  #bufferMax = 256; // bound; a peer behind the floor gets full state instead
 
   /** `node` is this replica's id — it stamps the dots this node mints, so they stay unique. */
   constructor(node: string) {
@@ -119,7 +122,9 @@ export class ORSet {
     if (!wasPresent) this.#dots.set(element, new Set());
     this.#dots.get(element)!.add(dot);
     if (!wasPresent) this.#onChange?.([element], []);
-    return { dots: [[element, [dot]]], context: { vv: {}, cloud: [dot] } };
+    const delta: CrdtState = { dots: [[element, [dot]]], context: { vv: {}, cloud: [dot] } };
+    this.#record(delta);
+    return delta;
   }
 
   /**
@@ -139,7 +144,9 @@ export class ORSet {
     const dots = removed ? [...removed] : [];
     this.#dots.delete(element);
     if (removed) this.#onChange?.([], [element]);
-    return { dots: [[element, []]], context: { vv: {}, cloud: dots } };
+    const delta: CrdtState = { dots: [[element, []]], context: { vv: {}, cloud: dots } };
+    if (removed) this.#record(delta); // only a real removal is a delta worth forwarding
+    return delta;
   }
 
   /**
@@ -263,9 +270,11 @@ export class ORSet {
    * ```
    */
   mergeDelta(delta: CrdtState): void {
-    this.#reconcile(
-      delta.dots.map(([element]) => element),
-      delta,
+    this.#record(
+      this.#reconcile(
+        delta.dots.map(([element]) => element),
+        delta,
+      ),
     );
   }
 
@@ -281,19 +290,24 @@ export class ORSet {
    * ```
    */
   merge(other: CrdtState): void {
-    this.#reconcile([...this.#dots.keys(), ...other.dots.map(([element]) => element)], other);
+    this.#record(
+      this.#reconcile([...this.#dots.keys(), ...other.dots.map(([element]) => element)], other),
+    );
   }
 
-  // The ORSWOT merge over a given element set — the union (full merge) or a delta's elements.
-  #reconcile(elements: Iterable<string>, other: CrdtState): void {
+  // The ORSWOT merge over a given element set — the union (full merge) or a delta's elements. Returns
+  // the NET change as a forwardable delta: each element whose live dots changed (with its new dots),
+  // plus every dot added or dropped in `cloud`, so replaying it via mergeDelta reproduces the change.
+  #reconcile(elements: Iterable<string>, other: CrdtState): CrdtState {
     const theirCloud = new Set(other.context.cloud);
     const theirSeen = (dot: Dot): boolean =>
       dotCount(dot) <= (other.context.vv[dotNode(dot)] ?? 0) || theirCloud.has(dot);
     const theirDots = new Map(other.dots.map(([element, dots]) => [element, new Set(dots)]));
     const added: string[] = [];
     const removed: string[] = [];
+    const changedDots: [element: string, dots: Dot[]][] = [];
+    const touched: Dot[] = [];
     for (const element of new Set(elements)) {
-      const wasPresent = this.#dots.has(element);
       const mine = this.#dots.get(element) ?? new Set<Dot>();
       const theirs = theirDots.get(element) ?? new Set<Dot>();
       const live = new Set<Dot>();
@@ -301,16 +315,64 @@ export class ORSet {
       for (const dot of mine) if (theirs.has(dot) || !theirSeen(dot)) live.add(dot);
       // Add the peer's dots I have never seen (concurrent adds).
       for (const dot of theirs) if (!this.#seen(dot)) live.add(dot);
+      let changed = mine.size !== live.size;
+      if (!changed) for (const dot of live) if (!mine.has(dot)) changed = true;
+      if (changed) {
+        changedDots.push([element, [...live]]);
+        for (const dot of live) if (!mine.has(dot)) touched.push(dot); // newly live
+        for (const dot of mine) if (!live.has(dot)) touched.push(dot); // dropped
+      }
       if (live.size > 0) {
         this.#dots.set(element, live);
-        if (!wasPresent) added.push(element);
+        if (mine.size === 0) added.push(element);
       } else {
         this.#dots.delete(element);
-        if (wasPresent) removed.push(element);
+        if (mine.size > 0) removed.push(element);
       }
     }
     this.#mergeContext(other.context);
     if (added.length > 0 || removed.length > 0) this.#onChange?.(added, removed);
+    return { dots: changedDots, context: { vv: {}, cloud: touched } };
+  }
+
+  // Buffer an applied delta under a fresh seq (the anti-entropy cursor); evict the oldest past the
+  // bound. A no-op delta (nothing changed) isn't recorded.
+  #record(delta: CrdtState): void {
+    if (delta.dots.length === 0 && delta.context.cloud.length === 0) return;
+    this.#buffer.push({ seq: ++this.#seq, delta });
+    while (this.#buffer.length > this.#bufferMax) this.#buffer.shift();
+  }
+
+  /**
+   * The anti-entropy cursor — how many deltas this replica has applied. A peer names the last one it
+   * has, and {@link ORSet.deltasSince} returns what's newer.
+   *
+   * ```ts
+   * const s = new ORSet('n@1');
+   * s.add('a');
+   * s.seq(); // 1
+   * ```
+   */
+  seq(): number {
+    return this.#seq;
+  }
+
+  /**
+   * The applied deltas after `seq` (a peer's cursor into THIS replica) — replay them via
+   * {@link ORSet.mergeDelta} to catch the peer up. `null` when the buffer no longer covers `seq` (the
+   * peer is too far behind); the caller sends full {@link ORSet.state} instead.
+   *
+   * ```ts
+   * const s = new ORSet('n@1');
+   * s.add('a');
+   * s.add('b');
+   * s.deltasSince(1)?.length; // 1 — only 'b' is newer than seq 1
+   * ```
+   */
+  deltasSince(seq: number): CrdtState[] | null {
+    const floor = this.#buffer.length > 0 ? this.#buffer[0].seq : this.#seq + 1;
+    if (seq < floor - 1) return null; // the gap fell out of the buffer — full state needed
+    return this.#buffer.filter((e) => e.seq > seq).map((e) => e.delta);
   }
 
   // Join causal contexts: version vectors pointwise-max, dot clouds union, then compact any

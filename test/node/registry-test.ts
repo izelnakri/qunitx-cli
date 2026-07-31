@@ -162,7 +162,10 @@ module('Node | anti-entropy', () => {
         const t = inner.transport();
         return {
           send(f: Node.Frame) {
-            if (f.kind === 'crdt' && f.full !== true) return; // drop per-op deltas
+            // Drop one-op BROADCASTS (crdt with a single delta), but let anti-entropy through — a
+            // full-state frame OR a delta BATCH (`frame.deltas`). That's the whole point: a lost
+            // broadcast is healed by the periodic anti-entropy catch-up.
+            if (f.kind === 'crdt' && !f.full && !f.deltas) return;
             t.send(f);
           },
           onFrame: (h: (f: Node.Frame) => void) => t.onFrame(h),

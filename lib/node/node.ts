@@ -91,6 +91,12 @@ export type Frame = {
   crdt?: CrdtState;
   /** Whether a 'crdt' frame carries FULL state (anti-entropy) vs a one-op delta. */
   full?: boolean;
+  /** A batch of catch-up deltas on a 'crdt' anti-entropy reply — applied in order via mergeDelta. */
+  deltas?: CrdtState[];
+  /** On a 'sync': the last seq of the RECIPIENT's deltas the sender has applied (its catch-up cursor). */
+  want?: number;
+  /** On a 'crdt' anti-entropy reply: the sender's seq this payload brings the receiver up to. */
+  upto?: number;
   /** A node's causal context for a 'sync' request — the peer replies with what's beyond it. */
   cc?: CausalContext;
   /** The distributed trace this call/cast belongs to — see {@link Trace}. */
@@ -381,6 +387,7 @@ export function start(
   // Membership + registry live in ONE convergent CRDT (ORSet of facts) — a dropped
   // join/register self-heals via anti-entropy, and a healed partition reconciles.
   const crdt = new ORSet(name);
+  const appliedFrom = new Map<string, number>(); // peer -> last seq of ITS deltas I have applied
   const myGroups = new Set<string>();
   const roundRobin = new Map<string, number>();
   const myKeys = new Set<string>(); // "registry\u0000key" — what I own
@@ -490,6 +497,7 @@ export function start(
     const wasHidden = peers.get(peer)?.hidden ?? false; // capture visibility before we drop it
     if (peers.delete(peer)) {
       for (const fn of monitors) fn(peer);
+      appliedFrom.delete(peer); // a returned/restarted peer re-syncs from its current seq
       notifyNode(peer, wasHidden, 'down'); // Erlang nodedown, node_type-filtered
       // A distributed link to a unit on the dead peer fires as if that unit exited (Erlang: nodedown
       // breaks remote links). Synthesize the exit for each local unit linked across.
@@ -559,6 +567,7 @@ export function start(
           to: frame.from,
           crdt: crdt.state(),
           full: true,
+          upto: crdt.seq(),
         });
       }
     } else if (frame.kind === 'link') {
@@ -582,14 +591,28 @@ export function start(
       linkTargets.get(local)?.(`${frame.peer}@${frame.from}`, decode(frame) as AnyFailure);
     } else if (frame.kind === 'crdt') {
       // A convergent update: a one-op delta (broadcast) or full state (anti-entropy / hello).
-      if (frame.full) crdt.merge(frame.crdt!);
-      else crdt.mergeDelta(frame.crdt!);
+      if (frame.deltas)
+        for (const d of frame.deltas) crdt.mergeDelta(d); // anti-entropy catch-up
+      else if (frame.full) crdt.merge(frame.crdt!);
+      else crdt.mergeDelta(frame.crdt!); // one-op broadcast
+      if (frame.upto !== undefined) appliedFrom.set(frame.from, frame.upto);
       checkConflicts();
     } else if (frame.kind === 'sync') {
       // A peer asked what it is missing (its causal context) — reply with full state iff I know
       // anything beyond it (otherwise the sync is a no-op).
-      if (crdt.hasBeyond(frame.cc!))
-        dispatch({ kind: 'crdt', from: name, to: frame.from, crdt: crdt.state(), full: true });
+      const catchUp = crdt.deltasSince(frame.want ?? 0);
+      if (catchUp === null)
+        // the peer is behind my delta buffer — fall back to full state
+        dispatch({
+          kind: 'crdt',
+          from: name,
+          to: frame.from,
+          crdt: crdt.state(),
+          full: true,
+          upto: crdt.seq(),
+        });
+      else if (catchUp.length > 0)
+        dispatch({ kind: 'crdt', from: name, to: frame.from, deltas: catchUp, upto: crdt.seq() });
     } else if (frame.kind === 'bye') {
       declareDown(frame.from);
     } else if (frame.kind === 'ping') {
@@ -701,7 +724,7 @@ export function start(
   transport.onReopen?.(() => {
     transport.send({ kind: 'hello', from: name, hidden });
     // Re-push my full CRDT state after a reconnect so peers re-learn my registrations.
-    transport.send({ kind: 'crdt', from: name, crdt: crdt.state(), full: true });
+    transport.send({ kind: 'crdt', from: name, crdt: crdt.state(), full: true, upto: crdt.seq() });
   });
 
   const awaitRef = <R>(
@@ -995,7 +1018,7 @@ export function start(
       const list = [...peers.keys()];
       if (list.length === 0) return;
       const peer = list[cursor++ % list.length];
-      dispatch({ kind: 'sync', from: name, to: peer, cc: crdt.context() });
+      dispatch({ kind: 'sync', from: name, to: peer, want: appliedFrom.get(peer) ?? 0 });
     }, antiEntropyMs ?? 10000);
     (syncTimer as { unref?: () => void }).unref?.();
   }

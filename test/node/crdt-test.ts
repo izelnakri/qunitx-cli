@@ -133,4 +133,36 @@ module('Node | ORSet delta', { concurrency: true }, () => {
     assert.true(c.has('first'), 'the origin keeps its own live entry (no phantom remove)');
     assert.true(c.has('second'), 'and still holds the second');
   });
+
+  test('delta anti-entropy (deltasSince) catches a lagging replica up — removes included', (assert) => {
+    const a = new ORSet('a@n');
+    a.add('x');
+    a.add('y');
+    a.remove('x');
+    a.add('z');
+
+    // A fresh replica converges by replaying ALL of a's buffered deltas.
+    const fresh = new ORSet('b@n');
+    for (const d of a.deltasSince(0)!) fresh.mergeDelta(d);
+    assert.deepEqual(
+      fresh.values().sort(),
+      ['y', 'z'],
+      'converged, incl. the add-then-remove of x',
+    );
+
+    // A partially-caught-up replica that already saw x,y gets only the TAIL and still converges —
+    // the remove of x (dot a@n:1, which this replica HAS seen) propagates, the case a context-diff
+    // delta could not carry.
+    const behind = new ORSet('c@n');
+    const all = a.deltasSince(0)!;
+    behind.mergeDelta(all[0]); // add x  (a's seq 1)
+    behind.mergeDelta(all[1]); // add y  (a's seq 2)
+    assert.deepEqual(behind.values().sort(), ['x', 'y'], 'caught up to seq 2');
+    for (const d of a.deltasSince(2)!) behind.mergeDelta(d); // remove x, add z
+    assert.deepEqual(
+      behind.values().sort(),
+      ['y', 'z'],
+      'the remove of an already-seen dot applied',
+    );
+  });
 });
