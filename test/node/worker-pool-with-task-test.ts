@@ -15,14 +15,6 @@ const until = async (cond: () => boolean, ms = 8000) => {
   return cond();
 };
 
-// Assert a settled result IS a Failure and hand it back narrowed — no `if (Failure.is(...))` dance
-// (same helper as node-with-task-test).
-type Asserter = { true(value: unknown, message?: string): void };
-const expectFailure = (assert: Asserter, result: unknown, why: string): Failure.Any => {
-  assert.true(Failure.is(result), why);
-  return result as Failure.Any;
-};
-
 // A worker handler's return is awaited by node.handle, so the Task rule holds across the wire:
 // RETURN/AWAIT a Task → it runs (its VALUE crosses) and, on failure, `.result()` surfaces a Failure;
 // a CREATED-AND-DROPPED lazy Task never runs. The fixture's bad handlers throw a plain
@@ -52,10 +44,10 @@ module('Node | workerPool | Task inside a worker handler', () => {
       1,
       'the Task RAN on the worker (node.handle awaited the return)',
     );
-    const returnTaskBad = expectFailure(
-      assert,
-      await pool.call('return-task-bad').result(),
-      'return-task-bad → propagated a Failure',
+    const returnTaskBad = (await pool.call('return-task-bad').result()) as Failure.Any;
+    assert.true(
+      Failure.is(returnTaskBad),
+      'return-task-bad → its error propagated as a Failure over the wire',
     );
     assert.equal(returnTaskBad.code, 'RemoteCrash', 'a raw worker throw crosses as RemoteCrash');
     assert.true(
@@ -72,11 +64,8 @@ module('Node | workerPool | Task inside a worker handler', () => {
     // (f) return await task — identical.
     assert.equal(await pool.call('return-await'), 'v', 'return await task → value crossed');
     assert.equal(await pool.call('ran'), 1, 'return await → RAN');
-    const returnAwaitBad = expectFailure(
-      assert,
-      await pool.call('return-await-bad').result(),
-      'return-await-bad → propagated a Failure',
-    );
+    const returnAwaitBad = (await pool.call('return-await-bad').result()) as Failure.Any;
+    assert.true(Failure.is(returnAwaitBad), 'return-await-bad → propagated a Failure');
     assert.equal(returnAwaitBad.code, 'RemoteCrash', 'a raw throw crosses as RemoteCrash');
     assert.true(
       String(returnAwaitBad.message).includes('boom'),
@@ -105,11 +94,8 @@ module('Node | workerPool | Task inside a worker handler', () => {
     // (h) { await task; return x } — the await runs the Task; a throw short-circuits the return.
     assert.equal(await pool.call('await-task'), 'x', 'await task; return x → returns x');
     assert.equal(await pool.call('ran'), 1, 'await triggered the Task');
-    const awaitTaskBad = expectFailure(
-      assert,
-      await pool.call('await-task-bad').result(),
-      'await-task-bad → propagated a Failure',
-    );
+    const awaitTaskBad = (await pool.call('await-task-bad').result()) as Failure.Any;
+    assert.true(Failure.is(awaitTaskBad), 'await-task-bad → propagated a Failure');
     assert.equal(awaitTaskBad.code, 'RemoteCrash', 'a raw throw crosses as RemoteCrash');
     assert.true(
       String(awaitTaskBad.message).includes('boom'),
@@ -147,10 +133,10 @@ module('Node | workerPool | Task inside a worker handler', () => {
       'return task → the Task ran; its VALUE crossed the wire',
     );
     assert.equal(await app.call('group:tk', 'ran'), 1, 'the Task RAN on the worker');
-    const returnTaskBad = expectFailure(
-      assert,
-      await app.call('group:tk', 'return-task-bad').result(),
-      'return-task-bad → propagated a Failure',
+    const returnTaskBad = (await app.call('group:tk', 'return-task-bad').result()) as Failure.Any;
+    assert.true(
+      Failure.is(returnTaskBad),
+      'return-task-bad → its error propagated as a Failure over the wire',
     );
     assert.equal(returnTaskBad.code, 'RemoteCrash', 'a raw worker throw crosses as RemoteCrash');
     assert.true(
@@ -171,11 +157,8 @@ module('Node | workerPool | Task inside a worker handler', () => {
       'return await task → value crossed',
     );
     assert.equal(await app.call('group:tk', 'ran'), 1, 'return await → RAN');
-    const returnAwaitBad = expectFailure(
-      assert,
-      await app.call('group:tk', 'return-await-bad').result(),
-      'return-await-bad → propagated a Failure',
-    );
+    const returnAwaitBad = (await app.call('group:tk', 'return-await-bad').result()) as Failure.Any;
+    assert.true(Failure.is(returnAwaitBad), 'return-await-bad → propagated a Failure');
     assert.equal(returnAwaitBad.code, 'RemoteCrash', 'a raw throw crosses as RemoteCrash');
     assert.true(
       String(returnAwaitBad.message).includes('boom'),
@@ -204,11 +187,8 @@ module('Node | workerPool | Task inside a worker handler', () => {
     // (l) { await task; return x } — the await runs the Task; a throw short-circuits the return.
     assert.equal(await app.call('group:tk', 'await-task'), 'x', 'await task; return x → returns x');
     assert.equal(await app.call('group:tk', 'ran'), 1, 'await triggered the Task');
-    const awaitTaskBad = expectFailure(
-      assert,
-      await app.call('group:tk', 'await-task-bad').result(),
-      'await-task-bad → propagated a Failure',
-    );
+    const awaitTaskBad = (await app.call('group:tk', 'await-task-bad').result()) as Failure.Any;
+    assert.true(Failure.is(awaitTaskBad), 'await-task-bad → propagated a Failure');
     assert.equal(awaitTaskBad.code, 'RemoteCrash', 'a raw throw crosses as RemoteCrash');
     assert.true(
       String(awaitTaskBad.message).includes('boom'),
