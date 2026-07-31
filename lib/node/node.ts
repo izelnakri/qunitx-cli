@@ -69,6 +69,8 @@ export type Frame = {
     | 'pong';
   from: string;
   to?: string;
+  /** On a `hello`: whether the sender is a HIDDEN node — attached but not a full member. */
+  hidden?: boolean;
   subject?: string;
   /** Process-group name for join/leave frames. */
   group?: string;
@@ -116,6 +118,13 @@ export interface Transport {
 }
 
 /**
+ * Which peers {@link NodeHandle.list} returns — Erlang's `Node.list/1` node types. `visible`
+ * (default) is connected non-hidden members; `hidden` the attached-but-not-member nodes; `connected`
+ * both; `this` just self; `known` self plus every connected peer.
+ */
+export type NodeListKind = 'visible' | 'hidden' | 'connected' | 'this' | 'known';
+
+/**
  * A running node — Elixir's Node functions as methods, plus the call/cast/handle trio that
  * replaces remote spawns.
  *
@@ -133,8 +142,12 @@ export interface NodeHandle {
   self(): string;
   /** Whether the node participates in the cluster — Elixir's `Node.alive?/0`. */
   alive(): boolean;
-  /** Peers seen via hello and not yet said bye — Elixir's `Node.list/0`. */
-  list(): string[];
+  /**
+   * Connected peers — Erlang's `Node.list/0,1`. Defaults to `visible` (non-hidden members); pass a
+   * {@link NodeListKind} for `hidden` / `connected` / `this` / `known`. Excludes peers that said bye
+   * or went nodedown.
+   */
+  list(kind?: NodeListKind): string[];
   /** Joins a process group — Elixir's `:pg.join/2` (AP-style: membership gossips, prunes on bye). */
   join(group: string): void;
   /** Leaves a process group. */
@@ -185,7 +198,10 @@ export interface NodeHandle {
    * key range onto a newly-joined host, warming a cache — can react to scale-up too. Returns the
    * un-monitor.
    */
-  monitorNodes(fn: (event: { node: string; status: 'up' | 'down' }) => void): () => void;
+  monitorNodes(
+    fn: (event: { node: string; status: 'up' | 'down' }) => void,
+    options?: { nodeType?: 'visible' | 'hidden' | 'all' },
+  ): () => void;
   /** Registers the handler for a subject; the reply (value or Failure) travels back to callers.
    *  `meta.trace` is the incoming {@link Trace} and `meta.deadline` the root caller's absolute
    *  budget — nested calls in the SYNCHRONOUS handler body continue both automatically (a nested
@@ -304,15 +320,34 @@ export function start(
   options: {
     tick?: { everyMs?: number; missAfter?: number } | false;
     antiEntropyMs?: number | false;
+    /**
+     * Start as a HIDDEN node — Erlang's `-hidden`. It connects and can observe the cluster
+     * (`sys.node.info`, whereis, CRDT state), but peers keep it out of their default `list()`, so it
+     * is excluded from rendezvous placement and `:global` — an observer/tooling node that attaches
+     * without becoming a member. It still participates in process groups (`:pg`, like Erlang).
+     */
+    hidden?: boolean;
   } = {},
 ): NodeHandle {
-  const peers = new Set<string>();
+  const hidden = options.hidden ?? false;
+  const peers = new Map<string, { hidden: boolean }>(); // name -> its visibility (Erlang's node table)
   const handlers = new Map<
     string,
     (payload: unknown, from: string, meta?: { trace?: Trace; deadline?: number }) => unknown
   >();
   const monitors = new Set<(name: string) => void>();
-  const nodeListeners = new Set<(event: { node: string; status: 'up' | 'down' }) => void>();
+  type NodeListener = {
+    fn: (event: { node: string; status: 'up' | 'down' }) => void;
+    nodeType: 'visible' | 'hidden' | 'all';
+  };
+  const nodeListeners = new Set<NodeListener>();
+  // Fire nodeup/nodedown only to listeners whose node_type matches the peer's visibility — Erlang's
+  // `net_kernel:monitor_nodes(Pid, [{node_type, visible|hidden|all}])`; the default is visible-only.
+  const notifyNode = (peer: string, peerHidden: boolean, status: 'up' | 'down'): void => {
+    for (const l of nodeListeners)
+      if (l.nodeType === 'all' || (l.nodeType === 'hidden') === peerHidden)
+        l.fn({ node: peer, status });
+  };
   const pending = new Map<number, (frame: Frame) => void>();
   // Membership + registry live in ONE convergent CRDT (ORSet of facts) — a dropped
   // join/register self-heals via anti-entropy, and a healed partition reconciles.
@@ -376,9 +411,10 @@ export function start(
   // entries are hidden at once and monitors fire; the CRDT is left intact so it recovers
   // cleanly if it returns.
   const declareDown = (peer: string): void => {
+    const wasHidden = peers.get(peer)?.hidden ?? false; // capture visibility before we drop it
     if (peers.delete(peer)) {
       for (const fn of monitors) fn(peer);
-      for (const fn of nodeListeners) fn({ node: peer, status: 'down' }); // Erlang nodedown
+      notifyNode(peer, wasHidden, 'down'); // Erlang nodedown, node_type-filtered
     }
   };
   const inspectors = new Map<string, () => Record<string, unknown>>();
@@ -422,9 +458,10 @@ export function start(
       return;
     if (frame.kind === 'hello') {
       if (!peers.has(frame.from)) {
-        peers.add(frame.from);
-        for (const fn of nodeListeners) fn({ node: frame.from, status: 'up' }); // Erlang nodeup
-        transport.send({ kind: 'hello', from: name, to: frame.from }); // answer so both sides list()
+        const peerHidden = frame.hidden ?? false;
+        peers.set(frame.from, { hidden: peerHidden });
+        notifyNode(frame.from, peerHidden, 'up'); // Erlang nodeup, node_type-filtered
+        transport.send({ kind: 'hello', from: name, to: frame.from, hidden }); // answer + my own visibility
         // Hand the newcomer my full CRDT state — anti-entropy on join, so it converges at once.
         transport.send({
           kind: 'crdt',
@@ -513,13 +550,13 @@ export function start(
     }
   };
   transport.onFrame((frame) => receive(frame));
-  transport.send({ kind: 'hello', from: name });
+  transport.send({ kind: 'hello', from: name, hidden });
 
   // The observer protocol — one subject any node (or a browser dashboard node) can call to
   // read this node's live state. Erlang's :observer, reduced to data over the same wire.
   handlers.set('sys.node.info', () => ({
     name,
-    peers: [...peers],
+    peers: [...peers.keys()],
     groups: allGroups(),
     registered: crdt.values().length,
     units: [...inspectors].map(([unit, report]) => ({ name: unit, ...report() })),
@@ -553,7 +590,7 @@ export function start(
   // Erlang reconnects re-run the handshake; so do we: a transport that redials (wsTransport
   // with reconnect) re-announces this node, and peers answer hello, rebuilding list().
   transport.onReopen?.(() => {
-    transport.send({ kind: 'hello', from: name });
+    transport.send({ kind: 'hello', from: name, hidden });
     // Re-push my full CRDT state after a reconnect so peers re-learn my registrations.
     transport.send({ kind: 'crdt', from: name, crdt: crdt.state(), full: true });
   });
@@ -593,7 +630,16 @@ export function start(
   const nodeHandle: NodeHandle = {
     self: () => name,
     alive: () => alive,
-    list: () => [...peers],
+    list: (kind = 'visible') => {
+      if (kind === 'this') return [name];
+      if (kind === 'known') return [name, ...peers.keys()];
+      const entries = [...peers];
+      const wanted =
+        kind === 'connected'
+          ? entries
+          : entries.filter(([, v]) => (kind === 'hidden' ? v.hidden : !v.hidden));
+      return wanted.map(([n]) => n);
+    },
     join(group) {
       myGroups.add(group);
       broadcastDelta(crdt.add(gfact(group, name)));
@@ -646,9 +692,10 @@ export function start(
       monitors.add(fn);
       return () => monitors.delete(fn);
     },
-    monitorNodes(fn) {
-      nodeListeners.add(fn);
-      return () => nodeListeners.delete(fn);
+    monitorNodes(fn, options) {
+      const listener: NodeListener = { fn, nodeType: options?.nodeType ?? 'visible' };
+      nodeListeners.add(listener);
+      return () => nodeListeners.delete(listener);
     },
     handle: (subject, handler) => void handlers.set(subject, handler),
     call<T>(to: string, subject: string, payload?: unknown, timeoutMs = 5000) {
@@ -791,7 +838,7 @@ export function start(
     const missAfter = tick?.missAfter ?? 3;
     const misses = new Map<string, number>();
     tickTimer = setInterval(() => {
-      for (const peer of [...peers]) {
+      for (const peer of [...peers.keys()]) {
         void nodeHandle.ping(peer, everyMs).then((answer) => {
           if (!alive || !peers.has(peer)) return;
           if (answer === 'pong') return void misses.delete(peer);
@@ -812,7 +859,7 @@ export function start(
   if (antiEntropyMs !== false) {
     let cursor = 0;
     syncTimer = setInterval(() => {
-      const list = [...peers];
+      const list = [...peers.keys()];
       if (list.length === 0) return;
       const peer = list[cursor++ % list.length];
       dispatch({ kind: 'sync', from: name, to: peer, cc: crdt.context() });
