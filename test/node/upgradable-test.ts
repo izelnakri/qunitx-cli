@@ -297,6 +297,111 @@ module('Node | crashOnError (let it crash)', () => {
   });
 });
 
+module('Node | self (the process context)', () => {
+  test('self.from is the sender; self.sendAfter schedules a message to itself', async (assert) => {
+    const hub = Node.memoryHub();
+    const svc = Node.start('svc@memory', hub.transport());
+    const cli = Node.start('cli@memory', hub.transport());
+    const ticker = Node.genServer(svc, 'ticker', {
+      version: '1',
+      init: () => ({ ticks: 0, lastFrom: '' }),
+      handlers: {
+        arm: (s, _p, self) => {
+          self.sendAfter('tick', null, 15); // Process.send_after(self(), :tick, 15)
+          return { state: s, reply: 'armed' };
+        },
+        tick: (s) => ({ state: { ...s, ticks: s.ticks + 1 }, reply: s.ticks + 1 }),
+        who: (s, _p, self) => ({ state: { ...s, lastFrom: self.from }, reply: self.from }),
+      },
+    });
+
+    assert.strictEqual(
+      await cli.call('svc@memory', 'ticker.who', null),
+      'cli@memory',
+      'self.from is the calling node',
+    );
+    assert.strictEqual(await ticker.call('arm'), 'armed');
+    assert.strictEqual(ticker.state().ticks, 0, 'the tick has not fired yet');
+    await new Promise((r) => setTimeout(r, 45));
+    assert.strictEqual(
+      ticker.state().ticks,
+      1,
+      'the scheduled self-message fired through the mailbox',
+    );
+    svc.stop();
+    cli.stop();
+  });
+
+  test('self.cast enqueues to self — it runs AFTER the current message, serialized', async (assert) => {
+    const hub = Node.memoryHub();
+    const svc = Node.start('svc@memory', hub.transport());
+    const trace: string[] = [];
+    const chain = Node.genServer(svc, 'chain', {
+      version: '1',
+      init: () => 0,
+      handlers: {
+        begin: (n, _p, self) => {
+          self.cast('follow', null); // does NOT run now — enqueued behind the current message
+          trace.push('begin');
+          return { state: n + 1, reply: n + 1 };
+        },
+        follow: (n) => {
+          trace.push('follow');
+          return { state: n + 1, reply: n + 1 };
+        },
+      },
+    });
+
+    assert.strictEqual(await chain.call('begin'), 1, 'begin committed first (n 0 → 1)');
+    await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(trace, ['begin', 'follow'], 'the self-cast ran next, never reentrant');
+    assert.strictEqual(chain.state(), 2, 'follow saw begin’s committed state (1 → 2)');
+    svc.stop();
+  });
+
+  test('pending self-timers are cancelled when the unit goes down', async (assert) => {
+    const hub = Node.memoryHub();
+    const svc = Node.start('svc@memory', hub.transport());
+    const doomed = Node.genServer(svc, 'doomed', {
+      version: '1',
+      init: () => 0,
+      handlers: {
+        arm: (n, _p, self) => {
+          self.sendAfter('tick', null, 20);
+          return { state: n, reply: 'armed' };
+        },
+        tick: (n) => ({ state: n + 1, reply: n + 1 }),
+      },
+    });
+
+    await doomed.call('arm');
+    doomed.exit(); // down() clears pending timers
+    await new Promise((r) => setTimeout(r, 45));
+    assert.false(doomed.isAlive(), 'the unit is down');
+    assert.strictEqual(doomed.state(), 0, 'the pending timer was cancelled — tick never fired');
+    svc.stop();
+  });
+
+  test('a handler can terminate its own unit via self.exit', async (assert) => {
+    const hub = Node.memoryHub();
+    const svc = Node.start('svc@memory', hub.transport());
+    const seppuku = Node.genServer(svc, 'seppuku', {
+      version: '1',
+      init: () => 'alive',
+      handlers: {
+        stop: (s, _p, self) => {
+          self.exit(); // Process.exit(self(), …)
+          return { state: s, reply: 'goodbye' };
+        },
+      },
+    });
+
+    assert.strictEqual(await seppuku.call('stop'), 'goodbye', 'the reply still comes back');
+    assert.false(seppuku.isAlive(), 'the unit terminated itself');
+    svc.stop();
+  });
+});
+
 // ── Links + trapExit — Erlang's exit signals between served units ─────────────
 
 module('Node | links', () => {

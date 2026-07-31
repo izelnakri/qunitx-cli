@@ -71,7 +71,9 @@ export {
   type Behavior,
   type GenServer,
   type GenServerOptions,
+  type Self,
   type Store,
+  type TimerRef,
 } from './upgradable.ts';
 export {
   supervisor,

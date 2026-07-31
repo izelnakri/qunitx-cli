@@ -169,6 +169,34 @@ export function memoryStore(): Store {
   };
 }
 
+/** A cancellable scheduled message — the handle {@link Self#sendAfter} returns (Erlang's timer ref). */
+export interface TimerRef {
+  /** Cancel the pending message if it has not fired yet; a no-op once it has. */
+  cancel(): void;
+}
+
+/**
+ * The unit's view of ITSELF, handed to every handler as the third argument — Elixir's `self()` plus
+ * the `Process.*` operations a gen_server callback runs on its own pid, bound to this unit. It is NOT
+ * a global `Process` module: our unit already IS the process, so `Process.send_after(self(), …)` is
+ * spelled `self.sendAfter(…)`. Self-sends run THROUGH the mailbox (serialized, run-to-completion —
+ * never reentrant), and pending timers are cancelled when the unit goes down. `subject` is constrained
+ * to the behavior's handler keys, like the typed local client.
+ */
+export interface Self<K extends string = string> {
+  /** `self()` — this unit's own name (the subject prefix it serves under). */
+  readonly name: string;
+  /** Who sent the message being handled — a peer node's name over the wire, or this unit for a
+   *  self-send/local call. Erlang's `from` (minus the reply ref, which the mailbox owns). */
+  readonly from: string;
+  /** `GenServer.cast(self(), …)` — enqueue a message to itself; it runs AFTER the current one. */
+  cast(subject: K, payload?: unknown): void;
+  /** `Process.send_after(self(), msg, ms)` — schedule a self-`cast` after `ms`, through the mailbox. */
+  sendAfter(subject: K, payload: unknown, ms: number): TimerRef;
+  /** `Process.exit(self(), reason)` — terminate this unit (propagates to links; a supervisor restarts). */
+  exit(reason?: AnyFailure): void;
+}
+
 /**
  * A versioned GenServer-ish unit: pure-ish handlers over owned state, plus the migration
  * hook. `codeChange` runs on the INCOMING behavior (like Erlang: the new module knows how to
@@ -193,14 +221,16 @@ export interface Behavior<S, K extends string = string> {
    *  completion before the next dequeues — gen_server's serialization, even for async work.
    *  When a `store` is configured (see {@link genServer}), the returned state is persisted BEFORE
    *  the reply is released (durable-before-ack — no delta loss). A read-only handler should
-   *  return `persist: false` to skip the write. The key set `K` is inferred, so the returned
-   *  {@link GenServer} exposes a typed local `call`/`cast` over exactly these subjects. */
+   *  return `persist: false` to skip the write. The third arg is {@link Self} — `self()` + the
+   *  `Process.*` self-ops (`self.from`, `self.cast`, `self.sendAfter`, `self.exit`). The key set `K`
+   *  is inferred, so both the returned {@link GenServer} and `self` are typed over exactly these
+   *  subjects. */
   handlers: Record<
     K,
     (
       state: S,
       payload: unknown,
-      from: string,
+      self: Self<K>,
     ) =>
       | { state: S; reply?: unknown; persist?: boolean }
       | Promise<{ state: S; reply?: unknown; persist?: boolean }>
@@ -402,9 +432,17 @@ export function genServer<S, K extends string = string>(
     return enqueue(async () => {
       if (!unitAlive)
         return downReason ?? new Failure('UnitDown', `${name} is down`, { name, from: name });
+      // The unit's view of itself for THIS message — self() + Process-style ops, plus who sent it.
+      const self: Self = {
+        name,
+        from,
+        cast: castSelf,
+        sendAfter,
+        exit: (reason) => handle.exit(reason),
+      };
       let outcome: { state: S; reply?: unknown; persist?: boolean };
       try {
-        outcome = await current.handlers[key](state, payload, from);
+        outcome = await current.handlers[key](state, payload, self);
       } catch (thrown) {
         // "Let it crash": a BUG (non-Failure throw) terminates the unit when crashOnError is set —
         // down() propagates the exit (links → onExit → supervisor restart). A declared Failure is an
@@ -455,6 +493,7 @@ export function genServer<S, K extends string = string>(
   let unitAlive = true;
   let downReason: AnyFailure | null = null;
   const links = new Set<ExitPort>();
+  const timers = new Set<ReturnType<typeof setTimeout>>(); // pending sendAfter timers, cleared on down
   let trap: ((from: string, reason: AnyFailure) => void) | null = null;
 
   const deliverExit = (from: string, reason: AnyFailure): void => {
@@ -478,9 +517,29 @@ export function genServer<S, K extends string = string>(
     unitAlive = false;
     downReason = reason;
     if (options.via) node.unregister(options.via.registry, options.via.key); // release the name
+    for (const timer of timers) clearTimeout(timer); // a dead unit fires no scheduled messages
+    timers.clear();
     for (const peer of links) peer.deliverExit(name, reason);
     links.clear();
     options.onDown?.(reason); // AFTER links propagate — observers see a fully-settled death
+  };
+
+  // Self-ops (Elixir's Process.*, bound to this unit) — the constant part of the `self` a handler
+  // gets; `from` varies per message and is spread in by invoke(). Self-sends reuse invoke(), so they
+  // ride the same mailbox: enqueued behind the current message, never reentrant.
+  const castSelf = (subject: string, payload?: unknown): void =>
+    void Promise.resolve(invoke(subject, payload, name)).catch(() => {});
+  const sendAfter = (subject: string, payload: unknown, ms: number): TimerRef => {
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      if (unitAlive) castSelf(subject, payload);
+    }, ms);
+    timers.add(timer);
+    return {
+      cancel: () => {
+        if (timers.delete(timer)) clearTimeout(timer);
+      },
+    };
   };
 
   const handle: GenServer<S, K> = {
