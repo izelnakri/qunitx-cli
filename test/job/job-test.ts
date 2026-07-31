@@ -81,6 +81,11 @@ module('Jobs | Oban-shaped durable queue', () => {
     assert.equal(discardedJob.attempt, 2, 'it stopped at exactly maxAttempts attempts');
     assert.equal(discardedJob.errors.length, 2, 'one error per attempt');
     assert.equal(discardedJob.errors[0].error.code, 'Unknown', 'a bug is coerced to a Failure');
+    assert.equal(
+      discardedJob.errors[0].error.message,
+      'always',
+      'its message is the original error text',
+    );
     assert.true(
       String((discardedJob.errors[0].error.cause as Error)?.message).includes('always'),
       'the original error preserved in .cause',
@@ -124,6 +129,7 @@ module('Jobs | Oban-shaped durable queue', () => {
       { retryAfter: 30 },
       'and its data — the full Failure API',
     );
+    assert.equal(typedError.error.message, 'slow down (30s)', 'and its rendered message');
 
     const plainError = queue.peek(plain.id)!.errors[0];
     assert.equal(
@@ -131,6 +137,7 @@ module('Jobs | Oban-shaped durable queue', () => {
       'Unknown',
       'a plain throw (a bug) is coerced to code `Unknown`',
     );
+    assert.equal(plainError.error.message, 'kaboom', 'the Unknown renders the original message');
     assert.true(
       String((plainError.error.cause as Error)?.message).includes('kaboom'),
       'with the original error preserved in .cause',

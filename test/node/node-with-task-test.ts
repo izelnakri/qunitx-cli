@@ -2,9 +2,18 @@ import { module, test } from 'qunitx';
 import { Node, memoryHub } from '../../lib/node/index.ts';
 import { Task, Failure } from '../../lib/task/index.ts';
 
-// A declared failure a handler throws on purpose — its `code` + `data` must survive the node hop
-// intact ("declared failures arrive declared"); `shape` marks which variation raised it.
+// A declared failure a handler throws on purpose — its `code`, `message`, and `data` must survive the
+// node hop intact ("declared failures arrive declared"); `shape` marks which variation raised it.
 const Boom = Failure.define('Boom', (d: { shape: string }) => `boom in ${d.shape}`);
+
+// Assert a call's settled result IS a Failure and hand it back narrowed — no `if (Failure.is(...))`
+// dance at every call site. `Asserter` is the sliver of qunitx's `assert` we need (structural, so we
+// don't depend on a `qunitx`-exported type).
+type Asserter = { true(value: unknown, message?: string): void };
+const expectFailure = (assert: Asserter, result: unknown, why: string): Failure.Any => {
+  assert.true(Failure.is(result), why);
+  return result as Failure.Any;
+};
 
 // `client.call('server@c', subject)` returns a `Task<T, AnyFailure>` addressed to ONE named node.
 // `node.handle` awaits the handler, so the Task rule holds: RETURN or AWAIT a Task → it runs, and on
@@ -34,7 +43,7 @@ module('Node | specific node | Task inside a handler', () => {
     };
   };
 
-  test('(m) return task — runs on the server; its Failure crosses back with code + data', async (assert) => {
+  test('(m) return task — runs on the server; its Failure crosses back with code + message + data', async (assert) => {
     const { ran, server, call, stop } = prepare();
     server.handle('ok', () =>
       Task(() => {
@@ -50,20 +59,18 @@ module('Node | specific node | Task inside a handler', () => {
     assert.equal(await call('ok'), 'v', 'the returned Task ran → its value crossed back');
     assert.true(ran.includes('m'), 'the Task RAN on the server node');
 
-    const failure = await call('bad').result();
-    assert.true(Failure.is(failure), 'the handler failure crossed back as a Failure');
-    if (Failure.is(failure)) {
-      assert.equal(
-        failure.code,
-        'Boom',
-        'a DECLARED failure arrives declared — code survives the hop',
-      );
-      assert.deepEqual(failure.data, { shape: 'm' }, 'and its data survives the codec round-trip');
-    }
+    const failure = expectFailure(assert, await call('bad').result(), 'the failure crossed back');
+    assert.equal(
+      failure.code,
+      'Boom',
+      'a DECLARED failure arrives declared — code survives the hop',
+    );
+    assert.equal(failure.message, 'boom in m', 'the rendered message survives too');
+    assert.deepEqual(failure.data, { shape: 'm' }, 'and its data survives the codec round-trip');
     stop();
   });
 
-  test('(n) return await task — identical: runs, Failure crosses back with code + data', async (assert) => {
+  test('(n) return await task — identical: runs, Failure crosses back with code + message + data', async (assert) => {
     const { ran, server, call, stop } = prepare();
     server.handle(
       'ok',
@@ -83,12 +90,14 @@ module('Node | specific node | Task inside a handler', () => {
     assert.equal(await call('ok'), 'v', 'the awaited Task’s value crossed back');
     assert.true(ran.includes('n'), 'the Task RAN');
 
-    const failure = await call('bad').result();
-    assert.true(Failure.is(failure), 'the await threw → crossed back as a Failure');
-    if (Failure.is(failure)) {
-      assert.equal(failure.code, 'Boom', 'declared → code survives the hop');
-      assert.deepEqual(failure.data, { shape: 'n' }, 'and its data survives the codec round-trip');
-    }
+    const failure = expectFailure(
+      assert,
+      await call('bad').result(),
+      'the await threw → a Failure',
+    );
+    assert.equal(failure.code, 'Boom', 'declared → code survives the hop');
+    assert.equal(failure.message, 'boom in n', 'and its rendered message');
+    assert.deepEqual(failure.data, { shape: 'n' }, 'and its data survives the codec round-trip');
     stop();
   });
 
@@ -131,12 +140,14 @@ module('Node | specific node | Task inside a handler', () => {
     assert.equal(await call('ok'), 'x', 'the handler returned x');
     assert.true(ran.includes('p'), 'await triggered the Task');
 
-    const failure = await call('bad').result();
-    assert.true(Failure.is(failure), 'the await threw → crossed back as a Failure');
-    if (Failure.is(failure)) {
-      assert.equal(failure.code, 'Boom', 'declared → code survives the hop');
-      assert.deepEqual(failure.data, { shape: 'p' }, 'and its data survives the codec round-trip');
-    }
+    const failure = expectFailure(
+      assert,
+      await call('bad').result(),
+      'the await threw → a Failure',
+    );
+    assert.equal(failure.code, 'Boom', 'declared → code survives the hop');
+    assert.equal(failure.message, 'boom in p', 'and its rendered message');
+    assert.deepEqual(failure.data, { shape: 'p' }, 'and its data survives the codec round-trip');
     assert.false(
       ran.includes('p:after'),
       'the throwing await STOPPED execution — the code after it (and `return x`) never ran',
@@ -144,29 +155,24 @@ module('Node | specific node | Task inside a handler', () => {
     stop();
   });
 
-  test('(raw) a non-Failure throw (a bug) crosses as a RemoteCrash Failure, not the raw Error', async (assert) => {
+  test('(raw) a non-Failure throw (a bug) crosses as a RemoteCrash Failure that names the subject', async (assert) => {
     const { server, call, stop } = prepare();
     server.handle('bug', () =>
       Task(() => {
         throw new Error('kaboom'); // a plain Error — a bug, not a declared failure
       }),
     );
-    const failure = await call('bug').result();
-    assert.true(
-      Failure.is(failure),
+    const failure = expectFailure(
+      assert,
+      await call('bug').result(),
       'a plain Error still crosses as a Failure (never a clone-gutted Error)',
     );
-    if (Failure.is(failure)) {
-      assert.equal(
-        failure.code,
-        'RemoteCrash',
-        'an undeclared throw is coerced to code RemoteCrash',
-      );
-      assert.true(
-        String(failure.message).includes('kaboom'),
-        'the original error text is preserved in the message',
-      );
-    }
+    assert.equal(failure.code, 'RemoteCrash', 'an undeclared throw is coerced to code RemoteCrash');
+    assert.true(
+      String(failure.message).includes('kaboom'),
+      'the original error text is preserved in the message',
+    );
+    assert.deepEqual(failure.data, { subject: 'bug' }, 'RemoteCrash tags which subject blew up');
     stop();
   });
 });

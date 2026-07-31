@@ -53,6 +53,7 @@ module('Jobs | Task inside a worker handler', () => {
     const rawError = queue.peek(bad.id)?.errors.at(-1)?.error;
     assert.true(Failure.is(rawError), 'a raw Error propagates through the Task as a live Failure');
     assert.equal(rawError?.code, 'Unknown', 'a bug is coerced to code Unknown');
+    assert.equal(rawError?.message, 'boom', 'the Unknown renders the original error message');
     assert.true(
       String((rawError?.cause as Error)?.message).includes('boom'),
       'with the original Error preserved in .cause',
@@ -62,6 +63,7 @@ module('Jobs | Task inside a worker handler', () => {
     assert.true(Failure.is(typedError), 'a thrown Failure stays a live Failure');
     assert.equal(typedError?.code, 'Overloaded', 'a declared Failure keeps its code');
     assert.deepEqual(typedError?.data, { retryAfter: 5 }, 'and its data survives');
+    assert.equal(typedError?.message, 'overloaded, retry in 5s', 'and its rendered message');
     queue.stop();
   });
 
@@ -92,6 +94,7 @@ module('Jobs | Task inside a worker handler', () => {
     const rawError = queue.peek(bad.id)?.errors.at(-1)?.error;
     assert.true(Failure.is(rawError), 'a raw Error propagates as a live Failure');
     assert.equal(rawError?.code, 'Unknown', 'a bug is coerced to code Unknown');
+    assert.equal(rawError?.message, 'boom', 'the Unknown renders the original error message');
     assert.true(
       String((rawError?.cause as Error)?.message).includes('boom'),
       'with the original Error preserved in .cause',
@@ -101,6 +104,7 @@ module('Jobs | Task inside a worker handler', () => {
     assert.true(Failure.is(typedError), 'a thrown Failure stays a live Failure');
     assert.equal(typedError?.code, 'Overloaded', 'a declared Failure keeps its code');
     assert.deepEqual(typedError?.data, { retryAfter: 5 }, 'and its data survives');
+    assert.equal(typedError?.message, 'overloaded, retry in 5s', 'and its rendered message');
     queue.stop();
   });
 
@@ -186,6 +190,7 @@ module('Jobs | Task inside a worker handler', () => {
     const rawError = queue.peek(bad.id)?.errors.at(-1)?.error;
     assert.true(Failure.is(rawError), 'a raw Error propagates as a live Failure');
     assert.equal(rawError?.code, 'Unknown', 'a bug is coerced to code Unknown');
+    assert.equal(rawError?.message, 'boom', 'the Unknown renders the original error message');
     assert.true(
       String((rawError?.cause as Error)?.message).includes('boom'),
       'with the original Error preserved in .cause',
@@ -195,6 +200,7 @@ module('Jobs | Task inside a worker handler', () => {
     assert.true(Failure.is(typedError), 'a thrown Failure stays a live Failure');
     assert.equal(typedError?.code, 'Overloaded', 'a declared Failure keeps its code');
     assert.deepEqual(typedError?.data, { retryAfter: 5 }, 'and its data survives');
+    assert.equal(typedError?.message, 'overloaded, retry in 5s', 'and its rendered message');
     queue.stop();
   });
 });
