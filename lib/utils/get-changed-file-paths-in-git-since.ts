@@ -30,13 +30,19 @@ const GIT_KILL_GRACE_MS = 2_000;
  * Runs one git command with a hard upper bound on how long it can take.
  *
  * Two layers, because they cover different failures: `execFile`'s own `timeout` kills a child
- * that is merely slow, while the outer race guarantees *this promise settles* even if the
- * child's exit event never arrives — the case where killing the child doesn't help because
- * nobody is listening for it to die. That second layer is what turns an unkillable hang into a
- * normal rejection the caller already knows how to degrade on.
+ * that is merely slow, while the outer race guarantees *this run settles* even if the child's
+ * exit event never arrives — the case where killing the child doesn't help because nobody is
+ * listening for it to die. That second layer is what turns an unkillable hang into a normal
+ * rejection the caller already knows how to degrade on.
+ *
+ * Returns a `Task`, so no subprocess is spawned until something awaits it, and a single
+ * invocation can be retried on its own (`index.lock` contention is per-call, not per-scan).
+ * It stays the low-level primitive either way: it rejects with a raw `Error`, never a declared
+ * `Failure` — classifying that is the job of the producers built on it. And because a Task is
+ * a Promise, `await runGit(...)` reads exactly as it did.
  *
  * ```ts
- * // Defined, not invoked: spawns a git subprocess.
+ * // Defined, not invoked: awaiting the Task spawns the git subprocess.
  * async function headDiff(projectRoot: string): Promise<string> {
  *   return await runGit(['diff', '--name-only', 'HEAD'], projectRoot); // git's stdout
  * }
@@ -51,24 +57,26 @@ export function runGit(
   // *happens* to hang — `git hash-object --stdin` hangs under Node but exits under Deno (whose
   // node:child_process EOFs the child's stdin), which flaked the deno lane (run 29512448230).
   command = 'git',
-): Promise<string> {
-  const pending = execFileAsync(command, args, {
-    cwd,
-    maxBuffer: 16 * 1024 * 1024,
-    timeout: timeoutMs,
-    killSignal: 'SIGKILL',
-  }).then((result) => result.stdout);
+): Task<string> {
+  return Task(() => {
+    const pending = execFileAsync(command, args, {
+      cwd,
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: timeoutMs,
+      killSignal: 'SIGKILL',
+    }).then((result) => result.stdout);
 
-  let timer: ReturnType<typeof setTimeout>;
-  const bound = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`git ${args[0]} timed out after ${timeoutMs}ms`)),
-      timeoutMs + GIT_KILL_GRACE_MS,
-    );
-    timer.unref?.();
+    let timer: ReturnType<typeof setTimeout>;
+    const bound = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`git ${args[0]} timed out after ${timeoutMs}ms`)),
+        timeoutMs + GIT_KILL_GRACE_MS,
+      );
+      timer.unref?.();
+    });
+
+    return Promise.race([pending, bound]).finally(() => clearTimeout(timer));
   });
-
-  return Promise.race([pending, bound]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -145,11 +153,11 @@ export type GitScanFailure = Failure.Of<typeof GitScanFailed>;
  * `timeoutMs` is injectable for tests; production always uses the default.
  *
  * Returns a lazy, retryable `Task`: the two git calls run only when the Task is awaited, and a
- * caller can `.retry()` a transient failure (e.g. `index.lock` contention) for free — the
- * derivation lineage means a retry re-runs this whole chain, git calls included. The git
- * boundary is the only throwing step, so `.mapErr` remaps *any* rejection there to a declared
- * `GitScanFailed`; a parsing bug in `.map` below is downstream of it and stays a bug, never
- * masked as a Failure. Callers await the value, or `.result()` for the bare
+ * caller can `.retry()` a transient failure (e.g. `index.lock` contention) for free — `Task.all`
+ * rebuilds over restarted members, so a retry re-runs this whole chain, git calls included. The
+ * git boundary is the only throwing step, so `.mapErr` remaps *any* rejection there to a
+ * declared `GitScanFailed`; a parsing bug in `.map` below is downstream of it and stays a bug,
+ * never masked as a Failure. Callers await the value, or `.result()` for the bare
  * `ChangeScan | GitScanFailure` union.
  *
  * ```ts
@@ -167,16 +175,10 @@ export function getChangedFilePathsInGitSince(
   ref: string,
   timeoutMs = GIT_TIMEOUT_MS,
 ): Task<ChangeScan, GitScanFailure> {
-  return Task(() =>
-    Promise.all([
-      runGit(
-        ['diff', '--name-only', '--no-renames', ref, '--', projectRoot],
-        projectRoot,
-        timeoutMs,
-      ),
-      runGit(['status', '--porcelain', '--untracked-files=all'], projectRoot, timeoutMs),
-    ]),
-  )
+  return Task.all([
+    runGit(['diff', '--name-only', '--no-renames', ref, '--', projectRoot], projectRoot, timeoutMs),
+    runGit(['status', '--porcelain', '--untracked-files=all'], projectRoot, timeoutMs),
+  ])
     .mapErr((cause) =>
       GitScanFailed({ ref, reason: (cause as Error).message.split('\n')[0] }, { cause }),
     )

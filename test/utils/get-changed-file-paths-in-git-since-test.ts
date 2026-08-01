@@ -132,8 +132,8 @@ module('Utils | getChangedFilePathsInGitSince | bounded execution', { concurrenc
   test('kills and rejects a subprocess that never exits, rather than waiting forever', async (assert) => {
     const startedAt = Date.now();
     let rejected = false;
-    // runGit is the low-level throwing primitive (it rejects with a raw Error, not a Failure),
-    // so this boundary stays a plain try/catch — Task is for the async *producers* built on it.
+    // runGit rejects with a raw Error rather than a declared Failure, so this boundary is a
+    // plain try/catch.
     try {
       await runGit(HANG_ARGS, process.cwd(), 300, process.execPath);
     } catch {
