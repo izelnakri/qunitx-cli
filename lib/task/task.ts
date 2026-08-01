@@ -933,6 +933,10 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * Substitutes `fallback` for a **declared** failure. A bug still rejects — a fallback that
    * absorbed a `TypeError` would be the silent-bug-hider the two-tier rule exists to prevent.
    *
+   * Takes a **value**, not a thunk: `unwrapOr(() => x)` falls back to the function itself.
+   * For a fallback computed from the failure, use `match({ ok: (v) => v, err: fn })` — same
+   * two-tier gate, and `err` runs only when there is one.
+   *
    * ```ts
    * const loadConfig = () => Task(() => ({ port: 8080 }));
    * const DEFAULTS = { port: 3000 };
