@@ -29,6 +29,10 @@ export { authDigest, randomNonce, safeEqual } from './auth.ts';
 // error rate, latency histogram) — serve `.prometheus()` from a /metrics route.
 export { collectMetrics, type Metrics, type MetricsSnapshot } from './metrics.ts';
 
+// Event sourcing over a Store — Commanded/EventStore's model: persist the append-only event log,
+// fold it to state, replay on restart. The log is the source of truth; snapshots bound replay.
+export { eventSourced, type Aggregate, type EventSourced } from './event-sourced.ts';
+
 // Rendezvous (HRW) hashing: pick THE owner of a key with minimal reshuffling on membership
 // change — the routing primitive for distributed stateful entities (see examples/realtime-chat).
 export { rendezvous } from './rendezvous.ts';
