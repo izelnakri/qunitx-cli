@@ -3,6 +3,16 @@ import net from 'node:net';
 export interface SemaphoreServer {
   port: number;
   close(): Promise<void>;
+  /**
+   * Live counts, for tests that must wait until the server has actually reached a state.
+   * `closes` counts every socket whose `close` the server has PROCESSED — the only way to
+   * pin the interleaving this server's one historical bug depended on (a queued socket whose
+   * death is seen before the slot it was waiting on is released).
+   * The protocol gives a queued client no reply of its own — being queued is precisely the
+   * absence of one — so from the outside a sleep is the only alternative, and a sleep that is
+   * too short on a loaded runner silently tests the wrong interleaving rather than failing.
+   */
+  stats(): { active: number; queued: number; closes: number };
 }
 
 /**
@@ -17,6 +27,7 @@ export interface SemaphoreServer {
 export async function createSemaphoreServer(max: number): Promise<SemaphoreServer> {
   const holders = new Set<net.Socket>();
   const queue: Array<() => void> = [];
+  let closes = 0;
 
   const server = net.createServer((socket) => {
     // Prevent uncaught 'error' events from crashing the semaphore server.
@@ -24,6 +35,7 @@ export async function createSemaphoreServer(max: number): Promise<SemaphoreServe
     socket.on('error', () => {});
 
     socket.once('close', () => {
+      closes += 1;
       if (!holders.delete(socket)) return; // was never granted — no-op
       queue.shift()?.();
     });
@@ -52,5 +64,6 @@ export async function createSemaphoreServer(max: number): Promise<SemaphoreServe
       new Promise<void>((resolve, reject) =>
         server.close((err) => (err ? reject(err) : resolve())),
       ),
+    stats: () => ({ active: holders.size, queued: queue.length, closes }),
   };
 }

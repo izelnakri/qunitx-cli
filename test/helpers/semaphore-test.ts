@@ -48,6 +48,24 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Budget for a grant that MUST arrive. Generous on purpose: these assertions are about a slot
+// being recoverable at all, never about latency, and a loaded CI runner (16 workers, each with
+// a browser) can stall a loopback round-trip well past any "surely that's enough" figure.
+// A negative assertion is the opposite case — there a short budget is correct, since a slow
+// machine only makes "still not granted" more true.
+const GRANT_BUDGET_MS = 5000;
+
+// Polls until `condition` holds, or throws when `GRANT_BUDGET_MS` elapses. Waiting for the
+// state the next step depends on is what makes the interleaving deterministic instead of
+// merely likely.
+async function until(condition: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + GRANT_BUDGET_MS;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting until ${what}`);
+    await delay(1);
+  }
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 module('Helpers | SemaphoreServer', { concurrency: true }, () => {
@@ -112,22 +130,35 @@ module('Helpers | SemaphoreServer', { concurrency: true }, () => {
       // Fill the only slot.
       const s1 = await acquireSlot(sem.port);
 
-      // Queue a second connection, then immediately destroy it before it is granted.
+      // Queue a second connection, then destroy it before it is granted. Waiting for the
+      // server to actually hold the queue entry is load-bearing: if the destroy lands first
+      // the queue is empty and the run proves nothing, which a fixed sleep cannot rule out.
       const s2 = queueSlot(sem.port);
-      await delay(20); // let the server register the queue entry
+      await until(() => sem.stats().queued === 1, 'the server has queued the second connection');
+
+      // Both waits are load-bearing, and for different reasons. The first proves the socket
+      // really is queued (destroy landing first would leave an empty queue and prove nothing).
+      // The second pins the ONE interleaving the historical bug needed: the server must have
+      // PROCESSED the death before the slot frees, so the later grant() meets an already-dead
+      // socket whose close will never come again. Reversed, the close handler returns the slot
+      // on its own and even the buggy server looks correct.
+      const closesBefore = sem.stats().closes;
       s2.destroy();
-      await delay(20); // let the server see the close
+      await until(
+        () => sem.stats().closes > closesBefore,
+        "the server has processed the queued socket's close",
+      );
 
-      // Release the active slot. The server must detect s2.destroyed, skip the write,
-      // and NOT increment active — leaving active = 0 so the next connection can get in.
+      // Release the active slot. Whether or not the server has processed s2's close by now,
+      // the slot must come back: grant() either skips the destroyed socket and passes the
+      // capacity on, or hands it over and the close that follows returns it. The buggy
+      // version did neither — it wrote to a dead socket and leaked the slot for good.
       s1.destroy();
-      await delay(20); // let the server process the release + dead-socket grant
 
-      // A new connection should be granted immediately (active = 0 < max = 1).
-      const grantedAfterRecovery = await tryAcquireWithinMs(sem.port, 200);
+      const grantedAfterRecovery = await tryAcquireWithinMs(sem.port, GRANT_BUDGET_MS);
       assert.true(
         grantedAfterRecovery,
-        'a new connection is immediately granted after the server correctly skips the dead queued socket',
+        'a new connection is granted again — the dead queued socket cost no slot',
       );
     } finally {
       await sem.close();
@@ -169,7 +200,7 @@ module('Helpers | SemaphoreServer', { concurrency: true }, () => {
         s2.destroy();
         await delay(5);
       }
-      const granted = await tryAcquireWithinMs(sem.port, 200);
+      const granted = await tryAcquireWithinMs(sem.port, GRANT_BUDGET_MS);
       assert.true(granted, 'server still grants slots after 10 cycles');
     } finally {
       await sem.close();
