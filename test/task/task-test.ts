@@ -405,11 +405,6 @@ module('Task | builders', { concurrency: true }, () => {
     await assert.rejects(Task.fail(NotFound({ id: 7 })), /no user 7/);
   });
 
-  test('Task.from lifts a promise or a recipe', async (assert) => {
-    assert.strictEqual(await Task.from(Promise.resolve(5)), 5);
-    assert.strictEqual(await Task.from(() => 6), 6);
-  });
-
   test('Task.try carries arguments and stays lazy — Promise.try made lazy', async (assert) => {
     let ran = false;
     const task = Task.try(

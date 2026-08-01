@@ -1167,7 +1167,7 @@ the _declared_ failure type; it is advisory (JS rejections are untyped) but it m
 
 The statics are the Promise statics, corrected and made lazy (`all`/`race`/`any`/`allSettled`
 observe nothing until the combined Task is awaited), plus `Task.try(fn, ...args)` — a lazy
-`Promise.try` — `Task.from`, `Task.fail(typedReason)`, `Task.withResolvers()`, and
+`Promise.try` — `Task.fail(typedReason)`, `Task.withResolvers()`, and
 `Task.results(tasks)`, the positional batch that keeps every outcome as a typed `Result`.
 
 ### 10.2 `.result()` is the one bridge to the bare union

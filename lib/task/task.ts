@@ -312,25 +312,6 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   // ── Builders ─────────────────────────────────────────────────────────────────
 
   /**
-   * Lifts a promise or a recipe into a Task. A recipe stays lazy; a passed promise is already
-   * running (JS starts promises at creation) — the Task then only defers *observation*.
-   *
-   * ```ts
-   * // Defined, not invoked: the second line starts a real network request at call time —
-   * // that eagerness is exactly what the comment is documenting.
-   * function bothSpellings(url: string) {
-   *   Task.from(() => fetch(url)); // fully lazy — fetch fires on first await
-   *   return Task.from(fetch(url)); // fetch already in flight; retry/result still work
-   * }
-   * ```
-   */
-  static from<T, E = AnyFailure>(
-    source: PromiseLike<T> | Recipe<T> | Executor<T>,
-  ): TaskClass<T, E> {
-    return new TaskClass(source);
-  }
-
-  /**
    * The call boundary with arguments — `Promise.try`'s shape, made lazy: `fn(...args)` runs on
    * first await, and whatever it throws (sync or async) becomes the rejection. The closure the
    * caller would otherwise write by hand (`Task(() => fn(a, b))`) is built here instead.
@@ -587,7 +568,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     const members = snapshotOnce(tasks);
     const combined = new TaskClass<Result<T, E>[], never>(
       () =>
-        Promise.all(members().map((task) => TaskClass.from<T, E>(task).result())) as Promise<
+        Promise.all(members().map((task) => new TaskClass<T, E>(task).result())) as Promise<
           Result<T, E>[]
         >,
     );
