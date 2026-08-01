@@ -972,13 +972,14 @@ export function start(
         pending.set(id, (frame) => {
           clearTimeout(timer);
           pending.delete(id);
+          const value = decode(frame);
+          const failed = isFailure(value);
           emit(
             ['node', 'call', 'stop'],
             { duration: performance.now() - started },
-            { to, subject, trace },
+            { to, subject, trace, error: failed }, // `error` drives error-rate metrics
           );
-          const value = decode(frame);
-          if (isFailure(value))
+          if (failed)
             reject(value); // a remote DECLARED failure stays declared here
           else resolve(value as T);
         });

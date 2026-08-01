@@ -25,6 +25,10 @@ export { wsTransport, traceTransport, binaryCodec, jsonCodec, type Codec } from 
 // Used by wsTransport's/startHub's `secret`; exported so custom transports/relays can reuse it.
 export { authDigest, randomNonce, safeEqual } from './auth.ts';
 
+// Observability sink: a Prometheus-format exporter over the node's telemetry events (call counts,
+// error rate, latency histogram) — serve `.prometheus()` from a /metrics route.
+export { collectMetrics, type Metrics, type MetricsSnapshot } from './metrics.ts';
+
 // Rendezvous (HRW) hashing: pick THE owner of a key with minimal reshuffling on membership
 // change — the routing primitive for distributed stateful entities (see examples/realtime-chat).
 export { rendezvous } from './rendezvous.ts';
