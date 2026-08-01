@@ -75,6 +75,16 @@ export interface Self<K extends string = string> {
   sendAfter(subject: K, payload: unknown, ms: number): TimerRef;
   /** `Process.exit(self(), reason)` — terminate this unit (propagates to links; a supervisor restarts). */
   exit(reason?: AnyFailure): void;
+  /**
+   * Selective receive — `gen_statem`'s `postpone` / Akka's stash. Defer the message being handled:
+   * it is neither applied nor answered now, but held and replayed (from the top of its handler) on
+   * the next {@link Self.unstashAll}. Call it from a guard at the START of a handler (before side
+   * effects — the handler re-runs on replay) when the unit isn't ready for this message yet. The
+   * caller keeps waiting; pair it with `unstashAll` once the unit becomes ready (e.g. after init).
+   */
+  postpone(): void;
+  /** Replay every stashed (postponed) message back through the mailbox, in the order they arrived. */
+  unstashAll(): void;
 }
 
 /**
@@ -288,6 +298,16 @@ export function genServer<S, K extends string = string>(
       queue.push({ run, settle: settle as (v: unknown) => void, fail });
       void pump();
     });
+  // A self-settling enqueue: `run` owns its caller promise (resolve/reject captured in its closure),
+  // so a POSTPONED message can be re-stashed and replayed with no second allocation — the common
+  // (non-postpone) path costs exactly one promise per message, same as before. The envelope's own
+  // settle/fail are no-ops. The plain `enqueue` above still serves the settle-by-return callers
+  // (sys.upgrade, swap, trapExit).
+  const noop = (): void => {};
+  const enqueueRun = (run: () => Promise<void>): void => {
+    queue.push({ run, settle: noop, fail: noop });
+    void pump();
+  };
   const priority: Priority = options.priority ?? 'normal';
   const pump = async (): Promise<void> => {
     if (pumping) return;
@@ -315,9 +335,17 @@ export function genServer<S, K extends string = string>(
     pumping = false;
   };
 
+  // Selective-receive buffer: messages a handler POSTPONED, held as their re-runnable closures.
+  // `unstashAll` replays them back through the mailbox in arrival order (they run from the top again).
+  const stash: Array<() => Promise<void>> = [];
+  const unstashAll = (): void => {
+    for (const run of stash.splice(0)) enqueueRun(run);
+  };
+
   // The one invocation path, shared by the remote handler (node.handle, below) and the typed LOCAL
-  // client (handle.call/cast). Returns the reply — a value, or a declared Failure (Overloaded /
-  // UnitDown / whatever the handler returns). A handler THROW rejects the enqueue promise.
+  // client (handle.call/cast). Returns the caller's reply promise (a value, or a declared Failure —
+  // Overloaded / UnitDown / whatever the handler returns). `run` self-settles that promise: a normal
+  // message resolves it; a postponed one is re-stashed and the promise waits; a bug rejects it.
   const invoke = (
     key: string,
     payload: unknown,
@@ -334,46 +362,60 @@ export function genServer<S, K extends string = string>(
         depth: queue.length,
       });
     }
-    return enqueue(async () => {
-      if (!unitAlive)
-        return downReason ?? new Failure('UnitDown', `${name} is down`, { name, from: name });
-      // The unit's view of itself for THIS message — self() + Process-style ops, who sent it, and
-      // the call's trace/deadline (undefined for a local self-send, which has neither).
-      const self: Self = {
-        name,
-        from,
-        trace: meta?.trace,
-        deadline: meta?.deadline,
-        cast: castSelf,
-        sendAfter,
-        exit: (reason) => handle.exit(reason),
-      };
-      let outcome: { state: S; reply?: unknown; persist?: boolean };
-      try {
-        outcome = await current.handlers[key](state, payload, self);
-      } catch (thrown) {
-        // "Let it crash": a BUG (non-Failure throw) terminates the unit when crashOnError is set —
-        // down() propagates the exit (links → onExit → supervisor restart). A declared Failure is an
-        // expected reply, never a crash; a bug WITHOUT the flag rejects as RemoteCrash, unit alive.
-        if (options.crashOnError && !isFailure(thrown)) {
-          const reason = new Failure(
-            'UnitCrashed',
-            `${name} crashed handling ${key}: ${String(thrown)}`,
-            { name, subject: key },
-            { cause: thrown },
-          );
-          down(reason);
-          throw reason; // the in-flight caller learns the unit died (bug carried as .cause)
+    // ONE native promise per message (same allocation as the old enqueue). `run` closes over its
+    // resolve/reject, so a postponed message re-stashes the SAME closure and replays with no new alloc.
+    return new Promise<unknown>((resolve, reject) => {
+      const run = async (): Promise<void> => {
+        if (!unitAlive) {
+          resolve(downReason ?? new Failure('UnitDown', `${name} is down`, { name, from: name }));
+          return;
         }
-        throw thrown;
-      }
-      state = outcome.state;
-      // PERSIST-BEFORE-ACK — the delta-loss fix: the durable write completes (inside the serial
-      // pump, so ordering holds) BEFORE the reply is released. A caller's ack means the state
-      // change is durable; there is no periodic-snapshot window to lose. Reads opt out with
-      // `persist: false`.
-      if (options.store && outcome.persist !== false) await options.store.save(storeKey, state);
-      return outcome.reply;
+        let postponed = false;
+        // The unit's view of itself for THIS message — self() + Process-style ops, who sent it, the
+        // call's trace/deadline, and the stash controls (postpone THIS message, replay the stash).
+        const self: Self = {
+          name,
+          from,
+          trace: meta?.trace,
+          deadline: meta?.deadline,
+          cast: castSelf,
+          sendAfter,
+          exit: (reason) => handle.exit(reason),
+          postpone: () => void (postponed = true),
+          unstashAll,
+        };
+        try {
+          const outcome = await current.handlers[key](state, payload, self);
+          // Selective receive: a postponed message is neither applied nor answered now — hold its run
+          // and replay it (from the top) on the next unstashAll. The caller's promise keeps waiting.
+          if (postponed) {
+            stash.push(run);
+            return;
+          }
+          state = outcome.state;
+          // PERSIST-BEFORE-ACK — the durable write completes (inside the serial pump, so ordering
+          // holds) BEFORE the reply is released. Reads opt out with `persist: false`.
+          if (options.store && outcome.persist !== false) await options.store.save(storeKey, state);
+          resolve(outcome.reply);
+        } catch (thrown) {
+          // "Let it crash": a BUG (non-Failure throw) terminates the unit when crashOnError is set —
+          // down() propagates the exit (links → onExit → supervisor restart). A declared Failure is an
+          // expected reply, never a crash; a bug WITHOUT the flag becomes RemoteCrash, unit alive.
+          if (options.crashOnError && !isFailure(thrown)) {
+            const reason = new Failure(
+              'UnitCrashed',
+              `${name} crashed handling ${key}: ${String(thrown)}`,
+              { name, subject: key },
+              { cause: thrown },
+            );
+            down(reason);
+            reject(reason); // the in-flight caller learns the unit died (bug carried as .cause)
+            return;
+          }
+          reject(thrown);
+        }
+      };
+      enqueueRun(run); // the pump runs it; `run` settles this promise (or re-stashes on postpone)
     });
   };
 
@@ -439,6 +481,7 @@ export function genServer<S, K extends string = string>(
     unitAlive = false;
     downReason = reason;
     if (options.via) node.unregister(options.via.registry, options.via.key); // release the name
+    unstashAll(); // replay held messages so their callers settle (as UnitDown) instead of hanging
     for (const timer of timers) clearTimeout(timer); // a dead unit fires no scheduled messages
     timers.clear();
     for (const peer of links) {
