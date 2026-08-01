@@ -487,7 +487,7 @@ module('Task | combinators', { concurrency: true }, () => {
     await assert.rejects(Task.results([loadUser(1), buggy]), TypeError);
   });
 
-  test('combinators snapshot a one-shot iterable — restart() re-awaits the same members', async (assert) => {
+  test('combinators snapshot a one-shot iterable, so restart() still sees every member', async (assert) => {
     function* gen() {
       yield Task(() => 1);
       yield Task(() => 2);
@@ -497,6 +497,50 @@ module('Task | combinators', { concurrency: true }, () => {
     // Without the snapshot, restart() re-iterates the exhausted generator and resolves [].
     assert.deepEqual(await all.restart(), [1, 2]);
     assert.deepEqual(await Task.results(gen()).restart(), [1, 2]);
+  });
+
+  test('restart re-runs the members themselves, so retry over a combinator retries the work', async (assert) => {
+    // A combinator has no single source to walk, so without this it rebuilt nothing: restart
+    // re-awaited members that had already settled and `Task.all(...).retry()` did no work at
+    // all — the lineage promise ("a fresh execution of the whole chain") stopped at the
+    // combinator's edge.
+    let runs = 0;
+    const member = () => Task(() => ++runs);
+
+    const all = Task.all([member(), member()]);
+    assert.deepEqual(await all, [1, 2]);
+    assert.deepEqual(await all.restart(), [3, 4], 'both members ran again');
+
+    // Through a derivation, which is how call sites actually use it.
+    runs = 0;
+    const chained = Task.all([member(), member()]).map((values) => values.join('+'));
+    assert.strictEqual(await chained, '1+2');
+    assert.strictEqual(await chained.restart(), '3+4', 'the chain reached the members');
+
+    // And for every combinator, not just `all`.
+    runs = 0;
+    const raced = Task.race([member()]);
+    await raced;
+    assert.strictEqual(await raced.restart(), 2, 'race');
+    runs = 0;
+    const settled = Task.allSettled([member()]);
+    await settled;
+    assert.deepEqual(await settled.restart(), [{ status: 'fulfilled', value: 2 }], 'allSettled');
+    runs = 0;
+    const outcomes = Task.results([member()]);
+    await outcomes;
+    assert.deepEqual(await outcomes.restart(), [2], 'results');
+  });
+
+  test('a plain promise member is passed through — it has no second execution to give', async (assert) => {
+    // Honest limit: a promise is already running, so a combinator over promises restarts the
+    // combination, never the work behind it. Only Task members carry a recipe to re-run.
+    let started = 0;
+    const promise = (): Promise<number> => Promise.resolve(++started);
+    const all = Task.all([promise(), promise()]);
+    assert.deepEqual(await all, [1, 2]);
+    assert.deepEqual(await all.restart(), [1, 2], 'the same settled promises, re-awaited');
+    assert.strictEqual(started, 2, 'nothing ran a second time');
   });
 });
 

@@ -105,6 +105,9 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    *  makes restart/retry on a *chain* re-execute the chain's source, not just the last step. */
   #source: TaskClass<unknown, unknown> | undefined;
   #rederive: ((fresh: TaskClass<unknown, unknown>) => TaskClass<T, E>) | undefined;
+  /** Rebuilds a combinator over freshly restarted members. A combinator has no single source
+   *  to walk, so this is how `restart` reaches the work its members represent. */
+  #remake: (() => TaskClass<T, E>) | undefined;
 
   /**
    * Takes any of the three shapes work arrives in — all lazy, all identical with or without
@@ -478,6 +481,11 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   // All four are overridden for correctness (the base implementations construct through
   // `new this(executor)`, which a recipe constructor cannot honour) and made LAZY: nothing in
   // `values` is observed — and no lazy member Task starts — until the combined Task is awaited.
+  //
+  // They also carry lineage the only way a combinator can. A derived Task walks back to one
+  // source; a combinator has many, so `restart` rebuilds it over freshly restarted members and
+  // `retry` therefore retries the work rather than re-reading settled answers. Members that are
+  // plain promises are passed through — already running, with no second execution to give.
 
   /**
    * Lazy `Promise.all`: on await, everything starts together, resolves positionally, and
@@ -494,7 +502,9 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   static override all<T>(values: Iterable<T | PromiseLike<T>>): TaskClass<Awaited<T>[]>;
   static override all(values: Iterable<unknown>): TaskClass<unknown[]> {
     const members = snapshotOnce(values);
-    return new TaskClass(() => Promise.all(members()));
+    const task = new TaskClass(() => Promise.all(members()));
+    task.#remake = () => TaskClass.all(members().map(restarted));
+    return task;
   }
 
   /**
@@ -509,7 +519,9 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   static override race<T>(values: Iterable<T | PromiseLike<T>>): TaskClass<Awaited<T>>;
   static override race(values: Iterable<unknown>): TaskClass<unknown> {
     const members = snapshotOnce(values);
-    return new TaskClass(() => Promise.race(members()));
+    const task = new TaskClass(() => Promise.race(members()));
+    task.#remake = () => TaskClass.race(members().map(restarted));
+    return task;
   }
 
   /**
@@ -523,7 +535,9 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   static override any<T>(values: Iterable<T | PromiseLike<T>>): TaskClass<Awaited<T>>;
   static override any(values: Iterable<unknown>): TaskClass<unknown> {
     const members = snapshotOnce(values);
-    return new TaskClass(() => Promise.any(members()));
+    const task = new TaskClass(() => Promise.any(members()));
+    task.#remake = () => TaskClass.any(members().map(restarted));
+    return task;
   }
 
   /**
@@ -545,7 +559,9 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     values: Iterable<unknown>,
   ): TaskClass<PromiseSettledResult<unknown>[]> {
     const members = snapshotOnce(values);
-    return new TaskClass(() => Promise.allSettled(members()));
+    const task = new TaskClass(() => Promise.allSettled(members()));
+    task.#remake = () => TaskClass.allSettled(members().map(restarted));
+    return task;
   }
 
   /**
@@ -569,12 +585,14 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     tasks: Iterable<TaskClass<T, E> | PromiseLike<T>>,
   ): TaskClass<Result<T, E>[], never> {
     const members = snapshotOnce(tasks);
-    return new TaskClass(
+    const combined = new TaskClass<Result<T, E>[], never>(
       () =>
         Promise.all(members().map((task) => TaskClass.from<T, E>(task).result())) as Promise<
           Result<T, E>[]
         >,
     );
+    combined.#remake = () => TaskClass.results(members().map(restarted));
+    return combined;
   }
 
   // ── Data-first twins of every transforming method ────────────────────────────
@@ -999,6 +1017,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     if (this.#source !== undefined && this.#rederive !== undefined) {
       return this.#rederive(this.#source.restart());
     }
+    if (this.#remake !== undefined) return this.#remake();
     // The work is copied across rather than re-passed through the constructor: an executor
     // normalised once must not be re-sniffed by arity. A fresh Task means fresh resolvers, so
     // a resolver captured by the previous attempt can only ever settle the attempt it came
@@ -1118,6 +1137,15 @@ Object.defineProperty(TaskClass, 'name', { value: 'Task' });
 function snapshotOnce<T>(values: Iterable<T>): () => T[] {
   let snapshot: T[] | undefined;
   return () => (snapshot ??= Array.from(values));
+}
+
+/**
+ * A member restarted, when it is something that CAN be: a Task carries its recipe, so it can
+ * run again. A plain promise is already running and has no second execution to offer, so it is
+ * passed through — a combinator over promises restarts the combination, not the work behind it.
+ */
+function restarted<Member>(member: Member): Member {
+  return member instanceof TaskClass ? (member.restart() as Member) : member;
 }
 
 /** Placeholder work for the internal construction path in `restart()`, immediately replaced. */
