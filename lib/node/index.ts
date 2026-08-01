@@ -33,6 +33,10 @@ export { collectMetrics, type Metrics, type MetricsSnapshot } from './metrics.ts
 // fold it to state, replay on restart. The log is the source of truth; snapshots bound replay.
 export { eventSourced, type Aggregate, type EventSourced } from './event-sourced.ts';
 
+// Rolling cluster upgrade over the `<unit>.sys.upgrade` relup subject — drive a new version across
+// the fleet a batch at a time, verifying each and halting at the canary if a build goes bad.
+export { rollingUpgrade, type RollingUpgradeReport } from './rolling-upgrade.ts';
+
 // Rendezvous (HRW) hashing: pick THE owner of a key with minimal reshuffling on membership
 // change — the routing primitive for distributed stateful entities (see examples/realtime-chat).
 export { rendezvous } from './rendezvous.ts';
