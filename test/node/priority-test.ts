@@ -84,6 +84,31 @@ module('Node | per-call priority (Option A)', () => {
     c.stop();
   });
 
+  test('self.setPriority changes the unit base priority at runtime (Process.flag(:priority))', async (assert) => {
+    const hub = Node.memoryHub();
+    const node = Node.start('n@flag', hub.transport());
+    Node.genServer(node, 'u', {
+      version: '1',
+      init: () => 0,
+      handlers: {
+        raise: (s: number, _p: unknown, self: Node.Self) => ({
+          state: s,
+          reply: self.setPriority('high'), // returns the PREVIOUS priority (Erlang process_flag)
+        }),
+      },
+    });
+    const cli = Node.start('cli@flag', hub.transport());
+    await settle();
+    assert.strictEqual(
+      await cli.call('n@flag', 'u.raise'),
+      'normal',
+      'returned the previous value',
+    );
+    assert.strictEqual(await cli.call('n@flag', 'u.raise'), 'high', 'the change persisted');
+    node.stop();
+    cli.stop();
+  });
+
   test('cast carries priority too', async (assert) => {
     const hub = Node.memoryHub();
     const srv = Node.start('srv@pri', hub.transport());

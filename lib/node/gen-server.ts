@@ -79,6 +79,13 @@ export interface Self<K extends string = string> {
   /** `Process.exit(self(), reason)` — terminate this unit (propagates to links; a supervisor restarts). */
   exit(reason?: AnyFailure): void;
   /**
+   * `Process.flag(:priority, level)` — set THIS unit's base scheduling priority at runtime (Erlang's
+   * per-process priority flag), returning the PREVIOUS value. Takes effect on the pump's next slice.
+   * Distinct from {@link Self.priority}, which is the current MESSAGE's carried priority: this changes
+   * the unit's own baseline (raise it while doing latency-critical work, lower it for a background sweep).
+   */
+  setPriority(level: Priority): Priority;
+  /**
    * Selective receive — `gen_statem`'s `postpone` / Akka's stash. Defer the message being handled:
    * it is neither applied nor answered now, but held and replayed (from the top of its handler) on
    * the next {@link Self.unstashAll}. Call it from a guard at the START of a handler (before side
@@ -316,7 +323,7 @@ export function genServer<S, K extends string = string>(
     queue.push({ run, settle: noop, fail: noop, priority: msgPriority });
     void pump();
   };
-  const priority: Priority = options.priority ?? 'normal';
+  let priority: Priority = options.priority ?? 'normal'; // the unit's base priority; Process.flag can change it
   const pump = async (): Promise<void> => {
     if (pumping) return;
     pumping = true;
@@ -394,6 +401,11 @@ export function genServer<S, K extends string = string>(
           cast: castSelf,
           sendAfter,
           exit: (reason) => handle.exit(reason),
+          setPriority: (level) => {
+            const previous = priority;
+            priority = level; // the pump reads `priority` at each slice reset — takes effect next slice
+            return previous;
+          },
           postpone: () => void (postponed = true),
           unstashAll,
         };
