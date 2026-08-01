@@ -144,6 +144,25 @@ export function workerPool(options: {
 }
 
 /**
+ * Delegate CPU-bound `subjects` from a node to a worker pool — the "dirty CPU scheduler" analog. The
+ * cooperative scheduler keeps an AWAITING handler fair, but a synchronous CPU-bound handler still
+ * blocks its node (the one case yielding can't cover); run it on a pool thread instead. Each named
+ * subject on `node` forwards to `pool` (whose worker module must register the same subject), so
+ * `node.call(subject, x)` computes off the main loop. Payloads cross as structured-clone data (a
+ * worker boundary), exactly like any cross-node call; a declared failure from the worker crosses back
+ * declared. Erlang marks a NIF dirty; here you point the heavy subjects at the thread pool.
+ *
+ * ```ts
+ * // node.handle('fib', …) now runs on a pool thread, not the main loop:
+ * // dirtyDelegate(node, pool, ['fib']);
+ * typeof dirtyDelegate; // 'function'
+ * ```
+ */
+export function dirtyDelegate(node: NodeHandle, pool: WorkerPool, subjects: string[]): void {
+  for (const subject of subjects) node.handle(subject, (payload) => pool.call(subject, payload));
+}
+
+/**
  * The worker-side entry: read the pool's assignment (name + group + bus), start this thread's node,
  * and let `setup` register its handlers. The pool's bootstrap calls this with your module's exported
  * `worker` — so you normally write `export function worker(node) { … }` and never call this directly.
