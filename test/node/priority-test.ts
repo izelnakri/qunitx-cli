@@ -122,4 +122,33 @@ module('Node | per-call priority (Option A)', () => {
     srv.stop();
     cli.stop();
   });
+
+  test('the local client (unit.call / unit.cast) carries priority too', async (assert) => {
+    const hub = Node.memoryHub();
+    const node = Node.start('n@local', hub.transport());
+    let castSeen: unknown = 'unset';
+    const unit = Node.genServer(node, 'u', {
+      version: '1',
+      init: () => 0,
+      handlers: {
+        which: (s: number, _p: unknown, self: Node.Self) => ({
+          state: s,
+          reply: self.priority ?? 'none',
+        }),
+        note: (s: number, _p: unknown, self: Node.Self) => ({
+          state: s,
+          reply: void (castSeen = self.priority ?? 'none'),
+        }),
+      },
+    });
+    assert.strictEqual(
+      await unit.call('which', null, { priority: 'high' }),
+      'high',
+      'the local call carried its priority through the mailbox',
+    );
+    unit.cast('note', null, { priority: 'low' });
+    await settle();
+    assert.strictEqual(castSeen, 'low', 'the local cast carried its priority');
+    node.stop();
+  });
 });

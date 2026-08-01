@@ -72,8 +72,9 @@ export interface Self<K extends string = string> {
   /** The scheduling priority this message carried, if the caller set one — read it to PROPAGATE
    *  priority to a nested `call`/`cast` (`node.call(to, subj, arg, { priority: self.priority })`). */
   readonly priority?: Priority;
-  /** `GenServer.cast(self(), …)` — enqueue a message to itself; it runs AFTER the current one. */
-  cast(subject: K, payload?: unknown): void;
+  /** `GenServer.cast(self(), …)` — enqueue a message to itself; it runs AFTER the current one.
+   *  `opts.priority` elevates the pump for that self-message. */
+  cast(subject: K, payload?: unknown, opts?: { priority?: Priority }): void;
   /** `Process.send_after(self(), msg, ms)` — schedule a self-`cast` after `ms`, through the mailbox. */
   sendAfter(subject: K, payload: unknown, ms: number): TimerRef;
   /** `Process.exit(self(), reason)` — terminate this unit (propagates to links; a supervisor restarts). */
@@ -169,10 +170,10 @@ export interface GenServer<S, K extends string = string> {
    * wire hop — no `node.call(nodeName, '<name>.<subject>', …)` round-trip. A handler that returns
    * (or throws) a declared `Failure` rejects the Task; an over-full mailbox rejects with `Overloaded`.
    */
-  call(subject: K, payload?: unknown): Task<unknown, AnyFailure>;
+  call(subject: K, payload?: unknown, opts?: { priority?: Priority }): Task<unknown, AnyFailure>;
   /** Fire-and-forget the local client — `gen_server:cast`. Runs the handler through the mailbox
-   *  (state still mutates + persists), drops the reply. */
-  cast(subject: K, payload?: unknown): void;
+   *  (state still mutates + persists), drops the reply. `opts.priority` elevates the pump for it. */
+  cast(subject: K, payload?: unknown, opts?: { priority?: Priority }): void;
   /** The currently running version. */
   version(): string;
   /** Swap via the mailbox — lands strictly BETWEEN messages, even async ones. An eager Task
@@ -398,7 +399,7 @@ export function genServer<S, K extends string = string>(
           trace: meta?.trace,
           deadline: meta?.deadline,
           priority: meta?.priority,
-          cast: castSelf,
+          cast: (subject, payload, opts) => castSelf(subject, payload, opts?.priority),
           sendAfter,
           exit: (reason) => handle.exit(reason),
           setPriority: (level) => {
@@ -525,8 +526,10 @@ export function genServer<S, K extends string = string>(
   // Self-ops (Elixir's Process.*, bound to this unit) — the constant part of the `self` a handler
   // gets; `from` varies per message and is spread in by invoke(). Self-sends reuse invoke(), so they
   // ride the same mailbox: enqueued behind the current message, never reentrant.
-  const castSelf = (subject: string, payload?: unknown): void =>
-    void Promise.resolve(invoke(subject, payload, name)).catch(() => {});
+  const castSelf = (subject: string, payload?: unknown, msgPriority?: Priority): void =>
+    void Promise.resolve(
+      invoke(subject, payload, name, msgPriority ? { priority: msgPriority } : undefined),
+    ).catch(() => {});
   const sendAfter = (subject: string, payload: unknown, ms: number): TimerRef => {
     const timer = setTimeout(() => {
       timers.delete(timer);
@@ -545,11 +548,16 @@ export function genServer<S, K extends string = string>(
     // `node.call` path would surface, this does too: a declared Failure (returned OR thrown) rejects
     // the Task as itself; a bug (a non-Failure throw) rejects as RemoteCrash — so Task<_, AnyFailure>
     // never leaks a bare Error, local or remote.
-    call: (subject, payload) =>
+    call: (subject, payload, opts) =>
       Task<unknown, AnyFailure>(async () => {
         let reply: unknown;
         try {
-          reply = await invoke(subject, payload, name);
+          reply = await invoke(
+            subject,
+            payload,
+            name,
+            opts?.priority ? { priority: opts.priority } : undefined,
+          );
         } catch (thrown) {
           throw isFailure(thrown)
             ? thrown
@@ -558,8 +566,10 @@ export function genServer<S, K extends string = string>(
         if (isFailure(reply)) throw reply;
         return reply;
       }).perform(),
-    cast: (subject, payload) =>
-      void Promise.resolve(invoke(subject, payload, name)).catch(() => {}),
+    cast: (subject, payload, opts) =>
+      void Promise.resolve(
+        invoke(subject, payload, name, opts?.priority ? { priority: opts.priority } : undefined),
+      ).catch(() => {}),
     version: () => current.version,
     upgrade: (next) => Task(() => enqueue(() => apply(next))).perform(),
     state: () => state,
