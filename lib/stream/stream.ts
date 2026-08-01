@@ -358,7 +358,12 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
   ): StreamClass<Exclude<R, AnyFailure>, Extract<U | R, AnyFailure> | AnyFailure> {
     const { maxConcurrency = 4, timeoutMs, ordered = true } = options;
     const runOne = (element: Exclude<U, AnyFailure>): Promise<unknown> => {
-      const work = new Task<unknown>((signal) => fn(element, signal)).perform();
+      // Executor form: `fn` needs the signal so `shutdown` below can cancel it. Its result goes
+      // to the resolver rather than being returned, because `fn` may answer with a plain value
+      // and only a returned *promise* settles a Task on its own.
+      const work = new Task<unknown>((resolve, _reject, signal) =>
+        resolve(fn(element, signal)),
+      ).perform();
       if (timeoutMs === undefined) return Promise.resolve(work);
       return work.yield(timeoutMs).then((settled) => {
         if (settled !== null) return isFailure(settled) ? settled : settled;
