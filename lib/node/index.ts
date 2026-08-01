@@ -85,6 +85,17 @@ export { Process, type BoundProcess } from './process.ts';
 // mailbox pump spends a reduction per message and yields its slice here; `Process.yield` is the
 // in-handler form. Exposed so other runtimes can reuse the yield/priority primitives directly.
 export { yieldToLoop, yieldWith, type Priority } from './scheduler.ts';
+
+// Typed RPC sugar: a compile-time contract + a stable string name give closure-like call sites
+// (`ledger.debit(arg)`) over call/handle, with no code on the wire. See service.ts for the model.
+export {
+  defineService,
+  type ServiceApi,
+  type Schema as ServiceSchema,
+  type Impl as ServiceImpl,
+  type Client as ServiceClient,
+  type Caster as ServiceCaster,
+} from './service.ts';
 export {
   supervisor,
   type Supervisor,
