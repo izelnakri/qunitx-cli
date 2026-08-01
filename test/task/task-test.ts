@@ -111,6 +111,16 @@ module('Task | call form', { concurrency: true }, () => {
 // shape, told apart by declared arity), and an already-running promise. These tests pin the
 // dispatch rule, because it is the one thing a caller can get wrong silently.
 
+// Polls until `condition` holds — waiting for the state a step depends on rather than
+// sleeping for a duration that may or may not be enough.
+async function until(condition: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + 5000;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting until ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+
 module('Task | construction forms', { concurrency: true }, () => {
   test('a recipe settles from its return value — sync, async, and void', async (assert) => {
     assert.strictEqual(await Task(() => 42), 42, 'sync value');
@@ -224,6 +234,44 @@ module('Task | construction forms', { concurrency: true }, () => {
     // the attempt it belonged to — which nothing awaits — so the outcome here cannot change.
     resolvers[0](999);
     assert.strictEqual(await flaky.restart(), 4, 'the stale resolve() was inert');
+  });
+
+  test('a stale resolver from an earlier attempt cannot settle a later one', async (assert) => {
+    // The dangling-resolver worry: attempt 1 subscribes something that closes over ITS
+    // resolve, fires late, and settles the wrong attempt. It cannot — every restart binds
+    // fresh resolvers to its own promise, and attempt 1's promise already rejected, so
+    // invoking its resolver is a no-op on a settled promise.
+    const listeners: Array<(value: number) => void> = [];
+    let attempt = 0;
+    const task = Task<string>((resolve, reject) => {
+      const mine = ++attempt;
+      listeners.push((value) => resolve(`attempt${mine}-saw-${value}`));
+      if (mine === 1) reject(new Error('attempt 1 failed'));
+    });
+
+    const settled = task.retry(1).perform();
+    await until(() => listeners.length === 2, 'both attempts have subscribed');
+    listeners.forEach((fire) => fire(7)); // the STALE one first
+
+    assert.strictEqual(await settled, 'attempt2-saw-7', 'the live attempt settled it');
+  });
+
+  test('an attempt retry abandons has its signal fired, so it can clean up', async (assert) => {
+    // Abandoned work gets no second chance to tidy up on its own, and the executor is the
+    // only shape that can be told — it is the one that receives the signal.
+    const cleaned: string[] = [];
+    let attempt = 0;
+    const root = Task<number>((resolve, reject, signal) => {
+      const mine = ++attempt;
+      signal.addEventListener('abort', () => cleaned.push(`attempt${mine}`));
+      if (mine < 3) reject(new Error(`fail ${mine}`));
+      else resolve(mine);
+    });
+
+    // Retried through a derived chain: the work lives at the root, so abandoning has to
+    // walk the lineage to reach it.
+    assert.strictEqual(await root.map((value) => value * 10).retry(3), 30);
+    assert.deepEqual(cleaned, ['attempt1', 'attempt2'], 'each abandoned attempt was told');
   });
 
   test('arity is what selects the shape — rest and defaulted parameters read as recipes', async (assert) => {

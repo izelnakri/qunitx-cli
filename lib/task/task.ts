@@ -1015,6 +1015,11 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * Failure-blind by design: transient bugs (a socket reset surfacing as a raw error before its
    * `mapErr`) are exactly what call sites retry, so every rejection counts as an attempt.
    *
+   * An attempt that fails is then **abandoned**: its `AbortSignal` fires so an executor that
+   * subscribed to something can unsubscribe, rather than leaving a listener behind per attempt.
+   * The attempt has already settled, so this changes no outcome and its reason never reaches
+   * the caller — the failure they see is their own. Recipes take no signal and are untouched.
+   *
    * ```ts
    * import { getChangedFilePathsInGitSince } from '../utils/get-changed-file-paths-in-git-since.ts';
    *
@@ -1033,14 +1038,31 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
       const attempts = Math.max(0, times) + 1;
       let lastReason: unknown;
       for (let attempt = 0; attempt < attempts; attempt++) {
+        const run = this.restart();
         try {
-          return await this.restart();
+          return await run;
         } catch (error) {
           lastReason = error;
+          run.#abandon();
         }
       }
       throw lastReason;
     });
+  }
+
+  /**
+   * Fires the abort signal of an attempt nothing will await again, so an executor that
+   * subscribed to something can unsubscribe. The attempt has already settled, so this cannot
+   * change any outcome — it is a cleanup notification, not a cancellation.
+   *
+   * Walks the derivation lineage because a chain's work lives in its source: abandoning
+   * `root.map(f)` has to reach `root`, which is where the executor (and its subscription) is.
+   */
+  #abandon(): void {
+    this.#controller?.abort(
+      new Failure('Abandoned', 'retry moved on from this attempt', undefined),
+    );
+    if (this.#source !== undefined) this.#source.#abandon();
   }
 
   // ── The one bridge to the value world ────────────────────────────────────────
