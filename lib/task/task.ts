@@ -59,9 +59,12 @@ import {
  * @see docs/error-handling.md
  */
 class TaskClass<T, E = AnyFailure> extends Promise<T> {
-  /** The recipe. Runs at most once per instance (memoised); kept so retry/restart can re-run it. */
-  #recipe: () => T | PromiseLike<T>;
+  /** The recipe. Runs at most once per instance (memoised); kept so retry/restart can re-run it.
+   *  It receives an AbortSignal — most recipes ignore it; cancellation-aware ones (a fetch, a
+   *  DB query) pass it on, which is what makes {@link TaskClass#shutdown} able to stop work. */
+  #recipe: (signal: AbortSignal) => T | PromiseLike<T>;
   #started = false;
+  #controller: AbortController | undefined;
   #resolve!: (value: T | PromiseLike<T>) => void;
   #reject!: (reason: unknown) => void;
   /** Derivation lineage: the Task this one was derived from, and how to re-derive it — what
@@ -72,7 +75,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   /** Takes a recipe (lazy — runs on first await), or an already-running promise (the Task
    *  then defers only *observation*). Never an executor — that is what makes it constructible
    *  around work instead of inside it. */
-  constructor(source: PromiseLike<T> | (() => T | PromiseLike<T>)) {
+  constructor(source: PromiseLike<T> | ((signal: AbortSignal) => T | PromiseLike<T>)) {
     let resolve!: (value: T | PromiseLike<T>) => void;
     let reject!: (reason: unknown) => void;
     // A no-op executor: the work does not start here (that is the whole point). We only capture
@@ -98,8 +101,9 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   #start(): void {
     if (this.#started) return;
     this.#started = true;
+    this.#controller ??= new AbortController();
     try {
-      Promise.resolve(this.#recipe()).then(this.#resolve, this.#reject);
+      Promise.resolve(this.#recipe(this.#controller.signal)).then(this.#resolve, this.#reject);
     } catch (error) {
       // A synchronous throw from the recipe becomes the rejection, same as an async one.
       this.#reject(error);
@@ -149,6 +153,88 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   perform(): this {
     this.#start();
     return this;
+  }
+
+  /**
+   * Awaits the task with a deadline — Elixir's `Task.await/2` (default 5000ms). Starts the
+   * run if needed; rejects with a declared `Failure('AwaitTimeout')` when the deadline fires
+   * first. The deadline does NOT cancel the work ({@link TaskClass#shutdown} does) — a later
+   * `await task` can still join the run, exactly like Elixir's yield-after-timeout.
+   *
+   * ```ts
+   * await Task(() => 42).await(1000); // 42
+   * const slow = Task(() => new Promise<never>(() => {}));
+   * const failed = await slow.await(10).catch((e) => e);
+   * (failed as { code: string }).code; // 'AwaitTimeout'
+   * ```
+   */
+  await(timeoutMs = 5000): Promise<T> {
+    this.#start();
+    let timer: ReturnType<typeof setTimeout>;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new Failure('AwaitTimeout', `await timed out after ${timeoutMs}ms`, { ms: timeoutMs }),
+          ),
+        timeoutMs,
+      );
+      // No unref: the deadline must HOLD the event loop (an unref'd timer lets Deno's
+      // test sanitizer — and a bare Node script — drain the loop mid-wait); clearTimeout on
+      // settle releases it immediately anyway.
+    });
+    return Promise.race([this, deadline]).finally(() => clearTimeout(timer)) as Promise<T>;
+  }
+
+  /**
+   * Non-destructive poll — Elixir's `Task.yield/2`: settles to the task's `Result` if it
+   * finishes within the window, or `null` if it is still running. Never consumes: the memo
+   * persists, so a later `yield`, `await`, or `result()` still sees the outcome. A *bug*
+   * rejection still rethrows (the two-tier gate is `result()`'s).
+   *
+   * ```ts
+   * const task = Task(() => 7);
+   * await task.yield(50); // 7 — settled within the window, bare
+   * const slow = Task(() => new Promise<never>(() => {}));
+   * await slow.yield(10); // null — still running, NOT consumed
+   * ```
+   */
+  yield(timeoutMs = 5000): Promise<Result<T, E> | null> {
+    this.#start();
+    let timer: ReturnType<typeof setTimeout>;
+    const window = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), timeoutMs);
+    });
+    return Promise.race([this.result(), window]).finally(() => clearTimeout(timer));
+  }
+
+  /**
+   * Aborts the run and reports what was there — Elixir's `Task.shutdown/2`. Fires the
+   * recipe's AbortSignal (cancellation-aware recipes — a `fetch(url, { signal })` — stop
+   * their work; JS cannot preempt others, which then finish detached), then yields for
+   * `timeoutMs`: the settled `Result` if one landed, else `null` after settling the task
+   * with a declared `Failure('Shutdown')` so every consumer resolves.
+   *
+   * ```ts
+   * const task = Task((signal) => fetch('https://example.com', { signal })).perform();
+   * const outcome = await task.shutdown(50); // Result | null — whatever had already landed
+   * outcome === null || 'ok' in Object(outcome); // true
+   * ```
+   */
+  async shutdown(timeoutMs = 5000): Promise<Result<T, E> | null> {
+    this.#controller ??= new AbortController();
+    const marker = new Failure('Shutdown', 'task shut down', undefined);
+    if (!this.#started) {
+      // Never ran: settle as shut down without ever invoking the recipe.
+      this.#started = true;
+      this.#reject(marker);
+    } else {
+      this.#controller.abort(marker);
+    }
+    const settled = await this.yield(timeoutMs).catch(() => null); // a bug counts as settled-nothing here
+    if (settled === null) this.#reject(marker); // non-signal-aware recipe: settle consumers anyway
+    // The marker settling is OUR doing, not a reply — Elixir's shutdown says nil for that.
+    return settled === (marker as unknown) ? null : settled;
   }
 
   // ── Builders ─────────────────────────────────────────────────────────────────
@@ -235,6 +321,63 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    */
   static fail<F>(reason: F): TaskClass<never, F> {
     return new TaskClass<never, F>(() => Promise.reject(reason));
+  }
+
+  /**
+   * Elixir's `Task.async/1`: build the task AND start it now — the async half of the
+   * async/await pair, for running work concurrently with the code that follows.
+   *
+   * ```ts
+   * const a = Task.async(() => 2);
+   * const b = Task.async(() => 3); // both running before either is awaited
+   * (await a.await()) + (await b.await()); // 5
+   * ```
+   */
+  static async<T, E = AnyFailure>(
+    recipe: (signal: AbortSignal) => T | PromiseLike<T>,
+  ): TaskClass<T, E> {
+    return new TaskClass<T, E>(recipe).perform();
+  }
+
+  /**
+   * Elixir's `Task.completed/1`: an already-settled task — for handing a precomputed value
+   * to an API that expects a Task, with no recipe left to run.
+   *
+   * ```ts
+   * await Task.completed(42); // 42
+   * await Task.completed(42).yield(0); // 42 — settled before any window
+   * ```
+   */
+  static completed<T>(value: T): TaskClass<Awaited<T>, never> {
+    return (TaskClass.resolve(value) as TaskClass<Awaited<T>, never>).perform();
+  }
+
+  /**
+   * Elixir's `Task.await_many/2`: awaits every task under ONE shared deadline, positionally.
+   *
+   * ```ts
+   * await Task.awaitMany([Task(() => 1), Task(() => 2)], 1000); // [1, 2]
+   * ```
+   */
+  static awaitMany<T, E>(tasks: readonly TaskClass<T, E>[], timeoutMs = 5000): Promise<T[]> {
+    return new TaskClass<T[], E>(() => Promise.all(tasks)).await(timeoutMs);
+  }
+
+  /**
+   * Elixir's `Task.yield_many/2`: polls every task under one shared window — each slot is
+   * the task's `Result` if it settled in time, `null` if still running. Nothing is consumed.
+   *
+   * ```ts
+   * const fast = Task(() => 1);
+   * const never = Task<number>(() => new Promise<never>(() => {}));
+   * await Task.yieldMany([fast, never], 20); // [1, null] — bare Result | null per slot
+   * ```
+   */
+  static yieldMany<T, E>(
+    tasks: readonly TaskClass<T, E>[],
+    timeoutMs = 5000,
+  ): Promise<(Result<T, E> | null)[]> {
+    return Promise.all(tasks.map((task) => task.yield(timeoutMs)));
   }
 
   /**
@@ -888,7 +1031,9 @@ function snapshotOnce<T>(values: Iterable<T>): () => T[] {
  */
 type TaskConstructor = typeof TaskClass & {
   /** Call form — `Task(recipeOrPromise)` without `new`; identical to the constructor. */
-  <T, E = AnyFailure>(source: PromiseLike<T> | (() => T | PromiseLike<T>)): TaskClass<T, E>;
+  <T, E = AnyFailure>(
+    source: PromiseLike<T> | ((signal: AbortSignal) => T | PromiseLike<T>),
+  ): TaskClass<T, E>;
 };
 
 /**

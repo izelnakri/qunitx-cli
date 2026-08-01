@@ -695,3 +695,75 @@ module('Task | ensure', { concurrency: true }, () => {
     );
   });
 });
+
+// ── The Elixir Task family: async/await pair, yield, shutdown, completed ──────
+
+// Serial: deno's step sanitizer misattributes cross-step timer waits under concurrency
+// (the deadline tests hold real timers; a sibling draining first trips "loop resolved").
+module('Task | elixir family', () => {
+  test('async starts NOW; await joins with a deadline', async (assert) => {
+    let ran = false;
+    const task = Task.async(() => ((ran = true), 21 * 2));
+    assert.true(ran, 'async performed immediately — the async half of the pair');
+    assert.strictEqual(await task.await(1000), 42);
+  });
+
+  test('await rejects with a declared AwaitTimeout — and does NOT consume the run', async (assert) => {
+    let settle!: (n: number) => void;
+    const slow = Task<number>(() => new Promise<number>((res) => (settle = res)));
+    const timedOut = await slow.await(10).catch((e: unknown) => e);
+    assert.true(Failure.is(timedOut));
+    assert.strictEqual((timedOut as Failure.Any).code, 'AwaitTimeout');
+    settle(7);
+    assert.strictEqual(await slow, 7, 'the run survived the deadline — a later await joins it');
+  });
+
+  test('yield polls without consuming; yieldMany reports each slot', async (assert) => {
+    const fast = Task(() => 1);
+    const never = Task<number>(() => new Promise<never>(() => {}));
+    assert.strictEqual(await fast.yield(50), 1, 'settled within the window, bare');
+    assert.strictEqual(await fast.yield(50), 1, 're-yield sees the memo — non-destructive');
+    assert.deepEqual(await Task.yieldMany([fast, never], 20), [1, null]);
+  });
+
+  test('awaitMany shares ONE deadline across all tasks', async (assert) => {
+    assert.deepEqual(await Task.awaitMany([Task(() => 1), Task(() => 2)], 1000), [1, 2]);
+    const stuck = [Task(() => 1), Task<number>(() => new Promise<never>(() => {}))];
+    const timedOut = await Task.awaitMany(stuck, 10).catch((e: unknown) => e);
+    assert.strictEqual((timedOut as Failure.Any).code, 'AwaitTimeout');
+  });
+
+  test('completed is settled before any window', async (assert) => {
+    assert.strictEqual(await Task.completed(42), 42);
+    assert.strictEqual(await Task.completed(42).yield(0), 42);
+  });
+
+  test('shutdown fires the recipe signal; cancellation-aware work stops', async (assert) => {
+    let aborted = false;
+    const task = Task<number>(
+      (signal) =>
+        new Promise<never>((_res, rej) => {
+          signal.addEventListener('abort', () => ((aborted = true), rej(signal.reason)));
+        }),
+    ).perform();
+    const outcome = await task.shutdown(50);
+    assert.true(aborted, 'the AbortSignal reached the recipe');
+    assert.true(outcome === null || Failure.is(outcome), 'nothing useful had landed');
+    const after = await task.result();
+    assert.true(Failure.is(after), 'every later consumer resolves — no hung awaits');
+  });
+
+  test('shutdown of a never-started task settles it without running the recipe', async (assert) => {
+    let ran = false;
+    const task = Task(() => ((ran = true), 1));
+    assert.strictEqual(await task.shutdown(10), null);
+    assert.false(ran, 'the recipe never ran');
+    assert.true(Failure.is(await task.result()), 'consumers see Shutdown, not a hang');
+  });
+
+  test('shutdown returns the Result when the work already landed', async (assert) => {
+    const done = Task(() => 9).perform();
+    await done;
+    assert.strictEqual(await done.shutdown(50), 9, 'the settled value, bare — nothing lost');
+  });
+});
