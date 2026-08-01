@@ -105,6 +105,135 @@ module('Task | call form', { concurrency: true }, () => {
   });
 });
 
+// ── Construction forms — every shape work arrives in, with and without `new` ──
+//
+// One constructor takes all three: a recipe (no parameters), an executor (the `new Promise`
+// shape, told apart by declared arity), and an already-running promise. These tests pin the
+// dispatch rule, because it is the one thing a caller can get wrong silently.
+
+module('Task | construction forms', { concurrency: true }, () => {
+  test('a recipe settles from its return value — sync, async, and void', async (assert) => {
+    assert.strictEqual(await Task(() => 42), 42, 'sync value');
+    assert.strictEqual(await new Task(() => 42), 42, 'sync value, new form');
+    assert.strictEqual(await Task(async () => await Promise.resolve(42)), 42, 'async function');
+    assert.strictEqual(
+      await new Task(async () => await Promise.resolve(42)),
+      42,
+      'async function, new form',
+    );
+    // A recipe returning nothing is a Task<void> that RESOLVES — it must never be mistaken
+    // for an executor still waiting on a resolver it was never handed.
+    assert.strictEqual(await Task(() => {}), undefined, 'void recipe resolves, never hangs');
+  });
+
+  test('an executor settles imperatively — resolve, reject, and the signal third', async (assert) => {
+    assert.strictEqual(await Task<number>((resolve) => resolve(42)), 42);
+    assert.strictEqual(await new Task<number>((resolve) => resolve(42)), 42, 'new form');
+
+    const failed = await Task<number>((_resolve, reject) => reject(NotFound({ id: 7 }))).result();
+    assert.true(Failure.is(failed) && failed.code === 'NotFound', 'reject settles the failure');
+
+    const signals = await Task<boolean>((resolve, _reject, signal) => {
+      resolve(signal instanceof AbortSignal);
+    });
+    assert.true(signals, 'the third parameter is the Task AbortSignal');
+  });
+
+  test('an executor may simply RETURN a promise instead of calling resolve', async (assert) => {
+    // This is the migration path for cancellation-aware work: name the parameters you need,
+    // hand the signal on, and let the returned promise settle the Task.
+    assert.strictEqual(await Task<number>((_resolve, _reject, _signal) => Promise.resolve(7)), 7);
+    // resolve() and a returned promise race; the first settlement wins, as promises always do.
+    assert.strictEqual(await Task<number>((resolve) => (resolve(1), Promise.resolve(2))), 1);
+  });
+
+  test('an async executor that throws rejects the Task — the bug native Promise has', async (assert) => {
+    // `new Promise(async () => { throw x })` never settles: the executor's returned promise is
+    // discarded, so the throw escapes as an unhandled rejection and every consumer hangs.
+    // Honouring the returned promise is what closes that hole here.
+    const failed = await Task<string>(async (_resolve) => {
+      await Promise.resolve(); // the throw lands in the async body, not synchronously
+      throw NotFound({ id: 1 });
+    }).result();
+    assert.true(Failure.is(failed) && failed.code === 'NotFound', 'the throw became the failure');
+
+    // And an async executor may still settle through its resolver as usual.
+    assert.strictEqual(
+      await Task<number>(async (resolve) => {
+        await Promise.resolve();
+        resolve(5);
+      }),
+      5,
+    );
+  });
+
+  test('an executor return that is NOT a promise is ignored, exactly as new Promise ignores it', async (assert) => {
+    // The rule earns its keep here: `(resolve) => setTimeout(resolve, ms)` implicitly returns a
+    // timer handle. Honouring non-promise returns would settle the Task with that handle
+    // immediately — breaking the commonest executor idiom there is.
+    const started = Date.now();
+    const slept = await Task<string>((resolve) => setTimeout(() => resolve('slept'), 40));
+    assert.strictEqual(slept, 'slept', 'the timer settled it, not the returned handle');
+    assert.true(Date.now() - started >= 35, 'and it genuinely waited');
+
+    // The corollary: a plain value must go through the resolver, which accepts either.
+    const maybe = (n: number): number | Promise<number> => (n > 0 ? n : Promise.resolve(0));
+    assert.strictEqual(await Task<number>((resolve) => resolve(maybe(5))), 5, 'plain value');
+    assert.strictEqual(await Task<number>((resolve) => resolve(maybe(-1))), 0, 'promise');
+  });
+
+  test('a promise source works in both spellings, deferring only observation', async (assert) => {
+    assert.strictEqual(await Task(Promise.resolve(5)), 5);
+    assert.strictEqual(await new Task(Promise.resolve(9)), 9);
+  });
+
+  test('both function shapes stay lazy — nothing runs until awaited', (assert) => {
+    let recipeRan = 0;
+    let executorRan = 0;
+    Task(() => (recipeRan++, 1));
+    Task<number>((resolve) => (executorRan++, resolve(1)));
+    assert.strictEqual(recipeRan, 0, 'the recipe did not run');
+    assert.strictEqual(executorRan, 0, 'the executor did not run either — unlike new Promise');
+  });
+
+  test('perform() starts an executor synchronously, so an event bridge cannot miss its event', async (assert) => {
+    let subscribed = false;
+    const task = Task<string>((resolve) => {
+      subscribed = true;
+      queueMicrotask(() => resolve('frame'));
+    });
+    assert.false(subscribed, 'still lazy before perform');
+    task.perform();
+    assert.true(subscribed, 'subscribed synchronously — the event cannot land first');
+    assert.strictEqual(await task, 'frame');
+  });
+
+  test('every retry of an executor gets FRESH resolvers, so a stale one cannot cross-settle', async (assert) => {
+    let attempt = 0;
+    const resolvers: ((value: number) => void)[] = [];
+    const flaky = Task<number>((resolve, reject) => {
+      resolvers.push(resolve);
+      attempt += 1;
+      if (attempt < 3) reject(new Error(`attempt ${attempt}`));
+      else resolve(attempt);
+    });
+
+    assert.strictEqual(await flaky.retry(3), 3, 'succeeded on the third fresh execution');
+    assert.strictEqual(new Set(resolvers).size, resolvers.length, 'no resolver was ever reused');
+    // The classic executor hazard: a callback captured during attempt 1 fires late. It settles
+    // the attempt it belonged to — which nothing awaits — so the outcome here cannot change.
+    resolvers[0](999);
+    assert.strictEqual(await flaky.restart(), 4, 'the stale resolve() was inert');
+  });
+
+  test('arity is what selects the shape — rest and defaulted parameters read as recipes', async (assert) => {
+    // `fn.length` ignores rest and defaulted parameters, so both declare zero and are recipes.
+    // Spelling the parameters out is what asks for an executor.
+    assert.strictEqual(await Task((..._args: unknown[]) => 3), 3, 'rest params: a recipe');
+    assert.strictEqual(await Task(() => 4), 4);
+  });
+});
+
 // ── ignore — deliberate non-handling, eager by design ────────────────────────
 
 module('Task | ignore', { concurrency: true }, () => {
@@ -740,12 +869,11 @@ module('Task | elixir family', () => {
 
   test('shutdown fires the recipe signal; cancellation-aware work stops', async (assert) => {
     let aborted = false;
-    const task = Task<number>(
-      (signal) =>
-        new Promise<never>((_res, rej) => {
-          signal.addEventListener('abort', () => ((aborted = true), rej(signal.reason)));
-        }),
-    ).perform();
+    // The executor form IS the cancellation-aware shape: no `new Promise` wrapper, because the
+    // Task hands over its own resolvers.
+    const task = Task<number>((_resolve, reject, signal) => {
+      signal.addEventListener('abort', () => ((aborted = true), reject(signal.reason)));
+    }).perform();
     const outcome = await task.shutdown(50);
     assert.true(aborted, 'the AbortSignal reached the recipe');
     assert.true(outcome === null || Failure.is(outcome), 'nothing useful had landed');

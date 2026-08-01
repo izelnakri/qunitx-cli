@@ -8,6 +8,36 @@ import {
 } from '../result/failure.ts';
 
 /**
+ * The zero-parameter shape: return the value (or a promise of it) and that settles the Task.
+ * Declared with no parameters both because that is what it receives and because it is what
+ * lets TypeScript tell a recipe from an {@link Executor} — a lambda naming even one parameter
+ * can then only be the executor, so `resolve` gets contextually typed instead of `any`.
+ * A recipe that needs the `AbortSignal` takes the executor shape.
+ */
+export type Recipe<T> = () => T | PromiseLike<T>;
+
+/**
+ * The `new Promise` shape, made lazy: settle imperatively through `resolve`/`reject`, with the
+ * Task's `AbortSignal` third.
+ *
+ * Returning a **promise** settles the Task as well (whichever lands first wins), which is what
+ * lets `(_, __, signal) => fetch(url, { signal })` skip the resolver entirely. Any **other**
+ * return value is ignored, exactly as `new Promise` ignores it — otherwise the commonest
+ * executor idiom of all, `(resolve) => setTimeout(resolve, 100)`, would settle the Task
+ * instantly with a timer handle. To settle with something that might not be a promise, hand it
+ * to the resolver: `(resolve) => resolve(maybeAPromise)`.
+ *
+ * Honouring the promise also closes a hole the platform leaves open: `new Promise(async () => {
+ * throw x })` discards the executor's promise, so the throw escapes as an unhandled rejection
+ * and the promise never settles. Here it simply becomes the Task's failure.
+ */
+export type Executor<T> = (
+  resolve: (value: T | PromiseLike<T>) => void,
+  reject: (reason?: unknown) => void,
+  signal: AbortSignal,
+) => unknown;
+
+/**
  * `Task<T, E>` — a **lazy, retryable** superset of `Promise<T>` for error handling that respects
  * JavaScript's rules from the ground up. `E` is the *declared* failure type: the reason a caller
  * expects when it fails, and what {@link TaskClass#result} surfaces as the `Err`. It is advisory
@@ -39,8 +69,12 @@ import {
  * errors get classified *into* Failures) and `recover` (the crash boundary itself) are the two
  * deliberate catch-alls.
  *
- * Construction is `Task(recipe)` or `new Task(recipe)` — the exported value is call-or-construct,
- * like `Boolean`/`Date`, because a factory reads better at the end of an adapter:
+ * Construction takes work in whichever shape it already has — a {@link Recipe} (`() => value`),
+ * an {@link Executor} (`(resolve, reject, signal) => …`, the `new Promise` shape made lazy), or
+ * a promise that is already running — with or without `new`, since the exported value is
+ * call-or-construct like `Boolean`/`Date`. The executor's parameters are ordered exactly as the
+ * platform's, so an existing `new Promise` body can move into a Task unchanged, with the
+ * `AbortSignal` appended where the platform has nothing:
  *
  * ```ts
  * import { define, type Of } from '../result/failure.ts';
@@ -59,10 +93,10 @@ import {
  * @see docs/error-handling.md
  */
 class TaskClass<T, E = AnyFailure> extends Promise<T> {
-  /** The recipe. Runs at most once per instance (memoised); kept so retry/restart can re-run it.
-   *  It receives an AbortSignal — most recipes ignore it; cancellation-aware ones (a fetch, a
-   *  DB query) pass it on, which is what makes {@link TaskClass#shutdown} able to stop work. */
-  #recipe: (signal: AbortSignal) => T | PromiseLike<T>;
+  /** The work. Runs at most once per instance (memoised); kept so retry/restart can re-run it.
+   *  Either a **recipe** (`() => value`) or an **executor** (`(resolve, reject, signal) => …`),
+   *  told apart by declared arity — see {@link TaskClass#constructor}. */
+  #work: Recipe<T> | Executor<T>;
   #started = false;
   #controller: AbortController | undefined;
   #resolve!: (value: T | PromiseLike<T>) => void;
@@ -72,19 +106,37 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   #source: TaskClass<unknown, unknown> | undefined;
   #rederive: ((fresh: TaskClass<unknown, unknown>) => TaskClass<T, E>) | undefined;
 
-  /** Takes a recipe (lazy — runs on first await), or an already-running promise (the Task
-   *  then defers only *observation*). Never an executor — that is what makes it constructible
-   *  around work instead of inside it. */
-  constructor(source: PromiseLike<T> | ((signal: AbortSignal) => T | PromiseLike<T>)) {
+  /**
+   * Takes any of the three shapes work arrives in — all lazy, all identical with or without
+   * `new`:
+   *
+   * - **recipe**, declaring no parameters — `() => value`, `async () => value`. Whatever it
+   *   returns (value or promise) settles the Task. The common case.
+   * - **executor**, declaring at least one — `(resolve, reject, signal) => …`, the
+   *   `new Promise` shape, so callback/event APIs settle a Task imperatively. Unlike
+   *   `new Promise` it runs **lazily** (on first await/`perform`), gets an `AbortSignal` third
+   *   for {@link TaskClass#shutdown}, and re-runs with *fresh* resolvers on every
+   *   {@link TaskClass#restart}. A returned promise settles the Task too, so
+   *   `(_, __, signal) => fetch(url, { signal })` needs no resolver call at all.
+   * - **promise**, already running — the Task then defers only *observation*.
+   *
+   * The two function shapes are told apart by **declared arity** (`fn.length`), which is why
+   * an executor must name at least `resolve`. `(...args) => …` and defaulted first parameters
+   * both declare zero, so they read as recipes — spell the parameters out to get an executor.
+   */
+  constructor(source: PromiseLike<T> | Recipe<T> | Executor<T>) {
     let resolve!: (value: T | PromiseLike<T>) => void;
     let reject!: (reason: unknown) => void;
     // A no-op executor: the work does not start here (that is the whole point). We only capture
-    // the resolving functions; the recipe runs later, in `#start`, on the first `.then`.
+    // the resolving functions; `#work` runs later, in `#start`, on the first `.then`.
     super((res, rej) => {
       resolve = res;
       reject = rej;
     });
-    this.#recipe = typeof source === 'function' ? source : () => source;
+    // A promise source becomes a zero-parameter recipe, so `#work`'s own arity stays the
+    // single source of truth for which shape it is — nothing extra to store, and nothing to
+    // keep in sync when `restart()` carries the work to a fresh Task.
+    this.#work = typeof source === 'function' ? (source as Recipe<T> | Executor<T>) : () => source;
     this.#resolve = resolve;
     this.#reject = reject;
   }
@@ -101,11 +153,27 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   #start(): void {
     if (this.#started) return;
     this.#started = true;
-    this.#controller ??= new AbortController();
+    const work = this.#work;
     try {
-      Promise.resolve(this.#recipe(this.#controller.signal)).then(this.#resolve, this.#reject);
+      if (work.length === 0) {
+        // The common shape. A recipe declares no parameters, so it can never observe the
+        // signal — the AbortController is left uncreated until `shutdown` actually asks for
+        // one, which keeps the ordinary path free of it entirely.
+        Promise.resolve((work as Recipe<T>)()).then(this.#resolve, this.#reject);
+      } else {
+        // The executor settles THIS Task's own resolvers — no intermediate promise, so the
+        // imperative shape costs less than the `new Promise` it replaces. A returned promise
+        // is honoured as well; whichever settles first wins, as promises always do.
+        this.#controller ??= new AbortController();
+        const returned = (work as Executor<T>)(
+          this.#resolve,
+          this.#reject,
+          this.#controller.signal,
+        );
+        if (isThenable<T>(returned)) returned.then(this.#resolve, this.#reject);
+      }
     } catch (error) {
-      // A synchronous throw from the recipe becomes the rejection, same as an async one.
+      // A synchronous throw from the work becomes the rejection, same as an async one.
       this.#reject(error);
     }
   }
@@ -216,7 +284,8 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * with a declared `Failure('Shutdown')` so every consumer resolves.
    *
    * ```ts
-   * const task = Task((signal) => fetch('https://example.com', { signal })).perform();
+   * const task = Task((_resolve, _reject, signal) => fetch('https://example.com', { signal }));
+   * task.perform();
    * const outcome = await task.shutdown(50); // Result | null — whatever had already landed
    * outcome === null || 'ok' in Object(outcome); // true
    * ```
@@ -253,7 +322,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * ```
    */
   static from<T, E = AnyFailure>(
-    source: PromiseLike<T> | (() => T | PromiseLike<T>),
+    source: PromiseLike<T> | Recipe<T> | Executor<T>,
   ): TaskClass<T, E> {
     return new TaskClass(source);
   }
@@ -333,10 +402,8 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * (await a.await()) + (await b.await()); // 5
    * ```
    */
-  static async<T, E = AnyFailure>(
-    recipe: (signal: AbortSignal) => T | PromiseLike<T>,
-  ): TaskClass<T, E> {
-    return new TaskClass<T, E>(recipe).perform();
+  static async<T, E = AnyFailure>(source: Recipe<T> | Executor<T>): TaskClass<T, E> {
+    return new TaskClass<T, E>(source).perform();
   }
 
   /**
@@ -932,7 +999,13 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     if (this.#source !== undefined && this.#rederive !== undefined) {
       return this.#rederive(this.#source.restart());
     }
-    return new TaskClass<T, E>(this.#recipe);
+    // The work is copied across rather than re-passed through the constructor: an executor
+    // normalised once must not be re-sniffed by arity. A fresh Task means fresh resolvers, so
+    // a resolver captured by the previous attempt can only ever settle the attempt it came
+    // from — a stale callback cannot cross-settle this one.
+    const fresh = new TaskClass<T, E>(EMPTY_RECIPE as unknown as Recipe<T>);
+    fresh.#work = this.#work;
+    return fresh;
   }
 
   /**
@@ -1025,15 +1098,24 @@ function snapshotOnce<T>(values: Iterable<T>): () => T[] {
   return () => (snapshot ??= Array.from(values));
 }
 
+/** Placeholder work for the internal construction path in `restart()`, immediately replaced. */
+const EMPTY_RECIPE = (() => undefined) as unknown as Recipe<never>;
+
+function isThenable<T>(value: unknown): value is PromiseLike<T> {
+  return (
+    (typeof value === 'object' || typeof value === 'function') &&
+    value !== null &&
+    typeof (value as PromiseLike<T>).then === 'function'
+  );
+}
+
 /**
  * The call-or-construct type of the exported {@link Task} value: the class's statics and
  * construct signature, intersected with a plain call signature.
  */
 type TaskConstructor = typeof TaskClass & {
-  /** Call form — `Task(recipeOrPromise)` without `new`; identical to the constructor. */
-  <T, E = AnyFailure>(
-    source: PromiseLike<T> | ((signal: AbortSignal) => T | PromiseLike<T>),
-  ): TaskClass<T, E>;
+  /** Call form — `Task(source)` without `new`; identical to the constructor. */
+  <T, E = AnyFailure>(source: PromiseLike<T> | Recipe<T> | Executor<T>): TaskClass<T, E>;
 };
 
 /**
