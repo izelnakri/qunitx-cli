@@ -21,6 +21,10 @@ export {
 // barrel: it stands on the `ws` package, and the barrel stays browser-safe.
 export { wsTransport, traceTransport, binaryCodec, jsonCodec, type Codec } from './ws.ts';
 
+// Cluster-join auth — Erlang's magic cookie via HMAC challenge-response (cookie never on the wire).
+// Used by wsTransport's/startHub's `secret`; exported so custom transports/relays can reuse it.
+export { authDigest, randomNonce, safeEqual } from './auth.ts';
+
 // Rendezvous (HRW) hashing: pick THE owner of a key with minimal reshuffling on membership
 // change — the routing primitive for distributed stateful entities (see examples/realtime-chat).
 export { rendezvous } from './rendezvous.ts';

@@ -68,9 +68,15 @@ export type Frame = {
     | 'ping'
     | 'pong'
     | 'link'
-    | 'unitexit';
+    | 'unitexit'
+    | 'challenge'
+    | 'auth';
   from: string;
   to?: string;
+  /** On a `challenge`/`auth` frame: the per-connection nonce (transport-level cluster-join auth). */
+  nonce?: string;
+  /** On an `auth` frame: HMAC-SHA-256(secret, nonce) — the cookie proof (see auth.ts). */
+  digest?: string;
   /** On a `hello`: whether the sender is a HIDDEN node — attached but not a full member. */
   hidden?: boolean;
   /** On a `link`/`unitexit` frame: the target unit's name on the RECEIVING node. */
@@ -358,9 +364,17 @@ export function start(
      * without becoming a member. It still participates in process groups (`:pg`, like Erlang).
      */
     hidden?: boolean;
+    /**
+     * Per-message authorization — the application-level gate above the transport's cluster-join auth
+     * (see `wsTransport`'s `secret`). Runs before every inbound `call`/`cast` handler; return `false`
+     * to deny. A denied `call` is answered with a declared `Unauthorized` failure; a denied `cast` is
+     * dropped. Wire it to a capability/role check on `(subject, from, payload)`.
+     */
+    authorize?: (request: { subject: string; from: string; payload: unknown }) => boolean;
   } = {},
 ): NodeHandle {
   const hidden = options.hidden ?? false;
+  const authorize = options.authorize;
   const peers = new Map<string, { hidden: boolean }>(); // name -> its visibility (Erlang's node table)
   const handlers = new Map<
     string,
@@ -647,6 +661,11 @@ export function start(
         { subject: frame.subject, from: frame.from, trace: frame.trace },
       );
       const meta = { trace: frame.trace, deadline: frame.deadline };
+      if (
+        authorize &&
+        !authorize({ subject: frame.subject!, from: frame.from, payload: decode(frame) })
+      )
+        return; // denied cast — silently dropped, like a message to a process that isn't listening
       handling(meta, () => handlers.get(frame.subject!)?.(decode(frame), frame.from, meta));
     } else if (frame.kind === 'call') {
       // Shed doomed work: a call that arrives PAST its root deadline is answered with the
@@ -660,6 +679,23 @@ export function start(
           ...encode(
             new Failure('DeadlineExceeded', `${frame.subject} arrived past its deadline`, {
               subject: frame.subject,
+            }),
+          ),
+        });
+      }
+      if (
+        authorize &&
+        !authorize({ subject: frame.subject!, from: frame.from, payload: decode(frame) })
+      ) {
+        return void dispatch({
+          kind: 'reply',
+          from: name,
+          to: frame.from,
+          ref: frame.ref,
+          ...encode(
+            new Failure('Unauthorized', `${frame.from} may not call ${frame.subject}`, {
+              subject: frame.subject,
+              from: frame.from,
             }),
           ),
         });

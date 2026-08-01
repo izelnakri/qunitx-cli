@@ -17,7 +17,9 @@
  * ```
  */
 import { WebSocketServer, type WebSocket as WsSocket } from 'ws';
+import { createServer, type Server } from 'node:https';
 import { binaryCodec, type Codec } from './ws.ts';
+import { authDigest, randomNonce, safeEqual } from './auth.ts';
 
 /**
  * Starts the relay on `port` (default 4369 — epmd's, for the culture). Returns `close()`.
@@ -29,12 +31,34 @@ import { binaryCodec, type Codec } from './ws.ts';
  * }
  * ```
  */
-export function startHub(options: { port?: number; codec?: Codec } = {}): {
+export function startHub(
+  options: {
+    port?: number;
+    codec?: Codec;
+    /**
+     * Shared cluster secret (Erlang's magic cookie). When set, the hub challenges every socket on
+     * connect and relays NOTHING until it proves HMAC(secret, nonce) — an unauthenticated socket is
+     * dropped, closing the "any socket joins the cluster" hole. Nodes prove it via `wsTransport`'s
+     * matching `secret`. When unset, the hub is open (today's behavior — no forced migration).
+     */
+    secret?: string;
+    /** TLS materials — run the hub over `wss://` (encrypt the wire). PEM cert + private key. */
+    tls?: { cert: string | Buffer; key: string | Buffer };
+  } = {},
+): {
   port: () => number;
   close: () => Promise<void>;
 } {
   const codec = options.codec ?? binaryCodec;
-  const wss = new WebSocketServer({ port: options.port ?? 4369 });
+  const secret = options.secret;
+  // TLS: bind an https server and mount the WS server on it; otherwise ws binds the port directly.
+  const tlsServer: Server | undefined = options.tls
+    ? createServer({ cert: options.tls.cert, key: options.tls.key })
+    : undefined;
+  const wss = tlsServer
+    ? new WebSocketServer({ server: tlsServer })
+    : new WebSocketServer({ port: options.port ?? 4369 });
+  if (tlsServer) tlsServer.listen(options.port ?? 4369);
   // node name -> the socket hosting it, so a frame WITH a `to` routes point-to-point instead
   // of broadcasting to the whole cluster (the O(N^2) call-traffic wall). Frames without a `to`
   // (hello/bye/join/register gossip) still broadcast; an unknown `to` falls back to broadcast.
@@ -42,7 +66,18 @@ export function startHub(options: { port?: number; codec?: Codec } = {}): {
 
   wss.on('connection', (socket: WsSocket) => {
     const names = new Set<string>();
-    socket.on('message', (data: Buffer, isBinary: boolean) => {
+    // Cluster-join auth (Erlang's cookie): challenge the socket, relay nothing until it proves the
+    // secret. `pending` buffers what it sends meanwhile; a bad proof or a 5s no-show drops the socket.
+    const nonce = secret ? randomNonce() : '';
+    let authed = !secret;
+    const pending: Array<[Buffer, boolean]> = [];
+    if (secret) {
+      socket.send(codec.encode({ kind: 'challenge', from: '', nonce }));
+      const timer = setTimeout(() => authed || socket.terminate(), 5000);
+      (timer as { unref?: () => void }).unref?.();
+    }
+
+    const relay = (data: Buffer, isBinary: boolean): void => {
       let frame;
       try {
         frame = codec.decode(isBinary ? new Uint8Array(data) : data.toString());
@@ -58,6 +93,28 @@ export function startHub(options: { port?: number; codec?: Codec } = {}): {
       for (const peer of targets) {
         if (peer !== socket && peer.readyState === 1) peer.send(data, { binary: isBinary });
       }
+    };
+
+    socket.on('message', (data: Buffer, isBinary: boolean) => {
+      if (secret && !authed) {
+        // The only frame we read before auth is the proof; everything else waits (or is a no-op).
+        let frame;
+        try {
+          frame = codec.decode(isBinary ? new Uint8Array(data) : data.toString());
+        } catch {
+          return;
+        }
+        if (frame.kind === 'auth') {
+          void authDigest(secret, nonce).then((expected) => {
+            if (frame.digest && safeEqual(frame.digest, expected)) {
+              authed = true;
+              for (const [buffered, bin] of pending.splice(0)) relay(buffered, bin);
+            } else socket.terminate(); // wrong cookie — no cluster for you
+          });
+        } else if (pending.length < 256) pending.push([data, isBinary]); // buffer, bounded
+        return;
+      }
+      relay(data, isBinary);
     });
     // Erlang's nodedown: a dropped socket gets its byes said for it.
     socket.on('close', () => {
@@ -72,12 +129,14 @@ export function startHub(options: { port?: number; codec?: Codec } = {}): {
   });
 
   return {
-    port: () => (wss.address() as { port: number }).port,
+    port: () =>
+      ((tlsServer ?? wss).address() as { port: number }).port ??
+      (wss.address() as { port: number }).port,
     close: () =>
       new Promise<void>((done) => {
         // ws's close() waits for clients that may never leave — sever them first, then close.
         for (const client of wss.clients) client.terminate();
-        wss.close(() => done());
+        wss.close(() => (tlsServer ? tlsServer.close(() => done()) : done()));
       }),
   };
 }
