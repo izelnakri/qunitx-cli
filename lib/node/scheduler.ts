@@ -15,6 +15,19 @@
  */
 export type Priority = 'high' | 'normal' | 'low';
 
+const RANK: Record<Priority, number> = { high: 2, normal: 1, low: 0 };
+
+/**
+ * The higher of two priorities (`high` > `normal` > `low`) — used to elevate a unit's pump to the
+ * priority of the message it is draining.
+ *
+ * ```ts
+ * higher('low', 'high'); // 'high'
+ * higher('normal', 'low'); // 'normal'
+ * ```
+ */
+export const higher = (a: Priority, b: Priority): Priority => (RANK[a] >= RANK[b] ? a : b);
+
 // The universal macrotask primitive: run `cb` on the next event-loop turn (NOT a microtask). This is
 // the crux — an `await`ed synchronous value only yields a MICROtask, and the microtask queue drains
 // to exhaustion before the loop processes timers/I-O. A macrotask hop is what actually hands the loop

@@ -29,7 +29,7 @@
  */
 import { Failure, isFailure, type Any as AnyFailure } from '../result/failure.ts';
 import { Task } from '../task/task.ts';
-import { yieldWith, type Priority } from './scheduler.ts';
+import { yieldWith, higher, type Priority } from './scheduler.ts';
 import type { NodeHandle, Trace } from './node.ts';
 import type { Service } from './supervisor.ts';
 import type { Store } from './store.ts';
@@ -69,6 +69,9 @@ export interface Self<K extends string = string> {
    *  reply nobody awaits. The transport already sheds a call that ARRIVES past its deadline; this
    *  catches one that crosses the line mid-work. */
   readonly deadline?: number;
+  /** The scheduling priority this message carried, if the caller set one — read it to PROPAGATE
+   *  priority to a nested `call`/`cast` (`node.call(to, subj, arg, { priority: self.priority })`). */
+  readonly priority?: Priority;
   /** `GenServer.cast(self(), …)` — enqueue a message to itself; it runs AFTER the current one. */
   cast(subject: K, payload?: unknown): void;
   /** `Process.send_after(self(), msg, ms)` — schedule a self-`cast` after `ms`, through the mailbox. */
@@ -290,7 +293,12 @@ export function genServer<S, K extends string = string>(
   // THE MAILBOX — gen_server's real guarantee, which run-to-completion alone cannot give
   // once handlers are async: every message (and every swap) enqueues, and ONE pump drains
   // strictly serially, awaiting each to completion. Nothing interleaves, ever.
-  type Envelope = { run: () => unknown; settle: (v: unknown) => void; fail: (e: unknown) => void };
+  type Envelope = {
+    run: () => unknown;
+    settle: (v: unknown) => void;
+    fail: (e: unknown) => void;
+    priority?: Priority; // the message's carried priority, if any (elevates the pump's yield)
+  };
   const queue: Envelope[] = [];
   let pumping = false;
   const enqueue = <R>(run: () => R | Promise<R>): Promise<R> =>
@@ -304,8 +312,8 @@ export function genServer<S, K extends string = string>(
   // settle/fail are no-ops. The plain `enqueue` above still serves the settle-by-return callers
   // (sys.upgrade, swap, trapExit).
   const noop = (): void => {};
-  const enqueueRun = (run: () => Promise<void>): void => {
-    queue.push({ run, settle: noop, fail: noop });
+  const enqueueRun = (run: () => Promise<void>, msgPriority?: Priority): void => {
+    queue.push({ run, settle: noop, fail: noop, priority: msgPriority });
     void pump();
   };
   const priority: Priority = options.priority ?? 'normal';
@@ -316,20 +324,24 @@ export function genServer<S, K extends string = string>(
     // (skipped without a store so the pump shifts synchronously — maxMailbox depth stays exact)
     let budget = REDUCTIONS;
     let sliceStart = performance.now();
+    let slicePriority = priority; // elevate to the highest-priority message seen this slice
     while (queue.length > 0) {
       const envelope = queue.shift()!;
+      if (envelope.priority) slicePriority = higher(slicePriority, envelope.priority);
       try {
         envelope.settle(await envelope.run());
       } catch (thrown) {
         envelope.fail(thrown); // the caller gets RemoteCrash; the unit keeps serving
       }
       // Spend a reduction; when the slice is exhausted, yield the loop (in priority order) so timers,
-      // I/O, and every OTHER actor's pump run before this one resumes. Under the budget (the common
-      // case — a mailbox under REDUCTIONS deep) nothing yields, so latency is unchanged.
+      // I/O, and every OTHER actor's pump run before this one resumes. A message that carried a higher
+      // priority elevates this yield, so a high-priority request resumes ahead of low-priority units.
+      // Under the budget (the common case — a mailbox under REDUCTIONS deep) nothing yields.
       if (--budget <= 0 || performance.now() - sliceStart >= SLICE_MS) {
-        await yieldWith(priority);
+        await yieldWith(slicePriority);
         budget = REDUCTIONS;
         sliceStart = performance.now();
+        slicePriority = priority;
       }
     }
     pumping = false;
@@ -337,9 +349,9 @@ export function genServer<S, K extends string = string>(
 
   // Selective-receive buffer: messages a handler POSTPONED, held as their re-runnable closures.
   // `unstashAll` replays them back through the mailbox in arrival order (they run from the top again).
-  const stash: Array<() => Promise<void>> = [];
+  const stash: Array<{ run: () => Promise<void>; priority?: Priority }> = [];
   const unstashAll = (): void => {
-    for (const run of stash.splice(0)) enqueueRun(run);
+    for (const held of stash.splice(0)) enqueueRun(held.run, held.priority);
   };
 
   // The one invocation path, shared by the remote handler (node.handle, below) and the typed LOCAL
@@ -350,7 +362,7 @@ export function genServer<S, K extends string = string>(
     key: string,
     payload: unknown,
     from: string,
-    meta?: { trace?: Trace; deadline?: number },
+    meta?: { trace?: Trace; deadline?: number; priority?: Priority },
   ): unknown => {
     // Load shedding — BEAM mailboxes are unbounded (a real footgun under overload); this is the
     // disciplined floor. A full mailbox rejects new work as a declared Overloaded the caller can
@@ -378,6 +390,7 @@ export function genServer<S, K extends string = string>(
           from,
           trace: meta?.trace,
           deadline: meta?.deadline,
+          priority: meta?.priority,
           cast: castSelf,
           sendAfter,
           exit: (reason) => handle.exit(reason),
@@ -389,7 +402,7 @@ export function genServer<S, K extends string = string>(
           // Selective receive: a postponed message is neither applied nor answered now — hold its run
           // and replay it (from the top) on the next unstashAll. The caller's promise keeps waiting.
           if (postponed) {
-            stash.push(run);
+            stash.push({ run, priority: meta?.priority });
             return;
           }
           state = outcome.state;
@@ -415,7 +428,9 @@ export function genServer<S, K extends string = string>(
           reject(thrown);
         }
       };
-      enqueueRun(run); // the pump runs it; `run` settles this promise (or re-stashes on postpone)
+      // the pump runs it; `run` settles this promise (or re-stashes on postpone). The message's
+      // priority elevates the pump's yield so a high-priority call drains ahead of low-priority units.
+      enqueueRun(run, meta?.priority);
     });
   };
 

@@ -32,6 +32,7 @@ import {
 import { Task } from '../task/task.ts';
 import { ORSet, type CrdtState, type CausalContext } from './crdt.ts';
 import { execute as emit } from '../telemetry/telemetry.ts';
+import type { Priority } from './scheduler.ts';
 
 /**
  * A distributed trace context — OpenTelemetry's shape, sized for this wire. Every `call`/`cast`
@@ -107,6 +108,9 @@ export type Frame = {
   cc?: CausalContext;
   /** The distributed trace this call/cast belongs to — see {@link Trace}. */
   trace?: Trace;
+  /** Scheduling priority carried by a `call`/`cast` — the receiving unit's pump drains this message
+   *  at (at least) this priority. Absent = the unit's own base priority. */
+  priority?: Priority;
   /** Transport-internal epidemic-gossip envelope (mesh `gossipFanout`): dedup id + hops left. */
   gossip?: { id: string; ttl: number };
   /** Absolute epoch-ms when the ROOT caller gives up — nested calls inherit and never outlive it. */
@@ -250,7 +254,7 @@ export interface NodeHandle {
     handler: (
       payload: unknown,
       from: string,
-      meta?: { trace?: Trace; deadline?: number },
+      meta?: { trace?: Trace; deadline?: number; priority?: Priority },
     ) => unknown,
   ): void;
   /** The trace of the message currently being handled (synchronous window), if any. */
@@ -270,10 +274,11 @@ export interface NodeHandle {
     to: string,
     subject: string,
     payload?: unknown,
-    timeoutMs?: number,
+    opts?: number | { timeoutMs?: number; priority?: Priority },
   ): Task<T, AnyFailure>;
-  /** Fire-and-forget message — no reply, no deadline. */
-  cast(to: string, subject: string, payload?: unknown): void;
+  /** Fire-and-forget message — no reply, no deadline. `opts.priority` elevates the receiving unit's
+   *  pump for this message (see {@link Priority}). */
+  cast(to: string, subject: string, payload?: unknown, opts?: { priority?: Priority }): void;
   /** Says bye to peers and closes the transport — Elixir's `Node.stop/0`. */
   stop(): void;
   /**
@@ -660,7 +665,7 @@ export function start(
         {},
         { subject: frame.subject, from: frame.from, trace: frame.trace },
       );
-      const meta = { trace: frame.trace, deadline: frame.deadline };
+      const meta = { trace: frame.trace, deadline: frame.deadline, priority: frame.priority };
       if (
         authorize &&
         !authorize({ subject: frame.subject!, from: frame.from, payload: decode(frame) })
@@ -706,7 +711,7 @@ export function start(
         {},
         { subject: frame.subject, from: frame.from, trace: frame.trace },
       );
-      const meta = { trace: frame.trace, deadline: frame.deadline };
+      const meta = { trace: frame.trace, deadline: frame.deadline, priority: frame.priority };
       const outcome = handler
         ? Promise.resolve()
             .then(() => handling(meta, () => handler(decode(frame), frame.from, meta)))
@@ -916,7 +921,15 @@ export function start(
       return () => nodeListeners.delete(listener);
     },
     handle: (subject, handler) => void handlers.set(subject, handler),
-    call<T>(to: string, subject: string, payload?: unknown, timeoutMs = 5000) {
+    call<T>(
+      to: string,
+      subject: string,
+      payload?: unknown,
+      opts?: number | { timeoutMs?: number; priority?: Priority },
+    ) {
+      // Backward-compatible: the 4th arg is still a bare timeout number, or an options object.
+      const timeoutMs = typeof opts === 'number' ? opts : (opts?.timeoutMs ?? 5000);
+      const priority = typeof opts === 'object' ? opts.priority : undefined;
       const trace = childTrace();
       const started = performance.now();
       // gRPC-style budget: a nested call never outlives the ROOT caller. The effective timeout
@@ -992,6 +1005,7 @@ export function start(
           ref: id,
           trace,
           deadline,
+          priority,
           ...encode(payload),
         });
         return promise;
@@ -1014,7 +1028,7 @@ export function start(
     },
     units: () => [...inspectors.keys()],
     unit: (name) => inspectors.get(name)?.(),
-    cast(to, subject, payload) {
+    cast(to, subject, payload, opts) {
       // A group cast reaches EVERY member (pg-style broadcast); a via: cast reaches the key's
       // owner; a node cast reaches one node.
       let targets: string[];
@@ -1033,6 +1047,7 @@ export function start(
           subject,
           trace,
           deadline,
+          priority: opts?.priority,
           ...encode(payload),
         });
     },
