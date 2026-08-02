@@ -422,6 +422,23 @@ module('Task | builders', { concurrency: true }, () => {
     await assert.rejects(Task.fail(NotFound({ id: 7 })), /no user 7/);
   });
 
+  test('Task.resolve passes an existing Task through, so its lineage survives', async (assert) => {
+    // `Promise.resolve(p)` returns p itself for a same-constructor promise. Wrapping instead
+    // would hand back a Task whose restart re-awaits the settled inner one rather than
+    // re-running its work — the combinator hole, one layer down.
+    let runs = 0;
+    const inner = Task(() => ++runs);
+    assert.strictEqual(Task.resolve(inner), inner, 'the same instance, not a wrapper');
+
+    assert.strictEqual(await Task.resolve(inner), 1);
+    assert.strictEqual(await Task.resolve(inner).restart(), 2, 'restart still reaches the work');
+
+    // A plain value — and a plain FUNCTION — are still lifted as values, never run.
+    assert.strictEqual(await Task.resolve(42), 42);
+    const fn = () => 'not called';
+    assert.strictEqual(typeof (await Task.resolve(fn)), 'function', 'a function stays a value');
+  });
+
   test('Task.try carries arguments and stays lazy — Promise.try made lazy', async (assert) => {
     let ran = false;
     const task = Task.try(

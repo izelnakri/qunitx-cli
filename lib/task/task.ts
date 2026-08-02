@@ -332,9 +332,13 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
 
   /**
    * A resolved Task. Overridden because the inherited `Promise.resolve` builds via
-   * `new this(executor)`, which our recipe constructor would misread. Same for every other
-   * inherited static (`try` above, `reject`/`withResolvers`/the combinators below) that the
-   * base class would otherwise construct through `NewPromiseCapability`.
+   * `new this(executor)`, which our lazy constructor cannot satisfy — it stores the work
+   * rather than running it, so `NewPromiseCapability` never captures its resolvers. Same for
+   * every other inherited static (`try` above, `reject`/`withResolvers`/the combinators below).
+   *
+   * A Task passes straight through, as `Promise.resolve` passes a same-constructor promise
+   * through: wrapping one would hand back something whose `restart` re-awaits a settled inner
+   * Task instead of re-running its work, which is the lineage a Task exists to keep.
    *
    * ```ts
    * await Task.resolve(42); // 42 — a settled value lifted into Task-land
@@ -343,6 +347,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   static override resolve(): TaskClass<void>;
   static override resolve<T>(value: T | PromiseLike<T>): TaskClass<Awaited<T>>;
   static override resolve<T>(value?: T | PromiseLike<T>): TaskClass<Awaited<T>> {
+    if (value instanceof TaskClass) return value as TaskClass<Awaited<T>>;
     return new TaskClass(() => value as Awaited<T>);
   }
 
