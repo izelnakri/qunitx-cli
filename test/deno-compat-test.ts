@@ -1,10 +1,8 @@
 import { module, test } from 'qunitx';
 import { tempDir } from './helpers/temp-dir.ts';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { findSidecarEsbuild } from '../lib/utils/find-sidecar-esbuild.ts';
 import { isDenoCompiledBinary } from '../lib/utils/run-user-module.ts';
 import { readTemplate } from '../lib/utils/read-template.ts';
