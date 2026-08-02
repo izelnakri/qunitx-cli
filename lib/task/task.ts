@@ -125,6 +125,9 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   /** Derivation lineage: the Task this one was derived from, and how to re-derive it — what
    *  makes restart/retry on a *chain* re-execute the chain's source, not just the last step. */
   #source: TaskClass<unknown, unknown> | undefined;
+  /** A combinator's members, kept so cancellation reaches them — lineage for a task with many
+   *  sources rather than one. Undefined on every non-combinator Task. */
+  #members: (() => readonly unknown[]) | undefined;
   #rederive: ((fresh: TaskClass<unknown, unknown>) => TaskClass<T, E>) | undefined;
   /** Rebuilds a combinator over freshly restarted members. A combinator has no single source
    *  to walk, so this is how `restart` reaches the work its members represent. */
@@ -321,14 +324,14 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * ```
    */
   async shutdown(timeoutMs = 5000): Promise<Result<T, E> | null> {
-    this.#controller ??= new AbortController();
     const marker = new Failure('Shutdown', 'task shut down', undefined);
     if (!this.#started) {
       // Never ran: settle as shut down without ever invoking the work.
       this.#started = true;
+      this.#controller ??= new AbortController();
       this.#reject(marker);
     } else {
-      this.#controller.abort(marker);
+      this.#abort(marker);
     }
     const settled = await this.yield(timeoutMs).catch(() => null); // a bug counts as settled-nothing here
     if (settled === null) this.#reject(marker); // work that ignored the signal: settle consumers anyway
@@ -522,6 +525,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     const members = snapshotOnce(values);
     const task = new TaskClass(() => Promise.all(members()));
     task.#remake = () => TaskClass.all(members().map(restarted));
+    task.#members = members;
     return task;
   }
 
@@ -542,6 +546,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     const members = snapshotOnce(values);
     const task = new TaskClass(() => Promise.race(members()));
     task.#remake = () => TaskClass.race(members().map(restarted));
+    task.#members = members;
     return task;
   }
 
@@ -558,6 +563,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     const members = snapshotOnce(values);
     const task = new TaskClass(() => Promise.any(members()));
     task.#remake = () => TaskClass.any(members().map(restarted));
+    task.#members = members;
     return task;
   }
 
@@ -582,6 +588,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     const members = snapshotOnce(values);
     const task = new TaskClass(() => Promise.allSettled(members()));
     task.#remake = () => TaskClass.allSettled(members().map(restarted));
+    task.#members = members;
     return task;
   }
 
@@ -1179,10 +1186,25 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * `root.map(f)` has to reach `root`, which is where the executor (and its subscription) is.
    */
   #abandon(): void {
-    this.#controller?.abort(
-      new Failure('Abandoned', 'retry moved on from this attempt', undefined),
-    );
-    if (this.#source !== undefined) this.#source.#abandon();
+    this.#abort(new Failure('Abandoned', 'retry moved on from this attempt', undefined));
+  }
+
+  /**
+   * Aborts this Task and everything upstream of it.
+   *
+   * A derived Task holds no work of its own — `map`/`mapErr`/`context` all wrap `this.then(...)`,
+   * so the executor with the live `fetch` belongs to the SOURCE. Aborting only this link fired a
+   * signal nobody was listening to and left the real work running, which made cancellation a
+   * no-op for every chain — and a chain is what the docs show. A combinator's members are
+   * reached the same way, through the snapshot it kept for `restart`.
+   */
+  #abort(reason: unknown): void {
+    this.#controller ??= new AbortController();
+    this.#controller.abort(reason);
+    if (this.#source !== undefined) this.#source.#abort(reason);
+    for (const member of this.#members?.() ?? []) {
+      if (member instanceof TaskClass) member.#abort(reason);
+    }
   }
 
   // ── The one bridge to the value world ────────────────────────────────────────

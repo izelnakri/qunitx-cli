@@ -1201,10 +1201,42 @@ module('Task | elixir family', () => {
       });
     }).perform();
     const outcome = await task.shutdown(50);
-    assert.true(aborted, 'the AbortSignal reached the recipe');
-    assert.true(outcome === null || Failure.is(outcome), 'nothing useful had landed');
+    assert.true(aborted, 'the AbortSignal reached the executor');
+    assert.strictEqual(outcome, null, 'nothing useful had landed');
     const after = await task.result();
     assert.true(Failure.is(after), 'every later consumer resolves — no hung awaits');
+    assert.strictEqual((after as Failure.Any).code, 'Shutdown', 'and it says why');
+  });
+
+  // The work lives on the SOURCE — `map`/`mapErr`/`context` only wrap `this.then(...)`. Aborting
+  // one link therefore has to walk the chain, or cancelling anything built the way the docs show
+  // fires a signal nobody is listening to and leaves the real work running.
+  test('shutdown reaches through a derived chain to the work that is actually running', async (assert) => {
+    let aborted = false;
+    const root = Task<number>((resolve, _reject, signal) => {
+      signal.addEventListener('abort', () => (aborted = true));
+      setTimeout(() => resolve(1), 60_000);
+    });
+    const chain = root.map((n) => n + 1).context('reading the thing');
+    chain.perform();
+
+    assert.strictEqual(await chain.shutdown(20), null);
+    assert.true(aborted, "the ROOT's signal fired, not just the derived link's");
+  });
+
+  test('shutdown reaches a combinator’s members too', async (assert) => {
+    let aborted = false;
+    const member = Task<number>((resolve, _reject, signal) => {
+      signal.addEventListener('abort', () => (aborted = true));
+      setTimeout(() => resolve(1), 60_000);
+    });
+    const combined = Task.all([member]);
+    combined.perform();
+    await new Promise((resolve) => setTimeout(resolve, 5)); // let Promise.all subscribe
+
+    await combined.shutdown(20);
+
+    assert.true(aborted, 'a combinator has many sources, and cancellation reaches each');
   });
 
   test('shutdown of a never-started task settles it without running the recipe', async (assert) => {
