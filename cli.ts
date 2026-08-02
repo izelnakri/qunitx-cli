@@ -22,9 +22,18 @@ process.title = 'qunitx';
 // because the one thing that must not happen is exiting 0.
 function exitAfterFlush(code: number): void {
   process.exitCode = code;
-  const exit = () => process.exit(code);
-  process.stdout.write('', exit);
-  setTimeout(exit, FLUSH_GRACE_MS);
+  const exit = (route: string) => () => {
+    // Under --debug only: which of the three routes actually ended the process, and with what.
+    // `Inputs | unresolvable inputs` fails on Windows and macOS with the failure correctly
+    // reported and the code coming out 0, which none of the three can produce — so the next
+    // occurrence should say whether any of them ran at all.
+    if (process.env.QUNITX_DEBUG) {
+      process.stderr.write(`# [qunitx] exiting ${code} via ${route}\n`);
+    }
+    process.exit(code);
+  };
+  process.stdout.write('', exit('stdout-drain'));
+  setTimeout(exit('flush-timer'), FLUSH_GRACE_MS);
 }
 
 // The timer is a LAST RESORT, not a routine path: whenever it fires before the drain callback,

@@ -10,9 +10,13 @@ module('Inputs | unresolvable inputs', { concurrency: true }, (_hooks, moduleMet
   test('a missing file, a missing folder and an unrecognised argument all exit 1', async (assert, testMetadata) => {
     const metadata = { ...moduleMetadata, ...testMetadata };
     const [missingFile, missingFolder, unrecognised] = await Promise.all([
-      shellFails('node cli.ts tmp/this-file-does-not-exist.js', metadata),
-      shellFails('node cli.ts tmp/this-folder-does-not-exist', metadata),
-      shellFails('node cli.ts this-command-does-not-exist', metadata),
+      // QUNITX_DEBUG so the failure message names which exit route ran. This assertion has
+      // failed on Windows and macOS with the failure correctly reported and the code coming
+      // out 0 — a combination none of cli.ts's exit routes can produce — and stderr is the
+      // only channel that can say which one (or none) fired.
+      shellFails('QUNITX_DEBUG=1 node cli.ts tmp/this-file-does-not-exist.js', metadata),
+      shellFails('QUNITX_DEBUG=1 node cli.ts tmp/this-folder-does-not-exist', metadata),
+      shellFails('QUNITX_DEBUG=1 node cli.ts this-command-does-not-exist', metadata),
     ]);
 
     assert.exitCode(missingFile, 1, 'a missing file exits 1');
