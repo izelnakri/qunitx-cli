@@ -16,6 +16,11 @@ const NAMESPACE = 'qunitx-runtime';
  * Scoped to the bare `qunitx` specifier only (covers the generated tests + documented usage);
  * `qunitx/assert` — used by advanced consumers extending asserts — is not yet provided as a
  * fallback (its default export collides with the runtime's, needing a separate bundle).
+ *
+ * ```ts
+ * const plugin = qunitxRuntimePlugin();
+ * plugin.name; // 'qunitx-runtime' — hand it to esbuild's `plugins` alongside the user's own
+ * ```
  */
 export function qunitxRuntimePlugin(): Plugin {
   return {

@@ -100,8 +100,10 @@ module('Resource leaks', () => {
 
       const before = await readCount();
       if (before === null) {
-        assert.ok(true, '/proc/sys/fs/inotify/nr_inotify_instances not available on this system');
-        return;
+        return assert.ok(
+          true,
+          '/proc/sys/fs/inotify/nr_inotify_instances not available on this system',
+        );
       }
 
       // Concurrent rather than sequential: the count is only read once every run has exited,

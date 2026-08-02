@@ -5,6 +5,7 @@ import net from 'node:net';
 import WebSocket from 'ws';
 import { HTTPServer } from '../../lib/web/index.ts';
 import { bindServerToPort } from '../../lib/setup/bind-server-to-port.ts';
+import * as Result from '../../lib/result/index.ts';
 
 module('Web | bindServerToPort | port selection', { concurrency: true }, () => {
   test('binds to the requested port when it is free', async (assert) => {
@@ -35,13 +36,20 @@ module('Web | bindServerToPort | port selection', { concurrency: true }, () => {
     const blocker = await findFreePort();
     const takenPort = blocker.number;
     const server = new HTTPServer();
+    // Declaring EADDRINUSE on the flat line removes the `assert.ok(false, 'should have
+    // thrown')` guard AND the `as NodeJS.ErrnoException` cast: a success is a plain
+    // `bound.ok`, and any *other* errno rethrows instead of a confusing equality diff.
+    const bound = await Result.try(() =>
+      bindServerToPort(server, { port: takenPort, portExplicit: true }),
+    );
+    if (!bound.ok && !Result.isErrno(bound.error, 'EADDRINUSE')) throw bound.error;
+    // `finally` still guards the release — an assertion that fails must not leak the blocker
+    // onto the next test. What is gone is the `catch`, which is what conflated "the bind
+    // failed as expected" with "an assertion threw".
     try {
-      await bindServerToPort(server, { port: takenPort, portExplicit: true });
-      assert.ok(false, 'should have thrown');
-    } catch (err: unknown) {
-      assert.equal(
-        (err as NodeJS.ErrnoException).code,
-        'EADDRINUSE',
+      assert.notOk(bound.ok, 'an explicitly requested taken port is rejected');
+      assert.true(
+        Result.isErrno(bound.error, 'EADDRINUSE'),
         'throws EADDRINUSE for explicit taken port',
       );
     } finally {

@@ -1,9 +1,9 @@
 /**
  * Prepends `count` repetitions of `indent` (default: one space) to each non-empty line of `string`.
- * @example
- * ```js
- * import indentString from './lib/utils/indent-string.ts';
- * console.assert(indentString('hello\nworld', 2) === '  hello\n  world');
+ *
+ * ```ts
+ * indentString('hello\nworld', 2); // '  hello\n  world'
+ * indentString('a\n\nb', 1, { indent: '\t', includeEmptyLines: true }); // '\ta\n\t\n\tb'
  * ```
  * @returns {string}
  */

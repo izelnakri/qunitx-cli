@@ -17,6 +17,14 @@ import type { Config } from '../../types.ts';
  * one-group-per-file has nowhere to live here. Narrowing fsTree keeps the selectors true for
  * everything loaded, at the cost of dropping untargeted inputs; those are named rather than
  * silently watched-but-never-run. `qa` clears the selectors to run everything still watched.
+ *
+ * ```ts
+ * import type { Config } from '../../types.ts';
+ * // Defined, not invoked: narrows config.fsTree/selectors for the whole watch session.
+ * async function scopeWatchSession(config: Config) {
+ *   await applyWatchLineTargets(config); // fsTree keeps only the `file#34`-targeted files
+ * }
+ * ```
  */
 export async function applyWatchLineTargets(config: Config): Promise<void> {
   const allFiles = Object.keys(config.fsTree);
@@ -38,7 +46,14 @@ export async function applyWatchLineTargets(config: Config): Promise<void> {
   console.log('#', blue(`qunitx: press "qa" to run every test in the watched file(s)`));
 }
 
-/** A file whose run is narrowed by `file#34` targets, with the selectors that scope it. */
+/**
+ * A file whose run is narrowed by `file#34` targets, with the selectors that scope it.
+ *
+ * ```ts
+ * const target = { file: '/proj/test/cart-test.ts', selectors: [{ module: 'Cart', test: 'checkout' }] };
+ * target.selectors[0].module; // 'Cart' — the group runs just this selection of the file
+ * ```
+ */
 interface TargetedFile {
   file: string;
   selectors: QUnitSelector[];
@@ -50,6 +65,14 @@ interface TargetedFile {
  * those that resolved to nothing — both fall back to running the file whole, which is what a
  * null `selectors` means. Every warning is surfaced; a line target that quietly did not narrow
  * is worse than one that says so.
+ *
+ * ```ts
+ * import type { Config } from '../../types.ts';
+ * // Defined, not invoked: reads each targeted file to resolve its `#line` selectors.
+ * async function targetsOf(config: Config, allFiles: string[]) {
+ *   return await resolveTargetedFiles(config, allFiles); // [{ file, selectors: [{ module, test }] }]
+ * }
+ * ```
  */
 export async function resolveTargetedFiles(
   config: Config,
@@ -88,6 +111,13 @@ export async function resolveTargetedFiles(
 /**
  * Packs files into `groupCount` groups of roughly equal estimated duration, returning the groups
  * and the per-file weights the estimate used (the caller reuses them to apportion wall time).
+ *
+ * ```ts
+ * const timings = { '/a.ts': 300, '/b.ts': 200, '/c.ts': 100 };
+ * const { groups, weights } = await splitIntoGroups(['/a.ts', '/b.ts', '/c.ts'], 2, timings);
+ * groups; // [['/a.ts'], ['/b.ts', '/c.ts']] — LPT keeps totals balanced (300 vs 300)
+ * weights.get('/a.ts'); // 300
+ * ```
  */
 export async function splitIntoGroups(
   files: string[],

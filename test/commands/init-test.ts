@@ -19,32 +19,31 @@ module('Commands | init', { concurrency: true }, (_hooks, moduleMetadata) => {
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(`${dir}/package.json`, JSON.stringify({ name: 'test-project' }, null, 2));
 
-    try {
-      const { stdout } = await shell(`node ${CLI} init`, {
-        cwd: dir,
-        ...moduleMetadata,
-        ...testMetadata,
-      });
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => rmRetry(dir));
 
-      assert.includes(stdout, 'written', 'prints a confirmation message');
+    const { stdout } = await shell(`node ${CLI} init`, {
+      cwd: dir,
+      ...moduleMetadata,
+      ...testMetadata,
+    });
 
-      const [htmlStat, pkgResult, tsconfigStat] = await Promise.allSettled([
-        fs.stat(`${dir}/test/tests.html`),
-        fs.readFile(`${dir}/package.json`, 'utf8').then(JSON.parse),
-        fs.stat(`${dir}/tsconfig.json`),
-      ]);
+    assert.includes(stdout, 'written', 'prints a confirmation message');
 
-      assert.ok(htmlStat.value, 'test/tests.html was created');
-      assert.ok(pkgResult.value?.qunitx, 'package.json has qunitx config');
-      assert.deepEqual(
-        pkgResult.value?.qunitx.htmlPaths,
-        ['test/tests.html'],
-        'htmlPaths defaults to test/tests.html',
-      );
-      assert.ok(tsconfigStat.value, 'tsconfig.json was created');
-    } finally {
-      await rmRetry(dir);
-    }
+    const [htmlStat, pkgResult, tsconfigStat] = await Promise.allSettled([
+      fs.stat(`${dir}/test/tests.html`),
+      fs.readFile(`${dir}/package.json`, 'utf8').then(JSON.parse),
+      fs.stat(`${dir}/tsconfig.json`),
+    ]);
+
+    assert.ok(htmlStat.value, 'test/tests.html was created');
+    assert.ok(pkgResult.value?.qunitx, 'package.json has qunitx config');
+    assert.deepEqual(
+      pkgResult.value?.qunitx.htmlPaths,
+      ['test/tests.html'],
+      'htmlPaths defaults to test/tests.html',
+    );
+    assert.ok(tsconfigStat.value, 'tsconfig.json was created');
   });
 
   test('exits 1 with an error when there is no package.json', async (assert) => {
@@ -53,14 +52,16 @@ module('Commands | init', { concurrency: true }, (_hooks, moduleMetadata) => {
     const dir = path.join(os.tmpdir(), `qunitx-init-${randomUUID()}`);
     await fs.mkdir(dir, { recursive: true });
 
-    try {
-      const result = await shellFails(`node ${CLI} init`, { cwd: dir });
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => rmRetry(dir));
 
-      assert.exitCode(result, 1, 'exits with code 1 when no package.json found');
-      assert.includes(result, 'package.json', 'prints error about missing package.json');
-    } finally {
-      await rmRetry(dir);
-    }
+    const result = await shellFails(`node ${CLI} init`, { cwd: dir });
+
+    assert.exitCode(result, 1, 'exits with code 1 when no package.json found');
+    // stderr, not stdout: a missing project root is now a declared ProjectRootNotFound that
+    // cli.ts reports at its crash boundary, the same place a bad flag or a broken plugin is
+    // reported. It used to be a console.log + process.exit(1) inside findProjectRoot itself.
+    assert.true(result.stderr.includes('package.json'), 'names the missing package.json on stderr');
   });
 
   test('prints "already exists" rather than overwriting an existing html file', async (assert, testMetadata) => {
@@ -71,19 +72,18 @@ module('Commands | init', { concurrency: true }, (_hooks, moduleMetadata) => {
       fs.writeFile(`${dir}/test/tests.html`, '<!-- original content -->'),
     ]);
 
-    try {
-      const { stdout } = await shell(`node ${CLI} init`, {
-        cwd: dir,
-        ...moduleMetadata,
-        ...testMetadata,
-      });
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => rmRetry(dir));
 
-      assert.includes(stdout, 'already exists', 'reports existing html file');
+    const { stdout } = await shell(`node ${CLI} init`, {
+      cwd: dir,
+      ...moduleMetadata,
+      ...testMetadata,
+    });
 
-      const content = await fs.readFile(`${dir}/test/tests.html`, 'utf8');
-      assert.equal(content, '<!-- original content -->', 'existing html file was not overwritten');
-    } finally {
-      await rmRetry(dir);
-    }
+    assert.includes(stdout, 'already exists', 'reports existing html file');
+
+    const content = await fs.readFile(`${dir}/test/tests.html`, 'utf8');
+    assert.equal(content, '<!-- original content -->', 'existing html file was not overwritten');
   });
 });

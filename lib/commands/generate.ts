@@ -7,6 +7,15 @@ import { convertToPascalCase } from '../utils/convert-to-pascal-case.ts';
 
 /**
  * Generates a new test file from the boilerplate template.
+ *
+ * ```ts
+ * import * as Generate from './generate.ts';
+ *
+ * // Defined, not invoked: `qunitx new test/login-test.ts` — reads argv[3], writes the file.
+ * async function generateCommand() {
+ *   await Generate.run(); // /project/test/login-test.ts written
+ * }
+ * ```
  * @returns {Promise<void>}
  */
 export async function run() {
@@ -17,10 +26,7 @@ export async function run() {
       ? `${projectRoot}/${process.argv[3]}`
       : `${projectRoot}/${process.argv[3]}.js`;
 
-  if (await pathExists(path)) {
-    console.log(`${path} already exists!`);
-    return;
-  }
+  if (await pathExists(path)) return console.log(`${path} already exists!`);
 
   const testJSContent = await readTemplate('test.js');
   const targetFolderPaths = path.split('/');

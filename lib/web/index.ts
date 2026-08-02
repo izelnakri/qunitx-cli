@@ -23,28 +23,68 @@ type NodeServerWithWSS = http.Server & { wss: WebSocketServer };
  * The return value is ignored — it is `unknown` only so handlers can `return res.end(...)` as a
  * terse "respond and stop", which is the prevailing style in `setup/web-server.ts`. Narrowing
  * this to `void` would reject every such handler.
+ *
+ * ```ts
+ * const handler: RouteHandler = (_req, res) => res.end('served');
+ * ```
  */
 export type RouteHandler = (
   req: http.IncomingMessage,
   res: http.ServerResponse,
 ) => unknown | Promise<unknown>;
-/** Middleware function signature — call `next()` to continue the chain. */
+/**
+ * Middleware function signature — call `next()` to continue the chain.
+ *
+ * ```ts
+ * const logger: Middleware = (req, _res, next) => {
+ *   console.debug(req.path);
+ *   next();
+ * };
+ * ```
+ */
 export type Middleware = (
   req: http.IncomingMessage,
   res: http.ServerResponse,
   next: () => void,
 ) => void;
 
-interface Route {
+/**
+ * One registered route: the parsed shape `get()`/`post()`/… store and `#findRouteHandler`
+ * matches against.
+ *
+ * ```ts
+ * const route: Route = {
+ *   path: '/tests/:id',
+ *   handler: (_req, res) => res.end('ok'),
+ *   paramNames: ['id'],
+ *   isWildcard: false,
+ *   compiledRegex: null,
+ * };
+ * route.paramNames; // ['id']
+ * ```
+ */
+export interface Route {
+  /** The registered path pattern, e.g. `/tests/:id` or the `/*` wildcard. */
   path: string;
+  /** The handler `#handleRequest` dispatches to when this route matches. */
   handler: RouteHandler;
+  /** Names of the `:param` segments, in order of appearance. */
   paramNames: string[];
+  /** Whether this is the catch-all `/*` route. */
   isWildcard: boolean;
+  /** The captured segment values from the most recent match; feeds `req.params`. */
   paramValues?: string[];
+  /** Prebuilt matcher for parameterised paths; `null` for static ones. */
   compiledRegex: RegExp | null;
 }
 
-/** Map of file extensions to their corresponding MIME type strings. */
+/**
+ * Map of file extensions to their corresponding MIME type strings.
+ *
+ * ```ts
+ * MIME_TYPES['svg']; // 'image/svg+xml'
+ * ```
+ */
 export const MIME_TYPES: Record<string, string> = {
   html: 'text/html; charset=UTF-8',
   js: 'application/javascript',
@@ -56,7 +96,18 @@ export const MIME_TYPES: Record<string, string> = {
   svg: 'image/svg+xml',
 };
 
-/** Minimal HTTP + WebSocket server used to serve test bundles and push reload events. */
+/**
+ * Minimal HTTP + WebSocket server used to serve test bundles and push reload events.
+ *
+ * Constructing one binds nothing — routes and middleware are plain registrations until
+ * `listen()`, so setup is cheap and safe to unwind:
+ *
+ * ```ts
+ * const server = new HTTPServer();
+ * server.get('/health', (_req, res) => res.end('ok'));
+ * await server.close(); // never listened; teardown is still safe
+ * ```
+ */
 export class HTTPServer {
   /** Registered routes keyed by HTTP method then path. */
   routes: Record<string, Record<string, Route>>;
@@ -69,6 +120,13 @@ export class HTTPServer {
 
   /**
    * Creates and starts a plain `http.createServer` instance on the given port.
+   *
+   * ```ts
+   * // Defined, not invoked: binds a real port.
+   * function example() {
+   *   return HTTPServer.serve({ port: 4200 }, (_req, res) => res.end('static-style handler'));
+   * }
+   * ```
    * @returns {Promise<object>}
    */
   static serve(
@@ -136,6 +194,11 @@ export class HTTPServer {
   /**
    * Closes the underlying HTTP server and all active connections, returning a
    * Promise that resolves once the server is fully closed.
+   *
+   * ```ts
+   * const server = new HTTPServer();
+   * await server.close(); // resolves even if listen() never happened
+   * ```
    * @returns {Promise<void>}
    */
   close(): Promise<void> {
@@ -146,13 +209,28 @@ export class HTTPServer {
     return Promise.all([wssClose, serverClose]).then(() => {});
   }
 
-  /** Registers a GET route handler. */
+  /**
+   * Registers a GET route handler.
+   *
+   * ```ts
+   * const server = new HTTPServer();
+   * server.get('/tests/:id', (req, res) => res.end(req.params.id)); // :id lands in req.params
+   * await server.close();
+   * ```
+   */
   get(path: string, handler: RouteHandler): void {
     this.#registerRouteHandler('GET', path, handler);
   }
 
   /**
    * Starts listening on the given port (0 = OS-assigned).
+   *
+   * ```ts
+   * // Defined, not invoked: binds a real port.
+   * async function example(server: HTTPServer) {
+   *   await server.listen(0); // 0 → the OS assigns; read it from server._server.address()
+   * }
+   * ```
    * @returns {Promise<void>}
    */
   listen(port = 0, callback: () => void = () => {}): Promise<void> {
@@ -171,7 +249,15 @@ export class HTTPServer {
     });
   }
 
-  /** Broadcasts a message to all connected WebSocket clients. */
+  /**
+   * Broadcasts a message to all connected WebSocket clients.
+   *
+   * ```ts
+   * const server = new HTTPServer();
+   * server.publish(JSON.stringify({ event: 'refresh' })); // zero clients connected — a no-op
+   * await server.close();
+   * ```
+   */
   publish(data: string): void {
     this.wss.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
@@ -180,22 +266,54 @@ export class HTTPServer {
     });
   }
 
-  /** Registers a POST route handler. */
+  /**
+   * Registers a POST route handler.
+   *
+   * ```ts
+   * const server = new HTTPServer();
+   * server.post('/report', (_req, res) => res.json({ accepted: true }));
+   * await server.close();
+   * ```
+   */
   post(path: string, handler: RouteHandler): void {
     this.#registerRouteHandler('POST', path, handler);
   }
 
-  /** Registers a DELETE route handler. */
+  /**
+   * Registers a DELETE route handler.
+   *
+   * ```ts
+   * const server = new HTTPServer();
+   * server.delete('/runs/:id', (_req, res) => res.end());
+   * await server.close();
+   * ```
+   */
   delete(path: string, handler: RouteHandler): void {
     this.#registerRouteHandler('DELETE', path, handler);
   }
 
-  /** Registers a PUT route handler. */
+  /**
+   * Registers a PUT route handler.
+   *
+   * ```ts
+   * const server = new HTTPServer();
+   * server.put('/runs/:id', (_req, res) => res.end());
+   * await server.close();
+   * ```
+   */
   put(path: string, handler: RouteHandler): void {
     this.#registerRouteHandler('PUT', path, handler);
   }
 
-  /** Adds a middleware function to the chain. */
+  /**
+   * Adds a middleware function to the chain.
+   *
+   * ```ts
+   * const server = new HTTPServer();
+   * server.use((_req, _res, next) => next()); // runs before every route handler
+   * await server.close();
+   * ```
+   */
   use(middleware: Middleware): void {
     this.middleware.push(middleware);
   }

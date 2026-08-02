@@ -1,9 +1,23 @@
 import path from 'node:path';
 import esbuild from 'esbuild';
 import * as SourceMap from '../utils/source-map.ts';
+import { Task } from '../task/index.ts';
+import * as Result from '../result/index.ts';
 import type { SourceMapDecoder } from '../utils/source-map.ts';
 
-/** A `test(...)` or `module(...)` call found in a test file, in 1-based source lines. */
+/**
+ * A `test(...)` or `module(...)` call found in a test file, in 1-based source lines.
+ *
+ * ```ts
+ * const declaration: TestDeclaration = {
+ *   kind: 'test',
+ *   name: 'adds an item',
+ *   startLine: 5,
+ *   endLine: 9,
+ *   parent: 0, // index of the enclosing module declaration; null at the top level
+ * };
+ * ```
+ */
 export interface TestDeclaration {
   /** Whether this is a `test(...)` or a `module(...)` call. */
   kind: 'test' | 'module';
@@ -17,7 +31,17 @@ export interface TestDeclaration {
   parent: number | null;
 }
 
-/** Every declaration found in a file, plus whether it uses `only()`. */
+/**
+ * Every declaration found in a file, plus whether it uses `only()`.
+ *
+ * ```ts
+ * const scan: DeclarationScan = {
+ *   declarations: [{ kind: 'module', name: 'Cart', startLine: 1, endLine: 20, parent: null }],
+ *   hasOnly: false,
+ * };
+ * scan.hasOnly; // false — no only() call, so a line target can still match
+ * ```
+ */
 export interface DeclarationScan {
   /** All test/module declarations, sorted by start line, with `parent` links resolved. */
   declarations: TestDeclaration[];
@@ -59,31 +83,37 @@ const LOADERS: Record<string, esbuild.Loader> = {
  * strings, template literals and the regex-vs-divide ambiguity.
  *
  * Returns null when the file cannot be parsed — callers fall back to running the whole file.
+ *
+ * ```ts
+ * // Defined, not invoked: transform spawns esbuild's service, which the doc sandbox cannot run.
+ * async function scanFile(source: string) {
+ *   const scan = await parseTestDeclarations(source, '/proj/cart-test.ts');
+ *   return scan?.declarations ?? []; // null degrades to "run the whole file"
+ * }
+ * ```
  */
 export async function parseTestDeclarations(
   source: string,
   filePath: string,
 ): Promise<DeclarationScan | null> {
-  let transformed: esbuild.TransformResult;
-  try {
-    transformed = await esbuild.transform(source, {
+  // A file this cannot transform or map is one whose declarations we do not know, and the
+  // caller's answer to that is the same either way: run the whole file. `recover`, because a
+  // syntax error and an esbuild bug are equally "no declaration scan" to a targeting feature.
+  const transformed = await Task(() =>
+    esbuild.transform(source, {
       loader: LOADERS[path.extname(filePath)] ?? 'tsx',
       jsx: 'automatic',
       sourcefile: filePath,
       sourcemap: 'external',
       sourcesContent: false,
       logLevel: 'silent',
-    });
-  } catch {
-    return null;
-  }
+    }),
+  ).recover(() => null);
+  if (!transformed) return null;
 
-  let decoder: SourceMapDecoder;
-  try {
-    decoder = SourceMap.parse(transformed.map, path.dirname(filePath));
-  } catch {
-    return null;
-  }
+  const decoded = Result.try(() => SourceMap.parse(transformed.map, path.dirname(filePath)));
+  if (!decoded.ok) return null;
+  const decoder = decoded.value;
 
   const tokens = tokenize(transformed.code);
   const { declarations, hasOnly } = collectQUnitDeclarations(tokens);

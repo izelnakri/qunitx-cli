@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 // global is the Web variant, which returns a number with no .unref().
 import { setTimeout, clearTimeout } from 'node:timers';
 import path from 'node:path';
+import { Task, Failure } from '../task/index.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -12,6 +13,10 @@ const execFileAsync = promisify(execFile);
  * git fails, so a stuck git should *reject* rather than wedge the run — without a bound the CLI
  * hangs forever, since neither git nor the caller ever gives up. 30s is orders of magnitude
  * above a healthy `git status` on a large repo, so it only fires on a genuine wedge.
+ *
+ * ```ts
+ * GIT_TIMEOUT_MS; // 30_000 — the default `timeoutMs` of runGit and getChangedFilePathsInGitSince
+ * ```
  */
 const GIT_TIMEOUT_MS = 30_000;
 /**
@@ -25,10 +30,23 @@ const GIT_KILL_GRACE_MS = 2_000;
  * Runs one git command with a hard upper bound on how long it can take.
  *
  * Two layers, because they cover different failures: `execFile`'s own `timeout` kills a child
- * that is merely slow, while the outer race guarantees *this promise settles* even if the
- * child's exit event never arrives — the case where killing the child doesn't help because
- * nobody is listening for it to die. That second layer is what turns an unkillable hang into a
- * normal rejection the caller already knows how to degrade on.
+ * that is merely slow, while the outer race guarantees *this run settles* even if the child's
+ * exit event never arrives — the case where killing the child doesn't help because nobody is
+ * listening for it to die. That second layer is what turns an unkillable hang into a normal
+ * rejection the caller already knows how to degrade on.
+ *
+ * Returns a `Task`, so no subprocess is spawned until something awaits it, and a single
+ * invocation can be retried on its own (`index.lock` contention is per-call, not per-scan).
+ * It stays the low-level primitive either way: it rejects with a raw `Error`, never a declared
+ * `Failure` — classifying that is the job of the producers built on it. And because a Task is
+ * a Promise, `await runGit(...)` reads exactly as it did.
+ *
+ * ```ts
+ * // Defined, not invoked: awaiting the Task spawns the git subprocess.
+ * async function headDiff(projectRoot: string): Promise<string> {
+ *   return await runGit(['diff', '--name-only', 'HEAD'], projectRoot); // git's stdout
+ * }
+ * ```
  */
 export function runGit(
   args: string[],
@@ -39,24 +57,26 @@ export function runGit(
   // *happens* to hang — `git hash-object --stdin` hangs under Node but exits under Deno (whose
   // node:child_process EOFs the child's stdin), which flaked the deno lane (run 29512448230).
   command = 'git',
-): Promise<string> {
-  const pending = execFileAsync(command, args, {
-    cwd,
-    maxBuffer: 16 * 1024 * 1024,
-    timeout: timeoutMs,
-    killSignal: 'SIGKILL',
-  }).then((result) => result.stdout);
+): Task<string> {
+  return Task(() => {
+    const pending = execFileAsync(command, args, {
+      cwd,
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: timeoutMs,
+      killSignal: 'SIGKILL',
+    }).then((result) => result.stdout);
 
-  let timer: ReturnType<typeof setTimeout>;
-  const bound = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`git ${args[0]} timed out after ${timeoutMs}ms`)),
-      timeoutMs + GIT_KILL_GRACE_MS,
-    );
-    timer.unref?.();
+    let timer: ReturnType<typeof setTimeout>;
+    const bound = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`git ${args[0]} timed out after ${timeoutMs}ms`)),
+        timeoutMs + GIT_KILL_GRACE_MS,
+      );
+      timer.unref?.();
+    });
+
+    return Promise.race([pending, bound]).finally(() => clearTimeout(timer));
   });
-
-  return Promise.race([pending, bound]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -64,61 +84,135 @@ export function runGit(
  * to any of these short-circuits `getChangedFilePathsInGitSince` to `null`, signalling
  * the caller to skip filtering and run everything. The qunitx config lives
  * inside `package.json` per project convention, so package.json alone covers it.
+ *
+ * ```ts
+ * BLAST_RADIUS_FILES.has('package.json'); // true — a lockstep change reruns the whole suite
+ * BLAST_RADIUS_FILES.has('lib/utils/color.ts'); // false — regular files stay filterable
+ * ```
  */
 const BLAST_RADIUS_FILES = new Set(['package.json', 'package-lock.json', 'deno.json', 'deno.lock']);
 /**
  * Basename regexes with the same blast-radius semantics. Currently catches
  * `tsconfig.json` and editor variants like `tsconfig.test.json` /
  * `tsconfig.build.json`.
+ *
+ * ```ts
+ * BLAST_RADIUS_PATTERNS.some((re) => re.test('tsconfig.build.json')); // true
+ * BLAST_RADIUS_PATTERNS.some((re) => re.test('deno.jsonc')); // false — only tsconfig variants
+ * ```
  */
 const BLAST_RADIUS_PATTERNS = [/^tsconfig.*\.json$/];
 
 /**
- * Resolves the set of working-tree paths that differ from `ref`, plus all
- * uncommitted modifications/additions. Returns absolute paths.
+ * What a change scan found.
  *
- * Returns `null` when any "blast-radius" file (package.json, tsconfig*.json, …)
- * has changed — those changes can affect every test and must skip the
- * dep-graph filter. The caller treats `null` as "run all tests."
+ * `everything` is a *successful* scan, not a failure: a blast-radius file changed, so the
+ * dep-graph filter cannot be trusted and the whole suite must run. Making that a named
+ * variant is the point of this type. It used to be `null`, returned alongside a `Set` and
+ * against a *throw* for real failure — so the caller held a `Set<string> | null | Error` and
+ * discriminated it by `instanceof`, with `changed === null` ("run everything") sitting
+ * directly beside `changed.size === 0` ("run nothing"). Two adjacent branches, opposite
+ * meanings, one of them a sentinel.
  *
- * Throws on git failure (not a repo, ref doesn't exist, git missing, or git exceeding
- * `timeoutMs`). Callers should catch and degrade to the run-all path with a stderr note.
+ * ```ts
+ * const full: ChangeScan = { scope: 'everything', trigger: 'package.json' };
+ * const subset: ChangeScan = { scope: 'paths', paths: new Set(['/proj/lib/a.ts']) };
+ * ```
+ */
+export type ChangeScan =
+  { scope: 'everything'; trigger: string } | { scope: 'paths'; paths: Set<string> };
+
+/**
+ * git could not answer: not a repo, unknown ref, git missing, or it exceeded `timeoutMs`.
+ *
+ * ```ts
+ * const failure = GitScanFailed({ ref: 'HEAD~1', reason: 'not a git repository' });
+ * failure.code; // 'GitScanFailed'
+ * failure.message; // 'git lookup for "HEAD~1" failed: not a git repository'
+ * ```
+ */
+export const GitScanFailed = Failure.define(
+  'GitScanFailed',
+  (data: { ref: string; reason: string }) => `git lookup for "${data.ref}" failed: ${data.reason}`,
+);
+/**
+ * The failure a git-change scan declares — the `E` of its {@link Task}, the `Err` of `.result()`.
+ *
+ * ```ts
+ * const failure: GitScanFailure = GitScanFailed({ ref: 'main', reason: 'timed out' });
+ * failure.data.ref; // 'main' — typed payload, no message parsing
+ * ```
+ */
+export type GitScanFailure = Failure.Of<typeof GitScanFailed>;
+
+/**
+ * Resolves the working-tree paths that differ from `ref`, plus all uncommitted
+ * modifications/additions, as absolute paths — or `scope: 'everything'` when a blast-radius
+ * file (package.json, tsconfig*.json, …) changed.
  *
  * `timeoutMs` is injectable for tests; production always uses the default.
+ *
+ * Returns a lazy, retryable `Task`: the two git calls run only when the Task is awaited, and a
+ * caller can `.retry()` a transient failure (e.g. `index.lock` contention) for free — `Task.all`
+ * rebuilds over restarted members, so a retry re-runs this whole chain, git calls included. The
+ * git boundary is the only throwing step, so `.mapErr` remaps *any* rejection there to a
+ * declared `GitScanFailed`; a parsing bug in `.map` below is downstream of it and stays a bug,
+ * never masked as a Failure. Callers await the value, or `.result()` for the bare
+ * `ChangeScan | GitScanFailure` union.
+ *
+ * ```ts
+ * import * as Failure from '../result/failure.ts';
+ *
+ * // Defined, not invoked: awaiting the Task spawns the git subprocesses.
+ * async function scan(projectRoot: string): Promise<ChangeScan | 'run-all'> {
+ *   const result = await getChangedFilePathsInGitSince(projectRoot, 'main').result();
+ *   return Failure.is(result) ? 'run-all' : result; // GitScanFailed degrades to a full run
+ * }
+ * ```
  */
-export async function getChangedFilePathsInGitSince(
+export function getChangedFilePathsInGitSince(
   projectRoot: string,
   ref: string,
   timeoutMs = GIT_TIMEOUT_MS,
-): Promise<Set<string> | null> {
-  const [diffOut, statusOut] = await Promise.all([
+): Task<ChangeScan, GitScanFailure> {
+  return Task.all([
     runGit(['diff', '--name-only', '--no-renames', ref, '--', projectRoot], projectRoot, timeoutMs),
     runGit(['status', '--porcelain', '--untracked-files=all'], projectRoot, timeoutMs),
-  ]);
+  ])
+    .mapErr((cause) =>
+      GitScanFailed({ ref, reason: (cause as Error).message.split('\n')[0] }, { cause }),
+    )
+    .map(([diffOut, statusOut]): ChangeScan => {
+      // `git status --porcelain` lines look like "XY path" or "XY path -> newpath"
+      // for renames. We disabled renames in `git diff` above; for status, take the
+      // rightmost path (post-rename name is what's currently on disk).
+      const fromStatus = (line: string) => {
+        const rest = line.slice(3);
+        const arrow = rest.indexOf(' -> ');
+        return arrow === -1 ? rest : rest.slice(arrow + 4);
+      };
+      const relPaths = new Set([
+        ...diffOut.split('\n').filter(Boolean),
+        ...statusOut
+          .split('\n')
+          .filter((l) => l.length >= 4)
+          .map(fromStatus),
+      ]);
 
-  // `git status --porcelain` lines look like "XY path" or "XY path -> newpath"
-  // for renames. We disabled renames in `git diff` above; for status, take the
-  // rightmost path (post-rename name is what's currently on disk).
-  const fromStatus = (line: string) => {
-    const rest = line.slice(3);
-    const arrow = rest.indexOf(' -> ');
-    return arrow === -1 ? rest : rest.slice(arrow + 4);
-  };
-  const relPaths = new Set([
-    ...diffOut.split('\n').filter(Boolean),
-    ...statusOut
-      .split('\n')
-      .filter((l) => l.length >= 4)
-      .map(fromStatus),
-  ]);
+      const isBlastRadius = (rel: string) => {
+        const base = path.basename(rel);
+        return BLAST_RADIUS_FILES.has(base) || BLAST_RADIUS_PATTERNS.some((re) => re.test(base));
+      };
+      // Naming the file that triggered it, which the old `null` could not carry — the caller
+      // could say "a blast-radius file changed" but never which one.
+      const trigger = Array.from(relPaths).find(isBlastRadius);
+      if (trigger !== undefined) return { scope: 'everything', trigger };
 
-  const isBlastRadius = (rel: string) => {
-    const base = path.basename(rel);
-    return BLAST_RADIUS_FILES.has(base) || BLAST_RADIUS_PATTERNS.some((re) => re.test(base));
-  };
-  if (Array.from(relPaths).some(isBlastRadius)) return null;
-
-  return new Set(Array.from(relPaths, (rel) => path.resolve(projectRoot, rel)));
+      return {
+        scope: 'paths',
+        paths: new Set(Array.from(relPaths, (rel) => path.resolve(projectRoot, rel))),
+      };
+    });
 }
 
 export { BLAST_RADIUS_FILES, BLAST_RADIUS_PATTERNS, GIT_TIMEOUT_MS };

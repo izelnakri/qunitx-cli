@@ -1,4 +1,5 @@
 import * as WebServer from './web-server.ts';
+import { Task } from '../task/index.ts';
 import { bindServerToPort } from './bind-server-to-port.ts';
 import * as Chrome from '../chrome/index.ts';
 import { prelaunchPromise, shutdownPrelaunch } from '../chrome/prelaunch.ts';
@@ -7,6 +8,9 @@ import * as RunState from './run-state.ts';
 import type { Browser } from 'playwright-core';
 import type { HTTPServer } from '../web/index.ts';
 import type { Config, Connections } from '../types.ts';
+
+// Deno's Windows child_process shim intermittently fails the first spawn; see below.
+const WINDOWS_SPAWN_RETRY_MS = 100;
 
 // Playwright-core starts loading the moment run.js imports this module.
 // browser.js is intentionally the first import in run.js so playwright-core
@@ -22,6 +26,18 @@ perfLog('browser.js: playwright-core import started');
  * For chromium: connects via CDP to the pre-launched Chrome (fast path) or falls
  * back to chromium.launch() if pre-launch failed.
  * For firefox/webkit: uses playwright's standard launch (requires `npx playwright install [browser]`).
+ *
+ * ```ts
+ * import * as Browser from './browser.ts';
+ *
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: connects to / launches a real browser.
+ * async function example(config: Config) {
+ *   const browser = await Browser.launch(config); // chromium: CDP fast path, else playwright launch()
+ *   return browser.newPage();
+ * }
+ * ```
  *
  * @param skipPrelaunch When true, bypasses the prelaunch CDP path entirely and goes
  * straight to a fresh chromium.launch(). Used by the daemon's crash-recovery path —
@@ -101,17 +117,28 @@ export async function launch(config: Config, skipPrelaunch = false): Promise<Bro
   // through our CDP pre-launch (chrome-prelaunch.ts) and never calls
   // child_process.spawn for the browser process. Remove this once upstream
   // Deno fixes their spawn shim for compiled binaries on Windows (denoland/deno#35994).
-  try {
-    return await playwrightCore[browserName].launch(launchOpts);
-  } catch (err) {
-    if (!/os error 6|handle is invalid/i.test((err as Error).message || '')) throw err;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    return playwrightCore[browserName].launch(launchOpts);
-  }
+  return await Task(() => playwrightCore[browserName].launch(launchOpts)).retry(1, {
+    delayMs: WINDOWS_SPAWN_RETRY_MS,
+    // The predicate IS the point: only the known shim bug is worth a second spawn. A real
+    // failure — missing binary, bad profile — still surfaces on the first attempt.
+    when: (error) => /os error 6|handle is invalid/i.test((error as Error).message || ''),
+  });
 }
 
 /**
  * Launches a Playwright browser (or reuses an existing one), starts the web server, and returns the page/server/browser connection object.
+ *
+ * ```ts
+ * import * as Browser from './browser.ts';
+ *
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: starts a real server, browser and page.
+ * async function example(config: Config) {
+ *   const { page } = await Browser.setup(config); // server is bound, console/pageerror wired
+ *   return page.goto(`http://localhost:${config.port}`);
+ * }
+ * ```
  * @returns {Promise<{server: object, browser: object, page: object}>}
  */
 export async function setup(

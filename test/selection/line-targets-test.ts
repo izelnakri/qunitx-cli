@@ -46,11 +46,10 @@ const SOURCE = [
 async function withFile<T>(source: string, fn: (filePath: string) => Promise<T>): Promise<T> {
   const filePath = path.join(os.tmpdir(), `qunitx-line-targets-${randomUUID()}.ts`);
   await fs.writeFile(filePath, source);
-  try {
-    return await fn(filePath);
-  } finally {
-    await fs.rm(filePath, { force: true });
-  }
+  await using stack = new AsyncDisposableStack();
+  stack.defer(() => fs.rm(filePath, { force: true }));
+
+  return await fn(filePath);
 }
 
 const resolve = (lines: number[], source = SOURCE) =>

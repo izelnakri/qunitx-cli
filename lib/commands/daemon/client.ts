@@ -1,10 +1,12 @@
 import net from 'node:net';
-import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import * as Paths from './paths.ts';
 import { CLEANUP_GRACE_MS } from '../../utils/close-with-grace.ts';
 import * as Args from '../../args/index.ts';
 import * as Socket from './socket.ts';
+import { Failure } from '../../result/index.ts';
+import { Task } from '../../task/index.ts';
+import { readJsonCache } from '../../utils/read-json-cache.ts';
 import type { Request, ResponseChunk } from './protocol.ts';
 
 const CONNECT_TIMEOUT_MS = 1_000;
@@ -32,6 +34,15 @@ const SHUTDOWN_PID_POLL_MS = 50;
 /**
  * True iff a live daemon socket exists and the invocation can use it. The cli's
  * primary dispatch check.
+ *
+ * ```ts
+ * import * as Client from './client.ts';
+ *
+ * // Defined, not invoked: checks env, argv and the on-disk sentinel for process.cwd().
+ * function daemonAvailable() {
+ *   return Client.shouldUse(); // true only when eligible and a daemon info file exists
+ * }
+ * ```
  */
 export function shouldUse(): boolean {
   return isDaemonEligible() && existsSync(Paths.info());
@@ -41,6 +52,15 @@ export function shouldUse(): boolean {
  * True iff the user opted in to auto-spawn (`QUNITX_DAEMON=1`), the invocation
  * is daemon-eligible, and no daemon is running yet — meaning cli should spawn
  * one before dispatching the run.
+ *
+ * ```ts
+ * import * as Client from './client.ts';
+ *
+ * // Defined, not invoked: reads env + the on-disk sentinel for process.cwd().
+ * function needsSpawn() {
+ *   return Client.shouldAutoSpawn(); // true → cli spawns the daemon before dispatching
+ * }
+ * ```
  */
 export function shouldAutoSpawn(): boolean {
   return Boolean(process.env.QUNITX_DAEMON) && isDaemonEligible() && !existsSync(Paths.info());
@@ -49,12 +69,32 @@ export function shouldAutoSpawn(): boolean {
 /**
  * Opens a connection to the daemon for the given cwd. Resolves the connected socket
  * on success; resolves `null` on any failure (no socket file, ECONNREFUSED, timeout).
+ *
+ * ```ts
+ * import * as Client from './client.ts';
+ *
+ * // Defined, not invoked: dials the project's daemon socket.
+ * async function probe() {
+ *   return await Client.tryConnect('/proj'); // net.Socket, or null within 1s on any failure
+ * }
+ * ```
  */
 export function tryConnect(cwd: string = process.cwd()): Promise<net.Socket | null> {
   return Socket.connect(Paths.socket(cwd), CONNECT_TIMEOUT_MS);
 }
 
-/** Sends a `ping` and resolves the daemon's `pong` response (or `null` on failure). */
+/**
+ * Sends a `ping` and resolves the daemon's `pong` response (or `null` on failure).
+ *
+ * ```ts
+ * import * as Client from './client.ts';
+ *
+ * // Defined, not invoked: one ping/pong round-trip over the daemon socket.
+ * async function daemonIdentity() {
+ *   return await Client.ping(); // { type: 'pong', pid, nodeVersion, cwd, startedAt } or null
+ * }
+ * ```
+ */
 export async function ping(): Promise<ResponseChunk | null> {
   const socket = await tryConnect();
   if (!socket) return null;
@@ -86,6 +126,15 @@ export async function ping(): Promise<ResponseChunk | null> {
  *
  * Returns `true` if a daemon was reached and asked to stop, `false` if no daemon
  * was running.
+ *
+ * ```ts
+ * import * as Client from './client.ts';
+ *
+ * // Defined, not invoked: `qunitx daemon stop` — IPC plus a bounded pid-exit poll.
+ * async function stopDaemon() {
+ *   return await Client.shutdown(); // true if a daemon was reached, false when none was running
+ * }
+ * ```
  */
 export async function shutdown(cwd: string = process.cwd()): Promise<boolean> {
   const pid = await readDaemonPid(cwd);
@@ -101,51 +150,127 @@ export async function shutdown(cwd: string = process.cwd()): Promise<boolean> {
 }
 
 /**
+ * No daemon was listening — the ordinary case on a cold machine, not an error worth showing.
+ *
+ * ```ts
+ * import * as Client from './client.ts';
+ *
+ * const failure = Client.DaemonUnreachable();
+ * failure.code; // 'DaemonUnreachable'
+ * failure.message; // 'no daemon is listening for this project'
+ * ```
+ */
+export const DaemonUnreachable = Failure.define(
+  'DaemonUnreachable',
+  'no daemon is listening for this project',
+);
+
+/**
+ * The daemon accepted the run and then dropped the connection without a terminal message.
+ *
+ * Previously indistinguishable from a normal failing run: `close` and `error` both
+ * `resolve(1)`, exactly like `done` with `exitCode: 1`. A daemon that crashed mid-run was
+ * therefore reported to the user — and to CI — as "one test failed", with no hint that no
+ * tests had actually been reported at all.
+ *
+ * ```ts
+ * import * as Client from './client.ts';
+ *
+ * Client.DaemonDisconnected({ reason: 'close' }).message;
+ * // 'daemon closed the connection (close) without reporting a result'
+ * ```
+ */
+export const DaemonDisconnected = Failure.define(
+  'DaemonDisconnected',
+  (data: { reason: 'close' | 'error' }) =>
+    `daemon closed the connection (${data.reason}) without reporting a result`,
+);
+
+/**
+ * Every way a daemon-routed run can fail to produce an exit code.
+ *
+ * ```ts
+ * import * as Client from './client.ts';
+ *
+ * const failure: Client.RunViaFailure = Client.DaemonDisconnected({ reason: 'error' });
+ * failure.code; // 'DaemonDisconnected' — or 'DaemonUnreachable'; narrow with a switch
+ * ```
+ */
+export type RunViaFailure = Failure.Of<typeof DaemonUnreachable | typeof DaemonDisconnected>;
+
+/**
  * Sends `argv` to the daemon and streams its TAP output back to local stdout/stderr.
- * Returns the exit code reported by the daemon. Throws if the connection fails.
+ * Succeeds with the exit code the daemon reported; fails with one the caller can act on:
+ * `DaemonUnreachable` means "fall through to a local run", `DaemonDisconnected` means the
+ * daemon died mid-run and the user should be told.
+ *
+ * A Task rather than a promise of a `Result`, because the two say the same thing and only
+ * one of them nests: `Promise<Result<number, E>>` hands the caller a union it must unwrap
+ * *inside* whatever it already uses to catch bugs, while `.result()` here produces that union
+ * on demand and `await` alone gets the exit code.
+ *
+ * Not idempotent — it streams a whole test run to stdio — so `retry()` would replay the
+ * output. There is nothing here to retry anyway: both failures mean the daemon is gone.
+ *
  * Forwards the user's Ctrl+C: client exits with 130; daemon abandons the run cleanly
  * when it sees the socket close (clientAlive=false stops further writes).
+ *
+ * ```ts
+ * import * as Client from './client.ts';
+ * import * as Failure from '../../result/failure.ts';
+ *
+ * // Defined, not invoked: streams the daemon's TAP output to this process's stdio.
+ * async function runOnDaemon() {
+ *   const outcome = await Client.runVia(['test/foo-test.ts']).result(); // number | RunViaFailure
+ *   return Failure.is(outcome) ? null : outcome; // exit code out; a failure the caller acts on
+ * }
+ * ```
  */
-export async function runVia(argv: string[]): Promise<number> {
-  const socket = await tryConnect();
-  if (!socket) throw new Error('daemon connect failed');
+export function runVia(argv: string[]): Task<number, RunViaFailure> {
+  return Task(async () => {
+    const socket = await tryConnect();
+    if (!socket) throw DaemonUnreachable();
 
-  // Per protocol.ts: exactly one terminal message ('done' or 'fatal') ends the
-  // stream. close/error here are last-resort fallbacks for a daemon that drops
-  // the connection without sending one.
-  const exitCode = new Promise<number>((resolve) => {
-    Socket.readMessages<ResponseChunk>(socket, (chunk) => {
-      if (chunk.type === 'stdout') process.stdout.write(chunk.data);
-      else if (chunk.type === 'stderr') process.stderr.write(chunk.data);
-      else if (chunk.type === 'done') resolve(chunk.exitCode);
-      else if (chunk.type === 'fatal') {
-        process.stderr.write(`# [qunitx daemon] ${chunk.message}\n`);
-        resolve(1);
-      }
+    // Per protocol.ts: exactly one terminal message ('done' or 'fatal') ends the
+    // stream. close/error here are last-resort fallbacks for a daemon that drops
+    // the connection without sending one — reported as declared failures rather than
+    // folded into the same exit code a failing test run produces.
+    const outcome = new Promise<number>((resolve, reject) => {
+      Socket.readMessages<ResponseChunk>(socket, (chunk) => {
+        if (chunk.type === 'stdout') process.stdout.write(chunk.data);
+        else if (chunk.type === 'stderr') process.stderr.write(chunk.data);
+        else if (chunk.type === 'done') resolve(chunk.exitCode);
+        else if (chunk.type === 'fatal') {
+          // A reported fatal IS a terminal result: the daemon ran, decided the run failed, and
+          // said so. That is an exit code, not a transport failure.
+          process.stderr.write(`# [qunitx daemon] ${chunk.message}\n`);
+          resolve(1);
+        }
+      });
+      socket.once('close', () => reject(DaemonDisconnected({ reason: 'close' })));
+      socket.once('error', () => reject(DaemonDisconnected({ reason: 'error' })));
     });
-    socket.once('close', () => resolve(1));
-    socket.once('error', () => resolve(1));
+
+    const onSigint = () => {
+      socket.end();
+      process.exit(SIGINT_EXIT_CODE);
+    };
+    process.once('SIGINT', onSigint);
+
+    send(socket, {
+      type: 'run',
+      argv,
+      cwd: process.cwd(),
+      env: { ...process.env },
+      nodeVersion: process.version,
+    });
+
+    try {
+      return await outcome;
+    } finally {
+      process.removeListener('SIGINT', onSigint);
+    }
   });
-
-  const onSigint = () => {
-    socket.end();
-    process.exit(SIGINT_EXIT_CODE);
-  };
-  process.once('SIGINT', onSigint);
-
-  send(socket, {
-    type: 'run',
-    argv,
-    cwd: process.cwd(),
-    env: { ...process.env },
-    nodeVersion: process.version,
-  });
-
-  try {
-    return await exitCode;
-  } finally {
-    process.removeListener('SIGINT', onSigint);
-  }
 }
 
 /**
@@ -189,13 +314,14 @@ function awaitClose(socket: net.Socket): Promise<void> {
   });
 }
 
-async function readDaemonPid(cwd: string = process.cwd()): Promise<number | null> {
-  try {
-    const info = JSON.parse(await fs.readFile(Paths.info(cwd), 'utf8')) as { pid?: unknown };
-    return typeof info.pid === 'number' ? info.pid : null;
-  } catch {
-    return null;
-  }
+// No info file, a torn one, or one without a pid are the same answer: no daemon here — which is
+// exactly what readJsonCache says, so this only has to name the shape it wants and read the field.
+function readDaemonPid(cwd: string = process.cwd()): Task<number | null, never> {
+  return readJsonCache(Paths.info(cwd), hasPid).map((info) => info?.pid ?? null);
+}
+
+function hasPid(value: unknown): value is { pid: number } {
+  return typeof (value as { pid?: unknown })?.pid === 'number';
 }
 
 function waitForPidExit(pid: number, timeoutMs: number): Promise<void> {

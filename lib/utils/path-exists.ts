@@ -1,21 +1,20 @@
 import fs from 'node:fs/promises';
+import { Task } from '../task/index.ts';
 
 /**
  * Returns `true` if the given filesystem path is accessible, `false` otherwise.
- * @example
- * ```js
- * import pathExists from './lib/utils/path-exists.ts';
- * console.assert(await pathExists('/tmp') === true);
- * console.assert(await pathExists('/tmp/nonexistent-qunitx-file') === false);
+ *
+ * ```ts
+ * await pathExists('/tmp'); // true
+ * await pathExists('/tmp/nonexistent-qunitx-file'); // false — any access failure reads as absent
  * ```
- * @returns {Promise<boolean>}
+ *
+ * `recover`, not `unwrapOr`: this is one of the few places the catch-all is the point. "Can I
+ * reach it?" has no failure mode worth distinguishing — an ENOENT and an EACCES both mean the
+ * caller cannot use the path.
  */
-export async function pathExists(path: string): Promise<boolean> {
-  try {
-    await fs.access(path);
-
-    return true;
-  } catch {
-    return false;
-  }
+export function pathExists(path: string): Task<boolean, never> {
+  return Task(() => fs.access(path))
+    .map(() => true)
+    .recover(() => false);
 }

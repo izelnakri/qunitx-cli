@@ -2,7 +2,17 @@
 // One JSON object per line. Client writes a single Request; daemon streams
 // any number of stdout/stderr chunks ending with a `done` (or `fatal`) message.
 
-/** Client → daemon: request to execute a test run with the given argv/env in the daemon's persistent Chrome. */
+/**
+ * Client → daemon: request to execute a test run with the given argv/env in the daemon's persistent Chrome.
+ *
+ * ```ts
+ * const request: RunRequest = {
+ *   type: 'run', argv: ['test/foo-test.ts', '--failFast'],
+ *   cwd: '/proj', env: { CI: undefined }, nodeVersion: 'v24.14.0',
+ * };
+ * JSON.stringify(request) + '\n'; // one NDJSON line, ready for the socket
+ * ```
+ */
 export interface RunRequest {
   /** Discriminator for the protocol union; always `'run'` for this variant. */
   type: 'run';
@@ -16,22 +26,53 @@ export interface RunRequest {
   nodeVersion: string;
 }
 
-/** Client → daemon: liveness/identity probe. */
+/**
+ * Client → daemon: liveness/identity probe.
+ *
+ * ```ts
+ * const ping: PingRequest = { type: 'ping' };
+ * ping.type; // 'ping' — the daemon answers with a `pong` chunk
+ * ```
+ */
 export interface PingRequest {
   /** Discriminator; always `'ping'`. */
   type: 'ping';
 }
 
-/** Client → daemon: graceful shutdown request. */
+/**
+ * Client → daemon: graceful shutdown request.
+ *
+ * ```ts
+ * const request: ShutdownRequest = { type: 'shutdown' };
+ * request.type; // 'shutdown' — acked with `done`, then the daemon exits
+ * ```
+ */
 export interface ShutdownRequest {
   /** Discriminator; always `'shutdown'`. */
   type: 'shutdown';
 }
 
-/** Discriminated union of every request the daemon accepts. */
+/**
+ * Discriminated union of every request the daemon accepts.
+ *
+ * ```ts
+ * const req: Request = { type: 'ping' };
+ * req.type; // 'ping' — the daemon's dispatch switches on this discriminant
+ * ```
+ */
 export type Request = RunRequest | PingRequest | ShutdownRequest;
 
-/** Daemon → client: one streamed response chunk in the per-request stream. */
+/**
+ * Daemon → client: one streamed response chunk in the per-request stream.
+ *
+ * ```ts
+ * const chunks: ResponseChunk[] = [
+ *   { type: 'stdout', data: 'ok 1 Cart: checkout\n' },
+ *   { type: 'done', exitCode: 0 }, // exactly one terminal chunk ends the stream
+ * ];
+ * chunks[1].type; // 'done'
+ * ```
+ */
 export type ResponseChunk =
   /** Forwarded `process.stdout.write` chunk from the run. */
   | { type: 'stdout'; data: string }
@@ -44,7 +85,17 @@ export type ResponseChunk =
   /** Terminal message of a failed run (validation error, internal exception, or pre-shutdown notify). */
   | { type: 'fatal'; message: string };
 
-/** Sidecar JSON file written next to the socket; lets `daemon status` show details without an IPC roundtrip. */
+/**
+ * Sidecar JSON file written next to the socket; lets `daemon status` show details without an IPC roundtrip.
+ *
+ * ```ts
+ * const info: DaemonInfo = {
+ *   pid: 4242, socketPath: '/tmp/qunitx-daemon-ab12cd34ef56.sock',
+ *   cwd: '/proj', nodeVersion: 'v24.14.0', startedAt: 1_760_000_000_000,
+ * };
+ * info.pid; // 4242 — polled with `process.kill(pid, 0)` after `daemon stop`
+ * ```
+ */
 export interface DaemonInfo {
   /** OS process id of the running daemon. */
   pid: number;

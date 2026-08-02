@@ -40,6 +40,7 @@ import * as Timings from './run/timings.ts';
 import { applyWatchLineTargets, resolveTargetedFiles, splitIntoGroups } from './run/grouping.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
 import type { Config, HtmlAssets } from '../types.ts';
+import { Task } from '../task/index.ts';
 
 // Playwright navigation timeout for headed watch-mode reloads (not test execution).
 const WATCH_NAV_TIMEOUT_MS = 5_000;
@@ -70,6 +71,15 @@ const EXIT_CODE_SIGTERM = 128 + 15;
 
 /**
  * Runs qunitx tests in headless Chrome, either in watch mode or concurrent batch mode.
+ *
+ * ```ts
+ * import type { run } from './run.ts';
+ * import type { Config } from '../types.ts';
+ * // Defined, not invoked: launches Chrome and runs the whole suite.
+ * async function runSuite(runTests: typeof run, config: Config) {
+ *   await runTests(config); // batch mode exits the process itself; watch mode returns, process alive
+ * }
+ * ```
  * @returns {Promise<void>}
  */
 export async function run(config: Config): Promise<void> {
@@ -132,11 +142,11 @@ async function runWatchMode(config: Config): Promise<void> {
   // await it inside its own try/catch — errors surface as BundleErrors there, keeping
   // the watcher alive exactly as they would for a normal watch-mode build failure.
   // Suppress unhandled rejection: esbuild can fail (syntax error, missing file) before
-  // Browser.setup completes. Without .catch(), Node.js detects the rejection during the
+  // Browser.setup completes. Without an eagerly-attached handler, Node.js detects the rejection during the
   // Promise.all window and crashes the process. runInBrowser awaits this promise inside
   // its own try/catch, so the rejection is handled — but only after Browser.setup resolves.
   const preBuildPromise = buildTestBundle(config);
-  preBuildPromise.catch(() => {});
+  Task(preBuildPromise).ignore('pre-build rejection — re-awaited by runInBrowser');
   build.preBuildPromise = preBuildPromise;
 
   const [connections] = await Promise.all([
@@ -226,12 +236,12 @@ async function runWatchMode(config: Config): Promise<void> {
   //   but the no-tests fallback page is set only AFTER runTestInsideHTMLFile returns, so we must
   //   re-navigate so the route handler can now serve the warning page.
   if (isHeadedWatchMode && build.fallbackPage) {
-    await connections.page
-      .goto(`http://localhost:${config.port}/`, {
+    await Task(
+      connections.page.goto(`http://localhost:${config.port}/`, {
         waitUntil: 'commit',
         timeout: WATCH_NAV_TIMEOUT_MS,
-      })
-      .catch(() => {});
+      }),
+    ).ignore('headed watch-mode navigation to the fallback page');
   }
 
   if (config.watch) {
@@ -258,7 +268,7 @@ async function runWatchMode(config: Config): Promise<void> {
           // initial watch-mode build). runInBrowser picks up the promise from
           // preBuildPromise and sets activeRebuild so /tests.js can await it.
           const rebuildPromise = buildTestBundle(config);
-          rebuildPromise.catch(() => {});
+          Task(rebuildPromise).ignore('watch rebuild rejection — re-awaited by runInBrowser');
           build.preBuildPromise = rebuildPromise;
           return await runInBrowser(config, connections);
         }
@@ -275,12 +285,12 @@ async function runWatchMode(config: Config): Promise<void> {
         // means it ignores the WS 'refresh' message). Navigate it directly after a build error
         // or a 0-tests warning so it shows the correct HTML rather than stale test results.
         if (isHeadedWatchMode && build.fallbackPage) {
-          await connections.page
-            .goto(`http://localhost:${config.port}/`, {
+          await Task(
+            connections.page.goto(`http://localhost:${config.port}/`, {
               waitUntil: 'commit',
               timeout: WATCH_NAV_TIMEOUT_MS,
-            })
-            .catch(() => {});
+            }),
+          ).ignore('headed watch-mode re-navigation after a rebuild');
         }
       },
     );
@@ -553,19 +563,15 @@ async function runConcurrentMode(
     wallTimes,
   );
   if (!filteredRun) {
-    Timings.persist(fileTimes, config.projectRoot).catch(
-      (err: Error) =>
-        config.debug && process.stderr.write(`# [qunitx] Timings.persist: ${err.message}\n`),
-    );
+    Task(Timings.persist(fileTimes, config.projectRoot)).ignore('Timings.persist');
   }
   // Persist this run's failures for the next `--only-failed`. An empty set (all green) is
   // written too, so a passing re-run clears the cache. Awaited on the exit path below (unlike
   // timings, which tolerate loss) so a slow filesystem can't lose the cache to process.exit.
   const failureCacheWrite = filteredRun
     ? null
-    : FailureCache.write(config.projectRoot, FailureCache.build(config)).catch(
-        (err: Error) =>
-          config.debug && process.stderr.write(`# [qunitx] FailureCache.write: ${err.message}\n`),
+    : Task(FailureCache.write(config.projectRoot, FailureCache.build(config))).ignore(
+        'FailureCache.write',
       );
   if (config.debug) Timings.print(fileTimes, config.projectRoot);
 
@@ -578,14 +584,7 @@ async function runConcurrentMode(
   // handler captures the exit code instead of hitting process.exit.
   if (config.state.daemon) {
     clearInterval(keepAlive);
-    await closeWithGrace([
-      sharedServer
-        ?.close()
-        .catch(
-          (err: Error) =>
-            config.debug && process.stderr.write(`# [qunitx] server.close: ${err.message}\n`),
-        ),
-    ]);
+    await closeWithGrace([Task(sharedServer?.close()).ignore('server.close')]);
     throw new DaemonRunError(exitCode);
   }
 
@@ -612,18 +611,8 @@ async function runConcurrentMode(
     // SIGTERMs it ~60 s later. Best-effort cleanup, exit anyway.
     await closeWithGrace([
       failureCacheWrite,
-      sharedServer
-        ?.close()
-        .catch(
-          (err: Error) =>
-            config.debug && process.stderr.write(`# [qunitx] server.close: ${err.message}\n`),
-        ),
-      browser
-        .close()
-        .catch(
-          (err: Error) =>
-            config.debug && process.stderr.write(`# [qunitx] browser.close: ${err.message}\n`),
-        ),
+      Task(sharedServer?.close()).ignore('server.close'),
+      Task(browser.close()).ignore('browser.close'),
       shutdownPrelaunch(),
     ]);
     clearInterval(keepAlive);

@@ -4,6 +4,14 @@ const LINK_HREF_REGEX = /<link[^>]+\bhref=['"]([^'"]+)['"]/gi;
 
 /**
  * Parses an HTML string and returns all internal (non-absolute-URL) `<script src>` and `<link href>` paths.
+ *
+ * ```ts
+ * findInternalAssetsFromHTML(
+ *   '<link href="app.css" rel="stylesheet"><script src="/assets/app.js"></script>' +
+ *     '<script src="https://cdn.example.com/vendor.js"></script>',
+ * );
+ * // ['app.css', '/assets/app.js'] — the CDN script is external, so it is skipped
+ * ```
  * @returns {string[]}
  */
 export function findInternalAssetsFromHTML(htmlContent: string): string[] {

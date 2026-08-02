@@ -1,7 +1,7 @@
 node_modules
 tmp
 test-output.log
-result
+/result
 docs/lib
 benches/results.json
 dist/

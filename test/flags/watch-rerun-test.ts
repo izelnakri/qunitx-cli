@@ -17,56 +17,46 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
   test('changing a file in watched directory triggers a re-run', async (assert) => {
     const { dir, id, testFile, testContent } = await makeWatchProject();
     // Watch the `tests/` directory so the file watcher resolves paths correctly.
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+    assert.passingTestCaseFor(session.stdout, { moduleName: id });
 
-    try {
-      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
-      assert.passingTestCaseFor(session.stdout, { moduleName: id });
+    // Modify the file (append a harmless comment to trigger a 'change' event).
+    await fs.writeFile(testFile, testContent + '\n// re-run trigger');
 
-      // Modify the file (append a harmless comment to trigger a 'change' event).
-      await fs.writeFile(testFile, testContent + '\n// re-run trigger');
+    const rerunBuf = await waitForRunComplete(session, 2, 're-run to start');
 
-      const rerunBuf = await waitForRunComplete(session, 2, 're-run to start');
-
-      assert.includes(session.stdout, 'CHANGED:');
-      const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
-      assert.includes(rerunOutput, '# pass 3');
-      assert.includes(rerunOutput, '# fail 0');
-    } finally {
-      await session.kill();
-    }
+    assert.includes(session.stdout, 'CHANGED:');
+    const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
+    assert.includes(rerunOutput, '# pass 3');
+    assert.includes(rerunOutput, '# fail 0');
   });
 
   test('adding a new file to the watched directory triggers a filtered re-run', async (assert) => {
     const { dir, id, testsDir, testContent } = await makeWatchProject();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+    assert.passingTestCaseFor(session.stdout, { moduleName: id });
 
-    try {
-      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
-      assert.passingTestCaseFor(session.stdout, { moduleName: id });
+    // Add a second test file with its own unique module name.
+    const newId = randomUUID();
+    const newContent = testContent.replace(id, newId);
+    await fs.writeFile(`${testsDir}/extra-tests.ts`, newContent);
 
-      // Add a second test file with its own unique module name.
-      const newId = randomUUID();
-      const newContent = testContent.replace(id, newId);
-      await fs.writeFile(`${testsDir}/extra-tests.ts`, newContent);
+    const rerunBuf = await waitForRunComplete(session, 2, 're-run to start');
 
-      const rerunBuf = await waitForRunComplete(session, 2, 're-run to start');
-
-      const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
-      // Pass `{ stdout, fullStdout }`: the assertion checks the latest-run slice for
-      // correctness (older runs may also contain "# pass 3" and would be a false positive),
-      // but on failure surfaces the full session buffer including every "QUnitX running:"
-      // marker and the watcher event log — needed to root-cause flakes like the change-after-add
-      // race that lib/setup/file-watcher.ts ADD_SUPPRESS_WINDOW_MS now suppresses.
-      const ctx = { stdout: rerunOutput, fullStdout: rerunBuf };
-      // Filtered run only executes the newly added file (3 tests).
-      assert.includes(ctx, '# pass 3');
-      assert.includes(ctx, '# fail 0');
-      // The new file's module name appears in the filtered re-run output.
-      assert.includes(ctx, newId);
-    } finally {
-      await session.kill();
-    }
+    const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
+    // Pass `{ stdout, fullStdout }`: the assertion checks the latest-run slice for
+    // correctness (older runs may also contain "# pass 3" and would be a false positive),
+    // but on failure surfaces the full session buffer including every "QUnitX running:"
+    // marker and the watcher event log — needed to root-cause flakes like the change-after-add
+    // race that lib/setup/file-watcher.ts ADD_SUPPRESS_WINDOW_MS now suppresses.
+    const ctx = { stdout: rerunOutput, fullStdout: rerunBuf };
+    // Filtered run only executes the newly added file (3 tests).
+    assert.includes(ctx, '# pass 3');
+    assert.includes(ctx, '# fail 0');
+    // The new file's module name appears in the filtered re-run output.
+    assert.includes(ctx, newId);
   });
 
   test('deleting a file from the watched directory triggers a full re-run without it', async (assert) => {
@@ -76,30 +66,25 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
     const id2 = randomUUID();
     await fs.writeFile(`${testsDir}/extra-tests.ts`, testContent.replace(id, id2));
 
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    // Initial run: both files → 6 passing tests (all bundled together in watch mode).
+    await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+    assert.passingTestCaseFor(session.stdout, { moduleName: id });
+    assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
 
-    try {
-      // Initial run: both files → 6 passing tests (all bundled together in watch mode).
-      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
-      assert.passingTestCaseFor(session.stdout, { moduleName: id });
-      assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
+    // Delete the first test file.
+    await fs.unlink(`${testsDir}/passing-tests.ts`);
 
-      // Delete the first test file.
-      await fs.unlink(`${testsDir}/passing-tests.ts`);
+    const rerunBuf = await waitForRunComplete(session, 2, 're-run to start');
 
-      const rerunBuf = await waitForRunComplete(session, 2, 're-run to start');
-
-      assert.includes(session.stdout, 'REMOVED:');
-      const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
-      // Only the second file's 3 tests run because the cache was cleared and rebuilt.
-      assert.includes(rerunOutput, '# pass 3');
-      assert.includes(rerunOutput, '# fail 0');
-      // The deleted file's module name is absent; the remaining file's is present.
-      assert.false(rerunOutput.includes(id), 'deleted file module absent from re-run output');
-      assert.includes(rerunOutput, id2);
-    } finally {
-      await session.kill();
-    }
+    assert.includes(session.stdout, 'REMOVED:');
+    const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
+    // Only the second file's 3 tests run because the cache was cleared and rebuilt.
+    assert.includes(rerunOutput, '# pass 3');
+    assert.includes(rerunOutput, '# fail 0');
+    // The deleted file's module name is absent; the remaining file's is present.
+    assert.false(rerunOutput.includes(id), 'deleted file module absent from re-run output');
+    assert.includes(rerunOutput, id2);
   });
 
   test('renaming a file triggers remove+add and the renamed file is re-run', async (assert) => {
@@ -109,32 +94,27 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
     const id2 = randomUUID();
     await fs.writeFile(`${testsDir}/extra-tests.ts`, testContent.replace(id, id2));
 
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+    assert.passingTestCaseFor(session.stdout, { moduleName: id });
+    assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
 
-    try {
-      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
-      assert.passingTestCaseFor(session.stdout, { moduleName: id });
-      assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
+    await fs.rename(`${testsDir}/passing-tests.ts`, `${testsDir}/renamed-tests.ts`);
 
-      await fs.rename(`${testsDir}/passing-tests.ts`, `${testsDir}/renamed-tests.ts`);
+    // REMOVED: and ADDED: are logged before the _building guard so they always appear.
+    await session.waitFor(
+      (buf) => buf.includes('REMOVED:') && buf.includes('ADDED:'),
+      'REMOVED and ADDED events',
+    );
 
-      // REMOVED: and ADDED: are logged before the _building guard so they always appear.
-      await session.waitFor(
-        (buf) => buf.includes('REMOVED:') && buf.includes('ADDED:'),
-        'REMOVED and ADDED events',
-      );
+    // Pending trigger: the add's filtered run fires after the unlink's full re-run completes.
+    // Wait for both runs to complete (initial + at least 2 more: unlink full-run + add filtered-run).
+    const rerunBuf = await waitForRunComplete(session, 3, 'unlink full-run + add filtered-run');
 
-      // Pending trigger: the add's filtered run fires after the unlink's full re-run completes.
-      // Wait for both runs to complete (initial + at least 2 more: unlink full-run + add filtered-run).
-      const rerunBuf = await waitForRunComplete(session, 3, 'unlink full-run + add filtered-run');
-
-      // Final run is the filtered run of the renamed file — same content (id), passes.
-      const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
-      assert.includes(rerunOutput, '# fail 0');
-      assert.includes(rerunOutput, id);
-    } finally {
-      await session.kill();
-    }
+    // Final run is the filtered run of the renamed file — same content (id), passes.
+    const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
+    assert.includes(rerunOutput, '# fail 0');
+    assert.includes(rerunOutput, id);
   });
 
   test('renaming a watched directory removes its files from tracking', async (assert) => {
@@ -146,65 +126,52 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
     await fs.mkdir(otherDir, { recursive: true });
     await fs.writeFile(`${otherDir}/other-tests.ts`, testContent.replace(id, id2));
 
-    const session = await spawnWatch(['tests', 'other-tests', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', 'other-tests', '--watch'], { cwd: dir });
+    await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+    assert.passingTestCaseFor(session.stdout, { moduleName: id });
+    assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
 
-    try {
-      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
-      assert.passingTestCaseFor(session.stdout, { moduleName: id });
-      assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
+    // Rename tests/ — parent watcher detects disappearance and fires unlinkDir.
+    await fs.rename(testsDir, `${dir}/old-tests`);
 
-      // Rename tests/ — parent watcher detects disappearance and fires unlinkDir.
-      await fs.rename(testsDir, `${dir}/old-tests`);
+    await session.waitFor((buf) => buf.includes('REMOVED:'), 'REMOVED event for renamed directory');
+    const rerunBuf = await waitForRunComplete(session, 2, 're-run to start');
 
-      await session.waitFor(
-        (buf) => buf.includes('REMOVED:'),
-        'REMOVED event for renamed directory',
-      );
-      const rerunBuf = await waitForRunComplete(session, 2, 're-run to start');
-
-      const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
-      // Only the other-tests file runs — renamed directory's files are no longer tracked.
-      assert.includes(rerunOutput, id2);
-      assert.false(rerunOutput.includes(id), 'renamed-away directory files absent from re-run');
-    } finally {
-      await session.kill();
-    }
+    const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
+    // Only the other-tests file runs — renamed directory's files are no longer tracked.
+    assert.includes(rerunOutput, id2);
+    assert.false(rerunOutput.includes(id), 'renamed-away directory files absent from re-run');
   });
 
   test('rapid file changes coalesce: only the final state is tested', async (assert) => {
     const { dir, id, testFile, testContent } = await makeWatchProject();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+    assert.passingTestCaseFor(session.stdout, { moduleName: id });
 
-    try {
-      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
-      assert.passingTestCaseFor(session.stdout, { moduleName: id });
+    // Write the file three times in quick succession. The pending-trigger mechanism
+    // ensures the last write wins: intermediate builds are coalesced.
+    const finalId = randomUUID();
+    await fs.writeFile(testFile, testContent + '\n// intermediate 1');
+    await fs.writeFile(testFile, testContent + '\n// intermediate 2');
+    await fs.writeFile(testFile, testContent.replace(id, finalId));
 
-      // Write the file three times in quick succession. The pending-trigger mechanism
-      // ensures the last write wins: intermediate builds are coalesced.
-      const finalId = randomUUID();
-      await fs.writeFile(testFile, testContent + '\n// intermediate 1');
-      await fs.writeFile(testFile, testContent + '\n// intermediate 2');
-      await fs.writeFile(testFile, testContent.replace(id, finalId));
+    // Wait until finalId has actually appeared in a completed run.
+    // Using count >= 2 is not enough: the first re-run may show an intermediate state while
+    // the pending trigger's build (which reads finalId) hasn't finished yet.
+    // waitFor returns a frozen snapshot of stdout at the exact moment the condition fired.
+    // Anchoring lastIndexOf before finalId's position guards against the edge case where a
+    // new run's 'QUnitX running:' banner arrived in the same data chunk as '# duration'.
+    const rerunBuf = await session.waitFor((buf) => {
+      const idx = buf.indexOf(finalId);
+      return idx !== -1 && buf.includes('# duration', idx);
+    }, 'final coalesced re-run with finalId to complete');
 
-      // Wait until finalId has actually appeared in a completed run.
-      // Using count >= 2 is not enough: the first re-run may show an intermediate state while
-      // the pending trigger's build (which reads finalId) hasn't finished yet.
-      // waitFor returns a frozen snapshot of stdout at the exact moment the condition fired.
-      // Anchoring lastIndexOf before finalId's position guards against the edge case where a
-      // new run's 'QUnitX running:' banner arrived in the same data chunk as '# duration'.
-      const rerunBuf = await session.waitFor((buf) => {
-        const idx = buf.indexOf(finalId);
-        return idx !== -1 && buf.includes('# duration', idx);
-      }, 'final coalesced re-run with finalId to complete');
-
-      const finalIdIdx = rerunBuf.indexOf(finalId);
-      const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:', finalIdIdx));
-      // The final state (finalId) ran — no crash, no broken intermediate state.
-      assert.includes(rerunOutput, '# fail 0');
-      assert.includes(rerunOutput, finalId);
-    } finally {
-      await session.kill();
-    }
+    const finalIdIdx = rerunBuf.indexOf(finalId);
+    const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:', finalIdIdx));
+    // The final state (finalId) ran — no crash, no broken intermediate state.
+    assert.includes(rerunOutput, '# fail 0');
+    assert.includes(rerunOutput, finalId);
   });
 
   test('simultaneous writes to files in two watched directories both appear in the rebuild', async (assert) => {
@@ -224,36 +191,31 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
     await fs.mkdir(testsDir2, { recursive: true });
     await fs.writeFile(testFile2, content2);
 
-    const session = await spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
+    await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+    assert.passingTestCaseFor(session.stdout, { moduleName: id1 });
+    assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
 
-    try {
-      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
-      assert.passingTestCaseFor(session.stdout, { moduleName: id1 });
-      assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
+    // Write to both files at the same time. The two separate fs.watch instances can
+    // deliver their change events at different times: the first event starts a full
+    // rebuild while the second queues as a pending trigger and fires after. On slower
+    // CI environments both new IDs may therefore appear across two consecutive runs
+    // rather than a single one. Wait for both IDs anywhere in the accumulated output.
+    const newId1 = randomUUID();
+    const newId2 = randomUUID();
+    await Promise.all([
+      fs.writeFile(testFile1, testContent.replace(id1, newId1)),
+      fs.writeFile(testFile2, content2.replace(id2, newId2)),
+    ]);
 
-      // Write to both files at the same time. The two separate fs.watch instances can
-      // deliver their change events at different times: the first event starts a full
-      // rebuild while the second queues as a pending trigger and fires after. On slower
-      // CI environments both new IDs may therefore appear across two consecutive runs
-      // rather than a single one. Wait for both IDs anywhere in the accumulated output.
-      const newId1 = randomUUID();
-      const newId2 = randomUUID();
-      await Promise.all([
-        fs.writeFile(testFile1, testContent.replace(id1, newId1)),
-        fs.writeFile(testFile2, content2.replace(id2, newId2)),
-      ]);
+    await session.waitFor(
+      (buf) => buf.includes(newId1) && buf.includes(newId2),
+      'both new module IDs appear in output',
+    );
 
-      await session.waitFor(
-        (buf) => buf.includes(newId1) && buf.includes(newId2),
-        'both new module IDs appear in output',
-      );
-
-      assert.includes(session.stdout, newId1);
-      assert.includes(session.stdout, newId2);
-      assert.includes(session.stdout, '# fail 0');
-    } finally {
-      await session.kill();
-    }
+    assert.includes(session.stdout, newId1);
+    assert.includes(session.stdout, newId2);
+    assert.includes(session.stdout, '# fail 0');
   });
 
   test('removing one watched directory fires REMOVED exactly once and leaves the other watcher live', async (assert) => {
@@ -266,46 +228,34 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
     await fs.mkdir(testsDir2, { recursive: true });
     await fs.writeFile(testFile2, content2);
 
-    const session = await spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
+    await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+    assert.passingTestCaseFor(session.stdout, { moduleName: id1 });
+    assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
 
-    try {
-      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
-      assert.passingTestCaseFor(session.stdout, { moduleName: id1 });
-      assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
+    // Rename tests/ away — the parent watcher fires a 'rename' event (Linux: IN_MOVED_FROM +
+    // IN_MOVED_TO appear as two separate events). The parentUnlinkFired guard ensures unlinkDir
+    // fires exactly once even if both arrive before the async stat() check completes.
+    await fs.rename(testsDir1, `${dir}/old-tests`);
 
-      // Rename tests/ away — the parent watcher fires a 'rename' event (Linux: IN_MOVED_FROM +
-      // IN_MOVED_TO appear as two separate events). The parentUnlinkFired guard ensures unlinkDir
-      // fires exactly once even if both arrive before the async stat() check completes.
-      await fs.rename(testsDir1, `${dir}/old-tests`);
+    await session.waitFor((buf) => buf.includes('REMOVED:'), 'REMOVED event for renamed directory');
+    await waitForRunComplete(session, 2, 're-run to start after removal');
 
-      await session.waitFor(
-        (buf) => buf.includes('REMOVED:'),
-        'REMOVED event for renamed directory',
-      );
-      await waitForRunComplete(session, 2, 're-run to start after removal');
+    // Removed directory's files are absent; remaining directory's files are present.
+    const afterRemoval = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+    assert.false(afterRemoval.includes(id1), 'removed directory module absent from re-run');
+    assert.includes(afterRemoval, id2);
 
-      // Removed directory's files are absent; remaining directory's files are present.
-      const afterRemoval = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
-      assert.false(afterRemoval.includes(id1), 'removed directory module absent from re-run');
-      assert.includes(afterRemoval, id2);
+    // REMOVED: must appear exactly once — verifies the parentUnlinkFired double-fire fix.
+    assert.equal(countOccurrences(session.stdout, 'REMOVED:'), 1, 'REMOVED: printed exactly once');
 
-      // REMOVED: must appear exactly once — verifies the parentUnlinkFired double-fire fix.
-      assert.equal(
-        countOccurrences(session.stdout, 'REMOVED:'),
-        1,
-        'REMOVED: printed exactly once',
-      );
+    // Verify the remaining watcher (tests2/) is still functional after the removal.
+    const newId2 = randomUUID();
+    await fs.writeFile(testFile2, content2.replace(id2, newId2));
 
-      // Verify the remaining watcher (tests2/) is still functional after the removal.
-      const newId2 = randomUUID();
-      await fs.writeFile(testFile2, content2.replace(id2, newId2));
+    await waitForRunComplete(session, 3, 'second re-run to start');
 
-      await waitForRunComplete(session, 3, 'second re-run to start');
-
-      assert.includes(session.stdout, newId2);
-    } finally {
-      await session.kill();
-    }
+    assert.includes(session.stdout, newId2);
   });
 
   test('renaming a nested subdirectory fires one REMOVED and re-runs every watched path without it', async (assert) => {
@@ -335,45 +285,40 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
     await fs.mkdir(testsDir2, { recursive: true });
     await fs.writeFile(`${testsDir2}/extra.ts`, testContent.replace(rootId, id2));
 
-    const session = await spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
+    // Initial run: 5 modules × 3 tests = 15 tests.
+    await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+    assert.passingTestCaseFor(session.stdout, { moduleName: rootId });
+    assert.passingTestCaseFor(session.stdout, { moduleName: nestedId1 });
+    assert.passingTestCaseFor(session.stdout, { moduleName: nestedId2 });
+    assert.passingTestCaseFor(session.stdout, { moduleName: deepId });
+    assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
 
-    try {
-      // Initial run: 5 modules × 3 tests = 15 tests.
-      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
-      assert.passingTestCaseFor(session.stdout, { moduleName: rootId });
-      assert.passingTestCaseFor(session.stdout, { moduleName: nestedId1 });
-      assert.passingTestCaseFor(session.stdout, { moduleName: nestedId2 });
-      assert.passingTestCaseFor(session.stdout, { moduleName: deepId });
-      assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
+    // Rename tests/subdir/ away — fires ONE 'rename' event for the directory itself.
+    // The child watcher detects tracked children and fires a single unlinkDir.
+    await fs.rename(subdir, `${dir}/old-subdir`);
 
-      // Rename tests/subdir/ away — fires ONE 'rename' event for the directory itself.
-      // The child watcher detects tracked children and fires a single unlinkDir.
-      await fs.rename(subdir, `${dir}/old-subdir`);
+    await session.waitFor((buf) => buf.includes('REMOVED:'), 'REMOVED event for renamed subdir');
+    await waitForRunComplete(session, 2, 're-run to start');
 
-      await session.waitFor((buf) => buf.includes('REMOVED:'), 'REMOVED event for renamed subdir');
-      await waitForRunComplete(session, 2, 're-run to start');
+    // Re-run must include tests/root.ts and tests2/extra.ts only (6 tests).
+    const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+    assert.includes(rerunOutput, '# pass 6');
+    assert.includes(rerunOutput, '# fail 0');
+    assert.includes(rerunOutput, rootId);
+    assert.includes(rerunOutput, id2);
+    assert.false(rerunOutput.includes(nestedId1), 'subdir files absent from re-run');
+    assert.false(rerunOutput.includes(nestedId2), 'subdir files absent from re-run');
+    assert.false(rerunOutput.includes(deepId), 'deeper files absent from re-run');
 
-      // Re-run must include tests/root.ts and tests2/extra.ts only (6 tests).
-      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
-      assert.includes(rerunOutput, '# pass 6');
-      assert.includes(rerunOutput, '# fail 0');
-      assert.includes(rerunOutput, rootId);
-      assert.includes(rerunOutput, id2);
-      assert.false(rerunOutput.includes(nestedId1), 'subdir files absent from re-run');
-      assert.false(rerunOutput.includes(nestedId2), 'subdir files absent from re-run');
-      assert.false(rerunOutput.includes(deepId), 'deeper files absent from re-run');
-
-      // Exactly one REMOVED: must appear — the directory rename fires one child-watcher
-      // 'rename' event which the new unlinkDir detection coalesces into a single event,
-      // rather than N separate unlink events for each file inside the directory.
-      assert.equal(
-        countOccurrences(session.stdout, 'REMOVED:'),
-        1,
-        'exactly one REMOVED: for the whole renamed subdirectory',
-      );
-    } finally {
-      await session.kill();
-    }
+    // Exactly one REMOVED: must appear — the directory rename fires one child-watcher
+    // 'rename' event which the new unlinkDir detection coalesces into a single event,
+    // rather than N separate unlink events for each file inside the directory.
+    assert.equal(
+      countOccurrences(session.stdout, 'REMOVED:'),
+      1,
+      'exactly one REMOVED: for the whole renamed subdirectory',
+    );
   });
 
   test('watch mode starts without crashing when the initial file has a build error', async (assert) => {
@@ -381,61 +326,51 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
 
     // Break the file BEFORE launching qunitx so the first build attempt always fails.
     await fs.writeFile(testFile, 'this is not valid typescript !!@#$%^&*');
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    // The process must NOT crash — it should stay alive, print the bundle error, then
+    // set up the watcher and print "Watching files...". Wait for the latter so both
+    // assertions are guaranteed to be present in stdout at assertion time.
+    await session.waitFor(
+      (buf) => buf.includes('Watching files'),
+      'process to stay alive and reach watch-ready state after initial build error',
+    );
+    assert.includes(session.stdout, 'esbuild Bundle Error:');
+    assert.includes(session.stdout, 'Watching files');
 
-    try {
-      // The process must NOT crash — it should stay alive, print the bundle error, then
-      // set up the watcher and print "Watching files...". Wait for the latter so both
-      // assertions are guaranteed to be present in stdout at assertion time.
-      await session.waitFor(
-        (buf) => buf.includes('Watching files'),
-        'process to stay alive and reach watch-ready state after initial build error',
-      );
-      assert.includes(session.stdout, 'esbuild Bundle Error:');
-      assert.includes(session.stdout, 'Watching files');
+    // Fix the file — the watcher must pick it up and run successfully.
+    await fs.writeFile(testFile, testContent);
+    await waitForRunComplete(session, 1, 're-run after initial error fixed');
 
-      // Fix the file — the watcher must pick it up and run successfully.
-      await fs.writeFile(testFile, testContent);
-      await waitForRunComplete(session, 1, 're-run after initial error fixed');
-
-      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
-      assert.includes(rerunOutput, '# pass');
-      assert.includes(rerunOutput, '# fail 0');
-    } finally {
-      await session.kill();
-    }
+    const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+    assert.includes(rerunOutput, '# pass');
+    assert.includes(rerunOutput, '# fail 0');
   });
 
   test('a build error in watch mode prints the error without exiting', async (assert) => {
     const { dir, id, testFile, testContent } = await makeWatchProject();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    // Wait for the initial passing run.
+    await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+    assert.passingTestCaseFor(session.stdout, { moduleName: id });
 
-    try {
-      // Wait for the initial passing run.
-      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
-      assert.passingTestCaseFor(session.stdout, { moduleName: id });
+    // Overwrite the file with invalid syntax that esbuild cannot bundle.
+    await fs.writeFile(testFile, 'this is not valid typescript !!@#$%^&*');
 
-      // Overwrite the file with invalid syntax that esbuild cannot bundle.
-      await fs.writeFile(testFile, 'this is not valid typescript !!@#$%^&*');
+    // Wait for the bundle error message to appear.
+    await session.waitFor(
+      (buf) => buf.includes('esbuild Bundle Error:'),
+      'esbuild Bundle Error to appear',
+    );
+    assert.includes(session.stdout, 'esbuild Bundle Error:');
 
-      // Wait for the bundle error message to appear.
-      await session.waitFor(
-        (buf) => buf.includes('esbuild Bundle Error:'),
-        'esbuild Bundle Error to appear',
-      );
-      assert.includes(session.stdout, 'esbuild Bundle Error:');
+    // Fix the file — a still-alive process will pick this up and re-run.
+    await fs.writeFile(testFile, testContent);
 
-      // Fix the file — a still-alive process will pick this up and re-run.
-      await fs.writeFile(testFile, testContent);
+    await waitForRunComplete(session, 2, 're-run after fix to start');
 
-      await waitForRunComplete(session, 2, 're-run after fix to start');
-
-      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
-      assert.includes(rerunOutput, '# pass 3');
-      assert.includes(rerunOutput, '# fail 0');
-    } finally {
-      await session.kill();
-    }
+    const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+    assert.includes(rerunOutput, '# pass 3');
+    assert.includes(rerunOutput, '# fail 0');
   });
 
   // ── Symlink tests ────────────────────────────────────────────────────────────────────────────
@@ -449,41 +384,31 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
     // Verifies the FSTree.build fix: symlinks inside the watched directory are included in the
     // initial fsTree scan and therefore bundled in the first run.
     const { dir, id, symlinkId } = await makeWatchProjectWithSymlink();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
-      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
-      // Both the regular test file and the symlinked file must be in the initial bundle.
-      assert.passingTestCaseFor(session.stdout, { moduleName: id });
-      assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
-    } finally {
-      await session.kill();
-    }
+    await using session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+    // Both the regular test file and the symlinked file must be in the initial bundle.
+    assert.passingTestCaseFor(session.stdout, { moduleName: id });
+    assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
   });
 
   test('adding a symlink to a .ts file triggers a filtered re-run', async (assert) => {
     // fs.watch fires a rename event when a symlink is created; classifyRenameEvent follows the
     // symlink via stat() and classifies it as 'add', triggering a filtered re-run.
     const { dir, id, testsDir, testContent } = await makeWatchProject();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+    assert.passingTestCaseFor(session.stdout, { moduleName: id });
 
-    try {
-      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
-      assert.passingTestCaseFor(session.stdout, { moduleName: id });
+    const symlinkId = randomUUID();
+    const target = `${dir}/new-target.ts`;
+    await fs.writeFile(target, testContent.replace(id, symlinkId));
+    await fs.symlink(target, `${testsDir}/new-symlink.ts`);
 
-      const symlinkId = randomUUID();
-      const target = `${dir}/new-target.ts`;
-      await fs.writeFile(target, testContent.replace(id, symlinkId));
-      await fs.symlink(target, `${testsDir}/new-symlink.ts`);
+    await waitForRunComplete(session, 2, 'symlink add re-run to start');
 
-      await waitForRunComplete(session, 2, 'symlink add re-run to start');
-
-      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
-      assert.includes(rerunOutput, symlinkId);
-      assert.includes(rerunOutput, '# fail 0');
-    } finally {
-      await session.kill();
-    }
+    const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+    assert.includes(rerunOutput, symlinkId);
+    assert.includes(rerunOutput, '# fail 0');
   });
 
   test('writing through a symlink (modifying its target) triggers a re-run', async (assert) => {
@@ -497,82 +422,67 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       testContent,
       symlinkId,
     } = await makeWatchProjectWithSymlink();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+    assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
 
-    try {
-      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
-      assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
+    const newId = randomUUID();
+    await fs.writeFile(symlink, testContent.replace(id, newId)); // writes through symlink to target
 
-      const newId = randomUUID();
-      await fs.writeFile(symlink, testContent.replace(id, newId)); // writes through symlink to target
+    // A write-through fires more than one fs event, and a mid-write one can trigger a re-run
+    // that reads the target before its bytes settle — a stale rebuild without newId. The
+    // content-hash gate then rebuilds once more on the settled write. Wait for the re-run that
+    // actually reflects the new content rather than asserting on whichever run happened to be
+    // second: in CI run 29790598868 a stale second run reached the assertion first and failed
+    // it. Waiting for the settled content tests the guarantee a user cares about (the watcher
+    // eventually shows the new bytes) and stays deterministic; a watcher that never converges
+    // still fails here on the waitFor timeout.
+    const rerunBuf = await session.waitFor((buf) => {
+      const latest = buf.slice(buf.lastIndexOf('QUnitX running:'));
+      return latest.includes(newId) && latest.includes('# duration');
+    }, 'symlink write-through re-run reflecting the new content');
 
-      // A write-through fires more than one fs event, and a mid-write one can trigger a re-run
-      // that reads the target before its bytes settle — a stale rebuild without newId. The
-      // content-hash gate then rebuilds once more on the settled write. Wait for the re-run that
-      // actually reflects the new content rather than asserting on whichever run happened to be
-      // second: in CI run 29790598868 a stale second run reached the assertion first and failed
-      // it. Waiting for the settled content tests the guarantee a user cares about (the watcher
-      // eventually shows the new bytes) and stays deterministic; a watcher that never converges
-      // still fails here on the waitFor timeout.
-      const rerunBuf = await session.waitFor((buf) => {
-        const latest = buf.slice(buf.lastIndexOf('QUnitX running:'));
-        return latest.includes(newId) && latest.includes('# duration');
-      }, 'symlink write-through re-run reflecting the new content');
-
-      const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
-      assert.includes(rerunOutput, newId);
-      assert.includes(rerunOutput, '# fail 0');
-    } finally {
-      await session.kill();
-    }
+    const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
+    assert.includes(rerunOutput, newId);
+    assert.includes(rerunOutput, '# fail 0');
   });
 
   test('deleting a symlink .ts file triggers a full re-run without it', async (assert) => {
     // fs.unlink on a symlink fires NO fs.watch events on Linux. The watcher uses fs.watchFile
     // polling (500 ms interval) to detect the deletion.
     const { dir, id, symlink, symlinkId } = await makeWatchProjectWithSymlink();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+    assert.passingTestCaseFor(session.stdout, { moduleName: id });
+    assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
 
-    try {
-      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
-      assert.passingTestCaseFor(session.stdout, { moduleName: id });
-      assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
+    await fs.unlink(symlink);
 
-      await fs.unlink(symlink);
+    // Poll detection fires within ~500 ms; use a 3 s cap to keep CI stable.
+    await waitForRunComplete(session, 2, 'symlink deletion re-run to start');
 
-      // Poll detection fires within ~500 ms; use a 3 s cap to keep CI stable.
-      await waitForRunComplete(session, 2, 'symlink deletion re-run to start');
-
-      assert.includes(session.stdout, 'REMOVED:');
-      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
-      assert.includes(rerunOutput, id);
-      assert.false(rerunOutput.includes(symlinkId), 'deleted symlink module absent from re-run');
-    } finally {
-      await session.kill();
-    }
+    assert.includes(session.stdout, 'REMOVED:');
+    const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+    assert.includes(rerunOutput, id);
+    assert.false(rerunOutput.includes(symlinkId), 'deleted symlink module absent from re-run');
   });
 
   test('deleting the target of a symlink (making it dangling) triggers a full re-run', async (assert) => {
     // When the symlink's target is removed, stat() on the symlink path starts failing.
     // The fs.watchFile poll detects nlink === 0 and fires 'unlink' for the symlink path.
     const { dir, id, symlink: _symlink, target, symlinkId } = await makeWatchProjectWithSymlink();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+    assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
 
-    try {
-      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
-      assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
+    // Delete the target (outside the watched dir). The symlink in tests/ becomes dangling.
+    await fs.unlink(target);
 
-      // Delete the target (outside the watched dir). The symlink in tests/ becomes dangling.
-      await fs.unlink(target);
+    await waitForRunComplete(session, 2, 'dangling symlink re-run to start');
 
-      await waitForRunComplete(session, 2, 'dangling symlink re-run to start');
-
-      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
-      assert.includes(rerunOutput, id);
-      assert.false(rerunOutput.includes(symlinkId), 'dangling symlink module absent from re-run');
-    } finally {
-      await session.kill();
-    }
+    const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+    assert.includes(rerunOutput, id);
+    assert.false(rerunOutput.includes(symlinkId), 'dangling symlink module absent from re-run');
   });
 
   test('renaming a symlink fires an immediate add then a polling-delayed unlink', async (assert) => {
@@ -588,75 +498,65 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       symlinkId,
       testContent: _testContent,
     } = await makeWatchProjectWithSymlink();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+    assert.passingTestCaseFor(session.stdout, { moduleName: id });
+    assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
 
-    try {
-      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
-      assert.passingTestCaseFor(session.stdout, { moduleName: id });
-      assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
+    // Rename the symlink within the watched dir. fs.watch fires 'rename' for the destination
+    // (add), while the source's removal is detected only by the fs.watchFile poll (~500 ms).
+    const renamedSymlink = `${testsDir}/renamed-symlink.ts`;
+    await fs.rename(symlink, renamedSymlink);
 
-      // Rename the symlink within the watched dir. fs.watch fires 'rename' for the destination
-      // (add), while the source's removal is detected only by the fs.watchFile poll (~500 ms).
-      const renamedSymlink = `${testsDir}/renamed-symlink.ts`;
-      await fs.rename(symlink, renamedSymlink);
+    // The add fires first — wait for the filtered re-run of the renamed symlink.
+    await session.waitFor((buf) => buf.includes('ADDED:'), 'ADDED event for renamed symlink');
+    await waitForRunComplete(session, 2, 'filtered re-run after add');
 
-      // The add fires first — wait for the filtered re-run of the renamed symlink.
-      await session.waitFor((buf) => buf.includes('ADDED:'), 'ADDED event for renamed symlink');
-      await waitForRunComplete(session, 2, 'filtered re-run after add');
+    // The unlink fires later via polling — wait for a second re-run.
+    await session.waitFor((buf) => buf.includes('REMOVED:'), 'REMOVED event via polling');
+    await waitForRunComplete(session, 3, 'full re-run after polling unlink');
 
-      // The unlink fires later via polling — wait for a second re-run.
-      await session.waitFor((buf) => buf.includes('REMOVED:'), 'REMOVED event via polling');
-      await waitForRunComplete(session, 3, 'full re-run after polling unlink');
-
-      const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
-      // Final state: renamed symlink's content (same symlinkId) present, original path gone.
-      assert.includes(rerunOutput, symlinkId);
-      assert.includes(rerunOutput, '# fail 0');
-    } finally {
-      await session.kill();
-    }
+    const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
+    // Final state: renamed symlink's content (same symlinkId) present, original path gone.
+    assert.includes(rerunOutput, symlinkId);
+    assert.includes(rerunOutput, '# fail 0');
   });
 
   test('a dangling symlink added to the watched directory is silently ignored', async (assert) => {
     // classifyRenameEvent: stat() fails on the dangling symlink, path is not in fsTree → null.
     // No re-run, no crash, no ADDED: in output.
     const { dir, id, testsDir, testContent } = await makeWatchProject();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
 
-    try {
-      await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
+    await fs.symlink(`${dir}/nonexistent.ts`, `${testsDir}/dangling.ts`);
 
-      await fs.symlink(`${dir}/nonexistent.ts`, `${testsDir}/dangling.ts`);
+    // Proving a negative needs a horizon, and a fixed sleep is a guess at one. Adding a real
+    // file afterwards and waiting for its re-run gives a real horizon: handleWatchEvent logs
+    // every event it acts on before it acts, so by the time the real file's rebuild has
+    // finished, anything the symlink was going to produce has already been logged.
+    const realId = randomUUID();
+    await fs.writeFile(`${testsDir}/real-tests.ts`, testContent.replace(id, realId));
+    await waitForRunComplete(session, 2, 're-run for the real file');
 
-      // Proving a negative needs a horizon, and a fixed sleep is a guess at one. Adding a real
-      // file afterwards and waiting for its re-run gives a real horizon: handleWatchEvent logs
-      // every event it acts on before it acts, so by the time the real file's rebuild has
-      // finished, anything the symlink was going to produce has already been logged.
-      const realId = randomUUID();
-      await fs.writeFile(`${testsDir}/real-tests.ts`, testContent.replace(id, realId));
-      await waitForRunComplete(session, 2, 're-run for the real file');
-
-      // The event log is the invariant, not the run count. A dangling symlink is dropped by
-      // classifyRenameEvent (stat fails, path not in fsTree → null) before anything is logged
-      // or any rebuild is queued, so its absence from the log is exactly the claim.
-      //
-      // Run counts are deliberately NOT asserted. One fs.writeFile can emit both a rename and
-      // a trailing change, and whether the second is deduplicated depends on whether the add's
-      // build finished inside ADD_SUPPRESS_WINDOW_MS — best-effort, and false on a loaded
-      // runner. So the real file may legitimately produce one rebuild or two, which says
-      // nothing about the symlink. See the boundary pinned in
-      // `Setup | FileWatcher.handleWatchEvent`.
-      //
-      // session.stdout rather than the waitFor snapshot: it is the live buffer, so a symlink
-      // event arriving late (macOS coalesces and can reorder directory events) is still caught.
-      assert.notIncludes(session.stdout, 'dangling.ts');
-      // Matched separately rather than as one 'ADDED: <path>' string: the logged path is
-      // project-relative and separator-native, so it reads \tests\ on Windows.
-      assert.includes(session.stdout, 'ADDED:');
-      assert.includes(session.stdout, 'real-tests.ts');
-    } finally {
-      await session.kill();
-    }
+    // The event log is the invariant, not the run count. A dangling symlink is dropped by
+    // classifyRenameEvent (stat fails, path not in fsTree → null) before anything is logged
+    // or any rebuild is queued, so its absence from the log is exactly the claim.
+    //
+    // Run counts are deliberately NOT asserted. One fs.writeFile can emit both a rename and
+    // a trailing change, and whether the second is deduplicated depends on whether the add's
+    // build finished inside ADD_SUPPRESS_WINDOW_MS — best-effort, and false on a loaded
+    // runner. So the real file may legitimately produce one rebuild or two, which says
+    // nothing about the symlink. See the boundary pinned in
+    // `Setup | FileWatcher.handleWatchEvent`.
+    //
+    // session.stdout rather than the waitFor snapshot: it is the live buffer, so a symlink
+    // event arriving late (macOS coalesces and can reorder directory events) is still caught.
+    assert.notIncludes(session.stdout, 'dangling.ts');
+    // Matched separately rather than as one 'ADDED: <path>' string: the logged path is
+    // project-relative and separator-native, so it reads \tests\ on Windows.
+    assert.includes(session.stdout, 'ADDED:');
+    assert.includes(session.stdout, 'real-tests.ts');
   });
 
   test('no-tests warning in watch mode serves warning HTML at / until tests are added', async (assert) => {
@@ -665,163 +565,145 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
 
     // Start with a no-tests file so the initial run produces a 0-tests warning.
     await fs.writeFile(testFile, 'export const x = 1;');
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await session.waitFor((buf) => {
+      const match = buf.match(/http:\/\/localhost:(\d+)/);
+      if (match && port === null) port = Number(match[1]);
+      return buf.includes('Press "qq"');
+    }, 'initial no-tests run to complete');
 
-    try {
-      await session.waitFor((buf) => {
-        const match = buf.match(/http:\/\/localhost:(\d+)/);
-        if (match && port === null) port = Number(match[1]);
-        return buf.includes('Press "qq"');
-      }, 'initial no-tests run to complete');
+    assert.includes(session.stdout, '# Warning: 0 tests registered');
 
-      assert.includes(session.stdout, '# Warning: 0 tests registered');
+    // Poll until / serves the amber warning HTML (not the normal QUnit page).
+    const warnBody = await pollUntil(
+      () => fetch(`http://localhost:${port}/`).then((r) => r.text()),
+      (body) => body.includes('Warning: No Tests Registered'),
+      { interval: 50, timeout: 5000, label: 'warning HTML at /' },
+    );
+    assert.includes(warnBody, 'Warning: No Tests Registered');
+    assert.includes(warnBody, '<html');
+    assert.notIncludes(warnBody, 'Build Error:');
 
-      // Poll until / serves the amber warning HTML (not the normal QUnit page).
-      const warnBody = await pollUntil(
-        () => fetch(`http://localhost:${port}/`).then((r) => r.text()),
-        (body) => body.includes('Warning: No Tests Registered'),
-        { interval: 50, timeout: 5000, label: 'warning HTML at /' },
-      );
-      assert.includes(warnBody, 'Warning: No Tests Registered');
-      assert.includes(warnBody, '<html');
-      assert.notIncludes(warnBody, 'Build Error:');
+    // Fix the file — add real tests. Warning must clear and normal page return.
+    await fs.writeFile(testFile, testContent);
+    await waitForRunComplete(session, 2, 're-run after tests added');
 
-      // Fix the file — add real tests. Warning must clear and normal page return.
-      await fs.writeFile(testFile, testContent);
-      await waitForRunComplete(session, 2, 're-run after tests added');
-
-      const okBody = await fetch(`http://localhost:${port}/`).then((r) => r.text());
-      assert.notIncludes(okBody, 'Warning: No Tests Registered');
-    } finally {
-      await session.kill();
-    }
+    const okBody = await fetch(`http://localhost:${port}/`).then((r) => r.text());
+    assert.notIncludes(okBody, 'Warning: No Tests Registered');
   });
 
   test('build error in watch mode serves error HTML at / until the file is fixed', async (assert) => {
     const { dir, testFile, testContent } = await makeWatchProject();
     let port: number | null = null;
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await session.waitFor((buf) => {
+      const match = buf.match(/http:\/\/localhost:(\d+)/);
+      if (match && port === null) port = Number(match[1]);
+      return buf.includes('Press "qq"');
+    }, 'initial run to complete');
 
-    try {
-      await session.waitFor((buf) => {
-        const match = buf.match(/http:\/\/localhost:(\d+)/);
-        if (match && port === null) port = Number(match[1]);
-        return buf.includes('Press "qq"');
-      }, 'initial run to complete');
+    // Trigger a build error
+    await fs.writeFile(testFile, 'this is not valid typescript !!@#$%^&*');
+    await session.waitFor((buf) => buf.includes('esbuild Bundle Error:'), 'build error to appear');
 
-      // Trigger a build error
-      await fs.writeFile(testFile, 'this is not valid typescript !!@#$%^&*');
-      await session.waitFor(
-        (buf) => buf.includes('esbuild Bundle Error:'),
-        'build error to appear',
-      );
+    // Poll until / serves the error HTML.
+    // Race: a single fs.writeFile can produce two inotify events. The second queues as a
+    // pending-trigger rebuild that clears fallbackPage = null at its start before re-setting
+    // it after the second failure. A single fetch right after 'esbuild Bundle Error:'
+    // appears in stdout can land in that brief null window and receive normal HTML.
+    const errorBody = await pollUntil(
+      () => fetch(`http://localhost:${port}/`).then((r) => r.text()),
+      (body) => body.includes('Build Error:'),
+      { interval: 50, timeout: 5000, label: 'error HTML at /' },
+    );
+    assert.includes(errorBody, 'Build Error:', 'error HTML served at / after build error');
+    assert.includes(errorBody, '<html', 'response is HTML, not a TAP stream');
 
-      // Poll until / serves the error HTML.
-      // Race: a single fs.writeFile can produce two inotify events. The second queues as a
-      // pending-trigger rebuild that clears fallbackPage = null at its start before re-setting
-      // it after the second failure. A single fetch right after 'esbuild Bundle Error:'
-      // appears in stdout can land in that brief null window and receive normal HTML.
-      const errorBody = await pollUntil(
-        () => fetch(`http://localhost:${port}/`).then((r) => r.text()),
-        (body) => body.includes('Build Error:'),
-        { interval: 50, timeout: 5000, label: 'error HTML at /' },
-      );
-      assert.includes(errorBody, 'Build Error:', 'error HTML served at / after build error');
-      assert.includes(errorBody, '<html', 'response is HTML, not a TAP stream');
+    // Fix the file — error clears, normal page returns
+    await fs.writeFile(testFile, testContent);
+    await waitForRunComplete(session, 2, 're-run after fix');
 
-      // Fix the file — error clears, normal page returns
-      await fs.writeFile(testFile, testContent);
-      await waitForRunComplete(session, 2, 're-run after fix');
-
-      const okBody = await fetch(`http://localhost:${port}/`).then((r) => r.text());
-      assert.notIncludes(okBody, 'Build Error:', 'error HTML cleared at / after fix');
-    } finally {
-      await session.kill();
-    }
+    const okBody = await fetch(`http://localhost:${port}/`).then((r) => r.text());
+    assert.notIncludes(okBody, 'Build Error:', 'error HTML cleared at / after fix');
   });
 
   test('build error in watch mode sends a WebSocket refresh message to connected clients', async (assert) => {
     const { dir, testFile, testContent } = await makeWatchProject();
     let port: number | null = null;
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await using session = await spawnWatch(['tests', '--watch'], { cwd: dir });
+    await session.waitFor((buf) => {
+      const match = buf.match(/http:\/\/localhost:(\d+)/);
+      if (match && port === null) port = Number(match[1]);
+      return buf.includes('Press "qq"');
+    }, 'initial run to complete');
+
+    const messages: string[] = [];
+    // Callbacks waiting for the next 'refresh' message. Drained and called on each arrival.
+    const refreshWaiters: Array<() => void> = [];
+
+    const ws = new WebSocket(`ws://localhost:${port}`);
+    await new Promise<void>((resolve, reject) => {
+      ws.onopen = () => resolve();
+      ws.onerror = () => reject(new Error('WS connect failed'));
+    });
+    ws.onmessage = (e) => {
+      const data = typeof e.data === 'string' ? e.data : String(e.data);
+      messages.push(data);
+      if (data === 'refresh') {
+        const waiting = refreshWaiters.splice(0);
+        for (const cb of waiting) cb();
+      }
+    };
+
+    // Resolves as soon as messages contains at least n 'refresh' entries, or rejects after 5 s.
+    // Checks immediately so it never sleeps when the message has already arrived.
+    const waitForNRefreshes = (n: number): Promise<void> => {
+      const count = () => messages.filter((m) => m === 'refresh').length;
+      if (count() >= n) return Promise.resolve();
+      return new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error(`timed out waiting for ${n} refresh message(s)`)),
+          5000,
+        );
+        const check = () => {
+          if (count() >= n) {
+            clearTimeout(timer);
+            resolve();
+          } else {
+            refreshWaiters.push(check);
+          }
+        };
+        refreshWaiters.push(check);
+      });
+    };
 
     try {
-      await session.waitFor((buf) => {
-        const match = buf.match(/http:\/\/localhost:(\d+)/);
-        if (match && port === null) port = Number(match[1]);
-        return buf.includes('Press "qq"');
-      }, 'initial run to complete');
+      // Trigger the error and wait reactively for the first refresh — no fixed sleep.
+      // A single fs.writeFile can produce two inotify events; the second queues as a
+      // pending trigger. waitForNRefreshes(1) resolves on the first, and
+      // refreshCountAfterError captures however many actually fired.
+      await fs.writeFile(testFile, 'this is not valid typescript !!@#$%^&*');
+      await session.waitFor(
+        (buf) => buf.includes('esbuild Bundle Error:'),
+        'build error to appear',
+      );
+      await waitForNRefreshes(1);
 
-      const messages: string[] = [];
-      // Callbacks waiting for the next 'refresh' message. Drained and called on each arrival.
-      const refreshWaiters: Array<() => void> = [];
+      const refreshCountAfterError = messages.filter((m) => m === 'refresh').length;
+      assert.ok(refreshCountAfterError >= 1, 'refresh sent to WS client on build error');
 
-      const ws = new WebSocket(`ws://localhost:${port}`);
-      await new Promise<void>((resolve, reject) => {
-        ws.onopen = () => resolve();
-        ws.onerror = () => reject(new Error('WS connect failed'));
-      });
-      ws.onmessage = (e) => {
-        const data = typeof e.data === 'string' ? e.data : String(e.data);
-        messages.push(data);
-        if (data === 'refresh') {
-          const waiting = refreshWaiters.splice(0);
-          for (const cb of waiting) cb();
-        }
-      };
+      // Fix the file. onFinishFunc fires after run returns (after '# duration'
+      // appears). Wait reactively for one more refresh rather than sleeping.
+      await fs.writeFile(testFile, testContent);
+      await waitForRunComplete(session, 2, 're-run after fix');
+      await waitForNRefreshes(refreshCountAfterError + 1);
 
-      // Resolves as soon as messages contains at least n 'refresh' entries, or rejects after 5 s.
-      // Checks immediately so it never sleeps when the message has already arrived.
-      const waitForNRefreshes = (n: number): Promise<void> => {
-        const count = () => messages.filter((m) => m === 'refresh').length;
-        if (count() >= n) return Promise.resolve();
-        return new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(
-            () => reject(new Error(`timed out waiting for ${n} refresh message(s)`)),
-            5000,
-          );
-          const check = () => {
-            if (count() >= n) {
-              clearTimeout(timer);
-              resolve();
-            } else {
-              refreshWaiters.push(check);
-            }
-          };
-          refreshWaiters.push(check);
-        });
-      };
-
-      try {
-        // Trigger the error and wait reactively for the first refresh — no fixed sleep.
-        // A single fs.writeFile can produce two inotify events; the second queues as a
-        // pending trigger. waitForNRefreshes(1) resolves on the first, and
-        // refreshCountAfterError captures however many actually fired.
-        await fs.writeFile(testFile, 'this is not valid typescript !!@#$%^&*');
-        await session.waitFor(
-          (buf) => buf.includes('esbuild Bundle Error:'),
-          'build error to appear',
-        );
-        await waitForNRefreshes(1);
-
-        const refreshCountAfterError = messages.filter((m) => m === 'refresh').length;
-        assert.ok(refreshCountAfterError >= 1, 'refresh sent to WS client on build error');
-
-        // Fix the file. onFinishFunc fires after run returns (after '# duration'
-        // appears). Wait reactively for one more refresh rather than sleeping.
-        await fs.writeFile(testFile, testContent);
-        await waitForRunComplete(session, 2, 're-run after fix');
-        await waitForNRefreshes(refreshCountAfterError + 1);
-
-        assert.ok(
-          messages.filter((m) => m === 'refresh').length > refreshCountAfterError,
-          'additional refresh sent to WS client after successful rebuild',
-        );
-      } finally {
-        ws.close();
-      }
+      assert.ok(
+        messages.filter((m) => m === 'refresh').length > refreshCountAfterError,
+        'additional refresh sent to WS client after successful rebuild',
+      );
     } finally {
-      await session.kill();
+      ws.close();
     }
   });
 });
@@ -845,7 +727,7 @@ function countOccurrences(str: string, needle: string): number {
   return count;
 }
 
-interface WatchSession {
+interface WatchSession extends AsyncDisposable {
   /** Resolves once `condition(accumulatedStdout)` returns true, or rejects after 90s. */
   waitFor(condition: (buf: string) => boolean, description?: string): Promise<string>;
   /** Sends SIGTERM and resolves once the child process has fully exited. */
@@ -940,6 +822,13 @@ async function spawnWatch(
       } finally {
         permit.release();
       }
+    },
+    // What makes `await using session = await spawnWatch(...)` release the browser permit at the
+    // end of the test, however the test ends. The permit is the reason this matters: it comes
+    // from a semaphore capped at availableParallelism(), so a session that is not killed does
+    // not fail its own test — it starves every test that runs after it.
+    [Symbol.asyncDispose]() {
+      return this.kill();
     },
     get stdout() {
       return buf;

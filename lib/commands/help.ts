@@ -4,7 +4,18 @@ import pkg from '../../package.json' with { type: 'json' };
 const highlight = (text: string) => magenta().bold(text);
 const color = (text: string) => blue(text);
 
-/** Prints qunitx-cli usage information to stdout. */
+/**
+ * Prints qunitx-cli usage information to stdout.
+ *
+ * ```ts
+ * import * as Help from './help.ts';
+ *
+ * // Defined, not invoked: prints the full multi-line usage text.
+ * function helpCommand() {
+ *   Help.run(); // [qunitx vX.Y.Z] Usage: qunitx [targets] --$flags …
+ * }
+ * ```
+ */
 export function run() {
   const config = pkg;
 

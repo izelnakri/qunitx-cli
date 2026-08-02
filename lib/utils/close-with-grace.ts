@@ -3,6 +3,10 @@
  * Playwright + HTTP server + Chrome pre-launch, well under the 60 s outer kill the test
  * runner imposes, and tuned around Firefox + Windows where `browser.close()` is known to
  * deadlock for the full 60 s.
+ *
+ * ```ts
+ * CLEANUP_GRACE_MS; // 10_000 — the default `graceMs` of closeWithGrace()
+ * ```
  */
 export const CLEANUP_GRACE_MS = 10_000;
 
@@ -20,6 +24,14 @@ export const CLEANUP_GRACE_MS = 10_000;
  *
  * `null` / `undefined` entries are accepted as-is so optional-chained closes such as
  * `connections.server?.close()` flow in without per-call filtering.
+ *
+ * ```ts
+ * const browserClose = Promise.resolve();
+ * const serverClose: Promise<void> | undefined = undefined; // e.g. connections.server?.close()
+ *
+ * await closeWithGrace([browserClose, serverClose]); // resolves once every close settles
+ * await closeWithGrace([Promise.reject(new Error('wedged'))], 50); // a failing close cannot wedge it
+ * ```
  */
 export function closeWithGrace(
   closes: ReadonlyArray<Promise<unknown> | null | undefined>,

@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
+import * as Result from '../../lib/result/index.ts';
 
 /**
  * Windows error codes for "a handle on this path is still open". All three describe the same
@@ -30,13 +31,14 @@ export async function rmRetry(
     sleep?: (ms: number) => Promise<unknown>;
   } = {},
 ): Promise<void> {
+  // The flat classification line right after the boundary: box, test, rethrow what was not
+  // declared. A non-retryable failure (EACCES, ENOSPC) escapes on the first attempt instead
+  // of burning the whole retry ladder against an error that will never clear.
   for (let attempt = 1; ; attempt++) {
-    try {
-      return await rm(dir);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code ?? '';
-      if (!RETRYABLE_CODES.has(code) || attempt >= attempts) throw error;
-      await sleep(delayMs * attempt);
-    }
+    const removed = await Result.try(rm, dir);
+    if (removed.ok) return;
+    if (!Result.isErrno(removed.error, ...RETRYABLE_CODES)) throw removed.error;
+    if (attempt >= attempts) throw removed.error;
+    await sleep(delayMs * attempt);
   }
 }

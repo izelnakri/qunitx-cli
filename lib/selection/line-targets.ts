@@ -6,6 +6,13 @@ import type { TestDeclaration, DeclarationScan } from './parse-test-declarations
  * One thing a `file#34` target selects. `test` omitted means "this module and everything nested
  * under it" — used for module targets, and as the fallback when a test's name is computed and so
  * cannot be matched exactly.
+ *
+ * ```ts
+ * import * as LineTargets from './line-targets.ts';
+ *
+ * const oneTest: LineTargets.QUnitSelector = { module: 'Cart > totals', test: 'sums line items' };
+ * const wholeModule: LineTargets.QUnitSelector = { module: 'Cart' }; // and everything nested under it
+ * ```
  */
 export interface QUnitSelector {
   /** Full module path, ' > '-joined. '' for a top-level test. */
@@ -14,7 +21,19 @@ export interface QUnitSelector {
   test?: string;
 }
 
-/** Result of resolving a file's line targets into selectors, plus any diagnostics to surface. */
+/**
+ * Result of resolving a file's line targets into selectors, plus any diagnostics to surface.
+ *
+ * ```ts
+ * import * as LineTargets from './line-targets.ts';
+ *
+ * const narrowed: LineTargets.LineTargetResolution = {
+ *   selectors: [{ module: 'Cart', test: 'adds an item' }],
+ *   warnings: [],
+ * };
+ * narrowed.selectors; // null here would mean: run the whole file unfiltered
+ * ```
+ */
 export interface LineTargetResolution {
   /** Selectors to apply, or null to run the whole file unfiltered. */
   selectors: QUnitSelector[] | null;
@@ -29,6 +48,14 @@ export interface LineTargetResolution {
  * test; landing in a `module(...)` but outside every test selects the whole module. Anything that
  * cannot be resolved degrades — to the enclosing module, or to the whole file — and says so,
  * rather than failing the run.
+ *
+ * ```ts
+ * import * as LineTargets from './line-targets.ts';
+ *
+ * const { selectors, warnings } = await LineTargets.resolve('/tmp/qunitx-doc-missing-test.ts', [34]);
+ * selectors; // null — an unreadable file degrades to running the whole file
+ * warnings; // ['could not read /tmp/qunitx-doc-missing-test.ts — running the whole file']
+ * ```
  */
 export async function resolve(
   filePath: string,
@@ -58,6 +85,22 @@ export async function resolve(
  * Resolves line targets against an ALREADY-parsed scan. Split out so `--search`, which has scanned
  * every file for its listing, can resolve line targets without reading and esbuild-transforming
  * those files a second time.
+ *
+ * ```ts
+ * import * as LineTargets from './line-targets.ts';
+ *
+ * import type { DeclarationScan } from './parse-test-declarations.ts';
+ *
+ * const scan: DeclarationScan = {
+ *   hasOnly: false,
+ *   declarations: [
+ *     { kind: 'module', name: 'Cart', startLine: 1, endLine: 20, parent: null },
+ *     { kind: 'test', name: 'adds an item', startLine: 5, endLine: 9, parent: 0 },
+ *   ],
+ * };
+ * LineTargets.selectorsFromScan(scan, [6], 'cart-test.ts').selectors; // [{ module: 'Cart', test: 'adds an item' }]
+ * LineTargets.selectorsFromScan(scan, [15], 'cart-test.ts').selectors; // [{ module: 'Cart' }] — outside every test
+ * ```
  */
 export function selectorsFromScan(
   scan: DeclarationScan,

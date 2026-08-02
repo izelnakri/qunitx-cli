@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { Task } from '../task/index.ts';
 import { readdir, readFile, stat, lstat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -71,6 +72,15 @@ const ADD_SUPPRESS_WINDOW_MS = 1_000;
  * only once its bytes have settled. Bounded by MAX_STABILITY_ATTEMPTS; returns the latest content
  * if it never stabilizes. `read` is injectable for tests; production reads from disk. Read errors
  * propagate so the caller's catch can treat a vanished file as a removal.
+ *
+ * ```ts
+ * import * as FileWatcher from './file-watcher.ts';
+ *
+ * import { Buffer } from 'node:buffer';
+ *
+ * const content = await FileWatcher.readFileStable('/proj/test/cart-test.ts', async () => Buffer.from('settled'));
+ * content.toString(); // 'settled' — two reads 10ms apart returned identical bytes
+ * ```
  */
 export async function readFileStable(
   filePath: string,
@@ -93,14 +103,11 @@ async function dispatchIfContentChanged(
   onEventFunc: (event: string, file: string) => unknown,
   onFinishFunc: ((path: string, event: string) => void) | null | undefined,
 ): Promise<void> {
-  let hash: string;
-  try {
-    hash = createHash('sha1')
-      .update(await readFileStable(filePath))
-      .digest('hex');
-  } catch {
-    return; // file vanished mid-read — the unlink/rename passes handle removal
-  }
+  // Vanished mid-read: the unlink/rename passes own removal, so there is nothing to do here.
+  const hash = await Task(() => readFileStable(filePath))
+    .map((contents) => createHash('sha1').update(contents).digest('hex'))
+    .recover(() => null);
+  if (hash === null) return;
   const hashes = config.state.watch.builtContentHash;
   if (hash === hashes[filePath]) return;
   hashes[filePath] = hash;
@@ -112,6 +119,19 @@ async function dispatchIfContentChanged(
  * debounced via a per-file timestamp. Also watches each path's parent directory to detect when a
  * watched directory is renamed or deleted (since fs.watch tracks by inode, not path).
  * Uses `config.fsTree` to distinguish `unlink` (tracked file) from `unlinkDir` (directory) on deletion.
+ *
+ * ```ts
+ * import * as FileWatcher from './file-watcher.ts';
+ *
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: starts real fs.watch watchers on the lookup paths.
+ * async function watch(config: Config, onEvent: (event: string, file: string) => unknown) {
+ *   const watchers = FileWatcher.setup(config.testFileLookupPaths, config, onEvent, null);
+ *   await watchers.ready; // no event is processed before the content-hash seed completes
+ *   return watchers.killFileWatchers; // teardown: closes every watcher, poller and timer
+ * }
+ * ```
  */
 export function setup(
   testFileLookupPaths: string[],
@@ -139,14 +159,13 @@ export function setup(
   // seed) — which was the hang. Seeding never clobbers a hash a build already recorded.
   const builtContentHash = config.state.watch.builtContentHash;
   const seedPromise = Promise.all(
-    Object.keys(config.fsTree).map(async (filePath) => {
-      try {
-        const buf = await readFile(filePath);
-        builtContentHash[filePath] ??= createHash('sha1').update(buf).digest('hex');
-      } catch {
-        /* unreadable at startup — first real event will be treated as a change */
-      }
-    }),
+    Object.keys(config.fsTree).map(
+      (filePath) =>
+        Task(async () => {
+          const buf = await readFile(filePath);
+          builtContentHash[filePath] ??= createHash('sha1').update(buf).digest('hex');
+        }).ignore('watch hash seed'), // unreadable at startup — the first event reads as a change
+    ),
   );
   const readyPromises: Promise<void>[] = [];
   const parentWatchers: FSWatcher[] = [];
@@ -267,17 +286,18 @@ export function setup(
         const now = Date.now();
         const last = lastEventMs[fullPath] ?? 0;
         lastEventMs[fullPath] = now;
-        try {
+        // Cheap kernel-duplicate filter: identical mtime within the 10ms burst window. Real
+        // content changes are confirmed by hash at dispatch time (see below), so this is only a
+        // fast-path to avoid re-reading the file for obvious inotify/FSEvents dups. An
+        // inaccessible file is not a duplicate — `false` says "proceed" where the old catch
+        // said it by falling out of the block.
+        const duplicate = await Task(async () => {
           const { mtimeMs } = await stat(fullPath);
           const prevMtime = seenMtimeMs[fullPath] ?? 0;
           seenMtimeMs[fullPath] = mtimeMs;
-          // Cheap kernel-duplicate filter: identical mtime within the 10ms burst window.
-          // Real content changes are confirmed by hash at dispatch time (see below), so this
-          // is only a fast-path to avoid re-reading the file for obvious inotify/FSEvents dups.
-          if (now - last < CHANGE_DEDUPE_MS && mtimeMs > 0 && mtimeMs === prevMtime) return;
-        } catch {
-          // File inaccessible — proceed.
-        }
+          return now - last < CHANGE_DEDUPE_MS && mtimeMs > 0 && mtimeMs === prevMtime;
+        }).recover(() => false);
+        if (duplicate) return;
         // Debounce: wait CHANGE_COALESCE_MS for the writeFile burst to settle, then dispatch a
         // rebuild only if the file's CONTENT actually changed (dispatchIfContentChanged hashes
         // it). Each new event resets the timer, so the file is fully written by dispatch time.
@@ -309,12 +329,10 @@ export function setup(
       if (event === 'add') {
         // If the added path is a symlink, set up deletion polling (fs.watch rename events are
         // not fired for symlink unlink on Linux, so polling is the only reliable detection).
-        try {
+        await Task(async () => {
           const lstatResult = await lstat(fullPath);
           if (lstatResult.isSymbolicLink()) trackSymlink(fullPath);
-        } catch {
-          /* path already gone */
-        }
+        }).ignore('watch symlink probe'); // path already gone
       } else if (event === 'unlink') {
         untrackSymlink(fullPath);
       }
@@ -415,12 +433,10 @@ export function setup(
   readyPromises.push(
     (async () => {
       for (const filePath of Object.keys(config.fsTree)) {
-        try {
+        await Task(async () => {
           const lstatResult = await lstat(filePath);
           if (lstatResult.isSymbolicLink()) trackSymlink(filePath);
-        } catch {
-          /* file gone or inaccessible — skip */
-        }
+        }).ignore('watch symlink seed'); // gone or inaccessible — skip
       }
     })(),
   );
@@ -445,6 +461,17 @@ export function setup(
  * Routes a file-system event to fsTree mutation and optional rebuild trigger.
  * `unlinkDir` bypasses the extension filter so deleted directories always clean up fsTree.
  * When a build is already in progress, queues the event as a pending trigger (last-write-wins).
+ *
+ * ```ts
+ * import * as FileWatcher from './file-watcher.ts';
+ *
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: mutates the live fsTree and dispatches a rebuild.
+ * function onSave(config: Config, rebuild: (event: string, file: string) => Promise<void>) {
+ *   return FileWatcher.handleWatchEvent(config, ['js', 'ts'], 'change', '/proj/test/cart-test.ts', rebuild, null);
+ * }
+ * ```
  */
 export function handleWatchEvent(
   config: Config,
@@ -539,12 +566,42 @@ export function handleWatchEvent(
 }
 
 /**
+ * The `fs` calls `rescanDirectoryForDelta` makes — injectable so a platform-specific
+ * readdir/stat disagreement can be reproduced deterministically. Production uses the real fs.
+ *
+ * ```ts
+ * import * as FileWatcher from './file-watcher.ts';
+ *
+ * import { readdir, stat } from 'node:fs/promises';
+ *
+ * const deps: FileWatcher.RescanDeps = { readdir, stat }; // the production default; tests inject fakes
+ * ```
+ */
+export interface RescanDeps {
+  /** Lists the directory tree. Its dirent types are unreliable on Windows — see `isMissing`. */
+  readdir: typeof readdir;
+  /** Resolves a path (follows symlinks). Used to drop entries that are genuinely gone. */
+  stat: typeof stat;
+}
+
+/**
  * Scans `watchPath` recursively and fires `add` / `change` / `unlink` events for any delta
  * between the directory contents and `config.fsTree`. Used as a 1 s safety-net poll on macOS
  * where FSEvents can drop events under load — additions and removals are recovered from the
  * directory listing, and modifications are recovered by re-stat'ing every tracked file and
  * firing `change` whenever its mtime is newer than `config.state.watch.lastBuildEndMs` (the moment the
  * last build saw the file). The seed for that baseline is set in {@link setup}.
+ *
+ * ```ts
+ * import * as FileWatcher from './file-watcher.ts';
+ *
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: walks the real directory tree.
+ * function rescan(config: Config, onEvent: (event: string, file: string) => unknown) {
+ *   return FileWatcher.rescanDirectoryForDelta('/proj/test', config, ['js', 'ts'], onEvent, null);
+ * }
+ * ```
  */
 export async function rescanDirectoryForDelta(
   watchPath: string,
@@ -553,9 +610,10 @@ export async function rescanDirectoryForDelta(
   onEventFunc: (event: string, file: string) => unknown,
   onFinishFunc: ((path: string, event: string) => void) | null | undefined,
   trackSymlinkFn?: (filePath: string) => void,
+  deps: RescanDeps = { readdir, stat },
 ): Promise<void> {
   try {
-    const entries = await readdir(watchPath, { withFileTypes: true, recursive: true });
+    const entries = await deps.readdir(watchPath, { withFileTypes: true, recursive: true });
     const presentPaths = new Set<string>();
     // presentDirs tracks every directory confirmed present on disk — used below to detect which
     // ancestor directory was removed without issuing additional stat() calls.
@@ -571,14 +629,18 @@ export async function rescanDirectoryForDelta(
       const entryPath = path.join(entry.parentPath, entry.name);
       presentDirs.add(entry.parentPath);
       if (!extensions.some((ext) => entryPath.endsWith(`.${ext}`))) continue;
-      // A symlink counts as present only if it resolves. readdir's isSymbolicLink() is
-      // lstat-based and says nothing about the target, so without this a dangling link is
-      // added to the tree here and then unlinked again as soon as the symlink poller notices
-      // — two spurious rebuilds — and this path contradicts FSTree.build and
-      // classifyRenameEvent, which both stat and skip it. Only paid per symlink, and only on
-      // the rescan path. Leaving it out of presentPaths is also what makes a tracked symlink
-      // whose target has since been deleted fire its unlink below.
-      if (entry.isSymbolicLink() && !(await resolves(entryPath))) continue;
+      // A path counts as present only if it resolves. This must NOT gate on
+      // `entry.isSymbolicLink()`: readdir's dirent type is unreliable on Windows, where a
+      // dangling symlink is a broken reparse point reported as a plain FILE — so the old
+      // symlink-gated check let the broken path in here, added it to the tree, and every
+      // rebuild then failed with "Could not resolve <path>" (the Windows CI flake). Stat every
+      // candidate instead and drop the ones that are genuinely gone — a dangling symlink, or a
+      // file removed since the readdir that listed it — whatever readdir called them. Dropping
+      // is also what makes a tracked symlink whose target was deleted fire its unlink below. A
+      // *transient* stat error (EMFILE/EACCES under load) is not ENOENT, so a real, existing
+      // file stays present and is never spuriously unlinked. FSTree.build and
+      // classifyRenameEvent already stat-and-skip on their own paths; this aligns the rescan.
+      if (await isMissing(entryPath, deps.stat)) continue;
       presentPaths.add(entryPath);
       if (!(entryPath in config.fsTree)) {
         if (entry.isSymbolicLink()) trackSymlinkFn?.(entryPath);
@@ -595,15 +657,14 @@ export async function rescanDirectoryForDelta(
     // write from an untouched file, so pre-existing files are never spuriously rebuilt.
     const buildEndMs = config.state.watch.lastBuildEndMs;
     await Promise.all(
-      trackedToRecheck.map(async (filePath) => {
-        try {
-          const { mtimeMs } = await stat(filePath);
+      trackedToRecheck.map((filePath) =>
+        Task(async () => {
+          const { mtimeMs } = await deps.stat(filePath);
           if (mtimeMs < buildEndMs - RESCAN_MTIME_GRACE_MS) return;
           await dispatchIfContentChanged(config, extensions, filePath, onEventFunc, onFinishFunc);
-        } catch {
-          /* file disappeared between readdir and stat — handled by the unlink pass below */
-        }
-      }),
+          // Disappeared between readdir and stat — the unlink pass below owns it.
+        }).ignore('watch rescan recheck'),
+      ),
     );
     const watchPrefix = watchPath + path.sep;
     // For each missing tracked path, walk up toward watchPath using presentDirs (O(1) Set
@@ -633,6 +694,14 @@ export async function rescanDirectoryForDelta(
 
 /**
  * Mutates `fsTree` in place based on a file-system event.
+ *
+ * ```ts
+ * import * as FileWatcher from './file-watcher.ts';
+ *
+ * const fsTree = { '/proj/test/a-test.ts': null, '/proj/test/sub/b-test.ts': null };
+ * FileWatcher.mutateFSTree(fsTree, 'unlinkDir', '/proj/test/sub');
+ * Object.keys(fsTree); // ['/proj/test/a-test.ts'] — the subtree's entries are gone
+ * ```
  */
 export function mutateFSTree(fsTree: FSTree, event: string, filePath: string): void {
   if (event === 'add') {
@@ -656,12 +725,23 @@ export function mutateFSTree(fsTree: FSTree, event: string, filePath: string): v
  * Retries once after 50ms for overlayfs (Docker CI) copy-on-write transient unavailability.
  * Returns null when the path is unknown and has no tracked children (safe to ignore).
  */
-/** Whether the path resolves — stat follows symlinks, so a dangling link answers false. */
-function resolves(filePath: string): Promise<boolean> {
-  return stat(filePath).then(
-    () => true,
-    () => false,
-  );
+/**
+ * Whether `filePath` is genuinely absent — a dangling symlink (stat follows the link to a
+ * missing target) or a file removed since the readdir that listed it. Both answer `ENOENT`.
+ *
+ * A *transient* stat error (`EMFILE`/`EACCES` under load) is deliberately NOT treated as
+ * absent: it answers `false`, so a real, existing file stays present and is never dropped from
+ * the tree and unlinked. That distinction is what lets the caller stat every candidate — rather
+ * than only readdir-typed symlinks — without a blanket "drop anything that fails to stat"
+ * spuriously unlinking a file under momentary fs pressure.
+ */
+function isMissing(filePath: string, statFn: typeof stat): Task<boolean, never> {
+  // The recover stays a predicate, and that is load-bearing: ENOENT means the path is genuinely
+  // gone, while EACCES or a transient EMFILE mean it is still there and we simply could not look.
+  // Collapsing them to `true` is the Windows CI flake this guards.
+  return Task(() => statFn(filePath))
+    .map(() => false)
+    .recover((error) => (error as NodeJS.ErrnoException).code === 'ENOENT');
 }
 
 async function classifyRenameEvent(
@@ -703,6 +783,13 @@ function colorEvent(event: string): unknown {
  * Maps a lookup path to a path fs.watch can actually watch. A real file or directory is returned
  * as-is; a glob is walked up to the deepest ancestor directory that exists — its base dir — which
  * fs.watch can watch recursively (`test/x/!(plugin).ts` collapses to `test/x`).
+ *
+ * ```ts
+ * import * as FileWatcher from './file-watcher.ts';
+ *
+ * FileWatcher.toWatchableRoot('/tmp'); // '/tmp' — a real path is watchable as-is
+ * FileWatcher.toWatchableRoot('/tmp/absent/!(skip)-test.ts'); // '/tmp' — a glob collapses to its deepest existing ancestor
+ * ```
  */
 export function toWatchableRoot(lookupPath: string): string {
   if (fs.existsSync(lookupPath)) return lookupPath;

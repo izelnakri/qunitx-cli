@@ -4,10 +4,22 @@ const UNIT_TO_MS: Record<string, number> = { ms: 1, s: 1_000, m: 60_000, h: 3_60
  * Default daemon idle window: 30 minutes after the last run finishes. Long enough
  * for typical edit/run/edit bursts, short enough that a forgotten daemon reclaims
  * resources without manual intervention.
+ *
+ * ```ts
+ * DEFAULT_IDLE_TIMEOUT_MS; // 1_800_000 — 30 minutes
+ * ```
  */
 export const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
-/** Result of {@link parseIdleTimeout}: the resolved idle window plus an optional human-readable warning the caller should surface to the user. */
+/**
+ * Result of {@link parseIdleTimeout}: the resolved idle window plus an optional human-readable warning the caller should surface to the user.
+ *
+ * ```ts
+ * const parsed: ParsedIdleTimeout = parseIdleTimeout('45s');
+ * parsed.ms; // 45_000
+ * parsed.warning; // null
+ * ```
+ */
 export interface ParsedIdleTimeout {
   /** Milliseconds. `Infinity` when the user opts out of auto-shutdown via `"false"`. */
   ms: number;
@@ -35,6 +47,13 @@ export interface ParsedIdleTimeout {
  * user does need feedback that their override was ignored.
  *
  * Pure: no side effects, no env access — caller passes the raw value.
+ *
+ * ```ts
+ * parseIdleTimeout('30').ms; // 1_800_000 — bare number means minutes
+ * parseIdleTimeout('500ms').ms; // 500
+ * parseIdleTimeout('false').ms; // Infinity — no auto-shutdown
+ * parseIdleTimeout('soon').warning; // '⚠ qunitx: … not a valid duration; using 30-minute default …'
+ * ```
  */
 export function parseIdleTimeout(value: string | undefined): ParsedIdleTimeout {
   if (!value) return { ms: DEFAULT_IDLE_TIMEOUT_MS, warning: null };

@@ -21,6 +21,18 @@ const NEEDS_QUOTING =
 /**
  * Serializes the fixed TAP assertion object to a YAML string.
  * Uses a template literal (no Object.entries overhead) for the known top-level keys.
+ *
+ * ```ts
+ * import * as TAP from './index.ts';
+ *
+ * TAP.dumpYaml({
+ *   name: 'Assertion #1', actual: 3, expected: 4, message: 'bad sum',
+ *   stack: null, source: null, at: 'lib/math.ts:4:3',
+ * });
+ * // "name: 'Assertion #1'\nactual: 3\nexpected: 4\nmessage: bad sum\nat: lib/math.ts:4:3\n"
+ * // — null supplementary fields (stack, source) are omitted
+ * ```
+ *
  * @returns {string}
  */
 export function dumpYaml({

@@ -12,8 +12,12 @@ import * as Config from '../../setup/config.ts';
 import * as Browser from '../../setup/browser.ts';
 import { DaemonRunError } from '../run/tests-in-browser.ts';
 import { run } from '../run.ts';
+import { borrowArgv, borrowEnv } from '../../utils/borrowed-globals.ts';
+import * as Result from '../../result/index.ts';
+import { Failure } from '../../result/index.ts';
 import type { Request, ResponseChunk, RunRequest, DaemonInfo } from './protocol.ts';
 import type { Browser as PlaywrightBrowser } from 'playwright-core';
+import { Task } from '../../task/index.ts';
 import type {
   Config as ResolvedConfig,
   EsbuildCache,
@@ -33,67 +37,17 @@ const IDLE_TIMEOUT_MS = parseIdleTimeout(process.env.QUNITX_DAEMON_IDLE_TIMEOUT)
 const MAX_CONSECUTIVE_CRASHES = 2;
 
 /**
- * Atomic at-most-one-daemon lock acquisition via tmpfile-then-link — the
- * canonical POSIX pattern for "publish a file with content atomically."
- * `link(tmp, target)` either succeeds (target dirent now points at the
- * already-populated inode) or fails EEXIST (someone else got there first).
- * Whoever links `${infoPath}.lock` wins; losers exit 0 and their client
- * still finds the winner's info file via the existing spawn-poll.
+ * All state one daemon process owns; `serve()` constructs the single instance and
+ * threads it through every handler.
  *
- * Needed because Deno's `net.Server.listen()` on Unix domain sockets does
- * NOT enforce single-bind from the compiled binary: two daemons can both
- * `await listen()` successfully on the same path. Verified locally — Node
- * returns EADDRINUSE to the loser 5/5; `deno compile`d binary lets both
- * pass 5/5. Race resolution moves off the socket onto a lockfile without
- * changing the client contract (info file still means "ready").
+ * ```ts
+ * import type * as Server from './server.ts';
  *
- * Why not `writeFile(..., { flag: 'wx' })`: that's `O_CREAT | O_EXCL` plus
- * a separate `write(2)`. The create is atomic but the content arrives a
- * few microseconds later — a contender that lands in that window reads
- * empty content, parses pid as NaN, decides the lock is stale (owner not
- * alive), unlinks the live lock and "wins" too. Observed in CI as both
- * daemons surviving the race (run 26013489092 on the Node lane).
- *
- * Stale-lock recovery: the lockfile content is the owning pid. A contender
- * reads it, checks `process.kill(pid, 0)`, and unlinks + retries once if
- * the pid is dead — covers daemons that crashed before reaching shutdown.
+ * // Internal — a snapshot of the lifecycle flags the handlers coordinate on.
+ * const flags = { shuttingDown: false, consecutiveCrashes: 0, listenSucceeded: true };
+ * flags.consecutiveCrashes; // 0 — reset after any run that leaves the browser connected
+ * ```
  */
-async function tryAcquireDaemonLock(lockPath: string): Promise<boolean> {
-  // Fast path: existing live lock means we lose without doing any work.
-  let ownerPid = Number((await readFile(lockPath, 'utf8').catch(() => '')).trim());
-  if (ownerPid > 0 && isProcessAlive(ownerPid)) return false;
-
-  const tmpPath = `${lockPath}.${process.pid}.tmp`;
-  await writeFile(tmpPath, String(process.pid));
-  try {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        await link(tmpPath, lockPath);
-        return true;
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-        ownerPid = Number((await readFile(lockPath, 'utf8').catch(() => '')).trim());
-        if (ownerPid > 0 && isProcessAlive(ownerPid)) return false;
-        await unlink(lockPath).catch(() => {});
-      }
-    }
-    return false;
-  } finally {
-    // Drop the second hardlink. On success the inode lives on via lockPath
-    // until shutdown unlinks it; on failure tmpPath was the only ref
-    // and unlinking here reaps the inode.
-    await unlink(tmpPath).catch(() => {});
-  }
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    return process.kill(pid, 0);
-  } catch {
-    return false;
-  }
-}
-
 interface DaemonState {
   /**
    * Resolved Chrome handle. `null` until the initial in-flight launch settles
@@ -158,6 +112,15 @@ interface DaemonState {
  * Daemon process entry point. Owns one persistent Chrome and one Unix socket; serves
  * `run` requests serially. Shuts down on SIGTERM/SIGINT, idle timeout, package.json
  * mutation, node version mismatch, or an explicit `shutdown` request.
+ *
+ * ```ts
+ * import type * as Server from './server.ts';
+ *
+ * // Defined, not invoked: binds the per-cwd socket and launches a persistent Chrome.
+ * async function daemonEntry(start: typeof Server.serve) {
+ *   await start(); // never resolves — the daemon exits via shutdown()
+ * }
+ * ```
  */
 export async function serve(): Promise<void> {
   const cwd = process.cwd();
@@ -198,14 +161,12 @@ export async function serve(): Promise<void> {
   // Config.setup reads process.argv directly; the daemon's actual argv is `daemon _serve`
   // which would be parsed as test paths. Strip it for the startup config — we only need
   // the browser type here. Per-run argv comes from the client via runOnce.
-  const argvSnapshot = process.argv;
-  process.argv = [argvSnapshot[0], argvSnapshot[1] ?? 'cli.ts'];
-  let baseConfig;
-  try {
-    baseConfig = await Config.setup();
-  } finally {
-    process.argv = argvSnapshot;
-  }
+  using _argv = borrowArgv([process.argv[0], process.argv[1] ?? 'cli.ts']);
+  const configured = await Config.setup().result();
+  // Startup, not a client run: argv is stripped to nothing here, so the only way this fails is
+  // a broken QUNITX_BROWSER or a plugin the project cannot load — in both cases the daemon has
+  // nothing valid to serve, and refusing to start beats accepting runs it will fail.
+  const baseConfig = Result.expect(configured, 'daemon could not assemble its startup config');
   // baseConfig is only ever handed to Browser.launch (initial launch + crash recovery), never
   // to run() — so it needs no daemon handles. watch/open still matter: Browser.launch derives
   // `headless` from them.
@@ -272,7 +233,8 @@ export async function serve(): Promise<void> {
   // Lock guarantees we're the sole daemon for this cwd — any socket file at the
   // path is from a crashed previous daemon (its lockfile would have been stale-
   // recovered above). Unlink so the bind below creates a fresh dirent.
-  if (fs.existsSync(socketPath)) await unlink(socketPath).catch(() => {});
+  if (fs.existsSync(socketPath))
+    await Task(unlink(socketPath)).ignore('stale daemon socket unlink');
   await listen(state.socketServer, socketPath);
   // Set the ownership flag in the same microtask as listen()'s resolution. Signals
   // are delivered as macrotasks; they cannot interleave between two synchronous
@@ -281,7 +243,8 @@ export async function serve(): Promise<void> {
   // chmod after listen — listen creates the socket file with the default umask, which
   // can leave it world-readable. Skipped on Windows: named pipe paths don't accept
   // POSIX modes and chmod returns EPERM/EINVAL for them.
-  if (process.platform !== 'win32') await chmod(socketPath, 0o600).catch(() => {});
+  if (process.platform !== 'win32')
+    await Task(chmod(socketPath, 0o600)).ignore('daemon socket chmod');
 
   const info: DaemonInfo = {
     pid: process.pid,
@@ -318,6 +281,15 @@ function listen(server: net.Server, socketPath: string): Promise<void> {
  * the browser/esbuild within a bounded grace, then exits. Idempotent via `state.shuttingDown`.
  * `exit` is injectable only so the shutdown ordering can be tested without killing the test
  * process; production always uses the default. See test/commands/daemon-shutdown-test.ts.
+ *
+ * ```ts
+ * import type * as Server from './server.ts';
+ *
+ * // Defined, not invoked: closes the socket server and browser, then exits the process.
+ * async function stopOnSignal(stop: typeof Server.shutdown, state: Parameters<typeof Server.shutdown>[0]) {
+ *   await stop(state, 'SIGTERM');
+ * }
+ * ```
  */
 export async function shutdown(
   state: DaemonState,
@@ -362,16 +334,16 @@ export async function shutdown(
       new Promise<null>((resolve) => setTimeout(() => resolve(null), SHUTDOWN_BROWSER_GRACE_MS)),
     ]));
   await Promise.all([
-    state.pageSlot.page?.close().catch(() => {}),
+    Task(state.pageSlot.page?.close()).ignore('daemon page close'),
     // browser may be null if the launch hadn't settled within the grace window
     // (or never started at all); the chrome-prelaunch exit hook handles that.
-    browser?.close().catch(() => {}),
-    state.esbuildCache.context?.dispose().catch(() => {}),
+    Task(browser?.close()).ignore('daemon browser close'),
+    Task(state.esbuildCache.context?.dispose()).ignore('daemon esbuild context dispose'),
   ]);
   // Best-effort cleanup of the per-cwd daemon dir created in run. rmdir refuses
   // non-empty dirs (we swallow the ENOTEMPTY) so a concurrent sibling that re-created files inside
   // is never trampled. socketPath lives outside Paths.dir, so the dir is empty after the unlinks.
-  await rmdir(Paths.dir(process.cwd())).catch(() => {});
+  await Task(rmdir(Paths.dir(process.cwd()))).ignore('daemon run dir rmdir');
   exit();
 }
 
@@ -381,12 +353,22 @@ export async function shutdown(
  * (e.g. an early throw) doesn't own them, and unlinking would corrupt whatever started in its
  * place. The lock IS ours unconditionally: reaching shutdown means tryAcquireDaemonLock returned
  * true, so always release it or the next spawn has to stale-pid-recover.
+ *
+ * ```ts
+ * import type * as Server from './server.ts';
+ *
+ * type State = Parameters<typeof Server.removeLivenessFiles>[0];
+ * // Defined, not invoked: unlinks socket + info (when owned) and always the lock.
+ * async function releaseMarkers(remove: typeof Server.removeLivenessFiles, state: State) {
+ *   await remove(state); // before the slow browser teardown, so clients see "gone" fast
+ * }
+ * ```
  */
 export async function removeLivenessFiles(state: DaemonState): Promise<void> {
   await Promise.all([
-    state.listenSucceeded ? unlink(state.socketPath).catch(() => {}) : null,
-    state.listenSucceeded ? unlink(state.infoPath).catch(() => {}) : null,
-    unlink(state.lockPath).catch(() => {}),
+    state.listenSucceeded ? Task(unlink(state.socketPath)).ignore('daemon socket unlink') : null,
+    state.listenSucceeded ? Task(unlink(state.infoPath)).ignore('daemon info file unlink') : null,
+    Task(unlink(state.lockPath)).ignore('daemon lock unlink'),
   ]);
 }
 
@@ -581,6 +563,13 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
  * ms even on a loaded runner, so this is generous headroom: if it elapses, the browser is
  * dead (or wedged) and recovery relaunches a fresh one. Kept well under GROUP_TIMEOUT_MS so
  * a doomed browser surfaces in seconds, not the 3-minute last-resort deadline.
+ *
+ * ```ts
+ * import type * as Server from './server.ts';
+ *
+ * const budgetMs: typeof Server.BROWSER_PROBE_TIMEOUT_MS = 3_000; // the probe's upper bound
+ * budgetMs; // 3000
+ * ```
  */
 export const BROWSER_PROBE_TIMEOUT_MS = 3_000;
 
@@ -591,6 +580,16 @@ export const BROWSER_PROBE_TIMEOUT_MS = 3_000;
  * channel resolves `false` within the budget rather than hanging. Chromium-only:
  * firefox/webkit use a pipe transport whose 'disconnected' fires promptly on
  * process exit, so `isConnected()` is already reliable there.
+ *
+ * ```ts
+ * import type * as Server from './server.ts';
+ *
+ * import type { Browser } from 'playwright-core';
+ * // Defined, not invoked: bounded CDP round-trip against the daemon's persistent browser.
+ * async function probeBeforeRun(probe: typeof Server.browserResponsive, browser: Browser) {
+ *   return await probe(browser, 'chromium'); // false within 3s when the channel is dead
+ * }
+ * ```
  */
 export async function browserResponsive(
   browser: Pick<PlaywrightBrowser, 'isConnected'> & {
@@ -612,12 +611,12 @@ export async function browserResponsive(
   const winner = await Promise.race([probe, timeout]);
   if (winner) {
     // Healthy: tidy up the probe session so it doesn't leak across runs.
-    void winner.detach().catch(() => {});
+    Task(winner.detach()).ignore('browser probe session detach');
     return true;
   }
   // Not responsive within budget (dead channel or CDP error). If the probe was merely
   // slow and resolves a session after the timeout, detach it so it doesn't leak.
-  void probe.then((session) => session?.detach().catch(() => {}));
+  void probe.then((session) => Task(session?.detach()).ignore('late browser probe session detach'));
   return false;
 }
 
@@ -637,7 +636,7 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
   // CDP socket hangs forever waiting for a protocol reply that never arrives.
   // skipPrelaunch=true bypasses the singleton prelaunch endpoint (which now points at the
   // dead Chrome) and goes straight to a fresh chromium.launch().
-  state.browser?.close().catch(() => {});
+  Task(state.browser?.close()).ignore('crashed browser close');
   // The persistent page belongs to the dead browser; drop the reference so the
   // next Browser.setup mints a fresh page on the new browser without paying an
   // isConnected() round-trip on a doomed CDP socket.
@@ -672,21 +671,25 @@ async function runOnce(
   env: Record<string, string | undefined>,
   state: DaemonState,
 ): Promise<number> {
-  // Snapshot env + argv, swap in client values, restore on exit. Snapshot is also the
-  // baseline so before-hook env mutations don't bleed across runs.
-  const envSnapshot = { ...process.env };
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) process.env[key] = value;
-  }
-  const argvSnapshot = process.argv;
-  process.argv = ['node', argvSnapshot[1] ?? 'cli.ts', ...argv];
+  // Both globals are lent for the whole call and given back however it ends. They used to be
+  // restored by two separate mechanisms at three separate places, and `env` was not among them
+  // when `Config.setup()` THREW — the argv `finally` ran, the exception left runOnce, and that
+  // client's environment stayed on the daemon for every later run.
+  using _env = borrowEnv(env);
+  using _argv = borrowArgv(['node', process.argv[1] ?? 'cli.ts', ...argv]);
 
-  let config: ResolvedConfig;
-  try {
-    config = await Config.setup();
-  } finally {
-    process.argv = argvSnapshot;
+  const configured = (await Config.setup().result()) as Result.Result<
+    ResolvedConfig,
+    Config.ConfigFailure
+  >;
+  // A bad flag from one client is that client's problem, not the daemon's. This is the whole
+  // reason config assembly returns instead of exiting: `process.exit(1)` inside `Args.parse`
+  // would have taken down a daemon serving every other invocation in the project.
+  if (Failure.is(configured)) {
+    process.stderr.write(`${Failure.format(configured)}\n`);
+    return 1;
   }
+  const config = configured;
 
   // Lending the daemon's persistent handles to this run also marks it as a daemon run:
   // a non-null state.daemon makes run() reuse the browser rather than launching one, throw
@@ -711,12 +714,6 @@ async function runOnce(
   } catch (err) {
     if (err instanceof DaemonRunError) return err.exitCode;
     throw err;
-  } finally {
-    // Restore env: drop keys added during the run, restore changed values.
-    for (const key of Object.keys(process.env)) {
-      if (!(key in envSnapshot)) delete process.env[key];
-    }
-    Object.assign(process.env, envSnapshot);
   }
 }
 
@@ -725,5 +722,67 @@ async function readPkgMtime(cwd: string): Promise<number> {
     return (await stat(path.join(cwd, 'package.json'))).mtimeMs;
   } catch {
     return 0;
+  }
+}
+
+/**
+ * Atomic at-most-one-daemon lock acquisition via tmpfile-then-link — the
+ * canonical POSIX pattern for "publish a file with content atomically."
+ * `link(tmp, target)` either succeeds (target dirent now points at the
+ * already-populated inode) or fails EEXIST (someone else got there first).
+ * Whoever links `${infoPath}.lock` wins; losers exit 0 and their client
+ * still finds the winner's info file via the existing spawn-poll.
+ *
+ * Needed because Deno's `net.Server.listen()` on Unix domain sockets does
+ * NOT enforce single-bind from the compiled binary: two daemons can both
+ * `await listen()` successfully on the same path. Verified locally — Node
+ * returns EADDRINUSE to the loser 5/5; `deno compile`d binary lets both
+ * pass 5/5. Race resolution moves off the socket onto a lockfile without
+ * changing the client contract (info file still means "ready").
+ *
+ * Why not `writeFile(..., { flag: 'wx' })`: that's `O_CREAT | O_EXCL` plus
+ * a separate `write(2)`. The create is atomic but the content arrives a
+ * few microseconds later — a contender that lands in that window reads
+ * empty content, parses pid as NaN, decides the lock is stale (owner not
+ * alive), unlinks the live lock and "wins" too. Observed in CI as both
+ * daemons surviving the race (run 26013489092 on the Node lane).
+ *
+ * Stale-lock recovery: the lockfile content is the owning pid. A contender
+ * reads it, checks `process.kill(pid, 0)`, and unlinks + retries once if
+ * the pid is dead — covers daemons that crashed before reaching shutdown.
+ */
+async function tryAcquireDaemonLock(lockPath: string): Promise<boolean> {
+  // Fast path: existing live lock means we lose without doing any work.
+  let ownerPid = Number((await readFile(lockPath, 'utf8').catch(() => '')).trim());
+  if (ownerPid > 0 && isProcessAlive(ownerPid)) return false;
+
+  const tmpPath = `${lockPath}.${process.pid}.tmp`;
+  await writeFile(tmpPath, String(process.pid));
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await link(tmpPath, lockPath);
+        return true;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+        ownerPid = Number((await readFile(lockPath, 'utf8').catch(() => '')).trim());
+        if (ownerPid > 0 && isProcessAlive(ownerPid)) return false;
+        await Task(unlink(lockPath)).ignore('stale daemon lock unlink');
+      }
+    }
+    return false;
+  } finally {
+    // Drop the second hardlink. On success the inode lives on via lockPath
+    // until shutdown unlinks it; on failure tmpPath was the only ref
+    // and unlinking here reaps the inode.
+    await Task(unlink(tmpPath)).ignore('daemon lock tmpfile unlink');
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    return process.kill(pid, 0);
+  } catch {
+    return false;
   }
 }

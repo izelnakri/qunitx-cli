@@ -1,11 +1,11 @@
 /**
  * Returns a timer object with a `startTime` Date and a `stop()` method that returns elapsed milliseconds.
- * @example
- * ```js
- * import * as TimeCounter from './lib/utils/time-counter.ts';
+ *
+ * ```ts
+ * import * as TimeCounter from './time-counter.ts';
+ *
  * const timer = TimeCounter.start();
- * const ms = timer.stop();
- * console.assert(ms >= 0);
+ * timer.stop(); // elapsed milliseconds since start() — ≥ 0
  * ```
  * @returns {{ startTime: Date, stop: () => number }}
  */

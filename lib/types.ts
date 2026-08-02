@@ -11,6 +11,12 @@ import type { FailedTestRecord } from './utils/failure-cache.ts';
 /**
  * Running totals of test outcomes for a single test run.
  * Mutated in place as TAP events arrive from the browser.
+ *
+ * ```ts
+ * const counter: Counter =
+ *   { testCount: 3, failCount: 1, skipCount: 0, todoCount: 0, passCount: 2, errorCount: 0 };
+ * counter.testCount; // 3 — the sum of the pass/fail/skip/todo buckets
+ * ```
  */
 export interface Counter {
   /** Total number of test cases registered. */
@@ -30,6 +36,11 @@ export interface Counter {
 /**
  * Snapshot of the project's file-system structure: a map of relative paths to `null`.
  * Diffed against a fresh snapshot in watch mode to detect added or removed test files.
+ *
+ * ```ts
+ * const tree: FSTree = { 'test/cart-test.ts': null, 'test/user-test.ts': null };
+ * 'test/cart-test.ts' in tree; // true — membership is the only question a snapshot answers
+ * ```
  */
 export type FSTree = Record<string, null>;
 
@@ -38,6 +49,12 @@ export type FSTree = Record<string, null>;
  * Two lifetimes share this shape: the per-process one on {@link BuildState} (watch mode)
  * and the daemon's persistent one, which survives across runs. `buildIncrementally` takes
  * either — it disposes and recreates the context whenever the key changes.
+ *
+ * ```ts
+ * const cache: EsbuildCache = { context: null };
+ * cache.contextKey = ['a-test.ts', 'b-test.ts'].join('\0');
+ * cache.contextKey === ['a-test.ts'].join('\0'); // false — file set changed, context is stale
+ * ```
  */
 export interface EsbuildCache {
   /** Live esbuild incremental context, or `null`/absent before the first build. */
@@ -50,6 +67,11 @@ export interface EsbuildCache {
  * One group's esbuild output and in-flight build bookkeeping, kept warm between watch-mode
  * rebuilds. Lives at `state.group.build`, so it shares the group's lifetime rather than being
  * threaded alongside the config as a second, independently-passable bag.
+ *
+ * ```ts
+ * const build: BuildState = { allTestCode: null, htmlPathsToRunTests: [], lastBuildErrored: false };
+ * build.allTestCode; // null — nothing compiled yet, the first build fills it
+ * ```
  */
 export interface BuildState extends EsbuildCache {
   /** Full test bundle source, or `null` before the first build completes. */
@@ -87,6 +109,16 @@ export interface BuildState extends EsbuildCache {
 /**
  * The run's resolved HTML fixtures and the assets they reference. Populated once by
  * `buildCachedContent` and not written again, so every concurrent group can share one copy.
+ *
+ * ```ts
+ * const htmlAssets: HtmlAssets = {
+ *   assets: new Set(['/app.css']),
+ *   mainHTML: { filePath: null, html: null },
+ *   staticHTMLs: {},
+ *   dynamicContentHTMLs: {},
+ * };
+ * htmlAssets.assets.has('/app.css'); // true — served alongside the fixture that references it
+ * ```
  */
 export interface HtmlAssets {
   /** Asset paths (scripts, stylesheets) discovered inside the user's HTML fixture. */
@@ -99,7 +131,17 @@ export interface HtmlAssets {
   dynamicContentHTMLs: Record<string, string>;
 }
 
-/** An esbuild failure, captured for display on the run's error page. */
+/**
+ * An esbuild failure, captured for display on the run's error page.
+ *
+ * ```ts
+ * const error: BuildError = {
+ *   type: 'Build Error',
+ *   formatted: '✘ [ERROR] Could not resolve "./missing.ts"',
+ * };
+ * error.type; // 'Build Error' — becomes the fallback page's heading
+ * ```
+ */
 export interface BuildError {
   /** Short error class used as the page heading (e.g. `'Build Error'`). */
   type: string;
@@ -114,6 +156,11 @@ export interface BuildError {
  * A single slot rather than two: both conditions can be live at once (a run that registers no
  * tests and then throws), and every reader has always checked the build error first — so
  * last-write-wins on one slot reproduces that precedence, with the throw overwriting the warning.
+ *
+ * ```ts
+ * const fallback: FallbackPage = { kind: 'no-tests', files: ['test/empty-test.ts'] };
+ * if (fallback.kind === 'no-tests') fallback.files; // `kind` narrows — ['test/empty-test.ts']
+ * ```
  */
 export type FallbackPage =
   { kind: 'build-error'; error: BuildError } | { kind: 'no-tests'; files: string[] };
@@ -121,6 +168,15 @@ export type FallbackPage =
 /**
  * One collected JUnit `<testcase>` — accumulated per `testEnd` and serialized into
  * `junit.xml` at run end when `--reporter=junit` is active.
+ *
+ * ```ts
+ * const testcase: JUnitCase = {
+ *   classname: 'Cart > totals',
+ *   name: 'sums line items',
+ *   time: 0.012, // QUnit reported 12ms
+ *   status: 'passed',
+ * };
+ * ```
  */
 export interface JUnitCase {
   /** Suite name: the QUnit module path (fullName minus the test name). */
@@ -140,6 +196,15 @@ export interface JUnitCase {
 /**
  * Per-source-file line coverage, accumulated across every executed bundle.
  * Keyed by absolute source path. Lines are 1-based, matching editor/lcov conventions.
+ *
+ * ```ts
+ * const file: FileCoverage = {
+ *   coverable: new Set([1, 2, 5]),
+ *   covered: new Map([[1, 3]]),
+ *   sourceContent: null,
+ * };
+ * file.covered.get(1); // 3 — line 1 was hit three times; lines 2 and 5 stayed uncovered
+ * ```
  */
 export interface FileCoverage {
   /** 1-based line numbers that the source map attributes to executable bundle positions. */
@@ -150,7 +215,15 @@ export interface FileCoverage {
   sourceContent: string | null;
 }
 
-/** Absolute source path → its accumulated {@link FileCoverage}. */
+/**
+ * Absolute source path → its accumulated {@link FileCoverage}.
+ *
+ * ```ts
+ * const coverage: CoverageFileMap = new Map();
+ * coverage.set('/proj/cart.ts', { coverable: new Set([1]), covered: new Map(), sourceContent: null });
+ * coverage.size; // 1
+ * ```
+ */
 export type CoverageFileMap = Map<string, FileCoverage>;
 
 /**
@@ -169,6 +242,13 @@ export type CoverageFileMap = Map<string, FileCoverage>;
  * see `RunState.reset`. Assigning a fresh object on one config detaches it from the others and
  * splits the run's totals, which no type can catch. Fields of a shared object may be reassigned
  * freely (`results.coverage = new Map()`); it is the object itself that must survive.
+ *
+ * ```ts
+ * import * as RunState from './setup/run-state.ts';
+ *
+ * const state = RunState.create();
+ * state.results.counter.testCount; // 0 — one shared accumulator for the whole run
+ * ```
  */
 export interface RunState {
   /** Whole-run accumulators, shared by reference across every concurrent group. */
@@ -201,7 +281,15 @@ export interface RunState {
   group: GroupState;
 }
 
-/** The run summary the browser-side runtime publishes on `window.QUNIT_RESULT`. */
+/**
+ * The run summary the browser-side runtime publishes on `window.QUNIT_RESULT`.
+ *
+ * ```ts
+ * const result: QUnitResult =
+ *   { totalTests: 8, finishedTests: 7, failedTests: 1, currentTest: 'Cart: checkout' };
+ * result.finishedTests < result.totalTests; // true — the run stalled inside `currentTest`
+ * ```
+ */
 export interface QUnitResult {
   /** Tests QUnit registered for this run. */
   totalTests: number;
@@ -213,7 +301,16 @@ export interface QUnitResult {
   currentTest: string | null;
 }
 
-/** RunState scoped to a single concurrent group — one fresh object per group of a run. */
+/**
+ * RunState scoped to a single concurrent group — one fresh object per group of a run.
+ *
+ * ```ts
+ * import * as RunState from './setup/run-state.ts';
+ *
+ * const group: GroupState = RunState.newGroup(1, [{ module: 'Cart' }]);
+ * group.phase; // 'bundling' — every group starts before its bundle exists
+ * ```
+ */
 export interface GroupState {
   /** Index within the run's group array; `0` for watch and single-group runs. */
   index: number;
@@ -274,6 +371,13 @@ export interface GroupState {
 /**
  * One-shot callbacks wiring the browser's progress back into the run pipeline. Each is installed
  * by the code that awaits it and fired by the web server as the corresponding event arrives.
+ *
+ * ```ts
+ * import * as RunState from './setup/run-state.ts';
+ *
+ * const { signals } = RunState.newGroup();
+ * signals.onWsOpen = () => {}; // installed by the code that awaits it, fired by the web server
+ * ```
  */
 export interface RunSignals {
   /** Resolves when the browser signals that the test run is complete. */
@@ -289,6 +393,13 @@ export interface RunSignals {
 /**
  * Build bookkeeping owned by the file watcher, used to decide whether a filesystem event
  * should dispatch a rebuild. Watch mode runs exactly one group, so nothing here is contended.
+ *
+ * ```ts
+ * import * as RunState from './setup/run-state.ts';
+ *
+ * const { watch } = RunState.create();
+ * watch.lastBuildEndMs; // 0 — no successful build yet, nothing to debounce against
+ * ```
  */
 export interface WatchState {
   /** `true` while esbuild is actively compiling. */
@@ -310,7 +421,16 @@ export interface WatchState {
   justAddedAt: Map<string, number>;
 }
 
-/** The daemon's persistent, cross-run handles, lent to a single run via {@link RunState.daemon}. */
+/**
+ * The daemon's persistent, cross-run handles, lent to a single run via {@link RunState.daemon}.
+ *
+ * ```ts
+ * // Defined, not invoked: only the daemon process (`qunitx daemon _serve`) owns a real one.
+ * function warmHandles(daemon: DaemonState) {
+ *   return daemon.pageSlot.page ?? daemon.browser; // reuse the stashed page when there is one
+ * }
+ * ```
+ */
 export interface DaemonState {
   /** The daemon's Browser. `run()` reuses it instead of launching, and does not close it. */
   browser: Browser;
@@ -326,6 +446,13 @@ export interface DaemonState {
 /**
  * Outcome totals and failure bookkeeping accumulated across every group of a single run.
  * Every field here is mutated in place — see {@link RunState} for why replacement is unsafe.
+ *
+ * ```ts
+ * import * as RunState from './setup/run-state.ts';
+ *
+ * const { results } = RunState.create();
+ * results.counter.passCount += 1; // mutate the shared object in place — never replace it
+ * ```
  */
 export interface RunResults {
   /** Running test-outcome counts, mutated in place as TAP events arrive. */
@@ -348,6 +475,13 @@ export interface RunResults {
  * Full resolved qunitx configuration for a single run, merging `package.json` settings,
  * CLI flags, and runtime state. Most fields are read-only after `Config.setup()` resolves;
  * underscore-prefixed fields are mutable runtime slots populated during the run lifecycle.
+ *
+ * ```ts
+ * // Defined, not invoked: a full Config is assembled by Config.setup, not by hand.
+ * function testServerUrl(config: Config) {
+ *   return `http://localhost:${config.port}`;
+ * }
+ * ```
  */
 export interface Config {
   /** Mutable state for this run; see {@link RunState} for the sharing rules. */
@@ -463,6 +597,15 @@ export interface Config {
 /**
  * Live handles for the three resources allocated at the start of a test run.
  * Passed through the run pipeline and closed together on shutdown.
+ *
+ * ```ts
+ * // Defined, not invoked: the run pipeline allocates all three together at run start.
+ * async function teardown({ page, browser, server }: Connections) {
+ *   await page.close();
+ *   await browser.close();
+ *   await server.close();
+ * }
+ * ```
  */
 export interface Connections {
   /** The HTTP + WebSocket server that serves the test bundle and streams TAP events. */
@@ -481,6 +624,13 @@ export interface Connections {
  * Handles to a pre-launched Chrome, available **synchronously** the moment it is spawned —
  * before the CDP endpoint is known. Enough to reap the process and its temp dir, which is all
  * the `process.on('exit')` safety net and `shutdownPrelaunch()` need.
+ *
+ * ```ts
+ * // Defined, not invoked: real handles come from Chrome.spawn / the prelaunch.
+ * async function reap(chrome: ChromeHandle) {
+ *   await chrome.shutdown(); // safe before CDP is ready, idempotent after
+ * }
+ * ```
  */
 export interface ChromeHandle {
   /** The spawned Chrome child process. */
@@ -490,7 +640,16 @@ export interface ChromeHandle {
   shutdown: () => Promise<void>;
 }
 
-/** A {@link ChromeHandle} plus the CDP endpoint, resolved once Chrome is listening. */
+/**
+ * A {@link ChromeHandle} plus the CDP endpoint, resolved once Chrome is listening.
+ *
+ * ```ts
+ * // Defined, not invoked: resolved by the prelaunch once Chrome prints its CDP URL on stderr.
+ * function connectTarget(chrome: EarlyChrome) {
+ *   return chrome.cdpEndpoint; // 'ws://127.0.0.1:<port>/devtools/browser/<id>'
+ * }
+ * ```
+ */
 export interface EarlyChrome extends ChromeHandle {
   /** The `ws://` URL exposed by Chrome's CDP remote debugging endpoint. */
   cdpEndpoint: string;

@@ -8,9 +8,18 @@ import './lib/utils/enable-compile-cache.ts';
 import './lib/utils/find-sidecar-esbuild.ts';
 import process from 'node:process';
 import { shutdownPrelaunch } from './lib/chrome/prelaunch.ts';
+import { Failure } from './lib/result/index.ts';
 import pkg from './package.json' with { type: 'json' };
 
 process.title = 'qunitx';
+
+// The timer is a LAST RESORT, not a routine path: whenever it fires before the drain callback,
+// process.exit() drops whatever is still queued. run.ts learned this the hard way and uses the
+// same 30s — on Windows under 16-way CI load the callback can take far longer than seems
+// reasonable, because the parent reader is busy, the OS pipe buffer fills, and Node's userland
+// write queue stalls until the reader catches up. 250ms was tight enough to be the normal path
+// there, which is exactly what it must never be.
+const FLUSH_GRACE_MS = 30_000;
 
 // Command-module imports are dynamic so the daemon-routed-run path doesn't
 // load `help.ts`, `init.ts`, `generate.ts`, or `setup/config.ts` (and its
@@ -50,12 +59,15 @@ process.title = 'qunitx';
     useDaemon = await ensureRunning();
   }
   if (useDaemon) {
-    try {
-      const exitCode = await Client.runVia(process.argv.slice(2));
-      process.stdout.write('', () => process.exit(exitCode));
-      return;
-    } catch {
-      // Daemon disappeared mid-handshake — fall through to a local run.
+    // `mapErr(Failure.from)` is the adapter edge: it sees every rejection, so a bug inside the
+    // client becomes a Failure instead of being erased, exactly as the `tryCatch` this replaces
+    // did — but in the same chain, so `.result()` yields one union to discriminate rather than a
+    // box wrapping one. The fall-through stays unconditional; only "the daemon died mid-run"
+    // says so, because it used to be indistinguishable from exit 1.
+    const routed = await Client.runVia(process.argv.slice(2)).mapErr(Failure.from).result();
+    if (!Failure.is(routed)) return exitAfterFlush(routed);
+    if (routed.code !== 'DaemonUnreachable') {
+      process.stderr.write(`# [qunitx] ${Failure.format(routed)} — running locally\n`);
     }
   }
 
@@ -66,7 +78,20 @@ process.title = 'qunitx';
     import('./lib/setup/config.ts'),
     import('./lib/commands/run.ts'),
   ]);
-  const config = await Config.setup();
+  // The one place a bad flag or a broken plugin becomes a message and an exit code. Config
+  // assembly used to do this itself, at eight separate `console.error` + `process.exit(1)`
+  // pairs buried in a pure argv transform.
+  const config = await Config.setup().result();
+  if (Failure.is(config)) {
+    console.error(Failure.format(config));
+    // BEFORE the cleanup await, not after. `shutdownPrelaunch()` waits on a Chrome that may
+    // still be starting — on the Windows runner CDP came ready 1.8s after this point — and if
+    // the loop drains around that wait, Node exits on its own. An unset `exitCode` at that
+    // moment means a run that could not read its inputs reports success.
+    process.exitCode = 1;
+    await shutdownPrelaunch();
+    return exitAfterFlush(1);
+  }
 
   // --search/--print lists what the filter matches and exits: no browser, no bundle, no tests.
   // Chrome was pre-launched at module load, so shut it back down rather than leaking it.
@@ -74,17 +99,43 @@ process.title = 'qunitx';
     const Search = await import('./lib/commands/search.ts');
     const exitCode = await Search.run(config);
     await shutdownPrelaunch();
-    return process.stdout.write('', () => process.exit(exitCode));
+    return exitAfterFlush(exitCode);
   }
 
-  try {
-    return await run(config);
-  } catch (error) {
-    console.error(error);
-    // Flush stdout before exit so any queued console.log writes (e.g. from WS testEnd
-    // handlers that fired before the exception) are not lost when process.exit() runs.
-    process.exitCode = 1;
-    await shutdownPrelaunch();
-    process.stdout.write('\n', () => process.exit(1));
-  }
-})();
+  return await run(config);
+})().catch(async (error) => {
+  // The program's ONE crash boundary, and the two-tier rule at the very edge: a declared failure
+  // is a message (`init`/`generate` reach here when there is no package.json to work in), a bug
+  // keeps its stack — both exit 1. Library functions used to make this call themselves with a
+  // bare `process.exit(1)`, which no caller could test or override.
+  //
+  // Set first, for the same reason as above: nothing awaited below may decide the exit code by
+  // draining the loop out from under us.
+  process.exitCode = 1;
+  await shutdownPrelaunch();
+  console.error(Failure.is(error) ? Failure.format(error) : error);
+  exitAfterFlush(1);
+});
+
+// Exits with `code` after giving stdio a chance to drain.
+//
+// The write callback is only the fast path. An exit that DEPENDS on it is not an exit: under
+// Deno on Windows the callback does not fire, and a process that then falls off the end of the
+// program reports a broken run as a passing one. So the timer is the guarantee and `exitCode`
+// covers the case where the loop drains on its own first — three ways to reach the same code,
+// because the one thing that must not happen is exiting 0.
+function exitAfterFlush(code: number): void {
+  process.exitCode = code;
+  const exit = (route: string) => () => {
+    // Under --debug only: which of the three routes actually ended the process, and with what.
+    // `Inputs | unresolvable inputs` fails on Windows and macOS with the failure correctly
+    // reported and the code coming out 0, which none of the three can produce — so the next
+    // occurrence should say whether any of them ran at all.
+    if (process.env.QUNITX_DEBUG) {
+      process.stderr.write(`# [qunitx] exiting ${code} via ${route}\n`);
+    }
+    process.exit(code);
+  };
+  process.stdout.write('', exit('stdout-drain'));
+  setTimeout(exit('flush-timer'), FLUSH_GRACE_MS);
+}

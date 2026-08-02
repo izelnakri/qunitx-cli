@@ -3,6 +3,8 @@ import path from 'node:path';
 import * as SourceMap from './source-map.ts';
 import type { SourceMapDecoder } from './source-map.ts';
 import { pathExists } from './path-exists.ts';
+import { Task } from '../task/index.ts';
+import { readJsonCache } from './read-json-cache.ts';
 import type { Config, FSTree } from '../types.ts';
 
 // Persistent cross-run cache of the last run's failures, living beside tmp/test-timings.json.
@@ -11,7 +13,19 @@ import type { Config, FSTree } from '../types.ts';
 // buildTestBundle's mkdir.
 const CACHE_FILENAME = 'tmp/.qunitx-last-failures.json';
 
-/** One failed test, kept for display and future `-t` (test-name filter) wiring. */
+/**
+ * One failed test, kept for display and future `-t` (test-name filter) wiring.
+ *
+ * ```ts
+ * import * as FailureCache from './failure-cache.ts';
+ *
+ * const sample: FailureCache.FailedTestRecord = {
+ *   file: 'test/auth-test.ts',
+ *   module: 'auth > login',
+ *   testName: 'rejects a bad password',
+ * };
+ * ```
+ */
 export interface FailedTestRecord {
   /** Source file the failure was attributed to (relative to projectRoot), or `null` when unattributable. */
   file: string | null;
@@ -21,7 +35,19 @@ export interface FailedTestRecord {
   testName: string;
 }
 
-/** On-disk shape of `tmp/.qunitx-last-failures.json`. */
+/**
+ * On-disk shape of `tmp/.qunitx-last-failures.json`.
+ *
+ * ```ts
+ * import * as FailureCache from './failure-cache.ts';
+ *
+ * const payload: FailureCache.FailureCachePayload = {
+ *   browser: 'chromium',
+ *   files: ['/proj/test/auth-test.ts'],
+ *   tests: [{ file: 'test/auth-test.ts', module: 'auth', testName: 'logs in' }],
+ * };
+ * ```
+ */
 export interface FailureCachePayload {
   /** Browser engine the failures were observed in. */
   browser: string;
@@ -31,18 +57,36 @@ export interface FailureCachePayload {
   tests: FailedTestRecord[];
 }
 
-/** Reads the failure cache; returns `null` on a missing file or any parse/shape error. */
-export async function read(projectRoot: string): Promise<FailureCachePayload | null> {
-  try {
-    const parsed = JSON.parse(await fs.readFile(path.join(projectRoot, CACHE_FILENAME), 'utf8'));
-    if (parsed && Array.isArray(parsed.files)) return parsed as FailureCachePayload;
-    return null;
-  } catch {
-    return null;
-  }
+/**
+ * Reads the failure cache; returns `null` on a missing file or any parse/shape error.
+ *
+ * ```ts
+ * import * as FailureCache from './failure-cache.ts';
+ *
+ * await FailureCache.read('/tmp/no-such-qunitx-project'); // null — a missing cache is just a miss
+ * ```
+ */
+export function read(projectRoot: string): Task<FailureCachePayload | null, never> {
+  return readJsonCache(path.join(projectRoot, CACHE_FILENAME), isFailureCache);
 }
 
-/** Writes the failure cache. Best-effort; callers fire-and-forget like `Timings.persist`. */
+/** A cache written by this version: the `files` array is what every consumer reads. */
+function isFailureCache(parsed: unknown): parsed is FailureCachePayload {
+  return !!parsed && Array.isArray((parsed as FailureCachePayload).files);
+}
+
+/**
+ * Writes the failure cache. Best-effort; callers fire-and-forget like `Timings.persist`.
+ *
+ * ```ts
+ * import * as FailureCache from './failure-cache.ts';
+ *
+ * // Defined, not invoked: writes tmp/.qunitx-last-failures.json to disk.
+ * async function persist(projectRoot: string, payload: FailureCache.FailureCachePayload) {
+ *   await FailureCache.write(projectRoot, payload);
+ * }
+ * ```
+ */
 export async function write(projectRoot: string, cache: FailureCachePayload): Promise<void> {
   await fs.writeFile(path.join(projectRoot, CACHE_FILENAME), JSON.stringify(cache, null, 2));
 }
@@ -53,6 +97,13 @@ export async function write(projectRoot: string, cache: FailureCachePayload): Pr
  * Otherwise returns the cached files that still exist, intersected with `fsTree` when input
  * targets were given (so failures stay scoped to what the user asked for) or the full cached set
  * when no targets were provided. Shared by the non-watch fsTree filter and the watch initial run.
+ *
+ * ```ts
+ * import * as FailureCache from './failure-cache.ts';
+ *
+ * await FailureCache.filesToRerun('/tmp/no-such-qunitx-project', false, {});
+ * // null — no cache yet, so the caller falls back to running everything
+ * ```
  */
 export async function filesToRerun(
   projectRoot: string,
@@ -69,7 +120,20 @@ export async function filesToRerun(
   return existing;
 }
 
-/** Assembles the cache payload from the shared per-run failure slots on `config`. */
+/**
+ * Assembles the cache payload from the shared per-run failure slots on `config`.
+ *
+ * ```ts
+ * import * as FailureCache from './failure-cache.ts';
+ *
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: needs a fully assembled run Config.
+ * function snapshot(config: Config): FailureCache.FailureCachePayload {
+ *   return FailureCache.build(config); // { browser, files, tests } ready for write()
+ * }
+ * ```
+ */
 export function build(config: Config): FailureCachePayload {
   return {
     browser: config.browser,
@@ -86,6 +150,17 @@ export function build(config: Config): FailureCachePayload {
  * failure is never dropped from `--only-failed`.
  *
  * No-op when the state slots are absent (unit-test configs built without run state).
+ *
+ * ```ts
+ * import * as FailureCache from './failure-cache.ts';
+ *
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: reads and mutates the live run state on Config.
+ * function onTestEnd(config: Config, details: { fullName: string[] }) {
+ *   FailureCache.record(config, details); // failure lands in state.results.{failedFiles,failedTests}
+ * }
+ * ```
  */
 export function record(config: Config, details: FailedTestDetails): void {
   const results = config.state?.results;
@@ -107,6 +182,18 @@ export function record(config: Config, details: FailedTestDetails): void {
   });
 }
 
+/**
+ * The QUnit `testEnd` slice `record()` consumes.
+ *
+ * ```ts
+ * import * as FailureCache from './failure-cache.ts';
+ *
+ * const details: Parameters<typeof FailureCache.record>[1] = {
+ *   fullName: ['auth', 'login', 'rejects a bad password'],
+ *   assertions: [{ passed: false, todo: false, stack: 'at http://localhost:7357/tests.js:1:1' }],
+ * };
+ * ```
+ */
 interface FailedTestDetails {
   fullName: string[];
   assertions?: { passed: boolean; todo: boolean; stack?: string }[];

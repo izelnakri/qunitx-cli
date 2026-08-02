@@ -21,6 +21,14 @@ const STDOUT_REPORTERS: Record<ReporterName, new () => Reporter> = {
  * reporters (JUnit) are additive and stack on top. Built once per run in `Config.setup` and
  * shared by every concurrent group — the group configs are spread off the parent config, so
  * they all reference this same array (the same way the run counter is shared).
+ *
+ * ```ts
+ * import * as Reporter from './index.ts';
+ *
+ * import type { Config } from '../types.ts';
+ *
+ * const reporters = (config: Config) => Reporter.create(config); // 1 stdout reporter, +JUnit if --junit
+ * ```
  */
 export function create(config: Config): Reporter[] {
   // Exactly one stdout reporter, plus any additive artifact reporters. A plain run is a
@@ -28,7 +36,21 @@ export function create(config: Config): Reporter[] {
   return [stdoutReporter(config), ...(config.junit ? [new JUnitReporter()] : [])];
 }
 
-/** Emits run start to every active reporter. In watch mode this fires once per rerun. */
+/**
+ * Emits run start to every active reporter. In watch mode this fires once per rerun.
+ *
+ * ```ts
+ * import * as Reporter from './index.ts';
+ *
+ * import type { Config } from '../types.ts';
+ * import type { RunStartInfo } from './types.ts';
+ *
+ * // Defined, not invoked: fans out to the run's live reporters, which write to stdout.
+ * function announce(config: Config, info: RunStartInfo) {
+ *   Reporter.runStart(config, info);
+ * }
+ * ```
+ */
 export function runStart(config: Config, info: RunStartInfo): void {
   config.state.reporters.forEach((reporter) => reporter.onRunStart?.(config, info));
 }
@@ -37,13 +59,39 @@ export function runStart(config: Config, info: RunStartInfo): void {
  * Applies one `testEnd` to the counters, then fans it out to every active reporter.
  * The counter update happens here — exactly once, before any reporter runs — so counts stay
  * correct regardless of how many reporters are attached.
+ *
+ * ```ts
+ * import * as Reporter from './index.ts';
+ *
+ * import type { Config } from '../types.ts';
+ * import type { TestDetails } from './types.ts';
+ *
+ * // Defined, not invoked: mutates the shared counter and writes reporter output.
+ * function record(config: Config, details: TestDetails) {
+ *   Reporter.testEnd(config, details); // counter first, then every reporter sees the same totals
+ * }
+ * ```
  */
 export function testEnd(config: Config, details: TestDetails): void {
   updateCounter(config.state.results.counter, details);
   config.state.reporters.forEach((reporter) => reporter.onTestEnd?.(config, details));
 }
 
-/** Emits run end to every active reporter, awaiting any that flush asynchronously. */
+/**
+ * Emits run end to every active reporter, awaiting any that flush asynchronously.
+ *
+ * ```ts
+ * import * as Reporter from './index.ts';
+ *
+ * import type { Config } from '../types.ts';
+ * import type { RunEndInfo } from './types.ts';
+ *
+ * // Defined, not invoked: JUnit flushes its XML file here.
+ * async function finish(config: Config, info: RunEndInfo) {
+ *   await Reporter.runEnd(config, info);
+ * }
+ * ```
+ */
 export async function runEnd(config: Config, info: RunEndInfo): Promise<void> {
   for (const reporter of config.state.reporters) {
     await reporter.onRunEnd?.(config, info);

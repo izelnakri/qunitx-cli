@@ -6,6 +6,12 @@ import type { TestDetails } from './types.ts';
  * Extracts the source location from a stack trace string.
  * Supports Chrome/Node style "at func (url:line:col)" and Firefox/WebKit style "@url:line:col".
  * Returns a clean location string without surrounding parens, or null if nothing can be extracted.
+ *
+ * ```ts
+ * extractStackAt('    at add (http://localhost:1234/tests.js:10:15)'); // 'http://localhost:1234/tests.js:10:15'
+ * extractStackAt('add@http://localhost:1234/tests.js:10:15'); // same frame, Firefox/WebKit style
+ * extractStackAt('no location here'); // null
+ * ```
  */
 export function extractStackAt(stack: string | null | undefined): string | null {
   if (!stack) return null;
@@ -22,6 +28,13 @@ export function extractStackAt(stack: string | null | undefined): string | null 
  * One failing assertion, normalized for rendering. Every reporter needs the same three
  * things — what failed, where in the *original* source, and the values involved — so the
  * source-map resolution and value normalization happen once here rather than per reporter.
+ *
+ * ```ts
+ * const failure: FailureInfo = {
+ *   index: 1, message: 'bad sum', actual: 3, expected: 4, stack: null, at: 'lib/math.ts:4:3', source: null,
+ * };
+ * failure.at; // 'lib/math.ts:4:3' — already in original-source coordinates
+ * ```
  */
 export interface FailureInfo {
   /** 1-based index of the assertion within the test (matches TAP's `Assertion #N`). */
@@ -43,6 +56,20 @@ export interface FailureInfo {
 /**
  * Extracts every genuinely-failing assertion (todo assertions are expected to fail and are
  * excluded) from a `testEnd` payload, resolving stacks back to original sources.
+ *
+ * ```ts
+ * const [failure] = failedAssertions({
+ *   status: 'failed',
+ *   fullName: ['Math', 'adds'],
+ *   runtime: 3,
+ *   assertions: [
+ *     { passed: true, todo: false },
+ *     { passed: false, todo: false, message: 'bad sum', actual: 3, expected: 4 },
+ *   ],
+ * });
+ * failure.index; // 2 — counts the passing assertion too, matching TAP's "Assertion #N"
+ * failure.message; // 'bad sum'
+ * ```
  */
 export function failedAssertions(
   details: TestDetails,
@@ -65,7 +92,14 @@ export function failedAssertions(
   );
 }
 
-/** Splits an `at` string (`path:line:col`) into parts; returns null when it isn't a location. */
+/**
+ * Splits an `at` string (`path:line:col`) into parts; returns null when it isn't a location.
+ *
+ * ```ts
+ * parseAt('lib/math.ts:4:12'); // { file: 'lib/math.ts', line: 4, col: 12 }
+ * parseAt('not a location'); // null
+ * ```
+ */
 export function parseAt(at: string | null): { file: string; line: number; col: number } | null {
   if (!at) return null;
   const match = /^(.+):(\d+):(\d+)$/.exec(at);

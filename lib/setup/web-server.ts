@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import * as Result from '../result/index.ts';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
@@ -11,6 +12,7 @@ import { HTTPServer, MIME_TYPES } from '../web/index.ts';
 import { createReconnectingSocket } from './ws-client.js';
 import { readTemplate } from '../utils/read-template.ts';
 import type { Config } from '../types.ts';
+import { Task } from '../task/index.ts';
 
 const fsPromise = fs.promises;
 
@@ -22,20 +24,15 @@ const WATCH_WS_RECONNECT_MAX_RETRIES = 120;
 // Retry interval for the QUnit page's WebSocket setup attempts (ms).
 const WS_RETRY_INTERVAL_MS = 10;
 
-// Writes a diagnostic warning to BOTH stdout and stderr. stderr is the natural
-// stream for warnings but is captured-then-discarded by many test helpers
-// (e.g. test/inputs/plugins-test.ts's runFixtureCli), making warnings invisible
-// when a test fails. stdout writes the same text as a TAP `#` comment — TAP
-// parsers ignore `#` lines, so it does not affect test outcomes, and assertion-
-// failure dumps that snapshot stdout (custom-asserts.tapResult) now include the
-// warning surface. Dual write keeps either stream a sufficient signal in CI
-// logs.
-function diagWrite(msg: string): void {
-  process.stderr.write(msg);
-  process.stdout.write(msg);
-}
-
-/** Static 404 page served for HTML-accepting requests to missing static assets. */
+/**
+ * Static 404 page served for HTML-accepting requests to missing static assets.
+ *
+ * ```ts
+ * import * as WebServer from './web-server.ts';
+ *
+ * WebServer.NOT_FOUND_HTML.includes('404 Not Found'); // true — self-contained, styled like the QUnit reporter
+ * ```
+ */
 const NOT_FOUND_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -66,6 +63,19 @@ const NOT_FOUND_HTML = `<!DOCTYPE html>
 
 /**
  * Creates and returns an HTTPServer with routes for the test HTML, filtered test page, and static assets, plus a WebSocket handler that streams TAP events.
+ *
+ * ```ts
+ * import * as WebServer from './web-server.ts';
+ *
+ * import type { Config } from '../types.ts';
+ * import { bindServerToPort } from './bind-server-to-port.ts';
+ *
+ * // Defined, not invoked: wires live run state into routes and WS handlers.
+ * function example(config: Config) {
+ *   const server = WebServer.setup(config); // routes ready, not yet listening
+ *   return bindServerToPort(server, config); // bind, then navigate the page to '/'
+ * }
+ * ```
  * @returns {object}
  */
 export function setup(config: Config): HTTPServer {
@@ -91,13 +101,7 @@ export function setup(config: Config): HTTPServer {
     './filtered-tests.js',
   );
   const saveHTML = (filePath: string, html: string) =>
-    fsPromise
-      .writeFile(filePath, html)
-      .catch(
-        (err: Error) =>
-          config.debug &&
-          process.stderr.write(`# [qunitx] writeFile ${filePath}: ${err.message}\n`),
-      );
+    Task(fsPromise.writeFile(filePath, html)).ignore(`writeFile ${filePath}`);
 
   config.state.group.wsConnectionCount = 0;
   server.wss.on('connection', function connection(socket) {
@@ -205,7 +209,7 @@ export function setup(config: Config): HTTPServer {
     // esbuild settles. On build failure, send a WS done signal with 0 tests so the test
     // race resolves immediately rather than waiting for the startup timeout.
     if (build.activeRebuild) {
-      await build.activeRebuild.catch(() => {});
+      await Task(build.activeRebuild).ignore('in-flight rebuild — reported by the request handler');
       if (!build.allTestCode) {
         // Resolve testRaceResult from Node.js directly — the WS may not be open yet
         // when this script executes on CI (Chrome can fetch tests.js before the WS
@@ -288,7 +292,7 @@ export function setup(config: Config): HTTPServer {
     // buildTestBundle clears fallbackPage only after its first await (fs.mkdir), so a stale
     // error from the previous run can persist into the next run's navigation window.
     // Awaiting activeRebuild here ensures we act on the settled build state, not stale state.
-    await build.activeRebuild?.catch(() => {});
+    await Task(build.activeRebuild).ignore('in-flight rebuild — reported by the request handler');
     const fallback = build.fallbackPage;
     if (fallback?.kind === 'build-error') {
       const htmlContent = buildErrorHTML(fallback.error);
@@ -396,6 +400,13 @@ export function setup(config: Config): HTTPServer {
  * QUnit tests. Styled to match the QUnit HTML reporter, with an amber banner instead of red.
  * Includes the same WebSocket reconnect script as buildErrorHTML so the page reloads on the
  * next successful build.
+ *
+ * ```ts
+ * import * as WebServer from './web-server.ts';
+ *
+ * const html = WebServer.buildNoTestsHTML(['/proj/test/empty-test.ts']);
+ * html.includes('0 QUnit tests were registered'); // true — lists the bundled files verbatim
+ * ```
  */
 export function buildNoTestsHTML(files: string[]): string {
   const escaped = files
@@ -509,6 +520,13 @@ export function buildNoTestsHTML(files: string[]): string {
  * Includes a WebSocket reconnect script that reloads the page on 'refresh' (next successful
  * build). Uses `location.port` so no port needs to be baked in at generation time; the script
  * is a no-op when the page is opened as a static file (location.port is empty).
+ *
+ * ```ts
+ * import * as WebServer from './web-server.ts';
+ *
+ * const html = WebServer.buildErrorHTML({ type: 'SyntaxError', formatted: 'x.ts:1:0: Unexpected "<"' });
+ * html.includes('Build Error: SyntaxError'); // true — the formatted esbuild output, HTML-escaped
+ * ```
  */
 export function buildErrorHTML(buildError: { type: string; formatted: string }): string {
   const escaped = buildError.formatted
@@ -619,6 +637,18 @@ export function buildErrorHTML(buildError: { type: string; formatted: string }):
 /**
  * Registers HTML and JS bundle routes for one concurrent group on a shared HTTPServer.
  * Routes: `GET /group-${groupId}/` and `GET /group-${groupId}/tests.js`.
+ *
+ * ```ts
+ * import * as WebServer from './web-server.ts';
+ *
+ * import type { Config } from '../types.ts';
+ * import type { HTTPServer } from '../web/index.ts';
+ *
+ * // Defined, not invoked: registers routes on a live shared server.
+ * function example(server: HTTPServer, groupConfigs: Config[]) {
+ *   groupConfigs.forEach((groupConfig) => WebServer.registerGroupRoutes(server, groupConfig));
+ * }
+ * ```
  */
 export function registerGroupRoutes(server: HTTPServer, groupConfig: Config): void {
   const groupId = groupConfig.state.group.index;
@@ -635,13 +665,7 @@ export function registerGroupRoutes(server: HTTPServer, groupConfig: Config): vo
     './tests.js',
   );
   const saveHTML = (filePath: string, html: string) =>
-    fsPromise
-      .writeFile(filePath, html)
-      .catch(
-        (err: Error) =>
-          groupConfig.debug &&
-          process.stderr.write(`# [qunitx] writeFile ${filePath}: ${err.message}\n`),
-      );
+    Task(fsPromise.writeFile(filePath, html)).ignore(`writeFile ${filePath}`);
 
   server.get(`/group-${groupId}/`, (_req, res) => {
     const fallback = groupConfig.state.group.build.fallbackPage;
@@ -694,6 +718,18 @@ export function registerGroupRoutes(server: HTTPServer, groupConfig: Config): vo
  * Attaches the shared WebSocket event dispatcher to `server.wss`.
  * Routes each socket's messages to the correct group's `Config` using the `groupId`
  * baked into the browser-side `wsOpen` message by `testRuntimeToInject`.
+ *
+ * ```ts
+ * import * as WebServer from './web-server.ts';
+ *
+ * import type { Config } from '../types.ts';
+ * import type { HTTPServer } from '../web/index.ts';
+ *
+ * // Defined, not invoked: attaches WS listeners to a live shared server.
+ * function example(server: HTTPServer, groupConfigs: Config[]) {
+ *   WebServer.setupGroupWSHandler(server, groupConfigs); // one dispatcher, routed by each socket's wsOpen groupId
+ * }
+ * ```
  */
 export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]): void {
   const socketToGroupId = new WeakMap<object, number>();
@@ -777,6 +813,18 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
 /**
  * Registers a `GET /*` wildcard handler on a shared HTTPServer that serves static assets
  * from each group's output directory, routing by `/group-{id}/` URL prefix.
+ *
+ * ```ts
+ * import * as WebServer from './web-server.ts';
+ *
+ * import type { Config } from '../types.ts';
+ * import type { HTTPServer } from '../web/index.ts';
+ *
+ * // Defined, not invoked: serves files from each group's real output directory.
+ * function example(server: HTTPServer, groupConfigs: Config[]) {
+ *   WebServer.registerSharedStaticHandler(server, groupConfigs); // /group-0/app.css → <group 0 output>/app.css
+ * }
+ * ```
  */
 export function registerSharedStaticHandler(server: HTTPServer, groupConfigs: Config[]): void {
   const groupUrlRegex = /^\/group-(\d+)(\/.*)?$/;
@@ -828,13 +876,14 @@ export { NOT_FOUND_HTML };
 // back to the embedded css if it (or the file) is absent. `createRequire().resolve` is a one-time
 // sync module lookup, not blocking file I/O.
 function resolveConsumerQunitCssCandidate(projectRoot: string): string | null {
-  try {
-    const entry = createRequire(`${projectRoot}/package.json`).resolve('qunitx');
-    const match = /^(.*[\\/]qunitx)[\\/]/.exec(entry);
-    return match ? path.join(match[1], 'vendor/qunit.css') : null;
-  } catch {
-    return null;
-  }
+  // Only the resolve() can throw — a project without qunitx installed. Narrowing the guard to
+  // it means a mistake in the regex or the join below is a bug that surfaces, rather than one
+  // more way this quietly answers "no stylesheet".
+  const entry = Result.try(() => createRequire(`${projectRoot}/package.json`).resolve('qunitx'));
+  if (!entry.ok) return null;
+
+  const match = /^(.*[\\/]qunitx)[\\/]/.exec(entry.value);
+  return match ? path.join(match[1], 'vendor/qunit.css') : null;
 }
 
 function replaceAssetPaths(html: string, htmlPath: string | null, projectRoot: string): string {
@@ -1057,4 +1106,17 @@ function debugGroupHeader(config: Config): void {
   process.stdout.write(
     `# ${blue(`── ${shown.join('  ')}${rest > 0 ? `  +${rest} more` : ''} ──`)}\n`,
   );
+}
+
+// Writes a diagnostic warning to BOTH stdout and stderr. stderr is the natural
+// stream for warnings but is captured-then-discarded by many test helpers
+// (e.g. test/inputs/plugins-test.ts's runFixtureCli), making warnings invisible
+// when a test fails. stdout writes the same text as a TAP `#` comment — TAP
+// parsers ignore `#` lines, so it does not affect test outcomes, and assertion-
+// failure dumps that snapshot stdout (custom-asserts.tapResult) now include the
+// warning surface. Dual write keeps either stream a sufficient signal in CI
+// logs.
+function diagWrite(msg: string): void {
+  process.stderr.write(msg);
+  process.stdout.write(msg);
 }

@@ -3,6 +3,11 @@ import { pathExists } from './path-exists.ts';
 
 /**
  * Recursively searches `directory` and its ancestors for a file or folder named `targetEntry`; returns the absolute path or `undefined`.
+ *
+ * ```ts
+ * await searchInParentDirectories('/tmp', 'no-such-entry-qunitx');
+ * // undefined — walked up to '/' without a hit
+ * ```
  * @returns {Promise<string|undefined>}
  */
 export async function searchInParentDirectories(

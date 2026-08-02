@@ -45,54 +45,17 @@ ${highlight('Tip:')} set ${color('QUNITX_DAEMON=1')} to auto-spawn the daemon on
 `;
 
 /**
- * Resolves how to respawn this CLI as the detached daemon child.
- *
- * - SEA / `deno compile` binary: `process.execPath` IS the qunitx binary;
- *   reinvoke with `daemon _serve`. `import.meta.url` is undefined in the
- *   CJS SEA bundle, so any path-based resolution at module scope crashes
- *   the entire `daemon` subcommand. The Deno-compiled binary is detected
- *   via `process.execPath` not ending in `deno`/`deno.exe` (compiled
- *   binaries inherit the user's binary name; only `deno run` keeps the
- *   runtime's own name on the path).
- * - `deno run cli.ts`: respawn `deno run -A <scriptPath> daemon _serve` so
- *   the child enters via the same entrypoint the parent did.
- *   `Deno.mainModule` is the authoritative source and avoids relative-path
- *   surprises.
- * - Source / dist bundle (Node ESM): respawn `node ${process.argv[1]}
- *   daemon _serve` so the child enters via the same entrypoint the parent
- *   did (cli.ts in source, bin/qunitx.js when installed via npm).
- */
-async function buildDaemonSpawn(): Promise<{ bin: string; args: string[] }> {
-  const sea = await import('node:sea').catch(() => null);
-  if (sea?.isSea()) return { bin: process.execPath, args: ['daemon', '_serve'] };
-
-  const deno = (globalThis as { Deno?: { mainModule: string } }).Deno;
-  if (deno) {
-    // Inside a `deno compile`d binary `Deno.mainModule` is also a `file:` URL
-    // (a virtual path under `/tmp/deno-compile-<name>/`), so the previous
-    // mainModule-prefix check always fell into the `deno run` branch and tried
-    // to spawn `<binary> run -A <virtual-path> daemon _serve` — the binary has
-    // no `run` subcommand and the spawn silently failed. process.execPath
-    // ending in `deno` (or `deno.exe`) is the reliable signal: only `deno run`
-    // preserves the runtime's name on the path.
-    if (!/[/\\]deno(\.exe)?$/i.test(process.execPath)) {
-      return { bin: process.execPath, args: ['daemon', '_serve'] };
-    }
-    const { fileURLToPath } = await import('node:url');
-    return {
-      bin: process.execPath,
-      args: ['run', '-A', fileURLToPath(deno.mainModule), 'daemon', '_serve'],
-    };
-  }
-
-  return { bin: process.execPath, args: [process.argv[1], 'daemon', '_serve'] };
-}
-
-/**
  * Dispatches `qunitx daemon <subcommand>`. `_serve` runs the in-process daemon loop
  * (spawned by `start`); all other subcommands are client operations. No subcommand
  * (or `--help` / `-h` / `help`) prints usage and exits 0; an unknown subcommand
  * prints usage to stderr and exits 1.
+ *
+ * ```ts
+ * // Defined, not invoked: dispatches on live process.argv and may spawn the daemon.
+ * async function daemonCommand(): Promise<number> {
+ *   return await run(); // `qunitx daemon status` → exit code
+ * }
+ * ```
  */
 export function run(): Promise<number> {
   const sub = process.argv[3];
@@ -226,6 +189,13 @@ async function spawnAndWaitForDaemon(): Promise<{ pid: number } | null> {
  * Ensures a daemon is reachable for the current cwd. Returns true if one was
  * already running or was successfully spawned; false on spawn timeout. Silent —
  * intended for the cli.ts auto-spawn path where the spawn is incidental to the run.
+ *
+ * ```ts
+ * // Defined, not invoked: pings the daemon socket and may spawn a real process.
+ * async function warmDaemon(): Promise<boolean> {
+ *   return await ensureRunning(); // true → a daemon is reachable for this cwd
+ * }
+ * ```
  */
 export async function ensureRunning(): Promise<boolean> {
   if ((await Client.ping())?.type === 'pong') return true;
@@ -269,4 +239,48 @@ async function statusDaemon(): Promise<number> {
       `  socket:  ${Paths.socket(pong.cwd)}\n`,
   );
   return 0;
+}
+
+/**
+ * Resolves how to respawn this CLI as the detached daemon child.
+ *
+ * - SEA / `deno compile` binary: `process.execPath` IS the qunitx binary;
+ *   reinvoke with `daemon _serve`. `import.meta.url` is undefined in the
+ *   CJS SEA bundle, so any path-based resolution at module scope crashes
+ *   the entire `daemon` subcommand. The Deno-compiled binary is detected
+ *   via `process.execPath` not ending in `deno`/`deno.exe` (compiled
+ *   binaries inherit the user's binary name; only `deno run` keeps the
+ *   runtime's own name on the path).
+ * - `deno run cli.ts`: respawn `deno run -A <scriptPath> daemon _serve` so
+ *   the child enters via the same entrypoint the parent did.
+ *   `Deno.mainModule` is the authoritative source and avoids relative-path
+ *   surprises.
+ * - Source / dist bundle (Node ESM): respawn `node ${process.argv[1]}
+ *   daemon _serve` so the child enters via the same entrypoint the parent
+ *   did (cli.ts in source, bin/qunitx.js when installed via npm).
+ */
+async function buildDaemonSpawn(): Promise<{ bin: string; args: string[] }> {
+  const sea = await import('node:sea').catch(() => null);
+  if (sea?.isSea()) return { bin: process.execPath, args: ['daemon', '_serve'] };
+
+  const deno = (globalThis as { Deno?: { mainModule: string } }).Deno;
+  if (deno) {
+    // Inside a `deno compile`d binary `Deno.mainModule` is also a `file:` URL
+    // (a virtual path under `/tmp/deno-compile-<name>/`), so the previous
+    // mainModule-prefix check always fell into the `deno run` branch and tried
+    // to spawn `<binary> run -A <virtual-path> daemon _serve` — the binary has
+    // no `run` subcommand and the spawn silently failed. process.execPath
+    // ending in `deno` (or `deno.exe`) is the reliable signal: only `deno run`
+    // preserves the runtime's name on the path.
+    if (!/[/\\]deno(\.exe)?$/i.test(process.execPath)) {
+      return { bin: process.execPath, args: ['daemon', '_serve'] };
+    }
+    const { fileURLToPath } = await import('node:url');
+    return {
+      bin: process.execPath,
+      args: ['run', '-A', fileURLToPath(deno.mainModule), 'daemon', '_serve'],
+    };
+  }
+
+  return { bin: process.execPath, args: [process.argv[1], 'daemon', '_serve'] };
 }

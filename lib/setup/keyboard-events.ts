@@ -5,6 +5,17 @@ import type { Config, Connections } from '../types.ts';
 
 /**
  * Registers watch-mode keyboard shortcuts: `qq` to abort, `qa` to run all, `qf` for last failed, `ql` for last run.
+ *
+ * ```ts
+ * import * as KeyboardEvents from './keyboard-events.ts';
+ *
+ * import type { Config, Connections } from '../types.ts';
+ *
+ * // Defined, not invoked: attaches stdin key listeners.
+ * function enableShortcuts(config: Config, connections: Connections) {
+ *   KeyboardEvents.setup(config, connections); // qq abort · qa run all · qf last failed · ql last run
+ * }
+ * ```
  * @returns {void}
  */
 export function setup(config: Config, connections: Connections): void {

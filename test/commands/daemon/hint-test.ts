@@ -5,6 +5,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import * as Hint from '../../../lib/commands/daemon/hint.ts';
 import '../../helpers/custom-asserts.ts';
+import { ignore } from '../../../lib/result/failure.ts';
 
 interface BaseCtx {
   durationMs: number;
@@ -88,7 +89,7 @@ module('Daemon | Hint.maybePrint', { concurrency: true }, () => {
       assert.includes(writes[0], 'qunitx daemon --help');
       assert.true(await pathExists(sentinel), 'sentinel file created');
     } finally {
-      await fs.unlink(sentinel).catch(() => {});
+      await fs.unlink(sentinel).catch(ignore('daemon hint sentinel unlink'));
     }
   });
 
@@ -103,7 +104,7 @@ module('Daemon | Hint.maybePrint', { concurrency: true }, () => {
       });
       assert.equal(writes.length, 0, 'nothing written when sentinel exists');
     } finally {
-      await fs.unlink(sentinel).catch(() => {});
+      await fs.unlink(sentinel).catch(ignore('daemon hint sentinel unlink'));
     }
   });
 
@@ -138,7 +139,7 @@ module('Daemon | Hint.maybePrint', { concurrency: true }, () => {
       await Hint.maybePrint(BASE_CTX, opts);
       assert.equal(writes.length, 1, 'only the first call printed');
     } finally {
-      await fs.unlink(sentinel).catch(() => {});
+      await fs.unlink(sentinel).catch(ignore('daemon hint sentinel unlink'));
     }
   });
 });

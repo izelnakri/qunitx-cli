@@ -1,4 +1,11 @@
-/** Default qunitx config values: build output directory, test timeout (ms), fail-fast flag, HTTP server port, and tracked file extensions. */
+/**
+ * Default qunitx config values: build output directory, test timeout (ms), fail-fast flag, HTTP server port, and tracked file extensions.
+ *
+ * ```ts
+ * defaultProjectConfigValues.port; // 1234
+ * defaultProjectConfigValues.extensions; // ['js', 'ts', 'jsx', 'tsx']
+ * ```
+ */
 export const defaultProjectConfigValues = {
   output: 'tmp',
   timeout: 20000,

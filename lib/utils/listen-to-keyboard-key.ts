@@ -8,6 +8,14 @@ let listenerAdded = false;
 
 /**
  * Registers a stdin listener that fires `closure` when the user types `inputString` (case-insensitive by default).
+ *
+ * ```ts
+ * // Defined, not invoked: puts the TTY in raw mode and leaves a persistent stdin listener.
+ * function wireWatchMode(rerun: () => void) {
+ *   listenToKeyboardKey('r', () => rerun()); // 'r' or 'R' reruns
+ *   listenToKeyboardKey('Q', () => process.exit(0), { caseSensitive: true }); // only 'Q' quits
+ * }
+ * ```
  * @returns {void}
  */
 export function listenToKeyboardKey(

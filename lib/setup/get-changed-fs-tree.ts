@@ -1,6 +1,7 @@
 import { getChangedFiles } from '../utils/get-changed-files.ts';
 import { getChangedFilePathsInGitSince } from '../utils/get-changed-file-paths-in-git-since.ts';
 import * as MetafileCache from '../utils/metafile-cache.ts';
+import * as Failure from '../result/failure.ts';
 import type { FSTree } from '../types.ts';
 
 /**
@@ -17,6 +18,15 @@ import type { FSTree } from '../types.ts';
  *
  * Always logs how the filter resolved (full / filtered / fallback) so users can
  * reason about why their selected suite ran.
+ *
+ * ```ts
+ * import type { FSTree } from '../types.ts';
+ *
+ * // Defined, not invoked: reads the metafile cache and runs git.
+ * async function narrow(fsTree: FSTree, projectRoot: string) {
+ *   return getChangedFsTree(fsTree, projectRoot, 'HEAD'); // only tests affected since HEAD
+ * }
+ * ```
  */
 export async function getChangedFsTree(
   fsTree: FSTree,
@@ -40,28 +50,34 @@ export async function getChangedFsTree(
     return fsTree;
   }
 
-  // .catch funnels git failures into a value branch so the three outcomes
-  // (error / blast-radius / size===0) collapse into one if/else-if chain
-  // without a mutable `let changed` + try/catch.
-  const changed = await getChanged(projectRoot, changedSince).catch((err: Error) => err);
-  if (changed instanceof Error) {
+  // Three outcomes, three named shapes: a declared failure, a successful "run everything"
+  // scan, and a set of paths. This used to be one variable holding `Set | null | Error`,
+  // discriminated by `instanceof` — with the `null` branch ("run everything") adjacent to the
+  // `size === 0` branch ("run nothing").
+  //
+  // `.result()` is the Task's own bridge to the value world: it settles to the bare
+  // `ChangeScan | GitScanFailure` union, and one `Failure.is` check discriminates it. The
+  // two-tier gate holds — a declared scan failure flows here as a value, while a bug in the
+  // scanner still rejects and crashes the run loudly.
+  const scan = await getChanged(projectRoot, changedSince).result();
+  if (Failure.is(scan)) {
     process.stdout.write(
-      `# --changed: git lookup failed (${changed.message.split('\n')[0]}) — running all ${testFiles.length} test files\n`,
+      `# --changed: ${scan.message} — running all ${testFiles.length} test files\n`,
     );
     return fsTree;
-  } else if (changed === null) {
+  } else if (scan.scope === 'everything') {
     process.stdout.write(
-      `# --changed: blast-radius file changed (package.json / tsconfig.json / lockfile) — running all ${testFiles.length} test files\n`,
+      `# --changed: blast-radius file changed (${scan.trigger}) — running all ${testFiles.length} test files\n`,
     );
     return fsTree;
-  } else if (changed.size === 0) {
+  } else if (scan.paths.size === 0) {
     process.stdout.write(
       `# --changed: 0 files changed since ${changedSince} — running 0 test files\n`,
     );
     return {};
   }
 
-  const affected = getChangedFiles(cache.metafile, cache.esbuildCwd, changed, testFiles);
+  const affected = getChangedFiles(cache.metafile, cache.esbuildCwd, scan.paths, testFiles);
   process.stdout.write(
     `# --changed: ${affected.size} of ${testFiles.length} test files affected by changes since ${changedSince}\n`,
   );

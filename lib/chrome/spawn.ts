@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Socket } from 'node:net';
 import type { ChromeHandle, EarlyChrome } from '../types.ts';
+import { Task } from '../task/index.ts';
 
 const CDP_URL_REGEX = /DevTools listening on (ws:\/\/[^\s]+)/;
 
@@ -13,6 +14,17 @@ const CDP_URL_REGEX = /DevTools listening on (ws:\/\/[^\s]+)/;
  * Spawns a headless Chrome process with `--remote-debugging-port=0` and resolves once the
  * CDP WebSocket endpoint appears on stderr. Returns null if Chrome is unavailable or fails
  * to start, so callers can fall back to playwright's normal `chromium.launch()`.
+ *
+ * ```ts
+ * import * as Chrome from './index.ts';
+ *
+ * await Chrome.spawn(null, Chrome.CHROMIUM_ARGS); // null — no Chrome path, caller falls back to chromium.launch()
+ *
+ * // Defined, not invoked: a real call spawns Chrome and creates a temp user-data-dir.
+ * async function prelaunch(chromePath: string) {
+ *   return await Chrome.spawn(chromePath, Chrome.CHROMIUM_ARGS); // EarlyChrome — { proc, cdpEndpoint, shutdown }
+ * }
+ * ```
  */
 export async function spawn(
   chromePath: string | null | undefined,
@@ -46,7 +58,10 @@ export async function spawn(
   let cdpConnected = false;
 
   proc.on('close', () => {
-    if (!cdpConnected) rm(userDataDir, { recursive: true, force: true }).catch(() => {});
+    if (!cdpConnected)
+      Task(rm(userDataDir, { recursive: true, force: true })).ignore(
+        'chrome user-data-dir removal after a failed CDP connect',
+      );
     resolveWith(null);
   });
   proc.on('error', () => resolveWith(null));

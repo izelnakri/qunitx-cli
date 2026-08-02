@@ -54,6 +54,14 @@ interface FoundTest {
  * (``test(`case ${i}`)``) has no name until the browser runs it, so it cannot be listed. Those are
  * counted and reported rather than silently omitted.
  *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ * // Defined, not invoked: reads and scans every selected file, prints the listing.
+ * async function searchCommand(config: Config) {
+ *   return await run(config); // 'Cart: checkout  test/cart-test.ts#12' … then the match count
+ * }
+ * ```
+ *
  * @returns the process exit code: 0 when something matched, 1 when nothing did (as `grep` does).
  */
 export async function run(config: Config): Promise<number> {
@@ -63,22 +71,31 @@ export async function run(config: Config): Promise<number> {
   const files = Object.keys(config.fsTree);
   const scanned = await Promise.all(files.map((file) => scanFile(file, config.projectRoot)));
 
-  const found = scanned.flatMap((record) => record.tests);
-  const computedNames = scanned.reduce((sum, record) => sum + record.computedNames, 0);
-  const unparseable = scanned.filter((record) => record.scan === null).length;
-  // Parsed fine, yet contributed nothing. Usually the file simply has no tests, but it is also how
-  // a declarator reached through a local alias (`const t = QUnit.test`) looks — the scan resolves
-  // declarators from the qunitx import and the QUnit global only, so it cannot follow one. Saying
-  // so keeps the count honest instead of quietly under-reporting.
-  const silent = scanned.filter(
-    (record) => record.scan !== null && record.tests.length === 0 && record.computedNames === 0,
-  ).length;
-
-  // Resolve each file's `#34` line targets from the scan already in hand — mirroring a real run's
-  // per-file scoping, without reading or transforming any file a second time.
+  // One pass over the scans, because every one of these is a per-file fact: the listable tests,
+  // the runtime-named declarations, the two disjoint ways a file contributes nothing, and each
+  // file's `#34` line targets resolved from the scan already in hand — no file is read or
+  // transformed a second time.
+  //
+  // `silent` is usually a file with no tests, but it is also how a declarator reached through a
+  // local alias (`const t = QUnit.test`) looks: the scan resolves declarators from the qunitx
+  // import and the QUnit global only, so it cannot follow one. Counting it keeps the total honest
+  // instead of quietly under-reporting.
+  const found: FoundTest[] = [];
   const lineSelectors: FileSelectors = new Map();
   const warnings: string[] = [];
+  let computedNames = 0;
+  let unparseable = 0;
+  let silent = 0;
+
   for (const record of scanned) {
+    // Pushed one at a time rather than spread: `push(...tests)` passes one argument per test and
+    // throws RangeError once a suite is large enough — the same trap as the `Math.max` below.
+    for (const test of record.tests) found.push(test);
+    computedNames += record.computedNames;
+
+    if (record.scan === null) unparseable++;
+    else if (record.tests.length === 0 && record.computedNames === 0) silent++;
+
     const lines = config.lineTargets?.[record.file];
     if (lines && record.scan) {
       const resolved = LineTargets.selectorsFromScan(record.scan, lines, record.displayPath);
