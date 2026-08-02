@@ -1230,9 +1230,9 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * ```
    */
   retry(times = 1, options: RetryDelay | RetryOptions = {}): TaskClass<T, E> {
-    const { delayMs, timeoutMs } =
+    const { delayMs, timeoutMs, when } =
       typeof options === 'number' || typeof options === 'function'
-        ? { delayMs: options, timeoutMs: undefined }
+        ? { delayMs: options, timeoutMs: undefined, when: undefined }
         : options;
     // An executor rather than a recipe, so the loop receives the retry Task's own AbortSignal:
     // a `shutdown()` mid-wait has to clear the pending timer, or the delay outlives the Task.
@@ -1249,6 +1249,8 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
         } catch (error) {
           lastReason = error;
           run.#abandon();
+          // Checked before the delay, so an unretryable failure costs nothing extra.
+          if (when !== undefined && !when(error, attempt)) throw error;
         }
         if (attempt < attempts) {
           const wait = typeof delayMs === 'function' ? delayMs(attempt) : (delayMs ?? 0);
@@ -1366,6 +1368,18 @@ export interface RetryOptions {
   /** Deadline for each individual attempt. The attempt is abandoned when it fires — its signal
    *  goes off so cancellation-aware work stops — and counts as a failure like any other. */
   timeoutMs?: number;
+  /**
+   * Which failures are worth another attempt. Returning `false` rethrows immediately, spending
+   * no further attempts and no delay.
+   *
+   * Retrying everything is the wrong default for a KNOWN flake: a genuinely broken call — a
+   * missing binary, a bad profile — gets a pointless second run and the "we only tolerate this
+   * one upstream bug" documentation disappears from the code. This is tokio-retry's `retry_if`
+   * condition. (`backoff` reaches the same place from the other side, by making the error type
+   * say `Transient` or `Permanent`; a predicate is the lighter fit here, because the declared-
+   * vs-bug axis is already what this library's error types encode.)
+   */
+  when?: (error: unknown, attempt: number) => boolean;
 }
 
 /**

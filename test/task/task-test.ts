@@ -512,6 +512,56 @@ module('Task | builders', { concurrency: true }, () => {
     assert.true(AwaitTimeout.is(outcome), 'the deadline is the failure');
   });
 
+  // Retrying everything is the wrong default for a KNOWN flake: the real failure underneath it
+  // gets a pointless second run, and the "we tolerate exactly this one bug" documentation
+  // disappears from the code. tokio-retry's `retry_if` condition, as an option.
+  test('when() decides which failures are worth another attempt', async (assert) => {
+    let attempts = 0;
+    const failWith = (message: string) =>
+      Task(() => {
+        attempts++;
+        throw new Error(message);
+      });
+    const isKnownFlake = (error: unknown) => /handle is invalid/i.test((error as Error).message);
+
+    attempts = 0;
+    await failWith('handle is invalid')
+      .retry(2, { when: isKnownFlake })
+      .recover(() => null);
+    assert.strictEqual(attempts, 3, 'the known flake spends every attempt');
+
+    attempts = 0;
+    await failWith('ENOENT: no such binary')
+      .retry(2, { when: isKnownFlake })
+      .recover(() => null);
+    assert.strictEqual(attempts, 1, 'anything else surfaces on the first attempt');
+  });
+
+  test('a rejected when() skips the delay as well as the attempt', async (assert) => {
+    const startedAt = Date.now();
+    await Task(() => {
+      throw new Error('permanent');
+    })
+      .retry(3, { delayMs: 500, when: () => false })
+      .recover(() => null);
+
+    assert.true(Date.now() - startedAt < 250, 'no attempt means no wait between attempts either');
+  });
+
+  test('when() receives the attempt number, so it can stop part-way', async (assert) => {
+    const seen: number[] = [];
+    let attempts = 0;
+    await Task(() => {
+      attempts++;
+      throw new Error('flaky');
+    })
+      .retry(5, { when: (_error, attempt) => (seen.push(attempt), attempt < 2) })
+      .recover(() => null);
+
+    assert.deepEqual(seen, [1, 2], 'asked after each failure until it said stop');
+    assert.strictEqual(attempts, 2);
+  });
+
   test('a pending wait is abortable, so shutdown during one settles now, not later', async (assert) => {
     // The leak this guards: an un-abortable sleep would hold its timer — and the Task — for the
     // full delay. Asserted by observable settling rather than a process-wide handle count,

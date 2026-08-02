@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { Task } from '../task/index.ts';
 import { readdir, readFile, stat, lstat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -742,13 +743,15 @@ export function mutateFSTree(fsTree: FSTree, event: string, filePath: string): v
  * than only readdir-typed symlinks — without a blanket "drop anything that fails to stat"
  * spuriously unlinking a file under momentary fs pressure.
  */
-async function isMissing(filePath: string, statFn: typeof stat): Promise<boolean> {
-  try {
-    await statFn(filePath);
-    return false;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'ENOENT';
-  }
+function isMissing(filePath: string, statFn: typeof stat): Task<boolean, never> {
+  return (
+    Task(() => statFn(filePath))
+      .map(() => false)
+      // The predicate is load-bearing, which is why it stays a predicate: ENOENT means the path
+      // is genuinely gone, while EACCES or a transient EMFILE mean it is still there and we
+      // simply could not look. Collapsing them to `true` is the Windows CI flake this guards.
+      .recover((error) => (error as NodeJS.ErrnoException).code === 'ENOENT')
+  );
 }
 
 async function classifyRenameEvent(
