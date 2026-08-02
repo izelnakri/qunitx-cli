@@ -1037,6 +1037,12 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * The attempt has already settled, so this changes no outcome and its reason never reaches
    * the caller — the failure they see is their own. Recipes take no signal and are untouched.
    *
+   * The second argument is the wait between attempts — a number, or a function of the attempt
+   * just finished for backoff — or the full `{ delayMs, timeoutMs }` bag. `timeoutMs` bounds
+   * each attempt individually: the deadline abandons it (its signal fires, so cancellation-aware
+   * work stops) and it counts as a failure like any other. A pending wait is abortable, so
+   * `shutdown()` during one settles immediately rather than outliving the Task.
+   *
    * ```ts
    * import { getChangedFilePathsInGitSince } from '../utils/get-changed-file-paths-in-git-since.ts';
    *
@@ -1048,19 +1054,39 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * let attempts = 0;
    * const flakyUpload = Task(() => (++attempts < 3 ? Promise.reject(new Error('flaky')) : 'ok'));
    * await flakyUpload.retry(4); // 'ok' — succeeded on the 3rd of up to 5 fresh executions
+   *
+   * attempts = 0;
+   * await flakyUpload.retry(4, 1); // the same, waiting 1ms between attempts
+   * attempts = 0;
+   * await flakyUpload.retry(4, (attempt) => attempt); // backoff: 1ms, then 2ms
+   * attempts = 0;
+   * await flakyUpload.retry(4, { delayMs: 1, timeoutMs: 5_000 }); // and a per-attempt deadline
    * ```
    */
-  retry(times = 1): TaskClass<T, E> {
-    return new TaskClass<T, E>(async () => {
+  retry(times = 1, options: RetryDelay | RetryOptions = {}): TaskClass<T, E> {
+    const { delayMs, timeoutMs } =
+      typeof options === 'number' || typeof options === 'function'
+        ? { delayMs: options, timeoutMs: undefined }
+        : options;
+    // An executor rather than a recipe, so the loop receives the retry Task's own AbortSignal:
+    // a `shutdown()` mid-wait has to clear the pending timer, or the delay outlives the Task.
+    return new TaskClass<T, E>(async (_resolve, _reject, signal) => {
       const attempts = Math.max(0, times) + 1;
       let lastReason: unknown;
-      for (let attempt = 0; attempt < attempts; attempt++) {
+      for (let attempt = 1; attempt <= attempts; attempt++) {
         const run = this.restart();
         try {
-          return await run;
+          // A per-attempt deadline is `await`'s, whose timer is already cleared on settle. It
+          // does not stop the work — nothing in JS can — so the attempt is abandoned below,
+          // which is what lets a cancellation-aware one actually stop.
+          return await (timeoutMs === undefined ? run : run.await(timeoutMs));
         } catch (error) {
           lastReason = error;
           run.#abandon();
+        }
+        if (attempt < attempts) {
+          const wait = typeof delayMs === 'function' ? delayMs(attempt) : (delayMs ?? 0);
+          if (wait > 0) await sleep(wait, signal);
         }
       }
       throw lastReason;
@@ -1144,6 +1170,41 @@ function snapshotOnce<T>(values: Iterable<T>): () => T[] {
  */
 function restarted<Member>(member: Member): Member {
   return member instanceof TaskClass ? (member.restart() as Member) : member;
+}
+
+/** Milliseconds to wait before the next attempt, or a function of the attempt just finished —
+ *  the shape `lib/job` converged on for Oban-style backoff, with a constant as its degenerate
+ *  case. `(n) => Math.min(100 * 2 ** n, 30_000)` is exponential; `() => 100` is fixed. */
+export type RetryDelay = number | ((attempt: number) => number);
+
+/** The full option bag for {@link Task#retry}; pass a {@link RetryDelay} directly when the
+ *  delay is all you need. */
+export interface RetryOptions {
+  /** Wait between attempts. Omitted or `0` retries immediately, as it always has. */
+  delayMs?: RetryDelay;
+  /** Deadline for each individual attempt. The attempt is abandoned when it fires — its signal
+   *  goes off so cancellation-aware work stops — and counts as a failure like any other. */
+  timeoutMs?: number;
+}
+
+/**
+ * A delay that a signal can cut short, with nothing left behind on either path: the timer is
+ * cleared when the wait is abandoned, and the listener removed when it completes. Deliberately
+ * NOT unref'd — an unref'd timer lets Deno's test sanitizer (and a bare Node script) drain the
+ * loop mid-wait; clearing on both exits is what keeps it honest instead.
+ */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 /** Placeholder work for the internal construction path in `restart()`, immediately replaced. */

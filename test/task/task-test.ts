@@ -422,6 +422,73 @@ module('Task | builders', { concurrency: true }, () => {
     await assert.rejects(Task.fail(NotFound({ id: 7 })), /no user 7/);
   });
 
+  test('retry waits between attempts — a constant, or a function of the attempt', async (assert) => {
+    let runs = 0;
+    const flaky = () =>
+      Task(() => {
+        runs += 1;
+        if (runs % 3 !== 0) throw NotFound({ id: runs });
+        return runs;
+      });
+
+    runs = 0;
+    const started = Date.now();
+    await flaky().retry(2, 20);
+    // Lower bound only: two gaps of 20ms must have elapsed. No upper bound — a loaded runner
+    // may take much longer, and asserting that it did not is how timing tests go flaky.
+    assert.true(Date.now() - started >= 40, 'two waits of 20ms happened between three attempts');
+
+    runs = 0;
+    const seen: number[] = [];
+    await flaky().retry(2, (attempt) => {
+      seen.push(attempt);
+      return 1;
+    });
+    assert.deepEqual(seen, [1, 2], 'the backoff fn is called once per gap, with a 1-based attempt');
+
+    // And no wait at all remains the default, as it always was.
+    runs = 0;
+    assert.strictEqual(await flaky().retry(2), 3, 'retry(times) alone still retries immediately');
+  });
+
+  test('retry bounds each attempt with timeoutMs, abandoning the one that overran', async (assert) => {
+    let started = 0;
+    let abandoned = 0;
+    const neverSettles = Task<number>((_resolve, _reject, signal) => {
+      started += 1;
+      signal.addEventListener('abort', () => (abandoned += 1));
+    });
+
+    const outcome = await neverSettles.retry(1, { timeoutMs: 20 }).result();
+
+    assert.strictEqual(started, 2, 'both attempts ran');
+    assert.strictEqual(abandoned, 2, 'and each was told when its deadline passed');
+    assert.true(
+      Failure.is(outcome) && outcome.code === 'AwaitTimeout',
+      'the deadline is the failure',
+    );
+  });
+
+  test('a pending wait is abortable, so shutdown during one settles now, not later', async (assert) => {
+    // The leak this guards: an un-abortable sleep would hold its timer — and the Task — for the
+    // full delay. Asserted by observable settling rather than a process-wide handle count,
+    // which concurrent test modules would make flaky.
+    let runs = 0;
+    const task = Task(() => {
+      runs += 1;
+      throw NotFound({ id: runs });
+    })
+      .retry(5, 60_000) // a wait far longer than any test would tolerate
+      .perform();
+
+    await until(() => runs > 0, 'the first attempt has failed and the wait has begun');
+    const startedAt = Date.now();
+    await task.shutdown(200);
+
+    assert.true(Date.now() - startedAt < 2_000, 'shutdown did not wait out the 60s delay');
+    assert.true(Failure.is(await task.result()), 'and the Task settled rather than hanging');
+  });
+
   test('a failing Task fits where its value type is declared — Task stays covariant in T', async (assert) => {
     // A private field carrying `T` in a parameter position would make the class invariant, and
     // `Task.fail(...)` — whose type is `Task<never, F>` — would stop being assignable to the
