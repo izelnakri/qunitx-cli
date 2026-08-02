@@ -50,7 +50,15 @@ export function build(
     fileAbsolutePaths.map((input) =>
       Task(() => collectFiles(input, targetExtensions)).mapErr(InputUnreadable, { input }),
     ),
-  ).map(toFSTree);
+    // One accumulator, folded once at the end. Measured against writing into a shared tree from
+    // each input: 0.553ms vs 0.554ms on a 4k-file tree — identical, so the purity above is free.
+    // (`Object.fromEntries` over `[path, null]` pairs is the version that costs: 1.39ms.)
+  ).map((fileGroups) =>
+    fileGroups.reduce((fsTree: FSTree, names) => {
+      for (const name of names) fsTree[name] = null;
+      return fsTree;
+    }, {}),
+  );
 }
 
 /**
@@ -78,20 +86,6 @@ async function collectFiles(input: string, extensions: string[]): Promise<string
   else if (entry.isDirectory()) return await readDirRecursive(input, wanted);
 
   return [];
-}
-
-/**
- * One accumulator, folded once at the end.
- *
- * Measured against writing into a shared object from each input: 0.553ms vs 0.554ms on a
- * 4k-file tree — identical, so the purity above costs nothing. (An `Object.fromEntries` over
- * `[path, null]` pairs is the version that does cost: 1.39ms, from the pair-per-file churn.)
- */
-function toFSTree(fileGroups: string[][]): FSTree {
-  return fileGroups.reduce((fsTree: FSTree, names) => {
-    for (const name of names) fsTree[name] = null;
-    return fsTree;
-  }, {});
 }
 
 function isGlob(str: string): boolean {
