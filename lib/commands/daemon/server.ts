@@ -37,68 +37,6 @@ const IDLE_TIMEOUT_MS = parseIdleTimeout(process.env.QUNITX_DAEMON_IDLE_TIMEOUT)
 const MAX_CONSECUTIVE_CRASHES = 2;
 
 /**
- * Atomic at-most-one-daemon lock acquisition via tmpfile-then-link — the
- * canonical POSIX pattern for "publish a file with content atomically."
- * `link(tmp, target)` either succeeds (target dirent now points at the
- * already-populated inode) or fails EEXIST (someone else got there first).
- * Whoever links `${infoPath}.lock` wins; losers exit 0 and their client
- * still finds the winner's info file via the existing spawn-poll.
- *
- * Needed because Deno's `net.Server.listen()` on Unix domain sockets does
- * NOT enforce single-bind from the compiled binary: two daemons can both
- * `await listen()` successfully on the same path. Verified locally — Node
- * returns EADDRINUSE to the loser 5/5; `deno compile`d binary lets both
- * pass 5/5. Race resolution moves off the socket onto a lockfile without
- * changing the client contract (info file still means "ready").
- *
- * Why not `writeFile(..., { flag: 'wx' })`: that's `O_CREAT | O_EXCL` plus
- * a separate `write(2)`. The create is atomic but the content arrives a
- * few microseconds later — a contender that lands in that window reads
- * empty content, parses pid as NaN, decides the lock is stale (owner not
- * alive), unlinks the live lock and "wins" too. Observed in CI as both
- * daemons surviving the race (run 26013489092 on the Node lane).
- *
- * Stale-lock recovery: the lockfile content is the owning pid. A contender
- * reads it, checks `process.kill(pid, 0)`, and unlinks + retries once if
- * the pid is dead — covers daemons that crashed before reaching shutdown.
- */
-async function tryAcquireDaemonLock(lockPath: string): Promise<boolean> {
-  // Fast path: existing live lock means we lose without doing any work.
-  let ownerPid = Number((await readFile(lockPath, 'utf8').catch(() => '')).trim());
-  if (ownerPid > 0 && isProcessAlive(ownerPid)) return false;
-
-  const tmpPath = `${lockPath}.${process.pid}.tmp`;
-  await writeFile(tmpPath, String(process.pid));
-  try {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        await link(tmpPath, lockPath);
-        return true;
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-        ownerPid = Number((await readFile(lockPath, 'utf8').catch(() => '')).trim());
-        if (ownerPid > 0 && isProcessAlive(ownerPid)) return false;
-        await Task(unlink(lockPath)).ignore('stale daemon lock unlink');
-      }
-    }
-    return false;
-  } finally {
-    // Drop the second hardlink. On success the inode lives on via lockPath
-    // until shutdown unlinks it; on failure tmpPath was the only ref
-    // and unlinking here reaps the inode.
-    await Task(unlink(tmpPath)).ignore('daemon lock tmpfile unlink');
-  }
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    return process.kill(pid, 0);
-  } catch {
-    return false;
-  }
-}
-
-/**
  * All state one daemon process owns; `serve()` constructs the single instance and
  * threads it through every handler.
  *
@@ -781,5 +719,67 @@ async function readPkgMtime(cwd: string): Promise<number> {
     return (await stat(path.join(cwd, 'package.json'))).mtimeMs;
   } catch {
     return 0;
+  }
+}
+
+/**
+ * Atomic at-most-one-daemon lock acquisition via tmpfile-then-link — the
+ * canonical POSIX pattern for "publish a file with content atomically."
+ * `link(tmp, target)` either succeeds (target dirent now points at the
+ * already-populated inode) or fails EEXIST (someone else got there first).
+ * Whoever links `${infoPath}.lock` wins; losers exit 0 and their client
+ * still finds the winner's info file via the existing spawn-poll.
+ *
+ * Needed because Deno's `net.Server.listen()` on Unix domain sockets does
+ * NOT enforce single-bind from the compiled binary: two daemons can both
+ * `await listen()` successfully on the same path. Verified locally — Node
+ * returns EADDRINUSE to the loser 5/5; `deno compile`d binary lets both
+ * pass 5/5. Race resolution moves off the socket onto a lockfile without
+ * changing the client contract (info file still means "ready").
+ *
+ * Why not `writeFile(..., { flag: 'wx' })`: that's `O_CREAT | O_EXCL` plus
+ * a separate `write(2)`. The create is atomic but the content arrives a
+ * few microseconds later — a contender that lands in that window reads
+ * empty content, parses pid as NaN, decides the lock is stale (owner not
+ * alive), unlinks the live lock and "wins" too. Observed in CI as both
+ * daemons surviving the race (run 26013489092 on the Node lane).
+ *
+ * Stale-lock recovery: the lockfile content is the owning pid. A contender
+ * reads it, checks `process.kill(pid, 0)`, and unlinks + retries once if
+ * the pid is dead — covers daemons that crashed before reaching shutdown.
+ */
+async function tryAcquireDaemonLock(lockPath: string): Promise<boolean> {
+  // Fast path: existing live lock means we lose without doing any work.
+  let ownerPid = Number((await readFile(lockPath, 'utf8').catch(() => '')).trim());
+  if (ownerPid > 0 && isProcessAlive(ownerPid)) return false;
+
+  const tmpPath = `${lockPath}.${process.pid}.tmp`;
+  await writeFile(tmpPath, String(process.pid));
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await link(tmpPath, lockPath);
+        return true;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+        ownerPid = Number((await readFile(lockPath, 'utf8').catch(() => '')).trim());
+        if (ownerPid > 0 && isProcessAlive(ownerPid)) return false;
+        await Task(unlink(lockPath)).ignore('stale daemon lock unlink');
+      }
+    }
+    return false;
+  } finally {
+    // Drop the second hardlink. On success the inode lives on via lockPath
+    // until shutdown unlinks it; on failure tmpPath was the only ref
+    // and unlinking here reaps the inode.
+    await Task(unlink(tmpPath)).ignore('daemon lock tmpfile unlink');
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    return process.kill(pid, 0);
+  } catch {
+    return false;
   }
 }

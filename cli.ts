@@ -13,29 +13,6 @@ import pkg from './package.json' with { type: 'json' };
 
 process.title = 'qunitx';
 
-// Exits with `code` after giving stdio a chance to drain.
-//
-// The write callback is only the fast path. An exit that DEPENDS on it is not an exit: under
-// Deno on Windows the callback does not fire, and a process that then falls off the end of the
-// program reports a broken run as a passing one. So the timer is the guarantee and `exitCode`
-// covers the case where the loop drains on its own first — three ways to reach the same code,
-// because the one thing that must not happen is exiting 0.
-function exitAfterFlush(code: number): void {
-  process.exitCode = code;
-  const exit = (route: string) => () => {
-    // Under --debug only: which of the three routes actually ended the process, and with what.
-    // `Inputs | unresolvable inputs` fails on Windows and macOS with the failure correctly
-    // reported and the code coming out 0, which none of the three can produce — so the next
-    // occurrence should say whether any of them ran at all.
-    if (process.env.QUNITX_DEBUG) {
-      process.stderr.write(`# [qunitx] exiting ${code} via ${route}\n`);
-    }
-    process.exit(code);
-  };
-  process.stdout.write('', exit('stdout-drain'));
-  setTimeout(exit('flush-timer'), FLUSH_GRACE_MS);
-}
-
 // The timer is a LAST RESORT, not a routine path: whenever it fires before the drain callback,
 // process.exit() drops whatever is still queued. run.ts learned this the hard way and uses the
 // same 30s — on Windows under 16-way CI load the callback can take far longer than seems
@@ -140,3 +117,26 @@ const FLUSH_GRACE_MS = 30_000;
   console.error(Failure.is(error) ? Failure.format(error) : error);
   exitAfterFlush(1);
 });
+
+// Exits with `code` after giving stdio a chance to drain.
+//
+// The write callback is only the fast path. An exit that DEPENDS on it is not an exit: under
+// Deno on Windows the callback does not fire, and a process that then falls off the end of the
+// program reports a broken run as a passing one. So the timer is the guarantee and `exitCode`
+// covers the case where the loop drains on its own first — three ways to reach the same code,
+// because the one thing that must not happen is exiting 0.
+function exitAfterFlush(code: number): void {
+  process.exitCode = code;
+  const exit = (route: string) => () => {
+    // Under --debug only: which of the three routes actually ended the process, and with what.
+    // `Inputs | unresolvable inputs` fails on Windows and macOS with the failure correctly
+    // reported and the code coming out 0, which none of the three can produce — so the next
+    // occurrence should say whether any of them ran at all.
+    if (process.env.QUNITX_DEBUG) {
+      process.stderr.write(`# [qunitx] exiting ${code} via ${route}\n`);
+    }
+    process.exit(code);
+  };
+  process.stdout.write('', exit('stdout-drain'));
+  setTimeout(exit('flush-timer'), FLUSH_GRACE_MS);
+}

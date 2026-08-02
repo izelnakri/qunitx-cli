@@ -24,19 +24,6 @@ const WATCH_WS_RECONNECT_MAX_RETRIES = 120;
 // Retry interval for the QUnit page's WebSocket setup attempts (ms).
 const WS_RETRY_INTERVAL_MS = 10;
 
-// Writes a diagnostic warning to BOTH stdout and stderr. stderr is the natural
-// stream for warnings but is captured-then-discarded by many test helpers
-// (e.g. test/inputs/plugins-test.ts's runFixtureCli), making warnings invisible
-// when a test fails. stdout writes the same text as a TAP `#` comment — TAP
-// parsers ignore `#` lines, so it does not affect test outcomes, and assertion-
-// failure dumps that snapshot stdout (custom-asserts.tapResult) now include the
-// warning surface. Dual write keeps either stream a sufficient signal in CI
-// logs.
-function diagWrite(msg: string): void {
-  process.stderr.write(msg);
-  process.stdout.write(msg);
-}
-
 /**
  * Static 404 page served for HTML-accepting requests to missing static assets.
  *
@@ -1119,4 +1106,17 @@ function debugGroupHeader(config: Config): void {
   process.stdout.write(
     `# ${blue(`── ${shown.join('  ')}${rest > 0 ? `  +${rest} more` : ''} ──`)}\n`,
   );
+}
+
+// Writes a diagnostic warning to BOTH stdout and stderr. stderr is the natural
+// stream for warnings but is captured-then-discarded by many test helpers
+// (e.g. test/inputs/plugins-test.ts's runFixtureCli), making warnings invisible
+// when a test fails. stdout writes the same text as a TAP `#` comment — TAP
+// parsers ignore `#` lines, so it does not affect test outcomes, and assertion-
+// failure dumps that snapshot stdout (custom-asserts.tapResult) now include the
+// warning surface. Dual write keeps either stream a sufficient signal in CI
+// logs.
+function diagWrite(msg: string): void {
+  process.stderr.write(msg);
+  process.stdout.write(msg);
 }
