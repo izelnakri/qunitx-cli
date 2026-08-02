@@ -9,8 +9,8 @@ A general-purpose error system for JS/TS, in three small modules with no depende
 | [`lib/result/try.ts`](../lib/result/try.ts)          | the **boundary** — where a `throw` becomes a value   |
 | [`lib/task/task.ts`](../lib/task/task.ts)            | the **async half** — a lazy, retryable, typed Promise |
 
-Tests: [`test/result/`](../test/result/), [`test/task/`](../test/task/). A runnable design
-study lives in [`design.ts`](../design.ts).
+Tests: [`test/result/`](../test/result/), [`test/task/`](../test/task/). A runnable end-to-end
+example lives in [`examples/error-handling-server.ts`](../examples/error-handling-server.ts).
 
 ---
 
