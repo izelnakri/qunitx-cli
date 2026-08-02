@@ -27,9 +27,13 @@ function exitAfterFlush(code: number): void {
   setTimeout(exit, FLUSH_GRACE_MS);
 }
 
-// Long enough for a piped stdout to drain on a loaded CI box, short enough that nobody waits on
-// it — it only ever runs when the callback above has already failed to fire.
-const FLUSH_GRACE_MS = 250;
+// The timer is a LAST RESORT, not a routine path: whenever it fires before the drain callback,
+// process.exit() drops whatever is still queued. run.ts learned this the hard way and uses the
+// same 30s — on Windows under 16-way CI load the callback can take far longer than seems
+// reasonable, because the parent reader is busy, the OS pipe buffer fills, and Node's userland
+// write queue stalls until the reader catches up. 250ms was tight enough to be the normal path
+// there, which is exactly what it must never be.
+const FLUSH_GRACE_MS = 30_000;
 
 // Command-module imports are dynamic so the daemon-routed-run path doesn't
 // load `help.ts`, `init.ts`, `generate.ts`, or `setup/config.ts` (and its
