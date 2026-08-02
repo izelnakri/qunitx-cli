@@ -748,17 +748,17 @@ function isMissing(
   // flake fix — a real file must never be spuriously unlinked.
   const gone = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT';
 
-  return (
-    Task(() => statFn(filePath))
-      // stat succeeded — but a DANGLING symlink stats OK on Windows (a reparse point, not ENOENT).
-      // realpath resolves the whole chain and throws ENOENT on a broken target on every platform.
-      .map(() =>
-        Task(() => realpathFn(filePath))
-          .map(() => false)
-          .recover(gone),
-      )
-      .recover(gone)
-  );
+  // stat succeeding is not enough: a DANGLING symlink stats OK on Windows (a reparse point, not
+  // ENOENT), so the second stage asks realpath, which resolves the whole chain and throws ENOENT
+  // on a broken target on every platform.
+  const resolves = () =>
+    Task(() => realpathFn(filePath))
+      .map(() => false)
+      .recover(gone);
+
+  return Task(() => statFn(filePath))
+    .map(resolves)
+    .recover(gone);
 }
 
 async function classifyRenameEvent(
