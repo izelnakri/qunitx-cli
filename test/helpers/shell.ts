@@ -370,9 +370,13 @@ export async function shellFails(
 ): Promise<CapturedResult> {
   const run = await Result.try(() => execute(commandString, { ...options, expectFailure: true }));
   if (run.ok) {
+    // stderr as well as stdout: a CLI that was supposed to fail reports WHY on stderr, so
+    // omitting it turns "it exited 0" into a guess about whether the failure was even produced.
+    const tail = (text: string) => text.split('\n').slice(-30).join('\n');
     throw new Error(
       `Expected \`${commandString}\` to fail, but it exited 0 after ${run.value.duration.toFixed(0)} ms.\n` +
-        `STDOUT:\n${run.value.stdout.split('\n').slice(-30).join('\n')}`,
+        `STDOUT:\n${tail(run.value.stdout)}\n` +
+        `STDERR:\n${tail(run.value.stderr)}`,
     );
   }
   if (!isProcessFailure(run.error)) throw run.error; // never-started (spawn ENOENT) propagates
