@@ -1,5 +1,4 @@
 import net from 'node:net';
-import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import * as Paths from './paths.ts';
 import { CLEANUP_GRACE_MS } from '../../utils/close-with-grace.ts';
@@ -7,6 +6,7 @@ import * as Args from '../../args/index.ts';
 import * as Socket from './socket.ts';
 import { Failure } from '../../result/index.ts';
 import { Task } from '../../task/index.ts';
+import { readJsonCache } from '../../utils/read-json-cache.ts';
 import type { Request, ResponseChunk } from './protocol.ts';
 
 const CONNECT_TIMEOUT_MS = 1_000;
@@ -314,14 +314,14 @@ function awaitClose(socket: net.Socket): Promise<void> {
   });
 }
 
+// No info file, a torn one, or one without a pid are the same answer: no daemon here — which is
+// exactly what readJsonCache says, so this only has to name the shape it wants and read the field.
 function readDaemonPid(cwd: string = process.cwd()): Task<number | null, never> {
-  return (
-    Task(() => fs.readFile(Paths.info(cwd), 'utf8'))
-      .map((raw) => (JSON.parse(raw) as { pid?: unknown }).pid)
-      .map((pid) => (typeof pid === 'number' ? pid : null))
-      // No info file, a torn one, or one without a pid are the same answer: no daemon here.
-      .recover(() => null)
-  );
+  return readJsonCache(Paths.info(cwd), hasPid).map((info) => info?.pid ?? null);
+}
+
+function hasPid(value: unknown): value is { pid: number } {
+  return typeof (value as { pid?: unknown })?.pid === 'number';
 }
 
 function waitForPidExit(pid: number, timeoutMs: number): Promise<void> {

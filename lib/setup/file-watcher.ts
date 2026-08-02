@@ -736,14 +736,12 @@ export function mutateFSTree(fsTree: FSTree, event: string, filePath: string): v
  * spuriously unlinking a file under momentary fs pressure.
  */
 function isMissing(filePath: string, statFn: typeof stat): Task<boolean, never> {
-  return (
-    Task(() => statFn(filePath))
-      .map(() => false)
-      // The predicate is load-bearing, which is why it stays a predicate: ENOENT means the path
-      // is genuinely gone, while EACCES or a transient EMFILE mean it is still there and we
-      // simply could not look. Collapsing them to `true` is the Windows CI flake this guards.
-      .recover((error) => (error as NodeJS.ErrnoException).code === 'ENOENT')
-  );
+  // The recover stays a predicate, and that is load-bearing: ENOENT means the path is genuinely
+  // gone, while EACCES or a transient EMFILE mean it is still there and we simply could not look.
+  // Collapsing them to `true` is the Windows CI flake this guards.
+  return Task(() => statFn(filePath))
+    .map(() => false)
+    .recover((error) => (error as NodeJS.ErrnoException).code === 'ENOENT');
 }
 
 async function classifyRenameEvent(
