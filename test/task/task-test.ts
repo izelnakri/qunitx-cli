@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { module, test } from 'qunitx';
-import { Task, Failure } from '../../lib/task/index.ts';
+import { Task, Failure, AwaitTimeout, Shutdown } from '../../lib/task/index.ts';
 
 const NotFound = Failure.define('NotFound', (data: { id: number }) => `no user ${data.id}`);
 
@@ -477,10 +477,7 @@ module('Task | builders', { concurrency: true }, () => {
 
     assert.strictEqual(started, 2, 'both attempts ran');
     assert.strictEqual(abandoned, 2, 'and each was told when its deadline passed');
-    assert.true(
-      Failure.is(outcome) && outcome.code === 'AwaitTimeout',
-      'the deadline is the failure',
-    );
+    assert.true(AwaitTimeout.is(outcome), 'the deadline is the failure');
   });
 
   test('a pending wait is abortable, so shutdown during one settles now, not later', async (assert) => {
@@ -1165,7 +1162,7 @@ module('Task | elixir family', () => {
     const slow = Task<number>(() => new Promise<number>((res) => (settle = res)));
     const timedOut = await slow.await(10).catch((e: unknown) => e);
     assert.true(Failure.is(timedOut));
-    assert.strictEqual((timedOut as Failure.Any).code, 'AwaitTimeout');
+    assert.true(AwaitTimeout.is(timedOut), 'the guard narrows it — no string compare');
     settle(7);
     assert.strictEqual(await slow, 7, 'the run survived the deadline — a later await joins it');
   });
@@ -1182,7 +1179,7 @@ module('Task | elixir family', () => {
     assert.deepEqual(await Task.awaitMany([Task(() => 1), Task(() => 2)], 1000), [1, 2]);
     const stuck = [Task(() => 1), Task<number>(() => new Promise<never>(() => {}))];
     const timedOut = await Task.awaitMany(stuck, 10).catch((e: unknown) => e);
-    assert.strictEqual((timedOut as Failure.Any).code, 'AwaitTimeout');
+    assert.true(AwaitTimeout.is(timedOut), 'the guard narrows it — no string compare');
   });
 
   test('completed is settled before any window', async (assert) => {
@@ -1205,7 +1202,7 @@ module('Task | elixir family', () => {
     assert.strictEqual(outcome, null, 'nothing useful had landed');
     const after = await task.result();
     assert.true(Failure.is(after), 'every later consumer resolves — no hung awaits');
-    assert.strictEqual((after as Failure.Any).code, 'Shutdown', 'and it says why');
+    assert.true(Shutdown.is(after), 'and it says why');
   });
 
   // The work lives on the SOURCE — `map`/`mapErr`/`context` only wrap `this.then(...)`. Aborting

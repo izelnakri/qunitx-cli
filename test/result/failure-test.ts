@@ -361,6 +361,28 @@ module('Result | Failure | tracing', () => {
     });
   });
 
+  // The registry is keyed by CODE, not by factory, so a redefinition inherits whatever the
+  // previous definition allowlisted. Left uncleared, a factory redefined WITHOUT a trace mapper
+  // kept emitting the old one's fields — an allowlist that leaks is worse than none, since the
+  // whole point is keeping payload like `password` out of spans.
+  test('re-defining a code without a trace mapper clears the previous one', (assert) => {
+    const Traced = Failure.define('RedefineProbe', (d: { token: string }) => `t=${d.token}`, {
+      trace: (d) => ({ 'probe.token': d.token }),
+    });
+    assert.deepEqual(Failure.attributes(Traced({ token: 'abc' })), {
+      'failure.code': 'RedefineProbe',
+      'probe.token': 'abc',
+    });
+
+    const Untraced = Failure.define('RedefineProbe', (d: { token: string }) => `t=${d.token}`);
+
+    assert.deepEqual(
+      Failure.attributes(Untraced({ token: 'secret' })),
+      { 'failure.code': 'RedefineProbe' },
+      'the payload of the redefined factory stays in the process',
+    );
+  });
+
   test('observed() reports to the portable observer and the diagnostics_channel', (assert) => {
     const viaHook: string[] = [];
     const viaChannel: unknown[] = [];

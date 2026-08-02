@@ -8,6 +8,11 @@
 // to — the value half, reused from lib/result unchanged; discriminate it with `Failure.is`.
 export { Task } from './task.ts';
 
+// The three failures Task raises itself. Exported as factories, not left as bare `code` strings,
+// so a caller can write `AwaitTimeout.is(outcome)` instead of `outcome.code === 'AwaitTimeout'`
+// — the same guard every user-defined failure gets.
+export { AwaitTimeout, Shutdown, Abandoned } from './task.ts';
+
 /**
  * Structured, discriminable failures — the rejection reason of a Task.
  *

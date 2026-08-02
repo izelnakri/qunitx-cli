@@ -284,8 +284,15 @@ export function define<Code extends string, Data>(
   message: string | ((data: Data) => string),
   defineOptions?: DefineOptions<Data>,
 ): FailureFactory<Code, Data> {
-  if (defineOptions?.trace)
+  if (defineOptions?.trace) {
     traceMappers.set(code, defineOptions.trace as (data: unknown) => TraceAttributes);
+  } else {
+    // Unconditional, because the mapper registry is keyed by CODE, not by factory. Re-defining a
+    // code without a `trace` has to clear the old mapper — otherwise the new factory keeps
+    // emitting fields its own definition never allowlisted, which is precisely backwards for an
+    // allowlist whose job is keeping passwords and tokens out of spans.
+    traceMappers.delete(code);
+  }
   const factory = (data: Data, options?: FailureOptions): Failure<Code, Data> => {
     // Computed outside the window below because it is caller-supplied code: anything it
     // throws must still get a stack trace of its own.

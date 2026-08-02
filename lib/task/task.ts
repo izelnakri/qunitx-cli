@@ -1,5 +1,6 @@
 import type { Result } from '../result/result.ts';
 import {
+  define as defineFailure,
   Failure,
   ignore as failureIgnore,
   observed as failureObserved,
@@ -8,6 +9,7 @@ import {
   type Any as AnyFailure,
   type Failure as FailureOf,
   type FailureFactory,
+  type FailureOptions as FailureBuildOptions,
 } from '../result/failure.ts';
 
 /**
@@ -39,6 +41,40 @@ export type Executor<T> = (
   reject: (reason?: unknown) => void,
   signal: AbortSignal,
 ) => unknown;
+
+/**
+ * The deadline in {@link TaskClass#await} elapsed before the work settled.
+ *
+ * ```ts
+ * AwaitTimeout({ ms: 5000 }).message; // 'await timed out after 5000ms'
+ * ```
+ */
+export const AwaitTimeout: FailureFactory<'AwaitTimeout', { ms: number }> = defineFailure(
+  'AwaitTimeout',
+  (data: { ms: number }) => `await timed out after ${data.ms}ms`,
+);
+
+/**
+ * {@link TaskClass#shutdown} settled the Task because the caller asked it to stop.
+ *
+ * ```ts
+ * Shutdown.is(Shutdown()); // true
+ * ```
+ */
+export const Shutdown: FailureFactory<'Shutdown', undefined> &
+  ((data?: undefined, options?: FailureBuildOptions) => FailureOf<'Shutdown', undefined>) =
+  defineFailure('Shutdown', 'task shut down');
+
+/**
+ * A {@link TaskClass#retry} attempt nothing will await again — the reason its signal fires.
+ *
+ * ```ts
+ * Abandoned.is(Abandoned()); // true
+ * ```
+ */
+export const Abandoned: FailureFactory<'Abandoned', undefined> &
+  ((data?: undefined, options?: FailureBuildOptions) => FailureOf<'Abandoned', undefined>) =
+  defineFailure('Abandoned', 'retry moved on from this attempt');
 
 /**
  * The failure a combinator member declares — `never` for a plain promise, which declares none.
@@ -267,13 +303,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     this.#start();
     let timer: ReturnType<typeof setTimeout>;
     const deadline = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(
-        () =>
-          reject(
-            new Failure('AwaitTimeout', `await timed out after ${timeoutMs}ms`, { ms: timeoutMs }),
-          ),
-        timeoutMs,
-      );
+      timer = setTimeout(() => reject(AwaitTimeout({ ms: timeoutMs })), timeoutMs);
       // No unref: the deadline must HOLD the event loop (an unref'd timer lets Deno's
       // test sanitizer — and a bare Node script — drain the loop mid-wait); clearTimeout on
       // settle releases it immediately anyway.
@@ -324,7 +354,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * ```
    */
   async shutdown(timeoutMs = 5000): Promise<Result<T, E> | null> {
-    const marker = new Failure('Shutdown', 'task shut down', undefined);
+    const marker = Shutdown();
     if (!this.#started) {
       // Never ran: settle as shut down without ever invoking the work.
       this.#started = true;
@@ -1186,7 +1216,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * `root.map(f)` has to reach `root`, which is where the executor (and its subscription) is.
    */
   #abandon(): void {
-    this.#abort(new Failure('Abandoned', 'retry moved on from this attempt', undefined));
+    this.#abort(Abandoned());
   }
 
   /**
