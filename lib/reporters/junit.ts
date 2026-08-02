@@ -154,12 +154,13 @@ export function toCase(config: Config, details: TestDetails): JUnitCase {
 export function buildXML(cases: JUnitCase[]): string {
   // Map.groupBy keys by first appearance, so suites stay in the order their tests ran.
   const suites = Map.groupBy(cases, (testCase) => testCase.classname);
+  const suite = summarize(cases);
 
   return (
     [
       '<?xml version="1.0" encoding="UTF-8"?>',
-      `<testsuites name="qunitx" tests="${cases.length}" failures="${countFailed(cases)}" ` +
-        `skipped="${countSkipped(cases)}" time="${formatTime(totalTime(cases))}">`,
+      `<testsuites name="qunitx" tests="${cases.length}" failures="${suite.failed}" ` +
+        `skipped="${suite.skipped}" time="${formatTime(suite.time)}">`,
       ...[...suites].flatMap(([suiteName, suiteCases]) => buildSuite(suiteName, suiteCases)),
       '</testsuites>',
     ].join('\n') + '\n'
@@ -168,10 +169,12 @@ export function buildXML(cases: JUnitCase[]): string {
 
 /** Builds the `<testsuite>` block (with nested `<testcase>` elements) for one QUnit module. */
 function buildSuite(suiteName: string, cases: JUnitCase[]): string[] {
+  const suite = summarize(cases);
+
   return [
     `  <testsuite name="${escapeAttr(suiteName)}" tests="${cases.length}" ` +
-      `failures="${countFailed(cases)}" skipped="${countSkipped(cases)}" ` +
-      `time="${formatTime(totalTime(cases))}">`,
+      `failures="${suite.failed}" skipped="${suite.skipped}" ` +
+      `time="${formatTime(suite.time)}">`,
     ...cases.flatMap(buildCase),
     '  </testsuite>',
   ];
@@ -196,19 +199,27 @@ function buildCase(testCase: JUnitCase): string[] {
   return [`${open}/>`];
 }
 
-function totalTime(cases: JUnitCase[]): number {
-  return cases.reduce((sum, testCase) => sum + testCase.time, 0);
-}
+/**
+ * The three numbers a `<testsuite(s)>` element needs, in one pass.
+ *
+ * Together rather than as three functions, because both levels need all three: three helpers
+ * meant six traversals of the same array to fill two elements, and it was the shared helper —
+ * not the shared array — that kept the levels agreeing. One summary makes that structural.
+ *
+ * `todo` has no JUnit equivalent and reports as skipped (see normalizeStatus), so both statuses
+ * count as skipped here.
+ */
+function summarize(cases: JUnitCase[]): { failed: number; skipped: number; time: number } {
+  return cases.reduce(
+    (totals, testCase) => {
+      if (testCase.status === 'failed') totals.failed++;
+      else if (testCase.status === 'skipped' || testCase.status === 'todo') totals.skipped++;
+      totals.time += testCase.time;
 
-function countFailed(cases: JUnitCase[]): number {
-  return cases.filter((testCase) => testCase.status === 'failed').length;
-}
-
-// `todo` has no JUnit equivalent and reports as skipped (see normalizeStatus), so both statuses
-// count here. Shared by the <testsuites> and <testsuite> levels so the two can never disagree.
-function countSkipped(cases: JUnitCase[]): number {
-  return cases.filter((testCase) => testCase.status === 'skipped' || testCase.status === 'todo')
-    .length;
+      return totals;
+    },
+    { failed: 0, skipped: 0, time: 0 },
+  );
 }
 
 // QUnit's `skipped` maps to JUnit `<skipped/>`; `todo` (expected-fail work-in-progress) has no

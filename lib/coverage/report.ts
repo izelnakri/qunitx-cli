@@ -141,9 +141,7 @@ export function buildRows(
 }
 
 function printTerminalSummary(rows: FileRow[]): void {
-  const totalLines = rows.reduce((sum, row) => sum + row.total, 0);
-  const coveredLines = rows.reduce((sum, row) => sum + row.covered, 0);
-  const overallPct = totalLines > 0 ? (coveredLines / totalLines) * 100 : 0;
+  const { totalLines, coveredLines, overallPct } = overallCoverage(rows);
 
   const pathWidth = Math.min(
     60,
@@ -228,9 +226,7 @@ export function buildLcov(rows: FileRow[]): string {
  * ```
  */
 export function buildHtml(rows: FileRow[]): string {
-  const totalLines = rows.reduce((sum, row) => sum + row.total, 0);
-  const coveredLines = rows.reduce((sum, row) => sum + row.covered, 0);
-  const overallPct = totalLines > 0 ? (coveredLines / totalLines) * 100 : 0;
+  const { totalLines, coveredLines, overallPct } = overallCoverage(rows);
 
   const summaryRows = rows
     .map(
@@ -327,4 +323,33 @@ function escapeHtml(value: string): string {
 
 function escapeAttr(value: string): string {
   return escapeHtml(value).replace(/"/g, '&quot;');
+}
+
+/**
+ * The suite's line totals, in one pass.
+ *
+ * Shared rather than repeated: the terminal summary and the HTML report both need the same three
+ * numbers, and computing them twice is how the two renderers come to disagree about what the
+ * coverage was.
+ */
+function overallCoverage(rows: FileRow[]): {
+  totalLines: number;
+  coveredLines: number;
+  overallPct: number;
+} {
+  const { totalLines, coveredLines } = rows.reduce(
+    (totals, row) => {
+      totals.totalLines += row.total;
+      totals.coveredLines += row.covered;
+
+      return totals;
+    },
+    { totalLines: 0, coveredLines: 0 },
+  );
+
+  return {
+    totalLines,
+    coveredLines,
+    overallPct: totalLines > 0 ? (coveredLines / totalLines) * 100 : 0,
+  };
 }

@@ -73,14 +73,21 @@ export async function run(config: Config): Promise<number> {
 
   const found = scanned.flatMap((record) => record.tests);
   const computedNames = scanned.reduce((sum, record) => sum + record.computedNames, 0);
-  const unparseable = scanned.filter((record) => record.scan === null).length;
-  // Parsed fine, yet contributed nothing. Usually the file simply has no tests, but it is also how
-  // a declarator reached through a local alias (`const t = QUnit.test`) looks — the scan resolves
-  // declarators from the qunitx import and the QUnit global only, so it cannot follow one. Saying
-  // so keeps the count honest instead of quietly under-reporting.
-  const silent = scanned.filter(
-    (record) => record.scan !== null && record.tests.length === 0 && record.computedNames === 0,
-  ).length;
+  // The two ways a file contributes nothing, counted together because they are disjoint: as two
+  // filters, `silent` had to restate `unparseable`'s negation to say so, and a reader had to
+  // notice that it did. `silent` is usually a file with no tests, but it is also how a declarator
+  // reached through a local alias (`const t = QUnit.test`) looks — the scan resolves declarators
+  // from the qunitx import and the QUnit global only, so it cannot follow one. Saying so keeps
+  // the count honest instead of quietly under-reporting.
+  const { unparseable, silent } = scanned.reduce(
+    (counts, record) => {
+      if (record.scan === null) counts.unparseable++;
+      else if (record.tests.length === 0 && record.computedNames === 0) counts.silent++;
+
+      return counts;
+    },
+    { unparseable: 0, silent: 0 },
+  );
 
   // Resolve each file's `#34` line targets from the scan already in hand — mirroring a real run's
   // per-file scoping, without reading or transforming any file a second time.
