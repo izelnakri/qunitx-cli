@@ -50,8 +50,9 @@ export type Executor<T> = (
  * `Failure` — which one `Failure.is()` check discriminates.
  *
  * A `Task` is a real `Promise` (`instanceof Promise` holds, and the Promises/A+ suite passes —
- * see test/task/promises-aplus.ts) built from a **recipe** — a thunk `() => T | PromiseLike<T>`
- * — that runs **only when the Task is first awaited** (or `.then`-ed, or {@link TaskClass#perform}-ed).
+ * see test/task/promises-aplus.ts) built from **work** — a {@link Recipe} `() => value`, an
+ * {@link Executor} `(resolve, reject, signal) => …`, or a promise already running — that starts
+ * **only when the Task is first awaited** (or `.then`-ed, or {@link TaskClass#perform}-ed).
  * A failure is a real **rejection** whose reason is a `Failure`. Those two choices are what make
  * it work *with* the language:
  *
@@ -61,16 +62,21 @@ export type Executor<T> = (
  *    wrapper shape lives behind one method, {@link TaskClass#result}.)
  *  - `Promise.all`/`race`/`any` fail-fast; `try`/`catch` handles it; `instanceof Promise` holds.
  *  - Because it is lazy, a relationship accessor can fire its RPC only on `await`; because every
- *    Task keeps its recipe **and its derivation lineage**, {@link TaskClass#retry}/
- *    {@link TaskClass#restart} spawn fresh executions of the *whole chain* (the
- *    ember-concurrency model — a Promise instance settles once, but the Task re-runs).
+ *    Task keeps its work **and its derivation lineage**, {@link TaskClass#retry}/
+ *    {@link TaskClass#restart} spawn fresh executions of the *whole chain* — including a
+ *    combinator's members (the ember-concurrency model: a Promise instance settles once, but the
+ *    Task re-runs). `retry` takes a delay, or a function of the attempt for backoff, and can
+ *    bound each attempt; every attempt it abandons has its `AbortSignal` fired so subscriptions
+ *    can be released.
  *
  * The two-tier rule threads through every consuming method: a **declared failure** (a `Failure`)
  * is an outcome the caller planned for, a **bug** (any other rejection) is not. `result`,
  * `match`, `unwrapOr` and `expect` act only on declared failures and let bugs keep flying to the
  * one boundary that turns them into a crash report; `mapErr` (the adapter edge, where foreign
  * errors get classified *into* Failures) and `recover` (the crash boundary itself) are the two
- * deliberate catch-alls.
+ * deliberate catch-alls. `mapErr` takes a {@link define}d factory directly — `mapErr(Unreadable,
+ * { path })` — chaining the original under `cause`, or a `(cause) => Failure` function when the
+ * payload has to be read out of the error being classified.
  *
  * Construction takes work in whichever shape it already has — a {@link Recipe} (`() => value`),
  * an {@link Executor} (`(resolve, reject, signal) => …`, the `new Promise` shape made lazy), or

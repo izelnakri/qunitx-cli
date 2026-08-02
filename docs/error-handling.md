@@ -556,7 +556,7 @@ return normalize(parsed.value);
 
 Flat, debuggable, breakpoint-able, and every failure is visibly handled. Where a pipeline is
 _not_ settled yet — async work — the value is not there to `if` on, and that is exactly where
-chaining earns its keep: `map`/`mapErr`/`expect` live as methods on `Task` (§10), the
+chaining earns its keep: `map`/`mapErr`/`context` live as methods on `Task` (§10), the
 _producer_, which may be a class because it never crosses a wire. On the settled side, `all`
 and `partition` are the two helpers that matter, both for batches.
 
@@ -1140,14 +1140,31 @@ return. This section is the _producer_ half, for async code.
 ### 10.1 `Task<T, E>` — a lazy, retryable `Promise`
 
 A `Task` **is a real `Promise`** — `instanceof Promise` holds, and the official Promises/A+
-suite passes 872/872 (`npm run test:aplus`). It is built from a _recipe_ — a thunk that runs
-only when the Task is first awaited — and a failure is a real **rejection** whose reason is a
-`Failure`. Construction is call-or-construct, like `Date`:
+suite passes 872/872 (`npm run test:aplus`). A failure is a real **rejection** whose reason is
+a `Failure`. Construction is call-or-construct (like `Date`) and takes work in whichever shape
+it already has — the constructor dispatches on the function's declared arity:
+
+```ts
+Task(() => rpcFetchPosts()); // recipe    — zero params: the return value settles it
+Task((resolve, reject, signal) => {
+  // executor  — ≥1 param: settle by hand
+  const socket = open(url, { signal });
+  socket.on('data', resolve).on('error', reject);
+});
+Task(alreadyRunningPromise); // adopt    — a thenable, wrapped as-is
+```
+
+All three are lazy: nothing starts until the Task is first awaited (or `.then`-ed, or
+`.perform()`-ed). The executor form receives an `AbortSignal` that fires whenever this
+execution is abandoned — a timed-out `retry` attempt, or a losing `Task.race` member — which
+is what makes cancellation reach the underlying `fetch`/socket rather than merely being
+ignored.
 
 ```ts
 const posts = () => Task(() => rpcFetchPosts()); // the RPC fires only on await
 const list = await posts(); // the value, or it throws
 const fresh = await posts().retry(3); // a fresh execution per attempt
+const patient = await posts().retry(5, { delay: (n) => 2 ** n * 100, timeoutMs: 2_000 });
 
 task.perform(); // start NOW without suspending — a later `await task` joins the in-flight run
 ```
@@ -1158,17 +1175,24 @@ task.perform(); // start NOW without suspending — a later `await task` joins t
 the biggest surprise this design can inflict, so the reflection lives behind one method
 instead.
 
-Because every Task keeps its recipe **and its derivation lineage**, `.restart()` and
-`.retry(times = 1)` spawn fresh executions of the _whole chain_ —
+Because every Task keeps its work **and its derivation lineage**, `.restart()` and
+`.retry(times, delayOrOptions?)` spawn fresh executions of the _whole chain_ —
 `scan.map(parse).context(ctx).retry()` re-runs the git call, not just the parse — while
-ordinary derivation still shares the upstream's memoised run (one fetch, many `.map`s). `E` is
-the _declared_ failure type; it is advisory (JS rejections are untyped) but it makes
+ordinary derivation still shares the upstream's memoised run (one fetch, many `.map`s). That
+lineage reaches through combinators too: `Task.all([a, b]).retry()` re-runs `a` and `b`, it
+does not re-read their settled answers. `E` is the _declared_ failure type; it is advisory (JS rejections are untyped) but it makes
 `.result()` return a typed `Result<T, E>`.
 
 The statics are the Promise statics, corrected and made lazy (`all`/`race`/`any`/`allSettled`
-observe nothing until the combined Task is awaited), plus `Task.try(fn, ...args)` — a lazy
-`Promise.try` — `Task.fail(typedReason)`, `Task.withResolvers()`, and
+observe nothing until the combined Task is awaited, and each returns a `Task`, not a bare
+`Promise`), plus `Task.try(fn, ...args)` — a lazy `Promise.try` — `Task.withResolvers()`,
+`Task.result(work)`, the static mirror of `.result()` that also accepts a plain promise, and
 `Task.results(tasks)`, the positional batch that keeps every outcome as a typed `Result`.
+
+`Task.reject(reason)` and `Task.fail(reason)` are the same rejection with different types:
+`reject` is the inherited `Promise` static (`Task<never, never>` — an undeclared reason, i.e.
+a bug), while `fail` declares it (`Task<never, E>`), so `Task.fail(NotFound({ id }))` type-checks
+as an early return from a function whose signature promises `Task<User, NotFoundFailure>`.
 
 ### 10.2 `.result()` is the one bridge to the bare union
 
@@ -1183,20 +1207,22 @@ It reflects a declared `Failure` into the value world as itself — bare, typed 
 **re-throws a bug**, so the two-tier rule of §3 survives the crossing — and the same rule
 threads through every consuming method:
 
-| method                      | declared `Failure`                                    | bug (any other rejection)                                   |
-| --------------------------- | ----------------------------------------------------- | ----------------------------------------------------------- |
-| `result()`                  | the failure as a bare, typed value                    | re-thrown                                                   |
-| `match({ ok, err })`        | `err` branch, typed `E`                               | re-thrown                                                   |
-| `unwrapOr(fallback)`        | fallback                                              | re-thrown                                                   |
-| `context(message)`          | re-thrown with context — same `code`/`data`, `cause`d | passes through untouched                                    |
-| `mapErr(fn)` — adapter      | remapped                                              | **remapped too** — classification happens here              |
-| `recover(fn)` — boundary    | recovered                                             | **recovered too** — the program's one `.catch()`            |
-| `ignore(context)` — cleanup | swallowed, labelled under `QUNITX_DEBUG`              | **swallowed too** — and EAGER: fire-and-forget attaches now |
+| method                     | declared `Failure`                                    | bug (any other rejection)                                   |
+| -------------------------- | ----------------------------------------------------- | ----------------------------------------------------------- |
+| `result()`                 | the failure as a bare, typed value                    | re-thrown                                                   |
+| `match({ ok, err })`       | `err` branch, typed `E`                               | re-thrown                                                   |
+| `unwrapOr(fallback)`       | fallback                                              | re-thrown                                                   |
+| `context(message)`         | re-thrown with context — same `code`/`data`, `cause`d | passes through untouched                                    |
+| `mapErr(fn \| Factory)`    | remapped                                              | **remapped too** — classification happens here              |
+| `recover(fn)` — boundary   | recovered                                             | **recovered too** — the program's one `.catch()`            |
+| `ignore(reason)` — cleanup | swallowed, labelled under `QUNITX_DEBUG`              | **swallowed too** — and EAGER: fire-and-forget attaches now |
 
-`expect` is anyhow's `.context()`, not Rust's panicking `expect`: the failure keeps its `code`
-and `data` (every `switch` on the code still works), gains the context message, and chains the
-original under `cause`. A bug is never promoted into the declared tier, where it would hide
-from the boundary.
+`context(message)` is anyhow's `.context()`, not Rust's panicking `expect` — hence the name:
+the failure keeps its `code` and `data` (every `switch` on the code still works), gains the
+context message, and chains the original under `cause`. A bug is never promoted into the
+declared tier, where it would hide from the boundary. (Rust's panicking `expect` does exist
+here, but on the value side as `Result.expect` — §9 — where promoting a failure to a bug is
+the explicit, permanent decision the name implies.)
 
 ### 10.3 The boundary story, completed
 
@@ -1206,17 +1232,35 @@ sees _every_ rejection, because its job is to turn foreign errors into declared 
 
 ```ts
 export function scanChanges(root: string, ref: string): Task<ChangeScan, GitScanFailure> {
-  return Task(() => runGit(root, ref)) // foreign throw-land: execFile, timeouts
+  return Task.all([runGit(diffArgs, root), runGit(statusArgs, root)]) // foreign throw-land
     .mapErr((cause) => GitScanFailed({ ref }, { cause })) // classified HERE, once
     .map(parse); // a bug in parse stays a bug
 }
 ```
 
-Everything downstream of the `mapErr` — `expect`, `result`, `match` — can then trust that a
+Everything downstream of the `mapErr` — `context`, `result`, `match` — can then trust that a
 rejection is either a declared `Failure` or a genuine bug. The live example is
 `lib/utils/get-changed-file-paths-in-git-since.ts`, consumed by `lib/setup/get-changed-fs-tree.ts`
 as `await getChanged(…).result()` — one `Failure.is` branch away from a typed
 `GitScanFailure`, no `instanceof` ladder.
+
+Because `runGit` returns a `Task` rather than a bare `Promise`, the two calls compose in one
+`Task.all`, the whole scan is retryable (a transient `index.lock` re-runs both), and there is
+no `await` anywhere in the producer — the classification line is the only place errors are
+touched.
+
+When the payload does not have to be read out of the error, the `(cause) => …` closure is
+noise, so `mapErr` takes a declared factory directly and chains the original under `cause` for
+you:
+
+```ts
+.mapErr(GitScanFailed, { ref })   // ≡ .mapErr((cause) => GitScanFailed({ ref }, { cause }))
+.mapErr(Unreadable)               // a factory that declares no data
+```
+
+The two overloads are distinguishable at both layers: a factory carries `code`/`is`, which a
+plain mapper does not, so the runtime discriminates them, and a data-carrying factory's first
+parameter is its data type — never `unknown` — so the type system does too.
 
 ### 10.4 When a `Task` is _not_ the answer
 
@@ -1226,11 +1270,18 @@ as `await getChanged(…).result()` — one `Failure.is` branch away from a type
 - it may need to run again (**retry**), or
 - it fails by **rejecting** and you want the failure type to survive the rejection.
 
-If a producer is awaited immediately, never retried, and already returns a typed `Result`,
-converting it to a `Task` is a **downgrade**: it adds a `.result()` call at every consumer and
-buys nothing. `Config.setup()` and the daemon's `runVia` are exactly that case, and they
-deliberately stay value-first — a plain `Promise<Result<…>>`. This is §11 applied to itself —
-the failure mode of a good abstraction is applying it everywhere.
+The last of the three is the one that is easy to under-count. A function that would otherwise
+be typed `Promise<Result<T, E>>` is _already_ task-shaped: it is async and it has a declared
+failure. Writing it as a `Task<T, E>` removes a whole channel — the caller awaits once and
+branches once (`await f().result()`) instead of awaiting a promise to get a union it then has
+to unwrap, and every intermediate step keeps composing (`.map`, `.mapErr`, `Task.all`) instead
+of being flattened by hand at each hop. The daemon's `runVia` was written the double-channel
+way and is now a `Task<number, RunViaFailure>` for exactly this reason.
+
+What does _not_ earn a `Task` is the case with no declared failure at all: `Config.setup()`
+either produces a config or has hit a bug, so it stays a plain `Promise` and lets the boundary
+catch. Converting _that_ adds a `.result()` at every consumer and buys nothing. This is §11
+applied to itself — the failure mode of a good abstraction is applying it everywhere.
 
 ## 11. When _not_ to use this
 
