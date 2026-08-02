@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import { Task } from '../../task/index.ts';
+import { readJsonCache } from '../../utils/read-json-cache.ts';
 
 // Per-file wall-clock timings: the cache that feeds LPT group packing, and the reporting of it.
 
@@ -13,19 +14,14 @@ import { Task } from '../../task/index.ts';
  * ```
  */
 export function read(projectRoot: string): Task<Record<string, number>, never> {
-  return (
-    Task(() => fs.readFile(`${projectRoot}/tmp/test-timings.json`, 'utf8'))
-      .map((raw): Record<string, number> => {
-        const parsed = JSON.parse(raw);
-        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-          throw new TypeError('timings cache is not an object map');
-        }
-        return parsed;
-      })
-      // One statement of the policy, covering the missing file, the torn JSON and the wrong
-      // shape alike — the try/catch had to name the empty fallback twice to say the same thing.
-      .recover(() => ({}))
+  return readJsonCache(`${projectRoot}/tmp/test-timings.json`, isFileTimings).map(
+    (timings) => timings ?? {},
   );
+}
+
+/** A cache written by this version: a plain map of file path to milliseconds. */
+function isFileTimings(parsed: unknown): parsed is Record<string, number> {
+  return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
 }
 
 /**

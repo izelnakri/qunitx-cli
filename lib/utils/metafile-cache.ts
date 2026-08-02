@@ -3,6 +3,7 @@ import nodePath from 'node:path';
 import { createHash } from 'node:crypto';
 import type { AffectedMetafile } from './get-changed-files.ts';
 import { Task } from '../task/index.ts';
+import { readJsonCache } from './read-json-cache.ts';
 
 /**
  * Persistent on-disk cache of the most recent successful esbuild metafile,
@@ -110,18 +111,13 @@ export async function write(
  * ```
  */
 export function read(projectRoot: string): Task<MetafileCachePayload | null, never> {
-  return (
-    Task(() => fs.readFile(path(projectRoot), 'utf8'))
-      .map((raw): MetafileCachePayload => {
-        const parsed = JSON.parse(raw) as MetafileCachePayload;
-        if (typeof parsed?.esbuildCwd !== 'string' || !parsed.metafile?.inputs) {
-          throw new TypeError('metafile cache is torn');
-        }
-        return parsed;
-      })
-      // A miss, a torn file and a stale shape are one answer to the caller: rebuild.
-      .recover(() => null)
-  );
+  return readJsonCache(path(projectRoot), isMetafileCache);
+}
+
+/** A cache written by this version: esbuild's cwd, and a metafile with inputs to diff against. */
+function isMetafileCache(parsed: unknown): parsed is MetafileCachePayload {
+  const cache = parsed as MetafileCachePayload | null;
+  return typeof cache?.esbuildCwd === 'string' && !!cache.metafile?.inputs;
 }
 
 export type { MetafileCachePayload };
