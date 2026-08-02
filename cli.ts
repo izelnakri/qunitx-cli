@@ -13,6 +13,24 @@ import pkg from './package.json' with { type: 'json' };
 
 process.title = 'qunitx';
 
+// Exits with `code` after giving stdio a chance to drain.
+//
+// The write callback is only the fast path. An exit that DEPENDS on it is not an exit: under
+// Deno on Windows the callback does not fire, and a process that then falls off the end of the
+// program reports a broken run as a passing one. So the timer is the guarantee and `exitCode`
+// covers the case where the loop drains on its own first — three ways to reach the same code,
+// because the one thing that must not happen is exiting 0.
+function exitAfterFlush(code: number): void {
+  process.exitCode = code;
+  const exit = () => process.exit(code);
+  process.stdout.write('', exit);
+  setTimeout(exit, FLUSH_GRACE_MS);
+}
+
+// Long enough for a piped stdout to drain on a loaded CI box, short enough that nobody waits on
+// it — it only ever runs when the callback above has already failed to fire.
+const FLUSH_GRACE_MS = 250;
+
 // Command-module imports are dynamic so the daemon-routed-run path doesn't
 // load `help.ts`, `init.ts`, `generate.ts`, or `setup/config.ts` (and its
 // transitive `fs-tree` / `find-project-root` / `parse-cli-flags` chain) just
@@ -57,11 +75,7 @@ process.title = 'qunitx';
     // box wrapping one. The fall-through stays unconditional; only "the daemon died mid-run"
     // says so, because it used to be indistinguishable from exit 1.
     const routed = await Client.runVia(process.argv.slice(2)).mapErr(Failure.from).result();
-    if (!Failure.is(routed)) {
-      process.exitCode = routed;
-      process.stdout.write('', () => process.exit(routed));
-      return;
-    }
+    if (!Failure.is(routed)) return exitAfterFlush(routed);
     if (routed.code !== 'DaemonUnreachable') {
       process.stderr.write(`# [qunitx] ${Failure.format(routed)} — running locally\n`);
     }
@@ -81,11 +95,7 @@ process.title = 'qunitx';
   if (Failure.is(configured)) {
     console.error(Failure.format(configured));
     await shutdownPrelaunch();
-    // `exitCode` FIRST, then the flush-then-exit. The write callback is the fast path, but it is
-    // not guaranteed to fire on every runtime — and when it does not, a process that falls off
-    // the end of this function exits 0 and reports a broken config as a passing run.
-    process.exitCode = 1;
-    return process.stderr.write('', () => process.exit(1));
+    return exitAfterFlush(1);
   }
   const config = configured;
 
@@ -95,8 +105,7 @@ process.title = 'qunitx';
     const Search = await import('./lib/commands/search.ts');
     const exitCode = await Search.run(config);
     await shutdownPrelaunch();
-    process.exitCode = exitCode;
-    return process.stdout.write('', () => process.exit(exitCode));
+    return exitAfterFlush(exitCode);
   }
 
   return await run(config);
@@ -107,8 +116,5 @@ process.title = 'qunitx';
   // bare `process.exit(1)`, which no caller could test or override.
   await shutdownPrelaunch();
   console.error(Failure.is(error) ? Failure.format(error) : error);
-  // Flush stdout before exiting so queued console.log writes (e.g. from WS testEnd handlers that
-  // fired before the throw) are not lost when process.exit() runs.
-  process.exitCode = 1;
-  process.stdout.write('\n', () => process.exit(1));
+  exitAfterFlush(1);
 });
