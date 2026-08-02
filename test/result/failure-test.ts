@@ -72,6 +72,28 @@ module('Result | Failure | is', { concurrency: true }, () => {
     assert.false(FileMissing.is(null));
   });
 
+  // isFactory is what lets `task.mapErr(SomeFailure, data)` tell a declared factory from an
+  // ordinary `(cause) => Failure` mapper at runtime. Mistaking one for the other silently
+  // classifies every error under the wrong code, so the near-misses matter more than the hit.
+  test('isFactory recognises a defined factory and nothing that merely resembles one', (assert) => {
+    assert.true(Failure.isFactory(FileMissing), 'a defined factory');
+    assert.true(Failure.isFactory(Timeout), 'including one that declares no data');
+
+    assert.false(Failure.isFactory(Failure.from), 'a plain mapper is not one');
+    assert.false(
+      Failure.isFactory((error: unknown) => error),
+      'nor is an arrow',
+    );
+    assert.false(Failure.isFactory(FileMissing({ path: 'a' })), 'nor is a built failure');
+    assert.false(Failure.isFactory(Object.assign(() => {}, { code: 'Fake' })), 'code without is()');
+    assert.false(
+      Failure.isFactory(Object.assign(() => {}, { is: () => true })),
+      'is() without code',
+    );
+    assert.false(Failure.isFactory(null));
+    assert.false(Failure.isFactory('FileMissing'), 'a bare string is not a factory');
+  });
+
   test('a Failure built in another realm is still recognised', (assert) => {
     // What `instanceof` cannot do. A Worker, an iframe and a vm context each have their own
     // `Failure` binding and their own `Error.prototype`; the Symbol.for brand is shared
@@ -234,7 +256,11 @@ module('Result | Failure | serialization', { concurrency: true }, () => {
 
 // ── Observability: setDebug + onIgnored — the seams for hosts and future packaging ──
 
-module('Result | Failure | ignore observability', { concurrency: true }, () => {
+// Serial on purpose — no `{ concurrency: true }`. Every test here owns process-global state:
+// the onIgnored observer, `process.stderr.write`, and a shared diagnostics channel that any
+// concurrent `Failure.ignore(...)` also publishes to. It passes today only because the bodies
+// happen to be synchronous; one `await` anywhere in the module would start crossing the streams.
+module('Result | Failure | ignore observability', () => {
   test('onIgnored sees every ignored failure, with its label — and detaches cleanly', (assert) => {
     const seen: { context: string; error: unknown }[] = [];
     Failure.onIgnored((context, error) => seen.push({ context, error }));
@@ -301,7 +327,9 @@ module('Result | Failure | ignore observability', { concurrency: true }, () => {
 
 // ── Tracing: attributes + the observed seam ──────────────────────────────────
 
-module('Result | Failure | tracing', { concurrency: true }, () => {
+// Serial for the same reason as the module above: onObserved and OBSERVED_CHANNEL_NAME are
+// process-global, so two of these running at once would see each other's failures.
+module('Result | Failure | tracing', () => {
   const AuthFailed = Failure.define(
     'AuthFailed',
     (d: { status: number; password: string }) => `auth rejected: HTTP ${d.status}`,

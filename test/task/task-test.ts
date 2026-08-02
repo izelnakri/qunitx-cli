@@ -327,9 +327,23 @@ module('Task | ignore', { concurrency: true }, () => {
   });
 
   test('a fire-and-forget rejection is absorbed, never an unhandled rejection', async (assert) => {
-    Task<number>(() => Promise.reject(NotFound({ id: 9 }))).ignore('cleanup');
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.true(true, 'the runner would have flagged an unhandled rejection by now');
+    // Watched rather than assumed: `assert.true(true)` here passed whether or not `ignore`
+    // absorbed anything. Filtered to OUR failure so a neighbouring concurrent test's noise
+    // cannot fail this one.
+    const unhandled: unknown[] = [];
+    const watch = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', watch);
+    try {
+      Task<number>(() => Promise.reject(NotFound({ id: 9 }))).ignore('cleanup');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    } finally {
+      process.off('unhandledRejection', watch);
+    }
+
+    assert.false(
+      unhandled.some((reason) => NotFound.is(reason)),
+      'the ignored rejection never reached the unhandled-rejection handler',
+    );
   });
 
   test('Task.ignore is the one-shot static spelling — same semantics, no intermediate', async (assert) => {
@@ -594,6 +608,39 @@ module('Task | combinators', { concurrency: true }, () => {
     await assert.rejects(Task.all([loadUser(1), loadUser(0)]), /no user 0/);
   });
 
+  // The combined Task must keep the members' DECLARED failure rather than widening it, or every
+  // chain that passes through a combinator loses the type it was carrying and `.result()` hands
+  // back a union the caller can no longer discriminate. The compile-time half of this is the
+  // `Failure.Of<typeof NotFound>` annotation below; the runtime half is that the same value
+  // arrives bare.
+  test('Task.all keeps the declared failure of its members', async (assert) => {
+    const both: Task<{ id: number; name: string }[], Failure.Of<typeof NotFound>> = Task.all([
+      loadUser(1),
+      loadUser(0),
+    ]);
+
+    const outcome = await both.result();
+
+    assert.true(NotFound.is(outcome), 'the failure survives the combinator as its own type');
+    assert.strictEqual(NotFound.is(outcome) ? outcome.data.id : -1, 0, 'and keeps its payload');
+  });
+
+  test('Task.race keeps it too, and a plain promise member declares nothing', async (assert) => {
+    const raced: Task<number, Failure.Of<typeof NotFound>> = Task.race([
+      Task<number, Failure.Of<typeof NotFound>>(() => {
+        throw NotFound({ id: 7 });
+      }),
+    ]);
+    assert.true(NotFound.is(await raced.result()));
+
+    // A promise contributes `never` to the union, so mixing one in does not widen the rest.
+    const mixed: Task<number, Failure.Of<typeof NotFound>> = Task.all([
+      Task<number, Failure.Of<typeof NotFound>>(() => 1),
+      Promise.resolve(2),
+    ]).map((values) => values[0]);
+    assert.strictEqual(await mixed, 1);
+  });
+
   test('Task.race and Task.any pick a settlement without losing laziness', async (assert) => {
     const fast = Task(() => 'fast');
     const never = Task<string>(() => new Promise<never>(() => {}));
@@ -777,7 +824,7 @@ module('Task | two-tier', { concurrency: true }, () => {
       return { id: x.n, name: 'never' }; // TypeError: reading n of undefined — a bug
     });
 
-  test('expect adds context to a declared failure, preserving code and data', async (assert) => {
+  test('context adds a message to a declared failure, preserving code and data', async (assert) => {
     try {
       await loadUser(0).context('the run needs a user here');
       assert.true(false, 'unreachable');
@@ -790,7 +837,7 @@ module('Task | two-tier', { concurrency: true }, () => {
     }
   });
 
-  test('expect lets a bug pass through uncontextualised', async (assert) => {
+  test('context lets a bug pass through uncontextualised', async (assert) => {
     await assert.rejects(buggy().context('context that must NOT wrap a bug'), TypeError);
   });
 
@@ -909,7 +956,7 @@ module('Task | retry & restart', { concurrency: true }, () => {
 // ── Data-first statics — the twin law: Task.m(t, …) ≡ t.m(…) ─────────────────
 
 module('Task | data-first statics', { concurrency: true }, () => {
-  test('map / mapErr / recover / expect delegate exactly', async (assert) => {
+  test('map / mapErr / recover / context delegate exactly', async (assert) => {
     assert.strictEqual(await Task.map(loadUser(1), (u) => u.name), 'u1');
     await assert.rejects(
       Task.mapErr(loadUser(0), (e) => new RangeError('twin: ' + (e as Failure.Any).code)),
@@ -986,11 +1033,16 @@ module('Task | unconsumed rejection', { concurrency: true }, () => {
   });
 
   test('an unstarted Task cannot crash — laziness means dropped chains are dead code', async (assert) => {
+    let ran = false;
     Task(() => {
+      ran = true;
       throw NotFound({ id: 1 });
-    }); // never awaited, never performed: the recipe NEVER runs, so nothing can reject
+    }); // never awaited, never performed
     await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.true(true, 'no rejection existed to go unhandled');
+
+    // The claim is that the work never ran — which is WHY nothing could reject. Asserting that
+    // directly fails if laziness ever regresses; the previous `assert.true(true)` could not.
+    assert.false(ran, 'the work never ran, so there was no rejection to go unhandled');
   });
 });
 
