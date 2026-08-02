@@ -744,12 +744,18 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   /**
    * Data-first twin of {@link TaskClass#result} — the bridge to the bare `Result` union.
    *
+   * Takes a foreign promise as well as a Task, matching {@link TaskClass.results} and the
+   * constructor: this twin is most useful over a value someone handed you, and being handed a
+   * promise is the ordinary case. A promise is lifted first, so its rejection lands on the
+   * failure channel exactly as a Task's would.
+   *
    * ```ts
    * const value = await Task.result(Task(() => 21 * 2)); // 42 — or the declared Failure, bare
+   * await Task.result(Promise.resolve(7)); // 7 — a foreign promise needs no wrapping first
    * ```
    */
-  static result<T, E>(task: TaskClass<T, E>): TaskClass<Result<T, E>, never> {
-    return task.result();
+  static result<T, E>(task: TaskClass<T, E> | PromiseLike<T>): TaskClass<Result<T, E>, never> {
+    return (task instanceof TaskClass ? task : new TaskClass<T, E>(task)).result();
   }
 
   // ── Transforming — lazy, and each returns a real Task ────────────────────────

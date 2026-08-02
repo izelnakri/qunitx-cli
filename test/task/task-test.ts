@@ -512,6 +512,24 @@ module('Task | builders', { concurrency: true }, () => {
     assert.true(Failure.is(await throwsOnly().result()), 'and so does an always-throwing recipe');
   });
 
+  test('Task.result takes a foreign promise as well as a Task', async (assert) => {
+    // The twin is most useful over a value someone handed you, and that is usually a promise.
+    // Before it was widened, `Task.result(promise)` was a type error — and a TypeError at
+    // runtime if it reached there from untyped JS, since it delegated straight to .result().
+    assert.strictEqual(await Task.result(Task(() => 21 * 2)), 42, 'a Task, as before');
+    assert.strictEqual(await Task.result(Promise.resolve(7)), 7, 'and a plain promise');
+
+    // A rejecting promise lands on the failure channel, exactly as a Task's would.
+    const failed = await Task.result(Promise.reject(NotFound({ id: 1 })) as Promise<number>);
+    assert.true(Failure.is(failed) && failed.code === 'NotFound', 'the rejection is the Err half');
+
+    // A bug still flies past — widening the input did not widen what result() absorbs.
+    await assert.rejects(
+      Task.result(Promise.reject(new TypeError('bug')) as Promise<number>),
+      TypeError,
+    );
+  });
+
   test('Task.resolve passes an existing Task through, so its lineage survives', async (assert) => {
     // `Promise.resolve(p)` returns p itself for a same-constructor promise. Wrapping instead
     // would hand back a Task whose restart re-awaits the settled inner one rather than
