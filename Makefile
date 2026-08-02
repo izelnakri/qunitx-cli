@@ -192,6 +192,32 @@ lint-docs:
 # Usage: make release LEVEL=patch|minor|major
 release:
 	@test -n "$(LEVEL)" || (echo "Usage: make release LEVEL=patch|minor|major" && exit 1)
+# The branch gate, first and non-negotiable. `npm publish` runs BEFORE the commit and tag below,
+# so a release started on a topic branch ships THAT branch's code to npm — under a version main
+# never contained — and the bare `git push` at the end pushes the topic branch, leaving the tag
+# on a commit that is not in main. Both happen silently. v0.32.0 shipped the whole unmerged PR
+# stack this way.
+	@branch=$$(git rev-parse --abbrev-ref HEAD); \
+	if [ "$$branch" != "main" ]; then \
+		echo "make release must run on main — you are on '$$branch'."; \
+		echo "npm publish happens before the release commit, so this would publish '$$branch'."; \
+		exit 1; \
+	fi
+	@git fetch -q origin main; \
+	if [ "$$(git rev-parse HEAD)" != "$$(git rev-parse origin/main)" ]; then \
+		echo "main and origin/main differ — pull or push first, then release."; \
+		exit 1; \
+	fi
+# Fail here, not after ~10 minutes of vendor + bench + check + test:release, when the version the
+# bump would produce is already on npm — which `npm publish` rejects outright.
+	@name=$$(node -p "require('./package.json').name"); \
+	target=$$(node -p "const [a,b,c]=require('./package.json').version.split('.').map(Number); \
+		({patch:[a,b,c+1],minor:[a,b+1,0],major:[a+1,0,0]}['$(LEVEL)']||'$(LEVEL)'.split('.')).join('.')"); \
+	if npm view "$$name@$$target" version > /dev/null 2>&1; then \
+		echo "$$name@$$target is already published — pick the next free version, e.g. LEVEL=<x.y.z>."; \
+		exit 1; \
+	fi; \
+	echo "releasing $$name@$$target from main"
 	@if [ -n "$$(git status --porcelain)" ]; then \
 		echo "WARNING: Uncommitted changes detected — these will NOT be included in the release:"; \
 		git status --short; \
@@ -233,7 +259,10 @@ release:
 	git add package.json package-lock.json CHANGELOG.md npm/*/package.json jsr/deno.json templates/vendor
 	git commit -m "Release $$(node -p 'require("./package.json").version')"
 	git tag "v$$(node -p 'require("./package.json").version')"
-	git push && git push --tags
+# Explicit remote and ref, not a bare `git push`: a bare push follows the current branch, which is
+# how a release can land on something other than main. The branch gate above makes that
+# unreachable, and naming main here means the two would have to disagree for it to happen again.
+	git push origin main && git push origin "v$$(node -p 'require("./package.json").version')"
 	$(MAKE) bench
 
 # Smoke-tests the locally-built dist/qunitx Deno binary against the same fixtures
