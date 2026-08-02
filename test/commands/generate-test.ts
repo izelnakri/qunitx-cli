@@ -47,54 +47,50 @@ module('Commands | generate | target path', { concurrency: false }, () => {
   test('appends .js when the target has no extension', async (assert) => {
     const target = `tmp/generated-${randomUUID()}`;
 
-    try {
-      const printed = await generate(target);
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(`${CWD}/${target}.js`, { force: true }));
 
-      assert.includes(printed, `${CWD}/${target}.js written`, 'confirms the resolved .js path');
-      assert.includes(await readGenerated(`${target}.js`), "module('", 'wrote the boilerplate');
-    } finally {
-      await fs.rm(`${CWD}/${target}.js`, { force: true });
-    }
+    const printed = await generate(target);
+
+    assert.includes(printed, `${CWD}/${target}.js written`, 'confirms the resolved .js path');
+    assert.includes(await readGenerated(`${target}.js`), "module('", 'wrote the boilerplate');
   });
 
   test('preserves an explicit .js extension', async (assert) => {
     const target = `tmp/generated-${randomUUID()}.js`;
 
-    try {
-      const printed = await generate(target);
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(`${CWD}/${target}`, { force: true }));
 
-      assert.includes(printed, `${CWD}/${target} written`);
-      assert.includes(await readGenerated(target), "module('");
-    } finally {
-      await fs.rm(`${CWD}/${target}`, { force: true });
-    }
+    const printed = await generate(target);
+
+    assert.includes(printed, `${CWD}/${target} written`);
+    assert.includes(await readGenerated(target), "module('");
   });
 
   test('preserves an explicit .ts extension (no double extension)', async (assert) => {
     const target = `tmp/generated-${randomUUID()}.ts`;
 
-    try {
-      const printed = await generate(target);
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(`${CWD}/${target}`, { force: true }));
 
-      assert.includes(printed, `${CWD}/${target} written`);
-      assert.notIncludes(printed, '.ts.js');
-      assert.includes(await readGenerated(target), "module('");
-    } finally {
-      await fs.rm(`${CWD}/${target}`, { force: true });
-    }
+    const printed = await generate(target);
+
+    assert.includes(printed, `${CWD}/${target} written`);
+    assert.notIncludes(printed, '.ts.js');
+    assert.includes(await readGenerated(target), "module('");
   });
 
   test('creates the intermediate directories of a nested target', async (assert) => {
     const root = `tmp/generated-dir-${randomUUID()}`;
     const target = `${root}/subdir/my-test.js`;
 
-    try {
-      await generate(target);
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => rmRetry(`${CWD}/${root}`));
 
-      assert.includes(await readGenerated(target), "module('", 'file exists inside the new dirs');
-    } finally {
-      await rmRetry(`${CWD}/${root}`);
-    }
+    await generate(target);
+
+    assert.includes(await readGenerated(target), "module('", 'file exists inside the new dirs');
   });
 
   test('prints "already exists" and leaves the existing file untouched', async (assert) => {
@@ -103,14 +99,13 @@ module('Commands | generate | target path', { concurrency: false }, () => {
 
     await fs.mkdir(`${CWD}/tmp`, { recursive: true });
     await fs.writeFile(`${CWD}/${target}`, originalContent);
-    try {
-      const printed = await generate(target);
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(`${CWD}/${target}`, { force: true }));
 
-      assert.includes(printed, 'already exists');
-      assert.equal(await readGenerated(target), originalContent, 'content is unchanged');
-    } finally {
-      await fs.rm(`${CWD}/${target}`, { force: true });
-    }
+    const printed = await generate(target);
+
+    assert.includes(printed, 'already exists');
+    assert.equal(await readGenerated(target), originalContent, 'content is unchanged');
   });
 });
 
@@ -122,27 +117,25 @@ module('Commands | generate | module name', { concurrency: false }, () => {
     const root = `tmp/generate-${randomUUID()}`;
     const target = `${root}/controllers/user-contact-details.ts`;
 
-    try {
-      await generate(target);
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => rmRetry(`${CWD}/${root}`));
 
-      assert.includes(await readGenerated(target), "| Controllers | UserContactDetails'");
-    } finally {
-      await rmRetry(`${CWD}/${root}`);
-    }
+    await generate(target);
+
+    assert.includes(await readGenerated(target), "| Controllers | UserContactDetails'");
   });
 
   test('drops a leading test/ segment so the module name starts at the folder below it', async (assert) => {
     const target = `test/generated-${randomUUID()}.ts`;
 
-    try {
-      await generate(target);
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(`${CWD}/${target}`, { force: true }));
 
-      const content = await readGenerated(target);
-      assert.includes(content, "module('Generated", 'name starts at the segment after test/');
-      assert.notIncludes(content, "module('Test", 'the test/ segment is not part of the name');
-    } finally {
-      await fs.rm(`${CWD}/${target}`, { force: true });
-    }
+    await generate(target);
+
+    const content = await readGenerated(target);
+    assert.includes(content, "module('Generated", 'name starts at the segment after test/');
+    assert.notIncludes(content, "module('Test", 'the test/ segment is not part of the name');
   });
 });
 
@@ -152,16 +145,15 @@ module('Commands | generate | cli', { concurrency: true }, (_hooks, moduleMetada
   test('$ qunitx generate <name> -> writes the test file and confirms the path', async (assert, testMetadata) => {
     const target = `tmp/generated-${randomUUID()}.ts`;
 
-    try {
-      const { stdout } = await shell(`node cli.ts generate ${target}`, {
-        ...moduleMetadata,
-        ...testMetadata,
-      });
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(`${CWD}/${target}`, { force: true }));
 
-      assert.includes(stdout, `${CWD}/${target} written`);
-      assert.includes(await readGenerated(target), "module('");
-    } finally {
-      await fs.rm(`${CWD}/${target}`, { force: true });
-    }
+    const { stdout } = await shell(`node cli.ts generate ${target}`, {
+      ...moduleMetadata,
+      ...testMetadata,
+    });
+
+    assert.includes(stdout, `${CWD}/${target} written`);
+    assert.includes(await readGenerated(target), "module('");
   });
 });

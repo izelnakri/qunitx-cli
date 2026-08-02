@@ -75,11 +75,10 @@ module('Flags | --reporter', { concurrency: true }, (_hooks, moduleMetadata) => 
       contains: ['3 passing', 'wrote JUnit report'],
       notContains: ['TAP version 13'],
     });
-    try {
-      const xml = await fs.readFile(`${output}/junit.xml`, 'utf8');
-      assert.ok(/<testsuites name="qunitx" tests="3"/.test(xml), 'junit artifact still produced');
-    } finally {
-      await rmRetry(output);
-    }
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => rmRetry(output));
+
+    const xml = await fs.readFile(`${output}/junit.xml`, 'utf8');
+    assert.ok(/<testsuites name="qunitx" tests="3"/.test(xml), 'junit artifact still produced');
   });
 });

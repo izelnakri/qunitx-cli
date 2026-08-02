@@ -735,13 +735,12 @@ module('Setup | FileWatcher.rescanDirectoryForDelta', { concurrency: true }, () 
       null,
     );
 
-    try {
-      assert.equal(events.length, 1);
-      assert.equal(events[0].event, 'add');
-      assert.equal(events[0].file, newFile);
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(dir, { recursive: true, force: true }));
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].event, 'add');
+    assert.equal(events[0].file, newFile);
   });
 
   test('fires add for a new symlink not yet in fsTree', async (assert) => {
@@ -764,14 +763,13 @@ module('Setup | FileWatcher.rescanDirectoryForDelta', { concurrency: true }, () 
       null,
     );
 
-    try {
-      assert.ok(
-        events.some((e) => e.event === 'add' && e.file === symlink),
-        'symlink detected as add event',
-      );
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(dir, { recursive: true, force: true }));
+
+    assert.ok(
+      events.some((e) => e.event === 'add' && e.file === symlink),
+      'symlink detected as add event',
+    );
   });
 
   test('does not fire add for a dangling symlink, and unlinks one that goes dangling', async (assert) => {
@@ -808,19 +806,18 @@ module('Setup | FileWatcher.rescanDirectoryForDelta', { concurrency: true }, () 
       null,
     );
 
-    try {
-      assert.false(
-        events.some((e) => e.file.endsWith('dangling.ts')),
-        'a never-resolving symlink produces no event at all',
-      );
-      assert.deepEqual(
-        events.filter((e) => e.file === wasValid).map((e) => e.event),
-        ['unlink'],
-        'a tracked symlink whose target was deleted still unlinks',
-      );
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(dir, { recursive: true, force: true }));
+
+    assert.false(
+      events.some((e) => e.file.endsWith('dangling.ts')),
+      'a never-resolving symlink produces no event at all',
+    );
+    assert.deepEqual(
+      events.filter((e) => e.file === wasValid).map((e) => e.event),
+      ['unlink'],
+      'a tracked symlink whose target was deleted still unlinks',
+    );
   });
 
   test('drops a dangling symlink that readdir misreports as a plain file (Windows)', async (assert) => {
@@ -919,18 +916,13 @@ module('Setup | FileWatcher.rescanDirectoryForDelta', { concurrency: true }, () 
       null,
     );
 
-    try {
-      assert.equal(events.length, 1, 'exactly one event fires');
-      assert.equal(events[0].event, 'change', 'event is a change, not add or unlink');
-      assert.equal(events[0].file, tracked);
-      assert.equal(
-        config.state.watch.builtContentHash![tracked],
-        sha1('after'),
-        'baseline advanced',
-      );
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(dir, { recursive: true, force: true }));
+
+    assert.equal(events.length, 1, 'exactly one event fires');
+    assert.equal(events[0].event, 'change', 'event is a change, not add or unlink');
+    assert.equal(events[0].file, tracked);
+    assert.equal(config.state.watch.builtContentHash![tracked], sha1('after'), 'baseline advanced');
   });
 
   test('does not fire change when the tracked file content matches the built baseline', async (assert) => {
@@ -960,11 +952,10 @@ module('Setup | FileWatcher.rescanDirectoryForDelta', { concurrency: true }, () 
       null,
     );
 
-    try {
-      assert.equal(events.length, 0, 'no event fires for unchanged content');
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(dir, { recursive: true, force: true }));
+
+    assert.equal(events.length, 0, 'no event fires for unchanged content');
   });
 
   test('fires a same-second rewrite whose content differs but mtime is unchanged', async (assert) => {
@@ -1003,17 +994,16 @@ module('Setup | FileWatcher.rescanDirectoryForDelta', { concurrency: true }, () 
       null,
     );
 
-    try {
-      assert.equal(events.length, 1, 'the differing final content fires despite identical mtime');
-      assert.equal(events[0].event, 'change');
-      assert.equal(
-        config.state.watch.builtContentHash![tracked],
-        sha1('final content'),
-        'baseline advanced',
-      );
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(dir, { recursive: true, force: true }));
+
+    assert.equal(events.length, 1, 'the differing final content fires despite identical mtime');
+    assert.equal(events[0].event, 'change');
+    assert.equal(
+      config.state.watch.builtContentHash![tracked],
+      sha1('final content'),
+      'baseline advanced',
+    );
   });
 
   test('does not re-add files already present in fsTree', async (assert) => {
@@ -1037,12 +1027,11 @@ module('Setup | FileWatcher.rescanDirectoryForDelta', { concurrency: true }, () 
       null,
     );
 
-    try {
-      assert.equal(events.length, 1, 'only the new file fires an event');
-      assert.equal(events[0].file, newFile);
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(dir, { recursive: true, force: true }));
+
+    assert.equal(events.length, 1, 'only the new file fires an event');
+    assert.equal(events[0].file, newFile);
   });
 
   test('ignores files with non-matching extensions', async (assert) => {
@@ -1064,12 +1053,11 @@ module('Setup | FileWatcher.rescanDirectoryForDelta', { concurrency: true }, () 
       null,
     );
 
-    try {
-      assert.equal(events.length, 1, 'only .ts file fires event');
-      assert.ok(events[0].file.endsWith('.ts'));
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(dir, { recursive: true, force: true }));
+
+    assert.equal(events.length, 1, 'only .ts file fires event');
+    assert.ok(events[0].file.endsWith('.ts'));
   });
 
   test('detects new files in nested subdirectories', async (assert) => {
@@ -1090,12 +1078,11 @@ module('Setup | FileWatcher.rescanDirectoryForDelta', { concurrency: true }, () 
       null,
     );
 
-    try {
-      assert.equal(events.length, 1);
-      assert.equal(events[0].file, deepFile);
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(dir, { recursive: true, force: true }));
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].file, deepFile);
   });
 
   test('fires unlink for a tracked file that no longer exists on disk', async (assert) => {
@@ -1123,13 +1110,12 @@ module('Setup | FileWatcher.rescanDirectoryForDelta', { concurrency: true }, () 
       null,
     );
 
-    try {
-      assert.equal(events.length, 1, 'exactly one unlink event fired');
-      assert.equal(events[0].event, 'unlink');
-      assert.equal(events[0].file, deleted);
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(dir, { recursive: true, force: true }));
+
+    assert.equal(events.length, 1, 'exactly one unlink event fired');
+    assert.equal(events[0].event, 'unlink');
+    assert.equal(events[0].file, deleted);
   });
 
   test('fires both add and unlink when a swap occurs in a single null-filename event', async (assert) => {
@@ -1158,18 +1144,17 @@ module('Setup | FileWatcher.rescanDirectoryForDelta', { concurrency: true }, () 
       null,
     );
 
-    try {
-      assert.ok(
-        events.some((e) => e.event === 'unlink' && e.file === deleted),
-        'deleted file fires unlink',
-      );
-      assert.ok(
-        events.some((e) => e.event === 'add' && e.file === added),
-        'new file fires add',
-      );
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(dir, { recursive: true, force: true }));
+
+    assert.ok(
+      events.some((e) => e.event === 'unlink' && e.file === deleted),
+      'deleted file fires unlink',
+    );
+    assert.ok(
+      events.some((e) => e.event === 'add' && e.file === added),
+      'new file fires add',
+    );
   });
 
   test('a renamed-away subdirectory fires unlinkDir, not individual unlinks', async (assert) => {
@@ -1206,18 +1191,17 @@ module('Setup | FileWatcher.rescanDirectoryForDelta', { concurrency: true }, () 
       null,
     );
 
-    try {
-      const removalEvents = events.filter((e) => e.event === 'unlink' || e.event === 'unlinkDir');
-      assert.equal(removalEvents.length, 1, 'exactly one removal event');
-      assert.equal(
-        removalEvents[0].event,
-        'unlinkDir',
-        'removal is unlinkDir, not individual unlinks',
-      );
-      assert.equal(removalEvents[0].file, subdir, 'unlinkDir targets the renamed directory');
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(dir, { recursive: true, force: true }));
+
+    const removalEvents = events.filter((e) => e.event === 'unlink' || e.event === 'unlinkDir');
+    assert.equal(removalEvents.length, 1, 'exactly one removal event');
+    assert.equal(
+      removalEvents[0].event,
+      'unlinkDir',
+      'removal is unlinkDir, not individual unlinks',
+    );
+    assert.equal(removalEvents[0].file, subdir, 'unlinkDir targets the renamed directory');
   });
 
   test('silently succeeds when watchPath does not exist', async (assert) => {

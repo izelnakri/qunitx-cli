@@ -117,30 +117,29 @@ module('Flags | --filter | persistent caches', { concurrency: true }, () => {
       ),
     ]);
 
-    try {
-      // An unfiltered run establishes both caches...
-      await runInProject(project, 'cache-test.ts');
-      const timingsBefore = await fs.readFile(`${project}/tmp/test-timings.json`, 'utf8');
-      const failuresBefore = await fs.readFile(`${project}/tmp/.qunitx-last-failures.json`, 'utf8');
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => rmRetry(project));
 
-      // ...and a filtered run must leave both exactly as they were. It sees only a subset of
-      // each file's tests: its wall time would mis-pack every future run's groups, and its
-      // failure set would silently shrink what the next --only-failed re-runs.
-      await runInProject(project, `cache-test.ts -t 'kept'`);
+    // An unfiltered run establishes both caches...
+    await runInProject(project, 'cache-test.ts');
+    const timingsBefore = await fs.readFile(`${project}/tmp/test-timings.json`, 'utf8');
+    const failuresBefore = await fs.readFile(`${project}/tmp/.qunitx-last-failures.json`, 'utf8');
 
-      assert.equal(
-        await fs.readFile(`${project}/tmp/test-timings.json`, 'utf8'),
-        timingsBefore,
-        'a filtered run must not persist timings',
-      );
-      assert.equal(
-        await fs.readFile(`${project}/tmp/.qunitx-last-failures.json`, 'utf8'),
-        failuresBefore,
-        'a filtered run must not rewrite the failure cache',
-      );
-    } finally {
-      await rmRetry(project);
-    }
+    // ...and a filtered run must leave both exactly as they were. It sees only a subset of
+    // each file's tests: its wall time would mis-pack every future run's groups, and its
+    // failure set would silently shrink what the next --only-failed re-runs.
+    await runInProject(project, `cache-test.ts -t 'kept'`);
+
+    assert.equal(
+      await fs.readFile(`${project}/tmp/test-timings.json`, 'utf8'),
+      timingsBefore,
+      'a filtered run must not persist timings',
+    );
+    assert.equal(
+      await fs.readFile(`${project}/tmp/.qunitx-last-failures.json`, 'utf8'),
+      failuresBefore,
+      'a filtered run must not rewrite the failure cache',
+    );
   });
 });
 

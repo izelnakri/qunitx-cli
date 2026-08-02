@@ -15,35 +15,33 @@ module('Inputs | custom html template', { concurrency: true }, () => {
   test('serves the suite from a passed custom.html that uses handlebars-style syntax', async (assert) => {
     const { dir, id } = await makeCustomHTMLProject();
 
-    try {
-      const result = await shell(`node ${CLI} tests/passing-tests.ts custom.html`, { cwd: dir });
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => rmRetry(dir));
 
-      assert.includes(result, 'QUnitX running: http://localhost:');
-      assert.includes(result, '/custom.html');
-      assert.passingTestCaseFor(result, { moduleName: id });
-      assert.tapResult(result, { testCount: 3 });
-    } finally {
-      await rmRetry(dir);
-    }
+    const result = await shell(`node ${CLI} tests/passing-tests.ts custom.html`, { cwd: dir });
+
+    assert.includes(result, 'QUnitX running: http://localhost:');
+    assert.includes(result, '/custom.html');
+    assert.passingTestCaseFor(result, { moduleName: id });
+    assert.tapResult(result, { testCount: 3 });
   });
 
   test('serves the same custom.html in watch mode and keeps watching', async (assert) => {
     const { dir, id } = await makeCustomHTMLProject();
 
-    try {
-      const stdout = await shellWatch(`node ${CLI} tests/passing-tests.ts custom.html --watch`, {
-        cwd: dir,
-        until: (buf) => buf.includes('Press "qq"'),
-      });
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => rmRetry(dir));
 
-      assert.includes(stdout, 'QUnitX running: http://localhost:');
-      assert.includes(stdout, '/custom.html');
-      assert.passingTestCaseFor(stdout, { moduleName: id });
-      assert.tapResult(stdout, { testCount: 3 });
-      assert.includes(stdout, 'Watching files...');
-    } finally {
-      await rmRetry(dir);
-    }
+    const stdout = await shellWatch(`node ${CLI} tests/passing-tests.ts custom.html --watch`, {
+      cwd: dir,
+      until: (buf) => buf.includes('Press "qq"'),
+    });
+
+    assert.includes(stdout, 'QUnitX running: http://localhost:');
+    assert.includes(stdout, '/custom.html');
+    assert.passingTestCaseFor(stdout, { moduleName: id });
+    assert.tapResult(stdout, { testCount: 3 });
+    assert.includes(stdout, 'Watching files...');
   });
 });
 

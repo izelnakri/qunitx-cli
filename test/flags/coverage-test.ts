@@ -10,8 +10,7 @@ const IS_CHROMIUM = (process.env.QUNITX_BROWSER || 'chromium') === 'chromium';
 
 module('Flags | --coverage', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('prints a terminal summary and writes lcov + html reports', async (assert, testMetadata) => {
-    await using stack = new AsyncDisposableStack();
-    const output = outputDir(stack, 'cov');
+    await using output = outputDir('cov');
 
     const result = await shell(
       `node cli.ts test/fixtures/coverage/calculator-test.ts --coverage=lcov,html --output=${output}`,
@@ -50,8 +49,7 @@ module('Flags | --coverage', { concurrency: true }, (_hooks, moduleMetadata) => 
       assert.ok(true, 'coverage exclusions only apply on chromium — skipped');
       return;
     }
-    await using stack = new AsyncDisposableStack();
-    const output = outputDir(stack, 'cov-exclude');
+    await using output = outputDir('cov-exclude');
 
     await shell(
       `node cli.ts test/fixtures/coverage/calculator-test.ts --coverage=lcov --output=${output}`,
@@ -63,8 +61,7 @@ module('Flags | --coverage', { concurrency: true }, (_hooks, moduleMetadata) => 
   });
 
   test('bare --coverage prints the summary without writing report files', async (assert, testMetadata) => {
-    await using stack = new AsyncDisposableStack();
-    const output = outputDir(stack, 'cov-terminal');
+    await using output = outputDir('cov-terminal');
 
     const result = await shell(
       `node cli.ts test/fixtures/coverage/calculator-test.ts --coverage --output=${output}`,

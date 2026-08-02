@@ -62,17 +62,16 @@ module('Flags | --search', { concurrency: true }, (_hooks, moduleMetadata) => {
     // concurrently and its other Chrome-spawning tests would otherwise land in the snapshot.
     const tmpdir = path.join(CWD, 'tmp', `search-tmpdir-${randomUUID()}`);
     await fs.mkdir(tmpdir, { recursive: true });
-    try {
-      await spawnCapture(`node ${CWD}/cli.ts ${NESTED} --print`, {
-        env: { ...process.env, TMPDIR: tmpdir, TMP: tmpdir, TEMP: tmpdir, FORCE_COLOR: '0' },
-        cwd: CWD,
-      });
-      const left = (await fs.readdir(tmpdir)).filter((e) => e.startsWith('qunitx-chrome-'));
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => rmRetry(tmpdir));
 
-      assert.deepEqual(left, [], 'a --print run must not leave a Chrome user-data-dir behind');
-    } finally {
-      await rmRetry(tmpdir);
-    }
+    await spawnCapture(`node ${CWD}/cli.ts ${NESTED} --print`, {
+      env: { ...process.env, TMPDIR: tmpdir, TMP: tmpdir, TEMP: tmpdir, FORCE_COLOR: '0' },
+      cwd: CWD,
+    });
+    const left = (await fs.readdir(tmpdir)).filter((e) => e.startsWith('qunitx-chrome-'));
+
+    assert.deepEqual(left, [], 'a --print run must not leave a Chrome user-data-dir behind');
   });
 
   test('a file whose declarator is a local alias is reported, not silently dropped', async (assert, tm) => {
@@ -86,15 +85,14 @@ module('Flags | --search', { concurrency: true }, (_hooks, moduleMetadata) => {
         `var t = QUnit.test;\n` +
         `t('hidden by alias', function (assert) { assert.ok(true); });\n`,
     );
-    try {
-      const result = await shellFails(`node cli.ts ${dir} --print`, { ...moduleMetadata, ...tm });
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => rmRetry(dir));
 
-      assert.includes(result.stdout, '0 of 0 tests');
-      assert.includes(result.stdout, 'declared no tests the scan could see');
-      assert.includes(result.stdout, 'local alias');
-    } finally {
-      await rmRetry(dir);
-    }
+    const result = await shellFails(`node cli.ts ${dir} --print`, { ...moduleMetadata, ...tm });
+
+    assert.includes(result.stdout, '0 of 0 tests');
+    assert.includes(result.stdout, 'declared no tests the scan could see');
+    assert.includes(result.stdout, 'local alias');
   });
 
   test('the preview matches what an actual run selects', async (assert, tm) => {

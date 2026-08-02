@@ -323,50 +323,48 @@ module('Setup | WebServer | qunit.css resolution', { concurrency: true }, () => 
     // embedded stylesheet, so asserting it proves the served bytes are the consumer's, not the
     // CLI default — the css analogue of the JS runtime plugin's build.resolve-first precedence.
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ws-css-consumer-'));
-    try {
-      await fs.writeFile(
-        path.join(dir, 'package.json'),
-        JSON.stringify({ name: 'p', version: '1.0.0' }),
-      );
-      const pkg = path.join(dir, 'node_modules/qunitx');
-      await fs.mkdir(path.join(pkg, 'vendor'), { recursive: true });
-      await fs.writeFile(
-        path.join(pkg, 'package.json'),
-        JSON.stringify({
-          name: 'qunitx',
-          version: '9.9.9',
-          main: 'index.js',
-          exports: './index.js',
-        }),
-      );
-      await fs.writeFile(path.join(pkg, 'index.js'), 'export default {};\n');
-      await fs.writeFile(
-        path.join(pkg, 'vendor/qunit.css'),
-        '/* PROJECT-QUNIT-CSS-MARKER */\n#qunit-tests {}\n',
-      );
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(dir, { recursive: true, force: true }));
 
-      const { status, body } = await fetchCss(dir);
-      assert.equal(status, 200);
-      assert.includes(body, 'PROJECT-QUNIT-CSS-MARKER', 'serves the consumer project qunit.css');
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
+    await fs.writeFile(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: 'p', version: '1.0.0' }),
+    );
+    const pkg = path.join(dir, 'node_modules/qunitx');
+    await fs.mkdir(path.join(pkg, 'vendor'), { recursive: true });
+    await fs.writeFile(
+      path.join(pkg, 'package.json'),
+      JSON.stringify({
+        name: 'qunitx',
+        version: '9.9.9',
+        main: 'index.js',
+        exports: './index.js',
+      }),
+    );
+    await fs.writeFile(path.join(pkg, 'index.js'), 'export default {};\n');
+    await fs.writeFile(
+      path.join(pkg, 'vendor/qunit.css'),
+      '/* PROJECT-QUNIT-CSS-MARKER */\n#qunit-tests {}\n',
+    );
+
+    const { status, body } = await fetchCss(dir);
+    assert.equal(status, 200);
+    assert.includes(body, 'PROJECT-QUNIT-CSS-MARKER', 'serves the consumer project qunit.css');
   });
 
   test('falls back to the embedded qunit.css when the project has no qunitx', async (assert) => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ws-css-embedded-'));
-    try {
-      await fs.writeFile(
-        path.join(dir, 'package.json'),
-        JSON.stringify({ name: 'p', version: '1.0.0' }),
-      );
-      const { status, body } = await fetchCss(dir);
-      assert.equal(status, 200, 'css route responds 200 without a copied file');
-      assert.includes(body, 'qunit-tests', 'serves the embedded QUnit stylesheet');
-      assert.notIncludes(body, 'PROJECT-QUNIT-CSS-MARKER', 'not a consumer file');
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => fs.rm(dir, { recursive: true, force: true }));
+
+    await fs.writeFile(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: 'p', version: '1.0.0' }),
+    );
+    const { status, body } = await fetchCss(dir);
+    assert.equal(status, 200, 'css route responds 200 without a copied file');
+    assert.includes(body, 'qunit-tests', 'serves the embedded QUnit stylesheet');
+    assert.notIncludes(body, 'PROJECT-QUNIT-CSS-MARKER', 'not a consumer file');
   });
 });
 

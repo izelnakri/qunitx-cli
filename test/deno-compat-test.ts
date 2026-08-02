@@ -1,4 +1,5 @@
 import { module, test } from 'qunitx';
+import { tempDir } from './helpers/temp-dir.ts';
 import fs from 'node:fs/promises';
 import { rmRetry } from './helpers/rm-retry.ts';
 import os from 'node:os';
@@ -83,36 +84,24 @@ module('Deno compat | esbuild sidecar resolution (find-sidecar-esbuild.ts)', () 
   }
 
   test('finds an esbuild sidecar next to the exec dir', async (assert) => {
-    const dir = path.join(os.tmpdir(), `qunitx-sidecar-${randomUUID()}`);
-    await fs.mkdir(dir, { recursive: true });
-    try {
-      await stageExecutable(dir, 'esbuild');
-      assert.equal(findSidecarEsbuild(dir, 'linux'), path.join(dir, 'esbuild'));
-    } finally {
-      await rmRetry(dir);
-    }
+    await using dir = await tempDir('sidecar');
+
+    await stageExecutable(dir.path, 'esbuild');
+    assert.equal(findSidecarEsbuild(dir.path, 'linux'), path.join(dir.path, 'esbuild'));
   });
 
   test('prefers esbuild.exe over esbuild on win32', async (assert) => {
-    const dir = path.join(os.tmpdir(), `qunitx-sidecar-${randomUUID()}`);
-    await fs.mkdir(dir, { recursive: true });
-    try {
-      await stageExecutable(dir, 'esbuild');
-      await stageExecutable(dir, 'esbuild.exe');
-      assert.equal(findSidecarEsbuild(dir, 'win32'), path.join(dir, 'esbuild.exe'));
-    } finally {
-      await rmRetry(dir);
-    }
+    await using dir = await tempDir('sidecar');
+
+    await stageExecutable(dir.path, 'esbuild');
+    await stageExecutable(dir.path, 'esbuild.exe');
+    assert.equal(findSidecarEsbuild(dir.path, 'win32'), path.join(dir.path, 'esbuild.exe'));
   });
 
   test('returns null when no sidecar is present', async (assert) => {
-    const dir = path.join(os.tmpdir(), `qunitx-sidecar-${randomUUID()}`);
-    await fs.mkdir(dir, { recursive: true });
-    try {
-      assert.equal(findSidecarEsbuild(dir, 'linux'), null);
-    } finally {
-      await rmRetry(dir);
-    }
+    await using dir = await tempDir('sidecar');
+
+    assert.equal(findSidecarEsbuild(dir.path, 'linux'), null);
   });
 });
 
@@ -169,36 +158,35 @@ module('Deno compat | child_process stderr must be drained (shell.ts)', () => {
     }
     const dir = path.join(os.tmpdir(), `qunitx-stderr-${randomUUID()}`);
     await fs.mkdir(dir, { recursive: true });
-    const script = path.join(dir, 'flood.mjs');
+    const script = path.join(dir.path, 'flood.mjs');
     // ~512 KB to stderr (>> the ~64 KB pipe buffer) BEFORE the stdout marker, so an
     // undrained stderr provably blocks the child before "READY" is ever written.
     await fs.writeFile(
       script,
       `const b='x'.repeat(1024);for(let i=0;i<512;i++)process.stderr.write(b);process.stdout.write('READY\\n');`,
     );
-    try {
-      // process.execPath is the deno binary here, so it needs the `run` subcommand.
-      const child = spawn(process.execPath, ['run', '-A', script]);
-      const got = await new Promise<string>((resolve, reject) => {
-        let out = '';
-        const timer = setTimeout(
-          () => reject(new Error(`stalled — stdout was: ${out.trim()}`)),
-          5000,
-        );
-        child.stdout.on('data', (chunk) => {
-          out += chunk.toString();
-          if (out.includes('READY')) {
-            clearTimeout(timer);
-            resolve(out);
-          }
-        });
-        child.stderr.on('data', () => {}); // the drain under test
-        child.on('error', reject);
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => rmRetry(dir));
+
+    // process.execPath is the deno binary here, so it needs the `run` subcommand.
+    const child = spawn(process.execPath, ['run', '-A', script]);
+    const got = await new Promise<string>((resolve, reject) => {
+      let out = '';
+      const timer = setTimeout(
+        () => reject(new Error(`stalled — stdout was: ${out.trim()}`)),
+        5000,
+      );
+      child.stdout.on('data', (chunk) => {
+        out += chunk.toString();
+        if (out.includes('READY')) {
+          clearTimeout(timer);
+          resolve(out);
+        }
       });
-      child.kill();
-      assert.true(got.includes('READY'), 'stdout marker arrived past the stderr flood');
-    } finally {
-      await rmRetry(dir);
-    }
+      child.stderr.on('data', () => {}); // the drain under test
+      child.on('error', reject);
+    });
+    child.kill();
+    assert.true(got.includes('READY'), 'stdout marker arrived past the stderr flood');
   });
 });

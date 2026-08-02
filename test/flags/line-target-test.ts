@@ -106,19 +106,18 @@ module('Flags | file#line targeting', { concurrency: true }, (_hooks, moduleMeta
         `  test('x2', function (assert) { assert.ok(true); });\n` +
         `});\n`,
     );
-    try {
-      const out = await shell(`node cli.ts ${dir} ${dir}/x-test.ts#3 --print`, {
-        ...moduleMetadata,
-        ...tm,
-      });
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => rmRetry(dir));
 
-      assert.includes(out.stdout, 'X: x1');
-      assert.includes(out.stdout, 'X: x2', 'the whole file runs, not just line 3');
-      assert.includes(out.stdout, '2 of 2 tests');
-      assert.includes(out.stdout, 'line target ignored');
-    } finally {
-      await rmRetry(dir);
-    }
+    const out = await shell(`node cli.ts ${dir} ${dir}/x-test.ts#3 --print`, {
+      ...moduleMetadata,
+      ...tm,
+    });
+
+    assert.includes(out.stdout, 'X: x1');
+    assert.includes(out.stdout, 'X: x2', 'the whole file runs, not just line 3');
+    assert.includes(out.stdout, '2 of 2 tests');
+    assert.includes(out.stdout, 'line target ignored');
   });
 
   test('the same file given both whole and line-targeted runs whole', async (assert, tm) => {
