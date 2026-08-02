@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { blue } from '../utils/color.ts';
 import { defaultProjectConfigValues } from './default-project-config-values.ts';
-import { findProjectRoot } from '../utils/find-project-root.ts';
+import { findProjectRoot, type ProjectRootNotFoundFailure } from '../utils/find-project-root.ts';
 import * as FSTree from './fs-tree.ts';
 import * as TestFilePaths from './test-file-paths.ts';
 import { getChangedFsTree } from './get-changed-fs-tree.ts';
@@ -62,7 +62,10 @@ export const PluginLoadFailed = Result.Failure.define(
  * ```
  */
 export type ConfigFailure =
-  Args.ParseFailure | Result.Failure.Of<typeof InvalidPlugins | typeof PluginLoadFailed>;
+  | Args.ParseFailure
+  | ProjectRootNotFoundFailure
+  | FSTree.InputUnreadableFailure
+  | Result.Failure.Of<typeof InvalidPlugins | typeof PluginLoadFailed>;
 
 /**
  * Builds the merged qunitx config from package.json settings and CLI flags.
@@ -85,7 +88,8 @@ export type ConfigFailure =
  * ```
  */
 export async function setup(): Promise<Result.Result<Config, ConfigFailure>> {
-  const projectRoot = await findProjectRoot();
+  const projectRoot = await findProjectRoot().result();
+  if (Result.Failure.is(projectRoot)) return projectRoot;
   const flags = Args.parse(projectRoot);
   if (Result.Failure.is(flags)) return flags;
   const cliConfigFlags = flags;
@@ -118,9 +122,10 @@ export async function setup(): Promise<Result.Result<Config, ConfigFailure>> {
   if (config.debug) Result.Failure.setDebug(true);
   config.htmlPaths = normalizeHTMLPaths(config.projectRoot, config.htmlPaths);
   const [fsTree, plugins] = await Promise.all([
-    FSTree.build(config.testFileLookupPaths, config),
+    FSTree.build(config.testFileLookupPaths, config).result(),
     pluginsPromise,
   ]);
+  if (Result.Failure.is(fsTree)) return fsTree;
   if (Result.Failure.is(plugins)) return plugins;
   [config.fsTree, config.plugins] = [fsTree, plugins];
 

@@ -103,4 +103,14 @@ process.title = 'qunitx';
     await shutdownPrelaunch();
     process.stdout.write('\n', () => process.exit(1));
   }
-})();
+})().catch(async (error) => {
+  // The program's one crash boundary, and the two-tier rule at the very edge: a declared failure
+  // is a message and an exit code (`init`/`generate` reach here when there is no package.json to
+  // work in), while anything else is a bug and keeps its stack. Library functions used to make
+  // this call themselves with a bare `process.exit(1)`, which no caller could test or override.
+  await shutdownPrelaunch();
+  if (!Failure.is(error)) throw error;
+
+  console.error(Failure.format(error));
+  process.stderr.write('', () => process.exit(1));
+});

@@ -138,6 +138,45 @@ module('Setup | FSTree.build | glob input', { concurrency: true }, () => {
   });
 });
 
+// An unreadable input used to be `console.error(error); process.exit(1)` — inside a library
+// function, so this whole module was unassertable: the first bad path killed the test worker.
+module('Setup | FSTree.build | unreadable input', { concurrency: true }, () => {
+  test('a missing path is a declared failure naming the input that failed', async (assert) => {
+    const missing = path.join(process.cwd(), 'tmp', crypto.randomUUID(), 'nope.ts');
+
+    const outcome = await FSTree.build([missing]).result();
+
+    assert.true(FSTree.InputUnreadable.is(outcome));
+    assert.equal((outcome as FSTree.InputUnreadableFailure).data.input, missing);
+  });
+
+  test('the underlying ENOENT is preserved under cause, not swallowed', async (assert) => {
+    const missing = path.join(process.cwd(), 'tmp', crypto.randomUUID(), 'nope.ts');
+
+    const failure = (await FSTree.build([missing]).result()) as FSTree.InputUnreadableFailure;
+
+    assert.equal((failure.cause as NodeJS.ErrnoException).code, 'ENOENT');
+  });
+
+  test('one bad input fails the build without losing which of several it was', async (assert) => {
+    const good = await makeTempDir(['a.ts']);
+    const missing = path.join(good, 'does-not-exist', 'nope.ts');
+
+    const failure = (await FSTree.build([good, missing]).result()) as FSTree.InputUnreadableFailure;
+
+    assert.equal(failure.data.input, missing);
+  });
+
+  test('a readable input still resolves to the tree, not a failure', async (assert) => {
+    const dir = await makeTempDir(['a.ts']);
+
+    const outcome = await FSTree.build([dir]).result();
+
+    assert.false(FSTree.InputUnreadable.is(outcome));
+    assert.equal(Object.keys(outcome as object).length, 1);
+  });
+});
+
 async function makeTempDir(files: string[]): Promise<string> {
   const dir = path.join(process.cwd(), 'tmp', crypto.randomUUID());
   await Promise.all(

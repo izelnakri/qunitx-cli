@@ -57,7 +57,13 @@ module('Commands | init', { concurrency: true }, (_hooks, moduleMetadata) => {
       const result = await shellFails(`node ${CLI} init`, { cwd: dir });
 
       assert.exitCode(result, 1, 'exits with code 1 when no package.json found');
-      assert.includes(result, 'package.json', 'prints error about missing package.json');
+      // stderr, not stdout: a missing project root is now a declared ProjectRootNotFound that
+      // cli.ts reports at its crash boundary, the same place a bad flag or a broken plugin is
+      // reported. It used to be a console.log + process.exit(1) inside findProjectRoot itself.
+      assert.true(
+        result.stderr.includes('package.json'),
+        'names the missing package.json on stderr',
+      );
     } finally {
       await rmRetry(dir);
     }
