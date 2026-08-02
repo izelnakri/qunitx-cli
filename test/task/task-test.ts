@@ -1266,6 +1266,106 @@ module('Task | finally', { concurrency: true }, () => {
   });
 });
 
+// Rust's `Result::or_else`, and the piece the API was missing: a fallback that is itself
+// allowed to fail. `recover` cannot express it — its `E` is `never`, so it has nowhere to put a
+// failure the handler wants to report.
+module('Task | orElse', { concurrency: true }, () => {
+  test('a declared failure gets the fallback, and the channel stays open', async (assert) => {
+    const primary = Task<{ id: number; name: string }, Failure.Of<typeof NotFound>>(() => {
+      throw NotFound({ id: 7 });
+    });
+
+    const replaced: Task<
+      { id: number; name: string },
+      Failure.Of<typeof NotFound>
+    > = primary.orElse(() => loadUser(7));
+
+    assert.deepEqual(await replaced, { id: 7, name: 'u7' });
+  });
+
+  test('the fallback may fail too, and its failure is still discriminable', async (assert) => {
+    const outcome = await Task<{ id: number; name: string }>(() => {
+      throw NotFound({ id: 7 });
+    })
+      .orElse(() => loadUser(0)) // 0 misses as well
+      .result();
+
+    assert.true(NotFound.is(outcome), 'not swallowed into a value the way recover would');
+    assert.strictEqual(
+      (outcome as Failure.Of<typeof NotFound>).data.id,
+      0,
+      "the FALLBACK's failure",
+    );
+  });
+
+  // The two-tier line, and the reason this is not just `recover` with a different return type:
+  // "retry the replica when the primary says NotFound" is a plan; "retry the replica when the
+  // primary threw a TypeError" ships the TypeError twice.
+  test('a bug gets no fallback — it is not a planned outcome', async (assert) => {
+    let fallbackRan = false;
+    const buggy = Task<number>(() => {
+      throw new TypeError('a real bug');
+    });
+
+    await assert.rejects(
+      buggy.orElse(() => {
+        fallbackRan = true;
+        return Task(() => 0);
+      }),
+      TypeError,
+    );
+    assert.false(fallbackRan, 'the fallback was never reached');
+  });
+
+  test('a success passes through without calling the fallback', async (assert) => {
+    let fallbackRan = false;
+    const value = await Task(() => 'ok').orElse(() => {
+      fallbackRan = true;
+      return Task(() => 'replacement');
+    });
+
+    assert.strictEqual(value, 'ok');
+    assert.false(fallbackRan);
+  });
+
+  test('Task.orElse is the data-first twin', async (assert) => {
+    const failing = Task<string>(() => {
+      throw NotFound({ id: 1 });
+    });
+
+    assert.strictEqual(await Task.orElse(failing, () => Task(() => 'twin')), 'twin');
+  });
+
+  // Both halves must fail for `retry` to have anything to do — a satisfied `orElse` succeeds,
+  // so the chain succeeds and the retry never fires. With both failing, retry has to restart the
+  // SOURCE through the orElse rather than re-read its settled answer.
+  test('lineage survives it — retry restarts the source through the fallback', async (assert) => {
+    let attempts = 0;
+    const flaky = Task<string>(() => {
+      if (++attempts < 3) throw NotFound({ id: attempts });
+      return `ok after ${attempts}`;
+    });
+    const alsoMisses = () =>
+      Task<string>(() => {
+        throw NotFound({ id: 99 });
+      });
+
+    assert.strictEqual(await flaky.orElse(alsoMisses).retry(3), 'ok after 3');
+    assert.strictEqual(attempts, 3, 'the source ran again each time, not the cached rejection');
+  });
+
+  test('a satisfied fallback ends the chain, so an outer retry never fires', async (assert) => {
+    let attempts = 0;
+    const failing = Task<string>(() => {
+      attempts++;
+      throw NotFound({ id: 1 });
+    });
+
+    assert.strictEqual(await failing.orElse(() => Task(() => 'handled')).retry(3), 'handled');
+    assert.strictEqual(attempts, 1, 'nothing to retry once orElse has answered');
+  });
+});
+
 module('Task | ensure', { concurrency: true }, () => {
   const TooSmall = Failure.define('TooSmall', (d: { got: number }) => `too small: ${d.got}`);
 

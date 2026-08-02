@@ -1214,8 +1214,21 @@ threads through every consuming method:
 | `unwrapOr(fallback)`       | fallback                                              | re-thrown                                                   |
 | `context(message)`         | re-thrown with context — same `code`/`data`, `cause`d | passes through untouched                                    |
 | `mapErr(fn \| Factory)`    | remapped                                              | **remapped too** — classification happens here              |
+| `orElse(fn)` — fallback    | the fallback runs; its own failure stays typed        | re-thrown — a bug is not a planned outcome                  |
 | `recover(fn)` — boundary   | recovered                                             | **recovered too** — the program's one `.catch()`            |
 | `ignore(reason)` — cleanup | swallowed, labelled under `QUNITX_DEBUG`              | **swallowed too** — and EAGER: fire-and-forget attaches now |
+
+`orElse` and `recover` are the two halves of Rust's pair, each on the operation its name fits.
+`orElse` is `Result::or_else`: a declared failure gets a second chance, and because the fallback
+may fail too, `E` stays open (`Task<T, F>`) so the caller still has something to discriminate.
+`recover` is `unwrap_or_else`: it _leaves_ the fallible world, so `E` becomes `never` and the
+handler must have no failure to give. That `never` is a claim about the declared channel only —
+a handler that itself throws produces a bug, and bugs are untyped everywhere here, which is why
+`await` throws `unknown`. When the fallback has a failure worth reporting, reach for `orElse`.
+
+The two-tier split follows: `orElse` is declared-only, like `unwrapOr`. "Try the replica when
+the primary says NotFound" is a plan; "try the replica when the primary threw a TypeError" is a
+way to ship the TypeError twice.
 
 `context(message)` is anyhow's `.context()`, not Rust's panicking `expect` — hence the name:
 the failure keeps its `code` and `data` (every `switch` on the code still works), gains the

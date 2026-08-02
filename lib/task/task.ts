@@ -777,6 +777,26 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   }
 
   /**
+   * Data-first twin of {@link TaskClass#orElse} — a declared failure's fallible second chance.
+   *
+   * ```ts
+   * import { define } from '../result/failure.ts';
+   * const Missed = define('Missed', 'cache miss');
+   *
+   * const cached = Task<string>(() => {
+   *   throw Missed();
+   * });
+   * await Task.orElse(cached, () => Task(() => 'from origin')); // 'from origin'
+   * ```
+   */
+  static orElse<T, E, F>(
+    task: TaskClass<T, E>,
+    fn: (error: E) => TaskClass<T, F> | PromiseLike<T>,
+  ): TaskClass<T, F> {
+    return task.orElse(fn);
+  }
+
+  /**
    * Data-first twin of {@link TaskClass#context} — context for declared failures only.
    *
    * ```ts
@@ -1002,6 +1022,50 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   }
 
   /**
+   * The **declared** failure's second chance: on a declared `E`, run `fn` and adopt whatever it
+   * produces — including its failure. Rust's `Result::or_else`, and the fallible twin of
+   * {@link TaskClass#unwrapOr}.
+   *
+   * Two-tier, like `unwrapOr` and unlike {@link TaskClass#recover}: a **bug** is not a planned
+   * outcome and does not get a fallback. "Try the replica when the primary says NotFound" is a
+   * plan; "try the replica when the primary threw a TypeError" is a way to ship the TypeError to
+   * production twice.
+   *
+   * The distinction from `recover` is the return type, and it is the whole point: `recover`
+   * promises no declared failure remains (`E` becomes `never`), so its handler must not have one
+   * to give. `orElse` keeps the channel open, so the fallback is allowed to fail and the caller
+   * still has something to discriminate.
+   *
+   * ```ts
+   * import { define, type Of } from '../result/failure.ts';
+   * const NotFound = define('NotFound', (d: { id: number }) => `no user ${d.id}`);
+   * type NotFoundFailure = Of<typeof NotFound>;
+   *
+   * const fromPrimary = (id: number): Task<string, NotFoundFailure> =>
+   *   Task(() => {
+   *     throw NotFound({ id });
+   *   });
+   * const fromReplica = (id: number): Task<string, NotFoundFailure> => Task(() => `user ${id}`);
+   *
+   * // still a Task<string, NotFoundFailure> — the replica is allowed to miss too
+   * await fromPrimary(7).orElse(() => fromReplica(7)); // 'user 7'
+   * ```
+   */
+  orElse<F>(fn: (error: E) => TaskClass<T, F> | PromiseLike<T>): TaskClass<T, F> {
+    return this.#derive<T, F>(
+      () =>
+        this.then<T, T>(undefined, (error: unknown) => {
+          // A bug belongs to neither branch and keeps rejecting, exactly as it does through
+          // `result`, `match` and `unwrapOr`.
+          if (!isFailure(error)) throw error;
+          failureObserved(error);
+          return fn(error as E);
+        }),
+      (fresh) => fresh.orElse(fn),
+    );
+  }
+
+  /**
    * Recovers by producing a success value — **the crash boundary**, the Task spelling of the
    * one `.catch()` at the top of a program. Sees every rejection, bugs included; everything
    * downstream is settled, so `E` is `never`.
@@ -1019,6 +1083,10 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * ```
    */
   recover<U = T>(fn: (error: unknown) => U | PromiseLike<U>): TaskClass<T | U, never> {
+    // `never` is a claim about the DECLARED channel: no planned failure survives this. It is not
+    // a claim that nothing can reject — a handler that itself throws produces a BUG, and bugs are
+    // untyped everywhere in this API (that is what makes `await` throw `unknown`). When the
+    // fallback has a declared failure of its own to report, that is `orElse`, not `recover`.
     return this.#derive<T | U, never>(
       () =>
         this.then<T | U, T | U>(undefined, (error: unknown) => {
