@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
 import { Task } from '../task/index.ts';
-import * as Result from '../result/index.ts';
 
 const CLEANUP_DEADLINE_MS = 5_000;
 const CLEANUP_RETRY_MS = 50;
@@ -89,15 +88,16 @@ export async function cleanupDir(dirPath: string): Promise<void> {
   await Promise.all(
     diagEntries.map(async (entry) => {
       if (!/^\d+$/.test(entry)) return;
-      // A pid that vanished mid-scan is the normal case for a diagnostic walking /proc.
-      await Task(async () => {
+      try {
         if (!(await processReferencesDir(entry, dirPath, dirName))) return;
         const cmdline = await fs.readFile(`/proc/${entry}/cmdline`, 'utf8').catch(() => '');
         process.stderr.write(
           `# [qunitx] cleanup failed: pid ${entry} still references ${dirPath}` +
             ` (cmdline: ${cmdline.replace(/\0/g, ' ').slice(0, 120)})\n`,
         );
-      }).ignore('chrome cleanup diagnostic');
+      } catch {
+        /* vanished */
+      }
     }),
   );
 }
@@ -107,12 +107,12 @@ export async function cleanupDir(dirPath: string): Promise<void> {
 // no dir name in cmdline, but they inherit file descriptors to the user-data-dir from the
 // browser main process. Without the FD check, those processes are missed and rm() fails
 // with EBUSY even though no process has the dir as its working directory.
-function processReferencesDir(
+async function processReferencesDir(
   entry: string,
   dirPath: string,
   dirName: string,
-): Task<boolean, never> {
-  return Task(async () => {
+): Promise<boolean> {
+  try {
     const [cwd, cmdline] = await Promise.all([
       fs.readlink(`/proc/${entry}/cwd`).catch(() => ''),
       fs.readFile(`/proc/${entry}/cmdline`, 'utf8').catch(() => ''),
@@ -124,9 +124,9 @@ function processReferencesDir(
       fds.map((fd) => fs.readlink(`/proc/${entry}/fd/${fd}`).catch(() => '')),
     );
     return fdTargets.some((target) => target.startsWith(dirPath));
-    // A pid that exits mid-scan takes its whole /proc entry with it; "not referencing" is the
-    // right answer for a process that no longer exists.
-  }).recover(() => false);
+  } catch {
+    return false;
+  }
 }
 
 // Scans /proc and SIGKILLs every process that references dirPath via cwd, cmdline, or open FDs.
@@ -136,8 +136,11 @@ async function killAllReferencingProcesses(dirPath: string, dirName: string): Pr
     procEntries.map(async (entry) => {
       if (!/^\d+$/.test(entry)) return;
       if (!(await processReferencesDir(entry, dirPath, dirName))) return;
-      // ESRCH: already dead, which is the outcome we wanted anyway.
-      Result.try(() => process.kill(parseInt(entry), 'SIGKILL'));
+      try {
+        process.kill(parseInt(entry), 'SIGKILL');
+      } catch {
+        /* ESRCH: already dead */
+      }
     }),
   );
 }

@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import { Task } from '../task/index.ts';
 import { readdir, readFile, stat, lstat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -103,11 +102,14 @@ async function dispatchIfContentChanged(
   onEventFunc: (event: string, file: string) => unknown,
   onFinishFunc: ((path: string, event: string) => void) | null | undefined,
 ): Promise<void> {
-  // Vanished mid-read: the unlink/rename passes own removal, so there is nothing to do here.
-  const hash = await Task(() => readFileStable(filePath))
-    .map((contents) => createHash('sha1').update(contents).digest('hex'))
-    .recover(() => null);
-  if (hash === null) return;
+  let hash: string;
+  try {
+    hash = createHash('sha1')
+      .update(await readFileStable(filePath))
+      .digest('hex');
+  } catch {
+    return; // file vanished mid-read — the unlink/rename passes handle removal
+  }
   const hashes = config.state.watch.builtContentHash;
   if (hash === hashes[filePath]) return;
   hashes[filePath] = hash;
@@ -159,13 +161,14 @@ export function setup(
   // seed) — which was the hang. Seeding never clobbers a hash a build already recorded.
   const builtContentHash = config.state.watch.builtContentHash;
   const seedPromise = Promise.all(
-    Object.keys(config.fsTree).map(
-      (filePath) =>
-        Task(async () => {
-          const buf = await readFile(filePath);
-          builtContentHash[filePath] ??= createHash('sha1').update(buf).digest('hex');
-        }).ignore('watch hash seed'), // unreadable at startup — the first event reads as a change
-    ),
+    Object.keys(config.fsTree).map(async (filePath) => {
+      try {
+        const buf = await readFile(filePath);
+        builtContentHash[filePath] ??= createHash('sha1').update(buf).digest('hex');
+      } catch {
+        /* unreadable at startup — first real event will be treated as a change */
+      }
+    }),
   );
   const readyPromises: Promise<void>[] = [];
   const parentWatchers: FSWatcher[] = [];
@@ -286,18 +289,17 @@ export function setup(
         const now = Date.now();
         const last = lastEventMs[fullPath] ?? 0;
         lastEventMs[fullPath] = now;
-        // Cheap kernel-duplicate filter: identical mtime within the 10ms burst window. Real
-        // content changes are confirmed by hash at dispatch time (see below), so this is only a
-        // fast-path to avoid re-reading the file for obvious inotify/FSEvents dups. An
-        // inaccessible file is not a duplicate — `false` says "proceed" where the old catch
-        // said it by falling out of the block.
-        const duplicate = await Task(async () => {
+        try {
           const { mtimeMs } = await stat(fullPath);
           const prevMtime = seenMtimeMs[fullPath] ?? 0;
           seenMtimeMs[fullPath] = mtimeMs;
-          return now - last < CHANGE_DEDUPE_MS && mtimeMs > 0 && mtimeMs === prevMtime;
-        }).recover(() => false);
-        if (duplicate) return;
+          // Cheap kernel-duplicate filter: identical mtime within the 10ms burst window.
+          // Real content changes are confirmed by hash at dispatch time (see below), so this
+          // is only a fast-path to avoid re-reading the file for obvious inotify/FSEvents dups.
+          if (now - last < CHANGE_DEDUPE_MS && mtimeMs > 0 && mtimeMs === prevMtime) return;
+        } catch {
+          // File inaccessible — proceed.
+        }
         // Debounce: wait CHANGE_COALESCE_MS for the writeFile burst to settle, then dispatch a
         // rebuild only if the file's CONTENT actually changed (dispatchIfContentChanged hashes
         // it). Each new event resets the timer, so the file is fully written by dispatch time.
@@ -329,10 +331,12 @@ export function setup(
       if (event === 'add') {
         // If the added path is a symlink, set up deletion polling (fs.watch rename events are
         // not fired for symlink unlink on Linux, so polling is the only reliable detection).
-        await Task(async () => {
+        try {
           const lstatResult = await lstat(fullPath);
           if (lstatResult.isSymbolicLink()) trackSymlink(fullPath);
-        }).ignore('watch symlink probe'); // path already gone
+        } catch {
+          /* path already gone */
+        }
       } else if (event === 'unlink') {
         untrackSymlink(fullPath);
       }
@@ -433,10 +437,12 @@ export function setup(
   readyPromises.push(
     (async () => {
       for (const filePath of Object.keys(config.fsTree)) {
-        await Task(async () => {
+        try {
           const lstatResult = await lstat(filePath);
           if (lstatResult.isSymbolicLink()) trackSymlink(filePath);
-        }).ignore('watch symlink seed'); // gone or inaccessible — skip
+        } catch {
+          /* file gone or inaccessible — skip */
+        }
       }
     })(),
   );
@@ -657,14 +663,15 @@ export async function rescanDirectoryForDelta(
     // write from an untouched file, so pre-existing files are never spuriously rebuilt.
     const buildEndMs = config.state.watch.lastBuildEndMs;
     await Promise.all(
-      trackedToRecheck.map((filePath) =>
-        Task(async () => {
+      trackedToRecheck.map(async (filePath) => {
+        try {
           const { mtimeMs } = await deps.stat(filePath);
           if (mtimeMs < buildEndMs - RESCAN_MTIME_GRACE_MS) return;
           await dispatchIfContentChanged(config, extensions, filePath, onEventFunc, onFinishFunc);
-          // Disappeared between readdir and stat — the unlink pass below owns it.
-        }).ignore('watch rescan recheck'),
-      ),
+        } catch {
+          /* file disappeared between readdir and stat — handled by the unlink pass below */
+        }
+      }),
     );
     const watchPrefix = watchPath + path.sep;
     // For each missing tracked path, walk up toward watchPath using presentDirs (O(1) Set

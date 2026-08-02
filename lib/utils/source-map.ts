@@ -20,7 +20,6 @@
 // (preserves browser compatibility).  Provides the Buffer type even when @types/node
 // isn't in scope (matters for `deno bench`, which type-checks without Node types).
 import type { Buffer as NodeBuffer } from 'node:buffer';
-import * as Result from '../result/index.ts';
 
 // ── Constants & lookup tables ────────────────────────────────────────────────
 
@@ -256,10 +255,11 @@ export function extractInline(
   if (!bundle) return null;
   const base64Payload = readMarkerPayload(bundle);
   if (!base64Payload) return null;
-  // A bundle whose inline map will not decode has no map, which is the same answer as a bundle
-  // with no marker at all — both already return null above.
-  const decoded = Result.try(() => parse(decodeBase64Utf8(base64Payload), outDir));
-  return decoded.ok ? decoded.value : null;
+  try {
+    return parse(decodeBase64Utf8(base64Payload), outDir);
+  } catch {
+    return null;
+  }
 }
 
 /**

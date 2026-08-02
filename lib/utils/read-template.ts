@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises';
-import { Task } from '../task/index.ts';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -25,20 +24,15 @@ export async function readTemplate(relativePath: string): Promise<string> {
   const sea = await import('node:sea').catch(() => null);
   if (sea?.isSea()) return sea.getAsset(relativePath, 'utf8');
   const __dirname = dirname(fileURLToPath(import.meta.url));
-
-  // "the first candidate that resolves", said once, instead of a loop whose empty catch is the
-  // only thing expressing "try the next one". Both layouts are read concurrently — they are two
-  // small file reads, once per invocation.
-  return await Task.any(
-    ['../templates', '../../templates'].map((base) =>
-      Task(() => fs.readFile(join(__dirname, base, relativePath))),
-    ),
-  )
-    .map((contents) => contents.toString())
-    .mapErr(
-      () =>
-        new Error(
-          `qunitx-cli: template "${relativePath}" not found — try reinstalling the package.`,
-        ),
-    );
+  for (const base of ['../templates', '../../templates']) {
+    const candidate = join(__dirname, base, relativePath);
+    try {
+      return (await fs.readFile(candidate)).toString();
+    } catch {
+      // try next candidate
+    }
+  }
+  throw new Error(
+    `qunitx-cli: template "${relativePath}" not found — try reinstalling the package.`,
+  );
 }

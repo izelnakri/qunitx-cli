@@ -85,19 +85,17 @@ export async function write(
 ): Promise<void> {
   const file = path(projectRoot);
   const tmpFile = `${file}.${process.pid}-${++writeSequence}.tmp`;
-
-  await Task(async () => {
+  try {
     await fs.mkdir(nodePath.dirname(file), { recursive: true });
     await fs.writeFile(
       tmpFile,
       JSON.stringify({ esbuildCwd, metafile } satisfies MetafileCachePayload),
     );
     await fs.rename(tmpFile, file);
-  })
-    // node_modules/.cache may not be writable (read-only FS, EACCES); a cache that cannot be
-    // written is a slower next run, not a failed one. The rename is what publishes the file, so
-    // anything that fails before it leaves the tmpfile behind for us to drop.
-    .recover(() => Task(fs.unlink(tmpFile)).ignore('metafile cache tmpfile unlink'));
+  } catch {
+    /* node_modules/.cache may not be writable (read-only FS, EACCES); silent degrade. */
+    await Task(fs.unlink(tmpFile)).ignore('metafile cache tmpfile unlink');
+  }
 }
 
 /**
@@ -109,19 +107,15 @@ export async function write(
  * await MetafileCache.read('/tmp/no-such-qunitx-project'); // null — missing or corrupt cache is a miss
  * ```
  */
-export function read(projectRoot: string): Task<MetafileCachePayload | null, never> {
-  return (
-    Task(() => fs.readFile(path(projectRoot), 'utf8'))
-      .map((raw): MetafileCachePayload => {
-        const parsed = JSON.parse(raw) as MetafileCachePayload;
-        if (typeof parsed?.esbuildCwd !== 'string' || !parsed.metafile?.inputs) {
-          throw new TypeError('metafile cache is torn');
-        }
-        return parsed;
-      })
-      // A miss, a torn file and a stale shape are one answer to the caller: rebuild.
-      .recover(() => null)
-  );
+export async function read(projectRoot: string): Promise<MetafileCachePayload | null> {
+  try {
+    const raw = await fs.readFile(path(projectRoot), 'utf8');
+    const parsed = JSON.parse(raw) as MetafileCachePayload;
+    if (typeof parsed?.esbuildCwd !== 'string' || !parsed.metafile?.inputs) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 export type { MetafileCachePayload };
