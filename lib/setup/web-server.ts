@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import * as Result from '../result/index.ts';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
@@ -888,13 +889,14 @@ export { NOT_FOUND_HTML };
 // back to the embedded css if it (or the file) is absent. `createRequire().resolve` is a one-time
 // sync module lookup, not blocking file I/O.
 function resolveConsumerQunitCssCandidate(projectRoot: string): string | null {
-  try {
-    const entry = createRequire(`${projectRoot}/package.json`).resolve('qunitx');
-    const match = /^(.*[\\/]qunitx)[\\/]/.exec(entry);
-    return match ? path.join(match[1], 'vendor/qunit.css') : null;
-  } catch {
-    return null;
-  }
+  // Only the resolve() can throw — a project without qunitx installed. Narrowing the guard to
+  // it means a mistake in the regex or the join below is a bug that surfaces, rather than one
+  // more way this quietly answers "no stylesheet".
+  const entry = Result.try(() => createRequire(`${projectRoot}/package.json`).resolve('qunitx'));
+  if (!entry.ok) return null;
+
+  const match = /^(.*[\\/]qunitx)[\\/]/.exec(entry.value);
+  return match ? path.join(match[1], 'vendor/qunit.css') : null;
 }
 
 function replaceAssetPaths(html: string, htmlPath: string | null, projectRoot: string): string {

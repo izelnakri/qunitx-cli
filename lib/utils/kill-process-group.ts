@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import * as Result from '../result/index.ts';
 
 /**
  * Sends SIGKILL to a process and its entire process group. Requires the target to have
@@ -18,14 +19,13 @@ import { spawnSync } from 'node:child_process';
  * ```
  */
 export function killProcessGroup(pid: number): void {
-  try {
+  // ESRCH: the process is already dead, which is what we were asking for.
+  Result.try(() => {
     if (process.platform === 'win32') {
       // /T kills the process tree; /F forces termination of running processes.
       spawnSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore' });
     } else {
       process.kill(-pid, 'SIGKILL');
     }
-  } catch {
-    // ESRCH: process already dead.
-  }
+  });
 }

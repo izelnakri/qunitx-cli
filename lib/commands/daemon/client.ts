@@ -314,13 +314,14 @@ function awaitClose(socket: net.Socket): Promise<void> {
   });
 }
 
-async function readDaemonPid(cwd: string = process.cwd()): Promise<number | null> {
-  try {
-    const info = JSON.parse(await fs.readFile(Paths.info(cwd), 'utf8')) as { pid?: unknown };
-    return typeof info.pid === 'number' ? info.pid : null;
-  } catch {
-    return null;
-  }
+function readDaemonPid(cwd: string = process.cwd()): Task<number | null, never> {
+  return (
+    Task(() => fs.readFile(Paths.info(cwd), 'utf8'))
+      .map((raw) => (JSON.parse(raw) as { pid?: unknown }).pid)
+      .map((pid) => (typeof pid === 'number' ? pid : null))
+      // No info file, a torn one, or one without a pid are the same answer: no daemon here.
+      .recover(() => null)
+  );
 }
 
 function waitForPidExit(pid: number, timeoutMs: number): Promise<void> {

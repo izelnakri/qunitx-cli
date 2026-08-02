@@ -3,6 +3,7 @@ import path from 'node:path';
 import * as SourceMap from './source-map.ts';
 import type { SourceMapDecoder } from './source-map.ts';
 import { pathExists } from './path-exists.ts';
+import { Task } from '../task/index.ts';
 import type { Config, FSTree } from '../types.ts';
 
 // Persistent cross-run cache of the last run's failures, living beside tmp/test-timings.json.
@@ -64,14 +65,17 @@ export interface FailureCachePayload {
  * await FailureCache.read('/tmp/no-such-qunitx-project'); // null — a missing cache is just a miss
  * ```
  */
-export async function read(projectRoot: string): Promise<FailureCachePayload | null> {
-  try {
-    const parsed = JSON.parse(await fs.readFile(path.join(projectRoot, CACHE_FILENAME), 'utf8'));
-    if (parsed && Array.isArray(parsed.files)) return parsed as FailureCachePayload;
-    return null;
-  } catch {
-    return null;
-  }
+export function read(projectRoot: string): Task<FailureCachePayload | null, never> {
+  return (
+    Task(() => fs.readFile(path.join(projectRoot, CACHE_FILENAME), 'utf8'))
+      .map((raw): FailureCachePayload => {
+        const parsed = JSON.parse(raw);
+        if (!parsed || !Array.isArray(parsed.files)) throw new TypeError('failure cache is torn');
+        return parsed as FailureCachePayload;
+      })
+      // A miss, a torn file and a wrong shape are the same answer to the caller: no cache.
+      .recover(() => null)
+  );
 }
 
 /**

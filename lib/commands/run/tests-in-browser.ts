@@ -1211,18 +1211,18 @@ export async function armJSCoverage(
   log: (...args: unknown[]) => void = console.log,
 ): Promise<boolean> {
   if (!config.coverage || (config.browser ?? 'chromium') !== 'chromium') return false;
-  try {
-    await page.coverage.startJSCoverage({ resetOnNavigation: false });
-    return true;
-  } catch (error) {
-    log(
-      '#',
-      yellow(
-        `Warning: --coverage could not be started on this page, so the report will be empty: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      ),
-    );
-    return false;
-  }
+
+  return await Task(() => page.coverage.startJSCoverage({ resetOnNavigation: false }))
+    .map(() => true)
+    .recover((error) => {
+      log(
+        '#',
+        yellow(
+          `Warning: --coverage could not be started on this page, so the report will be empty: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        ),
+      );
+      return false;
+    });
 }

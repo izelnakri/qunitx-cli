@@ -1,4 +1,5 @@
 import net from 'node:net';
+import * as Result from '../../result/index.ts';
 
 /**
  * Reads NDJSON from `socket`, dispatching each parsed object via `onLine`.
@@ -26,11 +27,14 @@ export function readMessages<T>(socket: net.Socket, onLine: (line: T) => void): 
     buf = lines.pop() ?? '';
     for (const line of lines) {
       if (!line) continue;
-      try {
-        onLine(JSON.parse(line) as T);
-      } catch {
-        /* malformed line — skip */
-      }
+      // Only the parse is guarded. The old `try` wrapped `onLine` as well, so an exception
+      // thrown by the CONSUMER — a real bug — was indistinguishable from a torn frame and
+      // silently dropped. Measured: against JSON.parse itself the guard is not the cost.
+      // Parsed as `unknown` and cast at the call: `Result.try(() => … as T)` with an
+      // unresolved `T` leaves `Tried<T>` undecidable, so the outcome types as a union that
+      // includes the promise branch and `.ok` stops existing.
+      const message = Result.try(() => JSON.parse(line));
+      if (message.ok) onLine(message.value as T);
     }
   });
 }

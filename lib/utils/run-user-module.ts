@@ -4,44 +4,71 @@ import os from 'node:os';
 import path from 'node:path';
 import { red } from './color.ts';
 import { Task } from '../task/index.ts';
+import * as Failure from '../result/failure.ts';
 
 /**
- * Dynamically imports `modulePath` and calls its default export with `params`; exits with code 1 on error.
+ * A user-supplied `--before`/`--after` script threw, or could not be imported.
  *
  * ```ts
- * // Defined, not invoked: imports and runs an arbitrary user script, exits the process on error.
+ * import { UserScriptFailed } from './run-user-module.ts';
+ *
+ * UserScriptFailed({ position: 'before', path: '/p/seed.ts' }).message;
+ * // 'the before script failed: /p/seed.ts'
+ * ```
+ */
+export const UserScriptFailed = Failure.define(
+  'UserScriptFailed',
+  (data: { position: string; path: string }) => `the ${data.position} script failed: ${data.path}`,
+);
+
+/** The one failure {@link runUserModule} declares. */
+export type UserScriptFailedFailure = Failure.Of<typeof UserScriptFailed>;
+
+/**
+ * Dynamically imports `modulePath` and calls its default export with `params`.
+ *
+ * A user script that throws is a declared failure, not a process exit. It used to
+ * `console.trace` and `process.exit(1)` from inside a library function — which no caller could
+ * test or override, and which took the daemon down over one client's bad hook.
+ *
+ * ```ts
+ * import { runUserModule } from './run-user-module.ts';
+ * import * as Failure from '../result/failure.ts';
+ *
+ * // Defined, not invoked: imports and runs an arbitrary user script.
  * async function runBeforeHook(config: { before?: string }) {
- *   if (config.before) await runUserModule(config.before, config, 'before');
+ *   if (!config.before) return null;
+ *   const outcome = await runUserModule(config.before, config, 'before').result();
+ *   return Failure.is(outcome) ? outcome.code : null; // 'UserScriptFailed', or null
  * }
  * ```
- * @returns {Promise<void>}
  */
-export async function runUserModule(
+export function runUserModule(
   modulePath: string,
   params: unknown,
   scriptPosition: string,
-): Promise<void> {
-  const { url, cleanup } = await resolveImportTarget(modulePath);
-  try {
-    const func = await import(url);
-    if (func) {
-      func.default
-        ? await func.default(params)
-        : typeof func === 'function'
-          ? await func(params)
-          : null;
-    }
-  } catch (error) {
-    console.log('#', red(`QUnitX ${scriptPosition} script failed:`));
-    console.trace(error);
-    console.error(error);
+): Task<void, UserScriptFailedFailure> {
+  return Task(async () => {
+    const { url, cleanup } = await resolveImportTarget(modulePath);
+    // The staging dir is this function's to clean up however the import goes, so it is disposed
+    // rather than left to a `finally` a later edit could step around.
+    await using _staged = { [Symbol.asyncDispose]: cleanup };
 
-    // Flush stdout before exiting — in piped contexts stdout is buffered and
-    // process.exit() can drop pending writes before they reach the OS.
-    process.stdout.write('', () => process.exit(1));
-  } finally {
-    await cleanup();
-  }
+    const func = await import(url);
+    if (!func) return;
+
+    if (func.default) await func.default(params);
+    else if (typeof func === 'function') await func(params);
+  }).mapErr((cause) => {
+    // The diagnostic stays on stdout with a `#` prefix, where it has always been: stdout is
+    // the TAP stream, `# …` is a TAP comment, and a consumer parsing that stream is exactly
+    // who needs to know a hook died. Only the `process.exit(1)` moved — the failure now
+    // travels to the caller, so the daemon can fail one client's run instead of dying with it.
+    console.log('#', red(`QUnitX ${scriptPosition} script failed:`));
+    console.error(cause);
+
+    return UserScriptFailed({ position: scriptPosition, path: modulePath }, { cause });
+  });
 }
 
 /**
