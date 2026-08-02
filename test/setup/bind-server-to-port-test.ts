@@ -9,7 +9,7 @@ import type { HTTPServer } from '../../lib/web/index.ts';
 // deterministic, no real sockets, no cross-worker contention — and an instant sleep.
 
 const eaddrinuse = () => Object.assign(new Error('listen EADDRINUSE'), { code: 'EADDRINUSE' });
-const noSleep = () => Promise.resolve();
+const NO_DELAY = 0;
 
 /** A server stub whose `listen(port)` outcome is decided per attempt by `plan`. */
 function stubServer(plan: (port: number, attempt: number) => 'bind' | Error) {
@@ -40,7 +40,7 @@ module('Setup | bindServerToPort', { concurrency: true }, () => {
     const stub = stubServer((_port, attempt) => (attempt < 2 ? eaddrinuse() : 'bind'));
     const config = { port: 4000, portExplicit: true };
 
-    await bindServerToPort(stub.server, config, noSleep);
+    await bindServerToPort(stub.server, config, NO_DELAY);
 
     assert.equal(stub.attempts, 3, 'two failures then a successful bind');
     assert.equal(config.port, 4000, 'the same explicit port is kept, not incremented');
@@ -51,7 +51,7 @@ module('Setup | bindServerToPort', { concurrency: true }, () => {
     const config = { port: 4000, portExplicit: true };
 
     await assert.rejects(
-      bindServerToPort(stub.server, config, noSleep),
+      bindServerToPort(stub.server, config, NO_DELAY),
       'a port held the whole time still fails',
     );
     // Initial attempt + EXPLICIT_PORT_RETRIES (20) before giving up.
@@ -63,7 +63,7 @@ module('Setup | bindServerToPort', { concurrency: true }, () => {
     const stub = stubServer((port) => (port < 1236 ? eaddrinuse() : 'bind'));
     const config = { port: 1234 };
 
-    await bindServerToPort(stub.server, config, noSleep);
+    await bindServerToPort(stub.server, config, NO_DELAY);
 
     assert.equal(stub.attempts, 3, 'walked 1234 → 1235 → 1236');
     assert.equal(config.port, 1236, 'config.port reflects the port actually bound');
@@ -74,7 +74,7 @@ module('Setup | bindServerToPort', { concurrency: true }, () => {
     const config = { port: 4000, portExplicit: true };
 
     await assert.rejects(
-      bindServerToPort(stub.server, config, noSleep),
+      bindServerToPort(stub.server, config, NO_DELAY),
       'permission errors bubble',
     );
     assert.equal(stub.attempts, 1, 'no retry for an error that is not a transient collision');

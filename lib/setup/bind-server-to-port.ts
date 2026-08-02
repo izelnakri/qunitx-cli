@@ -31,8 +31,10 @@ const EXPLICIT_PORT_RETRY_DELAY_MS = 50;
 export async function bindServerToPort(
   server: HTTPServer,
   config: { port: number; portExplicit?: boolean },
-  // Injectable so the retry loop is unit-testable without paying real wall-clock delays.
-  sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  // Injectable so the retry path is unit-testable without paying real wall-clock delays. A
+  // number rather than a sleep function now that `retry` owns the waiting — a fake sleep would
+  // be silently ignored, which is worse than no seam at all.
+  retryDelayMs: number = EXPLICIT_PORT_RETRY_DELAY_MS,
 ): Promise<HTTPServer> {
   const inUse = (error: unknown) => (error as NodeJS.ErrnoException).code === 'EADDRINUSE';
 
@@ -41,7 +43,7 @@ export async function bindServerToPort(
     // Same work, retried: `when` keeps that to EADDRINUSE, so any other listen error still
     // surfaces on the first attempt instead of after a second of pointless waiting.
     await Task(() => server.listen(config.port)).retry(EXPLICIT_PORT_RETRIES, {
-      delayMs: EXPLICIT_PORT_RETRY_DELAY_MS,
+      delayMs: retryDelayMs,
       when: inUse,
     });
   } else {
