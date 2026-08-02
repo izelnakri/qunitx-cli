@@ -839,7 +839,10 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * const log = (value: unknown): void => console.debug(value);
    * const req = new Request('https://example.com/users/7');
    *
-   * const reply = await route(req).recover((bug) => (log(bug), internalError()));
+   * const reply = await route(req).recover((bug) => {
+   *   log(bug);
+   *   return internalError();
+   * });
    * ```
    */
   recover<U = T>(fn: (error: unknown) => U | PromiseLike<U>): TaskClass<T | U, never> {

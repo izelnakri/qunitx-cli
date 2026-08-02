@@ -36,7 +36,10 @@ export type RouteHandler = (
  * Middleware function signature — call `next()` to continue the chain.
  *
  * ```ts
- * const logger: Middleware = (req, _res, next) => (console.debug(req.path), next());
+ * const logger: Middleware = (req, _res, next) => {
+ *   console.debug(req.path);
+ *   next();
+ * };
  * ```
  */
 export type Middleware = (
