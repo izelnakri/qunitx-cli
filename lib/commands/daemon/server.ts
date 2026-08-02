@@ -12,6 +12,7 @@ import * as Config from '../../setup/config.ts';
 import * as Browser from '../../setup/browser.ts';
 import { DaemonRunError } from '../run/tests-in-browser.ts';
 import { run } from '../run.ts';
+import { borrowArgv, borrowEnv } from '../../utils/borrowed-globals.ts';
 import * as Result from '../../result/index.ts';
 import { Failure } from '../../result/index.ts';
 import type { Request, ResponseChunk, RunRequest, DaemonInfo } from './protocol.ts';
@@ -222,14 +223,8 @@ export async function serve(): Promise<void> {
   // Config.setup reads process.argv directly; the daemon's actual argv is `daemon _serve`
   // which would be parsed as test paths. Strip it for the startup config — we only need
   // the browser type here. Per-run argv comes from the client via runOnce.
-  const argvSnapshot = process.argv;
-  process.argv = [argvSnapshot[0], argvSnapshot[1] ?? 'cli.ts'];
-  let configured;
-  try {
-    configured = await Config.setup();
-  } finally {
-    process.argv = argvSnapshot;
-  }
+  using _argv = borrowArgv([process.argv[0], process.argv[1] ?? 'cli.ts']);
+  const configured = await Config.setup();
   // Startup, not a client run: argv is stripped to nothing here, so the only way this fails is
   // a broken QUNITX_BROWSER or a plugin the project cannot load — in both cases the daemon has
   // nothing valid to serve, and refusing to start beats accepting runs it will fail.
@@ -740,26 +735,18 @@ async function runOnce(
   env: Record<string, string | undefined>,
   state: DaemonState,
 ): Promise<number> {
-  // Snapshot env + argv, swap in client values, restore on exit. Snapshot is also the
-  // baseline so before-hook env mutations don't bleed across runs.
-  const envSnapshot = { ...process.env };
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) process.env[key] = value;
-  }
-  const argvSnapshot = process.argv;
-  process.argv = ['node', argvSnapshot[1] ?? 'cli.ts', ...argv];
+  // Both globals are lent for the whole call and given back however it ends. They used to be
+  // restored by two separate mechanisms at three separate places, and `env` was not among them
+  // when `Config.setup()` THREW — the argv `finally` ran, the exception left runOnce, and that
+  // client's environment stayed on the daemon for every later run.
+  using _env = borrowEnv(env);
+  using _argv = borrowArgv(['node', process.argv[1] ?? 'cli.ts', ...argv]);
 
-  let configured: Result.Result<ResolvedConfig, Config.ConfigFailure>;
-  try {
-    configured = (await Config.setup()) as Result.Result<ResolvedConfig, Config.ConfigFailure>;
-  } finally {
-    process.argv = argvSnapshot;
-  }
+  const configured = (await Config.setup()) as Result.Result<ResolvedConfig, Config.ConfigFailure>;
   // A bad flag from one client is that client's problem, not the daemon's. This is the whole
   // reason config assembly returns instead of exiting: `process.exit(1)` inside `Args.parse`
   // would have taken down a daemon serving every other invocation in the project.
   if (Failure.is(configured)) {
-    process.env = envSnapshot;
     process.stderr.write(`${Failure.format(configured)}\n`);
     return 1;
   }
@@ -788,12 +775,6 @@ async function runOnce(
   } catch (err) {
     if (err instanceof DaemonRunError) return err.exitCode;
     throw err;
-  } finally {
-    // Restore env: drop keys added during the run, restore changed values.
-    for (const key of Object.keys(process.env)) {
-      if (!(key in envSnapshot)) delete process.env[key];
-    }
-    Object.assign(process.env, envSnapshot);
   }
 }
 
