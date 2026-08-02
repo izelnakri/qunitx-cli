@@ -99,7 +99,12 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   #work: Recipe<T> | Executor<T>;
   #started = false;
   #controller: AbortController | undefined;
-  #resolve!: (value: T | PromiseLike<T>) => void;
+  /** Typed `unknown` rather than `T` on purpose. A private field is checked structurally, so
+   *  putting `T` in a parameter position here would make the whole class INVARIANT in `T` —
+   *  and `Task.fail(...)`, whose type is `Task<never, F>`, would stop being assignable to the
+   *  `Task<Value, F>` a guard clause returns. Native Promise has no such field and stays
+   *  covariant; this keeps Task the same. Only values this class produced ever reach it. */
+  #resolve!: (value: unknown) => void;
   #reject!: (reason: unknown) => void;
   /** Derivation lineage: the Task this one was derived from, and how to re-derive it — what
    *  makes restart/retry on a *chain* re-execute the chain's source, not just the last step. */
@@ -140,7 +145,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
     // single source of truth for which shape it is — nothing extra to store, and nothing to
     // keep in sync when `restart()` carries the work to a fresh Task.
     this.#work = typeof source === 'function' ? (source as Recipe<T> | Executor<T>) : () => source;
-    this.#resolve = resolve;
+    this.#resolve = resolve as (value: unknown) => void;
     this.#reject = reject;
   }
 

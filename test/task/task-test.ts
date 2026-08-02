@@ -422,6 +422,29 @@ module('Task | builders', { concurrency: true }, () => {
     await assert.rejects(Task.fail(NotFound({ id: 7 })), /no user 7/);
   });
 
+  test('a failing Task fits where its value type is declared — Task stays covariant in T', async (assert) => {
+    // A private field carrying `T` in a parameter position would make the class invariant, and
+    // `Task.fail(...)` — whose type is `Task<never, F>` — would stop being assignable to the
+    // `Task<Value, F>` a guard clause returns. Native Promise is covariant; so is this. The
+    // assertions below are the runtime half; the compile-time half is that this file builds.
+    type Config = { port: number };
+    const load = (exists: boolean): Task<Config, Failure.Of<typeof NotFound>> => {
+      if (!exists) return Task.fail(NotFound({ id: 0 })); // the pattern Task.fail exists for
+      return Task(() => ({ port: 8080 }));
+    };
+
+    assert.deepEqual(await load(true), { port: 8080 }, 'the happy path still carries the value');
+    const failed = await load(false).result();
+    assert.true(Failure.is(failed) && failed.code === 'NotFound', 'the guard clause failed');
+
+    // A recipe that only ever throws is `Task<never, …>` too, and fits the same contract.
+    const throwsOnly = (): Task<Config, Failure.Of<typeof NotFound>> =>
+      Task(() => {
+        throw NotFound({ id: 1 });
+      });
+    assert.true(Failure.is(await throwsOnly().result()), 'and so does an always-throwing recipe');
+  });
+
   test('Task.resolve passes an existing Task through, so its lineage survives', async (assert) => {
     // `Promise.resolve(p)` returns p itself for a same-constructor promise. Wrapping instead
     // would hand back a Task whose restart re-awaits the settled inner one rather than
