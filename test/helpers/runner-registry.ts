@@ -75,16 +75,16 @@ export async function joinRunnerRegistry(
   const mutexPath = `${registryDir}.lock`;
 
   const releaseMutex = await acquireMutex(mutexPath);
-  let wasSolo = false;
-  try {
-    wasSolo = (await liveRunners(registryDir)).length === 0;
-    // Skipping the wipe is always safe; wiping while someone else runs is the bug. So when the
-    // mutex could not be taken (releaseMutex === null) we simply don't wipe.
-    if (wasSolo && releaseMutex) await onSolo();
-    await fs.writeFile(entryPath, JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
-  } finally {
-    await releaseMutex?.();
-  }
+  // The mutex is held for exactly this scope. `await using` rather than try/finally because the
+  // release is the lock's own business, not the caller's — and a registry mutex that is not
+  // released wedges every later runner, not this one.
+  await using _mutex = { [Symbol.asyncDispose]: async () => void (await releaseMutex?.()) };
+
+  const wasSolo = (await liveRunners(registryDir)).length === 0;
+  // Skipping the wipe is always safe; wiping while someone else runs is the bug. So when the
+  // mutex could not be taken (releaseMutex === null) we simply don't wipe.
+  if (wasSolo && releaseMutex) await onSolo();
+  await fs.writeFile(entryPath, JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
 
   return {
     runId: String(process.pid),
@@ -145,18 +145,19 @@ async function acquireMutex(mutexPath: string): Promise<(() => Promise<void>) | 
 async function publish(lockPath: string, entry: RunnerEntry): Promise<boolean> {
   const tmpPath = `${lockPath}.${process.pid}.tmp`;
   await fs.writeFile(tmpPath, JSON.stringify(entry));
-  try {
-    // EEXIST is the whole point of the link: someone else published first, which is an
-    // outcome, not a fault. The rethrow line means an EACCES or ENOSPC on the registry
-    // directory propagates instead of being read as "we lost the race" and silently
-    // disabling the cap.
-    const linked = await Result.try(fs.link, tmpPath, lockPath);
-    if (!linked.ok && !Result.isErrno(linked.error, 'EEXIST')) throw linked.error;
-    return linked.ok;
-  } finally {
-    // Drop our second reference; on success the lock's own name keeps the inode alive.
-    await fs.unlink(tmpPath).catch(ignore('runner registry tmpfile unlink'));
-  }
+  // The tmpfile is a resource from the moment it exists. Disposal drops our second reference to
+  // the inode; on success the lock's own name is what keeps it alive.
+  await using _tmpfile = {
+    [Symbol.asyncDispose]: () => fs.unlink(tmpPath).catch(ignore('runner registry tmpfile unlink')),
+  };
+
+  // EEXIST is the whole point of the link: someone else published first, which is an
+  // outcome, not a fault. The rethrow line means an EACCES or ENOSPC on the registry
+  // directory propagates instead of being read as "we lost the race" and silently
+  // disabling the cap.
+  const linked = await Result.try(fs.link, tmpPath, lockPath);
+  if (!linked.ok && !Result.isErrno(linked.error, 'EEXIST')) throw linked.error;
+  return linked.ok;
 }
 
 // `null` here means "no usable entry", which is genuinely all three of missing, torn, and
