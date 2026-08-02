@@ -11,8 +11,7 @@ import { module, test } from 'qunitx';
 module('Result | portability', { concurrency: true }, () => {
   test('the Result/Failure/Task graph loads and works without a process global', async (assert) => {
     if ('Deno' in globalThis) {
-      assert.true(true, 'skipped under Deno — the node lane owns this child-process assert');
-      return;
+      return assert.true(true, 'skipped under Deno — the node lane owns this child-process assert');
     }
     const resultBarrel = new URL('../../lib/result/index.ts', import.meta.url).href;
     const taskBarrel = new URL('../../lib/task/index.ts', import.meta.url).href;

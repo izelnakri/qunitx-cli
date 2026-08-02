@@ -23,8 +23,7 @@ module('Flags | --coverage', { concurrency: true }, (_hooks, moduleMetadata) => 
         .stat(`${output}/coverage`)
         .then(() => true)
         .catch(() => false);
-      assert.notOk(dirExists, 'no coverage dir on non-chromium browsers');
-      return;
+      return assert.notOk(dirExists, 'no coverage dir on non-chromium browsers');
     }
 
     assert.includes(result, 'Coverage (V8 line coverage)');
@@ -46,8 +45,7 @@ module('Flags | --coverage', { concurrency: true }, (_hooks, moduleMetadata) => 
 
   test('excludes test files and node_modules from the report', async (assert, testMetadata) => {
     if (!IS_CHROMIUM) {
-      assert.ok(true, 'coverage exclusions only apply on chromium — skipped');
-      return;
+      return assert.ok(true, 'coverage exclusions only apply on chromium — skipped');
     }
     await using output = outputDir('cov-exclude');
 
@@ -68,8 +66,7 @@ module('Flags | --coverage', { concurrency: true }, (_hooks, moduleMetadata) => 
       { ...moduleMetadata, ...testMetadata },
     );
     if (!IS_CHROMIUM) {
-      assert.includes(result, 'requires the chromium browser');
-      return;
+      return assert.includes(result, 'requires the chromium browser');
     }
     assert.includes(result, 'Coverage (V8 line coverage)');
     const dirExists = await fs

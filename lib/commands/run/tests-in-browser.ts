@@ -184,8 +184,9 @@ export async function buildTestBundle(config: Config): Promise<void> {
   // with no test modules. The pending-trigger mechanism will fire a correct rebuild once
   // the IN_CREATE event re-adds the file to fsTree.
   if (allTestFilePaths.length === 0) {
-    console.log('# [buildTestBundle] fsTree is empty — skipping build (no test files found)');
-    return;
+    return console.log(
+      '# [buildTestBundle] fsTree is empty — skipping build (no test files found)',
+    );
   }
 
   const outDir = path.resolve(projectRoot, output);

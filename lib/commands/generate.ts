@@ -26,10 +26,7 @@ export async function run() {
       ? `${projectRoot}/${process.argv[3]}`
       : `${projectRoot}/${process.argv[3]}.js`;
 
-  if (await pathExists(path)) {
-    console.log(`${path} already exists!`);
-    return;
-  }
+  if (await pathExists(path)) return console.log(`${path} already exists!`);
 
   const testJSContent = await readTemplate('test.js');
   const targetFolderPaths = path.split('/');

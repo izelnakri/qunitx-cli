@@ -1,7 +1,6 @@
 import { module, test } from 'qunitx';
 import { tempDir } from './helpers/temp-dir.ts';
 import fs from 'node:fs/promises';
-import { rmRetry } from './helpers/rm-retry.ts';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -153,11 +152,12 @@ module('Deno compat | template reading (read-template.ts)', () => {
 module('Deno compat | child_process stderr must be drained (shell.ts)', () => {
   test('a stderr flood does not stall stdout delivery when drained', async (assert) => {
     if (!IS_DENO) {
-      assert.ok(true, 'skipped under Node — the OS pipe is pumped without an explicit drain');
-      return;
+      return assert.ok(
+        true,
+        'skipped under Node — the OS pipe is pumped without an explicit drain',
+      );
     }
-    const dir = path.join(os.tmpdir(), `qunitx-stderr-${randomUUID()}`);
-    await fs.mkdir(dir, { recursive: true });
+    await using dir = await tempDir('stderr');
     const script = path.join(dir.path, 'flood.mjs');
     // ~512 KB to stderr (>> the ~64 KB pipe buffer) BEFORE the stdout marker, so an
     // undrained stderr provably blocks the child before "READY" is ever written.
@@ -165,9 +165,6 @@ module('Deno compat | child_process stderr must be drained (shell.ts)', () => {
       script,
       `const b='x'.repeat(1024);for(let i=0;i<512;i++)process.stderr.write(b);process.stdout.write('READY\\n');`,
     );
-    await using stack = new AsyncDisposableStack();
-    stack.defer(() => rmRetry(dir));
-
     // process.execPath is the deno binary here, so it needs the `run` subcommand.
     const child = spawn(process.execPath, ['run', '-A', script]);
     const got = await new Promise<string>((resolve, reject) => {

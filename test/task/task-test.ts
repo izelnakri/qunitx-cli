@@ -1092,8 +1092,7 @@ module('Task | unconsumed rejection', { concurrency: true }, () => {
     // unhandled-rejection default kills the process, and because the reason is a Failure
     // (a real Error with name/message/code/data/cause), the crash names the culprit.
     if ('Deno' in globalThis) {
-      assert.true(true, 'skipped under Deno — the node lane owns this child-process assert');
-      return;
+      return assert.true(true, 'skipped under Deno — the node lane owns this child-process assert');
     }
     const entry = new URL('../../lib/task/index.ts', import.meta.url).href;
     const script =
