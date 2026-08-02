@@ -804,7 +804,7 @@ async function buildIncrementally(
   const buildOpts: esbuild.BuildOptions = { ...options, write: false };
 
   if (!cache.context || cache.contextKey !== fileKey) {
-    Task(() => cache.context?.dispose()).ignore('stale esbuild context dispose');
+    Task(cache.context?.dispose()).ignore('stale esbuild context dispose');
     cache.context = await esbuild.context(buildOpts);
     cache.contextKey = fileKey;
   }
@@ -993,7 +993,7 @@ async function runTestInsideHTMLFile(
     // back to original sources via config.state.group.sourceMapDecoder, merging into the shared collector.
     if (coverageStarted) {
       const entries = await page.coverage.stopJSCoverage().catch(() => []);
-      await Task(() => Coverage.collect(config, entries)).ignore('coverage collection');
+      await Task(Coverage.collect(config, entries)).ignore('coverage collection');
     }
   }
 

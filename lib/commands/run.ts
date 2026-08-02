@@ -584,7 +584,7 @@ async function runConcurrentMode(
   // handler captures the exit code instead of hitting process.exit.
   if (config.state.daemon) {
     clearInterval(keepAlive);
-    await closeWithGrace([Task(() => sharedServer?.close()).ignore('server.close')]);
+    await closeWithGrace([Task(sharedServer?.close()).ignore('server.close')]);
     throw new DaemonRunError(exitCode);
   }
 
@@ -611,7 +611,7 @@ async function runConcurrentMode(
     // SIGTERMs it ~60 s later. Best-effort cleanup, exit anyway.
     await closeWithGrace([
       failureCacheWrite,
-      Task(() => sharedServer?.close()).ignore('server.close'),
+      Task(sharedServer?.close()).ignore('server.close'),
       Task(browser.close()).ignore('browser.close'),
       shutdownPrelaunch(),
     ]);

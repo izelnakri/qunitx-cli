@@ -173,6 +173,10 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * Takes any of the three shapes work arrives in — all lazy, all identical with or without
    * `new`:
    *
+   * - **`null` / `undefined`**, which settle as-is having run nothing. This is what makes the
+   *   cleanup idiom `Task(handle?.close()).ignore('…')` expressible: when the handle is already
+   *   gone there is no promise to adopt and nothing to do, and that is not an error. Both are
+   *   accepted because an absent handle is spelled either way across a codebase.
    * - **recipe**, declaring no parameters — `() => value`, `async () => value`. Whatever it
    *   returns (value or promise) settles the Task. The common case.
    * - **executor**, declaring at least one — `(resolve, reject, signal) => …`, the
@@ -187,7 +191,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * an executor must name at least `resolve`. `(...args) => …` and defaulted first parameters
    * both declare zero, so they read as recipes — spell the parameters out to get an executor.
    */
-  constructor(source: PromiseLike<T> | Recipe<T> | Executor<T>) {
+  constructor(source: PromiseLike<T> | Recipe<T> | Executor<T> | null | undefined) {
     let resolve!: (value: T | PromiseLike<T>) => void;
     let reject!: (reason: unknown) => void;
     // A no-op executor: the work does not start here (that is the whole point). We only capture
@@ -1401,7 +1405,9 @@ function isThenable<T>(value: unknown): value is PromiseLike<T> {
  */
 type TaskConstructor = typeof TaskClass & {
   /** Call form — `Task(source)` without `new`; identical to the constructor. */
-  <T, E = AnyFailure>(source: PromiseLike<T> | Recipe<T> | Executor<T>): TaskClass<T, E>;
+  <T, E = AnyFailure>(
+    source: PromiseLike<T> | Recipe<T> | Executor<T> | null | undefined,
+  ): TaskClass<T, E>;
 };
 
 /**

@@ -129,6 +129,38 @@ async function until(condition: () => boolean, what: string): Promise<void> {
 }
 
 module('Task | construction forms', { concurrency: true }, () => {
+  // The cleanup idiom depends on this: `Task(handle?.close())` is `Task(undefined)` when the
+  // handle is already gone, and an absent handle is not an error.
+  test('null and undefined settle as-is, having run nothing', async (assert) => {
+    assert.strictEqual(await Task(undefined), undefined);
+    assert.strictEqual(await Task(null), null);
+
+    const slot: { page: { close(): Promise<string> } | null } = { page: null };
+    assert.strictEqual(await Task(slot.page?.close()).ignore('absent handle'), undefined);
+
+    slot.page = { close: () => Promise.resolve('closed') };
+    assert.strictEqual(await Task(slot.page?.close()).ignore('present handle'), 'closed');
+  });
+
+  // Why the call form is the one to reach for on a cleanup: both forms swallow the benign
+  // runtime failure, but only the call form lets a SYNC throw — which for an async API means
+  // the method is gone — reach someone. `ignore` should hide an ECONNRESET, not an upgrade.
+  test('the call form keeps a sync throw visible while still absorbing a rejection', async (assert) => {
+    const rejecting = { close: () => Promise.reject(new Error('ECONNRESET')) };
+    assert.strictEqual(
+      await Task(rejecting.close()).ignore('benign'),
+      undefined,
+      'a rejection is still absorbed',
+    );
+
+    const brokenApi = {
+      close: (): Promise<void> => {
+        throw new TypeError('close is not a function');
+      },
+    };
+    assert.throws(() => Task(brokenApi.close()).ignore('api break'), /close is not a function/);
+  });
+
   test('a recipe settles from its return value — sync, async, and void', async (assert) => {
     assert.strictEqual(await Task(() => 42), 42, 'sync value');
     assert.strictEqual(await new Task(() => 42), 42, 'sync value, new form');

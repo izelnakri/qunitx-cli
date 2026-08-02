@@ -304,9 +304,7 @@ export function setup(config: Config): HTTPServer {
     // buildTestBundle clears fallbackPage only after its first await (fs.mkdir), so a stale
     // error from the previous run can persist into the next run's navigation window.
     // Awaiting activeRebuild here ensures we act on the settled build state, not stale state.
-    await Task(() => build.activeRebuild).ignore(
-      'in-flight rebuild — reported by the request handler',
-    );
+    await Task(build.activeRebuild).ignore('in-flight rebuild — reported by the request handler');
     const fallback = build.fallbackPage;
     if (fallback?.kind === 'build-error') {
       const htmlContent = buildErrorHTML(fallback.error);

@@ -396,11 +396,11 @@ export async function shutdown(
       new Promise<null>((resolve) => setTimeout(() => resolve(null), SHUTDOWN_BROWSER_GRACE_MS)),
     ]));
   await Promise.all([
-    Task(() => state.pageSlot.page?.close()).ignore('daemon page close'),
+    Task(state.pageSlot.page?.close()).ignore('daemon page close'),
     // browser may be null if the launch hadn't settled within the grace window
     // (or never started at all); the chrome-prelaunch exit hook handles that.
-    Task(() => browser?.close()).ignore('daemon browser close'),
-    Task(() => state.esbuildCache.context?.dispose()).ignore('daemon esbuild context dispose'),
+    Task(browser?.close()).ignore('daemon browser close'),
+    Task(state.esbuildCache.context?.dispose()).ignore('daemon esbuild context dispose'),
   ]);
   // Best-effort cleanup of the per-cwd daemon dir created in run. rmdir refuses
   // non-empty dirs (we swallow the ENOTEMPTY) so a concurrent sibling that re-created files inside
@@ -678,9 +678,7 @@ export async function browserResponsive(
   }
   // Not responsive within budget (dead channel or CDP error). If the probe was merely
   // slow and resolves a session after the timeout, detach it so it doesn't leak.
-  void probe.then((session) =>
-    Task(() => session?.detach()).ignore('late browser probe session detach'),
-  );
+  void probe.then((session) => Task(session?.detach()).ignore('late browser probe session detach'));
   return false;
 }
 
@@ -700,7 +698,7 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
   // CDP socket hangs forever waiting for a protocol reply that never arrives.
   // skipPrelaunch=true bypasses the singleton prelaunch endpoint (which now points at the
   // dead Chrome) and goes straight to a fresh chromium.launch().
-  Task(() => state.browser?.close()).ignore('crashed browser close');
+  Task(state.browser?.close()).ignore('crashed browser close');
   // The persistent page belongs to the dead browser; drop the reference so the
   // next Browser.setup mints a fresh page on the new browser without paying an
   // isConnected() round-trip on a doomed CDP socket.
