@@ -41,6 +41,13 @@ export type Executor<T> = (
 ) => unknown;
 
 /**
+ * The failure a combinator member declares — `never` for a plain promise, which declares none.
+ * Lets `Task.all`/`Task.race` union their members' `E` instead of widening it away, so a
+ * combined Task still reads as `Task<T, TheFailureYouDeclared>`.
+ */
+type DeclaredFailureOf<T> = T extends TaskClass<unknown, infer E> ? E : never;
+
+/**
  * `Task<T, E>` — a **lazy, retryable** superset of `Promise<T>` for error handling that respects
  * JavaScript's rules from the ground up. `E` is the *declared* failure type: the reason a caller
  * expects when it fails, and what {@link TaskClass#result} surfaces as the `Err`. It is advisory
@@ -71,7 +78,7 @@ export type Executor<T> = (
  *
  * The two-tier rule threads through every consuming method: a **declared failure** (a `Failure`)
  * is an outcome the caller planned for, a **bug** (any other rejection) is not. `result`,
- * `match`, `unwrapOr` and `expect` act only on declared failures and let bugs keep flying to the
+ * `match`, `unwrapOr` and `context` act only on declared failures and let bugs keep flying to the
  * one boundary that turns them into a crash report; `mapErr` (the adapter edge, where foreign
  * errors get classified *into* Failures) and `recover` (the crash boundary itself) are the two
  * deliberate catch-alls. `mapErr` takes a {@link define}d factory directly — `mapErr(Unreadable,
@@ -491,6 +498,10 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * Lazy `Promise.all`: on await, everything starts together, resolves positionally, and
    * fail-fast applies — before the await, nothing has begun.
    *
+   * The combined Task keeps the members' declared failure — `Task.all` of two
+   * `Task<T, LoadFailure>` is a `Task<T[], LoadFailure>`, so `.result()` on it still
+   * discriminates the union you declared rather than a widened `Failure`.
+   *
    * ```ts
    * const both = Task.all([Task(() => 'a'), Task(() => 'b')]); // nothing has started yet
    * await both; // ['a', 'b'] — both started HERE
@@ -498,7 +509,8 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    */
   static override all<T extends readonly unknown[] | []>(
     values: T,
-  ): TaskClass<{ -readonly [P in keyof T]: Awaited<T[P]> }>;
+  ): TaskClass<{ -readonly [P in keyof T]: Awaited<T[P]> }, DeclaredFailureOf<T[number]>>;
+  static override all<T, E>(values: Iterable<TaskClass<T, E>>): TaskClass<Awaited<T>[], E>;
   static override all<T>(values: Iterable<T | PromiseLike<T>>): TaskClass<Awaited<T>[]>;
   static override all(values: Iterable<unknown>): TaskClass<unknown[]> {
     const members = snapshotOnce(values);
@@ -515,7 +527,10 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * // 'fast'
    * ```
    */
-  static override race<T extends readonly unknown[] | []>(values: T): TaskClass<Awaited<T[number]>>;
+  static override race<T extends readonly unknown[] | []>(
+    values: T,
+  ): TaskClass<Awaited<T[number]>, DeclaredFailureOf<T[number]>>;
+  static override race<T, E>(values: Iterable<TaskClass<T, E>>): TaskClass<Awaited<T>, E>;
   static override race<T>(values: Iterable<T | PromiseLike<T>>): TaskClass<Awaited<T>>;
   static override race(values: Iterable<unknown>): TaskClass<unknown> {
     const members = snapshotOnce(values);
