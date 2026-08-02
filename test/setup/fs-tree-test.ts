@@ -167,6 +167,19 @@ module('Setup | FSTree.build | unreadable input', { concurrency: true }, () => {
     assert.equal(failure.data.input, missing);
   });
 
+  // Each input answers with its own files and the fold happens once, so nothing survives a call
+  // — which is what makes a retried build safe: the second attempt cannot inherit entries the
+  // first wrote before it failed (including files deleted in between).
+  test('each build produces its own tree, sharing no state with the last', async (assert) => {
+    const dir = await makeTempDir(['a.ts', 'b.ts']);
+
+    const first = await FSTree.build([dir]);
+    const second = await FSTree.build([dir]);
+
+    assert.notStrictEqual(first, second, 'a fresh accumulator per build, not a module-level one');
+    assert.deepEqual(Object.keys(first).sort(), Object.keys(second).sort());
+  });
+
   test('a readable input still resolves to the tree, not a failure', async (assert) => {
     const dir = await makeTempDir(['a.ts']);
 
