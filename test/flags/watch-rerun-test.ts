@@ -17,9 +17,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
   test('changing a file in watched directory triggers a re-run', async (assert) => {
     const { dir, id, testFile, testContent } = await makeWatchProject();
     // Watch the `tests/` directory so the file watcher resolves paths correctly.
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', '--watch'], { cwd: dir }, async (session) => {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
 
@@ -32,16 +30,12 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
       assert.includes(rerunOutput, '# pass 3');
       assert.includes(rerunOutput, '# fail 0');
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('adding a new file to the watched directory triggers a filtered re-run', async (assert) => {
     const { dir, id, testsDir, testContent } = await makeWatchProject();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', '--watch'], { cwd: dir }, async (session) => {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
 
@@ -64,9 +58,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       assert.includes(ctx, '# fail 0');
       // The new file's module name appears in the filtered re-run output.
       assert.includes(ctx, newId);
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('deleting a file from the watched directory triggers a full re-run without it', async (assert) => {
@@ -76,9 +68,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
     const id2 = randomUUID();
     await fs.writeFile(`${testsDir}/extra-tests.ts`, testContent.replace(id, id2));
 
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', '--watch'], { cwd: dir }, async (session) => {
       // Initial run: both files → 6 passing tests (all bundled together in watch mode).
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
@@ -97,9 +87,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       // The deleted file's module name is absent; the remaining file's is present.
       assert.false(rerunOutput.includes(id), 'deleted file module absent from re-run output');
       assert.includes(rerunOutput, id2);
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('renaming a file triggers remove+add and the renamed file is re-run', async (assert) => {
@@ -109,9 +97,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
     const id2 = randomUUID();
     await fs.writeFile(`${testsDir}/extra-tests.ts`, testContent.replace(id, id2));
 
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', '--watch'], { cwd: dir }, async (session) => {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
       assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
@@ -132,9 +118,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
       assert.includes(rerunOutput, '# fail 0');
       assert.includes(rerunOutput, id);
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('renaming a watched directory removes its files from tracking', async (assert) => {
@@ -146,9 +130,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
     await fs.mkdir(otherDir, { recursive: true });
     await fs.writeFile(`${otherDir}/other-tests.ts`, testContent.replace(id, id2));
 
-    const session = await spawnWatch(['tests', 'other-tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', 'other-tests', '--watch'], { cwd: dir }, async (session) => {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
       assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
@@ -166,16 +148,12 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       // Only the other-tests file runs — renamed directory's files are no longer tracked.
       assert.includes(rerunOutput, id2);
       assert.false(rerunOutput.includes(id), 'renamed-away directory files absent from re-run');
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('rapid file changes coalesce: only the final state is tested', async (assert) => {
     const { dir, id, testFile, testContent } = await makeWatchProject();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', '--watch'], { cwd: dir }, async (session) => {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
 
@@ -202,9 +180,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       // The final state (finalId) ran — no crash, no broken intermediate state.
       assert.includes(rerunOutput, '# fail 0');
       assert.includes(rerunOutput, finalId);
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('simultaneous writes to files in two watched directories both appear in the rebuild', async (assert) => {
@@ -224,9 +200,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
     await fs.mkdir(testsDir2, { recursive: true });
     await fs.writeFile(testFile2, content2);
 
-    const session = await spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', 'tests2', '--watch'], { cwd: dir }, async (session) => {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: id1 });
       assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
@@ -251,9 +225,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       assert.includes(session.stdout, newId1);
       assert.includes(session.stdout, newId2);
       assert.includes(session.stdout, '# fail 0');
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('removing one watched directory fires REMOVED exactly once and leaves the other watcher live', async (assert) => {
@@ -266,9 +238,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
     await fs.mkdir(testsDir2, { recursive: true });
     await fs.writeFile(testFile2, content2);
 
-    const session = await spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', 'tests2', '--watch'], { cwd: dir }, async (session) => {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: id1 });
       assert.passingTestCaseFor(session.stdout, { moduleName: id2 });
@@ -303,9 +273,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       await waitForRunComplete(session, 3, 'second re-run to start');
 
       assert.includes(session.stdout, newId2);
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('renaming a nested subdirectory fires one REMOVED and re-runs every watched path without it', async (assert) => {
@@ -335,9 +303,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
     await fs.mkdir(testsDir2, { recursive: true });
     await fs.writeFile(`${testsDir2}/extra.ts`, testContent.replace(rootId, id2));
 
-    const session = await spawnWatch(['tests', 'tests2', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', 'tests2', '--watch'], { cwd: dir }, async (session) => {
       // Initial run: 5 modules × 3 tests = 15 tests.
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: rootId });
@@ -371,9 +337,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
         1,
         'exactly one REMOVED: for the whole renamed subdirectory',
       );
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('watch mode starts without crashing when the initial file has a build error', async (assert) => {
@@ -381,9 +345,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
 
     // Break the file BEFORE launching qunitx so the first build attempt always fails.
     await fs.writeFile(testFile, 'this is not valid typescript !!@#$%^&*');
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', '--watch'], { cwd: dir }, async (session) => {
       // The process must NOT crash — it should stay alive, print the bundle error, then
       // set up the watcher and print "Watching files...". Wait for the latter so both
       // assertions are guaranteed to be present in stdout at assertion time.
@@ -401,16 +363,12 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
       assert.includes(rerunOutput, '# pass');
       assert.includes(rerunOutput, '# fail 0');
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('a build error in watch mode prints the error without exiting', async (assert) => {
     const { dir, id, testFile, testContent } = await makeWatchProject();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', '--watch'], { cwd: dir }, async (session) => {
       // Wait for the initial passing run.
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
@@ -433,9 +391,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
       assert.includes(rerunOutput, '# pass 3');
       assert.includes(rerunOutput, '# fail 0');
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   // ── Symlink tests ────────────────────────────────────────────────────────────────────────────
@@ -449,25 +405,19 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
     // Verifies the FSTree.build fix: symlinks inside the watched directory are included in the
     // initial fsTree scan and therefore bundled in the first run.
     const { dir, id, symlinkId } = await makeWatchProjectWithSymlink();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', '--watch'], { cwd: dir }, async (session) => {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       // Both the regular test file and the symlinked file must be in the initial bundle.
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
       assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('adding a symlink to a .ts file triggers a filtered re-run', async (assert) => {
     // fs.watch fires a rename event when a symlink is created; classifyRenameEvent follows the
     // symlink via stat() and classifies it as 'add', triggering a filtered re-run.
     const { dir, id, testsDir, testContent } = await makeWatchProject();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', '--watch'], { cwd: dir }, async (session) => {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
 
@@ -481,9 +431,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
       assert.includes(rerunOutput, symlinkId);
       assert.includes(rerunOutput, '# fail 0');
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('writing through a symlink (modifying its target) triggers a re-run', async (assert) => {
@@ -497,9 +445,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       testContent,
       symlinkId,
     } = await makeWatchProjectWithSymlink();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', '--watch'], { cwd: dir }, async (session) => {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
 
@@ -522,18 +468,14 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       const rerunOutput = rerunBuf.slice(rerunBuf.lastIndexOf('QUnitX running:'));
       assert.includes(rerunOutput, newId);
       assert.includes(rerunOutput, '# fail 0');
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('deleting a symlink .ts file triggers a full re-run without it', async (assert) => {
     // fs.unlink on a symlink fires NO fs.watch events on Linux. The watcher uses fs.watchFile
     // polling (500 ms interval) to detect the deletion.
     const { dir, id, symlink, symlinkId } = await makeWatchProjectWithSymlink();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', '--watch'], { cwd: dir }, async (session) => {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
       assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
@@ -547,18 +489,14 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
       assert.includes(rerunOutput, id);
       assert.false(rerunOutput.includes(symlinkId), 'deleted symlink module absent from re-run');
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('deleting the target of a symlink (making it dangling) triggers a full re-run', async (assert) => {
     // When the symlink's target is removed, stat() on the symlink path starts failing.
     // The fs.watchFile poll detects nlink === 0 and fires 'unlink' for the symlink path.
     const { dir, id, symlink: _symlink, target, symlinkId } = await makeWatchProjectWithSymlink();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', '--watch'], { cwd: dir }, async (session) => {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
 
@@ -570,9 +508,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       const rerunOutput = session.stdout.slice(session.stdout.lastIndexOf('QUnitX running:'));
       assert.includes(rerunOutput, id);
       assert.false(rerunOutput.includes(symlinkId), 'dangling symlink module absent from re-run');
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('renaming a symlink fires an immediate add then a polling-delayed unlink', async (assert) => {
@@ -588,9 +524,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       symlinkId,
       testContent: _testContent,
     } = await makeWatchProjectWithSymlink();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', '--watch'], { cwd: dir }, async (session) => {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
       assert.passingTestCaseFor(session.stdout, { moduleName: id });
       assert.passingTestCaseFor(session.stdout, { moduleName: symlinkId });
@@ -612,18 +546,14 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       // Final state: renamed symlink's content (same symlinkId) present, original path gone.
       assert.includes(rerunOutput, symlinkId);
       assert.includes(rerunOutput, '# fail 0');
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('a dangling symlink added to the watched directory is silently ignored', async (assert) => {
     // classifyRenameEvent: stat() fails on the dangling symlink, path is not in fsTree → null.
     // No re-run, no crash, no ADDED: in output.
     const { dir, id, testsDir, testContent } = await makeWatchProject();
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', '--watch'], { cwd: dir }, async (session) => {
       await session.waitFor((buf) => buf.includes('Press "qq"'), 'initial run to complete');
 
       await fs.symlink(`${dir}/nonexistent.ts`, `${testsDir}/dangling.ts`);
@@ -654,9 +584,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       // project-relative and separator-native, so it reads \tests\ on Windows.
       assert.includes(session.stdout, 'ADDED:');
       assert.includes(session.stdout, 'real-tests.ts');
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('no-tests warning in watch mode serves warning HTML at / until tests are added', async (assert) => {
@@ -665,9 +593,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
 
     // Start with a no-tests file so the initial run produces a 0-tests warning.
     await fs.writeFile(testFile, 'export const x = 1;');
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', '--watch'], { cwd: dir }, async (session) => {
       await session.waitFor((buf) => {
         const match = buf.match(/http:\/\/localhost:(\d+)/);
         if (match && port === null) port = Number(match[1]);
@@ -692,17 +618,13 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
 
       const okBody = await fetch(`http://localhost:${port}/`).then((r) => r.text());
       assert.notIncludes(okBody, 'Warning: No Tests Registered');
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('build error in watch mode serves error HTML at / until the file is fixed', async (assert) => {
     const { dir, testFile, testContent } = await makeWatchProject();
     let port: number | null = null;
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', '--watch'], { cwd: dir }, async (session) => {
       await session.waitFor((buf) => {
         const match = buf.match(/http:\/\/localhost:(\d+)/);
         if (match && port === null) port = Number(match[1]);
@@ -735,17 +657,13 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
 
       const okBody = await fetch(`http://localhost:${port}/`).then((r) => r.text());
       assert.notIncludes(okBody, 'Build Error:', 'error HTML cleared at / after fix');
-    } finally {
-      await session.kill();
-    }
+    });
   });
 
   test('build error in watch mode sends a WebSocket refresh message to connected clients', async (assert) => {
     const { dir, testFile, testContent } = await makeWatchProject();
     let port: number | null = null;
-    const session = await spawnWatch(['tests', '--watch'], { cwd: dir });
-
-    try {
+    await withWatchSession(['tests', '--watch'], { cwd: dir }, async (session) => {
       await session.waitFor((buf) => {
         const match = buf.match(/http:\/\/localhost:(\d+)/);
         if (match && port === null) port = Number(match[1]);
@@ -820,9 +738,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
       } finally {
         ws.close();
       }
-    } finally {
-      await session.kill();
-    }
+    });
   });
 });
 
@@ -851,6 +767,26 @@ interface WatchSession {
   /** Sends SIGTERM and resolves once the child process has fully exited. */
   kill(): Promise<void>;
   readonly stdout: string;
+}
+
+// Runs `body` against a live watch session and always kills it afterwards.
+//
+// Every session holds a permit from the cross-process browser semaphore, released by kill().
+// A forgotten `finally` therefore does not fail its own test — it starves every later test of
+// a browser until the run times out, which is a miserable thing to debug. Handing the session
+// to a scope instead of returning it makes that impossible to get wrong, and takes an indent
+// level off all 21 tests that use one.
+async function withWatchSession<T>(
+  args: string[],
+  options: { cwd?: string; timeout?: number },
+  body: (session: WatchSession) => Promise<T>,
+): Promise<T> {
+  const session = await spawnWatch(args, options);
+  try {
+    return await body(session);
+  } finally {
+    await session.kill();
+  }
 }
 
 // Spawns a long-running watch-mode process. Returns a session object that lets tests
