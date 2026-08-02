@@ -5,7 +5,7 @@
  *
  * The signature mirrors `Promise.try`: `Result.try(fn, ...args)` calls `fn(...args)` **now**
  * and reflects the outcome — a return becomes `Ok`, a throw becomes `Err`. A synchronous
- * source yields a `Result`; a source that returns a thenable yields a `Promise<Result>` that
+ * source yields a `Caught`; a source that returns a thenable yields a `Promise<Caught>` that
  * **never rejects**, which is what makes `Promise.all(items.map((i) => Result.try(work, i)))`
  * safe: no fail-fast, no lost successes.
  *
@@ -78,18 +78,22 @@ const errOf = <E>(error: E): Err<E> => ({ ok: false, value: undefined, error });
  *
  * The first arm handles an `any`-typed source — `JSON.parse`, the flagship caller. A
  * conditional type applied to `any` resolves to the *union* of both branches, which would
- * hand the caller the unusable `Promise<Result> | Result` (no `.ok` until narrowed by hand).
+ * hand the caller the unusable `Promise<Caught> | Caught` (no `.ok` until narrowed by hand).
  * `0 extends 1 & T` is true only for `any`; such a source is treated as synchronous and its
  * value as `unknown` — the honest reading of `any`, and what the call site can branch on.
  */
 type Tried<T> = 0 extends 1 & T
   ? Caught<unknown>
-  : T extends PromiseLike<unknown>
+  : // Bracketed so the check is NOT distributive. A naked `T extends …` distributes over a
+    // union, and `never` is the empty union — so `Tried<never>` short-circuited to `never` and
+    // `Result.try(alwaysThrows)` typed its own outcome as unusable, which is precisely the
+    // boundary this function exists for.
+    [T] extends [PromiseLike<unknown>]
     ? Promise<Caught<Awaited<T>>>
     : Caught<T>;
 
 /**
- * Calls `fn(...args)` and reflects the outcome into a `Result` — `Result.try`, shaped like
+ * Calls `fn(...args)` and reflects the outcome into a `Caught` box — `Result.try`, shaped like
  * `Promise.try`. See the module doc for the flat-classification pattern this is half of.
  *
  * ```ts
@@ -136,7 +140,9 @@ export function tryCatch<T, const A extends readonly unknown[]>(
  */
 export type Rescued<T, F> = 0 extends 1 & T
   ? unknown
-  : T extends PromiseLike<unknown>
+  : // Bracketed for the same reason as {@link Tried}: a naked check distributes, and `never`
+    // is the empty union, so a `never`-returning `fn` collapsed the whole result to `never`.
+    [T] extends [PromiseLike<unknown>]
     ? Promise<Awaited<T> | F>
     : T | F;
 

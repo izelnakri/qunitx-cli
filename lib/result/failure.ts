@@ -55,7 +55,8 @@ export interface SerializedFailure {
   message: string;
   /** The structured payload, JSON round-tripped by `toJSON` so it cannot fail later. */
   data: unknown;
-  /** The *producing* process's stack. Absent for a stackless failure. */
+  /** The *producing* process's stack. Frameless — the header line alone — when the failure was
+   *  built `{ stackless: true }`; the field itself is absent only if `stack` was never set. */
   stack?: string;
   /** The serialized cause chain: a nested Failure, or a plain error's identifying fields. */
   cause?: SerializedFailure | { name: string; message: string; stack?: string };
@@ -557,9 +558,14 @@ export function onIgnored(observer: IgnoredObserver | null): void {
  */
 export function ignore(context: string): (error: unknown) => void {
   return (error: unknown) => {
-    ignoredObserver?.(context, error);
-    // hasSubscribers first so the quiet path allocates no message object.
-    if (ignoredChannel?.hasSubscribers) ignoredChannel.publish({ context, error });
+    // A tracer is a bystander: it must not be able to change what the program does. Without this
+    // guard a throwing adapter re-throws from inside the `.catch()` this returns, turning a
+    // deliberate swallow into an unhandled rejection — the one outcome `ignore` exists to prevent.
+    notify(() => {
+      ignoredObserver?.(context, error);
+      // hasSubscribers first so the quiet path allocates no message object.
+      if (ignoredChannel?.hasSubscribers) ignoredChannel.publish({ context, error });
+    });
     if (!DEBUG) return;
     // stderr, not stdout: stdout is the TAP stream and a stray line there corrupts the report.
     const line = `# [qunitx] ignored (${context}): ${format(error)}`;
@@ -640,9 +646,29 @@ export function onObserved(observer: ObservedObserver | null): void {
  * ```
  */
 export function observed(failure: Any): void {
-  observedObserver?.(failure);
-  // hasSubscribers first so the quiet path allocates no message object.
-  if (observedChannel?.hasSubscribers) observedChannel.publish({ error: failure });
+  // Same bystander rule as {@link ignore}: this runs inside `Task#result`/`match`/`unwrapOr`, so
+  // a throwing tracer would convert a DECLARED failure into a raw rejection and defeat the
+  // two-tier rule at the exact moment it is being applied.
+  notify(() => {
+    observedObserver?.(failure);
+    // hasSubscribers first so the quiet path allocates no message object.
+    if (observedChannel?.hasSubscribers) observedChannel.publish({ error: failure });
+  });
+}
+
+/**
+ * Runs an observer notification, swallowing anything it throws.
+ *
+ * Deliberately silent: the alternative is reporting a tracing failure through the very
+ * channel that just failed. `--debug` surfaces it, which is where someone debugging their
+ * own adapter will be looking.
+ */
+function notify(emit: () => void): void {
+  try {
+    emit();
+  } catch (error) {
+    if (DEBUG) console.error(`# [qunitx] failure observer threw: ${format(error)}`);
+  }
 }
 
 /**

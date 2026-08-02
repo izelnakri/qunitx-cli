@@ -11,8 +11,9 @@
 //   tryCatch(JSON.parse, raw);
 //
 // The type `Result<T, E>` and the namespace `Result` coexist deliberately: TypeScript keeps
-// type and value namespaces separate, so `Result.ok()` and `const r: Result<T, E>` both
-// resolve even when the same identifier is bound to each.
+// type and value namespaces separate, so `Result.unwrap(x)` and `const r: Result<T, E>` both
+// resolve even when the same identifier is bound to each. (There is no `Result.ok()` — a
+// success IS the value; see the note on the bare union in result.ts.)
 export { type Result, unwrap, unwrapOr, expect, all, partition } from './result.ts';
 
 export {

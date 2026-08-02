@@ -302,30 +302,36 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
 
   /**
    * Aborts the run and reports what was there — Elixir's `Task.shutdown/2`. Fires the
-   * recipe's AbortSignal (cancellation-aware recipes — a `fetch(url, { signal })` — stop
-   * their work; JS cannot preempt others, which then finish detached), then yields for
+   * {@link Executor}'s AbortSignal, so work that was handed it — a `fetch(url, { signal })` —
+   * stops; JS cannot preempt work that ignores it, which finishes detached. Then yields for
    * `timeoutMs`: the settled `Result` if one landed, else `null` after settling the task
    * with a declared `Failure('Shutdown')` so every consumer resolves.
    *
+   * A {@link Recipe} declares no parameters and so never sees the signal — it cannot be
+   * interrupted, only abandoned. Take the executor shape for work that should stop.
+   *
    * ```ts
-   * const task = Task((_resolve, _reject, signal) => fetch('https://example.com', { signal }));
-   * task.perform();
-   * const outcome = await task.shutdown(50); // Result | null — whatever had already landed
-   * outcome === null || 'ok' in Object(outcome); // true
+   * const slow = Task<number>((resolve, _reject, signal) => {
+   *   const timer = setTimeout(() => resolve(1), 60_000);
+   *   signal.addEventListener('abort', () => clearTimeout(timer));
+   * });
+   * slow.perform();
+   *
+   * await slow.shutdown(10); // null — nothing had landed, and the timer was cleared
    * ```
    */
   async shutdown(timeoutMs = 5000): Promise<Result<T, E> | null> {
     this.#controller ??= new AbortController();
     const marker = new Failure('Shutdown', 'task shut down', undefined);
     if (!this.#started) {
-      // Never ran: settle as shut down without ever invoking the recipe.
+      // Never ran: settle as shut down without ever invoking the work.
       this.#started = true;
       this.#reject(marker);
     } else {
       this.#controller.abort(marker);
     }
     const settled = await this.yield(timeoutMs).catch(() => null); // a bug counts as settled-nothing here
-    if (settled === null) this.#reject(marker); // non-signal-aware recipe: settle consumers anyway
+    if (settled === null) this.#reject(marker); // work that ignored the signal: settle consumers anyway
     // The marker settling is OUR doing, not a reply — Elixir's shutdown says nil for that.
     return settled === (marker as unknown) ? null : settled;
   }
@@ -756,10 +762,15 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    *   return tries;
    * });
    * await Task.retry(flaky); // 2
+   * await Task.retry(flaky, 3, { delayMs: 1 }); // the instance method's options, unchanged
    * ```
    */
-  static retry<T, E>(task: TaskClass<T, E>, times = 1): TaskClass<T, E> {
-    return task.retry(times);
+  static retry<T, E>(
+    task: TaskClass<T, E>,
+    times = 1,
+    options: RetryDelay | RetryOptions = {},
+  ): TaskClass<T, E> {
+    return task.retry(times, options);
   }
 
   /**
