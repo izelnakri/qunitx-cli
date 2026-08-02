@@ -81,9 +81,9 @@ const FLUSH_GRACE_MS = 30_000;
   // The one place a bad flag or a broken plugin becomes a message and an exit code. Config
   // assembly used to do this itself, at eight separate `console.error` + `process.exit(1)`
   // pairs buried in a pure argv transform.
-  const configured = await Config.setup().result();
-  if (Failure.is(configured)) {
-    console.error(Failure.format(configured));
+  const config = await Config.setup().result();
+  if (Failure.is(config)) {
+    console.error(Failure.format(config));
     // BEFORE the cleanup await, not after. `shutdownPrelaunch()` waits on a Chrome that may
     // still be starting — on the Windows runner CDP came ready 1.8s after this point — and if
     // the loop drains around that wait, Node exits on its own. An unset `exitCode` at that
@@ -92,7 +92,6 @@ const FLUSH_GRACE_MS = 30_000;
     await shutdownPrelaunch();
     return exitAfterFlush(1);
   }
-  const config = configured;
 
   // --search/--print lists what the filter matches and exits: no browser, no bundle, no tests.
   // Chrome was pre-launched at module load, so shut it back down rather than leaking it.
