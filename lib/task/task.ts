@@ -869,7 +869,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   }
 
   /**
-   * Deliberate non-handling — the Task spelling of `promise.catch(Failure.ignore(context))`.
+   * Deliberate non-handling — the Task spelling of `promise.catch(Failure.ignore(reason))`.
    * Swallows **every** rejection (bugs included: this is for cleanup whose failure genuinely
    * has no consequence) and says so on stderr under `QUNITX_DEBUG` instead of vanishing.
    *
@@ -884,15 +884,15 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * await Task(unlink('/tmp/qunitx.lock')).ignore('daemon lock unlink'); // or join the cleanup
    * ```
    */
-  ignore(context: string): TaskClass<T | undefined, never> {
-    const report = failureIgnore(context);
+  ignore(reason: string): TaskClass<T | undefined, never> {
+    const report = failureIgnore(reason);
     return this.#derive<T | undefined, never>(
       () =>
         this.then<T | undefined, undefined>(undefined, (error: unknown) => {
           report(error);
           return undefined;
         }),
-      (fresh) => fresh.ignore(context),
+      (fresh) => fresh.ignore(reason),
     ).perform();
   }
 
@@ -910,9 +910,9 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    */
   static ignore<T>(
     source: PromiseLike<T> | (() => T | PromiseLike<T>),
-    context: string,
+    reason: string,
   ): TaskClass<T | undefined, never> {
-    return new TaskClass<T, AnyFailure>(source).ignore(context);
+    return new TaskClass<T, AnyFailure>(source).ignore(reason);
   }
 
   /**
