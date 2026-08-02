@@ -22,7 +22,7 @@
     "build": "node scripts/build-cli.js",
     "bin": "chmod +x cli.ts && ./cli.ts",
     "prepublishOnly": "npm run build",
-    "format": "prettier --check \"lib/**/*.ts\" \"test/**/*.ts\" \"scripts/**/*.js\" \"bin/**/*.js\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
+    "format": "prettier --check \"lib/**/*.ts\" \"test/**/*.ts\" \"examples/**/*.ts\" \"scripts/**/*.js\" \"bin/**/*.js\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
     "format:fix": "prettier --write \"lib/**/*.ts\" \"test/**/*.ts\" \"scripts/**/*.js\" \"bin/**/*.js\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
     "lint": "deno lint lib/ bin/ test/ scripts/ cli.ts",
     "typecheck": "deno check --doc lib/ cli.ts",

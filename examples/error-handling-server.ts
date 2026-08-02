@@ -1,12 +1,13 @@
-// design.ts — design study: a Task-based web server where the try/catch KEYWORD exists in
-// exactly ONE function body in the entire program (Result.try). Endpoints stay flat.
+// A runnable end-to-end example of this repo's error handling: a Task-based web server in which
+// the try/catch KEYWORD appears in exactly ONE function body in the whole program (Result.try).
+// Endpoints stay flat.
 //
 // The production implementations live in lib/result/ and lib/task/ (richer: Failure taxonomy,
 // lineage-carrying restart/retry, Promises/A+ compliance); this file stays a self-contained,
 // runnable distillation of the same rules against live HTTP/fs edges.
-// run:   node design.ts                 (starts on an ephemeral port, demos every endpoint, exits)
-//        node design.ts --serve         (keeps serving; GITHUB_TOKEN honored if set)
-// check: deno check design.ts
+// run:   node examples/error-handling-server.ts          (ephemeral port, demos every endpoint, exits)
+//        node examples/error-handling-server.ts --serve  (keeps serving; GITHUB_TOKEN honored if set)
+// check: deno check examples/error-handling-server.ts
 //
 // Routes:
 //   GET /                    index
