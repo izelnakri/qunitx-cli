@@ -3,6 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import * as Chrome from '../chrome/index.ts';
 import { buildQUnitFilterQuery } from '../selection/filter.ts';
+import { Task } from '../task/index.ts';
 import type { Config } from '../types.ts';
 
 /**
@@ -20,37 +21,36 @@ import type { Config } from '../types.ts';
  * }
  * ```
  */
-export async function openOutputInBrowser(config: Config): Promise<void> {
-  try {
-    // The filter query rides along so the opened window shows the same tests the terminal ran.
-    // QUnit reads it from location.search, which file:// URLs carry just like http:// ones.
-    const outputFile =
-      (config.watch
-        ? `http://localhost:${config.port}`
-        : pathToFileURL(path.join(path.resolve(config.projectRoot, config.output), 'index.html'))
-            .href) + buildQUnitFilterQuery(config);
+export function openOutputInBrowser(config: Config): Task<void, never> {
+  // A viewer window is a convenience, so every way it can fail — no such binary, no Chrome to
+  // find, a sandbox that refuses the spawn — is one warning and a run that carries on. Stating
+  // that once here is what lets the launch itself read straight down.
+  return Task(() => launch(config)).recover((error) => {
+    console.error('# Warning: --open could not launch browser:', error);
+  });
+}
 
-    if (typeof config.open === 'string') {
-      spawnDetached(config.open, [outputFile]);
-      return;
-    }
+async function launch(config: Config): Promise<void> {
+  // The filter query rides along so the opened window shows the same tests the terminal ran.
+  // QUnit reads it from location.search, which file:// URLs carry just like http:// ones.
+  const outputFile =
+    (config.watch
+      ? `http://localhost:${config.port}`
+      : pathToFileURL(path.join(path.resolve(config.projectRoot, config.output), 'index.html'))
+          .href) + buildQUnitFilterQuery(config);
 
-    const browserName = config.browser || 'chromium';
+  if (typeof config.open === 'string') return spawnDetached(config.open, [outputFile]);
 
-    if (browserName === 'firefox') {
-      spawnDetached('firefox', [outputFile]);
-      return;
-    }
-    if (browserName === 'webkit') {
-      if (process.platform === 'darwin') spawnDetached('open', ['-a', 'Safari', outputFile]);
-      return;
-    }
+  const browserName = config.browser || 'chromium';
 
+  if (browserName === 'firefox') {
+    spawnDetached('firefox', [outputFile]);
+  } else if (browserName === 'webkit') {
+    if (process.platform === 'darwin') spawnDetached('open', ['-a', 'Safari', outputFile]);
+  } else {
     const chromePath =
       (await Chrome.find()) ?? (await import('playwright-core')).chromium.executablePath();
     if (chromePath) spawnDetached(chromePath, [outputFile]);
-  } catch (err) {
-    console.error('# Warning: --open could not launch browser:', err);
   }
 }
 

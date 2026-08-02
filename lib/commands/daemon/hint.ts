@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { Task } from '../../task/index.ts';
+import { pathExists } from '../../utils/path-exists.ts';
 
 // Runs faster than this don't benefit enough from the daemon to justify the nag.
 const FAST_RUN_THRESHOLD_MS = 500;
@@ -98,17 +100,13 @@ export function shouldShow(ctx: HintContext): boolean {
 export async function maybePrint(ctx: HintContext, opts: PrintOpts = {}): Promise<void> {
   if (!shouldShow(ctx)) return;
   const sentinel = opts.sentinelPath ?? DEFAULT_SENTINEL;
-  try {
-    await fs.access(sentinel);
-    return;
-  } catch {
-    // Sentinel not present — proceed with show + create.
-  }
+  if (await pathExists(sentinel)) return;
+
   (opts.write ?? ((t) => process.stderr.write(t)))(HINT_TEXT);
-  try {
+  // Best-effort: a hint that could not remember it was shown is worth showing twice, never
+  // worth failing a run over.
+  await Task(async () => {
     await fs.mkdir(path.dirname(sentinel), { recursive: true });
     await fs.writeFile(sentinel, new Date().toISOString());
-  } catch {
-    // Best-effort.
-  }
+  }).ignore('daemon hint sentinel write');
 }
