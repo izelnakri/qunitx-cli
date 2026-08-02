@@ -1,4 +1,4 @@
-import { type Result } from '../result/result.ts';
+import type { Result } from '../result/result.ts';
 import {
   Failure,
   ignore as failureIgnore,

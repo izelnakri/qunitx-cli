@@ -406,8 +406,10 @@ export function hasCode<const Codes extends readonly string[]>(
  * Failure.Unknown.is(Failure.from('nope')); // true — and the original string is preserved under `.cause`
  * ```
  */
-export const Unknown = define('Unknown', (data: { thrown: unknown }) =>
-  data.thrown instanceof Error ? data.thrown.message : `non-Error thrown: ${label(data.thrown)}`,
+export const Unknown: FailureFactory<'Unknown', { thrown: unknown }> = define(
+  'Unknown',
+  (data: { thrown: unknown }) =>
+    data.thrown instanceof Error ? data.thrown.message : `non-Error thrown: ${label(data.thrown)}`,
 );
 
 /**
