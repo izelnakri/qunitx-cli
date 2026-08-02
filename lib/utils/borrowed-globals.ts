@@ -8,7 +8,7 @@ import process from 'node:process';
 // do the putting back:
 //
 //   using _argv = borrowArgv(['node', 'cli.ts', ...clientArgv]);
-//   const config = await Config.setup();   // restored on return, throw, or early return
+//   const config = await Config.setup().result();   // restored on return, throw, or early return
 //
 // A `try`/`finally` says the same thing, but it says it at the call site — which is where two
 // snapshots taken together and only one restored is an easy thing to write and a very hard thing

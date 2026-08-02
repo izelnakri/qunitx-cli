@@ -81,7 +81,7 @@ const FLUSH_GRACE_MS = 30_000;
   // The one place a bad flag or a broken plugin becomes a message and an exit code. Config
   // assembly used to do this itself, at eight separate `console.error` + `process.exit(1)`
   // pairs buried in a pure argv transform.
-  const configured = await Config.setup();
+  const configured = await Config.setup().result();
   if (Failure.is(configured)) {
     console.error(Failure.format(configured));
     // BEFORE the cleanup await, not after. `shutdownPrelaunch()` waits on a Chrome that may

@@ -72,10 +72,13 @@ export type ConfigFailure =
  * Builds the merged qunitx config from package.json settings and CLI flags.
  * `package.json#qunitx.plugins` entries are dynamic-imported into esbuild plugin objects.
  *
- * Resolves to the bare `Result<Config, ConfigFailure>` union — the Config itself, or a
- * *declared* failure the caller branches on with `Failure.is`, never a rejection. It reports rather than exits so the daemon — which
- * assembles a config per client request — can reject one bad flag and stay up; `cli.ts`
- * turns a failure into an exit.
+ * `ConfigFailure` is *declared*, so `.result()` hands back the bare union to branch on with
+ * `Failure.is`. It reports rather than exits so the daemon — which assembles a config per client
+ * request — can reject one bad flag and stay up; `cli.ts` turns a failure into an exit.
+ *
+ * Lazy, like every Task: nothing is read until it is awaited. `setup` reads `process.argv` and
+ * `process.env` at that moment, so a caller that lends those globals (the daemon, via
+ * `borrowArgv`/`borrowEnv`) must await INSIDE the borrowing scope, not hold the Task past it.
  *
  * ```ts
  * import * as Config from './config.ts';
@@ -83,74 +86,79 @@ export type ConfigFailure =
  *
  * // Defined, not invoked: reads package.json and walks the real fs.
  * async function example() {
- *   const config = await Config.setup();
+ *   const config = await Config.setup().result();
  *   return Result.Failure.is(config) ? config.code : config.inputs; // ConfigFailure, or the Config
  * }
  * ```
  */
-export async function setup(): Promise<Result.Result<Config, ConfigFailure>> {
-  const projectRoot = await findProjectRoot().result();
-  if (Result.Failure.is(projectRoot)) return projectRoot;
-  const flags = Args.parse(projectRoot);
-  if (Result.Failure.is(flags)) return flags;
-  const cliConfigFlags = flags;
-  const projectPackageJSON = await readConfigFromPackageJSON(projectRoot);
-  const { plugins: rawPlugins, ...userQunitx } =
-    (projectPackageJSON.qunitx as Partial<Config> & {
-      plugins?: unknown;
-    }) ?? {};
-  const inputs = cliConfigFlags.inputs.concat(readInputsFromPackageJSON(projectPackageJSON));
-  const config = {
-    ...defaultProjectConfigValues,
-    htmlPaths: [] as string[],
-    ...userQunitx,
-    ...cliConfigFlags,
-    projectRoot,
-    inputs,
-    testFileLookupPaths: TestFilePaths.setup(inputs),
-    state: RunState.create(),
-    // Asserted rather than inferred because fsTree and plugins are filled in by the awaits
-    // below — the literal is deliberately partial, and the function's contract is that a
-    // complete Config is only guaranteed at the return. The later `as Config` casts this
-    // function used to repeat are now redundant.
-  } as Config;
-  // `--debug` also reveals `.ignore(context)`-suppressed rejections as TAP comments —
-  // one flag lights every deliberate swallow. (QUNITX_DEBUG covers the env path at
-  // failure.ts load; enable-only, so a daemon run without the flag never turns it off.)
-  if (config.debug) Result.Failure.setDebug(true);
-  config.htmlPaths = normalizeHTMLPaths(config.projectRoot, config.htmlPaths);
-  // Started together, so plugin dynamic-imports overlap fsTree's I/O. The two used to be kicked
-  // off on separate lines to get that overlap; they didn't need to be, because everything between
-  // those lines was synchronous and no import could progress during it.
-  const built = await Task.all([
-    FSTree.build(config.testFileLookupPaths, config),
-    resolvePlugins(rawPlugins, projectRoot),
-  ]).result();
-  if (Result.Failure.is(built)) return built;
-  [config.fsTree, config.plugins] = built;
+export function setup(): Task<Config, ConfigFailure> {
+  return Task(async () => {
+    // Every declared failure below rejects rather than returning: the Task's E channel carries
+    // them, so the guard-and-return-it ladder this function used to open with is gone. Only
+    // `Args.parse` still needs a throw — it is synchronous, so it hands back a union, not a Task.
+    const projectRoot = await findProjectRoot();
+    const flags = Args.parse(projectRoot);
+    if (Result.Failure.is(flags)) throw flags;
+    const projectPackageJSON = await readConfigFromPackageJSON(projectRoot);
+    const { plugins: rawPlugins, ...userQunitx } =
+      (projectPackageJSON.qunitx as Partial<Config> & {
+        plugins?: unknown;
+      }) ?? {};
+    const inputs = flags.inputs.concat(readInputsFromPackageJSON(projectPackageJSON));
+    const config = {
+      ...defaultProjectConfigValues,
+      htmlPaths: [] as string[],
+      ...userQunitx,
+      ...flags,
+      projectRoot,
+      inputs,
+      testFileLookupPaths: TestFilePaths.setup(inputs),
+      state: RunState.create(),
+      // Asserted rather than inferred because fsTree and plugins are filled in by the awaits
+      // below — the literal is deliberately partial, and the function's contract is that a
+      // complete Config is only guaranteed at the return. The later `as Config` casts this
+      // function used to repeat are now redundant.
+    } as Config;
+    // `--debug` also reveals `.ignore(context)`-suppressed rejections as TAP comments —
+    // one flag lights every deliberate swallow. (QUNITX_DEBUG covers the env path at
+    // failure.ts load; enable-only, so a daemon run without the flag never turns it off.)
+    if (config.debug) Result.Failure.setDebug(true);
+    config.htmlPaths = normalizeHTMLPaths(config.projectRoot, config.htmlPaths);
+    // Started together, so plugin dynamic-imports overlap fsTree's I/O. The two used to be kicked
+    // off on separate lines to get that overlap; they didn't need to be, because everything between
+    // those lines was synchronous and no import could progress during it.
+    [config.fsTree, config.plugins] = await Task.all([
+      FSTree.build(config.testFileLookupPaths, config),
+      resolvePlugins(rawPlugins, projectRoot),
+    ]);
 
-  pruneSupersededLineTargets(config);
+    pruneSupersededLineTargets(config);
 
-  // --changed / --since: filter fsTree to test files whose transitive deps
-  // include a changed file. Watch mode skips this — watch is for fast feedback
-  // on every save, not "what does my working tree affect" semantics.
-  if (config.changedSince && !config.watch) {
-    config.fsTree = await getChangedFsTree(config.fsTree, config.projectRoot, config.changedSince);
-  }
+    // --changed / --since: filter fsTree to test files whose transitive deps
+    // include a changed file. Watch mode skips this — watch is for fast feedback
+    // on every save, not "what does my working tree affect" semantics.
+    if (config.changedSince && !config.watch) {
+      config.fsTree = await getChangedFsTree(
+        config.fsTree,
+        config.projectRoot,
+        config.changedSince,
+      );
+    }
 
-  // --only-failed: restrict the whole run to files that failed on the previous run (persistent
-  // cache). Watch mode is handled separately in run.ts — there the full fsTree is preserved (so
-  // `qa` and file-save reruns still see every file) and only the INITIAL run is scoped to the
-  // failures. See applyOnlyFailedFilter for the no-targets vs. scoped-targets behavior.
-  if (config.onlyFailed && !config.watch) {
-    config.fsTree = await applyOnlyFailedFilter(config);
-  }
+    // --only-failed: restrict the whole run to files that failed on the previous run (persistent
+    // cache). Watch mode is handled separately in run.ts — there the full fsTree is preserved (so
+    // `qa` and file-save reruns still see every file) and only the INITIAL run is scoped to the
+    // failures. See applyOnlyFailedFilter for the no-targets vs. scoped-targets behavior.
+    if (config.onlyFailed && !config.watch) {
+      config.fsTree = await applyOnlyFailedFilter(config);
+    }
 
-  // Built last: reporter selection reads the fully-merged flags. One instance per run, shared
-  // by every concurrent group via the group-config spread in run.ts.
-  config.state.reporters = Reporter.create(config);
+    // Built last: reporter selection reads the fully-merged flags. One instance per run, shared
+    // by every concurrent group via the group-config spread in run.ts.
+    config.state.reporters = Reporter.create(config);
 
-  return config;
+    return config;
+  });
 }
 
 /**

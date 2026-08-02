@@ -162,7 +162,7 @@ export async function serve(): Promise<void> {
   // which would be parsed as test paths. Strip it for the startup config — we only need
   // the browser type here. Per-run argv comes from the client via runOnce.
   using _argv = borrowArgv([process.argv[0], process.argv[1] ?? 'cli.ts']);
-  const configured = await Config.setup();
+  const configured = await Config.setup().result();
   // Startup, not a client run: argv is stripped to nothing here, so the only way this fails is
   // a broken QUNITX_BROWSER or a plugin the project cannot load — in both cases the daemon has
   // nothing valid to serve, and refusing to start beats accepting runs it will fail.
@@ -678,7 +678,10 @@ async function runOnce(
   using _env = borrowEnv(env);
   using _argv = borrowArgv(['node', process.argv[1] ?? 'cli.ts', ...argv]);
 
-  const configured = (await Config.setup()) as Result.Result<ResolvedConfig, Config.ConfigFailure>;
+  const configured = (await Config.setup().result()) as Result.Result<
+    ResolvedConfig,
+    Config.ConfigFailure
+  >;
   // A bad flag from one client is that client's problem, not the daemon's. This is the whole
   // reason config assembly returns instead of exiting: `process.exit(1)` inside `Args.parse`
   // would have taken down a daemon serving every other invocation in the project.

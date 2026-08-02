@@ -93,7 +93,7 @@ export function unwrap<O>(outcome: O): Exclude<O, Any> {
  * // Defined, not invoked: setup() assembles a real config. The doctest checks and
  * // evaluates the definition; only a caller would perform the work.
  * async function daemonBoot() {
- *   return Result.expect(await Config.setup(), 'daemon could not assemble its startup config');
+ *   return Result.expect(await Config.setup().result(), 'daemon could not assemble its startup config');
  * }
  * ```
  */
