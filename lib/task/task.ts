@@ -4,7 +4,10 @@ import {
   ignore as failureIgnore,
   observed as failureObserved,
   isFailure,
+  isFactory,
   type Any as AnyFailure,
+  type Failure as FailureOf,
+  type FailureFactory,
 } from '../result/failure.ts';
 
 /**
@@ -827,8 +830,41 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * Task(() => execFileAsync('git', ['status'])) // foreign throw-land
    *   .mapErr((cause) => GitScanFailed({ ref }, { cause })); // classified HERE, once
    * ```
+   *
+   * A {@link define}d factory may be passed directly, with its payload as the second argument
+   * — the original is chained under `cause` for you. Factories carry their own `code` and `is`,
+   * so they are told from a mapper exactly rather than by arity:
+   *
+   * ```ts
+   * import { define } from '../result/failure.ts';
+   * const Unreadable = define('Unreadable', (d: { path: string }) => `cannot read ${d.path}`);
+   * const Denied = define('Denied', 'permission denied');
+   *
+   * Task(() => Promise.reject(new Error('EACCES')))
+   *   .mapErr(Unreadable, { path: '/etc/app.json' }); // payload given, cause chained
+   * Task(() => Promise.reject(new Error('EACCES'))).mapErr(Denied); // no payload to give
+   * ```
+   *
+   * Reach for the function form whenever the payload is read *from* the cause — the git scan
+   * above takes its `reason` from the error's first line, which no shorthand can express.
    */
-  mapErr<F>(fn: (error: unknown) => F): TaskClass<T, F> {
+  mapErr<Code extends string, Data>(
+    factory: FailureFactory<Code, Data>,
+    data: Data,
+  ): TaskClass<T, FailureOf<Code, Data>>;
+  mapErr<Code extends string>(
+    factory: FailureFactory<Code, undefined>,
+  ): TaskClass<T, FailureOf<Code, undefined>>;
+  mapErr<F>(fn: (error: unknown) => F): TaskClass<T, F>;
+  mapErr(fnOrFactory: unknown, data?: unknown): TaskClass<T, unknown> {
+    // Normalised once, here: everything downstream — including the re-derivation restart uses
+    // — sees a plain mapper, so the factory shape exists only at the call site.
+    const fn = isFactory(fnOrFactory)
+      ? (cause: unknown) =>
+          (fnOrFactory as unknown as (d: unknown, o: { cause: unknown }) => unknown)(data, {
+            cause,
+          })
+      : (fnOrFactory as (error: unknown) => unknown);
     return this.#derive(
       () =>
         this.then(undefined, (error) => {

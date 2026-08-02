@@ -699,6 +699,45 @@ module('Task | transforming', { concurrency: true }, () => {
     await assert.rejects(remapBug, /kind: TypeError/);
   });
 
+  test('mapErr takes a failure factory directly, chaining the cause for you', async (assert) => {
+    // Before the overload this exact line compiled and misbehaved: a factory's first parameter
+    // is its payload, so the raw error landed in `data` and the cause chain was lost.
+    const Unreadable = Failure.define(
+      'Unreadable',
+      (d: { path: string }) => `cannot read ${d.path}`,
+    );
+    const Denied = Failure.define('Denied', 'permission denied');
+    const foreign = () => Task<string>(() => Promise.reject(new Error('EACCES')));
+
+    const withPayload = await foreign().mapErr(Unreadable, { path: '/etc/app.json' }).result();
+    assert.true(Failure.is(withPayload) && withPayload.code === 'Unreadable', 'the declared code');
+    assert.deepEqual(
+      (withPayload as Failure.Of<typeof Unreadable>).data,
+      { path: '/etc/app.json' },
+      'the payload is the payload — not the error that was caught',
+    );
+    assert.strictEqual(
+      ((withPayload as Failure.Any).cause as Error).message,
+      'EACCES',
+      'and the original is chained under cause',
+    );
+
+    // A factory with nothing to carry needs no second argument.
+    const bare = await foreign().mapErr(Denied).result();
+    assert.true(Failure.is(bare) && bare.code === 'Denied', 'the bare factory form');
+    assert.strictEqual(((bare as Failure.Any).cause as Error).message, 'EACCES', 'still chained');
+
+    // The function form is untouched, and is still the only one that can read the cause.
+    const derived = await foreign()
+      .mapErr((cause) => Unreadable({ path: (cause as Error).message }, { cause }))
+      .result();
+    assert.deepEqual((derived as Failure.Of<typeof Unreadable>).data, { path: 'EACCES' });
+
+    // And the factory form survives a restart, like every other derivation.
+    const restarted = await foreign().mapErr(Denied).restart().result();
+    assert.true(Failure.is(restarted) && restarted.code === 'Denied', 'lineage keeps the shape');
+  });
+
   test('recover is the crash boundary: it catches declared failures AND bugs', async (assert) => {
     assert.deepEqual(await loadUser(0).recover(() => ({ id: -1, name: 'guest' })), {
       id: -1,

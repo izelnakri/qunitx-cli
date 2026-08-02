@@ -356,6 +356,25 @@ export function isFailure(value: unknown): value is Any {
 export { isFailure as is };
 
 /**
+ * True for a factory made by {@link define}. A factory carries the `code` it produces and its
+ * own `is` guard; a plain error-mapper carries neither, so an API can accept both in one
+ * position and tell them apart exactly, without guessing from arity.
+ *
+ * ```ts
+ * const NotFound = define('NotFound', 'missing');
+ * isFactory(NotFound); // true
+ * isFactory((error: unknown) => from(error)); // false — a mapper, not a factory
+ * ```
+ */
+export function isFactory(value: unknown): value is FailureFactory<string, never> {
+  return (
+    typeof value === 'function' &&
+    typeof (value as { code?: unknown }).code === 'string' &&
+    typeof (value as { is?: unknown }).is === 'function'
+  );
+}
+
+/**
  * Narrows a Failure to one of several codes — the multi-code sibling of `Factory.is`.
  *
  * ```ts
