@@ -94,11 +94,11 @@ export type ConfigFailure =
 export function setup(): Task<Config, ConfigFailure> {
   return Task(async () => {
     // Every declared failure below rejects rather than returning: the Task's E channel carries
-    // them, so the guard-and-return-it ladder this function used to open with is gone. Only
-    // `Args.parse` still needs a throw — it is synchronous, so it hands back a union, not a Task.
+    // them, so the guard-and-return-it ladder this function used to open with is gone. Args.parse
+    // is synchronous, so it hands back a union rather than a Task — `unwrap` is the union's own
+    // way into that channel, throwing the failure by identity so its stack still points at Args.
     const projectRoot = await findProjectRoot();
-    const flags = Args.parse(projectRoot);
-    if (Result.Failure.is(flags)) throw flags;
+    const flags = Result.unwrap(Args.parse(projectRoot));
     const projectPackageJSON = await readConfigFromPackageJSON(projectRoot);
     const { plugins: rawPlugins, ...userQunitx } =
       (projectPackageJSON.qunitx as Partial<Config> & {
