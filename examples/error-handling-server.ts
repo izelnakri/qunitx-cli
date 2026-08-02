@@ -2,9 +2,8 @@
 // the try/catch KEYWORD appears in exactly ONE function body in the whole program (Result.try).
 // Endpoints stay flat.
 //
-// The production implementations live in lib/result/ and lib/task/ (richer: Failure taxonomy,
-// lineage-carrying restart/retry, Promises/A+ compliance); this file stays a self-contained,
-// runnable distillation of the same rules against live HTTP/fs edges.
+// It runs the REAL lib/result/ and lib/task/ — not a distillation of them — so what you read here
+// is what the library actually does against live HTTP and filesystem edges.
 // run:   node examples/error-handling-server.ts          (ephemeral port, demos every endpoint, exits)
 //        node examples/error-handling-server.ts --serve  (keeps serving; GITHUB_TOKEN honored if set)
 // check: deno check examples/error-handling-server.ts
@@ -23,8 +22,9 @@
 // ── DESIGN NOTES: calibrated claims — what this buys, and what it does not ──────────────────
 // 1. Sync fallible code is unavoidable in a real server (JSON.parse of bodies, decodeURIComponent,
 //    date parsing, schema validation). That is Result.try's job — the sync twin of Task: it buries
-//    the try/catch keyword once for the whole program and returns the same flat { ok, value, error }
-//    shape, so error handling never adds indentation anywhere else. A server wants BOTH layers.
+//    the try/catch keyword once for the whole program and hands back a flat { ok, value, error }
+//    box, the one place a box survives because a caught `unknown` carries no brand to discriminate
+//    on. Async failures need no box: `.result()` settles to the bare `T | Failure` union.
 // 2. Performance: a Task is a promise + one closure + one small allocation — neutral overhead,
 //    neither speedup nor cost. Laziness can save real work (un-awaited tasks never fire) and
 //    memoization dedupes repeated awaits, but there is no throughput magic in this pattern.
@@ -44,113 +44,43 @@ import { createServer, type IncomingMessage } from 'node:http';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 import type { AddressInfo } from 'node:net';
+import * as Result from '../lib/result/index.ts';
+import { Failure } from '../lib/result/index.ts';
+import { Task } from '../lib/task/index.ts';
 
-// ── Task<T, E> core, with the two-tier .result() gate ────────────────────────
+// ── the declared failures, and the ONE place HTTP status is decided ──────────
+//
+// Status lives here, not on the failure: the same NotFound is 404 over HTTP, exit code 1 in a CLI
+// and a retry in a queue. The domain names the failure; the transport maps it.
 
-/** The declared-failure tier: anything a caller is EXPECTED to handle carries an HTTP status.
- *  Everything else that throws is a bug and belongs to the boundary, not to .result(). */
-export class Failure extends Error {
-  readonly httpStatus: number;
-  constructor(message: string, httpStatus: number, options?: ErrorOptions) {
-    super(message, options);
-    this.name = 'Failure';
-    this.httpStatus = httpStatus;
-  }
-}
+const BadRequest = Failure.define('BadRequest', (d: { detail: string }) => d.detail);
+const Forbidden = Failure.define('Forbidden', (d: { path: string }) => `forbidden: ${d.path}`);
+const NotFound = Failure.define('NotFound', (d: { detail: string }) => d.detail);
+const MethodNotAllowed = Failure.define(
+  'MethodNotAllowed',
+  (d: { method: string }) => `method not allowed: ${d.method}`,
+);
+const UpstreamFailed = Failure.define(
+  'UpstreamFailed',
+  (d: { status: number; url: string }) => `upstream ${d.status} from ${d.url}`,
+);
 
-export type Result<T, E> =
-  { ok: true; value: T; error?: never } | { ok: false; value?: never; error: E };
+/** Every failure this server declares — the union each endpoint carries in its signature. */
+type ApiFailure = Failure.Of<
+  | typeof BadRequest
+  | typeof Forbidden
+  | typeof NotFound
+  | typeof MethodNotAllowed
+  | typeof UpstreamFailed
+>;
 
-/** The sync twin of Task — and THE ONLY place in the entire program where the try/catch keyword
- *  exists. Mirrors Promise.try's signature: `Result.try(fn, ...args)` runs fn NOW, synchronously.
- *  It boxes EVERY throw (this is the raw sync edge — classifying the boxed error into a declared
- *  Failure happens flat at the call site, exactly like adapters do for async). Note the mirrored
- *  gates: Result.try boxes everything; Task.result() boxes only declared Failures. Anything
- *  returning a promise belongs in Task, not here. */
-export const Result = {
-  try<T, A extends unknown[]>(fn: (...args: A) => T, ...args: A): Result<T, unknown> {
-    try {
-      return { ok: true, value: fn(...args) };
-    } catch (error) {
-      return { ok: false, error };
-    }
-  },
+const STATUS: Record<string, number> = {
+  BadRequest: 400,
+  Forbidden: 403,
+  NotFound: 404,
+  MethodNotAllowed: 405,
+  UpstreamFailed: 502,
 };
-
-class TaskImpl<T, E extends Failure = Failure> implements PromiseLike<T> {
-  #recipe: () => Promise<T>;
-  #memo: Promise<T> | undefined;
-  constructor(recipe: () => Promise<T>) {
-    this.#recipe = recipe;
-  }
-
-  /** Start the run NOW without suspending; `await t` later joins it. */
-  perform(): Promise<T> {
-    this.#memo ??= this.#recipe();
-    return this.#memo;
-  }
-
-  /** Lazy: the recipe runs on the FIRST await/then, then memoizes (a promise settles once). */
-  then<R1 = T, R2 = never>(
-    onOk?: ((value: T) => R1 | PromiseLike<R1>) | null,
-    onErr?: ((reason: E) => R2 | PromiseLike<R2>) | null,
-  ): Promise<R1 | R2> {
-    return this.perform().then(onOk, onErr);
-  }
-
-  /** A fresh execution of THIS task's recipe (shallow on derived tasks — retry re-runs the
-   *  derivation but hits the source's memo; deep retry is `source.retry().map(...)`). */
-  retry(): Task<T, E> {
-    return Task<T, E>(this.#recipe);
-  }
-
-  /** anyhow-style context. Wraps DECLARED failures only — a bug passes through untouched,
-   *  because promoting a bug into the declared tier would hide it from the boundary. */
-  expect(message: string): Task<T, Failure> {
-    return Task<T, Failure>(() =>
-      this.perform().catch((cause) => {
-        if (cause instanceof Failure) throw new Failure(message, cause.httpStatus, { cause });
-        throw cause;
-      }),
-    );
-  }
-
-  /** `.then(fn)` that STAYS a Task — lazy, retryable, E preserved. */
-  map<U>(fn: (value: T) => U | PromiseLike<U>): Task<U, E> {
-    return Task<U, E>(() => this.perform().then(fn));
-  }
-
-  /** Transform the failure channel E→F; success passes through. */
-  mapErr<F extends Failure>(fn: (error: E) => F): Task<T, F> {
-    return Task<T, F>(() =>
-      this.perform().catch((error) => {
-        throw error instanceof Failure ? fn(error as E) : error;
-      }),
-    );
-  }
-
-  /** The bridge out of throw-land — and the TWO-TIER GATE: a declared Failure becomes err,
-   *  a bug RETHROWS so it lands at the server boundary instead of being silently boxed. */
-  result(): Promise<Result<T, E>> {
-    return this.perform().then(
-      (value): Result<T, E> => ({ ok: true, value }),
-      (error): Result<T, E> => {
-        if (error instanceof Failure) return { ok: false, error: error as E };
-        throw error;
-      },
-    );
-  }
-}
-
-export function Task<T, E extends Failure = Failure>(recipe: () => Promise<T>): Task<T, E> {
-  return new TaskImpl<T, E>(recipe);
-}
-export type Task<T, E extends Failure = Failure> = TaskImpl<T, E>;
-
-/** A pre-failed Task — for routing dead-ends, so every path speaks the same pattern. */
-function fail(message: string, httpStatus: number): Task<never, Failure> {
-  return Task(() => Promise.reject(new Failure(message, httpStatus)));
-}
 
 // ── shared JSON typing ────────────────────────────────────────────────────────
 
@@ -162,17 +92,17 @@ type Reply = { status: number; body: JsonValue };
 async function fetchJson<T>(url: string, headers: Record<string, string> = {}): Promise<T> {
   const response = await fetch(url, { headers: { accept: 'application/json', ...headers } });
   if (!response.ok) {
-    // Edge classification: upstream's 404 is OUR 404; any other upstream failure is OUR 502.
-    throw new Failure(
-      `upstream ${response.status} from ${url}`,
-      response.status === 404 ? 404 : 502,
-    );
+    // Edge classification, named at the condition: an upstream 404 is a NotFound, anything else
+    // upstream is an UpstreamFailed. Both are declared; the status map turns them into HTTP.
+    throw response.status === 404
+      ? NotFound({ detail: `no such upstream resource: ${url}` })
+      : UpstreamFailed({ status: response.status, url });
   }
   return (await response.json()) as T;
 }
 
-function taskJson<T>(url: string, headers?: Record<string, string>): Task<T, Failure> {
-  return Task(() => fetchJson<T>(url, headers)); // closure keeps args, defers the fetch
+function taskJson<T>(url: string, headers?: Record<string, string>): Task<T, ApiFailure> {
+  return Task<T, ApiFailure>(() => fetchJson<T>(url, headers)); // closure keeps args, defers the fetch
 }
 
 // ── endpoint: /github/:username and /gitlab/:username → one Profile shape ────
@@ -188,7 +118,7 @@ type Profile = {
 type GithubApiUser = { login: string; name: string | null; html_url: string; followers: number };
 type GitlabApiUser = { username: string; name: string | null; web_url: string };
 
-function githubProfile(username: string): Task<Profile, Failure> {
+function githubProfile(username: string): Task<Profile, ApiFailure> {
   const token = process.env.GITHUB_TOKEN;
   return taskJson<GithubApiUser>(
     `https://api.github.com/users/${encodeURIComponent(username)}`,
@@ -201,15 +131,16 @@ function githubProfile(username: string): Task<Profile, Failure> {
       url: u.html_url,
       followers: u.followers,
     }))
-    .expect(`github profile: ${username}`);
+    .context(`github profile: ${username}`);
 }
 
-function gitlabProfile(username: string): Task<Profile, Failure> {
+function gitlabProfile(username: string): Task<Profile, ApiFailure> {
   return taskJson<GitlabApiUser[]>(
     `https://gitlab.com/api/v4/users?username=${encodeURIComponent(username)}`,
   )
     .map(([user]): Profile => {
-      if (!user) throw new Failure(`gitlab user not found: ${username}`, 404); // a Failure may rise mid-pipeline
+      // A declared failure may rise mid-pipeline, named where the condition is known.
+      if (!user) throw NotFound({ detail: `gitlab user not found: ${username}` });
       return {
         source: 'gitlab',
         username: user.username,
@@ -218,7 +149,7 @@ function gitlabProfile(username: string): Task<Profile, Failure> {
         followers: null,
       };
     })
-    .expect(`gitlab profile: ${username}`);
+    .context(`gitlab profile: ${username}`);
 }
 
 // ── endpoint: /fs/{path} — file-system exposure, rooted and traversal-safe ───
@@ -230,19 +161,19 @@ type FsEntry =
   | { type: 'directory'; path: string; entries: string[] }
   | { type: 'file'; path: string; size: number; truncated: boolean; content: string };
 
-/** Edge classification for raw fs errors: known errnos become declared Failures, unknown stay bugs. */
-function classifyErrno(error: Error & { code?: string }, path: string): Error {
-  if (error.code === 'ENOENT' || error.code === 'ENOTDIR')
-    return new Failure(`no such path: ${path}`, 404, { cause: error });
-  if (error.code === 'EACCES' || error.code === 'EPERM')
-    return new Failure(`forbidden: ${path}`, 403, { cause: error });
+/** Edge classification for raw fs errors: known errnos become declared failures, and anything
+ *  else is returned untouched so it stays a bug and reaches the boundary with its own stack. */
+function classifyErrno(error: unknown, path: string): unknown {
+  if (Result.isErrno(error, 'ENOENT', 'ENOTDIR'))
+    return NotFound({ detail: `no such path: ${path}` }, { cause: error });
+  if (Result.isErrno(error, 'EACCES', 'EPERM')) return Forbidden({ path }, { cause: error });
   return error;
 }
 
 async function readEntry(relPath: string): Promise<FsEntry> {
   const full = resolve(ROOT, relPath);
   if (full !== ROOT && !full.startsWith(ROOT + sep))
-    throw new Failure(`path escapes served root: ${relPath}`, 400);
+    throw BadRequest({ detail: `path escapes served root: ${relPath}` });
   const stats = await stat(full).catch((e) => {
     throw classifyErrno(e, relPath);
   });
@@ -261,31 +192,37 @@ async function readEntry(relPath: string): Promise<FsEntry> {
   };
 }
 
-function taskFs(rawPath: string): Task<FsEntry, Failure> {
-  return Task(async () => {
+function taskFs(rawPath: string): Task<FsEntry, ApiFailure> {
+  return Task<FsEntry, ApiFailure>(async () => {
     // The sync edge, flat: Result.try boxes the raw URIError, one `if` classifies it — no
     // indentation, no keyword. This is DESIGN NOTE 1 in action.
     const decoded = Result.try(decodeURIComponent, rawPath);
     if (!decoded.ok)
-      throw new Failure(`malformed percent-encoding: ${rawPath}`, 400, { cause: decoded.error });
+      throw BadRequest(
+        { detail: `malformed percent-encoding: ${rawPath}` },
+        { cause: decoded.error },
+      );
     return await readEntry(decoded.value);
-  }).expect(`fs entry: ${rawPath || '(root)'}`);
+  }).context(`fs entry: ${rawPath || '(root)'}`);
 }
 
 // ── THE handler pattern: every endpoint is one pipeline + one destructure ────
 
-function causeChain(failure: Error): string[] {
-  const chain: string[] = [];
-  for (let cause = failure.cause; cause instanceof Error; cause = cause.cause)
-    chain.push(cause.message);
-  return chain;
-}
+async function reply<T extends JsonValue>(task: Task<T, ApiFailure>): Promise<Reply> {
+  // The bare union, not a box: `.result()` never rejects for a DECLARED failure, and Failure.is
+  // narrows both arms — so the success value needs no unwrapping at all.
+  const outcome = await task.result();
+  if (!Failure.is(outcome)) return { status: 200, body: outcome };
 
-async function reply<T extends JsonValue>(task: Task<T, Failure>): Promise<Reply> {
-  const { ok, value, error } = await task.result(); // never rejects for DECLARED failures
-  return ok
-    ? { status: 200, body: value }
-    : { status: error.httpStatus, body: { error: error.message, chain: causeChain(error) } };
+  // Failure.causes walks the chain cycle-safely and depth-bounded, which the hand-rolled loop
+  // this replaces did not.
+  const chain = Failure.causes(outcome)
+    .slice(1)
+    .map((cause) => Failure.format(cause));
+  return {
+    status: STATUS[outcome.code] ?? 500,
+    body: { error: outcome.message, code: outcome.code, chain },
+  };
 }
 
 const INDEX: JsonValue = {
@@ -293,19 +230,20 @@ const INDEX: JsonValue = {
 };
 
 function route(req: IncomingMessage): Promise<Reply> {
-  if (req.method !== 'GET') return reply(fail(`method not allowed: ${req.method}`, 405));
+  if (req.method !== 'GET')
+    return reply(Task.fail(MethodNotAllowed({ method: req.method ?? '(none)' })));
   const { pathname } = new URL(req.url ?? '/', 'http://internal');
   const segments = pathname.split('/').filter(Boolean);
   const head = segments.at(0) ?? '';
   const username = segments.at(1) ?? '';
 
-  if (segments.length === 0) return reply(Task(async () => INDEX));
+  if (segments.length === 0) return reply(Task<JsonValue, ApiFailure>(() => INDEX));
   else if (head === 'fs') return reply(taskFs(segments.slice(1).join('/')));
   else if (head === 'github' && segments.length === 2) return reply(githubProfile(username));
   else if (head === 'gitlab' && segments.length === 2) return reply(gitlabProfile(username));
   else if (head === 'bug')
-    return reply(Task(async () => JSON.parse('{malformed') as JsonValue)); // tier-2 on purpose
-  else return reply(fail(`no route: ${pathname}`, 404));
+    return reply(Task<JsonValue, ApiFailure>(() => JSON.parse('{malformed') as JsonValue)); // tier-2 on purpose
+  else return reply(Task.fail(NotFound({ detail: `no route: ${pathname}` })));
 }
 
 // ── the server: ONE bug boundary — spelled with .catch(), not the keyword ────
