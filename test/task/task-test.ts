@@ -1097,6 +1097,63 @@ module('Task | failure observation seam', () => {
 
 // ── ensure — the declared invariant on the success value ───────────────────────
 
+module('Task | finally', { concurrency: true }, () => {
+  test('returns a Task, so cleanup no longer drops the chain out of Task-land', async (assert) => {
+    const task = Task(() => 'body').finally(() => {});
+
+    assert.true(task instanceof Task, 'then/catch hand back a plain Promise; finally does not');
+    assert.strictEqual(await task.map((body) => body.toUpperCase()), 'BODY', 'still chainable');
+  });
+
+  test('keeps every Promise.prototype.finally behaviour', async (assert) => {
+    assert.strictEqual(await Task(() => 1).finally(() => 99), 1, "onFinally's return is discarded");
+
+    await assert.rejects(
+      Task(() => 1).finally(() => {
+        throw new Error('cleanup blew up');
+      }),
+      /cleanup blew up/,
+      'but a throwing onFinally does replace the outcome',
+    );
+
+    await assert.rejects(
+      Task(() => Promise.reject(NotFound({ id: 3 }))).finally(() => {}),
+      /no user 3/,
+    );
+
+    const startedAt = Date.now();
+    await Task(() => 1).finally(() => new Promise((resolve) => setTimeout(resolve, 30)));
+    assert.true(Date.now() - startedAt >= 25, 'a thenable returned by onFinally is awaited');
+
+    let args: unknown[] = ['not called'];
+    await Task(() => 1).finally((...received: unknown[]) => (args = received));
+    assert.deepEqual(args, [], 'onFinally receives nothing — it cannot see the outcome');
+  });
+
+  // Deliberately EAGER, like ignore(): `finally` is overwhelmingly written fire-and-forget, and
+  // a lazy one nobody awaited would silently never release the resource.
+  test('runs the cleanup with no await at all — the fire-and-forget idiom', async (assert) => {
+    let released = false;
+    Task(() => 'x').finally(() => (released = true));
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.true(released, 'a lazy finally would have released nothing here');
+  });
+
+  test('cleanup re-runs per attempt when the retry is upstream of it', async (assert) => {
+    let attempts = 0;
+    let cleanups = 0;
+    const flaky = Task(() => {
+      if (++attempts < 2) throw new Error('again');
+      return attempts;
+    });
+
+    assert.strictEqual(await flaky.retry(2).finally(() => cleanups++), 2);
+    assert.strictEqual(cleanups, 1, 'one cleanup for the whole retried chain');
+  });
+});
+
 module('Task | ensure', { concurrency: true }, () => {
   const TooSmall = Failure.define('TooSmall', (d: { got: number }) => `too small: ${d.got}`);
 

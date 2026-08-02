@@ -58,6 +58,7 @@ process.title = 'qunitx';
     // says so, because it used to be indistinguishable from exit 1.
     const routed = await Client.runVia(process.argv.slice(2)).mapErr(Failure.from).result();
     if (!Failure.is(routed)) {
+      process.exitCode = routed;
       process.stdout.write('', () => process.exit(routed));
       return;
     }
@@ -80,6 +81,10 @@ process.title = 'qunitx';
   if (Failure.is(configured)) {
     console.error(Failure.format(configured));
     await shutdownPrelaunch();
+    // `exitCode` FIRST, then the flush-then-exit. The write callback is the fast path, but it is
+    // not guaranteed to fire on every runtime — and when it does not, a process that falls off
+    // the end of this function exits 0 and reports a broken config as a passing run.
+    process.exitCode = 1;
     return process.stderr.write('', () => process.exit(1));
   }
   const config = configured;
@@ -90,27 +95,20 @@ process.title = 'qunitx';
     const Search = await import('./lib/commands/search.ts');
     const exitCode = await Search.run(config);
     await shutdownPrelaunch();
+    process.exitCode = exitCode;
     return process.stdout.write('', () => process.exit(exitCode));
   }
 
-  try {
-    return await run(config);
-  } catch (error) {
-    console.error(error);
-    // Flush stdout before exit so any queued console.log writes (e.g. from WS testEnd
-    // handlers that fired before the exception) are not lost when process.exit() runs.
-    process.exitCode = 1;
-    await shutdownPrelaunch();
-    process.stdout.write('\n', () => process.exit(1));
-  }
+  return await run(config);
 })().catch(async (error) => {
-  // The program's one crash boundary, and the two-tier rule at the very edge: a declared failure
-  // is a message and an exit code (`init`/`generate` reach here when there is no package.json to
-  // work in), while anything else is a bug and keeps its stack. Library functions used to make
-  // this call themselves with a bare `process.exit(1)`, which no caller could test or override.
+  // The program's ONE crash boundary, and the two-tier rule at the very edge: a declared failure
+  // is a message (`init`/`generate` reach here when there is no package.json to work in), a bug
+  // keeps its stack — both exit 1. Library functions used to make this call themselves with a
+  // bare `process.exit(1)`, which no caller could test or override.
   await shutdownPrelaunch();
-  if (!Failure.is(error)) throw error;
-
-  console.error(Failure.format(error));
-  process.stderr.write('', () => process.exit(1));
+  console.error(Failure.is(error) ? Failure.format(error) : error);
+  // Flush stdout before exiting so queued console.log writes (e.g. from WS testEnd handlers that
+  // fired before the throw) are not lost when process.exit() runs.
+  process.exitCode = 1;
+  process.stdout.write('\n', () => process.exit(1));
 });

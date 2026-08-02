@@ -265,6 +265,39 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   }
 
   /**
+   * `Promise.prototype.finally`, returning a **Task** — so cleanup no longer drops the chain out
+   * of Task-land the way `then`/`catch` do. Every spec behaviour is kept: `onFinally` takes no
+   * arguments, its return value is discarded, a thenable it returns is awaited, and anything it
+   * throws replaces the outcome.
+   *
+   * **Eager, like {@link TaskClass#ignore}** — and for the same reason. `finally` is overwhelmingly
+   * written fire-and-forget (`closeWithGrace(...).finally(() => process.exit(143))` in this very
+   * repo), and a lazy one nobody awaits would never run its cleanup. Laziness is right for
+   * building a pipeline; it is wrong for releasing a resource.
+   *
+   * ```ts
+   * let released = false;
+   * const value = await Task(() => 'body').finally(() => {
+   *   released = true; // runs whichever way the Task settles
+   * });
+   *
+   * value; // 'body' — the outcome passes through untouched
+   * released; // true
+   * ```
+   *
+   * Being eager, it carries {@link TaskClass#perform}'s caveat: the returned Task is running, so
+   * if it fails and nothing consumes it, that is an unhandled rejection. `task.finally(cleanup)`
+   * followed only by `.retry()` is the shape to watch — `retry` builds a fresh chain rather than
+   * consuming this one. Put `finally` after the retry, or `.result()` the outcome.
+   */
+  override finally(onFinally?: (() => void) | null): TaskClass<T, E> {
+    return this.#derive<T, E>(
+      () => super.finally(onFinally),
+      (fresh) => fresh.finally(onFinally),
+    ).perform();
+  }
+
+  /**
    * Starts the run **now** without suspending the caller (ember-concurrency's verb), so work
    * can overlap: `task.perform()` early, `await task` later joins the in-flight run. Idempotent
    * — on a running or settled Task it is a no-op join. Returns `this` for chaining.

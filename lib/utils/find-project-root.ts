@@ -43,10 +43,14 @@ export type ProjectRootNotFoundFailure = Failure.Of<typeof ProjectRootNotFound>;
 export function findProjectRoot(): Task<string, ProjectRootNotFoundFailure> {
   return Task(async () => {
     const absolutePath = await searchInParentDirectories('.', 'package.json');
-    if (!absolutePath?.includes('package.json')) throw new Error('no package.json found');
+    // Thrown at the condition rather than classified afterwards with `.mapErr`. A trailing
+    // `.mapErr(ProjectRootNotFound, …)` would see EVERY rejection — so an EACCES part-way up the
+    // tree, which is a bug, would be reported as "there is no project here", which is a lie. It
+    // also builds a second, derived Task for a failure this function can name itself.
+    if (!absolutePath?.includes('package.json')) throw ProjectRootNotFound({ cwd: process.cwd() });
 
     // path.dirname strips the basename using the platform separator — `.replace('/package.json', '')`
     // missed Windows paths like `C:\foo\package.json`, leaving the literal filename in the result.
     return path.dirname(absolutePath);
-  }).mapErr(ProjectRootNotFound, { cwd: process.cwd() });
+  });
 }
