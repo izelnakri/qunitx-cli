@@ -90,12 +90,10 @@ async function readDirRecursive(dir: string, filter: (name: string) => boolean):
       const fullPath = path.join(dirent.parentPath, dirent.name);
       if (dirent.isFile()) return fullPath;
       // Symlink — follow it and verify it resolves to a file, not a directory or a broken target.
-      try {
-        const statResult = await fs.stat(fullPath);
-        return statResult.isFile() ? fullPath : null;
-      } catch {
-        return null; // dangling symlink — skip
-      }
+      // A dangling link throws here, and "not a file to bundle" is the answer either way.
+      return await Task(() => fs.stat(fullPath))
+        .map((entry) => (entry.isFile() ? fullPath : null))
+        .recover(() => null);
     }),
   );
 

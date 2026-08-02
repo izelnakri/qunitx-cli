@@ -1,4 +1,5 @@
 import { SpecReporter } from './spec.ts';
+import * as Result from '../result/index.ts';
 import { failedAssertions, parseAt, type FailureInfo } from './failure.ts';
 import type { Reporter, RunStartInfo, RunEndInfo, TestDetails } from './types.ts';
 import type { Config } from '../types.ts';
@@ -137,9 +138,8 @@ function escapeProperty(value: string): string {
 function format(value: unknown): string {
   if (typeof value === 'string') return JSON.stringify(value);
   if (value === undefined) return 'undefined';
-  try {
-    return JSON.stringify(value) ?? String(value);
-  } catch {
-    return String(value);
-  }
+  // A circular structure is the case this exists for; String(value) is what a reporter can
+  // still print. Narrowed to the stringify so a bug in this function is not also swallowed.
+  const json = Result.try(() => JSON.stringify(value));
+  return json.ok ? (json.value ?? String(value)) : String(value);
 }

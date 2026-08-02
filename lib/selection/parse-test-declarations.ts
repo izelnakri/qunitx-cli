@@ -1,6 +1,8 @@
 import path from 'node:path';
 import esbuild from 'esbuild';
 import * as SourceMap from '../utils/source-map.ts';
+import { Task } from '../task/index.ts';
+import * as Result from '../result/index.ts';
 import type { SourceMapDecoder } from '../utils/source-map.ts';
 
 /**
@@ -94,26 +96,24 @@ export async function parseTestDeclarations(
   source: string,
   filePath: string,
 ): Promise<DeclarationScan | null> {
-  let transformed: esbuild.TransformResult;
-  try {
-    transformed = await esbuild.transform(source, {
+  // A file this cannot transform or map is one whose declarations we do not know, and the
+  // caller's answer to that is the same either way: run the whole file. `recover`, because a
+  // syntax error and an esbuild bug are equally "no declaration scan" to a targeting feature.
+  const transformed = await Task(() =>
+    esbuild.transform(source, {
       loader: LOADERS[path.extname(filePath)] ?? 'tsx',
       jsx: 'automatic',
       sourcefile: filePath,
       sourcemap: 'external',
       sourcesContent: false,
       logLevel: 'silent',
-    });
-  } catch {
-    return null;
-  }
+    }),
+  ).recover(() => null);
+  if (!transformed) return null;
 
-  let decoder: SourceMapDecoder;
-  try {
-    decoder = SourceMap.parse(transformed.map, path.dirname(filePath));
-  } catch {
-    return null;
-  }
+  const decoded = Result.try(() => SourceMap.parse(transformed.map, path.dirname(filePath)));
+  if (!decoded.ok) return null;
+  const decoder = decoded.value;
 
   const tokens = tokenize(transformed.code);
   const { declarations, hasOnly } = collectQUnitDeclarations(tokens);
