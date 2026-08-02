@@ -107,6 +107,11 @@ const FLUSH_GRACE_MS = 30_000;
   const configured = await Config.setup();
   if (Failure.is(configured)) {
     console.error(Failure.format(configured));
+    // BEFORE the cleanup await, not after. `shutdownPrelaunch()` waits on a Chrome that may
+    // still be starting — on the Windows runner CDP came ready 1.8s after this point — and if
+    // the loop drains around that wait, Node exits on its own. An unset `exitCode` at that
+    // moment means a run that could not read its inputs reports success.
+    process.exitCode = 1;
     await shutdownPrelaunch();
     return exitAfterFlush(1);
   }
@@ -127,6 +132,10 @@ const FLUSH_GRACE_MS = 30_000;
   // is a message (`init`/`generate` reach here when there is no package.json to work in), a bug
   // keeps its stack — both exit 1. Library functions used to make this call themselves with a
   // bare `process.exit(1)`, which no caller could test or override.
+  //
+  // Set first, for the same reason as above: nothing awaited below may decide the exit code by
+  // draining the loop out from under us.
+  process.exitCode = 1;
   await shutdownPrelaunch();
   console.error(Failure.is(error) ? Failure.format(error) : error);
   exitAfterFlush(1);
