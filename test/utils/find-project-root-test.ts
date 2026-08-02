@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import process from 'node:process';
@@ -65,9 +66,10 @@ async function withCwd<T>(dir: string, fn: () => Promise<T> | T): Promise<T> {
 }
 
 // A directory with no package.json at any level: os.tmpdir()'s ancestors have none, but this
-// repository's do, so the temp root is the only place the miss can be observed.
+// repository's do, so the temp root is the only place the miss can be observed. os.tmpdir()
+// rather than a hardcoded '/tmp' — on Windows that resolves to a non-existent D:\tmp.
 async function makeEmptyDir(): Promise<string> {
-  const dir = path.join(await fs.realpath(process.env.TMPDIR ?? '/tmp'), crypto.randomUUID());
+  const dir = path.join(await fs.realpath(os.tmpdir()), crypto.randomUUID());
   await fs.mkdir(dir, { recursive: true });
   return dir;
 }
