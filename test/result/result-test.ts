@@ -1,6 +1,7 @@
 import { module, test } from 'qunitx';
 import * as Result from '../../lib/result/index.ts';
 import * as Failure from '../../lib/result/failure.ts';
+import { Task } from '../../lib/task/index.ts';
 
 const NotFound = Failure.define('NotFound', (d: { id: number }) => `no user ${d.id}`);
 const Denied = Failure.define('Denied', (d: { user: string }) => `denied: ${d.user}`);
@@ -50,24 +51,53 @@ module('Result | the bare union', { concurrency: true }, () => {
 
 // ── unwrap / expect / unwrapOr ────────────────────────────────────────────────
 
-module('Result | unwrap', { concurrency: true }, () => {
+module(
+  'Result | unwrap — leave the union, keep the failure declared',
+  { concurrency: true },
+  () => {
+    test('returns a success value untouched', (assert) => {
+      assert.strictEqual(Result.unwrap('x' as Result.Result<string, Failure.Any>), 'x');
+    });
+
+    test('throws a failure by identity, preserving its stack', (assert) => {
+      const boom = NotFound({ id: 3 });
+      try {
+        Result.unwrap(boom as Result.Result<string, Failure.Of<typeof NotFound>>);
+        assert.true(false, 'should have thrown');
+      } catch (error) {
+        // Identity, not equality: the stack still points at where `boom` was created rather
+        // than at this unwrap. `expect()` is the opposite trade.
+        assert.strictEqual(error, boom);
+      }
+    });
+
+    test('a thrown failure stays DECLARED, so a boundary upstream can still absorb it', async (assert) => {
+      // What "keeps the failure declared" buys the caller: unwrap is for propagating a failure
+      // that someone above still has a right to handle.
+      const outcome = await Task(() =>
+        Result.unwrap(NotFound({ id: 3 }) as Result.Result<string, Failure.Any>),
+      ).result();
+      assert.true(
+        Failure.is(outcome) && outcome.code === 'NotFound',
+        'result() handed it back as a value',
+      );
+
+      const substituted = await Task(() =>
+        Result.unwrap(NotFound({ id: 3 }) as Result.Result<string, Failure.Any>),
+      ).unwrapOr('fallback');
+      assert.strictEqual(substituted, 'fallback', 'and unwrapOr could substitute for it');
+    });
+  },
+);
+
+module('Result | expect — promote a failure to a bug, permanently', { concurrency: true }, () => {
   test('returns a success value untouched', (assert) => {
-    assert.strictEqual(Result.unwrap('x' as Result.Result<string, Failure.Any>), 'x');
+    assert.strictEqual(Result.expect('x' as Result.Result<string, Failure.Any>, 'must load'), 'x');
   });
 
-  test('throws a failure by identity, preserving its stack', (assert) => {
-    const boom = NotFound({ id: 3 });
-    try {
-      Result.unwrap(boom as Result.Result<string, Failure.Of<typeof NotFound>>);
-      assert.true(false, 'should have thrown');
-    } catch (error) {
-      // Identity, not equality: the stack still points at where `boom` was created rather
-      // than at this unwrap. `expect()` is the opposite trade.
-      assert.strictEqual(error, boom);
-    }
-  });
-
-  test('expect() throws at the demand site and files the original under cause', (assert) => {
+  test('throws at the demand site and files the original under cause', (assert) => {
+    // The trade against unwrap: a fresh error whose stack points HERE, at the code that
+    // demanded a value, with the original failure (and its own stack) kept under `cause`.
     const boom = NotFound({ id: 9 });
     try {
       Result.expect(boom as Result.Result<string, Failure.Of<typeof NotFound>>, 'must load');
@@ -78,13 +108,28 @@ module('Result | unwrap', { concurrency: true }, () => {
     }
   });
 
-  test('expect() throws a plain Error, never a Failure — the promotion is permanent', (assert) => {
+  test('throws a plain Error, never a Failure', (assert) => {
     try {
       Result.expect(NotFound({ id: 2 }) as Result.Result<number, Failure.Any>, 'promoted');
       assert.true(false, 'should have thrown');
     } catch (error) {
-      assert.false(Failure.is(error), 'a promoted bug cannot be re-absorbed as declared');
+      assert.false(Failure.is(error), 'not a Failure');
     }
+  });
+
+  test('and THAT is what stops a boundary upstream from un-crashing it', async (assert) => {
+    // The reason for the plain Error, stated as behaviour rather than as a comment: every
+    // two-tier consumer treats a thrown Failure as declared and hands it onward as a value.
+    // Were expect to throw one, the promotion it just performed would be quietly undone.
+    const promoted = Task(() =>
+      Result.expect(NotFound({ id: 4 }) as Result.Result<string, Failure.Any>, 'must load'),
+    );
+    await assert.rejects(promoted.result(), 'result() rethrows it — a bug is not an outcome');
+
+    const stillCrashes = Task(() =>
+      Result.expect(NotFound({ id: 4 }) as Result.Result<string, Failure.Any>, 'must load'),
+    ).unwrapOr('fallback');
+    await assert.rejects(stillCrashes, 'and no fallback can absorb it either');
   });
 
   test('unwrapOr substitutes a fallback for a failure only', (assert) => {
