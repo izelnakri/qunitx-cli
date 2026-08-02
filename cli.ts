@@ -8,7 +8,7 @@ import './lib/utils/enable-compile-cache.ts';
 import './lib/utils/find-sidecar-esbuild.ts';
 import process from 'node:process';
 import { shutdownPrelaunch } from './lib/chrome/prelaunch.ts';
-import { tryCatch, Failure } from './lib/result/index.ts';
+import { Failure } from './lib/result/index.ts';
 import pkg from './package.json' with { type: 'json' };
 
 process.title = 'qunitx';
@@ -51,19 +51,18 @@ process.title = 'qunitx';
     useDaemon = await ensureRunning();
   }
   if (useDaemon) {
-    // `tryCatch` with no rethrow line rather than the bare `catch {}` this replaces: the fall-through
-    // is still unconditional, but a bug inside the client now shows up in the failure instead of
-    // being erased. Both transport failures fall through to a local run; only the one that means
-    // "the daemon died mid-run" says so, because it used to be indistinguishable from exit 1.
-    const routed = await tryCatch(() => Client.runVia(process.argv.slice(2)));
-    if (routed.ok && !Failure.is(routed.value)) {
-      const exitCode = routed.value;
-      process.stdout.write('', () => process.exit(exitCode));
+    // `mapErr(Failure.from)` is the adapter edge: it sees every rejection, so a bug inside the
+    // client becomes a Failure instead of being erased, exactly as the `tryCatch` this replaces
+    // did — but in the same chain, so `.result()` yields one union to discriminate rather than a
+    // box wrapping one. The fall-through stays unconditional; only "the daemon died mid-run"
+    // says so, because it used to be indistinguishable from exit 1.
+    const routed = await Client.runVia(process.argv.slice(2)).mapErr(Failure.from).result();
+    if (!Failure.is(routed)) {
+      process.stdout.write('', () => process.exit(routed));
       return;
     }
-    const failure = Failure.from(routed.ok ? routed.value : routed.error);
-    if (failure.code !== 'DaemonUnreachable') {
-      process.stderr.write(`# [qunitx] ${Failure.format(failure)} — running locally\n`);
+    if (routed.code !== 'DaemonUnreachable') {
+      process.stderr.write(`# [qunitx] ${Failure.format(routed)} — running locally\n`);
     }
   }
 

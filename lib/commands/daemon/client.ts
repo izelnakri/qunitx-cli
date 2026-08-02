@@ -5,7 +5,8 @@ import * as Paths from './paths.ts';
 import { CLEANUP_GRACE_MS } from '../../utils/close-with-grace.ts';
 import * as Args from '../../args/index.ts';
 import * as Socket from './socket.ts';
-import { type Result, Failure } from '../../result/index.ts';
+import { Failure } from '../../result/index.ts';
+import { Task } from '../../task/index.ts';
 import type { Request, ResponseChunk } from './protocol.ts';
 
 const CONNECT_TIMEOUT_MS = 1_000;
@@ -199,9 +200,17 @@ export type RunViaFailure = Failure.Of<typeof DaemonUnreachable | typeof DaemonD
 
 /**
  * Sends `argv` to the daemon and streams its TAP output back to local stdout/stderr.
- * Returns the exit code reported by the daemon, or a failure the caller can act on:
+ * Succeeds with the exit code the daemon reported; fails with one the caller can act on:
  * `DaemonUnreachable` means "fall through to a local run", `DaemonDisconnected` means the
  * daemon died mid-run and the user should be told.
+ *
+ * A Task rather than a promise of a `Result`, because the two say the same thing and only
+ * one of them nests: `Promise<Result<number, E>>` hands the caller a union it must unwrap
+ * *inside* whatever it already uses to catch bugs, while `.result()` here produces that union
+ * on demand and `await` alone gets the exit code.
+ *
+ * Not idempotent — it streams a whole test run to stdio — so `retry()` would replay the
+ * output. There is nothing here to retry anyway: both failures mean the daemon is gone.
  *
  * Forwards the user's Ctrl+C: client exits with 130; daemon abandons the run cleanly
  * when it sees the socket close (clientAlive=false stops further writes).
@@ -212,54 +221,56 @@ export type RunViaFailure = Failure.Of<typeof DaemonUnreachable | typeof DaemonD
  *
  * // Defined, not invoked: streams the daemon's TAP output to this process's stdio.
  * async function runOnDaemon() {
- *   const outcome = await Client.runVia(['test/foo-test.ts']); // number | RunViaFailure — bare
+ *   const outcome = await Client.runVia(['test/foo-test.ts']).result(); // number | RunViaFailure
  *   return Failure.is(outcome) ? null : outcome; // exit code out; a failure the caller acts on
  * }
  * ```
  */
-export async function runVia(argv: string[]): Promise<Result<number, RunViaFailure>> {
-  const socket = await tryConnect();
-  if (!socket) return DaemonUnreachable();
+export function runVia(argv: string[]): Task<number, RunViaFailure> {
+  return Task(async () => {
+    const socket = await tryConnect();
+    if (!socket) throw DaemonUnreachable();
 
-  // Per protocol.ts: exactly one terminal message ('done' or 'fatal') ends the
-  // stream. close/error here are last-resort fallbacks for a daemon that drops
-  // the connection without sending one — now reported as such rather than folded
-  // into the same exit code a failing test run produces.
-  const outcome = new Promise<Result<number, RunViaFailure>>((resolve) => {
-    Socket.readMessages<ResponseChunk>(socket, (chunk) => {
-      if (chunk.type === 'stdout') process.stdout.write(chunk.data);
-      else if (chunk.type === 'stderr') process.stderr.write(chunk.data);
-      else if (chunk.type === 'done') resolve(chunk.exitCode);
-      else if (chunk.type === 'fatal') {
-        // A reported fatal IS a terminal result: the daemon ran, decided the run failed, and
-        // said so. That is an exit code, not a transport failure.
-        process.stderr.write(`# [qunitx daemon] ${chunk.message}\n`);
-        resolve(1);
-      }
+    // Per protocol.ts: exactly one terminal message ('done' or 'fatal') ends the
+    // stream. close/error here are last-resort fallbacks for a daemon that drops
+    // the connection without sending one — reported as declared failures rather than
+    // folded into the same exit code a failing test run produces.
+    const outcome = new Promise<number>((resolve, reject) => {
+      Socket.readMessages<ResponseChunk>(socket, (chunk) => {
+        if (chunk.type === 'stdout') process.stdout.write(chunk.data);
+        else if (chunk.type === 'stderr') process.stderr.write(chunk.data);
+        else if (chunk.type === 'done') resolve(chunk.exitCode);
+        else if (chunk.type === 'fatal') {
+          // A reported fatal IS a terminal result: the daemon ran, decided the run failed, and
+          // said so. That is an exit code, not a transport failure.
+          process.stderr.write(`# [qunitx daemon] ${chunk.message}\n`);
+          resolve(1);
+        }
+      });
+      socket.once('close', () => reject(DaemonDisconnected({ reason: 'close' })));
+      socket.once('error', () => reject(DaemonDisconnected({ reason: 'error' })));
     });
-    socket.once('close', () => resolve(DaemonDisconnected({ reason: 'close' })));
-    socket.once('error', () => resolve(DaemonDisconnected({ reason: 'error' })));
+
+    const onSigint = () => {
+      socket.end();
+      process.exit(SIGINT_EXIT_CODE);
+    };
+    process.once('SIGINT', onSigint);
+
+    send(socket, {
+      type: 'run',
+      argv,
+      cwd: process.cwd(),
+      env: { ...process.env },
+      nodeVersion: process.version,
+    });
+
+    try {
+      return await outcome;
+    } finally {
+      process.removeListener('SIGINT', onSigint);
+    }
   });
-
-  const onSigint = () => {
-    socket.end();
-    process.exit(SIGINT_EXIT_CODE);
-  };
-  process.once('SIGINT', onSigint);
-
-  send(socket, {
-    type: 'run',
-    argv,
-    cwd: process.cwd(),
-    env: { ...process.env },
-    nodeVersion: process.version,
-  });
-
-  try {
-    return await outcome;
-  } finally {
-    process.removeListener('SIGINT', onSigint);
-  }
 }
 
 /**
