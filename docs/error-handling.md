@@ -1160,7 +1160,7 @@ instead.
 
 Because every Task keeps its recipe **and its derivation lineage**, `.restart()` and
 `.retry(times = 1)` spawn fresh executions of the _whole chain_ —
-`scan.map(parse).expect(ctx).retry()` re-runs the git call, not just the parse — while
+`scan.map(parse).context(ctx).retry()` re-runs the git call, not just the parse — while
 ordinary derivation still shares the upstream's memoised run (one fetch, many `.map`s). `E` is
 the _declared_ failure type; it is advisory (JS rejections are untyped) but it makes
 `.result()` return a typed `Result<T, E>`.
@@ -1188,7 +1188,7 @@ threads through every consuming method:
 | `result()`                  | the failure as a bare, typed value                    | re-thrown                                                   |
 | `match({ ok, err })`        | `err` branch, typed `E`                               | re-thrown                                                   |
 | `unwrapOr(fallback)`        | fallback                                              | re-thrown                                                   |
-| `expect(message)`           | re-thrown with context — same `code`/`data`, `cause`d | passes through untouched                                    |
+| `context(message)`          | re-thrown with context — same `code`/`data`, `cause`d | passes through untouched                                    |
 | `mapErr(fn)` — adapter      | remapped                                              | **remapped too** — classification happens here              |
 | `recover(fn)` — boundary    | recovered                                             | **recovered too** — the program's one `.catch()`            |
 | `ignore(context)` — cleanup | swallowed, labelled under `QUNITX_DEBUG`              | **swallowed too** — and EAGER: fire-and-forget attaches now |

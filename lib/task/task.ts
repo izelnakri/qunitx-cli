@@ -658,14 +658,14 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   }
 
   /**
-   * Data-first twin of {@link TaskClass#expect} — context for declared failures only.
+   * Data-first twin of {@link TaskClass#context} — context for declared failures only.
    *
    * ```ts
-   * await Task.expect(Task(() => 'v'), 'must load'); // 'v' — context only decorates failures
+   * await Task.context(Task(() => 'v'), 'must load'); // 'v' — context only decorates failures
    * ```
    */
-  static expect<T, E>(task: TaskClass<T, E>, message: string): TaskClass<T, E> {
-    return task.expect(message);
+  static context<T, E>(task: TaskClass<T, E>, message: string): TaskClass<T, E> {
+    return task.context(message);
   }
 
   /**
@@ -753,7 +753,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   //
   // Every method derives a fresh `Task(() => this.then(...))`: the `this.then` inside the recipe
   // triggers the upstream Task — but only when the *derived* Task is awaited, so a chain like
-  // `task.map(f).expect(m)` stays fully lazy, and repeated awaits share the upstream's memoised
+  // `task.map(f).context(m)` stays fully lazy, and repeated awaits share the upstream's memoised
   // run. `#derive` also records the lineage that lets restart/retry re-execute the whole chain.
 
   #derive<U, F>(
@@ -916,7 +916,10 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   }
 
   /**
-   * Adds context to a declared failure — anyhow's `.context()`, not Rust's panicking `expect`.
+   * Adds context to a declared failure — anyhow's `.context()`. Named for what it does, and
+   * deliberately NOT `expect`: `Result.expect` is Rust's, which PROMOTES a failure to a bug,
+   * and one word meaning both "keep this handled" and "crash on this" is the confusion worth
+   * spending a rename to avoid.
    * A `Failure` rethrows as a new Failure with the **same `code` and `data`** (so `E`, and every
    * `switch` on `code`, still hold), `message` as the context line, and the original chained
    * under `cause`. A *bug* passes through untouched: promoting it into the declared tier would
@@ -925,20 +928,20 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * ```ts
    * const loadUser = (id: number) => Task(() => ({ name: 'u' + id }));
    *
-   * await loadUser(7).expect('route /users/7 needs its user');
+   * await loadUser(7).context('route /users/7 needs its user');
    * // and when loadUser rejects with Failure(NotFound), the await throws:
    * // Failure(NotFound): route /users/7 needs its user
    * //   caused by: Failure(NotFound): no user 7
    * ```
    */
-  expect(message: string): TaskClass<T, E> {
+  context(message: string): TaskClass<T, E> {
     return this.#derive<T, E>(
       () =>
         this.then(undefined, (error: unknown) => {
           if (!isFailure(error)) throw error;
           throw new Failure(error.code, message, error.data, { cause: error });
         }),
-      (fresh) => fresh.expect(message),
+      (fresh) => fresh.context(message),
     );
   }
 
@@ -1000,7 +1003,7 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   /**
    * A brand-new execution: fresh recipe run for a root Task, and for a *derived* Task the
    * lineage is walked — the source restarts and every derivation step is re-applied. So
-   * `scan.map(parse).expect(ctx).restart()` re-runs the git call, the parse, and the context
+   * `scan.map(parse).context(ctx).restart()` re-runs the git call, the parse, and the context
    * wrap; nothing is served from the old chain's memo.
    *
    * ```ts

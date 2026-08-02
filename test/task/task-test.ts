@@ -31,7 +31,7 @@ module('Task | lazy', { concurrency: true }, () => {
       return 2;
     })
       .map((x) => x + 1)
-      .expect('never fails here')
+      .context('never fails here')
       .result();
     assert.false(ran, 'building the whole chain ran nothing');
     assert.strictEqual(await chain, 3, '.result() settles to the bare value');
@@ -722,7 +722,7 @@ module('Task | two-tier', { concurrency: true }, () => {
 
   test('expect adds context to a declared failure, preserving code and data', async (assert) => {
     try {
-      await loadUser(0).expect('the run needs a user here');
+      await loadUser(0).context('the run needs a user here');
       assert.true(false, 'unreachable');
     } catch (error) {
       assert.true(NotFound.is(error), 'same code — every switch on it still works');
@@ -734,7 +734,7 @@ module('Task | two-tier', { concurrency: true }, () => {
   });
 
   test('expect lets a bug pass through uncontextualised', async (assert) => {
-    await assert.rejects(buggy().expect('context that must NOT wrap a bug'), TypeError);
+    await assert.rejects(buggy().context('context that must NOT wrap a bug'), TypeError);
   });
 
   test('unwrapOr substitutes only for declared failures; a bug still rejects', async (assert) => {
@@ -783,7 +783,7 @@ module('Task | retry & restart', { concurrency: true }, () => {
     // re-ran only the derivation and served the source from its memo.
     let fetches = 0;
     const user = Task(() => ({ id: 7, name: 'u' + ++fetches }));
-    const chain = user.map((u) => u.name).expect('user must load');
+    const chain = user.map((u) => u.name).context('user must load');
     assert.strictEqual(await chain, 'u1');
     assert.strictEqual(fetches, 1);
     assert.strictEqual(await chain.restart(), 'u2', 'the fetch itself re-ran');
@@ -863,7 +863,7 @@ module('Task | data-first statics', { concurrency: true }, () => {
       name: 'guest',
     });
     try {
-      await Task.expect(loadUser(0), 'twin context');
+      await Task.context(loadUser(0), 'twin context');
       assert.true(false, 'unreachable');
     } catch (error) {
       assert.strictEqual((error as Error).message, 'twin context');
