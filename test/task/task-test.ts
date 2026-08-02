@@ -50,7 +50,11 @@ module('Task | lazy', { concurrency: true }, () => {
 
   test('a memoria-style lazy relationship fires its RPC only on await', async (assert) => {
     let rpcCount = 0;
-    const posts = () => Task(() => (rpcCount++, [{ id: 1 }, { id: 2 }]));
+    const posts = () =>
+      Task(() => {
+        rpcCount++;
+        return [{ id: 1 }, { id: 2 }];
+      });
     const rel = posts();
     assert.strictEqual(rpcCount, 0, 'accessing the relationship fired no RPC');
     assert.deepEqual(await rel, [{ id: 1 }, { id: 2 }]);
@@ -67,7 +71,10 @@ module('Task | lazy', { concurrency: true }, () => {
 
   test('derived Tasks share the upstream memo — one fetch, many derivations', async (assert) => {
     let fetches = 0;
-    const user = Task(() => (fetches++, { id: 7, name: 'u7' }));
+    const user = Task(() => {
+      fetches++;
+      return { id: 7, name: 'u7' };
+    });
     const name = user.map((u) => u.name);
     const id = user.map((u) => u.id);
     assert.strictEqual(await name, 'u7');
@@ -154,7 +161,11 @@ module('Task | construction forms', { concurrency: true }, () => {
     // hand the signal on, and let the returned promise settle the Task.
     assert.strictEqual(await Task<number>((_resolve, _reject, _signal) => Promise.resolve(7)), 7);
     // resolve() and a returned promise race; the first settlement wins, as promises always do.
-    assert.strictEqual(await Task<number>((resolve) => (resolve(1), Promise.resolve(2))), 1);
+    const raced = Task<number>((resolve) => {
+      resolve(1);
+      return Promise.resolve(2);
+    });
+    assert.strictEqual(await raced, 1);
   });
 
   test('an async executor that throws rejects the Task — the bug native Promise has', async (assert) => {
@@ -200,8 +211,14 @@ module('Task | construction forms', { concurrency: true }, () => {
   test('both function shapes stay lazy — nothing runs until awaited', (assert) => {
     let recipeRan = 0;
     let executorRan = 0;
-    Task(() => (recipeRan++, 1));
-    Task<number>((resolve) => (executorRan++, resolve(1)));
+    Task(() => {
+      recipeRan++;
+      return 1;
+    });
+    Task<number>((resolve) => {
+      executorRan++;
+      resolve(1);
+    });
     assert.strictEqual(recipeRan, 0, 'the recipe did not run');
     assert.strictEqual(executorRan, 0, 'the executor did not run either — unlike new Promise');
   });
@@ -919,7 +936,10 @@ module('Task | ensure', { concurrency: true }, () => {
 module('Task | elixir family', () => {
   test('async starts NOW; await joins with a deadline', async (assert) => {
     let ran = false;
-    const task = Task.async(() => ((ran = true), 21 * 2));
+    const task = Task.async(() => {
+      ran = true;
+      return 21 * 2;
+    });
     assert.true(ran, 'async performed immediately — the async half of the pair');
     assert.strictEqual(await task.await(1000), 42);
   });
@@ -959,7 +979,10 @@ module('Task | elixir family', () => {
     // The executor form IS the cancellation-aware shape: no `new Promise` wrapper, because the
     // Task hands over its own resolvers.
     const task = Task<number>((_resolve, reject, signal) => {
-      signal.addEventListener('abort', () => ((aborted = true), reject(signal.reason)));
+      signal.addEventListener('abort', () => {
+        aborted = true;
+        reject(signal.reason);
+      });
     }).perform();
     const outcome = await task.shutdown(50);
     assert.true(aborted, 'the AbortSignal reached the recipe');
@@ -970,7 +993,10 @@ module('Task | elixir family', () => {
 
   test('shutdown of a never-started task settles it without running the recipe', async (assert) => {
     let ran = false;
-    const task = Task(() => ((ran = true), 1));
+    const task = Task(() => {
+      ran = true;
+      return 1;
+    });
     assert.strictEqual(await task.shutdown(10), null);
     assert.false(ran, 'the recipe never ran');
     assert.true(Failure.is(await task.result()), 'consumers see Shutdown, not a hang');
