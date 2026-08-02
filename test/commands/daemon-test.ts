@@ -57,6 +57,14 @@ async function makeDaemonProject(): Promise<DaemonProject> {
   return { cwd, socketPath: Paths.socket(cwd), infoPath: Paths.info(cwd) };
 }
 
+// For the `cli()` calls that must cold-start Chrome rather than reuse the daemon's: the ones
+// after a killDaemonChrome. The suite's 180s default covers "daemon spawn + run against a live
+// browser"; these additionally pay a relaunch whose tail exceeds 100s under CI load (see
+// DaemonState.browser in daemon/server.ts) — a 1.8x margin, and the deno lane duly timed out here
+// at 180007ms on commits that passed on every branch stacked above it. A wedged daemon still
+// surfaces, 2 minutes later.
+const CHROME_RELAUNCH_TIMEOUT_MS = 300_000;
+
 // Spawn via shared helper so QUNITX_BIN is honored: when scripts/test-release.sh sets
 // it to the installed binary (or the SEA blob), every daemon invocation here actually
 // exercises the published artefact instead of source. The previous local exec() helper
@@ -73,7 +81,7 @@ async function makeDaemonProject(): Promise<DaemonProject> {
 const cli = async (
   project: DaemonProject,
   args: string,
-  opts: { failOk?: boolean; env?: NodeJS.ProcessEnv } = {},
+  opts: { failOk?: boolean; env?: NodeJS.ProcessEnv; timeout?: number } = {},
 ): Promise<CapturedResult> => {
   const daemonLogPath = path.join(project.cwd, 'daemon.log');
   const baseEnv = opts.env ?? CLI_ENV;
@@ -85,6 +93,7 @@ const cli = async (
     spawnCapture(`node ${CWD}/cli.ts ${args}`, {
       env: { ...baseEnv, QUNITX_DAEMON_LOG: daemonLogPath },
       cwd: project.cwd,
+      timeout: opts.timeout,
     }),
   );
   if (run.ok) return run.value;
@@ -740,7 +749,7 @@ module('Commands | Daemon | crash recovery', { concurrency: true }, () => {
     // Give Playwright's CDP transport a moment to flag the connection dead.
     await new Promise((r) => setTimeout(r, 200));
 
-    const after = await cli(project, FIXTURE_PASS);
+    const after = await cli(project, FIXTURE_PASS, { timeout: CHROME_RELAUNCH_TIMEOUT_MS });
     assert.exitCode(after, 0);
     assert.includes(after, '# pass 3');
     assert.includes(after, '(daemon)');
@@ -761,7 +770,7 @@ module('Commands | Daemon | crash recovery', { concurrency: true }, () => {
       const cycle1Killed = await killDaemonChrome(startupPid);
       assert.ok(cycle1Killed, 'cycle 1: killed Chrome');
       await new Promise((r) => setTimeout(r, 200));
-      const cycle1 = await cli(project, FIXTURE_PASS);
+      const cycle1 = await cli(project, FIXTURE_PASS, { timeout: CHROME_RELAUNCH_TIMEOUT_MS });
       assert.exitCode(cycle1, 0);
       assert.includes(cycle1, '# pass 3');
 
@@ -769,7 +778,7 @@ module('Commands | Daemon | crash recovery', { concurrency: true }, () => {
       const cycle2Killed = await killDaemonChrome(startupPid);
       assert.ok(cycle2Killed, 'cycle 2: killed Chrome');
       await new Promise((r) => setTimeout(r, 200));
-      const cycle2 = await cli(project, FIXTURE_PASS);
+      const cycle2 = await cli(project, FIXTURE_PASS, { timeout: CHROME_RELAUNCH_TIMEOUT_MS });
       assert.exitCode(cycle2, 0);
       assert.includes(cycle2, '# pass 3');
 
@@ -797,7 +806,10 @@ module('Commands | Daemon | crash recovery', { concurrency: true }, () => {
       void killDaemonChrome(daemonPid);
     }, 150);
 
-    const inFlight = await cli(project, FIXTURE_PASS, { failOk: true });
+    const inFlight = await cli(project, FIXTURE_PASS, {
+      failOk: true,
+      timeout: CHROME_RELAUNCH_TIMEOUT_MS,
+    });
     clearTimeout(killTimer);
 
     // The in-flight run may either complete (kill landed too late) or fail (kill
@@ -808,7 +820,7 @@ module('Commands | Daemon | crash recovery', { concurrency: true }, () => {
       `in-flight run produced an exit code (got ${inFlight.code})`,
     );
 
-    const next = await cli(project, FIXTURE_PASS);
+    const next = await cli(project, FIXTURE_PASS, { timeout: CHROME_RELAUNCH_TIMEOUT_MS });
     assert.exitCode(next, 0);
     assert.includes(next, '# pass 3');
     assert.includes(next, '(daemon)');
