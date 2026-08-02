@@ -1141,6 +1141,36 @@ module('Task | finally', { concurrency: true }, () => {
     assert.true(released, 'a lazy finally would have released nothing here');
   });
 
+  // The reason the docs point at try/finally instead of this method: a plain try/finally inside
+  // the recipe gives the SAME per-attempt cleanup, stays lazy, and builds no extra running Task
+  // to leave unowned. `finally` earns its place only as Promise compatibility.
+  test('try/finally in the recipe matches it, without the eager derived Task', async (assert) => {
+    let attempts = 0;
+    let cleanups = 0;
+    const task = Task(() => {
+      try {
+        if (++attempts < 3) throw new Error('again');
+        return attempts;
+      } finally {
+        cleanups++;
+      }
+    });
+
+    assert.strictEqual(await task.retry(5), 3);
+    assert.strictEqual(cleanups, 3, 'one cleanup per attempt — same as .finally() would give');
+
+    let ran = false;
+    Task(() => {
+      try {
+        ran = true;
+      } finally {
+        /* nothing to release */
+      }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.false(ran, 'and unlike .finally(), it does not start anything on its own');
+  });
+
   test('cleanup re-runs per attempt when the retry is upstream of it', async (assert) => {
     let attempts = 0;
     let cleanups = 0;

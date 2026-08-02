@@ -1224,6 +1224,15 @@ declared tier, where it would hide from the boundary. (Rust's panicking `expect`
 here, but on the value side as `Result.expect` — §9 — where promoting a failure to a bug is
 the explicit, permanent decision the name implies.)
 
+`Task#finally` exists and returns a Task, but **prefer `try`/`finally` to it**. It is there so
+that calling it on a Task — which is a real Promise, so anyone may — does not silently drop the
+chain into plain-Promise land. It is not the better spelling. A `try`/`finally` inside the recipe
+is lazy, runs its cleanup once per retry attempt exactly as the method would, and builds no extra
+Task; the method has to be eager (`finally` is overwhelmingly fire-and-forget, and a lazy one
+nobody awaited would never release), so it hands back a _running_ Task and
+`task.finally(cleanup).retry(3)` leaves the first attempt's rejection unowned. This is the one
+place where §8's advice to flatten a `try` does not apply — `finally` is the block worth keeping.
+
 ### 10.3 The boundary story, completed
 
 `Result.try(fn, ...args)` is the sync-or-settled edge: box everything, classify flat (§4.4).

@@ -265,15 +265,35 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
   }
 
   /**
-   * `Promise.prototype.finally`, returning a **Task** — so cleanup no longer drops the chain out
-   * of Task-land the way `then`/`catch` do. Every spec behaviour is kept: `onFinally` takes no
-   * arguments, its return value is discarded, a thenable it returns is awaited, and anything it
-   * throws replaces the outcome.
+   * `Promise.prototype.finally`, returning a **Task** so cleanup does not drop the chain into
+   * plain-Promise land. Every spec behaviour is kept: `onFinally` takes no arguments, its return
+   * value is discarded, a thenable it returns is awaited, and anything it throws replaces the
+   * outcome.
    *
-   * **Eager, like {@link TaskClass#ignore}** — and for the same reason. `finally` is overwhelmingly
-   * written fire-and-forget (`closeWithGrace(...).finally(() => process.exit(143))` in this very
-   * repo), and a lazy one nobody awaits would never run its cleanup. Laziness is right for
-   * building a pipeline; it is wrong for releasing a resource.
+   * **Prefer `try`/`finally` to this.** It exists so that calling it on a Task — which is a real
+   * Promise, so anyone may — behaves sensibly, not because it is the better spelling. A plain
+   * `try`/`finally` inside the recipe is better on every axis:
+   *
+   * ```ts
+   * const acquire = async () => ({ read: async () => 'body', release: () => {} });
+   *
+   * // preferred: lazy, retryable, and the cleanup runs once per attempt
+   * Task(async () => {
+   *   const handle = await acquire();
+   *   try {
+   *     return await handle.read();
+   *   } finally {
+   *     handle.release();
+   *   }
+   * });
+   * ```
+   *
+   * The reason is that this method must be EAGER — `finally` is overwhelmingly written
+   * fire-and-forget (`closeWithGrace(...).finally(() => process.exit(143))`), and a lazy one
+   * nobody awaited would never release. Being eager, it hands back a *running* Task, so
+   * `task.finally(cleanup).retry(3)` leaves the first attempt's rejection unowned and reports an
+   * unhandled rejection. `retry` first, `finally` last — or `try`/`finally`, which cannot be held
+   * wrong this way.
    *
    * ```ts
    * let released = false;
@@ -284,11 +304,6 @@ class TaskClass<T, E = AnyFailure> extends Promise<T> {
    * value; // 'body' — the outcome passes through untouched
    * released; // true
    * ```
-   *
-   * Being eager, it carries {@link TaskClass#perform}'s caveat: the returned Task is running, so
-   * if it fails and nothing consumes it, that is an unhandled rejection. `task.finally(cleanup)`
-   * followed only by `.retry()` is the shape to watch — `retry` builds a fresh chain rather than
-   * consuming this one. Put `finally` after the retry, or `.result()` the outcome.
    */
   override finally(onFinally?: (() => void) | null): TaskClass<T, E> {
     return this.#derive<T, E>(
