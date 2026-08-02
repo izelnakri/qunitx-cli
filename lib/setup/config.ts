@@ -13,6 +13,7 @@ import * as FailureCache from '../utils/failure-cache.ts';
 import * as Reporter from '../reporters/index.ts';
 import * as RunState from './run-state.ts';
 import * as Result from '../result/index.ts';
+import { Task } from '../task/index.ts';
 import type { Config, FSTree as FSTreeShape } from '../types.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
 
@@ -98,9 +99,6 @@ export async function setup(): Promise<Result.Result<Config, ConfigFailure>> {
     (projectPackageJSON.qunitx as Partial<Config> & {
       plugins?: unknown;
     }) ?? {};
-  // Kick off plugin resolution before the rest of the config is assembled so dynamic-import
-  // latency overlaps with fsTree I/O. For projects with no plugins this is a free no-op.
-  const pluginsPromise = resolvePlugins(rawPlugins, projectRoot);
   const inputs = cliConfigFlags.inputs.concat(readInputsFromPackageJSON(projectPackageJSON));
   const config = {
     ...defaultProjectConfigValues,
@@ -121,13 +119,15 @@ export async function setup(): Promise<Result.Result<Config, ConfigFailure>> {
   // failure.ts load; enable-only, so a daemon run without the flag never turns it off.)
   if (config.debug) Result.Failure.setDebug(true);
   config.htmlPaths = normalizeHTMLPaths(config.projectRoot, config.htmlPaths);
-  const [fsTree, plugins] = await Promise.all([
-    FSTree.build(config.testFileLookupPaths, config).result(),
-    pluginsPromise,
-  ]);
-  if (Result.Failure.is(fsTree)) return fsTree;
-  if (Result.Failure.is(plugins)) return plugins;
-  [config.fsTree, config.plugins] = [fsTree, plugins];
+  // Started together, so plugin dynamic-imports overlap fsTree's I/O. The two used to be kicked
+  // off on separate lines to get that overlap; they didn't need to be, because everything between
+  // those lines was synchronous and no import could progress during it.
+  const built = await Task.all([
+    FSTree.build(config.testFileLookupPaths, config),
+    resolvePlugins(rawPlugins, projectRoot),
+  ]).result();
+  if (Result.Failure.is(built)) return built;
+  [config.fsTree, config.plugins] = built;
 
   pruneSupersededLineTargets(config);
 
@@ -247,34 +247,32 @@ function readInputsFromPackageJSON(packageJSON: {
  * `createRequire(projectRoot)` keeps resolution rooted at the user's project so plugins work
  * under local installs, globals, or `npx`.
  */
-async function resolvePlugins(
+function resolvePlugins(
   raw: unknown,
   projectRoot: string,
-): Promise<
-  Result.Result<EsbuildPlugin[], Result.Failure.Of<typeof InvalidPlugins | typeof PluginLoadFailed>>
-> {
-  if (raw == null) return [];
-  if (!Array.isArray(raw)) return InvalidPlugins({ received: typeof raw });
+): Task<EsbuildPlugin[], Result.Failure.Of<typeof InvalidPlugins | typeof PluginLoadFailed>> {
+  return Task(() => {
+    if (raw == null) return [];
+    if (!Array.isArray(raw)) throw InvalidPlugins({ received: typeof raw });
 
-  const projectRequire = createRequire(`${projectRoot}/package.json`);
-  // `Result.try` per entry rather than around the whole `Promise.all`, so the failure can
-  // name *which* specifier broke — `Promise.all` would report the first rejection with no
-  // such context.
-  const loaded = await Promise.all(
-    raw.map(async (entry) => {
-      const [spec, options] = Array.isArray(entry) ? entry : [entry];
-      const imported = await Result.try(async () => {
-        const mod = await import(pathToFileURL(projectRequire.resolve(spec as string)).href);
-        const exported = mod.default ?? mod;
-        return (typeof exported === 'function' ? exported(options) : exported) as EsbuildPlugin;
-      });
-      if (imported.ok) return imported.value;
-      // Only a resolution/import error (a Node error carrying `code`, e.g.
-      // ERR_MODULE_NOT_FOUND) is the declared "could not load" failure. A plugin factory
-      // that throws while building its own options is a bug and stays one.
-      if (!Result.isErrno(imported.error)) throw imported.error;
-      return PluginLoadFailed({ specifier: String(spec) }, { cause: imported.error });
-    }),
-  );
-  return Result.all(loaded);
+    const projectRequire = createRequire(`${projectRoot}/package.json`);
+    // One Task per entry, so the failure can name *which* specifier broke — a bare
+    // `Promise.all` reports the first rejection with no such context.
+    return Task.all(
+      raw.map((entry) => {
+        const [spec, options] = Array.isArray(entry) ? entry : [entry];
+        return Task(async () => {
+          const mod = await import(pathToFileURL(projectRequire.resolve(spec as string)).href);
+          const exported = mod.default ?? mod;
+          return (typeof exported === 'function' ? exported(options) : exported) as EsbuildPlugin;
+        }).mapErr((cause) => {
+          // Only a resolution/import error (a Node error carrying `code`, e.g.
+          // ERR_MODULE_NOT_FOUND) is the declared "could not load" failure. A plugin factory
+          // that throws while building its own options is a bug and stays one.
+          if (!Result.isErrno(cause)) throw cause;
+          return PluginLoadFailed({ specifier: String(spec) }, { cause });
+        });
+      }),
+    );
+  });
 }
