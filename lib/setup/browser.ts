@@ -1,4 +1,6 @@
+import { format } from 'node:util';
 import * as WebServer from './web-server.ts';
+import * as Reporter from '../reporters/index.ts';
 import { Task } from '../task/index.ts';
 import { bindServerToPort } from './bind-server-to-port.ts';
 import * as Chrome from '../chrome/index.ts';
@@ -228,18 +230,22 @@ export async function setup(
     // events asynchronously after QUnit done, and arg.evaluate() round-trips fail
     // when the browser closes mid-flight, falling back to the useless "JSHandle@object".
     const handler = (async () => {
-      try {
-        const values = await Promise.all(msg.args().map((arg) => arg.jsonValue()));
-        console.log(...values);
-      } catch {
-        console.log(msg.text());
-      }
+      // `args` is best-effort: Firefox BiDi can fail to serialize a handle after the page is
+      // gone, in which case the pre-rendered text is all there is.
+      const args = await Promise.all(msg.args().map((arg) => arg.jsonValue())).catch(() => null);
+      Reporter.browserLog(config, {
+        // `format` is what console.log itself uses to turn its arguments into a line, so the
+        // rendered text is byte-identical to the `console.log(...values)` this replaces.
+        type,
+        text: args ? format(...args) : msg.text(),
+        args: args ?? [],
+      });
     })();
     config.state.group.pendingConsoleHandlers!.add(handler);
     handler.finally(() => config.state.group.pendingConsoleHandlers?.delete(handler));
   });
   page.on('pageerror', (error) => {
-    console.error(error.toString());
+    Reporter.browserLog(config, { type: 'pageerror', text: error.toString(), args: [error] });
     config.state.results.counter.failCount++;
   });
 

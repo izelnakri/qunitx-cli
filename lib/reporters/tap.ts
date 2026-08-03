@@ -35,7 +35,7 @@ export class TAPReporter implements Reporter {
    * ```
    */
   onRunStart(config: Config, info: RunStartInfo): void {
-    process.stdout.write('TAP version 13\n');
+    config.state.output.write('TAP version 13\n');
     // Watch mode emits the header per browser connection and has no file/group counts to
     // report at that point.
     if (info.fileCount === null) return;
@@ -44,12 +44,12 @@ export class TAPReporter implements Reporter {
     if (info.fileCount === 0) {
       // No test files matched (e.g. --changed filtered everything out): emit a complete,
       // valid TAP document — header plus an empty plan — so parsers see a clean zero run.
-      process.stdout.write(`# Running 0 test files${daemon}\n1..0\n`);
+      config.state.output.write(`# Running 0 test files${daemon}\n1..0\n`);
       return;
     }
     const files = `${info.fileCount} test file${info.fileCount === 1 ? '' : 's'}`;
     const groups = `${info.groupCount} group${info.groupCount === 1 ? '' : 's'}`;
-    process.stdout.write(`# Running ${files} across ${groups}${daemon}\n`);
+    config.state.output.write(`# Running ${files} across ${groups}${daemon}\n`);
   }
 
   /**
@@ -74,7 +74,12 @@ export class TAPReporter implements Reporter {
       details.status === 'failed'
         ? failedAssertions(details, config.state.group.sourceMapDecoder, config.projectRoot)
         : [];
-    TAP.displayTestResult(config.state.results.counter.testCount, details, failures);
+    TAP.displayTestResult(
+      config.state.results.counter.testCount,
+      details,
+      failures,
+      config.state.output,
+    );
   }
 
   /**
@@ -90,6 +95,6 @@ export class TAPReporter implements Reporter {
    * ```
    */
   onRunEnd(config: Config, info: RunEndInfo): void {
-    TAP.displayFinalResult(config.state.results.counter, info.durationMs);
+    TAP.displayFinalResult(config.state.results.counter, info.durationMs, config.state.output);
   }
 }

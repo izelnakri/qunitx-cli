@@ -1,6 +1,7 @@
 import type { BuildState, Counter, GroupState, RunResults, RunState } from '../types.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
 import type { Page } from 'playwright-core';
+import { processOutput } from '../reporters/output.ts';
 
 /**
  * The daemon's reusable Page slot, or `null` when reuse does not apply.
@@ -93,6 +94,7 @@ export function create(): RunState {
     group: newGroup(),
     groupCount: 1,
     reporters: [],
+    output: processOutput,
     htmlAssets: {
       assets: new Set(),
       mainHTML: { filePath: null, html: null },

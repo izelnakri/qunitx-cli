@@ -115,12 +115,15 @@ export function setup(config: Config): HTTPServer {
       config.state.group.wsConnectionCount > 1 &&
       (config.debug || !(config.watch || config.open))
     ) {
-      diagWrite(
-        `# [qunitx][diag] wss accepted connection #${config.state.group.wsConnectionCount} — ` +
+      Reporter.notice(config, {
+        level: 'warning',
+        stream: 'both',
+        message:
+          `[qunitx][diag] wss accepted connection #${config.state.group.wsConnectionCount} — ` +
           `single-group runs should see exactly one WS connection per run. ` +
           `Multiple connections from one page are the prime suspect for the 2× testEnd flake ` +
-          `(WS retry race in the injected runtime).\n`,
-      );
+          `(WS retry race in the injected runtime).`,
+      });
     }
     socket.on('message', function message(data) {
       const { event, details, qunitResult, abort } = JSON.parse(String(data));
@@ -160,11 +163,14 @@ export function setup(config: Config): HTTPServer {
         const count = (config.state.group.testEndCounts?.get(fullName) ?? 0) + 1;
         config.state.group.testEndCounts?.set(fullName, count);
         if (count > 1) {
-          diagWrite(
-            `# [qunitx] WARNING: duplicate testEnd ignored for "${fullName}" — ` +
+          Reporter.notice(config, {
+            level: 'warning',
+            stream: 'both',
+            message:
+              `[qunitx] WARNING: duplicate testEnd ignored for "${fullName}" — ` +
               `browser/Playwright fired the event twice in one run. ` +
-              `Counter not incremented; see Config.state.group.testEndCounts for details.\n`,
-          );
+              `Counter not incremented; see Config.state.group.testEndCounts for details.`,
+          });
           return;
         }
 
@@ -776,10 +782,13 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
         const count = (config.state.group.testEndCounts?.get(fullName) ?? 0) + 1;
         config.state.group.testEndCounts?.set(fullName, count);
         if (count > 1) {
-          diagWrite(
-            `# [qunitx] WARNING: group ${resolvedGroupId} duplicate testEnd ignored for "${fullName}" — ` +
-              `single-run testEnds should be unique.\n`,
-          );
+          Reporter.notice(config, {
+            level: 'warning',
+            stream: 'both',
+            message:
+              `[qunitx] WARNING: group ${resolvedGroupId} duplicate testEnd ignored for "${fullName}" — ` +
+              `single-run testEnds should be unique.`,
+          });
           return;
         }
         if (details.status === 'failed') {
@@ -1106,17 +1115,4 @@ function debugGroupHeader(config: Config): void {
   process.stdout.write(
     `# ${blue(`── ${shown.join('  ')}${rest > 0 ? `  +${rest} more` : ''} ──`)}\n`,
   );
-}
-
-// Writes a diagnostic warning to BOTH stdout and stderr. stderr is the natural
-// stream for warnings but is captured-then-discarded by many test helpers
-// (e.g. test/inputs/plugins-test.ts's runFixtureCli), making warnings invisible
-// when a test fails. stdout writes the same text as a TAP `#` comment — TAP
-// parsers ignore `#` lines, so it does not affect test outcomes, and assertion-
-// failure dumps that snapshot stdout (custom-asserts.tapResult) now include the
-// warning surface. Dual write keeps either stream a sufficient signal in CI
-// logs.
-function diagWrite(msg: string): void {
-  process.stderr.write(msg);
-  process.stdout.write(msg);
 }

@@ -24,18 +24,21 @@ export const REPORTERS = ['tap', 'spec', 'dot', 'github'] as const;
 export type ReporterName = (typeof REPORTERS)[number];
 
 /**
- * The internal reporter contract. Reporters render a run to stdout (or to a file, for
- * additive artifact reporters like JUnit). This is deliberately **not** public API — it is
- * not exported from the package entry point and carries no stability promise. Custom
- * reporters are expected to arrive later via the JS API's event stream, not by freezing
- * QUnit's `testEnd` payload as third-party surface.
+ * The reporter contract — the public extension point for observing a run. Reporters render it
+ * to text (the built-in `tap`/`spec`/`dot`/`github`), write an artifact (`junit`), or simply
+ * collect, which is how the JS API turns a run into a value.
  *
- * Lifecycle: `onRunStart` → `onTestEnd` (× N) → `onRunEnd`. In watch mode the whole cycle
- * repeats per rerun, so stateful reporters must reset in `onRunStart`.
+ * Every method is optional, so a reporter is any object carrying the handlers it cares about.
+ *
+ * Lifecycle: `onRunStart` → (`onTestEnd` | `onNotice` | `onBrowserLog`)* → `onRunEnd`. In watch
+ * mode the whole cycle repeats per rerun, so stateful reporters must reset in `onRunStart`.
  *
  * Concurrency: one reporter instance is shared across all concurrent groups (the group
  * configs are spread off the parent config, so `state.reporters` is the same array). `onTestEnd`
  * therefore arrives interleaved across groups.
+ *
+ * Text goes through `config.state.output`, never `process.stdout` — that indirection is what
+ * lets a caller redirect or silence a built-in reporter.
  *
  * ```ts
  * import type { Config } from '../types.ts';
@@ -57,6 +60,69 @@ export interface Reporter {
   onTestEnd?(config: Config, details: TestDetails): void;
   /** Called once when the run finishes, with the final counts on `config.state.results.counter`. */
   onRunEnd?(config: Config, info: RunEndInfo): void | Promise<void>;
+  /**
+   * Called for each of qunitx's own diagnostics — the `# …` lines about what it decided to run,
+   * what it could not find, what timed out. The default rendering has already gone to
+   * `config.state.output`; implement this only to capture them as data.
+   */
+  onNotice?(config: Config, notice: Notice): void;
+  /**
+   * Called for each `console.*` call and uncaught error from the page under test. Only warnings
+   * and errors arrive unless `debug` is on — the same selection the CLI prints.
+   */
+  onBrowserLog?(config: Config, log: BrowserLog): void;
+}
+
+/**
+ * One diagnostic from qunitx itself: which files a narrowing flag scoped the run to, a filter
+ * that matched nothing, a build error, a timeout.
+ *
+ * Distinct from a test result, and distinct from the program failing — a notice is qunitx
+ * explaining what it did. The CLI renders these as TAP `#` comments, which is what they have
+ * always been; a programmatic caller reads them as a list.
+ *
+ * ```ts
+ * const notice: Notice = { level: 'warning', message: 'No tests matched --filter "Crat"' };
+ * notice.level; // 'warning' — an 'error' additionally goes to the error stream
+ * ```
+ */
+export interface Notice {
+  /** `info` is a decision, `warning` a surprise, `error` a diagnostic that also hits stderr. */
+  level: 'info' | 'warning' | 'error';
+  /** The text, already colored where the CLI colors it, with no `#` prefix and no newline. */
+  message: string;
+  /**
+   * Write `message` verbatim rather than as a `# `-prefixed comment. For pre-formatted blocks —
+   * the coverage table, a stack trace — whose own layout is the point.
+   */
+  raw?: boolean;
+  /**
+   * Which of the run's two streams the default rendering goes to; `output` by default.
+   *
+   * Separate from `level` because the two answer different questions: `level` is what kind of
+   * thing this is, which is what a consumer filters on, while this is where the CLI has always
+   * put it. A raw stack belongs on `error` alone — un-prefixed multi-line text on stdout would
+   * corrupt the TAP document — and a few diagnostics go to `both` deliberately, so a reader
+   * watching only one stream still sees them.
+   */
+  stream?: 'output' | 'error' | 'both';
+}
+
+/**
+ * A `console.*` call or an uncaught error from the page under test.
+ *
+ * ```ts
+ * const log: BrowserLog = { type: 'error', text: 'TypeError: x is not a function', args: [] };
+ * log.type; // 'error' — 'pageerror' marks an uncaught exception rather than a console call
+ * ```
+ */
+export interface BrowserLog {
+  /** The page console type (`log`/`warning`/`error`/`info`/`debug`), or `pageerror`. */
+  type: string;
+  /** The rendered single-line text. Always present. */
+  text: string;
+  /** The call's arguments, resolved to JSON values where the page could serialize them. */
+  args: unknown[];
 }
 
 /**

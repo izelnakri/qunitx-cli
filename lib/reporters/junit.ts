@@ -70,11 +70,26 @@ export class JUnitReporter implements Reporter {
    * }
    * ```
    */
+  /**
+   * The XML document as it stands. `onRunEnd` writes exactly this to disk; the JS API reads it
+   * back so a caller can ship the report somewhere other than the filesystem.
+   *
+   * ```ts
+   * const reporter = new JUnitReporter();
+   * reporter.xml().startsWith('<?xml'); // true — an empty but well-formed document
+   * ```
+   */
+  xml(): string {
+    return buildXML(this.#cases);
+  }
+
   async onRunEnd(config: Config, _info: RunEndInfo): Promise<void> {
     const file = outputPath(config);
     await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file, buildXML(this.#cases));
-    process.stdout.write(`# wrote JUnit report to ${relativeToRoot(file, config.projectRoot)}\n`);
+    await fs.writeFile(file, this.xml());
+    config.state.output.write(
+      `# wrote JUnit report to ${relativeToRoot(file, config.projectRoot)}\n`,
+    );
   }
 }
 

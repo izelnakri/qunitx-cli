@@ -4,7 +4,15 @@ import { DotReporter } from './dot.ts';
 import { GithubReporter } from './github.ts';
 import { JUnitReporter } from './junit.ts';
 import { updateCounter } from './types.ts';
-import type { Reporter, ReporterName, RunStartInfo, RunEndInfo, TestDetails } from './types.ts';
+import type {
+  BrowserLog,
+  Notice,
+  Reporter,
+  ReporterName,
+  RunStartInfo,
+  RunEndInfo,
+  TestDetails,
+} from './types.ts';
 import type { Config } from '../types.ts';
 
 // The `--reporter` value -> stdout reporter. Keyed by ReporterName so adding a name to
@@ -96,6 +104,59 @@ export async function runEnd(config: Config, info: RunEndInfo): Promise<void> {
   for (const reporter of config.state.reporters) {
     await reporter.onRunEnd?.(config, info);
   }
+}
+
+/**
+ * Emits one of qunitx's own diagnostics: renders it to the run's output as a TAP `#` comment,
+ * then hands the structured form to any reporter that wants it.
+ *
+ * Both halves matter. The rendering is what every `console.log('#', …)` scattered through the
+ * run pipeline used to do inline — which meant a run could not be made quiet, and a caller
+ * could not read the diagnostics back. Going through here, silence is a matter of the run's
+ * `output`, and capture is a matter of a reporter.
+ *
+ * ```ts
+ * import * as Reporter from './index.ts';
+ *
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: writes '# No tests matched …' to the run's output.
+ * function warnNoMatches(config: Config, filter: string) {
+ *   Reporter.notice(config, { level: 'warning', message: `No tests matched ${filter}` });
+ * }
+ * ```
+ */
+export function notice(config: Config, notice: Notice): void {
+  const line = notice.raw ? notice.message : `# ${notice.message}\n`;
+  const stream = notice.stream ?? 'output';
+  if (stream !== 'error') config.state.output.write(line);
+  if (stream !== 'output') config.state.output.error(line);
+  config.state.reporters.forEach((reporter) => reporter.onNotice?.(config, notice));
+}
+
+/**
+ * Emits one `console.*` call or uncaught error from the page under test. Rendered verbatim —
+ * no `#` prefix — because it is the page's output, not qunitx's, and prefixing it would corrupt
+ * whatever the page was deliberately printing.
+ *
+ * ```ts
+ * import * as Reporter from './index.ts';
+ *
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: writes the page's own line to the run's output.
+ * function forward(config: Config) {
+ *   Reporter.browserLog(config, { type: 'error', text: 'boom', args: [] });
+ * }
+ * ```
+ */
+export function browserLog(config: Config, log: BrowserLog): void {
+  const line = `${log.text}\n`;
+  // Matches what the page-event handlers did directly: console.log for everything, console.error
+  // for an uncaught pageerror, so a crashed page is visible in a stdout-only or stderr-only log.
+  if (log.type === 'pageerror') config.state.output.error(line);
+  else config.state.output.write(line);
+  config.state.reporters.forEach((reporter) => reporter.onBrowserLog?.(config, log));
 }
 
 // Exactly one stdout reporter per run. `--reporter` is validated in Args.parse, so an

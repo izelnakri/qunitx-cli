@@ -1,4 +1,5 @@
 import { dumpYaml } from './dump-yaml.ts';
+import { processOutput, type Output } from '../reporters/output.ts';
 import { indentString } from '../utils/indent-string.ts';
 import type { TestDetails } from '../reporters/types.ts';
 import type { FailureInfo } from '../reporters/failure.ts';
@@ -16,7 +17,7 @@ import type { FailureInfo } from '../reporters/failure.ts';
  * import type { TestDetails } from '../reporters/types.ts';
  * import type { FailureInfo } from '../reporters/failure.ts';
  *
- * // Defined, not invoked: writes the TAP line (plus YAML failure blocks) to stdout.
+ * // Defined, not invoked: writes the TAP line (plus YAML failure blocks) to the run's output.
  * function example(details: TestDetails, failures: FailureInfo[]) {
  *   TAP.displayTestResult(3, details, failures);
  *   // "not ok 3 Math | adds # (2 ms)" then one "  ---" YAML block per failure
@@ -29,19 +30,20 @@ export function displayTestResult(
   testNumber: number,
   details: TestDetails,
   failures: FailureInfo[] = [],
+  output: Output = processOutput,
 ): void {
   // NOTE: https://github.com/qunitjs/qunit/blob/master/src/html-reporter/diff.js
   const name = details.fullName.join(' | ');
 
   if (details.status === 'skipped') {
-    process.stdout.write(`ok ${testNumber} ${name} # skip\n`);
+    output.write(`ok ${testNumber} ${name} # skip\n`);
   } else if (details.status === 'todo') {
-    process.stdout.write(`not ok ${testNumber} ${name} # TODO\n`);
+    output.write(`not ok ${testNumber} ${name} # TODO\n`);
   } else if (details.status === 'failed') {
-    process.stdout.write(`not ok ${testNumber} ${name} # (${details.runtime.toFixed(0)} ms)\n`);
+    output.write(`not ok ${testNumber} ${name} # (${details.runtime.toFixed(0)} ms)\n`);
     failures.forEach((failure) => {
-      process.stdout.write('  ---\n');
-      process.stdout.write(
+      output.write('  ---\n');
+      output.write(
         indentString(
           dumpYaml({
             name: `Assertion #${failure.index}`,
@@ -55,10 +57,10 @@ export function displayTestResult(
           4,
         ),
       );
-      process.stdout.write('  ...\n');
+      output.write('  ...\n');
     });
   } else if (details.status === 'passed') {
-    process.stdout.write(`ok ${testNumber} ${name} # (${details.runtime.toFixed(0)} ms)\n`);
+    output.write(`ok ${testNumber} ${name} # (${details.runtime.toFixed(0)} ms)\n`);
   }
 }
 
