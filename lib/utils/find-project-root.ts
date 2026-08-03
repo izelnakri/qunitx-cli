@@ -29,6 +29,9 @@ export type ProjectRootNotFoundFailure = Failure.Of<typeof ProjectRootNotFound>;
  * `process.exit(1)` from inside a library function — untestable, and unanswerable by the
  * daemon, which serves many projects and must not die because one of them lacks a manifest.
  *
+ * `cwd` defaults to the working directory, which is what the CLI wants. It is a parameter so the
+ * JS API can resolve a project other than the one the host process happens to sit in.
+ *
  * ```ts
  * import { findProjectRoot } from './find-project-root.ts';
  * import * as Failure from '../result/failure.ts';
@@ -40,14 +43,16 @@ export type ProjectRootNotFoundFailure = Failure.Of<typeof ProjectRootNotFound>;
  * }
  * ```
  */
-export function findProjectRoot(): Task<string, ProjectRootNotFoundFailure> {
+export function findProjectRoot(
+  cwd: string = process.cwd(),
+): Task<string, ProjectRootNotFoundFailure> {
   return Task(async () => {
-    const absolutePath = await searchInParentDirectories('.', 'package.json');
+    const absolutePath = await searchInParentDirectories(cwd, 'package.json');
     // Thrown at the condition rather than classified afterwards with `.mapErr`. A trailing
     // `.mapErr(ProjectRootNotFound, …)` would see EVERY rejection — so an EACCES part-way up the
     // tree, which is a bug, would be reported as "there is no project here", which is a lie. It
     // also builds a second, derived Task for a failure this function can name itself.
-    if (!absolutePath?.includes('package.json')) throw ProjectRootNotFound({ cwd: process.cwd() });
+    if (!absolutePath?.includes('package.json')) throw ProjectRootNotFound({ cwd });
 
     // path.dirname strips the basename using the platform separator — `.replace('/package.json', '')`
     // missed Windows paths like `C:\foo\package.json`, leaving the literal filename in the result.

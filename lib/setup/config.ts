@@ -69,16 +69,42 @@ export type ConfigFailure =
   | Result.Failure.Of<typeof InvalidPlugins | typeof PluginLoadFailed>;
 
 /**
- * Builds the merged qunitx config from package.json settings and CLI flags.
- * `package.json#qunitx.plugins` entries are dynamic-imported into esbuild plugin objects.
+ * Resolved settings handed to {@link setup} in place of an argv, by the JS API and by anyone
+ * else assembling a run programmatically. Every CLI flag has a field here — they are the same
+ * settings, arrived at by a different route — plus the two things argv cannot express: a working
+ * directory, and esbuild plugins as live objects rather than module specifiers.
+ *
+ * `inputs` are raw targets, exactly as they would be typed on the command line: relative or
+ * absolute, `.html` fixtures, `file.ts#34` line targets. {@link Args.applyInputs} classifies them.
+ *
+ * ```ts
+ * import * as Config from './config.ts';
+ *
+ * const options: Config.ConfigOptions = { inputs: ['test/cart-test.ts#34'], filter: 'Cart' };
+ * options.inputs; // ['test/cart-test.ts#34'] — resolved against `cwd` by setup()
+ * ```
+ */
+export interface ConfigOptions extends Partial<Args.ParsedFlags> {
+  /** Directory the project root and relative inputs resolve against. Defaults to `process.cwd()`. */
+  cwd?: string;
+  /** Live esbuild plugin objects, appended after any resolved from `package.json#qunitx.plugins`. */
+  esbuildPlugins?: EsbuildPlugin[];
+}
+
+/**
+ * Builds the merged qunitx config from package.json settings and either an argv or an explicit
+ * {@link ConfigOptions}. `package.json#qunitx.plugins` entries are dynamic-imported into esbuild
+ * plugin objects.
  *
  * `ConfigFailure` is *declared*, so `.result()` hands back the bare union to branch on with
  * `Failure.is`. It reports rather than exits so the daemon — which assembles a config per client
  * request — can reject one bad flag and stay up; `cli.ts` turns a failure into an exit.
  *
- * Lazy, like every Task: nothing is read until it is awaited. `setup` reads `process.argv` and
- * `process.env` at that moment, so a caller that lends those globals (the daemon, via
- * `borrowArgv`/`borrowEnv`) must await INSIDE the borrowing scope, not hold the Task past it.
+ * Lazy, like every Task: nothing is read until it is awaited. With no argument `setup` reads
+ * `process.argv` and `process.env` at that moment, so a caller that lends those globals (the
+ * daemon, via `borrowArgv`/`borrowEnv`) must await INSIDE the borrowing scope, not hold the Task
+ * past it. Passing options instead skips the argv read entirely — which is why the JS API needs
+ * no such borrowing.
  *
  * ```ts
  * import * as Config from './config.ts';
@@ -86,19 +112,25 @@ export type ConfigFailure =
  *
  * // Defined, not invoked: reads package.json and walks the real fs.
  * async function example() {
- *   const config = await Config.setup().result();
+ *   const config = await Config.setup({ inputs: ['test/'] }).result();
  *   return Result.Failure.is(config) ? config.code : config.inputs; // ConfigFailure, or the Config
  * }
  * ```
  */
-export function setup(): Task<Config, ConfigFailure> {
+export function setup(options?: ConfigOptions): Task<Config, ConfigFailure> {
   return Task(async () => {
     // Every declared failure below rejects rather than returning: the Task's E channel carries
     // them, so the guard-and-return-it ladder this function used to open with is gone. Args.parse
     // is synchronous, so it hands back a union rather than a Task — `unwrap` is the union's own
     // way into that channel, throwing the failure by identity so its stack still points at Args.
-    const projectRoot = await findProjectRoot();
-    const flags = Result.unwrap(Args.parse(projectRoot));
+    const { cwd: requestedCwd, esbuildPlugins, ...provided } = options ?? {};
+    const cwd = requestedCwd ? path.resolve(requestedCwd) : process.cwd();
+    const projectRoot = await findProjectRoot(cwd);
+    // Given options, the positional grammar still applies — `applyInputs` is the same
+    // classification argv positionals go through, so `'a.ts#34'` targets a line either way.
+    const flags = options
+      ? Args.applyInputs({ ...provided, inputs: [] }, projectRoot, cwd, provided.inputs ?? [])
+      : Result.unwrap(Args.parse(projectRoot, process.argv.slice(2), cwd));
     const projectPackageJSON = await readConfigFromPackageJSON(projectRoot);
     const { plugins: rawPlugins, ...userQunitx } =
       (projectPackageJSON.qunitx as Partial<Config> & {
@@ -111,6 +143,7 @@ export function setup(): Task<Config, ConfigFailure> {
       ...userQunitx,
       ...flags,
       projectRoot,
+      cwd,
       inputs,
       testFileLookupPaths: TestFilePaths.setup(inputs),
       state: RunState.create(),
@@ -127,10 +160,14 @@ export function setup(): Task<Config, ConfigFailure> {
     // Started together, so plugin dynamic-imports overlap fsTree's I/O. The two used to be kicked
     // off on separate lines to get that overlap; they didn't need to be, because everything between
     // those lines was synchronous and no import could progress during it.
-    [config.fsTree, config.plugins] = await Task.all([
+    const [fsTree, resolvedPlugins] = await Task.all([
       FSTree.build(config.testFileLookupPaths, config),
       resolvePlugins(rawPlugins, projectRoot),
     ]);
+    config.fsTree = fsTree;
+    // package.json specifiers first, then the caller's live objects — the same order the two
+    // sources are declared in, so an API-supplied plugin can override an earlier one's handlers.
+    config.plugins = esbuildPlugins ? resolvedPlugins.concat(esbuildPlugins) : resolvedPlugins;
 
     pruneSupersededLineTargets(config);
 

@@ -180,7 +180,7 @@ async function runWatchMode(config: Config): Promise<void> {
   }
 
   if (config.before) {
-    await runUserModule(`${process.cwd()}/${config.before}`, config, 'before');
+    await runUserModule(`${config.cwd}/${config.before}`, config, 'before');
   }
 
   // A run-narrowing flag (--only-failed / --changed / --since) scopes only the FIRST run in
@@ -487,7 +487,7 @@ async function runConcurrentMode(
         groupConfig.webServer = connections.server;
 
         if (config.before) {
-          await runUserModule(`${process.cwd()}/${config.before}`, groupConfig, 'before');
+          await runUserModule(`${config.cwd}/${config.before}`, groupConfig, 'before');
         }
 
         try {
@@ -576,7 +576,7 @@ async function runConcurrentMode(
   if (config.debug) Timings.print(fileTimes, config.projectRoot);
 
   if (config.after) {
-    await runUserModule(`${process.cwd()}/${config.after}`, config.state.results.counter, 'after');
+    await runUserModule(`${config.cwd}/${config.after}`, config.state.results.counter, 'after');
   }
 
   // Daemon mode: close the per-run shared server (if any) but never the browser
