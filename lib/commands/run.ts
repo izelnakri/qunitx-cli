@@ -285,6 +285,13 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
     ).ignore('headed watch-mode navigation to the fallback page');
   }
 
+  // Every rerun — the watcher's, the CLI's keyboard shortcuts', the session's — goes through one
+  // chain. Two runs sharing a page cannot overlap: the second's `page.goto` tears down the first's
+  // JS context mid-run, and both then wait out the startup timeout. The watcher has an internal
+  // guard for its OWN events, but nothing coordinated it with a rerun asked for from outside.
+  const reruns = serializer();
+  const rerun = (files?: string[]) => reruns(() => rebuildAndRun(config, connections, files));
+
   const { ready: watcherReady, killFileWatchers } = FileWatcher.setup(
     config.testFileLookupPaths,
     config,
@@ -295,23 +302,17 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
         // before `rename` (→ `add`) when a file is first created. The `add` event
         // will follow and trigger the correct filtered re-run.
         if (event === 'change' && !(file in config.fsTree)) return;
-        // Clear the cached bundles so the next re-run rebuilds without the deleted file.
-        // `change` events can fire while a file is being rewritten, so a filtered bundle
-        // may catch the file in a transient empty/partial state and produce a broken rerun.
-        RunState.clearBundles(build);
+        // The cached bundles are dropped inside `rebuildAndRun`, at the moment the rebuild
+        // starts — not here, when the event arrives. Clearing on arrival nulled `allTestCode`
+        // out from under a run that was already in flight, which then bailed out of its own
+        // post-navigation check having registered nothing.
         if (config.debug) {
           Reporter.notice(config, {
             level: 'info',
             message: `Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
           });
         }
-        // Kick off rebuild immediately so it races Chrome navigation (same pattern as the
-        // initial watch-mode build). runInBrowser picks up the promise from
-        // preBuildPromise and sets activeRebuild so /tests.js can await it.
-        const rebuildPromise = buildTestBundle(config);
-        Task(rebuildPromise).ignore('watch rebuild rejection — re-awaited by runInBrowser');
-        build.preBuildPromise = rebuildPromise;
-        return await runInBrowser(config, connections);
+        return await rerun();
       }
       if (config.debug) {
         Reporter.notice(config, {
@@ -319,7 +320,7 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
           message: `Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
         });
       }
-      await runInBrowser(config, connections, [file]);
+      await rerun([file]);
     },
     async (_path, _event) => {
       connections.server.publish('refresh');
@@ -342,9 +343,53 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
     config,
     connections,
     url: `http://localhost:${config.port}`,
-    rerun: async (files?: string[]) => void (await runInBrowser(config, connections, files)),
+    // Rebuilds first, like the watcher's own change path: a caller asking for a rerun means
+    // "run what is on disk now", and re-serving the cached bundle would answer with what was on
+    // disk when the session started.
+    rerun,
     close: () => closeSession(connections, killFileWatchers),
   };
+}
+
+/**
+ * A one-at-a-time queue for work that cannot overlap.
+ *
+ * Each call waits for the previous one to settle — succeed or fail — and resolves or rejects
+ * with its own outcome. A rejected run must not poison the queue for the next one, which is why
+ * the stored tail swallows while the returned promise does not.
+ */
+function serializer(): <T>(work: () => Promise<T>) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve();
+
+  return <T>(work: () => Promise<T>): Promise<T> => {
+    const next = tail.then(work, work);
+    tail = next.then(
+      () => {},
+      () => {},
+    );
+
+    return next;
+  };
+}
+
+/**
+ * Drops the cached bundles, starts a rebuild, and runs — the rerun every path through watch mode
+ * performs.
+ *
+ * The build is kicked off rather than awaited so it races Chrome's navigation: `runInBrowser`
+ * picks the promise up from `preBuildPromise` and the `/tests.js` route awaits it before serving,
+ * which is what lets the two overlap. The rejection is pre-ignored because it is re-awaited
+ * inside `runInBrowser`'s own try/catch, and an esbuild failure between here and there would
+ * otherwise reach Node as an unhandled rejection and take the watch process down.
+ */
+function rebuildAndRun(config: Config, connections: Connections, files?: string[]): Promise<void> {
+  const build = config.state.group.build;
+  RunState.clearBundles(build);
+  const rebuild = buildTestBundle(config);
+  Task(rebuild).ignore('watch rebuild rejection — re-awaited by runInBrowser');
+  build.preBuildPromise = rebuild;
+
+  return runInBrowser(config, connections, files).then(() => {});
 }
 
 /**

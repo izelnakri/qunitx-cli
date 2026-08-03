@@ -4,12 +4,19 @@ import { JUnitReporter } from '../reporters/junit.ts';
 import { Task } from '../task/index.ts';
 import { unwrap } from '../result/result.ts';
 import { buildResult, type RunResult } from './result.ts';
-import { normalizeOptions, resolveReporting, toConfigOptions, type RunOptions } from './options.ts';
+import {
+  normalizeOptions,
+  resolveReporting,
+  toConfigOptions,
+  validate,
+  type InvalidOptionFailure,
+  type RunOptions,
+} from './options.ts';
 import type { Reporter } from '../reporters/types.ts';
 
 /**
- * Every way a run can fail to happen: a rejected option, an unreadable input, a directory with
- * no `package.json` above it, an esbuild plugin that will not load.
+ * Every way a run can fail to happen: an option the runner will not accept, an unreadable input,
+ * a directory with no `package.json` above it, an esbuild plugin that will not load.
  *
  * Note what is *not* here. Failing tests are not a failure — they are a {@link RunResult} with
  * `ok: false`. This union is only for the runner being unable to answer the question.
@@ -23,7 +30,7 @@ import type { Reporter } from '../reporters/types.ts';
  * }
  * ```
  */
-export type RunFailure = Config.ConfigFailure;
+export type RunFailure = Config.ConfigFailure | InvalidOptionFailure;
 
 /**
  * Runs the suite once in a real browser and resolves with everything it produced.
@@ -49,6 +56,7 @@ export type RunFailure = Config.ConfigFailure;
 export function run(options: RunOptions | string | string[] = {}): Task<RunResult, RunFailure> {
   return Task(async () => {
     const resolved = normalizeOptions(options);
+    validate(resolved);
     const reporting = resolveReporting(resolved);
     // `unwrap` moves a declared config failure into this Task's E channel by throwing it by
     // identity, so `RunFailure` stays a union the caller can discriminate rather than a
