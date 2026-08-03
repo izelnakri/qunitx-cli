@@ -186,17 +186,47 @@ export class Collector implements Reporter {
     this.browserLogs.length = 0;
   }
 
-  /** Records one finished test. */
+  /**
+   * Records one finished test.
+   *
+   * ```ts
+   * import type { Config } from '../types.ts';
+   *
+   * const collector = new Collector();
+   * collector.onTestEnd({} as Config, { status: 'failed', fullName: ['Cart', 'adds'], runtime: 4 });
+   * collector.tests[0].status; // 'failed'
+   * ```
+   */
   onTestEnd(_config: Config, details: TestDetails): void {
     this.tests.push(toTestResult(details));
   }
 
-  /** Records one diagnostic. */
+  /**
+   * Records one diagnostic.
+   *
+   * ```ts
+   * import type { Config } from '../types.ts';
+   *
+   * const collector = new Collector();
+   * collector.onNotice({} as Config, { level: 'warning', message: 'No tests matched' });
+   * collector.notices[0].level; // 'warning'
+   * ```
+   */
   onNotice(_config: Config, notice: Notice): void {
     this.notices.push(notice);
   }
 
-  /** Records one page console call or uncaught error. */
+  /**
+   * Records one page console call or uncaught error.
+   *
+   * ```ts
+   * import type { Config } from '../types.ts';
+   *
+   * const collector = new Collector();
+   * collector.onBrowserLog({} as Config, { type: 'error', text: 'boom', args: [] });
+   * collector.browserLogs[0].text; // 'boom'
+   * ```
+   */
   onBrowserLog(_config: Config, log: BrowserLog): void {
     this.browserLogs.push(log);
   }

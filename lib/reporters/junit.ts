@@ -83,6 +83,19 @@ export class JUnitReporter implements Reporter {
     return buildXML(this.#cases);
   }
 
+  /**
+   * Serializes the accumulated cases and writes the XML document to disk.
+   *
+   * ```ts
+   * import type { Config } from '../types.ts';
+   *
+   * // Defined, not invoked: writes the XML document to disk.
+   * async function example(reporter: JUnitReporter, config: Config) {
+   *   await reporter.onRunEnd(config, { durationMs: 40 });
+   *   // "# wrote JUnit report to tmp/junit.xml" on the run's output
+   * }
+   * ```
+   */
   async onRunEnd(config: Config, _info: RunEndInfo): Promise<void> {
     const file = outputPath(config);
     await fs.mkdir(path.dirname(file), { recursive: true });
