@@ -43,6 +43,7 @@ export { init, generate, type InitOptions, type GenerateOptions } from './scaffo
  * ```
  */
 export * as daemon from './daemon.ts';
+export type { DaemonRunOptions, DaemonStatus } from './daemon.ts';
 
 export type { RunOptions, ReporterOption, WritableLike } from './options.ts';
 export type {
