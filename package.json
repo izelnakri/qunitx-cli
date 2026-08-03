@@ -16,8 +16,18 @@
   "files": [
     "bin/",
     "dist/",
+    "lib/",
     "templates/"
   ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/lib/api/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./lib/*": "./lib/*",
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/types/lib/api/index.d.ts",
   "scripts": {
     "build": "node scripts/build-cli.js",
     "bin": "chmod +x cli.ts && ./cli.ts",
