@@ -3,7 +3,13 @@ import * as Run from '../commands/run.ts';
 import { Task } from '../task/index.ts';
 import { unwrap } from '../result/result.ts';
 import { buildResult, type Collector, type RunResult } from './result.ts';
-import { normalizeOptions, resolveReporting, toConfigOptions, type RunOptions } from './options.ts';
+import {
+  normalizeOptions,
+  resolveReporting,
+  toConfigOptions,
+  validate,
+  type RunOptions,
+} from './options.ts';
 import { junitXml, type RunFailure } from './run.ts';
 import type { Reporter } from '../reporters/types.ts';
 import type { Config as ResolvedConfig } from '../types.ts';
@@ -71,6 +77,7 @@ export function watch(
 ): Task<WatchSession, RunFailure> {
   return Task(async () => {
     const resolved = normalizeOptions(options);
+    validate(resolved);
     const reporting = resolveReporting(resolved);
     const configOptions = toConfigOptions(resolved, reporting);
     const config = unwrap(await Config.setup({ ...configOptions, watch: true }).result());

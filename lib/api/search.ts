@@ -2,7 +2,13 @@ import * as Config from '../setup/config.ts';
 import * as Search from '../commands/search.ts';
 import { Task } from '../task/index.ts';
 import { unwrap } from '../result/result.ts';
-import { normalizeOptions, resolveReporting, toConfigOptions, type RunOptions } from './options.ts';
+import {
+  normalizeOptions,
+  resolveReporting,
+  toConfigOptions,
+  validate,
+  type RunOptions,
+} from './options.ts';
 import type { RunFailure } from './run.ts';
 
 /**
@@ -83,6 +89,7 @@ export function search(
 ): Task<SearchResult, RunFailure> {
   return Task(async () => {
     const resolved = normalizeOptions(options);
+    validate(resolved);
     const reporting = resolveReporting(resolved);
     const config = unwrap(await Config.setup(toConfigOptions(resolved, reporting)).result());
     const report = await Search.scan(config);

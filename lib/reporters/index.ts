@@ -60,7 +60,7 @@ export function create(config: Config): Reporter[] {
  * ```
  */
 export function runStart(config: Config, info: RunStartInfo): void {
-  config.state.reporters.forEach((reporter) => reporter.onRunStart?.(config, info));
+  fanOut(config, 'onRunStart', (reporter) => reporter.onRunStart?.(config, info));
 }
 
 /**
@@ -82,7 +82,7 @@ export function runStart(config: Config, info: RunStartInfo): void {
  */
 export function testEnd(config: Config, details: TestDetails): void {
   updateCounter(config.state.results.counter, details);
-  config.state.reporters.forEach((reporter) => reporter.onTestEnd?.(config, details));
+  fanOut(config, 'onTestEnd', (reporter) => reporter.onTestEnd?.(config, details));
 }
 
 /**
@@ -102,7 +102,13 @@ export function testEnd(config: Config, details: TestDetails): void {
  */
 export async function runEnd(config: Config, info: RunEndInfo): Promise<void> {
   for (const reporter of config.state.reporters) {
-    await reporter.onRunEnd?.(config, info);
+    // Awaited one at a time, and isolated the same way the sync hooks are: JUnit writes a file
+    // here, and a third-party reporter that rejects must not cost the run its artifacts.
+    try {
+      await reporter.onRunEnd?.(config, info);
+    } catch (error) {
+      reportReporterFailure(config, 'onRunEnd', error);
+    }
   }
 }
 
@@ -131,7 +137,7 @@ export function notice(config: Config, notice: Notice): void {
   const stream = notice.stream ?? 'output';
   if (stream !== 'error') config.state.output.write(line);
   if (stream !== 'output') config.state.output.error(line);
-  config.state.reporters.forEach((reporter) => reporter.onNotice?.(config, notice));
+  fanOut(config, 'onNotice', (reporter) => reporter.onNotice?.(config, notice));
 }
 
 /**
@@ -156,7 +162,34 @@ export function browserLog(config: Config, log: BrowserLog): void {
   // for an uncaught pageerror, so a crashed page is visible in a stdout-only or stderr-only log.
   if (log.type === 'pageerror') config.state.output.error(line);
   else config.state.output.write(line);
-  config.state.reporters.forEach((reporter) => reporter.onBrowserLog?.(config, log));
+  fanOut(config, 'onBrowserLog', (reporter) => reporter.onBrowserLog?.(config, log));
+}
+
+/**
+ * Delivers one event to every reporter, isolating each from the others.
+ *
+ * `Reporter` is public surface, so a reporter is third-party code, and a plain `forEach` gives
+ * the first one that throws the power to stop delivery to the rest — including the collector the
+ * JS API builds its result from, and the counter reconciliation that depends on it. A reporter
+ * that throws should cost its own output and nothing else.
+ */
+function fanOut(config: Config, hook: string, deliver: (reporter: Reporter) => void): void {
+  for (const reporter of config.state.reporters) {
+    try {
+      deliver(reporter);
+    } catch (error) {
+      reportReporterFailure(config, hook, error);
+    }
+  }
+}
+
+/**
+ * Reports a throwing reporter straight to the output rather than through `notice` — a reporter
+ * that throws from `onNotice` would otherwise be handed the notice about itself, and throw again.
+ */
+function reportReporterFailure(config: Config, hook: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  config.state.output.error(`# [qunitx] reporter ${hook} threw: ${message}\n`);
 }
 
 // Exactly one stdout reporter per run. `--reporter` is validated in Args.parse, so an

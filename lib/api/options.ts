@@ -5,6 +5,8 @@ import { SpecReporter } from '../reporters/spec.ts';
 import { TAPReporter } from '../reporters/tap.ts';
 import { processOutput, silentOutput, streamOutput, type Output } from '../reporters/output.ts';
 import { Collector, toTestResult } from './result.ts';
+import { REPORTERS } from '../reporters/types.ts';
+import { Failure } from '../task/index.ts';
 import type { BrowserLog, Notice, Reporter, ReporterName } from '../reporters/types.ts';
 import type { TestResult } from './result.ts';
 import type { ConfigOptions } from '../setup/config.ts';
@@ -129,6 +131,91 @@ export interface ResolvedReporting {
   output: Output;
   /** The collector the result is built from. */
   collector: Collector;
+}
+
+/**
+ * An option was given a value the runner will not accept.
+ *
+ * The API's equivalent of `InvalidFlag`, and it exists for the same reason: the values that come
+ * from outside — an enum spelled wrong, a port out of range — must be rejected where they are
+ * named, not several layers down as an unexplained browser-launch failure.
+ *
+ * ```ts
+ * const failure = InvalidOption({ option: 'browser', value: 'netscape', expected: 'chromium, firefox, webkit' });
+ * failure.data.option; // 'browser' — typed payload, no message parsing
+ * ```
+ */
+export const InvalidOption = Failure.define(
+  'InvalidOption',
+  (data: { option: string; value: unknown; expected: string }) =>
+    `Invalid \`${data.option}\` value: ${JSON.stringify(data.value) ?? String(data.value)}. Expected ${data.expected}.`,
+);
+
+/** The one failure {@link validate} raises. */
+export type InvalidOptionFailure = Failure.Of<typeof InvalidOption>;
+
+const BROWSERS = ['chromium', 'firefox', 'webkit'];
+const COVERAGE_FORMATS = ['lcov', 'html'];
+
+/**
+ * Rejects options the run cannot honour, before anything is launched.
+ *
+ * Only the closed sets and the bounded numbers are checked here — the same ones `Args.parse`
+ * validates for argv. Everything else is either free-form (a filter, a path) or already a
+ * compile-time error for a TypeScript caller; this is the guard for the ones that are neither,
+ * which is exactly what a JavaScript caller or a generated call can get wrong.
+ *
+ * ```ts
+ * import { validate, InvalidOption } from './options.ts';
+ *
+ * try {
+ *   validate({ browser: 'netscape' as 'chromium' });
+ * } catch (error) {
+ *   InvalidOption.is(error); // true
+ * }
+ * ```
+ */
+export function validate(options: RunOptions): void {
+  if (options.browser !== undefined && !BROWSERS.includes(options.browser)) {
+    throw InvalidOption({
+      option: 'browser',
+      value: options.browser,
+      expected: `one of ${BROWSERS.join(', ')}`,
+    });
+  }
+  for (const entry of Array.isArray(options.reporter) ? options.reporter : [options.reporter]) {
+    if (typeof entry === 'string' && !(REPORTERS as readonly string[]).includes(entry)) {
+      throw InvalidOption({
+        option: 'reporter',
+        value: entry,
+        expected: `one of ${REPORTERS.join(', ')}, a Reporter object, or false`,
+      });
+    }
+  }
+  const formats = typeof options.coverage === 'object' ? (options.coverage.formats ?? []) : [];
+  for (const format of formats) {
+    if (!COVERAGE_FORMATS.includes(format)) {
+      throw InvalidOption({
+        option: 'coverage.formats',
+        value: format,
+        expected: `one of ${COVERAGE_FORMATS.join(', ')}`,
+      });
+    }
+  }
+  if (options.port !== undefined && !isPort(options.port)) {
+    throw InvalidOption({ option: 'port', value: options.port, expected: 'an integer 0-65535' });
+  }
+  if (options.timeout !== undefined && !(Number.isFinite(options.timeout) && options.timeout > 0)) {
+    throw InvalidOption({
+      option: 'timeout',
+      value: options.timeout,
+      expected: 'a positive number of milliseconds',
+    });
+  }
+}
+
+function isPort(value: number): boolean {
+  return Number.isInteger(value) && value >= 0 && value <= 65535;
 }
 
 /**
