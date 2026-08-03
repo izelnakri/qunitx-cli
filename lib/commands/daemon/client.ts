@@ -7,6 +7,9 @@ import * as Socket from './socket.ts';
 import { Failure } from '../../result/index.ts';
 import { Task } from '../../task/index.ts';
 import { readJsonCache } from '../../utils/read-json-cache.ts';
+import { processOutput, type Output } from '../../reporters/output.ts';
+import type { DaemonRunOptions } from '../../api/options.ts';
+import type { RunResult } from '../../api/result.ts';
 import type { Request, ResponseChunk } from './protocol.ts';
 
 const CONNECT_TIMEOUT_MS = 1_000;
@@ -182,7 +185,9 @@ export const DaemonUnreachable = Failure.define(
  */
 export const DaemonDisconnected = Failure.define(
   'DaemonDisconnected',
-  (data: { reason: 'close' | 'error' }) =>
+  // 'no-result' is the version-skew case: a daemon older than the client answered an
+  // options-driven request without the `result` chunk that request is defined by.
+  (data: { reason: 'close' | 'error' | 'no-result' }) =>
     `daemon closed the connection (${data.reason}) without reporting a result`,
 );
 
@@ -227,9 +232,62 @@ export type RunViaFailure = Failure.Of<typeof DaemonUnreachable | typeof DaemonD
  * ```
  */
 export function runVia(argv: string[]): Task<number, RunViaFailure> {
+  return Task(async () => (await dispatchRun({ argv })).exitCode);
+}
+
+/**
+ * The options-driven twin of {@link runVia}: sends resolved options rather than an argv and
+ * resolves with the run's structured result.
+ *
+ * Streams the daemon's text back the same way — into `sink` when one is given, so a caller that
+ * asked for a reporter still gets its output locally — and additionally receives the `result`
+ * chunk the daemon sends just before `done`.
+ *
+ * ```ts
+ * import * as Client from './client.ts';
+ * import * as Failure from '../../result/failure.ts';
+ *
+ * // Defined, not invoked: dispatches a real run to the project's daemon.
+ * async function runOnDaemon() {
+ *   const outcome = await Client.runOptionsVia({ inputs: ['test/'] }).result();
+ *   return Failure.is(outcome) ? null : outcome.counts;
+ * }
+ * ```
+ */
+export function runOptionsVia(
+  options: DaemonRunOptions,
+  sink?: Output,
+): Task<RunResult, RunViaFailure> {
   return Task(async () => {
+    const { result } = await dispatchRun({ options, sink });
+    // The daemon sends `result` before `done` on every options-driven request, so its absence
+    // means the daemon answered a request it did not understand — a version skew between a
+    // running daemon and a newer client, which is exactly the case `fatal` cannot describe.
+    if (!result) throw DaemonDisconnected({ reason: 'no-result' });
+
+    return result;
+  });
+}
+
+/**
+ * One run over the socket. Shared by both entry points because everything except what is sent
+ * and what is read back — connect, SIGINT forwarding, terminal-chunk handling, the two ways a
+ * daemon can vanish — is identical between them.
+ */
+function dispatchRun({
+  argv = [],
+  options,
+  sink,
+}: {
+  argv?: string[];
+  options?: DaemonRunOptions;
+  sink?: Output;
+}): Promise<{ exitCode: number; result: RunResult | null }> {
+  return (async () => {
     const socket = await tryConnect();
     if (!socket) throw DaemonUnreachable();
+    const out = sink ?? processOutput;
+    let result: RunResult | null = null;
 
     // Per protocol.ts: exactly one terminal message ('done' or 'fatal') ends the
     // stream. close/error here are last-resort fallbacks for a daemon that drops
@@ -237,13 +295,14 @@ export function runVia(argv: string[]): Task<number, RunViaFailure> {
     // folded into the same exit code a failing test run produces.
     const outcome = new Promise<number>((resolve, reject) => {
       Socket.readMessages<ResponseChunk>(socket, (chunk) => {
-        if (chunk.type === 'stdout') process.stdout.write(chunk.data);
-        else if (chunk.type === 'stderr') process.stderr.write(chunk.data);
+        if (chunk.type === 'stdout') out.write(chunk.data);
+        else if (chunk.type === 'stderr') out.error(chunk.data);
+        else if (chunk.type === 'result') result = chunk.result;
         else if (chunk.type === 'done') resolve(chunk.exitCode);
         else if (chunk.type === 'fatal') {
           // A reported fatal IS a terminal result: the daemon ran, decided the run failed, and
           // said so. That is an exit code, not a transport failure.
-          process.stderr.write(`# [qunitx daemon] ${chunk.message}\n`);
+          out.error(`# [qunitx daemon] ${chunk.message}\n`);
           resolve(1);
         }
       });
@@ -260,17 +319,18 @@ export function runVia(argv: string[]): Task<number, RunViaFailure> {
     send(socket, {
       type: 'run',
       argv,
+      options,
       cwd: process.cwd(),
       env: { ...process.env },
       nodeVersion: process.version,
     });
 
     try {
-      return await outcome;
+      return { exitCode: await outcome, result };
     } finally {
       process.removeListener('SIGINT', onSigint);
     }
-  });
+  })();
 }
 
 /**

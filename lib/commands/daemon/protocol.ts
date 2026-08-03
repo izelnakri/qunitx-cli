@@ -1,6 +1,11 @@
 // NDJSON protocol between daemon client and daemon server.
 // One JSON object per line. Client writes a single Request; daemon streams
 // any number of stdout/stderr chunks ending with a `done` (or `fatal`) message.
+//
+// Type-only imports: erased at runtime, so this leaf module stays free of the
+// api/ dependency it names in its types.
+import type { DaemonRunOptions } from '../../api/options.ts';
+import type { RunResult } from '../../api/result.ts';
 
 /**
  * Client → daemon: request to execute a test run with the given argv/env in the daemon's persistent Chrome.
@@ -18,6 +23,16 @@ export interface RunRequest {
   type: 'run';
   /** CLI arguments after `qunitx` (i.e. `process.argv.slice(2)`). */
   argv: string[];
+  /**
+   * Resolved options, when the request came from the JS API rather than a command line. Present
+   * means "build the config from these and answer with a `result` chunk"; absent means the
+   * daemon parses `argv` exactly as the CLI would.
+   *
+   * Only what survives JSON is here — no plugin objects, no reporter instances, no callbacks.
+   * {@link DaemonRunOptions} is the type that enforces that at the call site rather than
+   * discovering it at the socket.
+   */
+  options?: DaemonRunOptions;
   /** Client's working directory. The daemon rejects mismatched cwds (different project). */
   cwd: string;
   /** Client's full process environment, applied to the run and restored on completion. */
@@ -76,6 +91,8 @@ export type Request = RunRequest | PingRequest | ShutdownRequest;
 export type ResponseChunk =
   /** Forwarded `process.stdout.write` chunk from the run. */
   | { type: 'stdout'; data: string }
+  /** The run's structured result; sent just before `done`, only for an options-driven request. */
+  | { type: 'result'; result: RunResult }
   /** Forwarded `process.stderr.write` chunk from the run. */
   | { type: 'stderr'; data: string }
   /** Reply to a `PingRequest` with daemon identity + uptime fields. */

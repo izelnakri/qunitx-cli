@@ -7,11 +7,15 @@ import './lib/utils/enable-compile-cache.ts';
 // env is already set or no sidecar is present (npm / source / Node SEA paths).
 import './lib/utils/find-sidecar-esbuild.ts';
 import process from 'node:process';
-import { shutdownPrelaunch } from './lib/chrome/prelaunch.ts';
+import { shutdownPrelaunch, startPrelaunch } from './lib/chrome/prelaunch.ts';
 import { Failure } from './lib/result/index.ts';
 import pkg from './package.json' with { type: 'json' };
 
 process.title = 'qunitx';
+// First statement, and deliberately so: this spawns Chrome for run commands, and the whole
+// point is that its ~150ms start-up overlaps the dynamic import of playwright-core below
+// rather than following it. Everything between here and that import is synchronous.
+startPrelaunch();
 
 // The timer is a LAST RESORT, not a routine path: whenever it fires before the drain callback,
 // process.exit() drops whatever is still queued. run.ts learned this the hard way and uses the
@@ -42,9 +46,15 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   } else if (['help', 'h', 'p', 'print'].includes(cmd)) {
     return await (await import('./lib/commands/help.ts')).run();
   } else if (['new', 'n', 'g', 'generate'].includes(cmd)) {
-    return await (await import('./lib/commands/generate.ts')).run();
+    const { path, created } = await (await import('./lib/commands/generate.ts')).run();
+    const { green } = await import('./lib/utils/color.ts');
+    return console.log(created ? green(`${path} written`) : `${path} already exists!`);
   } else if (cmd === 'init') {
-    return await (await import('./lib/commands/init.ts')).run();
+    const { written, skipped } = await (await import('./lib/commands/init.ts')).run();
+    // The scaffolding commands report what they did and let this decide how to say it — the same
+    // split as everywhere else, so `Qunitx.init()` returns the facts instead of printing them.
+    skipped.forEach((file) => console.log(`${file} already exists`));
+    return written.forEach((file) => console.log(`${file} written`));
   } else if (cmd === 'daemon') {
     const Daemon = await import('./lib/commands/daemon/index.ts');
     process.exit(await Daemon.run());
