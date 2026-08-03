@@ -260,9 +260,8 @@ export interface RunState {
   reporters: Reporter[];
   /**
    * Non-null exactly when this run is executing inside the persistent daemon process — it is
-   * the daemon-mode flag as well as the handles. Daemon runs throw `DaemonRunError` instead of
-   * calling `process.exit`, suppress the per-connection TAP header, and leave the shared browser
-   * open at the end of the run.
+   * the daemon-mode flag as well as the handles. Daemon runs reuse the shared browser, suppress
+   * the per-connection TAP header, and leave that browser open at the end of the run.
    */
   daemon: DaemonState | null;
   /** Number of concurrent groups in this run; 1 for watch and single-group runs. */

@@ -1,8 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { blue, yellow } from '../../utils/color.ts';
-import { shutdownPrelaunch } from '../../chrome/prelaunch.ts';
-import { closeWithGrace } from '../../utils/close-with-grace.ts';
 import esbuild from 'esbuild';
 import * as TimeCounter from '../../utils/time-counter.ts';
 import { runUserModule } from '../../utils/run-user-module.ts';
@@ -25,7 +23,6 @@ import type {
   EsbuildCache,
   QUnitResult,
 } from '../../types.ts';
-import type { HTTPServer } from '../../web/index.ts';
 import { Task } from '../../task/index.ts';
 
 /**
@@ -424,26 +421,13 @@ export async function run(
         await runUserModule(`${config.cwd}/${config.after}`, config.state.results.counter, 'after');
       }
 
-      if (!config.watch) {
-        await flushConsoleHandlers(config.state.group.pendingConsoleHandlers, connections.page);
-        // Daemon mode: the daemon owns the browser and server lifetimes, so we
-        // must not close them here. Throw instead so the daemon's run handler
-        // captures the exit code and keeps the process alive for the next run.
-        if (config.state.daemon) {
-          throw new DaemonRunError(config.state.results.counter.failCount > 0 ? 1 : 0);
-        }
-        await closeWithGrace([
-          connections.server?.close(),
-          connections.browser?.close(),
-          shutdownPrelaunch(),
-        ]);
-        return process.exit(config.state.results.counter.failCount > 0 ? 1 : 0);
-      }
+      // There is no non-watch branch here. Every non-watch run reaches this function through
+      // `runConcurrentMode`, which sets `groupMode` on all of its group configs — so this whole
+      // block only ever executes in watch mode, and reporting, cleanup and the exit code belong
+      // to the orchestrator either way. The unreachable branch that used to close this block
+      // held the last `process.exit` on the run path.
     }
   } catch (error) {
-    // DaemonRunError signals normal completion in daemon mode (replaces process.exit);
-    // pass it through unchanged so the daemon's run handler can capture the exit code.
-    if (error instanceof DaemonRunError) throw error;
     build.activeRebuild = null;
     config.state.group.lastFailedFiles = config.state.group.lastRanFiles;
     const exception = new BundleError(error);
@@ -686,28 +670,6 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
   }
 }
 
-/**
- * Thrown in daemon mode in place of `process.exit(code)` so the caller (the daemon
- * server's run handler) can capture the exit code, restore stdout interception, and
- * keep the daemon process alive for the next run.
- *
- * ```ts
- * const error = new DaemonRunError(1);
- * error.exitCode; // 1
- * error instanceof Error; // true — passes through catch blocks unchanged
- * ```
- */
-export class DaemonRunError extends Error {
-  /** The exit code that the run would have passed to `process.exit()` outside of daemon mode. */
-  exitCode: number;
-  /** Constructs a DaemonRunError carrying the run's exit code. */
-  constructor(exitCode: number) {
-    super(`daemon run finished with exit code ${exitCode}`);
-    this.name = 'DaemonRunError';
-    this.exitCode = exitCode;
-  }
-}
-
 function buildFilteredTests(
   filteredTests: string[],
   outputPath: string,
@@ -836,7 +798,7 @@ function esbuildTarget(browser?: string): string[] {
 
 async function runTestInsideHTMLFile(
   filePath: string,
-  { page, server, browser }: Connections,
+  { page }: Connections,
   config: Config,
 ): Promise<void> {
   let QUNIT_RESULT: QUnitResult | null | undefined;
@@ -878,8 +840,8 @@ async function runTestInsideHTMLFile(
   // startupMs / 80s testsJsMs / 25s per-test timer — a 60s hang is the exact window where
   // the test runner's 60s SIGTERM beats the daemon's 'done' message, leaving the client
   // with code=null instead of an exit code. Catch-block diagnostics then fire as for any
-  // other timeout, and (in daemon mode) failOnNonWatchMode throws DaemonRunError so the
-  // daemon writes 'done' to its socket fast.
+  // other timeout, and failOnNonWatchMode rejects the group so the orchestrator finishes the
+  // run promptly — which is what lets the daemon write 'done' to its socket fast.
   page.on('close', resolveTestRace);
 
   try {
@@ -1003,14 +965,7 @@ async function runTestInsideHTMLFile(
   }
 
   const outcome = classifyRunOutcome(QUNIT_RESULT, doneReceived);
-  const failRun = () =>
-    failOnNonWatchMode(
-      config.watch,
-      { server, browser, page },
-      config.state.group.groupMode,
-      config.state.group.pendingConsoleHandlers,
-      !!config.state.daemon,
-    );
+  const failRun = () => failOnNonWatchMode(config.watch);
 
   if (outcome.kind === 'no-tests-ran') {
     // No 'done' arrived: either no QUnit tally at all, or a zero tally the runtime pre-initialised
@@ -1024,7 +979,7 @@ async function runTestInsideHTMLFile(
     console.log(`# TIMEOUT: ${wsReason}`);
     console.log('BROWSER: runtime error thrown during executing tests');
     console.error('BROWSER: runtime error thrown during executing tests');
-    await failRun();
+    failRun();
   } else if (outcome.kind === 'empty') {
     // QUnit fired 'done' with zero registered tests — a genuinely empty file (e.g. a helper).
     // Not a failure — handled at the run level as a warning.
@@ -1036,7 +991,7 @@ async function runTestInsideHTMLFile(
     );
     console.log(`BROWSER: TEST TIMED OUT: ${QUNIT_RESULT!.currentTest}`);
     console.error(`BROWSER: TEST TIMED OUT: ${QUNIT_RESULT!.currentTest}`);
-    await failRun();
+    failRun();
   } else if (config.state.groupCount === 1) {
     // Every registered test finished. The WebSocket testEnd stream is the only channel that
     // feeds the counter, and under load (a CPU-starved CI runner, a dropped or duplicated
@@ -1068,11 +1023,11 @@ async function runTestInsideHTMLFile(
  * How a browser run ended, decided from QUnit's tally plus whether a WS `done` arrived.
  *
  * ```ts
- * const outcome: RunOutcome = classifyRunOutcome(null, false);
+ * const outcome: BrowserRunOutcome = classifyRunOutcome(null, false);
  * outcome.kind; // 'no-tests-ran'
  * ```
  */
-export type RunOutcome =
+export type BrowserRunOutcome =
   | { kind: 'completed' } // every registered test finished; the caller reconciles the counter
   | { kind: 'empty' } // QUnit fired `done` with zero registered tests — a genuinely empty file
   | { kind: 'no-tests-ran' } // no `done`: a timeout that never executed tests (fail, not green)
@@ -1099,7 +1054,7 @@ export type RunOutcome =
 export function classifyRunOutcome(
   result: QUnitResult | null | undefined,
   doneReceived: boolean,
-): RunOutcome {
+): BrowserRunOutcome {
   if (!result) return { kind: 'no-tests-ran' };
   if (result.totalTests === 0) return doneReceived ? { kind: 'empty' } : { kind: 'no-tests-ran' };
   if (result.totalTests > result.finishedTests) return { kind: 'stalled' };
@@ -1137,29 +1092,14 @@ export function reconcileUndeliveredResults(counter: Counter, result: QUnitResul
   return undelivered;
 }
 
-async function failOnNonWatchMode(
-  watchMode: boolean = false,
-  connections: { server?: HTTPServer; browser?: { close(): Promise<void> }; page?: Page } = {},
-  groupMode: boolean = false,
-  pendingHandlers?: Set<Promise<void>> | null,
-  daemonMode: boolean = false,
-): Promise<void> {
-  if (watchMode) return;
-  if (groupMode) {
-    // Parent orchestrator handles cleanup and exit; signal failure via throw.
-    throw new Error('Browser test run failed');
-  }
-  await flushConsoleHandlers(pendingHandlers, connections.page);
-  if (daemonMode) {
-    // Daemon owns browser/server lifetimes — throw so its run handler captures the code.
-    throw new DaemonRunError(1);
-  }
-  await closeWithGrace([
-    connections.server?.close(),
-    connections.browser?.close(),
-    shutdownPrelaunch(),
-  ]);
-  process.exit(1);
+/**
+ * A run that timed out or stalled. Watch mode keeps going — the next save is the retry. Anything
+ * else throws, and `runConcurrentMode` turns the rejected group into an exit code. It owns the
+ * browser, the server and the process's fate; this function owns none of the three, which is why
+ * the cleanup-and-exit arms it used to carry are gone.
+ */
+function failOnNonWatchMode(watchMode: boolean | undefined): void {
+  if (!watchMode) throw new Error('Browser test run failed');
 }
 
 // Converts an absolute file path to a relative import path esbuild can resolve from the run's
