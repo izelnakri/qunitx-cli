@@ -271,6 +271,9 @@ matches.map((test) => `${test.fullName}  ${test.file}#${test.line}`);
 A reporter is any object with the handlers it cares about. Pass an instance as `reporter`; it can
 sit alongside a built-in one. A reporter that throws costs its own output and nothing else.
 
+Passing an object does **not** turn on printing — only a built-in *name*, or an explicit
+`stdout`, does. So a collector of your own keeps the run silent.
+
 ```js
 await run({
   reporter: [
@@ -317,6 +320,10 @@ if (Failure.is(outcome)) {
 ```
 
 `await run(…)` throws the same failure instead, if you prefer `try`/`catch`.
+
+A runnable end-to-end example lives in
+[`examples/js-api-quality-gate.ts`](examples/js-api-quality-gate.ts) — search, run, coverage
+floor, JUnit, a custom reporter, and failure handling in one script.
 
 ### Deno and TypeScript
 
