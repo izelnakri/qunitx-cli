@@ -2,23 +2,17 @@ import * as Config from '../setup/config.ts';
 import * as Run from '../commands/run.ts';
 import { Task } from '../task/index.ts';
 import { unwrap } from '../result/result.ts';
-import { buildResult, type Collector, type RunResult } from './result.ts';
+import { buildResult, type RunResult } from './result.ts';
 import {
   normalizeOptions,
   resolveReporting,
   toConfigOptions,
   validate,
+  type ResolvedReporting,
   type RunOptions,
 } from './options.ts';
 import { junitXml, type RunFailure } from './run.ts';
-import type { Reporter } from '../reporters/types.ts';
 import type { Config as ResolvedConfig } from '../types.ts';
-
-/** The reporter set plus the collector results are built from — what a session snapshots. */
-interface Reporting {
-  reporters: Reporter[];
-  collector: Collector;
-}
 
 /**
  * A running watch session.
@@ -99,7 +93,7 @@ class Session implements WatchSession {
   readonly initial: RunResult;
   #inner: Run.WatchSession;
   #config: ResolvedConfig;
-  #reporting: Reporting;
+  #reporting: ResolvedReporting;
   #queued: RunResult[];
   #waiting: ((result: IteratorResult<RunResult>) => void) | null = null;
   #latest: RunResult;
@@ -109,7 +103,7 @@ class Session implements WatchSession {
   constructor(
     inner: Run.WatchSession,
     config: ResolvedConfig,
-    reporting: Reporting,
+    reporting: ResolvedReporting,
     initial: RunResult,
   ) {
     this.#inner = inner;
@@ -189,7 +183,7 @@ class Session implements WatchSession {
  * nothing exits — but "did this rerun pass" is exactly as meaningful, and is the same question
  * `failCount` answers for the batch runner.
  */
-function snapshot(config: ResolvedConfig, reporting: Reporting): RunResult {
+function snapshot(config: ResolvedConfig, reporting: ResolvedReporting): RunResult {
   const failed = config.state.results.counter.failCount > 0;
   const result = buildResult(
     config,
