@@ -502,6 +502,14 @@ export interface Config {
   browser: 'chromium' | 'firefox' | 'webkit';
   /** Absolute path to the project root (directory containing `package.json`). */
   projectRoot: string;
+  /**
+   * Working directory this run resolves against: relative inputs, bare-specifier resolution
+   * inside the test bundle, and `--before`/`--after` hook paths. `process.cwd()` for the CLI;
+   * the JS API's `cwd` option otherwise. Distinct from {@link projectRoot}, which is wherever
+   * the nearest `package.json` sits — running from a subdirectory keeps that subdirectory's
+   * `node_modules` on the resolution chain, exactly as Node itself would.
+   */
+  cwd: string;
   /** CLI input paths (files or directories) from which test files are discovered. */
   inputs: string[];
   /** Absolute paths to HTML fixture files that wrap the compiled test bundle. */

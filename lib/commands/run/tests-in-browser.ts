@@ -41,10 +41,18 @@ const ancestorNodeModules = (dir: string): string[] =>
       path.join(parts.slice(0, parts.length - i).join(path.sep) || path.sep, 'node_modules'),
     );
 
-// process.cwd() is fixed for the lifetime of the process — compute once and reuse
-// across every buildTestBundle / buildFilteredTests call rather than reallocating
-// the array of ancestor paths on every esbuild invocation.
-const ANCESTOR_NODE_MODULES = ancestorNodeModules(process.cwd());
+// Memoized per directory: a process almost always runs from one cwd, so this is the same
+// compute-once it replaces — but the JS API can resolve a different project per call, and
+// recomputing the ancestor list on every esbuild invocation would be pure waste.
+const nodePathsCache = new Map<string, string[]>();
+function nodePathsFrom(cwd: string): string[] {
+  const cached = nodePathsCache.get(cwd);
+  if (cached) return cached;
+  const paths = ancestorNodeModules(cwd);
+  nodePathsCache.set(cwd, paths);
+
+  return paths;
+}
 
 const RETRY_DELAY_MS = 100;
 const MAX_RETRIES = 3;
@@ -202,14 +210,14 @@ export async function buildTestBundle(config: Config): Promise<void> {
   const buildOptions: esbuild.BuildOptions = {
     stdin: {
       contents: allTestFilePaths
-        .map((filePath) => `import "${toEsbuildImportPath(filePath)}";`)
+        .map((filePath) => `import "${toEsbuildImportPath(filePath, config.cwd)}";`)
         .join(''),
-      resolveDir: process.cwd(),
+      resolveDir: config.cwd,
     },
     // Allow test files outside the project root (e.g. /tmp/my-test.ts) to import
     // packages from any node_modules on the ancestor chain of cwd — the same lookup
-    // order Node itself uses when resolving require() from process.cwd().
-    nodePaths: ANCESTOR_NODE_MODULES,
+    // order Node itself uses when resolving require() from the run's cwd.
+    nodePaths: nodePathsFrom(config.cwd),
     bundle: true,
     logLevel: 'silent',
     outfile,
@@ -221,7 +229,7 @@ export async function buildTestBundle(config: Config): Promise<void> {
     // `import { jsx } from 'react/jsx-runtime'` for .tsx/.jsx files. Per-file overrides via
     // tsconfig's `jsxImportSource` or a `@jsxImportSource <pkg>` pragma cover Vue/Preact/Solid.
     jsx: 'automatic',
-    plugins: [qunitxRuntimePlugin(), ...(config.plugins ?? [])],
+    plugins: [qunitxRuntimePlugin(config.cwd), ...(config.plugins ?? [])],
     // Required for --changed/--since dep-graph filter on subsequent runs (cache
     // populates here, reads in Config.setup). Inputs map carries the full reverse-dep
     // graph; output cost is negligible.
@@ -260,7 +268,7 @@ export async function buildTestBundle(config: Config): Promise<void> {
     config.state.group.sourceMapDecoder = SourceMap.extractInline(allTestCode, outDir);
     // Persist metafile for the next --changed run. Best-effort; cache miss
     // on subsequent reads degrades to "run all tests."
-    if (metafile) void MetafileCache.write(projectRoot, process.cwd(), metafile);
+    if (metafile) void MetafileCache.write(projectRoot, config.cwd, metafile);
     build.lastBuildErrored = false;
   } catch (error) {
     build.lastBuildErrored = true;
@@ -413,11 +421,7 @@ export async function run(
       if (config.coverage) await Coverage.Report.write(config, allTestFilePaths);
 
       if (config.after) {
-        await runUserModule(
-          `${process.cwd()}/${config.after}`,
-          config.state.results.counter,
-          'after',
-        );
+        await runUserModule(`${config.cwd}/${config.after}`, config.state.results.counter, 'after');
       }
 
       if (!config.watch) {
@@ -529,7 +533,7 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
     groupConfig.state.group.build.fallbackPage = null;
   });
 
-  const { projectRoot, browser } = groupConfigs[0];
+  const { projectRoot, browser, cwd } = groupConfigs[0];
 
   // Build each group's descriptor in one pass, skipping empty groups (overlayfs race).
   // Their build.allTestCode stays null so run's early-return handles them.
@@ -579,9 +583,9 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
         const slotIndex = parseInt(args.path.replace('group-entry-', ''));
         return {
           contents: activeGroups[slotIndex].files
-            .map((filePath) => `import "${toEsbuildImportPath(filePath)}";`)
+            .map((filePath) => `import "${toEsbuildImportPath(filePath, cwd)}";`)
             .join(''),
-          resolveDir: process.cwd(),
+          resolveDir: cwd,
         };
       });
     },
@@ -598,8 +602,8 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
     // groupEntryPlugin must run first — it owns the virtual entry-point modules every other
     // plugin sees. User plugins follow and apply to the resolved test files just like in
     // single-group mode (`buildTestBundle`).
-    plugins: [groupEntryPlugin, qunitxRuntimePlugin(), ...(groupConfigs[0].plugins ?? [])],
-    nodePaths: ANCESTOR_NODE_MODULES,
+    plugins: [groupEntryPlugin, qunitxRuntimePlugin(cwd), ...(groupConfigs[0].plugins ?? [])],
+    nodePaths: nodePathsFrom(cwd),
     bundle: true,
     logLevel: 'silent',
     // outdir only labels the paths in outputFiles[].path — nothing is written to disk
@@ -662,7 +666,7 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
     );
     // Persist metafile for the next --changed run (same cache as single-group path).
     if (result.metafile) {
-      void MetafileCache.write(projectRoot, process.cwd(), result.metafile as AffectedMetafile);
+      void MetafileCache.write(projectRoot, cwd, result.metafile as AffectedMetafile);
     }
   } catch (error) {
     const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
@@ -719,9 +723,9 @@ function buildFilteredTests(
         contents: filteredTests
           .map((filePath) => `import "${filePath.replace(/\\/g, '/')}";`)
           .join(''),
-        resolveDir: process.cwd(),
+        resolveDir: config.cwd,
       },
-      nodePaths: ANCESTOR_NODE_MODULES,
+      nodePaths: nodePathsFrom(config.cwd),
       bundle: true,
       logLevel: 'silent',
       outfile: outputPath,
@@ -729,7 +733,7 @@ function buildFilteredTests(
       target: esbuildTarget(config.browser),
       sourcemap,
       jsx: 'automatic',
-      plugins: [qunitxRuntimePlugin(), ...(config.plugins ?? [])],
+      plugins: [qunitxRuntimePlugin(config.cwd), ...(config.plugins ?? [])],
       footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
     },
     needsDisk,
@@ -1158,11 +1162,11 @@ async function failOnNonWatchMode(
   process.exit(1);
 }
 
-// Converts an absolute file path to a relative import path esbuild can resolve from
-// process.cwd(). On Windows, absolute paths like "D:/..." are treated as bare module
-// specifiers in stdin content, so we must use relative paths instead.
-function toEsbuildImportPath(filePath: string): string {
-  const rel = path.relative(process.cwd(), filePath);
+// Converts an absolute file path to a relative import path esbuild can resolve from the run's
+// cwd. On Windows, absolute paths like "D:/..." are treated as bare module specifiers in stdin
+// content, so we must use relative paths instead.
+function toEsbuildImportPath(filePath: string, cwd: string): string {
+  const rel = path.relative(cwd, filePath);
   const normalized = rel.replace(/\\/g, '/');
   if (path.isAbsolute(rel)) return filePath.replace(/\\/g, '/');
   return normalized.startsWith('.') ? normalized : './' + normalized;

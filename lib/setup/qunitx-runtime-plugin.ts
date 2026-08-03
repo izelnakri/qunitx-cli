@@ -22,7 +22,7 @@ const NAMESPACE = 'qunitx-runtime';
  * plugin.name; // 'qunitx-runtime' — hand it to esbuild's `plugins` alongside the user's own
  * ```
  */
-export function qunitxRuntimePlugin(): Plugin {
+export function qunitxRuntimePlugin(cwd: string = process.cwd()): Plugin {
   return {
     name: 'qunitx-runtime',
     setup(build) {
@@ -44,7 +44,7 @@ export function qunitxRuntimePlugin(): Plugin {
       build.onLoad({ filter: /.*/, namespace: NAMESPACE }, async () => ({
         contents: await readTemplate('vendor/qunitx-runtime.js'),
         loader: 'js',
-        resolveDir: process.cwd(),
+        resolveDir: cwd,
       }));
     },
   };

@@ -581,6 +581,58 @@ module('Args | parse | --reporter validation', { concurrency: true }, () => {
   });
 });
 
+module('Args | parse | explicit argv and cwd', { concurrency: true }, () => {
+  test('argv is a parameter, so no process.argv borrowing is needed to parse someone else', (assert) => {
+    const original = process.argv;
+    process.argv = ['node', 'cli.ts', '--watch'];
+    try {
+      const flags = Result.unwrap(Args.parse(PROJECT_ROOT, ['--timeout=5000']));
+      assert.equal(flags.timeout, 5000);
+      assert.equal(flags.watch, undefined, 'the live process.argv is not consulted');
+    } finally {
+      process.argv = original;
+    }
+  });
+
+  test('relative inputs resolve against the cwd argument, not process.cwd()', (assert) => {
+    const flags = Result.unwrap(Args.parse(PROJECT_ROOT, ['tests/foo.ts'], '/elsewhere'));
+    assert.deepEqual(flags.inputs, [path.normalize('/elsewhere/tests/foo.ts')]);
+  });
+});
+
+module('Args | applyInputs', { concurrency: true }, () => {
+  test('classifies the same grammar argv positionals get', (assert) => {
+    const flags = Args.applyInputs({ inputs: [] }, PROJECT_ROOT, '/proj', [
+      'test/a-test.ts#34',
+      'test/b-test.ts',
+      'test/tests.html',
+    ]);
+
+    assert.deepEqual(flags.lineTargets, { [path.normalize('/proj/test/a-test.ts')]: [34] });
+    assert.deepEqual(flags.htmlPaths, ['test/tests.html']);
+    assert.deepEqual(flags.wholeInputPaths, [path.normalize('/proj/test/b-test.ts')]);
+    assert.deepEqual(flags.inputs, [
+      path.normalize('/proj/test/a-test.ts'),
+      path.normalize('/proj/test/b-test.ts'),
+    ]);
+  });
+
+  test('is idempotent for already-absolute inputs, so re-normalizing parsed flags is safe', (assert) => {
+    const once = Args.applyInputs({ inputs: [] }, PROJECT_ROOT, '/proj', ['test/a-test.ts']);
+    const twice = Args.applyInputs({ ...once, inputs: [] }, PROJECT_ROOT, '/proj', once.inputs);
+
+    assert.deepEqual(twice.inputs, once.inputs);
+  });
+
+  test('deduplicates a path mentioned both bare and with a line target', (assert) => {
+    const flags = Args.applyInputs({ inputs: [] }, PROJECT_ROOT, '/proj', ['a.ts', 'a.ts#7']);
+
+    assert.deepEqual(flags.inputs, [path.normalize('/proj/a.ts')], 'one entry, not two');
+    assert.deepEqual(flags.lineTargets, { [path.normalize('/proj/a.ts')]: [7] });
+    assert.deepEqual(flags.wholeInputPaths, [path.normalize('/proj/a.ts')]);
+  });
+});
+
 function withArgv(args, fn) {
   const original = process.argv;
   process.argv = ['node', 'cli.ts', ...args];
