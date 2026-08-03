@@ -290,7 +290,19 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
   // JS context mid-run, and both then wait out the startup timeout. The watcher has an internal
   // guard for its OWN events, but nothing coordinated it with a rerun asked for from outside.
   const reruns = serializer();
-  const rerun = (files?: string[]) => reruns(() => rebuildAndRun(config, connections, files));
+  // The two rerun shapes are NOT interchangeable, and collapsing them broke the rename tests:
+  //
+  //   whole-suite  drops the cached bundle and rebuilds it, because the file set changed
+  //   scoped       serves a freshly-built FILTERED bundle and leaves the full one alone
+  //
+  // A scoped rerun already compiles the files it was handed straight from disk, so it picks up
+  // edits without the full rebuild — paying for one would just make every `add` slower.
+  const rerun = (files?: string[]) =>
+    reruns(() =>
+      files
+        ? runInBrowser(config, connections, files).then(() => {})
+        : rebuildAndRun(config, connections),
+    );
 
   const { ready: watcherReady, killFileWatchers } = FileWatcher.setup(
     config.testFileLookupPaths,
@@ -302,10 +314,10 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
         // before `rename` (→ `add`) when a file is first created. The `add` event
         // will follow and trigger the correct filtered re-run.
         if (event === 'change' && !(file in config.fsTree)) return;
-        // The cached bundles are dropped inside `rebuildAndRun`, at the moment the rebuild
-        // starts — not here, when the event arrives. Clearing on arrival nulled `allTestCode`
-        // out from under a run that was already in flight, which then bailed out of its own
-        // post-navigation check having registered nothing.
+        // The cached bundle is dropped inside `rebuildAndRun`, when the rebuild starts — not
+        // here, when the event arrives. Clearing on arrival nulled `allTestCode` out from under
+        // a run already in flight, which then bailed out of its own post-navigation check having
+        // registered nothing. Serialized reruns make "at the start of the work" the safe moment.
         if (config.debug) {
           Reporter.notice(config, {
             level: 'info',
@@ -382,14 +394,14 @@ function serializer(): <T>(work: () => Promise<T>) => Promise<T> {
  * inside `runInBrowser`'s own try/catch, and an esbuild failure between here and there would
  * otherwise reach Node as an unhandled rejection and take the watch process down.
  */
-function rebuildAndRun(config: Config, connections: Connections, files?: string[]): Promise<void> {
+function rebuildAndRun(config: Config, connections: Connections): Promise<void> {
   const build = config.state.group.build;
   RunState.clearBundles(build);
   const rebuild = buildTestBundle(config);
   Task(rebuild).ignore('watch rebuild rejection — re-awaited by runInBrowser');
   build.preBuildPromise = rebuild;
 
-  return runInBrowser(config, connections, files).then(() => {});
+  return runInBrowser(config, connections).then(() => {});
 }
 
 /**
