@@ -36,7 +36,7 @@ output to the terminal.
 - `--junit` writes a JUnit XML report for CI dashboards, alongside the normal terminal output
 - `--coverage` reports V8 line coverage (terminal summary, plus optional `lcov` and `html` reports)
 - `--version` / `-v` prints the installed version
-- [JavaScript API](#javascript-api) — `await run('test/')` returns the results as data; silent by default, with `watch`, `search`, custom reporters and daemon control
+- [JavaScript API](#javascript-api) — `await run('test/')` returns the results as data; silent by default, with `watch`, `search`, custom reporters and daemon control. On npm and JSR (`jsr:@izelnakri/qunitx-cli/api`)
 - Optional daemon mode (`qunitx daemon start`) keeps Chrome and the esbuild context warm across runs — roughly halves the wall-clock time of repeated invocations
 - Docker image for zero-install CI usage
 
@@ -327,7 +327,14 @@ floor, JUnit, a custom reporter, and failure handling in one script.
 
 ### Deno and TypeScript
 
-The package ships its TypeScript sources, so Deno and Node 24 can import them directly:
+From JSR:
+
+```ts
+import { run } from 'jsr:@izelnakri/qunitx-cli/api';
+```
+
+The package also ships its TypeScript sources on npm, so Deno and Node 24 can import them
+directly:
 
 ```ts
 import { run } from 'qunitx-cli/lib/api/index.ts';

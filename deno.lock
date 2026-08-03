@@ -4,6 +4,7 @@
     "jsr:@std/fmt@*": "1.0.9",
     "jsr:@std/fmt@1": "1.0.9",
     "npm:@types/ws@*": "8.18.1",
+    "npm:@types/ws@8": "8.18.1",
     "npm:esbuild@*": "0.28.1",
     "npm:esbuild@~0.28.1": "0.28.1",
     "npm:js-yaml@^5.2.1": "5.2.1",

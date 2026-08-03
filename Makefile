@@ -248,10 +248,14 @@ release:
 	  npm install --package-lock-only --ignore-scripts; \
 	fi
 	npm publish --access public
-# Publish the jsr/ bootstrap package to JSR alongside npm. One arch-agnostic package
-# (jsr/cli.ts resolves os-arch at runtime and fetches the matching prebuilt binary
-# from the GitHub release), so a single publish covers every platform. --allow-dirty:
-# jsr/deno.json's bumped version is not committed yet at this point in the recipe.
+# Publish to JSR alongside npm. One arch-agnostic package with two exports: `.` is the
+# bootstrap (jsr/cli.ts resolves os-arch at runtime and fetches the matching prebuilt binary
+# from the GitHub release, so a single publish covers every platform), and `./api` is the JS
+# API. The staging step copies lib/, templates/ and package.json into jsr/ first, because JSR
+# resolves every export relative to the package root and a specifier may not climb above it.
+# --allow-dirty: jsr/deno.json's bumped version is not committed yet at this point in the
+# recipe, and the staged files are generated and gitignored.
+	node scripts/stage-jsr-library.ts
 	cd jsr && deno publish --allow-dirty
 	@node scripts/remove-optional-deps.js
 	@npm install --package-lock-only --ignore-scripts

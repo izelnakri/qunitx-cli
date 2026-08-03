@@ -22,7 +22,10 @@ import { type Result, Failure } from '../result/index.ts';
  * failure.data.flag; // '--port' — typed payload, no message parsing
  * ```
  */
-export const InvalidFlag = Failure.define(
+export const InvalidFlag: Failure.FailureFactory<
+  'InvalidFlag',
+  { flag: string; value: string; expected: string }
+> = Failure.define(
   'InvalidFlag',
   (data: { flag: string; value: string; expected: string }) =>
     `Invalid ${data.flag} value: "${data.value}". ${data.expected}`,

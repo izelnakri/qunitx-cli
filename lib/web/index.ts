@@ -1,18 +1,50 @@
 import http from 'node:http';
-// @deno-types="npm:@types/ws"
+// Constraint spelled out because this specifier bypasses the import map, and JSR requires
+// every npm specifier to carry one.
+// @deno-types="npm:@types/ws@^8"
 import WebSocket, { WebSocketServer } from 'ws';
 import { bindServerToPort } from '../setup/bind-server-to-port.ts';
 
-declare module 'node:http' {
-  interface IncomingMessage {
-    send: (data: string) => void;
-    path: string;
-    query: Record<string, string>;
-    params: Record<string, string>;
-  }
-  interface ServerResponse {
-    json: (data: unknown) => void;
-  }
+/**
+ * The request a route handler receives: node's, plus the four conveniences this server attaches
+ * before dispatching.
+ *
+ * An interface that *extends* `IncomingMessage` rather than a `declare module` augmenting it.
+ * The augmentation put `path`/`query`/`params`/`send` on every `node:http` request in the entire
+ * program — including ones this server never touched, where they were a lie the type checker
+ * would have vouched for. (It is also a global side effect JSR rejects outright.)
+ *
+ * ```ts
+ * // Defined, not invoked: a real request comes from the server's own dispatch.
+ * function routeOf(req: Request) {
+ *   return `${req.path}?${new URLSearchParams(req.query)}`;
+ * }
+ * ```
+ */
+export interface Request extends http.IncomingMessage {
+  /** Responds with `data` as `text/plain` and ends the response. */
+  send: (data: string) => void;
+  /** The URL's pathname, without the query string. */
+  path: string;
+  /** The parsed query string. */
+  query: Record<string, string>;
+  /** Values captured by the matched route's `:name` segments; `{}` for a literal route. */
+  params: Record<string, string>;
+}
+
+/**
+ * The response a route handler receives: node's, plus a JSON shorthand.
+ *
+ * ```ts
+ * // Defined, not invoked: a real response comes from the server's own dispatch.
+ * function ok(res: Response) {
+ *   return res.json({ ok: true });
+ * }
+ * ```
+ */
+export interface Response extends http.ServerResponse {
+  /** Responds with `data` as `application/json` and ends the response. */
+  json: (data: unknown) => void;
 }
 
 type NodeServerWithWSS = http.Server & { wss: WebSocketServer };
@@ -28,10 +60,7 @@ type NodeServerWithWSS = http.Server & { wss: WebSocketServer };
  * const handler: RouteHandler = (_req, res) => res.end('served');
  * ```
  */
-export type RouteHandler = (
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-) => unknown | Promise<unknown>;
+export type RouteHandler = (req: Request, res: Response) => unknown | Promise<unknown>;
 /**
  * Middleware function signature — call `next()` to continue the chain.
  *
@@ -42,11 +71,7 @@ export type RouteHandler = (
  * };
  * ```
  */
-export type Middleware = (
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-  next: () => void,
-) => void;
+export type Middleware = (req: Request, res: Response, next: () => void) => void;
 
 /**
  * One registered route: the parsed shape `get()`/`post()`/… store and `#findRouteHandler`
@@ -121,6 +146,10 @@ export class HTTPServer {
   /**
    * Creates and starts a plain `http.createServer` instance on the given port.
    *
+   * The handler gets node's own request and response, NOT this server's {@link Request} and
+   * {@link Response}: nothing in this path attaches `path`/`query`/`params`/`json`, so promising
+   * them would be a lie. The ambient augmentation this replaced told exactly that lie.
+   *
    * ```ts
    * // Defined, not invoked: binds a real port.
    * function example() {
@@ -169,7 +198,11 @@ export class HTTPServer {
       PUT: {},
     };
     this.middleware = [];
-    this._server = http.createServer((req, res) => {
+    this._server = http.createServer((rawReq, rawRes) => {
+      // The single cast in the file, and the only place one is honest: the four properties
+      // `Request`/`Response` promise are attached on the next lines, before anything reads them.
+      const req = rawReq as Request;
+      const res = rawRes as Response;
       req.send = (data: string) => {
         res.setHeader('Content-Type', 'text/plain');
         res.end(data);
@@ -334,7 +367,7 @@ export class HTTPServer {
     };
   }
 
-  #handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+  #handleRequest(req: Request, res: Response): void {
     const { method, url } = req;
     const urlObj = new URL(url!, 'http://localhost');
     const pathname = urlObj.pathname;
@@ -352,11 +385,7 @@ export class HTTPServer {
     }
   }
 
-  #runMiddleware(
-    req: http.IncomingMessage,
-    res: http.ServerResponse,
-    callback: RouteHandler,
-  ): void {
+  #runMiddleware(req: Request, res: Response, callback: RouteHandler): void {
     let index = 0;
     const next = () => {
       if (index >= this.middleware.length) {

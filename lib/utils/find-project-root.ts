@@ -13,11 +13,12 @@ import { searchInParentDirectories } from './search-in-parent-directories.ts';
  * ProjectRootNotFound.is(ProjectRootNotFound({ cwd: '/tmp' })); // true
  * ```
  */
-export const ProjectRootNotFound = Failure.define(
-  'ProjectRootNotFound',
-  (data: { cwd: string }) =>
-    `couldn't find a package.json at or above ${data.cwd} — did you run \`npm init\`?`,
-);
+export const ProjectRootNotFound: Failure.FailureFactory<'ProjectRootNotFound', { cwd: string }> =
+  Failure.define(
+    'ProjectRootNotFound',
+    (data: { cwd: string }) =>
+      `couldn't find a package.json at or above ${data.cwd} — did you run \`npm init\`?`,
+  );
 
 /** The one failure {@link findProjectRoot} declares. */
 export type ProjectRootNotFoundFailure = Failure.Of<typeof ProjectRootNotFound>;
