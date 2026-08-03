@@ -330,20 +330,23 @@ function instantiate(entry: ReporterName | Reporter): Reporter {
 }
 
 /**
- * Silence unless something is going to be printed. A reporter with nowhere to write would be a
- * confusing no-op, and a `stdout` with no reporter would still carry the `#` diagnostics — which
- * is a legitimate thing to want, so both independently opt in.
+ * Silence unless something is going to be printed.
+ *
+ * A *named* reporter is a request for the CLI's text, so it defaults to the process streams. A
+ * reporter **object** is not: it is a request to observe the run programmatically, and turning on
+ * the host's stdout because someone passed a collector would break the silent-by-default promise
+ * in the exact case they were being careful. Naming `stdout`/`stderr` opts in either way — and
+ * does so even with no reporter at all, which is how you get just the `#` diagnostics.
  */
 function resolveOutput(options: RunOptions): Output {
   if (options.stdout) {
     return streamOutput(options.stdout, options.stderr ?? options.stdout);
   } else if (options.stderr) {
     return streamOutput(process.stdout, options.stderr);
-  } else if (options.reporter) {
-    return processOutput;
   }
+  const requested = Array.isArray(options.reporter) ? options.reporter : [options.reporter];
 
-  return silentOutput;
+  return requested.some((entry) => typeof entry === 'string') ? processOutput : silentOutput;
 }
 
 /** Wraps the three convenience callbacks into one reporter, or nothing when none were given. */

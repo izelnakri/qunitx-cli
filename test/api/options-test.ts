@@ -72,6 +72,20 @@ module('API | options | reporting', { concurrency: true }, () => {
     assert.equal(reporting.reporters.length, 1, 'the collector, and nothing that prints');
   });
 
+  test('a reporter OBJECT does not turn on the process streams', (assert) => {
+    // Passing a collector is a request to observe, not to print. Only a named built-in — or an
+    // explicit stdout — means "put text on my terminal".
+    const reporting = resolveReporting({ reporter: { onTestEnd: () => {} } });
+
+    assert.equal(reporting.output, silentOutput);
+  });
+
+  test('a named reporter among objects still opts into them', (assert) => {
+    const reporting = resolveReporting({ reporter: [{ onTestEnd: () => {} }, 'dot'] });
+
+    assert.equal(reporting.output, processOutput);
+  });
+
   test('junit is additive rather than a choice of format', (assert) => {
     const reporting = resolveReporting({ reporter: 'spec', junit: true });
 
