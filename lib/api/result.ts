@@ -133,7 +133,8 @@ export interface RunResult {
   tests: TestResult[];
   /** The subset of `tests` that failed — the list you almost always want first. */
   failures: TestResult[];
-  /** Absolute paths of the test files this run executed. */
+  /** Absolute paths of the test files this run executed — the ones scoped to, in a
+   * filtered watch rerun, rather than everything being watched. */
   files: string[];
   /** Absolute paths of the test files with at least one failure, attributed via source maps. */
   failedFiles: string[];
@@ -269,7 +270,10 @@ export function buildResult(
     },
     tests,
     failures: tests.filter((test) => test.status === 'failed'),
-    files: Object.keys(config.fsTree),
+    // `lastRanFiles` rather than the whole fsTree: a watch-mode rerun scoped to one saved file
+    // ran that file, not everything being watched. The batch runner sets it to the full set, so
+    // the two agree there.
+    files: config.state.group.lastRanFiles ?? Object.keys(config.fsTree),
     failedFiles: Array.from(failedFiles),
     notices: collector.notices.slice(),
     browserLogs: collector.browserLogs.slice(),
