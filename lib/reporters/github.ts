@@ -68,7 +68,7 @@ export class GithubReporter implements Reporter {
     // One annotation per failing assertion: each has its own location, and GitHub renders
     // them at their exact line. Emitted as one write so the block can't be split apart.
     const title = details.fullName.join(' | ');
-    process.stdout.write(
+    config.state.output.write(
       failedAssertions(details, config.state.group.sourceMapDecoder, config.projectRoot)
         .map((failure) => `${annotation(title, failure)}\n`)
         .join(''),

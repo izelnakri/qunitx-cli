@@ -15,6 +15,8 @@ import * as RunState from './run-state.ts';
 import * as Result from '../result/index.ts';
 import { Task } from '../task/index.ts';
 import type { Config, FSTree as FSTreeShape } from '../types.ts';
+import type { Reporter as ReporterInstance } from '../reporters/types.ts';
+import type { Output } from '../reporters/output.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
 
 /**
@@ -89,6 +91,17 @@ export interface ConfigOptions extends Partial<Args.ParsedFlags> {
   cwd?: string;
   /** Live esbuild plugin objects, appended after any resolved from `package.json#qunitx.plugins`. */
   esbuildPlugins?: EsbuildPlugin[];
+  /**
+   * Reporter instances for this run, replacing the one `reporter`/`junit` would have selected.
+   * The way a caller observes a run as data rather than as text.
+   */
+  reporters?: ReporterInstance[];
+  /**
+   * Where reporter text and `#` diagnostics go. Defaults to the process streams; pass
+   * `silentOutput` for a run that prints nothing at all. Named apart from `output` — the build
+   * directory — because they are unrelated and both spellings are load-bearing.
+   */
+  reporterOutput?: Output;
 }
 
 /**
@@ -123,7 +136,13 @@ export function setup(options?: ConfigOptions): Task<Config, ConfigFailure> {
     // them, so the guard-and-return-it ladder this function used to open with is gone. Args.parse
     // is synchronous, so it hands back a union rather than a Task — `unwrap` is the union's own
     // way into that channel, throwing the failure by identity so its stack still points at Args.
-    const { cwd: requestedCwd, esbuildPlugins, ...provided } = options ?? {};
+    const {
+      cwd: requestedCwd,
+      esbuildPlugins,
+      reporters,
+      reporterOutput,
+      ...provided
+    } = options ?? {};
     const cwd = requestedCwd ? path.resolve(requestedCwd) : process.cwd();
     const projectRoot = await findProjectRoot(cwd);
     // Given options, the positional grammar still applies — `applyInputs` is the same
@@ -152,6 +171,11 @@ export function setup(options?: ConfigOptions): Task<Config, ConfigFailure> {
       // complete Config is only guaranteed at the return. The later `as Config` casts this
       // function used to repeat are now redundant.
     } as Config;
+    // Wired before anything below can emit: `pruneSupersededLineTargets` and the narrowing
+    // filters all announce what they decided through `Reporter.notice`, and a run whose
+    // reporters were still an empty array at that point would drop those diagnostics.
+    if (reporterOutput) config.state.output = reporterOutput;
+    config.state.reporters = reporters ?? Reporter.create(config);
     // `--debug` also reveals `.ignore(context)`-suppressed rejections as TAP comments —
     // one flag lights every deliberate swallow. (QUNITX_DEBUG covers the env path at
     // failure.ts load; enable-only, so a daemon run without the flag never turns it off.)
@@ -175,11 +199,7 @@ export function setup(options?: ConfigOptions): Task<Config, ConfigFailure> {
     // include a changed file. Watch mode skips this — watch is for fast feedback
     // on every save, not "what does my working tree affect" semantics.
     if (config.changedSince && !config.watch) {
-      config.fsTree = await getChangedFsTree(
-        config.fsTree,
-        config.projectRoot,
-        config.changedSince,
-      );
+      config.fsTree = await getChangedFsTree(config.fsTree, config, config.changedSince);
     }
 
     // --only-failed: restrict the whole run to files that failed on the previous run (persistent
@@ -189,10 +209,6 @@ export function setup(options?: ConfigOptions): Task<Config, ConfigFailure> {
     if (config.onlyFailed && !config.watch) {
       config.fsTree = await applyOnlyFailedFilter(config);
     }
-
-    // Built last: reporter selection reads the fully-merged flags. One instance per run, shared
-    // by every concurrent group via the group-config spread in run.ts.
-    config.state.reporters = Reporter.create(config);
 
     return config;
   });
@@ -218,12 +234,12 @@ function pruneSupersededLineTargets(config: Config): void {
     const coveredBy = wholeInputs.find((input) => coversFileWhole(input, file));
     if (!coveredBy) continue;
     const rel = path.relative(config.projectRoot, file).replaceAll('\\', '/');
-    console.log(
-      '#',
-      blue(
+    Reporter.notice(config, {
+      level: 'warning',
+      message: blue(
         `qunitx: ${rel}#${lineTargets[file].join(',')} line target ignored — a broader input runs the whole file`,
       ),
-    );
+    });
     delete lineTargets[file];
   }
 
@@ -262,17 +278,21 @@ async function applyOnlyFailedFilter(config: Config): Promise<FSTreeShape> {
     config.fsTree,
   );
   if (failed === null) {
-    console.log('#', `qunitx --only-failed: no failure cache found — running all tests`);
+    Reporter.notice(config, {
+      level: 'info',
+      message: `qunitx --only-failed: no failure cache found — running all tests`,
+    });
     return config.fsTree;
   }
 
   const count = failed.length;
-  console.log(
-    '#',
-    count === 0
-      ? `qunitx --only-failed: no previously-failing test files to run`
-      : `qunitx --only-failed: re-running ${count} previously-failing test file${count === 1 ? '' : 's'}`,
-  );
+  Reporter.notice(config, {
+    level: 'info',
+    message:
+      count === 0
+        ? `qunitx --only-failed: no previously-failing test files to run`
+        : `qunitx --only-failed: re-running ${count} previously-failing test file${count === 1 ? '' : 's'}`,
+  });
   return Object.fromEntries(failed.map((file) => [file, config.fsTree[file] ?? null]));
 }
 

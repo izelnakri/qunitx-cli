@@ -1,3 +1,4 @@
+import { processOutput, type Output } from '../reporters/output.ts';
 import type { Counter } from '../types.ts';
 
 /**
@@ -8,7 +9,7 @@ import type { Counter } from '../types.ts';
  *
  * import type { Counter } from '../types.ts';
  *
- * // Defined, not invoked: writes the plan and summary comments to stdout.
+ * // Defined, not invoked: writes the plan and summary comments to the run's output.
  * function example(counter: Counter) {
  *   TAP.displayFinalResult(counter, 1240);
  *   // "1..8" then "# tests 8", "# pass 7", … "# duration 1240"
@@ -21,14 +22,15 @@ import type { Counter } from '../types.ts';
 export function displayFinalResult(
   { testCount, passCount, skipCount, todoCount, failCount }: Counter,
   timeTaken: number,
+  output: Output = processOutput,
 ): void {
-  process.stdout.write('\n');
-  process.stdout.write(`1..${testCount}\n`);
-  process.stdout.write(`# tests ${testCount}\n`);
-  process.stdout.write(`# pass ${passCount}\n`);
-  process.stdout.write(`# skip ${skipCount}\n`);
-  process.stdout.write(`# todo ${todoCount}\n`);
-  process.stdout.write(`# fail ${failCount}\n`);
-  process.stdout.write(`# duration ${timeTaken}\n`);
-  process.stdout.write('\n');
+  output.write('\n');
+  output.write(`1..${testCount}\n`);
+  output.write(`# tests ${testCount}\n`);
+  output.write(`# pass ${passCount}\n`);
+  output.write(`# skip ${skipCount}\n`);
+  output.write(`# todo ${todoCount}\n`);
+  output.write(`# fail ${failCount}\n`);
+  output.write(`# duration ${timeTaken}\n`);
+  output.write('\n');
 }

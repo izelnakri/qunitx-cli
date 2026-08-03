@@ -5,6 +5,7 @@ import type { Buffer } from 'node:buffer';
 import type { BuildContext, Plugin as EsbuildPlugin } from 'esbuild';
 import type { SourceMapDecoder } from './utils/source-map.ts';
 import type { Reporter, ReporterName } from './reporters/types.ts';
+import type { Output } from './reporters/output.ts';
 import type { QUnitSelector } from './selection/line-targets.ts';
 import type { FailedTestRecord } from './utils/failure-cache.ts';
 
@@ -258,6 +259,12 @@ export interface RunState {
    * One set for the whole run, so a stateful reporter sees every group rather than one slice.
    */
   reporters: Reporter[];
+  /**
+   * Where this run's text goes: every reporter line and every `#` diagnostic. `processOutput`
+   * for the CLI, `silentOutput` for a programmatic run that only wants the result value.
+   * Shared by reference across concurrent groups, like everything else outside `group`.
+   */
+  output: Output;
   /**
    * Non-null exactly when this run is executing inside the persistent daemon process — it is
    * the daemon-mode flag as well as the handles. Daemon runs reuse the shared browser, suppress

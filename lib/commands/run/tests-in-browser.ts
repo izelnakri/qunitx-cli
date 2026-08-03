@@ -189,9 +189,10 @@ export async function buildTestBundle(config: Config): Promise<void> {
   // with no test modules. The pending-trigger mechanism will fire a correct rebuild once
   // the IN_CREATE event re-adds the file to fsTree.
   if (allTestFilePaths.length === 0) {
-    return console.log(
-      '# [buildTestBundle] fsTree is empty — skipping build (no test files found)',
-    );
+    return Reporter.notice(config, {
+      level: 'warning',
+      message: '[buildTestBundle] fsTree is empty — skipping build (no test files found)',
+    });
   }
 
   const outDir = path.resolve(projectRoot, output);
@@ -249,8 +250,8 @@ export async function buildTestBundle(config: Config): Promise<void> {
   try {
     const [{ js: allTestCode, metafile }] = await Promise.all([
       config.watch || config.state.daemon
-        ? buildIncrementally(buildOptions, fileKey, cacheHolder, needsDisk)
-        : buildWithOverlayfsRetry(buildOptions, needsDisk),
+        ? buildIncrementally(buildOptions, fileKey, cacheHolder, needsDisk, config)
+        : buildWithOverlayfsRetry(buildOptions, needsDisk, config),
       Promise.all(
         build.htmlPathsToRunTests.map(async (htmlPath) => {
           const targetPath = path.join(outDir, htmlPath);
@@ -374,11 +375,14 @@ export async function run(
       build.activeRebuild = null;
       if (!build.allTestCode) {
         const fallback = build.fallbackPage;
-        config.watch &&
-          fallback?.kind === 'build-error' &&
-          console.log(
-            `# esbuild Bundle Error: ${fallback.error.formatted}`.split('\n').join('\n# '),
-          );
+        if (config.watch && fallback?.kind === 'build-error') {
+          // Every line of the block gets its own `#`, so a multi-line esbuild message stays
+          // inside the TAP document rather than breaking out of it.
+          Reporter.notice(config, {
+            level: 'error',
+            message: `esbuild Bundle Error: ${fallback.error.formatted}`.split('\n').join('\n# '),
+          });
+        }
         return connections;
       }
     }
@@ -396,9 +400,10 @@ export async function run(
         );
         build.fallbackPage = { kind: 'no-tests', files: displayFiles };
         const fileWord = allTestFilePaths.length === 1 ? 'file' : 'files';
-        console.log(
-          `# Warning: 0 tests registered — no QUnit test cases found in ${allTestFilePaths.length} ${fileWord}`,
-        );
+        Reporter.notice(config, {
+          level: 'warning',
+          message: `Warning: 0 tests registered — no QUnit test cases found in ${allTestFilePaths.length} ${fileWord}`,
+        });
         Task(
           fs.writeFile(path.join(outDir, 'index.html'), WebServer.buildNoTestsHTML(displayFiles)),
         ).ignore('no-tests fallback page write');
@@ -449,7 +454,7 @@ export async function run(
     }
 
     if (config.watch) {
-      console.log(`# ${exception}`);
+      Reporter.notice(config, { level: 'error', message: String(exception) });
     } else {
       throw exception;
     }
@@ -542,9 +547,10 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
   );
 
   if (activeGroups.length === 0)
-    return console.log(
-      '# [buildAllGroupBundles] all groups empty — skipping build (no test files found)',
-    );
+    return Reporter.notice(groupConfigs[0], {
+      level: 'warning',
+      message: '[buildAllGroupBundles] all groups empty — skipping build (no test files found)',
+    });
 
   await Promise.all(
     activeGroups.map((group) =>
@@ -699,6 +705,7 @@ function buildFilteredTests(
       footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
     },
     needsDisk,
+    config,
   ).then((r) => r.js);
 }
 
@@ -714,6 +721,7 @@ function buildFilteredTests(
 async function runWithOverlayfsRetry(
   getContents: () => Promise<{ result: esbuild.BuildResult; js: Buffer }>,
   needsDisk: boolean,
+  config: Config,
 ): Promise<{ js: Buffer; metafile?: AffectedMetafile }> {
   let { result, js } = await getContents();
   const initialSize = js.length;
@@ -729,9 +737,10 @@ async function runWithOverlayfsRetry(
   // If the size never moved from the initial value, the file is just legitimately small
   // (no QUnit imports, tree-shaken to the footer only) and no warning is needed.
   if (js.length < EMPTY_BUNDLE_THRESHOLD && js.length !== initialSize) {
-    console.log(
-      `# [buildWithOverlayfsRetry] bundle is ${js.length} bytes after ${MAX_RETRIES} retries — proceeding`,
-    );
+    Reporter.notice(config, {
+      level: 'warning',
+      message: `[buildWithOverlayfsRetry] bundle is ${js.length} bytes after ${MAX_RETRIES} retries — proceeding`,
+    });
   }
 
   if (needsDisk) {
@@ -746,13 +755,18 @@ async function runWithOverlayfsRetry(
 function buildWithOverlayfsRetry(
   options: esbuild.BuildOptions,
   needsDisk: boolean,
+  config: Config,
 ): Promise<{ js: Buffer; metafile?: AffectedMetafile }> {
   const buildOpts: esbuild.BuildOptions = { ...options, write: false };
-  return runWithOverlayfsRetry(async () => {
-    const result = await esbuild.build(buildOpts);
-    const jsFile = result.outputFiles!.find((f) => !f.path.endsWith('.map'))!;
-    return { result, js: Buffer.from(jsFile.contents) };
-  }, needsDisk);
+  return runWithOverlayfsRetry(
+    async () => {
+      const result = await esbuild.build(buildOpts);
+      const jsFile = result.outputFiles!.find((f) => !f.path.endsWith('.map'))!;
+      return { result, js: Buffer.from(jsFile.contents) };
+    },
+    needsDisk,
+    config,
+  );
 }
 
 // Uses an esbuild incremental context so the module graph stays warm between rebuilds.
@@ -767,6 +781,7 @@ async function buildIncrementally(
   fileKey: string,
   cache: EsbuildCache,
   needsDisk: boolean,
+  config: Config,
 ): Promise<{ js: Buffer; metafile?: AffectedMetafile }> {
   const buildOpts: esbuild.BuildOptions = { ...options, write: false };
 
@@ -777,11 +792,15 @@ async function buildIncrementally(
   }
 
   const ctx = cache.context!;
-  return runWithOverlayfsRetry(async () => {
-    const result = await ctx.rebuild();
-    const jsFile = result.outputFiles!.find((f) => !f.path.endsWith('.map'))!;
-    return { result, js: Buffer.from(jsFile.contents) };
-  }, needsDisk);
+  return runWithOverlayfsRetry(
+    async () => {
+      const result = await ctx.rebuild();
+      const jsFile = result.outputFiles!.find((f) => !f.path.endsWith('.map'))!;
+      return { result, js: Buffer.from(jsFile.contents) };
+    },
+    needsDisk,
+    config,
+  );
 }
 
 /**
@@ -806,7 +825,6 @@ async function runTestInsideHTMLFile(
   // this is what tells a genuinely-empty run (done, 0 tests) apart from a timeout that never ran
   // tests (no done, but the runtime pre-initialised window.QUNIT_RESULT to a 0 tally).
   let doneReceived = false;
-  let targetError: unknown;
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   // wsConnected is set by config.state.group.signals.onWsOpen when Chrome's WS socket opens (< 1s after navigation,
   // before test bundle compilation finishes). Distinguishes "WS never opened" from "WS opened
@@ -849,7 +867,10 @@ async function runTestInsideHTMLFile(
     // spec/dot/github run. --debug forces it on regardless: the URL is the whole point of
     // debug mode (open it in a real browser), whatever the reporter.
     if (config.reporter === 'tap' || config.debug) {
-      console.log('#', blue(`QUnitX running: http://localhost:${config.port}${filePath}`));
+      Reporter.notice(config, {
+        level: 'info',
+        message: blue(`QUnitX running: http://localhost:${config.port}${filePath}`),
+      });
     }
 
     // navMs is the budget Playwright gets to commit the navigation. Startup race timers must
@@ -944,9 +965,9 @@ async function runTestInsideHTMLFile(
       config.state.group.lastQUnitResult ??
       (await page.evaluate(() => (globalThis as { QUNIT_RESULT?: QUnitResult }).QUNIT_RESULT));
   } catch (error) {
-    targetError = error;
-    console.log(error);
-    console.error(error);
+    // Dumped once, here. The outcome branches below used to re-log the same error before their
+    // own `# TIMEOUT:` line, printing every navigation failure twice.
+    dumpError(config, error);
   } finally {
     clearTimeout(timeoutHandle);
     page.off('close', resolveTestRace);
@@ -972,25 +993,32 @@ async function runTestInsideHTMLFile(
     // before tests.js ran (a CPU-starved page load whose race timer fired first). Both mean the
     // tests never executed — a timeout, not a green run. This used to slip through as a silent
     // exit-0 when the pre-initialised {totalTests:0} looked like a genuinely empty file.
-    if (targetError) console.log(targetError);
     const wsReason = !wsConnected
       ? 'WebSocket connection never received — Chrome may be CPU-starved or the page failed to load'
       : 'WebSocket connected but no tests ran — QUnit may have failed to start';
-    console.log(`# TIMEOUT: ${wsReason}`);
-    console.log('BROWSER: runtime error thrown during executing tests');
-    console.error('BROWSER: runtime error thrown during executing tests');
+    Reporter.notice(config, { level: 'error', message: `TIMEOUT: ${wsReason}` });
+    Reporter.notice(config, {
+      level: 'error',
+      raw: true,
+      stream: 'both',
+      message: 'BROWSER: runtime error thrown during executing tests\n',
+    });
     failRun();
   } else if (outcome.kind === 'empty') {
     // QUnit fired 'done' with zero registered tests — a genuinely empty file (e.g. a helper).
     // Not a failure — handled at the run level as a warning.
     return;
   } else if (outcome.kind === 'stalled') {
-    if (targetError) console.log(targetError);
-    console.log(
-      `# TIMEOUT: test stalled after ${QUNIT_RESULT!.finishedTests}/${QUNIT_RESULT!.totalTests} finished — last active: ${QUNIT_RESULT!.currentTest}`,
-    );
-    console.log(`BROWSER: TEST TIMED OUT: ${QUNIT_RESULT!.currentTest}`);
-    console.error(`BROWSER: TEST TIMED OUT: ${QUNIT_RESULT!.currentTest}`);
+    Reporter.notice(config, {
+      level: 'error',
+      message: `TIMEOUT: test stalled after ${QUNIT_RESULT!.finishedTests}/${QUNIT_RESULT!.totalTests} finished — last active: ${QUNIT_RESULT!.currentTest}`,
+    });
+    Reporter.notice(config, {
+      level: 'error',
+      raw: true,
+      stream: 'both',
+      message: `BROWSER: TEST TIMED OUT: ${QUNIT_RESULT!.currentTest}\n`,
+    });
     failRun();
   } else if (config.state.groupCount === 1) {
     // Every registered test finished. The WebSocket testEnd stream is the only channel that
@@ -1003,13 +1031,15 @@ async function runTestInsideHTMLFile(
     // tally cannot safely rewrite it (the multi-group failure safety net below still applies).
     const undelivered = reconcileUndeliveredResults(config.state.results.counter, QUNIT_RESULT!);
     if (undelivered > 0) {
-      const warning =
-        `# [qunitx] WARNING: ${undelivered} test result(s) finished in the browser but never ` +
-        `reached the runner — the WebSocket stream under-delivered (CPU-starved runner or a ` +
-        `dropped connection). Reconciled from QUnit's own tally so the summary and exit code ` +
-        `are correct; re-run to get the per-test lines back.\n`;
-      process.stdout.write(warning);
-      process.stderr.write(warning);
+      Reporter.notice(config, {
+        level: 'warning',
+        stream: 'both',
+        message:
+          `[qunitx] WARNING: ${undelivered} test result(s) finished in the browser but never ` +
+          `reached the runner — the WebSocket stream under-delivered (CPU-starved runner or a ` +
+          `dropped connection). Reconciled from QUnit's own tally so the summary and exit code ` +
+          `are correct; re-run to get the per-test lines back.`,
+      });
     }
   } else if (QUNIT_RESULT!.failedTests > config.state.results.counter.failCount) {
     // Multi-group safety net: the shared counter aggregates every group, so we cannot rewrite
@@ -1090,6 +1120,19 @@ export function reconcileUndeliveredResults(counter: Counter, result: QUnitResul
     counter.testCount - counter.failCount - counter.skipCount - counter.todoCount,
   );
   return undelivered;
+}
+
+/**
+ * Emits a caught error verbatim on both streams — the shape `console.log(err)` +
+ * `console.error(err)` produced, minus the `#` prefix a stack must not carry.
+ */
+function dumpError(config: Config, error: unknown): void {
+  Reporter.notice(config, {
+    level: 'error',
+    raw: true,
+    stream: 'both',
+    message: `${(error as Error)?.stack ?? String(error)}\n`,
+  });
 }
 
 /**

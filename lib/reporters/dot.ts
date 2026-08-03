@@ -46,16 +46,16 @@ export class DotReporter implements Reporter {
    * }
    * ```
    */
-  onRunStart(_config: Config, info: RunStartInfo): void {
+  onRunStart(config: Config, info: RunStartInfo): void {
     this.#column = 0;
     this.#failures = [];
     if (info.fileCount === null) return;
     if (info.fileCount === 0) {
-      process.stdout.write('\nNo test files found.\n');
+      config.state.output.write('\nNo test files found.\n');
       return;
     }
     const files = `${info.fileCount} test file${info.fileCount === 1 ? '' : 's'}`;
-    process.stdout.write(`\nRunning ${files} across ${info.groupCount} worker(s)\n\n`);
+    config.state.output.write(`\nRunning ${files} across ${info.groupCount} worker(s)\n\n`);
   }
 
   /**
@@ -76,7 +76,9 @@ export class DotReporter implements Reporter {
     // group's output between the character and its own newline.
     const wrapped = ++this.#column >= LINE_WIDTH;
     if (wrapped) this.#column = 0;
-    process.stdout.write(wrapped ? `${statusDot(details.status)}\n` : statusDot(details.status));
+    config.state.output.write(
+      wrapped ? `${statusDot(details.status)}\n` : statusDot(details.status),
+    );
 
     if (details.status !== 'failed') return;
     this.#failures.push({
@@ -119,7 +121,7 @@ export class DotReporter implements Reporter {
       : '';
 
     // Leading newline closes the dot matrix when it ends mid-line.
-    process.stdout.write(`${this.#column > 0 ? '\n' : ''}${counts}\n${recap}\n`);
+    config.state.output.write(`${this.#column > 0 ? '\n' : ''}${counts}\n${recap}\n`);
   }
 }
 

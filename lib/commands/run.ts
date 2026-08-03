@@ -164,9 +164,10 @@ export async function watch(config: Config): Promise<WatchSession> {
 // firefox/webkit, warn once and disable so the rest of the pipeline treats it as off.
 function disableUnsupportedCoverage(config: Config): void {
   if (!config.coverage || config.browser === 'chromium') return;
-  console.log(
-    `# Warning: --coverage requires the chromium browser; skipping coverage for ${config.browser}.`,
-  );
+  Reporter.notice(config, {
+    level: 'warning',
+    message: `Warning: --coverage requires the chromium browser; skipping coverage for ${config.browser}.`,
+  });
   config.coverage = false;
 }
 
@@ -234,28 +235,29 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
     );
     if (failed && failed.length > 0) {
       initialFilter = failed;
-      console.log(
-        '#',
-        blue(
+      Reporter.notice(config, {
+        level: 'info',
+        message: blue(
           `qunitx --only-failed: first run scoped to ${failed.length} previously-failing test file${failed.length === 1 ? '' : 's'} — press "qa" to run all`,
         ),
-      );
+      });
     } else {
-      console.log('#', blue(`qunitx --only-failed: no cached failures — running all tests`));
+      Reporter.notice(config, {
+        level: 'info',
+        message: blue(`qunitx --only-failed: no cached failures — running all tests`),
+      });
     }
   } else if (config.changedSince) {
     // getChangedFsTree logs its own affected/fallback counts and returns the full tree on
     // fallback (cold metafile / git failure / blast-radius); scope only when it narrowed.
-    const changed = Object.keys(
-      await getChangedFsTree(config.fsTree, config.projectRoot, config.changedSince),
-    );
+    const changed = Object.keys(await getChangedFsTree(config.fsTree, config, config.changedSince));
     if (changed.length < Object.keys(config.fsTree).length) {
       initialFilter = changed;
       if (changed.length > 0) {
-        console.log(
-          '#',
-          blue(`qunitx --changed/--since: first run scoped — press "qa" to run all`),
-        );
+        Reporter.notice(config, {
+          level: 'info',
+          message: blue(`qunitx --changed/--since: first run scoped — press "qa" to run all`),
+        });
       }
     }
   }
@@ -298,9 +300,10 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
         // may catch the file in a transient empty/partial state and produce a broken rerun.
         RunState.clearBundles(build);
         if (config.debug) {
-          console.log(
-            `# Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
-          );
+          Reporter.notice(config, {
+            level: 'info',
+            message: `Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
+          });
         }
         // Kick off rebuild immediately so it races Chrome navigation (same pattern as the
         // initial watch-mode build). runInBrowser picks up the promise from
@@ -311,7 +314,10 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
         return await runInBrowser(config, connections);
       }
       if (config.debug) {
-        console.log(`# Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`);
+        Reporter.notice(config, {
+          level: 'info',
+          message: `Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
+        });
       }
       await runInBrowser(config, connections, [file]);
     },
@@ -577,7 +583,14 @@ async function runConcurrentMode(
     (code, result) => {
       // `reason` only exists on the rejected arm of the union, so narrow before reading it.
       if (result.status !== 'rejected') return code;
-      console.error(result.reason);
+      // Raw and stderr-only: a rejected group's reason is an Error whose stack IS the diagnostic,
+      // and un-prefixed multi-line text on stdout would corrupt the TAP document.
+      Reporter.notice(config, {
+        level: 'error',
+        raw: true,
+        stream: 'error',
+        message: `${(result.reason as Error)?.stack ?? String(result.reason)}\n`,
+      });
       return 1;
     },
     config.state.results.counter.failCount > 0 ? 1 : 0,
@@ -587,13 +600,17 @@ async function runConcurrentMode(
     if (isFilteredRun(config)) {
       // A filter matching nothing is a typo, not a green run — every neighbouring runner
       // fails here, and passing CI on a mistyped -t is the worst outcome available.
-      console.log(`# No tests matched ${describeActiveFilters(config)}`);
+      Reporter.notice(config, {
+        level: 'warning',
+        message: `No tests matched ${describeActiveFilters(config)}`,
+      });
       exitCode = 1;
     } else {
       const fileWord = allFiles.length === 1 ? 'file' : 'files';
-      console.log(
-        `# Warning: 0 tests registered — no QUnit test cases found in ${allFiles.length} ${fileWord}`,
-      );
+      Reporter.notice(config, {
+        level: 'warning',
+        message: `Warning: 0 tests registered — no QUnit test cases found in ${allFiles.length} ${fileWord}`,
+      });
     }
   }
 
@@ -684,12 +701,12 @@ async function resolveHtmlFixtures(config: Config): Promise<void> {
       htmlAssets.dynamicContentHTMLs[filePath] = html;
       result.htmlPathsToRunTests.push(filePath.replace(config.projectRoot, ''));
     } else {
-      console.log(
-        '#',
-        yellow(
+      Reporter.notice(config, {
+        level: 'warning',
+        message: yellow(
           `WARNING: Static html file with no {{qunitxScript}} or handlebars-style tokens detected. Therefore ignoring ${filePath}`,
         ),
-      );
+      });
       htmlAssets.staticHTMLs[filePath] = html;
     }
 

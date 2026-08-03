@@ -44,16 +44,16 @@ export class SpecReporter implements Reporter {
    * }
    * ```
    */
-  onRunStart(_config: Config, info: RunStartInfo): void {
+  onRunStart(config: Config, info: RunStartInfo): void {
     this.#lastModule = null;
     this.#failures = [];
     if (info.fileCount === null) return;
     if (info.fileCount === 0) {
-      process.stdout.write('\nNo test files found.\n');
+      config.state.output.write('\nNo test files found.\n');
       return;
     }
     const files = `${info.fileCount} test file${info.fileCount === 1 ? '' : 's'}`;
-    process.stdout.write(`\nRunning ${files} across ${info.groupCount} worker(s)\n`);
+    config.state.output.write(`\nRunning ${files} across ${info.groupCount} worker(s)\n`);
   }
 
   /**
@@ -77,7 +77,7 @@ export class SpecReporter implements Reporter {
     const line = `  ${statusMark(details.status)} ${details.fullName.at(-1) ?? ''}${duration(details)}\n`;
 
     if (details.status !== 'failed') {
-      process.stdout.write(header + line);
+      config.state.output.write(header + line);
       return;
     }
 
@@ -86,7 +86,7 @@ export class SpecReporter implements Reporter {
     const block = formatFailureBlock(
       failedAssertions(details, config.state.group.sourceMapDecoder, config.projectRoot),
     );
-    process.stdout.write(header + line + (block ? indentString(block, 4) : ''));
+    config.state.output.write(header + line + (block ? indentString(block, 4) : ''));
     // Remember the headline for the end-of-run recap so a failure buried thousands of lines
     // up is still actionable.
     this.#failures.push(details.fullName.join(' | '));
@@ -119,7 +119,7 @@ export class SpecReporter implements Reporter {
       ? `\n${red('Failures:')}\n${this.#failures.map((name, index) => `  ${index + 1}) ${name}`).join('\n')}\n`
       : '';
 
-    process.stdout.write(`${counts}\n${recap}\n`);
+    config.state.output.write(`${counts}\n${recap}\n`);
   }
 }
 
