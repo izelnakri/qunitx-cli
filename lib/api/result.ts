@@ -6,6 +6,7 @@ import type {
   TestAssertion,
   TestDetails,
 } from '../reporters/types.ts';
+import { buildRows } from '../coverage/report.ts';
 import type { RunOutcome } from '../commands/run.ts';
 
 /**
@@ -306,44 +307,36 @@ export function toTestResult(details: TestDetails): TestResult {
   };
 }
 
-/** Folds the raw per-line coverage map into per-file counts plus the run totals. */
+/**
+ * Folds the run's coverage into per-file counts plus the totals.
+ *
+ * `buildRows` does the folding — the same function the terminal report uses — rather than a
+ * second walk of the collector. That is not only less code: it carries the Windows lesson, where
+ * the two sides arrive in different shapes (fsTree paths use backslashes, source-map keys always
+ * `/`) and a naive comparison silently leaks every test file into its own report.
+ */
 function summarizeCoverage(config: Config): CoverageSummary {
-  const collected = config.state.results.coverage!;
-  const testFiles = new Set(Object.keys(config.fsTree));
-  const files: FileCoverageSummary[] = [];
-  let coveredLines = 0;
-  let coverableLines = 0;
+  const rows = buildRows(
+    config.state.results.coverage!,
+    new Set(Object.keys(config.fsTree)),
+    config.projectRoot,
+  );
+  const coveredLines = rows.reduce((total, row) => total + row.covered, 0);
+  const coverableLines = rows.reduce((total, row) => total + row.total, 0);
 
-  for (const [absolutePath, fileCoverage] of collected) {
-    // Same exclusion the terminal report applies: a test file's own coverage is noise, and
-    // node_modules never reached the collector.
-    if (testFiles.has(absolutePath)) continue;
-    const coverable = fileCoverage.coverable.size;
-    if (coverable === 0) continue;
-    let covered = 0;
-    for (const line of fileCoverage.coverable) {
-      if ((fileCoverage.covered.get(line) ?? 0) > 0) covered++;
-    }
-    coveredLines += covered;
-    coverableLines += coverable;
-    files.push({
-      path: displayPath(absolutePath, config.projectRoot),
-      coveredLines: covered,
-      coverableLines: coverable,
-      percent: percentOf(covered, coverable),
-    });
-  }
-  files.sort((left, right) => left.path.localeCompare(right.path));
-
-  return { files, coveredLines, coverableLines, percent: percentOf(coveredLines, coverableLines) };
+  return {
+    files: rows.map((row) => ({
+      path: row.displayPath,
+      coveredLines: row.covered,
+      coverableLines: row.total,
+      percent: percentOf(row.covered, row.total),
+    })),
+    coveredLines,
+    coverableLines,
+    percent: percentOf(coveredLines, coverableLines),
+  };
 }
 
 function percentOf(covered: number, coverable: number): number {
   return coverable === 0 ? 0 : Math.round((covered / coverable) * 10000) / 100;
-}
-
-function displayPath(absolutePath: string, projectRoot: string): string {
-  return absolutePath.startsWith(`${projectRoot}/`)
-    ? absolutePath.slice(projectRoot.length + 1)
-    : absolutePath.replaceAll('\\', '/');
 }
