@@ -29,11 +29,12 @@ import type { Plugin as EsbuildPlugin } from 'esbuild';
  * failure.message; // 'package.json#qunitx.plugins must be an array, received string'
  * ```
  */
-export const InvalidPlugins = Result.Failure.define(
-  'InvalidPlugins',
-  (data: { received: string }) =>
-    `package.json#qunitx.plugins must be an array, received ${data.received}`,
-);
+export const InvalidPlugins: Result.Failure.FailureFactory<'InvalidPlugins', { received: string }> =
+  Result.Failure.define(
+    'InvalidPlugins',
+    (data: { received: string }) =>
+      `package.json#qunitx.plugins must be an array, received ${data.received}`,
+  );
 
 /**
  * A plugin specifier could not be resolved or imported.
@@ -49,7 +50,10 @@ export const InvalidPlugins = Result.Failure.define(
  * failure.data.specifier; // 'esbuild-plugin-vue' — the entry at fault, resolver error under `.cause`
  * ```
  */
-export const PluginLoadFailed = Result.Failure.define(
+export const PluginLoadFailed: Result.Failure.FailureFactory<
+  'PluginLoadFailed',
+  { specifier: string }
+> = Result.Failure.define(
   'PluginLoadFailed',
   (data: { specifier: string }) => `could not load esbuild plugin "${data.specifier}"`,
 );

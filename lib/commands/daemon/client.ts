@@ -163,7 +163,11 @@ export async function shutdown(cwd: string = process.cwd()): Promise<boolean> {
  * failure.message; // 'no daemon is listening for this project'
  * ```
  */
-export const DaemonUnreachable = Failure.define(
+export const DaemonUnreachable: Failure.FailureFactory<'DaemonUnreachable', undefined> &
+  ((
+    data?: undefined,
+    options?: Failure.FailureOptions,
+  ) => Failure.Failure<'DaemonUnreachable', undefined>) = Failure.define(
   'DaemonUnreachable',
   'no daemon is listening for this project',
 );
@@ -183,7 +187,10 @@ export const DaemonUnreachable = Failure.define(
  * // 'daemon closed the connection (close) without reporting a result'
  * ```
  */
-export const DaemonDisconnected = Failure.define(
+export const DaemonDisconnected: Failure.FailureFactory<
+  'DaemonDisconnected',
+  { reason: 'close' | 'error' | 'no-result' }
+> = Failure.define(
   'DaemonDisconnected',
   // 'no-result' is the version-skew case: a daemon older than the client answered an
   // options-driven request without the `result` chunk that request is defined by.

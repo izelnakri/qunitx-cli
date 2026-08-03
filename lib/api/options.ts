@@ -145,7 +145,10 @@ export interface ResolvedReporting {
  * failure.data.option; // 'browser' — typed payload, no message parsing
  * ```
  */
-export const InvalidOption = Failure.define(
+export const InvalidOption: Failure.FailureFactory<
+  'InvalidOption',
+  { option: string; value: unknown; expected: string }
+> = Failure.define(
   'InvalidOption',
   (data: { option: string; value: unknown; expected: string }) =>
     `Invalid \`${data.option}\` value: ${JSON.stringify(data.value) ?? String(data.value)}. Expected ${data.expected}.`,

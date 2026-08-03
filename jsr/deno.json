@@ -1,16 +1,27 @@
 {
   "name": "@izelnakri/qunitx-cli",
   "version": "0.33.0",
-  "description": "Bootstrap that fetches and caches the matching qunitx-cli prebuilt binary, then spawns it.",
+  "description": "qunitx-cli: the JS API under ./api, plus a bootstrap that fetches and caches the matching prebuilt binary for the CLI.",
   "license": "MIT",
+  "nodeModulesDir": "auto",
+  "imports": {
+    "esbuild": "npm:esbuild@^0.28.1",
+    "ws": "npm:ws@^8.21.0",
+    "@types/ws": "npm:@types/ws@^8",
+    "playwright-core": "npm:playwright-core@1.61.1"
+  },
   "exports": {
-    ".": "./cli.ts"
+    ".": "./cli.ts",
+    "./api": "./lib/api/index.ts"
   },
   "publish": {
     "include": [
       "cli.ts",
       "deno.json",
-      "README.md"
+      "README.md",
+      "lib",
+      "templates",
+      "package.json"
     ]
   }
 }
