@@ -20,6 +20,8 @@ process.title = 'qunitx';
 // write queue stalls until the reader catches up. 250ms was tight enough to be the normal path
 // there, which is exactly what it must never be.
 const FLUSH_GRACE_MS = 30_000;
+// Conventional exit code for a process terminated by SIGTERM (128 + signal number 15).
+const EXIT_CODE_SIGTERM = 128 + 15;
 
 // Command-module imports are dynamic so the daemon-routed-run path doesn't
 // load `help.ts`, `init.ts`, `generate.ts`, or `setup/config.ts` (and its
@@ -74,7 +76,7 @@ const FLUSH_GRACE_MS = 30_000;
   // Local-run path: lazy-import Config.setup + run.ts (and their transitive
   // chains: esbuild, playwright-core, fs-tree, etc.). Loading in parallel lets
   // playwright-core's heavy module evaluation overlap with config assembly.
-  const [Config, { run }] = await Promise.all([
+  const [Config, { run, watch }] = await Promise.all([
     import('./lib/setup/config.ts'),
     import('./lib/commands/run.ts'),
   ]);
@@ -102,7 +104,39 @@ const FLUSH_GRACE_MS = 30_000;
     return exitAfterFlush(exitCode);
   }
 
-  return await run(config);
+  // Watch mode hands back a live session and leaves the process running. Everything that makes
+  // it a *terminal* session rather than a library call — stdin shortcuts, the SIGTERM handler,
+  // the banner — is wired up here, because `lib/` has no business owning any of the three.
+  if (config.watch) {
+    const session = await watch(config);
+    const [KeyboardEvents, { blue }] = await Promise.all([
+      import('./lib/setup/keyboard-events.ts'),
+      import('./lib/utils/color.ts'),
+    ]);
+    KeyboardEvents.setup(session.config, session.connections);
+    // Close the HTTP server explicitly on SIGTERM so the port is reclaimed by application code
+    // rather than as a side effect of OS process cleanup — on macOS, waitpid() can return a few
+    // ms before the socket is reclaimed, which makes the port look busy to whatever starts next.
+    // On Windows child.kill('SIGTERM') calls TerminateProcess() so this never runs, and
+    // TerminateProcess is synchronous, so the race doesn't exist there either.
+    process.once('SIGTERM', () => {
+      void session.close().finally(() => process.exit(EXIT_CODE_SIGTERM));
+    });
+    console.log('#', blue(`Watching files... You can browse the tests on ${session.url} ...`));
+    return console.log(
+      '#',
+      blue(
+        `Shortcuts: Press "qq" to abort running tests, "qa" to run all the tests, "qf" to run last failing test, "ql" to repeat last test`,
+      ),
+    );
+  }
+
+  const outcome = await run(config);
+  // The trailing newline the batch run has always ended on. Daemon-routed runs skip it — the
+  // daemon's own local run produced it inside the socket stream already.
+  process.stdout.write('\n');
+
+  return exitAfterFlush(outcome.exitCode);
 })().catch(async (error) => {
   // The program's ONE crash boundary, and the two-tier rule at the very edge: a declared failure
   // is a message (`init`/`generate` reach here when there is no package.json to work in), a bug

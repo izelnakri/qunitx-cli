@@ -10,7 +10,6 @@ import { parseIdleTimeout } from './parse-idle-timeout.ts';
 import * as Socket from './socket.ts';
 import * as Config from '../../setup/config.ts';
 import * as Browser from '../../setup/browser.ts';
-import { DaemonRunError } from '../run/tests-in-browser.ts';
 import { run } from '../run.ts';
 import { borrowArgv, borrowEnv } from '../../utils/borrowed-globals.ts';
 import * as Result from '../../result/index.ts';
@@ -693,11 +692,10 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
 }
 
 /**
- * Performs one test run inside the daemon by delegating to `run()` — the same code
- * path local non-watch invocations use, but with state.daemon set so it reuses the
- * daemon's persistent browser and throws `DaemonRunError` instead of `process.exit`.
- * Concurrent group orchestration, timing-cache persistence, and after-hook all come
- * for free from the shared run pipeline.
+ * Performs one test run inside the daemon by delegating to `run()` — the same code path local
+ * invocations use, with `state.daemon` set so it reuses the daemon's persistent browser and
+ * leaves it open. Concurrent group orchestration, timing-cache persistence, and after-hook all
+ * come for free from the shared run pipeline.
  */
 async function runOnce(
   argv: string[],
@@ -725,9 +723,8 @@ async function runOnce(
   const config = configured;
 
   // Lending the daemon's persistent handles to this run also marks it as a daemon run:
-  // a non-null state.daemon makes run() reuse the browser rather than launching one, throw
-  // DaemonRunError instead of calling process.exit, and leave the browser open at the end.
-  // watch/open are forced off — those modes don't make sense inside a daemon run.
+  // a non-null state.daemon makes run() reuse the browser rather than launching one, and leave
+  // it open at the end. watch/open are forced off — neither makes sense inside a daemon run.
   //
   // state.browser is non-null here — runOnce only fires from handleRun after awaitBrowser
   // has resolved (and recoverBrowser, if it ran, reassigned it).
@@ -739,15 +736,7 @@ async function runOnce(
   config.watch = false;
   config.open = false;
 
-  try {
-    await run(config);
-    // run() throws DaemonRunError on success in daemon mode; reaching here means it
-    // returned without exiting — fall back on the counter.
-    return config.state.results.counter.failCount > 0 ? 1 : 0;
-  } catch (err) {
-    if (err instanceof DaemonRunError) return err.exitCode;
-    throw err;
-  }
+  return (await run(config)).exitCode;
 }
 
 async function readPkgMtime(cwd: string): Promise<number> {

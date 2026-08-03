@@ -10,14 +10,13 @@ import { availableParallelism } from 'node:os';
 // node:timers returns Timer objects with .unref()/.ref() in both Node and Deno.
 // The bare `setTimeout` global in Deno is the Web platform variant, which returns
 // a number with no unref method.
-import { setTimeout, clearTimeout, setInterval, clearInterval } from 'node:timers';
+import { setTimeout, setInterval, clearInterval } from 'node:timers';
 import { blue, yellow } from '../utils/color.ts';
 import {
   run as runInBrowser,
   buildTestBundle,
   buildAllGroupBundles,
   flushConsoleHandlers,
-  DaemonRunError,
 } from './run/tests-in-browser.ts';
 
 import * as RunState from '../setup/run-state.ts';
@@ -25,7 +24,6 @@ import * as FileWatcher from '../setup/file-watcher.ts';
 import { getChangedFsTree } from '../setup/get-changed-fs-tree.ts';
 import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
 import { runUserModule } from '../utils/run-user-module.ts';
-import * as KeyboardEvents from '../setup/keyboard-events.ts';
 import { writeOutputStaticFiles } from '../setup/write-output-static-files.ts';
 import * as TimeCounter from '../utils/time-counter.ts';
 import * as Reporter from '../reporters/index.ts';
@@ -39,22 +37,11 @@ import { isFilteredRun, describeActiveFilters } from '../selection/filter.ts';
 import * as Timings from './run/timings.ts';
 import { applyWatchLineTargets, resolveTargetedFiles, splitIntoGroups } from './run/grouping.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
-import type { Config, HtmlAssets } from '../types.ts';
+import type { Config, Connections, HtmlAssets } from '../types.ts';
 import { Task } from '../task/index.ts';
 
 // Playwright navigation timeout for headed watch-mode reloads (not test execution).
 const WATCH_NAV_TIMEOUT_MS = 5_000;
-// Maximum ms to wait for the `process.stdout.write` drain callback to fire before
-// forcing process.exit(). On Windows under concurrent CI load (16 parallel tests)
-// the drain callback can take far longer than expected: the parent reader is busy,
-// the OS pipe buffer fills, Node's userland write queue stalls until the reader
-// catches up. The original 5s was too tight — exitTimer fired first and process.exit
-// dropped pending writes (the `--after works when it needs to be awaited` flake
-// reported only the pre-await TAP-13 header). 30s gives realistic headroom; nothing
-// in node:fs can force-drain Node's userland queue (fsync would only flush the OS
-// pipe buffer, not Node's queue — and pipes have no backing store on POSIX anyway),
-// so the only honest fix is to wait longer for the natural drain.
-const STDOUT_FLUSH_GRACE_MS = 30_000;
 // setInterval period that keeps the event loop alive while Promise.allSettled runs.
 const KEEP_ALIVE_INTERVAL_MS = 10_000;
 // Daemon-only bound on the "connecting" phase (Browser.setup → newPage on the reused
@@ -66,65 +53,130 @@ const KEEP_ALIVE_INTERVAL_MS = 10_000;
 // deadline, so it only ever fires on a genuine wedge; the daemon then recovers for the next
 // run. Local runs launch a fresh browser per invocation, so this race can't apply there.
 const DAEMON_CONNECT_TIMEOUT_MS = 30_000;
-// Conventional exit code for a process terminated by SIGTERM (128 + signal number 15).
-const EXIT_CODE_SIGTERM = 128 + 15;
 
 /**
- * Runs qunitx tests in headless Chrome, either in watch mode or concurrent batch mode.
+ * How a one-shot run ended. Everything a caller needs to decide what happens next, and nothing
+ * about how it should be announced — {@link run} neither writes a summary nor exits.
+ *
+ * That is the point of the shape: it is what `cli.ts` turns into an exit code, what the daemon
+ * ships back over its socket, and what the JS API builds its result from. Three consumers, one
+ * return value, and no `process.exit` between them.
+ *
+ * ```ts
+ * const outcome: RunOutcome = { exitCode: 1, durationMs: 1240 };
+ * outcome.exitCode === 0; // false — at least one test failed, or a group rejected
+ * ```
+ */
+export interface RunOutcome {
+  /** `0` when every test passed, `1` for any failure, group rejection, or empty filtered run. */
+  exitCode: number;
+  /** Wall-clock duration of the test phase in milliseconds. */
+  durationMs: number;
+}
+
+/**
+ * A live watch session: the run's browser, server and file watchers, kept open.
+ *
+ * Returned rather than "the process stays alive and you figure it out", so a caller other than
+ * the CLI — the JS API, a test of the watcher itself — can drive reruns and then shut the whole
+ * thing down deterministically.
+ *
+ * ```ts
+ * // Defined, not invoked: a real session owns a browser and a bound port.
+ * async function restartOnce(session: WatchSession) {
+ *   await session.rerun(); // same rerun the file watcher performs
+ *   await session.close();
+ * }
+ * ```
+ */
+export interface WatchSession {
+  /** The resolved config this session runs with; its `state` carries the live counters. */
+  config: Config;
+  /** The session's browser, page and HTTP server. */
+  connections: Connections;
+  /** Where the QUnit view is being served, e.g. `http://localhost:1234`. */
+  url: string;
+  /** Re-runs now, optionally scoped to `files`; resolves when that run finishes. */
+  rerun(files?: string[]): Promise<void>;
+  /** Stops the watchers and closes the browser and server. Idempotent. */
+  close(): Promise<void>;
+}
+
+/**
+ * Runs the whole suite once in headless Chrome and resolves with its {@link RunOutcome}.
  *
  * ```ts
  * import type { run } from './run.ts';
  * import type { Config } from '../types.ts';
  * // Defined, not invoked: launches Chrome and runs the whole suite.
  * async function runSuite(runTests: typeof run, config: Config) {
- *   await runTests(config); // batch mode exits the process itself; watch mode returns, process alive
+ *   const { exitCode } = await runTests(config); // returns; deciding what that means is the caller's
+ *   return exitCode;
  * }
  * ```
- * @returns {Promise<void>}
  */
-export async function run(config: Config): Promise<void> {
-  // Coverage is V8-precise-coverage over CDP, which only the chromium engine exposes. For
-  // firefox/webkit, warn once and disable so the rest of the pipeline treats it as off.
-  if (config.coverage && config.browser !== 'chromium') {
-    console.log(
-      `# Warning: --coverage requires the chromium browser; skipping coverage for ${config.browser}.`,
-    );
-    config.coverage = false;
-  }
+export async function run(config: Config): Promise<RunOutcome> {
+  disableUnsupportedCoverage(config);
 
   // Kick off all I/O that doesn't need the HTML fixtures in parallel with resolveHtmlFixtures:
   //   Browser.launch: CDP connect to pre-launched Chrome (~30-50ms)
   //   Timings.read: reads tmp/test-timings.json (~2ms)
   //   resolveHtmlFixtures: reads HTML template from disk (~5-10ms)
   // Chrome is typically fully connected by the time resolveHtmlFixtures + splitIntoGroups resolve.
-  // Daemon mode reuses its persistent browser; non-watch local runs launch their own;
-  // watch mode defers launch until Browser.setup inside the watch path.
+  // Daemon mode reuses its persistent browser; local runs launch their own.
   const daemonBrowser = config.state.daemon?.browser;
-  const browserPromise = daemonBrowser
-    ? Promise.resolve(daemonBrowser)
-    : config.watch
-      ? null
-      : Browser.launch(config);
+  const browserPromise = daemonBrowser ? Promise.resolve(daemonBrowser) : Browser.launch(config);
   const [, timings] = await Promise.all([
     resolveHtmlFixtures(config),
-    config.watch
-      ? Promise.resolve(null as Record<string, number> | null)
-      : Timings.read(config.projectRoot),
+    Timings.read(config.projectRoot),
   ]);
 
-  if (config.watch) {
-    await runWatchMode(config);
-  } else {
-    await runConcurrentMode(config, timings, browserPromise);
-  }
+  return await runConcurrentMode(config, timings, browserPromise);
+}
+
+/**
+ * Starts a watch session: one browser, one page, every test file in a single bundle, behind an
+ * HTTP server that stays up. Resolves once the initial run has finished and the watchers are
+ * armed — the returned {@link WatchSession} is how the caller stops it again.
+ *
+ * ```ts
+ * import type { watch } from './run.ts';
+ * import type { Config } from '../types.ts';
+ * // Defined, not invoked: launches Chrome and leaves it watching.
+ * async function watchSuite(startWatching: typeof watch, config: Config) {
+ *   const session = await startWatching(config);
+ *   return session.url; // 'http://localhost:1234'
+ * }
+ * ```
+ */
+export async function watch(config: Config): Promise<WatchSession> {
+  disableUnsupportedCoverage(config);
+  // Load-bearing for the whole function: `runInBrowser`, the file watcher and the keyboard
+  // shortcuts all branch on it, and a session started through the JS API arrives here with the
+  // flag unset because nobody typed `--watch`.
+  config.watch = true;
+  await resolveHtmlFixtures(config);
+
+  return await runWatchMode(config);
+}
+
+// Coverage is V8-precise-coverage over CDP, which only the chromium engine exposes. For
+// firefox/webkit, warn once and disable so the rest of the pipeline treats it as off.
+function disableUnsupportedCoverage(config: Config): void {
+  if (!config.coverage || config.browser === 'chromium') return;
+  console.log(
+    `# Warning: --coverage requires the chromium browser; skipping coverage for ${config.browser}.`,
+  );
+  config.coverage = false;
 }
 
 /**
  * WATCH MODE: one browser, one page, every test file in a single bundle, behind an HTTP server
- * that stays up so the QUnit view can be kept open. Reruns are driven by the file watcher and the
- * keyboard shortcuts, so this returns with the process still alive.
+ * that stays up so the QUnit view can be kept open. Reruns are driven by the file watcher; the
+ * caller owns whatever else drives them (the CLI adds keyboard shortcuts) and owns shutting the
+ * session down.
  */
-async function runWatchMode(config: Config): Promise<void> {
+async function runWatchMode(config: Config): Promise<WatchSession> {
   const build = config.state.group.build;
   // Line targets scope the whole watch session, so they have to narrow fsTree BEFORE the
   // bundle below is built from it — see applyWatchLineTargets. Guarded so the common path
@@ -154,19 +206,6 @@ async function runWatchMode(config: Config): Promise<void> {
     writeOutputStaticFiles(config, config.state.htmlAssets),
   ]);
   config.webServer = connections.server;
-  KeyboardEvents.setup(config, connections);
-
-  // Explicitly close the HTTP server on SIGTERM before the process exits. This ensures
-  // the port is reclaimed by application code (not as a side effect of OS process cleanup),
-  // guaranteeing the port is free from the moment waitpid() returns in the parent process.
-  // Without this, macOS can lag a few ms between waitpid() and socket reclamation, making
-  // the port appear in-use immediately after the child exits.
-  // Note: on Windows child.kill('SIGTERM') calls TerminateProcess() so this handler never
-  // runs there — but TerminateProcess() is fully synchronous so the race doesn't exist on
-  // Windows anyway. Exit with 143 (128 + SIGTERM) to preserve the conventional exit code.
-  process.once('SIGTERM', () => {
-    closeWithGrace([connections.server.close()]).finally(() => process.exit(EXIT_CODE_SIGTERM));
-  });
 
   // In headed watch mode (bare --open + --watch), chrome-prelaunch.ts launches Chrome
   // without --headless=new so the Playwright-controlled window IS the visible browser.
@@ -244,93 +283,107 @@ async function runWatchMode(config: Config): Promise<void> {
     ).ignore('headed watch-mode navigation to the fallback page');
   }
 
-  if (config.watch) {
-    const { ready: watcherReady } = FileWatcher.setup(
-      config.testFileLookupPaths,
-      config,
-      async (event, file) => {
-        if (event === 'addDir') return;
-        if (['change', 'unlink', 'unlinkDir'].includes(event)) {
-          // Ignore `change` events for files not yet in fsTree: fs.watch fires `change`
-          // before `rename` (→ `add`) when a file is first created. The `add` event
-          // will follow and trigger the correct filtered re-run.
-          if (event === 'change' && !(file in config.fsTree)) return;
-          // Clear the cached bundles so the next re-run rebuilds without the deleted file.
-          // `change` events can fire while a file is being rewritten, so a filtered bundle
-          // may catch the file in a transient empty/partial state and produce a broken rerun.
-          RunState.clearBundles(build);
-          if (config.debug) {
-            console.log(
-              `# Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
-            );
-          }
-          // Kick off rebuild immediately so it races Chrome navigation (same pattern as the
-          // initial watch-mode build). runInBrowser picks up the promise from
-          // preBuildPromise and sets activeRebuild so /tests.js can await it.
-          const rebuildPromise = buildTestBundle(config);
-          Task(rebuildPromise).ignore('watch rebuild rejection — re-awaited by runInBrowser');
-          build.preBuildPromise = rebuildPromise;
-          return await runInBrowser(config, connections);
-        }
+  const { ready: watcherReady, killFileWatchers } = FileWatcher.setup(
+    config.testFileLookupPaths,
+    config,
+    async (event, file) => {
+      if (event === 'addDir') return;
+      if (['change', 'unlink', 'unlinkDir'].includes(event)) {
+        // Ignore `change` events for files not yet in fsTree: fs.watch fires `change`
+        // before `rename` (→ `add`) when a file is first created. The `add` event
+        // will follow and trigger the correct filtered re-run.
+        if (event === 'change' && !(file in config.fsTree)) return;
+        // Clear the cached bundles so the next re-run rebuilds without the deleted file.
+        // `change` events can fire while a file is being rewritten, so a filtered bundle
+        // may catch the file in a transient empty/partial state and produce a broken rerun.
+        RunState.clearBundles(build);
         if (config.debug) {
           console.log(
             `# Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
           );
         }
-        await runInBrowser(config, connections, [file]);
-      },
-      async (_path, _event) => {
-        connections.server.publish('refresh');
-        // In headed watch mode the Playwright page IS the visible browser (navigator.webdriver=true
-        // means it ignores the WS 'refresh' message). Navigate it directly after a build error
-        // or a 0-tests warning so it shows the correct HTML rather than stale test results.
-        if (isHeadedWatchMode && build.fallbackPage) {
-          await Task(
-            connections.page.goto(`http://localhost:${config.port}/`, {
-              waitUntil: 'commit',
-              timeout: WATCH_NAV_TIMEOUT_MS,
-            }),
-          ).ignore('headed watch-mode re-navigation after a rebuild');
-        }
-      },
-    );
-    await watcherReady;
-  }
+        // Kick off rebuild immediately so it races Chrome navigation (same pattern as the
+        // initial watch-mode build). runInBrowser picks up the promise from
+        // preBuildPromise and sets activeRebuild so /tests.js can await it.
+        const rebuildPromise = buildTestBundle(config);
+        Task(rebuildPromise).ignore('watch rebuild rejection — re-awaited by runInBrowser');
+        build.preBuildPromise = rebuildPromise;
+        return await runInBrowser(config, connections);
+      }
+      if (config.debug) {
+        console.log(`# Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`);
+      }
+      await runInBrowser(config, connections, [file]);
+    },
+    async (_path, _event) => {
+      connections.server.publish('refresh');
+      // In headed watch mode the Playwright page IS the visible browser (navigator.webdriver=true
+      // means it ignores the WS 'refresh' message). Navigate it directly after a build error
+      // or a 0-tests warning so it shows the correct HTML rather than stale test results.
+      if (isHeadedWatchMode && build.fallbackPage) {
+        await Task(
+          connections.page.goto(`http://localhost:${config.port}/`, {
+            waitUntil: 'commit',
+            timeout: WATCH_NAV_TIMEOUT_MS,
+          }),
+        ).ignore('headed watch-mode re-navigation after a rebuild');
+      }
+    },
+  );
+  await watcherReady;
 
-  logWatcherAndKeyboardShortcutInfo(config, connections.server);
+  return {
+    config,
+    connections,
+    url: `http://localhost:${config.port}`,
+    rerun: async (files?: string[]) => void (await runInBrowser(config, connections, files)),
+    close: () => closeSession(connections, killFileWatchers),
+  };
+}
+
+/**
+ * Stops a watch session's watchers and closes its browser and server. Bounded by
+ * `closeWithGrace`, and safe to call twice — every step tolerates an already-closed handle.
+ */
+async function closeSession(
+  connections: Connections,
+  killFileWatchers: () => unknown,
+): Promise<void> {
+  killFileWatchers();
+  await closeWithGrace([
+    Task(connections.server?.close()).ignore('watch session server.close'),
+    Task(connections.page?.close()).ignore('watch session page.close'),
+    Task(connections.browser?.close()).ignore('watch session browser.close'),
+    shutdownPrelaunch(),
+  ]);
 }
 
 /**
  * CONCURRENT MODE: the one-shot batch run. Files are split across groups, each group getting its
- * own page inside one shared browser so esbuild time hides behind Chrome start-up. Ends the
- * process itself — reporting, cache persistence and cleanup all happen here.
+ * own page inside one shared browser so esbuild time hides behind Chrome start-up. Reporting,
+ * cache persistence and cleanup all happen here; the exit code is returned, not applied.
  */
 async function runConcurrentMode(
   config: Config,
   timings: Record<string, number> | null,
-  browserPromise: ReturnType<typeof Browser.launch> | null,
-): Promise<void> {
+  browserPromise: Promise<Awaited<ReturnType<typeof Browser.launch>>>,
+): Promise<RunOutcome> {
   const build = config.state.group.build;
   // CONCURRENT MODE: split test files across N groups = availableParallelism().
   // All group bundles are built while Chrome is starting up, so esbuild time
   // is hidden behind the ~1.2s Chrome launch. Each group then gets its own
   // HTTP server and Playwright page inside one shared browser instance.
   const allFiles = Object.keys(config.fsTree);
-  // Empty fsTree (e.g. --changed filtered out every test, or the inputs
-  // matched no files): emit a clean TAP plan and exit 0. The downstream
-  // group/build pipeline assumes ≥1 file and would crash on undefined
-  // groupConfigs[0]. In daemon mode, throw DaemonRunError so the daemon's
-  // run handler closes the run cleanly and stays alive for the next call.
+  // Empty fsTree (e.g. --changed filtered out every test, or the inputs matched no files): emit
+  // a clean TAP plan and report success. The downstream group/build pipeline assumes ≥1 file and
+  // would crash on undefined groupConfigs[0].
   if (allFiles.length === 0) {
     Reporter.runStart(config, { fileCount: 0, groupCount: 0 });
-    if (config.state.daemon) throw new DaemonRunError(0);
-    if (!config.watch) {
-      // Daemon runs threw above, so this is always a browser this run owns and must close.
-      const browser = await browserPromise!;
-      await closeWithGrace([browser.close(), shutdownPrelaunch()]);
-      return process.exit(0);
+    // The daemon owns its browser across runs and must keep it; a local run owns this one.
+    if (!config.state.daemon) {
+      await closeWithGrace([(await browserPromise).close(), shutdownPrelaunch()]);
     }
-    return;
+    return { exitCode: 0, durationMs: 0 };
   }
   // Line-targeted files run as their own single-file groups, each carrying its own selectors.
   // A group is one page with one QUnit config, so this is what lets `a.ts#34 b.ts` mean "the
@@ -544,11 +597,8 @@ async function runConcurrentMode(
     }
   }
 
-  // Set after the zero-match block above, which can flip exitCode to 1 for a filter that
-  // matched nothing.
-  process.exitCode = exitCode;
-
-  await Reporter.runEnd(config, { durationMs: timer.stop() });
+  const durationMs = timer.stop();
+  await Reporter.runEnd(config, { durationMs });
 
   if (config.coverage) await Coverage.Report.write(config, allFiles);
 
@@ -579,13 +629,12 @@ async function runConcurrentMode(
     await runUserModule(`${config.cwd}/${config.after}`, config.state.results.counter, 'after');
   }
 
-  // Daemon mode: close the per-run shared server (if any) but never the browser
-  // (the daemon owns it across runs). Throw DaemonRunError so the daemon's run
-  // handler captures the exit code instead of hitting process.exit.
+  // Daemon mode: close the per-run shared server (if any) but never the browser — the daemon
+  // owns it across runs, and the next run reuses it.
   if (config.state.daemon) {
-    clearInterval(keepAlive);
     await closeWithGrace([Task(sharedServer?.close()).ignore('server.close')]);
-    throw new DaemonRunError(exitCode);
+    clearInterval(keepAlive);
+    return { exitCode, durationMs };
   }
 
   // First-time discoverability nudge for the daemon — only on local-mode runs that
@@ -593,31 +642,24 @@ async function runConcurrentMode(
   // the suppression matrix (CI / env opt-outs / TTY / sentinel).
   await Hint.maybePrint({ durationMs: process.uptime() * 1000 });
 
-  // Flush stdout, shut down Chrome cleanly, then exit.
-  // keepAlive holds the event loop open until this callback fires, at which point
-  // process.exit() takes over — so clearInterval happens here, not earlier.
-  // If the write callback never fires (theoretical), the unref'd exitTimer is the fallback.
-  const exitTimer = setTimeout(() => process.exit(exitCode), STDOUT_FLUSH_GRACE_MS);
-  exitTimer.unref();
+  // Cleanup happens here, before returning, rather than inside a `process.stdout.write` drain
+  // callback racing an unref'd exit timer. The old shape existed because this function ended the
+  // process; now that the caller does, "finish cleaning up, then hand back the outcome" is both
+  // simpler and stricter — the failure cache can no longer be lost to an exit that fires first.
+  //
+  // keepAlive is cleared AFTER cleanup so the interval holds the event loop open throughout,
+  // preventing a premature drain if every close resolves instantly (e.g. Chrome already dead)
+  // before proc.ref() takes effect inside shutdownPrelaunch. closeWithGrace bounds the other
+  // side: Playwright's browser.close() can deadlock on Firefox + Windows.
+  await closeWithGrace([
+    failureCacheWrite,
+    Task(sharedServer?.close()).ignore('server.close'),
+    Task(browser.close()).ignore('browser.close'),
+    shutdownPrelaunch(),
+  ]);
+  clearInterval(keepAlive);
 
-  process.stdout.write('\n', async () => {
-    clearTimeout(exitTimer);
-    // keepAlive is cleared AFTER cleanup so the interval holds the event loop open
-    // throughout, preventing premature drain if every close resolves instantly (e.g.
-    // Chrome already dead) before proc.ref() takes effect inside shutdownPrelaunch.
-    //
-    // closeWithGrace bounds this race: Playwright's browser.close() can deadlock on
-    // Firefox + Windows, leaving the CLI alive but silent until the test runner
-    // SIGTERMs it ~60 s later. Best-effort cleanup, exit anyway.
-    await closeWithGrace([
-      failureCacheWrite,
-      Task(sharedServer?.close()).ignore('server.close'),
-      Task(browser.close()).ignore('browser.close'),
-      shutdownPrelaunch(),
-    ]);
-    clearInterval(keepAlive);
-    process.exit(exitCode);
-  });
+  return { exitCode, durationMs };
 }
 
 /**
@@ -680,20 +722,6 @@ async function resolveMainHTML(projectRoot: string, htmlAssets: HtmlAssets): Pro
     // copy — see the /node_modules/qunitx/vendor/qunit.css route in web-server.ts. It is no longer
     // copied out of the consumer's node_modules, so projects need not install `qunitx`.
   }
-}
-
-function logWatcherAndKeyboardShortcutInfo(config: Config, _server: unknown): void {
-  const prefix = 'Watching files...';
-  console.log(
-    '#',
-    blue(`${prefix} You can browse the tests on http://localhost:${config.port} ...`),
-  );
-  console.log(
-    '#',
-    blue(
-      `Shortcuts: Press "qq" to abort running tests, "qa" to run all the tests, "qf" to run last failing test, "ql" to repeat last test`,
-    ),
-  );
 }
 
 function normalizeInternalAssetPathFromHTML(
