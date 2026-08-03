@@ -266,7 +266,13 @@ export function runOptionsVia(
   sink?: Output,
 ): Task<RunResult, RunViaFailure> {
   return Task(async () => {
-    const { result } = await dispatchRun({ options, sink });
+    // `stdout`/`stderr` are the CLIENT's sinks for the text streamed back — they are objects
+    // carrying a function, so they do not survive `JSON.stringify`. Sent anyway, the daemon
+    // received `{}`, built an `Output` whose `write` was `undefined`, and died on the first
+    // write — taking the daemon down and every run queued behind it. They are dropped here, at
+    // the one place that knows which half of the options crosses the socket.
+    const { stdout: _stdout, stderr: _stderr, ...overWire } = options;
+    const { result } = await dispatchRun({ options: overWire, sink });
     // The daemon sends `result` before `done` on every options-driven request, so its absence
     // means the daemon answered a request it did not understand — a version skew between a
     // running daemon and a newer client, which is exactly the case `fatal` cannot describe.

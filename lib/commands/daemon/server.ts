@@ -691,12 +691,17 @@ async function runOnce(
   // An options-driven request answers with a structured result, which means it needs a collector
   // — and a reporter set built here rather than by `Reporter.create`, because the client asked
   // for specific ones by name.
-  const reporting = req.options ? resolveReporting(req.options) : null;
+  // `stdout`/`stderr` are stripped again here, not only by the client. They cannot survive JSON,
+  // so anything arriving under those keys is a `{}` from an older client — and building an
+  // `Output` from it would give the daemon a `write` of `undefined` and kill it on first use.
+  // The daemon serves every invocation in the project; it does not get to trust one of them.
+  const wireOptions = req.options && { ...req.options, stdout: undefined, stderr: undefined };
+  const reporting = wireOptions ? resolveReporting(wireOptions) : null;
   const configured = (await Config.setup(
     // `cwd` is forced to the daemon's: `handleRun` already rejected a mismatched client cwd, and
     // a daemon serving one project must not be talked into resolving another.
-    req.options && reporting
-      ? { ...toConfigOptions(req.options, reporting), cwd: state.cwd }
+    wireOptions && reporting
+      ? { ...toConfigOptions(wireOptions, reporting), cwd: state.cwd }
       : undefined,
   ).result()) as Result.Result<ResolvedConfig, Config.ConfigFailure>;
   // A bad flag from one client is that client's problem, not the daemon's. This is the whole
