@@ -28,6 +28,20 @@ export { run, type RunFailure } from './run.ts';
 export { watch, type WatchSession } from './watch.ts';
 export { search, type SearchMatch, type SearchResult } from './search.ts';
 export { init, generate, type InitOptions, type GenerateOptions } from './scaffold.ts';
+/**
+ * Daemon control: `start`, `stop`, `status`, and a `run` that reuses the daemon's warm browser
+ * and returns the same {@link RunResult} a local run does.
+ *
+ * ```ts
+ * import * as daemon from './daemon.ts';
+ *
+ * // Defined, not invoked: spawns and talks to a real background process.
+ * async function warmRun() {
+ *   await daemon.start();
+ *   return await daemon.run({ inputs: ['test/'] });
+ * }
+ * ```
+ */
 export * as daemon from './daemon.ts';
 
 export type { RunOptions, ReporterOption, WritableLike } from './options.ts';
@@ -71,7 +85,7 @@ export { type Output, processOutput, silentOutput, streamOutput } from '../repor
  *
  * ```ts
  * import { run } from './run.ts';
- * import { Failure } from '../task/index.ts';
+ * import { Failure } from './failure.ts';
  *
  * // Defined, not invoked: launches a browser.
  * async function branchOnFailure() {
@@ -80,4 +94,6 @@ export { type Output, processOutput, silentOutput, streamOutput } from '../repor
  * }
  * ```
  */
-export { Task, Failure, type Result } from '../task/index.ts';
+export { Task, type Result } from '../task/index.ts';
+
+export { Failure, type AnyFailure } from './failure.ts';

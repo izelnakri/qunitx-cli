@@ -36,6 +36,7 @@ output to the terminal.
 - `--junit` writes a JUnit XML report for CI dashboards, alongside the normal terminal output
 - `--coverage` reports V8 line coverage (terminal summary, plus optional `lcov` and `html` reports)
 - `--version` / `-v` prints the installed version
+- [JavaScript API](#javascript-api) — `await run('test/')` returns the results as data; silent by default, with `watch`, `search`, custom reporters and daemon control
 - Optional daemon mode (`qunitx daemon start`) keeps Chrome and the esbuild context warm across runs — roughly halves the wall-clock time of repeated invocations
 - Docker image for zero-install CI usage
 
@@ -183,6 +184,150 @@ qunitx test/**/*.js --browser=webkit
 > npx playwright install firefox
 > npx playwright install webkit
 > ```
+
+## JavaScript API
+
+Everything the CLI does, available as a function — for CI scripts, editor integrations, agents,
+and anything else that needs the results as data rather than as text on a terminal.
+
+```js
+import { run } from 'qunitx-cli';
+
+const result = await run('test/');
+
+result.ok; // false
+result.counts; // { total: 42, passed: 41, failed: 1, skipped: 0, todo: 0, assertionsFailed: 1 }
+result.failures.map((test) => test.fullName); // ['Cart > Coupons: applies code']
+```
+
+Four things to know:
+
+- **Nothing is printed unless you ask.** The returned result is the whole answer. Pass
+  `reporter: 'tap'` (or `'spec'`, `'dot'`, `'github'`) to get the CLI's output too.
+- **Failing tests are not an error.** `run()` resolves with `ok: false`. It rejects only when the
+  run could not happen — a bad option, an unreadable input, no `package.json`.
+- **It is lazy.** These return a `Task` (a Promise superset), so nothing starts until you `await`.
+- **It is the same engine as the CLI**, taking the same code path, so behaviour cannot drift.
+
+### run
+
+```js
+import { run } from 'qunitx-cli';
+
+const result = await run({
+  inputs: ['test/', 'src/cart-test.ts#34'], // same grammar as the command line
+  filter: 'Cart',
+  browser: 'chromium',
+  coverage: { formats: ['lcov'] },
+  junit: true,
+  reporter: 'spec', // omit for silence
+  onTest: (test) => console.log(test.status, test.fullName), // streamed as they finish
+});
+
+result.tests; // every test: name, modules, fullName, status, durationMs, assertions
+result.failedFiles; // absolute paths, attributed through source maps
+result.notices; // qunitx's own `# …` diagnostics, as data
+result.browserLogs; // console.* and uncaught errors from the page
+result.coverage; // per-file line coverage, or null
+result.junitXml; // the XML document, or null
+```
+
+Every CLI flag has an option; see the [CLI Reference](#cli-reference). `run('test/')` and
+`run(['a.ts', 'b.ts'])` are shorthand for `inputs`.
+
+### watch
+
+An async-iterable session that yields a complete result per rerun, and closes deterministically.
+No keyboard shortcuts are installed and your stdin is left alone.
+
+```js
+import { watch } from 'qunitx-cli';
+
+const session = await watch({ inputs: ['test/'] });
+console.log(session.url); // http://localhost:1234
+
+for await (const result of session) {
+  console.log(`${result.counts.passed}/${result.counts.total}`);
+  if (result.ok) break; // breaking out closes the session
+}
+```
+
+`session.rerun(files?)` forces a run and resolves with it; `session.close()` releases the browser
+and the port.
+
+### search
+
+Lists what a selection would run, without running it — no browser, no bundle, milliseconds.
+
+```js
+import { search } from 'qunitx-cli';
+
+const { matches, total } = await search({ filter: 'Cart' });
+matches.map((test) => `${test.fullName}  ${test.file}#${test.line}`);
+```
+
+### Custom reporters
+
+A reporter is any object with the handlers it cares about. Pass an instance as `reporter`; it can
+sit alongside a built-in one. A reporter that throws costs its own output and nothing else.
+
+```js
+await run({
+  reporter: [
+    'tap',
+    {
+      onRunStart: (config, info) => {},
+      onTestEnd: (config, details) => {},
+      onNotice: (config, notice) => {}, // qunitx's own diagnostics
+      onBrowserLog: (config, log) => {}, // console.* from the page
+      onRunEnd: (config, info) => {},
+    },
+  ],
+  stdout: myWritable, // where the built-in reporter writes; defaults to process.stdout
+});
+```
+
+### daemon
+
+Reuses a persistent browser and warm bundle across runs — worth roughly 800 ms per run once it
+is up. `daemon.run` takes the options that survive a socket, so plugin objects, reporter
+instances and callbacks are a compile error rather than a silent drop.
+
+```js
+import { daemon } from 'qunitx-cli';
+
+await daemon.start();
+const result = await daemon.run({ inputs: ['test/'] }); // same RunResult
+await daemon.status(); // { running: true, pid, cwd, socketPath, … }
+await daemon.stop();
+```
+
+### Errors
+
+Declared failures are discriminable values, not messages to parse.
+
+```js
+import { run, Failure } from 'qunitx-cli';
+
+const outcome = await run({ browser: 'netscape' }).result(); // never throws
+if (Failure.is(outcome)) {
+  outcome.code; // 'InvalidOption'
+  Failure.format(outcome); // 'Invalid `browser` value: "netscape". Expected one of …'
+}
+```
+
+`await run(…)` throws the same failure instead, if you prefer `try`/`catch`.
+
+### Deno and TypeScript
+
+The package ships its TypeScript sources, so Deno and Node 24 can import them directly:
+
+```ts
+import { run } from 'qunitx-cli/lib/api/index.ts';
+```
+
+Types are shipped for the bundled entry too — `import { run, type RunResult } from 'qunitx-cli'`
+typechecks under `--strict`.
 
 ## Daemon mode
 

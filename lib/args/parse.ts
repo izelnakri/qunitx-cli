@@ -63,31 +63,53 @@ const FILE_LOOKING = /\.(js|ts|jsx|tsx|html)$/;
  * }
  * ```
  */
-// { inputs: [], debug: true, watch: true, open: true, failFast: true, onlyFailed: true, htmlPaths: [], output }
 export interface ParsedFlags {
+  /** Absolute paths of the test targets, deduplicated. `.html` fixtures and `#line` suffixes
+   * are split out into `htmlPaths` and `lineTargets` rather than kept here. */
   inputs: string[];
+  /** `--debug`/`--console`: print the server URL and forward the page's console. */
   debug?: boolean;
+  /** `--watch`/`-w`: re-run on every save instead of exiting after one run. */
   watch?: boolean;
+  /** `--open`/`-o`: open the output in a browser; a string names a specific binary. */
   open?: boolean | string;
+  /** `--failFast`: stop at the first failing test. */
   failFast?: boolean;
+  /** `--only-failed`/`-f`: run only the files that failed on the previous run. */
   onlyFailed?: boolean;
+  /** `--timeout`: milliseconds a single test may take before the run is declared stalled. */
   timeout?: number;
+  /** `--output`: directory for the compiled bundle and HTML. */
   output?: string;
+  /** Positional `.html` fixtures the test bundle is injected into. */
   htmlPaths?: string[];
+  /** `--port`/`-p`: the port the local test server listens on. */
   port?: number;
+  /** `true` when `--port` was given explicitly, so a busy port fails instead of incrementing. */
   portExplicit?: boolean;
+  /** `--extensions`: file extensions treated as test files. */
   extensions?: string[];
+  /** `--browser`: the engine to run in. */
   browser?: 'chromium' | 'firefox' | 'webkit';
+  /** `--before`: module run before the tests, or `false` to disable a configured one. */
   before?: string | false;
+  /** `--after`: module run after the tests, or `false` to disable a configured one. */
   after?: string | false;
+  /** `--since`/`--changed`: run only files whose transitive imports changed since this git ref. */
   changedSince?: string;
+  /** `--reporter`/`-r`: the single stdout format. */
   reporter?: ReporterName;
+  /** `--junit`: write a JUnit report. `true` uses the default path; a string overrides it. */
   junit?: boolean | string;
+  /** `--coverage`: collect V8 line coverage. */
   coverage?: boolean;
+  /** Artifact formats beyond the terminal summary (`lcov`, `html`). */
   coverageFormats?: string[];
+  /** `-t`/`--filter`/`-m`/`--module`/`-n`: the one test-name matcher, in QUnit's own semantics. */
   filter?: string;
   /** `--search`/`--print` mode: the expression to preview, or `true` to list everything. */
   search?: string | true;
+  /** Absolute path → the `#34` line targets given for it. */
   lineTargets?: Record<string, number[]>;
   /** Absolute paths mentioned WITHOUT a line target — whole-file requests that supersede a line target. */
   wholeInputPaths?: string[];

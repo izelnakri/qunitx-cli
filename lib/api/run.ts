@@ -72,6 +72,10 @@ export function run(options: RunOptions | string | string[] = {}): Task<RunResul
  * The JUnit document, when the run was asked for one. Read off the reporter rather than the
  * disk: the caller may want to publish it without touching the filesystem, and it is the same
  * string `onRunEnd` just wrote.
+ *
+ * ```ts
+ * junitXml([]); // null — no JUnit reporter was attached, so there is no document
+ * ```
  */
 export function junitXml(reporters: readonly Reporter[]): string | null {
   const junit = reporters.find((reporter) => reporter instanceof JUnitReporter);
