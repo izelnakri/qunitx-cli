@@ -53,7 +53,7 @@ export async function launch(config: Config, skipPrelaunch = false): Promise<Bro
     const waitStart = Date.now();
     const [playwrightCore, prelaunch] = await Promise.all([
       playwrightCorePromise,
-      skipPrelaunch ? Promise.resolve(null) : prelaunchPromise,
+      skipPrelaunch ? Promise.resolve(null) : prelaunchPromise(),
     ]);
     perfLog(
       `browser.js: playwright-core + prelaunch resolved in ${Date.now() - waitStart}ms, prelaunch:`,

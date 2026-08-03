@@ -14,6 +14,9 @@ import { run } from '../run.ts';
 import { borrowArgv, borrowEnv } from '../../utils/borrowed-globals.ts';
 import * as Result from '../../result/index.ts';
 import { Failure } from '../../result/index.ts';
+import { resolveReporting, toConfigOptions } from '../../api/options.ts';
+import { buildResult, type RunResult } from '../../api/result.ts';
+import { junitXml } from '../../api/run.ts';
 import type { Request, ResponseChunk, RunRequest, DaemonInfo } from './protocol.ts';
 import type { Browser as PlaywrightBrowser } from 'playwright-core';
 import { Task } from '../../task/index.ts';
@@ -531,7 +534,13 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
 
   let exitCode = 0;
   try {
-    exitCode = await runOnce(req.argv, req.env, state);
+    const outcome = await runOnce(req, state);
+    exitCode = outcome.exitCode;
+    // Before `done`, so a client reading the stream in order has the result in hand by the time
+    // the terminal chunk tells it the run is over.
+    if (outcome.result && !socket.destroyed) {
+      writeChunk(socket, { type: 'result', result: outcome.result });
+    }
   } catch (err) {
     process.stderr.write = origStderrWrite;
     origStderrWrite(`# [qunitx daemon] run error: ${(err as Error).stack || err}\n`);
@@ -665,27 +674,37 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
  * come for free from the shared run pipeline.
  */
 async function runOnce(
-  argv: string[],
-  env: Record<string, string | undefined>,
+  req: RunRequest,
   state: DaemonState,
-): Promise<number> {
+): Promise<{ exitCode: number; result: RunResult | null }> {
   // Both globals are lent for the whole call and given back however it ends. They used to be
   // restored by two separate mechanisms at three separate places, and `env` was not among them
   // when `Config.setup()` THREW — the argv `finally` ran, the exception left runOnce, and that
   // client's environment stayed on the daemon for every later run.
-  using _env = borrowEnv(env);
-  using _argv = borrowArgv(['node', process.argv[1] ?? 'cli.ts', ...argv]);
+  //
+  // An options-driven request needs neither, strictly — `Config.setup(options)` reads no globals
+  // — but `env` still shapes the run (QUNITX_BROWSER, TZ, anything a --before hook reads), so
+  // both stay lent for every request rather than only some of them.
+  using _env = borrowEnv(req.env);
+  using _argv = borrowArgv(['node', process.argv[1] ?? 'cli.ts', ...req.argv]);
 
-  const configured = (await Config.setup().result()) as Result.Result<
-    ResolvedConfig,
-    Config.ConfigFailure
-  >;
+  // An options-driven request answers with a structured result, which means it needs a collector
+  // — and a reporter set built here rather than by `Reporter.create`, because the client asked
+  // for specific ones by name.
+  const reporting = req.options ? resolveReporting(req.options) : null;
+  const configured = (await Config.setup(
+    // `cwd` is forced to the daemon's: `handleRun` already rejected a mismatched client cwd, and
+    // a daemon serving one project must not be talked into resolving another.
+    req.options && reporting
+      ? { ...toConfigOptions(req.options, reporting), cwd: state.cwd }
+      : undefined,
+  ).result()) as Result.Result<ResolvedConfig, Config.ConfigFailure>;
   // A bad flag from one client is that client's problem, not the daemon's. This is the whole
   // reason config assembly returns instead of exiting: `process.exit(1)` inside `Args.parse`
   // would have taken down a daemon serving every other invocation in the project.
   if (Failure.is(configured)) {
     process.stderr.write(`${Failure.format(configured)}\n`);
-    return 1;
+    return { exitCode: 1, result: null };
   }
   const config = configured;
 
@@ -703,7 +722,14 @@ async function runOnce(
   config.watch = false;
   config.open = false;
 
-  return (await run(config)).exitCode;
+  const outcome = await run(config);
+
+  return {
+    exitCode: outcome.exitCode,
+    result: reporting
+      ? buildResult(config, outcome, reporting.collector, junitXml(reporting.reporters))
+      : null,
+  };
 }
 
 async function readPkgMtime(cwd: string): Promise<number> {
