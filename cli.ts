@@ -124,7 +124,7 @@ const EXIT_CODE_SIGTERM = 128 + 15;
       import('./lib/utils/color.ts'),
       import('./lib/utils/close-with-grace.ts'),
     ]);
-    KeyboardEvents.setup(session.config, session.connections);
+    KeyboardEvents.setup(session);
     // Close the HTTP SERVER on SIGTERM — and only the server. The point is that the port is
     // reclaimed by application code rather than as a side effect of OS process cleanup: on macOS,
     // waitpid() can return a few ms before the socket is reclaimed, which makes the port look busy

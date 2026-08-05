@@ -273,6 +273,16 @@ export interface RunState {
   daemon: DaemonState | null;
   /** Number of concurrent groups in this run; 1 for watch and single-group runs. */
   groupCount: number;
+  /**
+   * One callback per live server that tells its connected pages to drop the rest of the QUnit
+   * queue — what `qq`, `session.abort()` and an aborted `signal` all go through.
+   *
+   * A set rather than a slot because a concurrent run may have one server per group, and
+   * aborting half a run is not aborting it. Shared by reference across groups, so a group
+   * registering its own server marks it for everyone. Entries for closed servers are harmless:
+   * publishing to a server with no clients reaches nobody.
+   */
+  aborters: Set<() => void>;
   /** File-watcher build bookkeeping. Only meaningful in watch mode, where there is one group. */
   watch: WatchState;
   /**
@@ -337,12 +347,10 @@ export interface GroupState {
    * failing assertion's stack can't be resolved to one file — scoped per group so an
    * unattributable failure blames only the files that group ran, not the whole invocation.
    *
-   * Watch mode runs exactly one group, so this doubles as the `ql` rerun target there. Named to
-   * pair with {@link lastFailedFiles}.
+   * Watch mode runs exactly one group, so this doubles as the `ql` rerun target there, and the
+   * `qf` fallback when the last run had no failures to scope to.
    */
   lastRanFiles: string[] | null;
-  /** Files treated as failed for the `qf` rerun shortcut. Watch mode only, hence single-group. */
-  lastFailedFiles: string[] | null;
   /**
    * Tracks `testEnd` arrivals per test fullName in this group's run. Reset in lockstep with the
    * run counter — explicitly NOT on every WS 'connection' event, which was the bug that broke
@@ -475,6 +483,15 @@ export interface RunResults {
    * Reassigned only by `RunState.reset` (a fresh Map per run), never by a group.
    */
   coverage: CoverageFileMap | null;
+  /**
+   * Whether the browser confirmed it dropped this run's remaining queue — `qq`, `session.abort()`,
+   * or an aborted `signal`. Lives here rather than on the group because groups share this object
+   * by reference, so one aborted group marks the whole run without any cross-group plumbing.
+   *
+   * Load-bearing for the result: an aborted run and a red run both end with failures and exit 1,
+   * and nothing else distinguishes "I stopped it" from "it broke".
+   */
+  aborted: boolean;
 }
 
 /**
