@@ -141,13 +141,33 @@ export interface RunResult {
   failedFiles: string[];
   /** qunitx's own diagnostics for this run, in emission order. */
   notices: Notice[];
-  /** `console.*` calls and uncaught errors from the page. Warnings and errors unless `debug`. */
+  /**
+   * `console.*` calls and uncaught errors from the page — warnings and errors unless `debug`.
+   *
+   * Capped at the most recent {@link MAX_BROWSER_LOGS}; `browserLogsTruncated` counts what was
+   * dropped. The cap is not tidiness: unlike tests and notices, page output is bounded by nothing
+   * — one `for` loop around `console.warn` produced 50,001 entries and 252 MB of retained heap.
+   * The newest are kept because they are the ones adjacent to the failure being diagnosed.
+   */
   browserLogs: BrowserLog[];
+  /** How many page-log entries were dropped to stay under the cap. `0` in every ordinary run. */
+  browserLogsTruncated: number;
   /** Line coverage, or `null` when `coverage` was not requested. */
   coverage: CoverageSummary | null;
   /** The JUnit XML document, when `junit` was requested. Written to disk as well. */
   junitXml: string | null;
 }
+
+/**
+ * How many page-log entries a result retains. Tests and notices are bounded by the suite; page
+ * output is bounded by nothing a test runner controls, so this is the one channel that needs a
+ * ceiling. Generous enough that a real run never reaches it.
+ *
+ * ```ts
+ * MAX_BROWSER_LOGS; // 1000
+ * ```
+ */
+export const MAX_BROWSER_LOGS = 1000;
 
 /**
  * The reporter that turns a run into a value: it records what happened instead of printing it.
@@ -168,8 +188,10 @@ export class Collector implements Reporter {
   readonly tests: TestResult[] = [];
   /** Every diagnostic, in emission order. */
   readonly notices: Notice[] = [];
-  /** Every page console call and uncaught error, in arrival order. */
+  /** The most recent page console calls and uncaught errors, capped at {@link MAX_BROWSER_LOGS}. */
   readonly browserLogs: BrowserLog[] = [];
+  /** How many page-log entries the cap dropped. */
+  browserLogsTruncated = 0;
 
   /**
    * Drops everything from a previous run. Watch sessions reuse one collector across reruns, so
@@ -186,6 +208,7 @@ export class Collector implements Reporter {
     this.tests.length = 0;
     this.notices.length = 0;
     this.browserLogs.length = 0;
+    this.browserLogsTruncated = 0;
   }
 
   /**
@@ -231,6 +254,11 @@ export class Collector implements Reporter {
    */
   onBrowserLog(_config: Config, log: BrowserLog): void {
     this.browserLogs.push(log);
+    // Drop from the front: a flood's newest lines are the ones next to whatever went wrong.
+    if (this.browserLogs.length > MAX_BROWSER_LOGS) {
+      this.browserLogs.shift();
+      this.browserLogsTruncated++;
+    }
   }
 }
 
@@ -278,6 +306,7 @@ export function buildResult(
     failedFiles: Array.from(failedFiles),
     notices: collector.notices.slice(),
     browserLogs: collector.browserLogs.slice(),
+    browserLogsTruncated: collector.browserLogsTruncated,
     coverage: coverage ? summarizeCoverage(config) : null,
     junitXml,
   };
