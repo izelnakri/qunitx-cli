@@ -63,7 +63,6 @@ export function newGroup(index = 0, selectors?: QUnitSelector[]): GroupState {
     phase: 'bundling',
     selectors,
     lastRanFiles: null,
-    lastFailedFiles: null,
     testEndCounts: new Map(),
     wsConnectionCount: 0,
     lastQUnitResult: null,
@@ -93,6 +92,7 @@ export function create(): RunState {
     daemon: null,
     group: newGroup(),
     groupCount: 1,
+    aborters: new Set(),
     reporters: [],
     output: processOutput,
     htmlAssets: {
@@ -114,6 +114,7 @@ export function create(): RunState {
       failedFiles: new Set(),
       failedTests: [],
       coverage: null,
+      aborted: false,
     },
   };
 }
@@ -141,6 +142,32 @@ export function reset(results: RunResults, coverageEnabled: boolean): void {
   results.failedFiles.clear();
   results.failedTests.length = 0;
   results.coverage = coverageEnabled ? new Map() : null;
+  results.aborted = false;
+}
+
+/**
+ * Asks every live server to tell its pages to drop the rest of the QUnit queue, and records that
+ * this run was cut short.
+ *
+ * The flag is set on intent, not on the browser's acknowledgement, and that is deliberate: an
+ * abort that arrives before any page has connected — a `signal` already aborted, a `qq` during
+ * start-up — would otherwise reach nobody and go unrecorded. `WebServer.setup` re-sends it to
+ * pages that connect afterwards, so the request survives the gap either way.
+ *
+ * Cleared by {@link reset} at the start of every run, so an abort while idle does not follow the
+ * session into its next run.
+ *
+ * ```ts
+ * import * as RunState from './run-state.ts';
+ *
+ * const state = RunState.create();
+ * RunState.requestAbort(state);
+ * state.results.aborted; // true — even with no server listening yet
+ * ```
+ */
+export function requestAbort(state: RunState): void {
+  state.results.aborted = true;
+  state.aborters.forEach((stop) => stop());
 }
 
 /**

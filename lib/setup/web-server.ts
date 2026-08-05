@@ -12,6 +12,7 @@ import { HTTPServer, MIME_TYPES } from '../web/index.ts';
 import { createReconnectingSocket } from './ws-client.js';
 import { readTemplate } from '../utils/read-template.ts';
 import type { Config } from '../types.ts';
+import type { QUnitSelector } from '../selection/line-targets.ts';
 import { Task } from '../task/index.ts';
 
 const fsPromise = fs.promises;
@@ -83,29 +84,47 @@ export function setup(config: Config): HTTPServer {
   const STATIC_FILES_PATH = path.resolve(config.projectRoot, config.output);
   const consumerQunitCssCandidate = resolveConsumerQunitCssCandidate(config.projectRoot);
   const server = new HTTPServer();
+  // Registered at construction rather than by the caller, so every server that can run tests can
+  // also be told to stop — including the per-group servers a custom HTML template forces.
+  config.state.aborters.add(() => server.publish('abort'));
   const mainHTMLWithReplacedAssets = replaceAssetPaths(
     config.state.htmlAssets.mainHTML.html ?? '',
     config.state.htmlAssets.mainHTML.filePath,
     config.projectRoot,
   );
-  // Cache the runtime script and both normal HTML responses — stable for this server's lifetime.
-  const runtimeScript = testRuntimeToInject(config);
-  const mainIndexHTML = escapeAndInjectTestsToHTML(
-    mainHTMLWithReplacedAssets,
-    runtimeScript,
-    './tests.js',
-  );
-  const mainQunitxHTML = escapeAndInjectTestsToHTML(
-    mainHTMLWithReplacedAssets,
-    runtimeScript,
-    './filtered-tests.js',
-  );
+  // Cached, but keyed on the selectors rather than for the server's whole lifetime: the runtime
+  // script bakes the line-target filter into the page, so a session that cleared its selectors
+  // (`qa`, `session.runAll()`) went on being served the pinned page and kept running one test.
+  // Recomputed only when they actually change, which in a normal run is never.
+  let pages: { selectors: QUnitSelector[] | undefined; index: string; qunitx: string } | null =
+    null;
+  const htmlPages = () => {
+    const selectors = config.state.group.selectors;
+    if (!pages || pages.selectors !== selectors) {
+      const runtimeScript = testRuntimeToInject(config);
+      pages = {
+        selectors,
+        index: escapeAndInjectTestsToHTML(mainHTMLWithReplacedAssets, runtimeScript, './tests.js'),
+        qunitx: escapeAndInjectTestsToHTML(
+          mainHTMLWithReplacedAssets,
+          runtimeScript,
+          './filtered-tests.js',
+        ),
+      };
+    }
+
+    return pages;
+  };
   const saveHTML = (filePath: string, html: string) =>
     Task(fsPromise.writeFile(filePath, html)).ignore(`writeFile ${filePath}`);
 
   config.state.group.wsConnectionCount = 0;
   server.wss.on('connection', function connection(socket) {
     config.state.group.wsConnectionCount = (config.state.group.wsConnectionCount ?? 0) + 1;
+    // The abort was requested before this page existed — `signal` already aborted, or `qq` pressed
+    // while the browser was still starting. Without this the request would reach nobody and the
+    // run it was meant to stop would go on to completion.
+    if (config.state.results.aborted) socket.send('abort');
     // A second WS connection is expected in watch/--open mode — the user opening http://localhost:PORT
     // in their own browser (the watch banner invites it) or a headed reload — so warning there is
     // noise. In a plain single run (e.g. CI) the lone headless page must connect exactly once, so a
@@ -175,7 +194,6 @@ export function setup(config: Config): HTTPServer {
         }
 
         if (details.status === 'failed') {
-          config.state.group.lastFailedFiles = config.state.group.lastRanFiles;
           FailureCache.record(config, details);
         }
 
@@ -325,12 +343,10 @@ export function setup(config: Config): HTTPServer {
       res.writeHead(200, HTML_HEADERS);
       return res.end(buildNoTestsHTML(fallback.files));
     }
+    const { index } = htmlPages();
     res.writeHead(200, HTML_HEADERS);
-    res.end(mainIndexHTML);
-    saveHTML(
-      path.join(path.resolve(config.projectRoot, config.output), 'index.html'),
-      mainIndexHTML,
-    );
+    res.end(index);
+    saveHTML(path.join(path.resolve(config.projectRoot, config.output), 'index.html'), index);
   });
 
   server.get('/qunitx.html', (_req, res) => {
@@ -348,12 +364,10 @@ export function setup(config: Config): HTTPServer {
       res.writeHead(200, HTML_HEADERS);
       return res.end(buildNoTestsHTML(fallback.files));
     }
+    const { qunitx } = htmlPages();
     res.writeHead(200, HTML_HEADERS);
-    res.end(mainQunitxHTML);
-    saveHTML(
-      path.join(path.resolve(config.projectRoot, config.output), 'qunitx.html'),
-      mainQunitxHTML,
-    );
+    res.end(qunitx);
+    saveHTML(path.join(path.resolve(config.projectRoot, config.output), 'qunitx.html'), qunitx);
   });
 
   server.get('/*', (req, res) => {
@@ -362,7 +376,7 @@ export function setup(config: Config): HTTPServer {
     if (possibleDynamicHTML) {
       const htmlContent = escapeAndInjectTestsToHTML(
         possibleDynamicHTML,
-        runtimeScript,
+        testRuntimeToInject(config),
         '/tests.js',
       );
       res.writeHead(200, HTML_HEADERS);
@@ -792,7 +806,6 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
           return;
         }
         if (details.status === 'failed') {
-          config.state.group.lastFailedFiles = config.state.group.lastRanFiles;
           FailureCache.record(config, details);
         }
         if (config.debug && details.runtime > config.timeout * 0.8) {

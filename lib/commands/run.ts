@@ -86,10 +86,14 @@ export interface RunOutcome {
  * the CLI — the JS API, a test of the watcher itself — can drive reruns and then shut the whole
  * thing down deterministically.
  *
+ * The verbs are here rather than in the CLI's keyboard bindings because there is more than one
+ * caller now: `qa` and `session.runAll()` must mean the same thing, and they only do if there is
+ * one implementation. Binding a keystroke to it is `keyboard-events.ts`'s whole remaining job.
+ *
  * ```ts
  * // Defined, not invoked: a real session owns a browser and a bound port.
  * async function restartOnce(session: WatchSession) {
- *   await session.rerun(); // same rerun the file watcher performs
+ *   await session.run(); // same rerun the file watcher performs
  *   await session.close();
  * }
  * ```
@@ -101,8 +105,29 @@ export interface WatchSession {
   connections: Connections;
   /** Where the QUnit view is being served, e.g. `http://localhost:1234`. */
   url: string;
+  /** Whether a run is executing or queued — true from the moment one is asked for. */
+  readonly running: boolean;
   /** Re-runs now, optionally scoped to `files`; resolves when that run finishes. */
-  rerun(files?: string[]): Promise<void>;
+  run(files?: string[]): Promise<void>;
+  /** Runs the whole suite, dropping any line-target selectors this session was scoped to. */
+  runAll(): Promise<void>;
+  /** Re-runs the files that last failed, or repeats the last run when nothing has failed yet. */
+  runFailed(): Promise<void>;
+  /**
+   * Tells the browser to drop the rest of the current run's queue.
+   *
+   * Fire-and-forget by design: it is a message to a page that may not be running anything, and
+   * the run it interrupts settles through its own normal path. Awaiting the interrupted run is
+   * what the caller already holds a promise for.
+   */
+  abort(): void;
+  /**
+   * Resolves once nothing is in flight — a no-op at the back of the rerun queue.
+   *
+   * What `abort()` is awaited through: queueing a real rerun to wait for quiet would start the
+   * very thing the caller just asked to stop.
+   */
+  settled(): Promise<void>;
   /** Stops the watchers and closes the browser and server. Idempotent. */
   close(): Promise<void>;
 }
@@ -302,12 +327,28 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
   //
   // A scoped rerun already compiles the files it was handed straight from disk, so it picks up
   // edits without the full rebuild — paying for one would just make every `add` slower.
-  const rerun = (files?: string[]) =>
-    reruns(() =>
-      files
-        ? runInBrowser(config, connections, files).then(() => {})
-        : rebuildAndRun(config, connections),
-    );
+  let inFlight = 0;
+  // One place that counts what is in flight, because every rerun shape goes through it. Nesting
+  // these instead — `runAll` calling `rerun` inside its own `serialize` — deadlocks: the inner
+  // call queues behind the outer one that is awaiting it.
+  //
+  // Counted at the call, not inside the queued work: the serializer defers `work` to a microtask,
+  // so a caller checking `running` on the line after asking for a rerun would be told the session
+  // was idle. "Requested but not finished" is also the more useful reading — a queued rerun is
+  // work the session owes, and a UI showing a spinner wants it up from the keystroke.
+  const serialize = (work: () => Promise<void>) => {
+    inFlight++;
+
+    return reruns(work).finally(() => inFlight--);
+  };
+  const runFiles = (files?: string[]) =>
+    files
+      ? runInBrowser(config, connections, files).then(() => {})
+      : rebuildAndRun(config, connections);
+  const rerun = (files?: string[]) => serialize(() => runFiles(files));
+  // Through the shared registry rather than `connections.server` directly: one abort mechanism
+  // for watch, batch and `signal`, so a fix to any of them is a fix to all three.
+  const abort = () => RunState.requestAbort(config.state);
 
   const { ready: watcherReady, killFileWatchers } = FileWatcher.setup(
     config.testFileLookupPaths,
@@ -360,10 +401,54 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
     config,
     connections,
     url: `http://localhost:${config.port}`,
+    get running() {
+      return inFlight > 0;
+    },
     // Rebuilds first, like the watcher's own change path: a caller asking for a rerun means
     // "run what is on disk now", and re-serving the cached bundle would answer with what was on
     // disk when the session started.
-    rerun,
+    run: rerun,
+    abort,
+    // Through `reruns`, not `serialize`: a no-op is not a run, and counting it as one would make
+    // `running` true for anyone who merely asked whether the session was busy.
+    settled: () => reruns(() => Promise.resolve()),
+    runAll: () => {
+      abort();
+
+      // Cleared inside the serialized work, not before it: clearing here would also unscope a
+      // rerun already queued ahead of this one, which asked for a scoped run and would silently
+      // get a whole-suite one instead.
+      return serialize(() => {
+        // "Run all" means all: drop the line-target selections that scoped this session. `-t`/`-m`
+        // stay — those are a standing instruction about which tests to run, not a starting point.
+        config.state.group.selectors = undefined;
+
+        return runFiles();
+      });
+    },
+    // Both reads happen inside the serialized work so they see the run this one just aborted:
+    // asking for "the files that failed" before that run has recorded its failures answers with
+    // the previous run's set.
+    runFailed: () => {
+      abort();
+
+      return serialize(() => {
+        // `results.failedFiles`, NOT `group.lastFailedFiles`: the latter is assigned the whole
+        // `lastRanFiles` set whenever any test fails, so "re-run what failed" re-ran everything.
+        // This one is the per-file attribution the result reports, so the rerun is actually scoped.
+        const failed = Array.from(config.state.results.failedFiles);
+        if (failed.length === 0) {
+          Reporter.notice(config, {
+            level: 'info',
+            message: 'QUnitX: No tests failed in the last run, so repeating it',
+          });
+        }
+
+        return runFiles(
+          failed.length > 0 ? failed : (config.state.group.lastRanFiles ?? undefined),
+        );
+      });
+    },
     close: () => closeSession(connections, killFileWatchers),
   };
 }
@@ -518,6 +603,7 @@ async function runConcurrentMode(
     groupCount > 1 && build.htmlPathsToRunTests[0] === '/' && build.htmlPathsToRunTests.length === 1
       ? (() => {
           const s = new HTTPServer();
+          config.state.aborters.add(() => s.publish('abort'));
           WebServer.setupGroupWSHandler(s, groupConfigs);
           groupConfigs.forEach((gc) => WebServer.registerGroupRoutes(s, gc));
           WebServer.registerSharedStaticHandler(s, groupConfigs);

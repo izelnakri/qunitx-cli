@@ -434,7 +434,6 @@ export async function run(
     }
   } catch (error) {
     build.activeRebuild = null;
-    config.state.group.lastFailedFiles = config.state.group.lastRanFiles;
     const exception = new BundleError(error);
 
     // buildTestBundle's own catch sets the build-error fallback for full-bundle failures before rethrowing.
