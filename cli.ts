@@ -119,18 +119,27 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   // the banner — is wired up here, because `lib/` has no business owning any of the three.
   if (config.watch) {
     const session = await watch(config);
-    const [KeyboardEvents, { blue }] = await Promise.all([
+    const [KeyboardEvents, { blue }, { closeWithGrace }] = await Promise.all([
       import('./lib/setup/keyboard-events.ts'),
       import('./lib/utils/color.ts'),
+      import('./lib/utils/close-with-grace.ts'),
     ]);
     KeyboardEvents.setup(session.config, session.connections);
-    // Close the HTTP server explicitly on SIGTERM so the port is reclaimed by application code
-    // rather than as a side effect of OS process cleanup — on macOS, waitpid() can return a few
-    // ms before the socket is reclaimed, which makes the port look busy to whatever starts next.
-    // On Windows child.kill('SIGTERM') calls TerminateProcess() so this never runs, and
-    // TerminateProcess is synchronous, so the race doesn't exist there either.
+    // Close the HTTP SERVER on SIGTERM — and only the server. The point is that the port is
+    // reclaimed by application code rather than as a side effect of OS process cleanup: on macOS,
+    // waitpid() can return a few ms before the socket is reclaimed, which makes the port look busy
+    // to whatever starts next. On Windows child.kill('SIGTERM') calls TerminateProcess(), so this
+    // never runs and the race does not exist there either.
+    //
+    // NOT `session.close()`, which also tears down the browser: Playwright's `browser.close()`
+    // deadlocks on WebKit often enough that the teardown outlived the 5s SIGTERM + 2s SIGKILL
+    // budget a supervising process allows, and the child had to be killed instead of exiting.
+    // Nothing needs closing here anyway — the process is about to exit, and the prelaunch exit
+    // hook SIGKILLs Chrome's whole process group on the way out.
     process.once('SIGTERM', () => {
-      void session.close().finally(() => process.exit(EXIT_CODE_SIGTERM));
+      void closeWithGrace([session.connections.server.close()]).finally(() =>
+        process.exit(EXIT_CODE_SIGTERM),
+      );
     });
     console.log('#', blue(`Watching files... You can browse the tests on ${session.url} ...`));
     return console.log(
