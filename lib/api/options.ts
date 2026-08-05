@@ -94,6 +94,17 @@ export interface RunOptions {
   debug?: boolean;
   /** Open the output in a browser: `true` for the default, a string to name a binary. */
   open?: boolean | string;
+  /**
+   * Cancels the run when it fires.
+   *
+   * Cancellation here means "stop and answer", not "throw": the browser drops the rest of its
+   * queue and the run resolves with whatever it had, marked `aborted: true`. The tests that did
+   * finish are still on the result, which is the point — a cancelled run that discarded its own
+   * findings would be no more useful than one that never started.
+   *
+   * An already-aborted signal short-circuits: no browser is launched at all.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -114,7 +125,7 @@ export interface RunOptions {
  */
 export interface DaemonRunOptions extends Omit<
   RunOptions,
-  'reporter' | 'plugins' | 'onTest' | 'onNotice' | 'onBrowserLog' | 'open'
+  'reporter' | 'plugins' | 'onTest' | 'onNotice' | 'onBrowserLog' | 'open' | 'signal'
 > {
   /** A built-in reporter's name, several of them, or `false`. Instances cannot cross a socket. */
   reporter?: ReporterName | ReadonlyArray<ReporterName> | false;
