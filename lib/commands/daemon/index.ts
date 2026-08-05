@@ -263,22 +263,24 @@ async function buildDaemonSpawn(): Promise<{ bin: string; args: string[] }> {
   const sea = await import('node:sea').catch(() => null);
   if (sea?.isSea()) return { bin: process.execPath, args: ['daemon', '_serve'] };
 
-  const deno = (globalThis as { Deno?: { mainModule: string } }).Deno;
+  const deno = (globalThis as { Deno?: unknown }).Deno;
   if (deno) {
     // Inside a `deno compile`d binary `Deno.mainModule` is also a `file:` URL
-    // (a virtual path under `/tmp/deno-compile-<name>/`), so the previous
-    // mainModule-prefix check always fell into the `deno run` branch and tried
-    // to spawn `<binary> run -A <virtual-path> daemon _serve` — the binary has
-    // no `run` subcommand and the spawn silently failed. process.execPath
-    // ending in `deno` (or `deno.exe`) is the reliable signal: only `deno run`
-    // preserves the runtime's name on the path.
+    // (a virtual path under `/tmp/deno-compile-<name>/`), so a mainModule-prefix
+    // check always fell into the `deno run` branch and tried to spawn
+    // `<binary> run -A <virtual-path> daemon _serve` — the binary has no `run`
+    // subcommand and the spawn silently failed. process.execPath ending in
+    // `deno` (or `deno.exe`) is the reliable signal: only `deno run` preserves
+    // the runtime's name on the path.
     if (!/[/\\]deno(\.exe)?$/i.test(process.execPath)) {
       return { bin: process.execPath, args: ['daemon', '_serve'] };
     }
-    const { fileURLToPath } = await import('node:url');
+    // `selfEntryPoint()`, not `Deno.mainModule`: under `deno test` — or anywhere the JS API is
+    // driven from a host program — mainModule is the *caller's* entry, so this spawned the host
+    // again instead of a daemon. Same defect the Node branch had, in the other runtime.
     return {
       bin: process.execPath,
-      args: ['run', '-A', fileURLToPath(deno.mainModule), 'daemon', '_serve'],
+      args: ['run', '-A', await selfEntryPoint(), 'daemon', '_serve'],
     };
   }
 
