@@ -227,7 +227,7 @@ const result = await run({
 result.tests; // every test: name, modules, fullName, status, durationMs, assertions
 result.failedFiles; // absolute paths, attributed through source maps
 result.notices; // qunitx's own `# …` diagnostics, as data
-result.browserLogs; // console.* and uncaught errors from the page
+result.browserLogs; // console.* and uncaught errors from the page (newest 1000)
 result.coverage; // per-file line coverage, or null
 result.junitXml; // the XML document, or null
 ```
@@ -271,7 +271,7 @@ matches.map((test) => `${test.fullName}  ${test.file}#${test.line}`);
 A reporter is any object with the handlers it cares about. Pass an instance as `reporter`; it can
 sit alongside a built-in one. A reporter that throws costs its own output and nothing else.
 
-Passing an object does **not** turn on printing — only a built-in *name*, or an explicit
+Passing an object does **not** turn on printing — only a built-in _name_, or an explicit
 `stdout`, does. So a collector of your own keeps the run silent.
 
 ```js
@@ -542,11 +542,11 @@ Don't forget to add the plugin's file extension(s) to `qunitx.extensions` so dir
 
 ### Environment variables
 
-| Variable              | Description                                                                                                                                                                                                                                                                                                                                  |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CHROME_BIN`          | Path to the Chrome/Chromium executable. Required on systems where Chrome is not on `PATH` (e.g. many CI environments). Set automatically when using `browser-actions/setup-chrome` in GitHub Actions.                                                                                                                                        |
-| `QUNITX_BROWSER`      | Browser engine to use (`chromium`, `firefox`, `webkit`). Equivalent to `--browser` on the CLI. Useful in CI matrix jobs.                                                                                                                                                                                                                     |
-| `NODE_COMPILE_CACHE`  | Standard Node env, auto-enabled by qunitx. Stores V8 bytecode for the CLI + its dep graph on disk so the second and subsequent `qunitx` runs skip the parser pass — measured ~8% faster end-to-end (more on slow CI disks). Defaults to `${TMPDIR}/node-compile-cache`; set to a path to relocate (handy for a CI cache key) or `""` to disable. |
+| Variable             | Description                                                                                                                                                                                                                                                                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `CHROME_BIN`         | Path to the Chrome/Chromium executable. Required on systems where Chrome is not on `PATH` (e.g. many CI environments). Set automatically when using `browser-actions/setup-chrome` in GitHub Actions.                                                                                                                                            |
+| `QUNITX_BROWSER`     | Browser engine to use (`chromium`, `firefox`, `webkit`). Equivalent to `--browser` on the CLI. Useful in CI matrix jobs.                                                                                                                                                                                                                         |
+| `NODE_COMPILE_CACHE` | Standard Node env, auto-enabled by qunitx. Stores V8 bytecode for the CLI + its dep graph on disk so the second and subsequent `qunitx` runs skip the parser pass — measured ~8% faster end-to-end (more on slow CI disks). Defaults to `${TMPDIR}/node-compile-cache`; set to a path to relocate (handy for a CI cache key) or `""` to disable. |
 
 If you do not provide any HTML template, qunitx falls back to its built-in `test/tests.html` boilerplate internally, so `qunitx init` is optional.
 
