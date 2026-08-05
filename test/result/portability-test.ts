@@ -26,11 +26,17 @@ module('Result | portability', { concurrency: true }, () => {
       `const doubled = await Task(() => 21).map((n) => n * 2);` +
       `const failed = await Task(() => { throw FileMissing({ path: 'a.ts' }); }).result();` +
       `const streamed = await Stream.from([1, FileMissing({ path: 'b.ts' }), 3]).partition();` +
+      // The push source and the terminal fold go through the same guard: a channel is exactly
+      // the kind of member that reaches for a platform timer or queue if nobody is watching.
+      `const channel = Stream.channel();` +
+      `const pushed = channel.stream.reduce((sum, n) => sum + n, 0);` +
+      `channel.emit(2); channel.emit(3); channel.close();` +
+      `const total = await pushed;` +
       `Failure.setDebug(true);` + // debug line must fall back to console.error, not crash
       `Task(() => Promise.reject(new Error('gone'))).ignore('browser cleanup');` +
       `await new Promise((res) => setTimeout(res, 10));` +
       `console.log('OK', parsed.value.n, doubled, Failure.is(failed), failed.code,` +
-      `  streamed.values.length, streamed.errors.length);`;
+      `  streamed.values.length, streamed.errors.length, total);`;
     const child = spawn(process.execPath, ['--input-type=module', '-e', script]);
     let stdout = '';
     let stderr = '';
@@ -38,7 +44,7 @@ module('Result | portability', { concurrency: true }, () => {
     child.stderr.on('data', (chunk) => (stderr += chunk));
     const code = await new Promise<number | null>((resolve) => child.on('close', resolve));
     assert.strictEqual(code, 0, `clean exit, got stderr: ${stderr}`);
-    assert.true(stdout.includes('OK 1 42 true FileMissing 2 1'), 'the full surface worked');
+    assert.true(stdout.includes('OK 1 42 true FileMissing 2 1 5'), 'the full surface worked');
     assert.true(
       stderr.includes('ignored (browser cleanup)'),
       'the debug line reached console.error without a process.stderr',

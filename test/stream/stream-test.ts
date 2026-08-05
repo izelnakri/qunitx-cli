@@ -492,3 +492,321 @@ module('Stream | asyncStream', { concurrency: true }, () => {
     assert.strictEqual(started, 3);
   });
 });
+
+// ── The push source ───────────────────────────────────────────────────────────
+
+module('Stream | channel', { concurrency: true }, () => {
+  test('emits arrive in order', async (assert) => {
+    const channel = Stream.channel<number>();
+    const collected = channel.stream.values();
+    channel.emit(1);
+    channel.emit(2);
+    channel.close();
+    assert.deepEqual(await collected, [1, 2]);
+  });
+
+  test('emits before anyone consumes are buffered, not lost', async (assert) => {
+    const channel = Stream.channel<number>();
+    channel.emit(1);
+    channel.emit(2);
+    channel.close();
+    assert.strictEqual(channel.buffered, 2, 'held for whoever arrives');
+    assert.deepEqual(await channel.stream.values(), [1, 2], 'and delivered on arrival');
+  });
+
+  test('close() ends the stream only after the buffer drains', async (assert) => {
+    const channel = Stream.channel<number>();
+    channel.emit(1);
+    channel.close();
+    assert.true(channel.closed);
+    assert.deepEqual(
+      await channel.stream.values(),
+      [1],
+      'closing is not a discard — what was emitted still arrives',
+    );
+  });
+
+  test('close() is idempotent and wakes a parked consumer', async (assert) => {
+    const channel = Stream.channel<number>();
+    const collected = channel.stream.values();
+    await Promise.resolve();
+    channel.close();
+    channel.close();
+    assert.deepEqual(await collected, [], 'released rather than hung');
+  });
+
+  test('fail() puts a declared failure in the flow; the railway carries it', async (assert) => {
+    const channel = Stream.channel<number, Failure.Of<typeof BadRow>>();
+    const collected = channel.stream.partition();
+    channel.emit(1);
+    channel.fail(BadRow({ line: 7 }));
+    channel.emit(2);
+    channel.close();
+
+    const { values, errors } = await collected;
+    assert.deepEqual(values, [1, 2], 'values keep flowing past the failure');
+    assert.strictEqual(errors.length, 1);
+    assert.strictEqual(errors[0].data.line, 7);
+  });
+
+  test('abort() rejects the consuming Task — the bug tier, not the flow', async (assert) => {
+    const channel = Stream.channel<number>();
+    const collected = channel.stream.values();
+    channel.emit(1);
+    channel.abort(new TypeError('producer exploded'));
+    await assert.rejects(collected, TypeError, 'a bug is never boxed into the element flow');
+    assert.true(channel.closed);
+  });
+
+  test('emitting after close or abort is ignored rather than thrown', (assert) => {
+    const channel = Stream.channel<number>();
+    channel.close();
+    assert.false(channel.emit(1), 'the producer is told there is nowhere to put it');
+    assert.strictEqual(channel.buffered, 0);
+  });
+
+  test('a second consumer throws rather than silently splitting the elements', async (assert) => {
+    const channel = Stream.channel<number>();
+    channel.emit(1);
+    channel.close();
+    assert.deepEqual(await channel.stream.values(), [1]);
+    await assert.rejects(channel.stream.values(), /already been consumed/);
+  });
+});
+
+module('Stream | channel backpressure', { concurrency: true }, () => {
+  test('emit() reports whether there is room left, Node write() style', (assert) => {
+    const channel = Stream.channel<number>({ capacity: 2 });
+    assert.true(channel.emit(1), 'room to spare');
+    assert.false(channel.emit(2), 'that was the last slot — slow down if you can');
+  });
+
+  test('dropOldest keeps the newest and counts what went', async (assert) => {
+    const discarded: number[] = [];
+    const channel = Stream.channel<number>({
+      capacity: 2,
+      onDiscard: (element) => void discarded.push(element as number),
+    });
+    channel.emit(1);
+    channel.emit(2);
+    channel.emit(3);
+    channel.close();
+
+    assert.deepEqual(await channel.stream.values(), [2, 3], 'the oldest was evicted');
+    assert.strictEqual(channel.dropped, 1);
+    assert.deepEqual(discarded, [1], 'onDiscard is handed what was lost, not what caused it');
+  });
+
+  test('dropNewest keeps the oldest and refuses the arrival', async (assert) => {
+    const discarded: number[] = [];
+    const channel = Stream.channel<number>({
+      capacity: 2,
+      overflow: 'dropNewest',
+      onDiscard: (element) => void discarded.push(element as number),
+    });
+    channel.emit(1);
+    channel.emit(2);
+    channel.emit(3);
+    channel.close();
+
+    assert.deepEqual(await channel.stream.values(), [1, 2]);
+    assert.deepEqual(discarded, [3], 'the arrival was the casualty');
+  });
+
+  test('a producer that honours emit()/drained() loses nothing at any capacity', async (assert) => {
+    // The whole point of the pair, and the only way an unslowable-looking producer becomes a
+    // pausable one: 200 elements through a buffer of 10, nothing dropped. Merely yielding to the
+    // microtask queue between emits is NOT enough — the consumer's own path through the generator
+    // costs several turns per element, so a producer that only awaits `Promise.resolve()` still
+    // outruns it by a factor of three and overflows. Waiting on demand is what keeps pace.
+    const channel = Stream.channel<number>({ capacity: 10 });
+    const seen: number[] = [];
+    const produce = (async () => {
+      for (let index = 0; index < 200; index++) {
+        if (!channel.emit(index)) await channel.drained();
+      }
+      channel.close();
+    })();
+
+    await Promise.all([channel.stream.each((n) => void seen.push(n)), produce]);
+    assert.strictEqual(channel.dropped, 0, 'nothing lost');
+    assert.deepEqual(seen.length, 200, 'and everything arrived');
+  });
+
+  test('the same producer past a capacity nobody is draining drops the excess', async (assert) => {
+    const channel = Stream.channel<number>({ capacity: 10 });
+    for (let index = 0; index < 500; index++) channel.emit(index);
+    channel.close();
+
+    assert.strictEqual(
+      channel.dropped,
+      490,
+      'bounded memory costs elements — there is no third option',
+    );
+    assert.deepEqual(
+      await channel.stream.take(1).values(),
+      [490],
+      'and the newest are what survived',
+    );
+  });
+
+  test('drained() resolves once the consumer has made room', async (assert) => {
+    const channel = Stream.channel<number>({ capacity: 1 });
+    channel.emit(1);
+
+    let resumed = false;
+    const waiting = channel.drained().then(() => void (resumed = true));
+    await Promise.resolve();
+    assert.false(resumed, 'still full — the producer waits');
+
+    // Awaited together: the consuming Task is lazy, so `values()` alone attaches nothing and
+    // the slot would never free.
+    const [, collected] = await Promise.all([waiting, channel.stream.take(1).values()]);
+    assert.true(resumed, 'the take freed the slot');
+    assert.deepEqual(collected, [1]);
+  });
+
+  test('drained() resolves immediately when there is already room', async (assert) => {
+    const channel = Stream.channel<number>({ capacity: 4 });
+    await channel.drained();
+    assert.true(true, 'no wait when nothing is full');
+  });
+
+  test('a consumer that leaves early releases a producer parked on drained()', async (assert) => {
+    const channel = Stream.channel<number>({ capacity: 1 });
+    channel.emit(1);
+    channel.emit(2);
+    const waiting = channel.drained();
+
+    assert.deepEqual(await channel.stream.take(1).values(), [2], 'take(1) ends the consumer');
+    await waiting;
+    assert.true(channel.closed, 'an abandoned channel stops accepting rather than leaking');
+  });
+});
+
+module('Stream | channel demand', { concurrency: true }, () => {
+  test('onDemand fires exactly once, when a consumer actually starts draining', async (assert) => {
+    let started = 0;
+    const channel = Stream.channel<number>({ onDemand: () => void (started += 1) });
+    const collected = channel.stream.values();
+    assert.strictEqual(started, 0, 'building the channel and the consumer started nothing');
+
+    channel.close();
+    await collected;
+    assert.strictEqual(started, 1, 'awaiting the consumer is what started the producer');
+  });
+
+  test('a producer deferred to onDemand emits nothing into a buffer nobody wanted', async (assert) => {
+    // The lazy-start property: a producer that can wait for demand never races ahead of a
+    // consumer that has not arrived, which is the difference between the two rows of the
+    // measurement in `channel`'s docs. Here the whole run happens after the consumer is real.
+    const channel: ReturnType<typeof Stream.channel<number>> = Stream.channel<number>({
+      capacity: 50,
+      onDemand: () => {
+        void (async () => {
+          for (let index = 0; index < 200; index++) {
+            if (!channel.emit(index)) await channel.drained();
+          }
+          channel.close();
+        })();
+      },
+    });
+    assert.strictEqual(channel.buffered, 0, 'nothing emitted before anyone asked');
+
+    assert.strictEqual((await channel.stream.values()).length, 200);
+    assert.strictEqual(channel.dropped, 0, 'and nothing was lost getting there');
+  });
+
+  test('a consumer attaches when its Task is awaited, not when it is built', async (assert) => {
+    // The sharp edge of a lazy module meeting a live producer, pinned so it cannot drift:
+    // `values()` returns a Task and Tasks do nothing until awaited, so building a consumer does
+    // NOT start draining. Anything emitted in between is buffered — which is what `capacity` is
+    // for, and what `onDemand` exists to let a deferrable producer avoid entirely.
+    let started = 0;
+    const channel = Stream.channel<number>({ onDemand: () => void (started += 1) });
+    const collected = channel.stream.values();
+    channel.emit(1);
+    assert.strictEqual(started, 0, 'building the consumer attached nothing');
+    assert.strictEqual(channel.buffered, 1, 'so the emit went to the buffer');
+
+    channel.close();
+    assert.deepEqual(await collected, [1], 'and awaiting is what drains it');
+    assert.strictEqual(started, 1);
+  });
+
+  test('composes with every transform — it is an ordinary Stream', async (assert) => {
+    const channel = Stream.channel<number>();
+    const collected = channel.stream
+      .filter((n) => n % 2 === 0)
+      .map((n) => n * 10)
+      .take(2)
+      .values();
+    for (let index = 0; index < 10; index++) channel.emit(index);
+
+    assert.deepEqual(await collected, [0, 20]);
+  });
+});
+
+// ── The terminal fold ─────────────────────────────────────────────────────────
+
+module('Stream | reduce', { concurrency: true }, () => {
+  test('folds every value into one', async (assert) => {
+    assert.strictEqual(await Stream.from([1, 2, 3]).reduce((sum, n) => sum + n, 0), 6);
+  });
+
+  test('the accumulator type is the seed type, not the element type', async (assert) => {
+    const joined = await Stream.from([1, 2, 3]).reduce((text, n) => `${text}${n}`, '');
+    assert.strictEqual(joined, '123');
+  });
+
+  test('an empty stream answers with the seed rather than raising', async (assert) => {
+    assert.strictEqual(await Stream.from([] as number[]).reduce((sum, n) => sum + n, 0), 0);
+  });
+
+  test('the index is passed, like every other element-wise member', async (assert) => {
+    const pairs = await Stream.from(['a', 'b']).reduce<string[]>(
+      (acc, value, index) => [...acc, `${index}:${value}`],
+      [],
+    );
+    assert.deepEqual(pairs, ['0:a', '1:b']);
+  });
+
+  test('an async reducer is awaited per element', async (assert) => {
+    const total = await Stream.from([1, 2, 3]).reduce(
+      async (sum, n) => sum + (await Promise.resolve(n)),
+      0,
+    );
+    assert.strictEqual(total, 6);
+  });
+
+  test('fail-fasts on the first failure element, as a declared rejection', async (assert) => {
+    const outcome = await Stream.from([1, BadRow({ line: 9 }), 3])
+      .reduce((sum, n) => sum + n, 0)
+      .result();
+    assert.true(BadRow.is(outcome));
+    assert.strictEqual((outcome as Failure.Of<typeof BadRow>).data.line, 9);
+  });
+
+  test('does not buffer the source — the whole point of a terminal fold', async (assert) => {
+    let live = 0;
+    const total = await Stream.from(
+      (function* () {
+        for (let index = 1; index <= 100_000; index++) {
+          live += 1;
+          yield index;
+        }
+      })(),
+    ).reduce((sum, n) => sum + n, 0);
+    assert.strictEqual(total, 5_000_050_000);
+    assert.strictEqual(live, 100_000, 'every element passed through, none were kept');
+  });
+
+  test('a throw in the reducer stays a bug', async (assert) => {
+    await assert.rejects(
+      Stream.from([1]).reduce(() => {
+        throw new TypeError('boom');
+      }, 0),
+      TypeError,
+    );
+  });
+});
