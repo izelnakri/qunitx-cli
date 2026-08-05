@@ -58,10 +58,19 @@ module('API | daemon', { concurrency: false, skip: SKIP }, () => {
     assert.false(await daemon.stop(), 'nothing was running');
   });
 
+  // From here on the tests SHARE one daemon: the first spawns it, the rest reuse it, and only
+  // the last stops it. Spawning per test paid up to SPAWN_TIMEOUT_MS of exposure each — four
+  // spawns for four assertions — and under CI contention that is exactly what went red. Sharing
+  // is also the situation these tests are about: a daemon serving several runs in a row.
+
   test('run returns the same structured result a local run does', async (assert) => {
     await using output = outputDir('api-daemon-run');
     const permit = await acquireBrowser();
     try {
+      // Spawned explicitly rather than left to `run`'s auto-spawn, so a spawn that never became
+      // reachable is reported as such instead of surfacing as `DaemonUnreachable` mid-assertion.
+      assert.true(await daemon.start(), 'the shared daemon came up');
+
       const result = await daemon.run({ inputs: [PASSING], output: output.path });
 
       assert.true(result.ok);
@@ -69,7 +78,6 @@ module('API | daemon', { concurrency: false, skip: SKIP }, () => {
       assert.equal(result.tests.length, 3, 'the per-test detail survives the socket');
       assert.true(result.files[0].endsWith('passing-tests.ts'));
     } finally {
-      await daemon.stop();
       permit.release();
     }
   });
@@ -84,7 +92,6 @@ module('API | daemon', { concurrency: false, skip: SKIP }, () => {
       assert.true(result.failures.length > 0);
       assert.true(result.failedFiles[0].endsWith('failing-tests.ts'));
     } finally {
-      await daemon.stop();
       permit.release();
     }
   });
@@ -103,7 +110,6 @@ module('API | daemon', { concurrency: false, skip: SKIP }, () => {
         first.tests.map((one) => one.fullName),
       );
     } finally {
-      await daemon.stop();
       permit.release();
     }
   });
@@ -123,6 +129,7 @@ module('API | daemon', { concurrency: false, skip: SKIP }, () => {
       assert.includes(chunks.join(''), 'TAP version 13', 'the daemon-side output arrives here');
       assert.equal(result.counts.passed, 3, 'and the structured result comes back too');
     } finally {
+      // The last of the shared-daemon tests owns the teardown.
       await daemon.stop();
       permit.release();
     }
