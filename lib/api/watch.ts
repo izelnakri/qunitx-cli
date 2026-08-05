@@ -75,12 +75,16 @@ export function watch(
     const reporting = resolveReporting(resolved);
     const configOptions = toConfigOptions(resolved, reporting);
     const config = unwrap(await Config.setup({ ...configOptions, watch: true }).result());
+    const begunAt = Date.now();
     const inner = await Run.watch(config);
 
     // Snapshotted here, before the session installs its own rerun listener: the initial run has
     // already finished by the time `Run.watch` resolves, so it has no listener to fire and would
     // otherwise be the one result that never reaches the iterator.
-    return new Session(inner, config, reporting, snapshot(config, reporting));
+    // The initial run's duration is the one number this path cannot recover after the fact —
+    // `Run.watch` has already returned by the time the session exists — so it is measured here,
+    // around the call that performs it.
+    return new Session(inner, config, reporting, snapshot(config, reporting, Date.now() - begunAt));
   });
 }
 
@@ -116,7 +120,9 @@ class Session implements WatchSession {
     this.#queued = [initial];
     // Every rerun goes through the same reporters, and `onRunEnd` is the last thing a run does —
     // which makes it the one honest signal that a result is complete and ready to snapshot.
-    reporting.reporters.push({ onRunEnd: () => this.#publish() });
+    reporting.reporters.push({
+      onRunEnd: (_config, info) => this.#publish(info.durationMs),
+    });
   }
 
   get url(): string {
@@ -125,11 +131,12 @@ class Session implements WatchSession {
 
   async rerun(files?: string[]): Promise<RunResult> {
     const before = this.#published;
+    const startedAt = Date.now();
     await this.#inner.rerun(files);
     // A rerun that died in the bundler never reaches `onRunEnd`, so nothing was published.
     // Snapshot it anyway: the build error is on the result as a notice, which is precisely what
     // the caller needs, and returning the *previous* run's result would be a lie.
-    if (this.#published === before) this.#publish();
+    if (this.#published === before) this.#publish(Date.now() - startedAt);
 
     return this.#latest;
   }
@@ -165,9 +172,9 @@ class Session implements WatchSession {
   }
 
   /** Hands a finished run to whoever is iterating, or queues it until someone is. */
-  #publish(): void {
+  #publish(durationMs: number): void {
     this.#published++;
-    this.#latest = snapshot(this.#config, this.#reporting);
+    this.#latest = snapshot(this.#config, this.#reporting, durationMs);
     if (!this.#waiting) return void this.#queued.push(this.#latest);
 
     const resolve = this.#waiting;
@@ -183,11 +190,16 @@ class Session implements WatchSession {
  * nothing exits — but "did this rerun pass" is exactly as meaningful, and is the same question
  * `failCount` answers for the batch runner.
  */
-function snapshot(config: ResolvedConfig, reporting: ResolvedReporting): RunResult {
+function snapshot(
+  config: ResolvedConfig,
+  reporting: ResolvedReporting,
+  durationMs: number,
+): RunResult {
   const failed = config.state.results.counter.failCount > 0;
+  const finishedAt = Date.now();
   const result = buildResult(
     config,
-    { exitCode: failed ? 1 : 0, durationMs: 0 },
+    { exitCode: failed ? 1 : 0, durationMs, startedAt: finishedAt - durationMs, finishedAt },
     reporting.collector,
     junitXml(reporting.reporters),
   );

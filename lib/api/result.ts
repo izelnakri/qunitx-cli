@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { Config } from '../types.ts';
 import type {
   BrowserLog,
@@ -20,6 +21,7 @@ import type { RunOutcome } from '../commands/run.ts';
  *   status: 'failed',
  *   durationMs: 12,
  *   assertions: [{ passed: false, todo: false, actual: 3, expected: 4 }],
+ *   file: 'test/cart-test.ts',
  * };
  * test.fullName; // exactly the string `--filter` matches against
  * ```
@@ -40,6 +42,14 @@ export interface TestResult {
    * failures and empty otherwise — a passing test's assertion count is not reported.
    */
   assertions: TestAssertion[];
+  /**
+   * Source file this test was declared in, relative to the project root, or `null`.
+   *
+   * Populated for **failures only**, and that is a limit of what QUnit reports rather than a
+   * choice: `testEnd` carries no file, so the path is recovered from the failing assertion's
+   * stack through the bundle's source map. A passing test leaves no stack to map.
+   */
+  file: string | null;
 }
 
 /**
@@ -107,6 +117,38 @@ export interface CoverageSummary {
 }
 
 /**
+ * What the run actually resolved to, after `package.json`, the defaults and the options were
+ * merged — the answers a caller cannot otherwise recover from what it passed in.
+ *
+ * `port` is the sharp one: it auto-increments past a busy port, so the value bound is routinely
+ * not the value requested.
+ *
+ * ```ts
+ * const resolved: ResolvedRun = {
+ *   browser: 'chromium', projectRoot: '/proj', output: '/proj/tmp', port: 1235,
+ *   extensions: ['js', 'ts'], coverageFormats: [],
+ * };
+ * resolved.port; // 1235 — 1234 was taken
+ * ```
+ */
+export interface ResolvedRun {
+  /** The engine the tests ran in. */
+  browser: 'chromium' | 'firefox' | 'webkit';
+  /** Absolute path of the directory holding `package.json`. */
+  projectRoot: string;
+  /** Absolute path of the build output directory — where the bundle and artifacts landed. */
+  output: string;
+  /** The port actually bound, which may differ from the one requested. */
+  port: number;
+  /** File extensions treated as test files. */
+  extensions: string[];
+  /** Coverage artifact formats beyond the terminal summary. */
+  coverageFormats: string[];
+  /** The active test-name filter, when one was set. */
+  filter?: string;
+}
+
+/**
  * Everything a finished run produced.
  *
  * **A run whose tests failed is a successful run.** `run()` resolves with `ok: false`; it does
@@ -156,6 +198,14 @@ export interface RunResult {
   coverage: CoverageSummary | null;
   /** The JUnit XML document, when `junit` was requested. Written to disk as well. */
   junitXml: string | null;
+  /** Epoch ms when the test phase began. */
+  startedAt: number;
+  /** Epoch ms when it ended. */
+  finishedAt: number;
+  /** How many concurrent groups the files were split across; `1` for watch and single-file runs. */
+  groupCount: number;
+  /** What the run resolved to — see {@link ResolvedRun}. */
+  resolved: ResolvedRun;
 }
 
 /**
@@ -282,8 +332,17 @@ export function buildResult(
   collector: Collector,
   junitXml: string | null,
 ): RunResult {
-  const { counter, failedFiles, coverage } = config.state.results;
-  const tests = collector.tests.slice();
+  const { counter, failedFiles, failedTests, coverage } = config.state.results;
+  // QUnit's `testEnd` carries no file, so failures are attributed separately — through the
+  // failing assertion's stack and the bundle's source map. Joining on the display name is what
+  // puts that attribution back on the test it belongs to.
+  const fileByTest = new Map(
+    failedTests.map((record) => [`${record.module}\u0000${record.testName}`, record.file]),
+  );
+  const tests = collector.tests.map((test) => ({
+    ...test,
+    file: fileByTest.get(`${test.modules.join(' > ')}\u0000${test.name}`) ?? null,
+  }));
 
   return {
     ok: outcome.exitCode === 0,
@@ -309,6 +368,18 @@ export function buildResult(
     browserLogsTruncated: collector.browserLogsTruncated,
     coverage: coverage ? summarizeCoverage(config) : null,
     junitXml,
+    startedAt: outcome.startedAt,
+    finishedAt: outcome.finishedAt,
+    groupCount: config.state.groupCount,
+    resolved: {
+      browser: config.browser,
+      projectRoot: config.projectRoot,
+      output: path.resolve(config.projectRoot, config.output),
+      port: config.port,
+      extensions: config.extensions,
+      coverageFormats: config.coverageFormats ?? [],
+      ...(config.filter === undefined ? {} : { filter: config.filter }),
+    },
   };
 }
 
@@ -333,6 +404,8 @@ export function toTestResult(details: TestDetails): TestResult {
     status: details.status as TestResult['status'],
     durationMs: details.runtime,
     assertions: details.assertions ?? [],
+    // Filled in by `buildResult`, which is where the failure attribution is available.
+    file: null,
   };
 }
 

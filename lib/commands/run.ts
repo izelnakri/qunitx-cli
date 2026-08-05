@@ -63,7 +63,8 @@ const DAEMON_CONNECT_TIMEOUT_MS = 30_000;
  * return value, and no `process.exit` between them.
  *
  * ```ts
- * const outcome: RunOutcome = { exitCode: 1, durationMs: 1240 };
+ * const outcome: RunOutcome =
+ *   { exitCode: 1, durationMs: 1240, startedAt: 1_760_000_000_000, finishedAt: 1_760_000_001_240 };
  * outcome.exitCode === 0; // false — at least one test failed, or a group rejected
  * ```
  */
@@ -72,6 +73,10 @@ export interface RunOutcome {
   exitCode: number;
   /** Wall-clock duration of the test phase in milliseconds. */
   durationMs: number;
+  /** Epoch ms when the test phase began — after the bundle, at the first navigation. */
+  startedAt: number;
+  /** Epoch ms when it ended. `finishedAt - startedAt` is `durationMs` modulo clock resolution. */
+  finishedAt: number;
 }
 
 /**
@@ -446,7 +451,8 @@ async function runConcurrentMode(
     if (!config.state.daemon) {
       await closeWithGrace([(await browserPromise).close(), shutdownPrelaunch()]);
     }
-    return { exitCode: 0, durationMs: 0 };
+    const now = Date.now();
+    return { exitCode: 0, durationMs: 0, startedAt: now, finishedAt: now };
   }
   // Line-targeted files run as their own single-file groups, each carrying its own selectors.
   // A group is one page with one QUnit config, so this is what lets `a.ts#34 b.ts` mean "the
@@ -544,6 +550,7 @@ async function runConcurrentMode(
     void openOutputInBrowser(config);
   }
   const timer = TimeCounter.start();
+  const startedAt = Date.now();
   const wallTimes = new Map<number, number>();
 
   // 3-minute per-group deadline. Firefox/WebKit can hang indefinitely in any Playwright
@@ -672,6 +679,7 @@ async function runConcurrentMode(
   }
 
   const durationMs = timer.stop();
+  const finishedAt = Date.now();
   await Reporter.runEnd(config, { durationMs });
 
   if (config.coverage) await Coverage.Report.write(config, allFiles);
@@ -708,7 +716,7 @@ async function runConcurrentMode(
   if (config.state.daemon) {
     await closeWithGrace([Task(sharedServer?.close()).ignore('server.close')]);
     clearInterval(keepAlive);
-    return { exitCode, durationMs };
+    return { exitCode, durationMs, startedAt, finishedAt };
   }
 
   // First-time discoverability nudge for the daemon — only on local-mode runs that
@@ -733,7 +741,7 @@ async function runConcurrentMode(
   ]);
   clearInterval(keepAlive);
 
-  return { exitCode, durationMs };
+  return { exitCode, durationMs, startedAt, finishedAt };
 }
 
 /**
