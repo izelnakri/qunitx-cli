@@ -128,7 +128,11 @@ export function status(): Task<DaemonStatus, never> {
  */
 export function run(options: DaemonRunOptions = {}): Task<RunResult, Client.RunViaFailure> {
   return Task(async () => {
-    await Daemon.ensureRunning();
+    // The boolean matters: `ensureRunning` returns false when the spawn never became reachable
+    // within its budget. Proceeding anyway meant dialling a socket that certainly is not there
+    // and reporting `DaemonUnreachable` a connect-timeout later — the same failure, minutes
+    // after it was already known.
+    if (!(await Daemon.ensureRunning())) throw Client.DaemonUnreachable();
     const sink = options.stdout
       ? streamOutput(options.stdout, options.stderr ?? options.stdout)
       : undefined;
