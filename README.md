@@ -224,13 +224,46 @@ const result = await run({
   onTest: (test) => console.log(test.status, test.fullName), // streamed as they finish
 });
 
-result.tests; // every test: name, modules, fullName, status, durationMs, assertions
+result.tests; // every test: name, modules, fullName, status, durationMs, assertions, file
 result.failedFiles; // absolute paths, attributed through source maps
-result.notices; // qunitx's own `# …` diagnostics, as data
+result.notices; // qunitx's own `# …` diagnostics, as data — see below
 result.browserLogs; // console.* and uncaught errors from the page (newest 1000)
+result.browserLogsTruncated; // how many were dropped past that cap
 result.coverage; // per-file line coverage, or null
 result.junitXml; // the XML document, or null
+result.startedAt; // epoch ms
+result.finishedAt; //  ″
+result.groupCount; // how many concurrent groups the files were split across
+result.resolved; // { browser, projectRoot, output, port, extensions, coverageFormats, filter? }
 ```
+
+`resolved` answers questions the caller cannot recover from what it passed in — chiefly which
+browser ran, and which port was actually bound (it auto-increments past a busy one).
+
+`file` on a test is populated **for failures only**: QUnit's `testEnd` carries no file, so the
+path is recovered from the failing assertion's stack through the source map. A passing test
+leaves no stack to map.
+
+### Notices — why `ok` alone is not enough
+
+`notices` are every `# …` line the CLI prints, as structured data. They matter because `ok` is
+ambiguous on its own:
+
+```js
+const result = await run({ inputs: ['test/'], onlyFailed: true });
+result.ok;           // true
+result.counts.total; // 0   ← nothing ran, and a gate checking `ok` would pass
+result.notices;      // [{ level: 'info',
+                     //    message: 'qunitx --only-failed: no previously-failing test files to run' }]
+```
+
+Each carries a `level`: `info` (a decision qunitx made), `warning` (a surprise), `error` (also
+went to stderr). So a cheap gate is `result.notices.some((n) => n.level !== 'info')`. Typical
+ones: a filter that matched nothing, `--changed` narrowing the run, a line target superseded by a
+broader input, coverage skipped on a non-chromium browser, build errors, timeouts.
+
+They are *not* captured stdout — text is a rendering **of** these, not their source. To capture
+the rendered text instead, pass `reporter` and `stdout`.
 
 Every CLI flag has an option; see the [CLI Reference](#cli-reference). `run('test/')` and
 `run(['a.ts', 'b.ts'])` are shorthand for `inputs`.

@@ -64,6 +64,46 @@ module('API | run | results', { concurrency: true }, () => {
     assert.true(result.ok, 'so the run is green');
   });
 
+  test('the result carries what the run resolved to, not just what was asked', async (assert) => {
+    const result = await apiRun({ inputs: [PASSING] });
+
+    assert.equal(result.resolved.browser, 'chromium');
+    assert.equal(result.resolved.projectRoot, process.cwd());
+    assert.true(result.resolved.port > 0, 'the port actually bound');
+    assert.true(result.resolved.output.startsWith(process.cwd()), 'output is absolute');
+    assert.equal(result.groupCount, 1, 'one file, one group');
+  });
+
+  test('timings bracket the run', async (assert) => {
+    const before = Date.now();
+    const result = await apiRun({ inputs: [PASSING] });
+
+    assert.true(result.startedAt >= before, 'started after we asked');
+    assert.true(result.finishedAt >= result.startedAt, 'and finished after it started');
+    assert.true(
+      Math.abs(result.finishedAt - result.startedAt - result.durationMs) < 50,
+      'the span agrees with durationMs',
+    );
+  });
+
+  test('a failing test is attributed to its source file', async (assert) => {
+    const result = await apiRun({ inputs: [FAILING] });
+
+    assert.true(
+      result.failures.every((one) => one.file?.endsWith('failing-tests.ts')),
+      'every failure names the file it came from',
+    );
+  });
+
+  test('a passing test has no file — QUnit gives no stack to map', async (assert) => {
+    const result = await apiRun({ inputs: [PASSING] });
+
+    assert.true(
+      result.tests.every((one) => one.file === null),
+      'null rather than a guess',
+    );
+  });
+
   test('`files` reports what actually ran', async (assert) => {
     const result = await apiRun({ inputs: [PASSING] });
 
