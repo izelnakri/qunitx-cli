@@ -204,6 +204,15 @@ export interface RunResult {
   finishedAt: number;
   /** How many concurrent groups the files were split across; `1` for watch and single-file runs. */
   groupCount: number;
+  /**
+   * Whether this run was cut short — `session.abort()`, the CLI's `qq`, or an aborted `signal`.
+   *
+   * Check it before reporting a red run as red. An aborted run also has `ok: false` and
+   * `exitCode: 1`, because tests that never ran did not pass — but its counts are a prefix of the
+   * suite rather than a verdict on it, and a UI that conflates the two says "3 failures" when the
+   * user pressed stop.
+   */
+  aborted: boolean;
   /** What the run resolved to — see {@link ResolvedRun}. */
   resolved: ResolvedRun;
 }
@@ -371,6 +380,7 @@ export function buildResult(
     startedAt: outcome.startedAt,
     finishedAt: outcome.finishedAt,
     groupCount: config.state.groupCount,
+    aborted: config.state.results.aborted,
     resolved: {
       browser: config.browser,
       projectRoot: config.projectRoot,

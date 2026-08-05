@@ -25,6 +25,7 @@
  */
 
 export { run, type RunFailure } from './run.ts';
+export { runSession, type RunSession } from './session.ts';
 export { watch, type WatchSession } from './watch.ts';
 export { search, type SearchMatch, type SearchResult } from './search.ts';
 export { init, generate, type InitOptions, type GenerateOptions } from './scaffold.ts';
@@ -50,9 +51,18 @@ export type {
   RunResult,
   RunCounts,
   TestResult,
+  ResolvedRun,
   CoverageSummary,
   FileCoverageSummary,
 } from './result.ts';
+
+/**
+ * The live view of a run: what a session yields, in the order it happened.
+ *
+ * The fine-grained counterpart to {@link RunResult} — the same run, as it happens rather than once
+ * it is over. Both sessions produce the same events, so a progress display works against either.
+ */
+export type { RunEvent } from './events.ts';
 
 /**
  * The reporter contract and its payloads. Implement {@link Reporter} to observe a run as it

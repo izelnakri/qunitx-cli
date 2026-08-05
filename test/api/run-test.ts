@@ -248,6 +248,34 @@ module('API | run | failures', { concurrency: true }, () => {
     assert.equal(Qunitx.Failure.is(outcome) ? outcome.code : null, 'InvalidOption');
   });
 
+  test('an already-aborted signal answers without launching a browser', async (assert) => {
+    await using output = outputDir('api-signal-pre');
+    // No permit: not launching a browser is exactly what is being asserted.
+    const result = await Qunitx.run({
+      inputs: [PASSING],
+      output: output.path,
+      signal: AbortSignal.abort(),
+    });
+
+    assert.true(result.aborted, 'the result says it was cancelled');
+    assert.equal(result.counts.total, 0, 'and nothing ran');
+    assert.equal(result.exitCode, 1, 'a run that never happened is not a pass');
+    assert.false(result.ok);
+  });
+
+  test('an ordinary run is not marked aborted', async (assert) => {
+    const result = await apiRun({ inputs: [PASSING] });
+
+    assert.false(result.aborted, 'green and complete');
+  });
+
+  test('a red run is not marked aborted either', async (assert) => {
+    const result = await apiRun({ inputs: [FAILING] });
+
+    assert.false(result.ok);
+    assert.false(result.aborted, 'failing is not the same as interrupted');
+  });
+
   test('the Task is lazy — nothing runs until it is awaited', async (assert) => {
     await using output = outputDir('api-lazy');
     const task = Qunitx.run({ inputs: [PASSING], output: output.path });

@@ -3,6 +3,7 @@ import * as Run from '../commands/run.ts';
 import { Task } from '../task/index.ts';
 import { unwrap } from '../result/result.ts';
 import { buildResult, type RunResult } from './result.ts';
+import { Channel, eventReporter, type RunEvent } from './events.ts';
 import {
   normalizeOptions,
   resolveReporting,
@@ -39,8 +40,51 @@ export interface WatchSession extends AsyncIterable<RunResult> {
   readonly url: string;
   /** The initial run's result, available before anything has changed on disk. */
   readonly initial: RunResult;
+  /**
+   * The most recent run's result — `initial` until something re-runs.
+   *
+   * The session's current state, readable without consuming the iteration. A UI redrawing for
+   * some reason of its own (a resize, a keystroke) needs the last result again, and taking it
+   * from the iterator would steal it from the loop that is driving the redraws.
+   */
+  readonly latest: RunResult;
+  /** Whether a run is in flight right now. */
+  readonly running: boolean;
   /** Re-runs now, optionally scoped to `files`, and resolves with that run's result. */
-  rerun(files?: string[]): Promise<RunResult>;
+  run(files?: string[]): Promise<RunResult>;
+  /**
+   * Runs the whole suite, dropping any line-target selectors this session was scoped to.
+   *
+   * Not the same as `run()`: a session started from `test/cart-test.ts#34` stays pinned to that
+   * line until something clears the pin, and only this clears it. `-t`/`-m` survive — those are a
+   * standing instruction about which tests to run rather than a starting point.
+   */
+  runAll(): Promise<RunResult>;
+  /**
+   * Re-runs the files that last failed, or repeats the last run when nothing has failed yet —
+   * saying so as an `info` notice on the result rather than silently doing something else.
+   */
+  runFailed(): Promise<RunResult>;
+  /**
+   * Cuts the current run short: the browser drops the rest of its queue and the run ends where it
+   * is, with `aborted: true` on its result.
+   *
+   * Resolves once the interrupted run has settled, so `await session.abort()` leaves the session
+   * idle and ready for the next verb. Aborting while nothing is running is a no-op.
+   */
+  abort(): Promise<void>;
+  /**
+   * The fine-grained feed: every event of every run, flat and in order, until the session closes.
+   *
+   * The same events for a watch session as for a single run, so a UI written against one works
+   * against the other — `runStart` … `test` … `runEnd`, then again for the next rerun. Iterating
+   * the session itself gives the coarse view (one complete result per rerun); this gives the view
+   * a progress bar needs.
+   *
+   * Buffers from the first call, not from the first read, so events between calling this and
+   * starting to iterate are not lost. One consumer, like the session's own iteration.
+   */
+  events(): AsyncIterable<RunEvent>;
   /** Stops watching, closes the browser and server, and ends the iteration. Idempotent. */
   close(): Promise<void>;
 }
@@ -53,7 +97,10 @@ export interface WatchSession extends AsyncIterable<RunResult> {
  * a browser and a bound port — `close()` is what releases both.
  *
  * Unlike the CLI's `--watch`, nothing is bound to stdin: no keyboard shortcuts are installed and
- * the host's terminal is left alone.
+ * the host's terminal is left alone. The behaviours behind those shortcuts are still here as
+ * {@link WatchSession.runAll}, {@link WatchSession.runFailed} and {@link WatchSession.abort} —
+ * the CLI binds keys to the same methods, so a terminal UI built on this API is not reimplementing
+ * them.
  *
  * ```ts
  * import { watch } from './watch.ts';
@@ -84,7 +131,21 @@ export function watch(
     // The initial run's duration is the one number this path cannot recover after the fact —
     // `Run.watch` has already returned by the time the session exists — so it is measured here,
     // around the call that performs it.
-    return new Session(inner, config, reporting, snapshot(config, reporting, Date.now() - begunAt));
+    const session = new Session(
+      inner,
+      config,
+      reporting,
+      snapshot(config, reporting, Date.now() - begunAt),
+    );
+    // For a watch session `signal` means "stop watching" — there is no single run to cut short,
+    // and the session's own `abort()` covers the one in flight. An already-aborted signal still
+    // pays for the initial run, because the session's contract is that `initial` is a real result.
+    if (resolved.signal) {
+      if (resolved.signal.aborted) await session.close();
+      else resolved.signal.addEventListener('abort', () => void session.close(), { once: true });
+    }
+
+    return session;
   });
 }
 
@@ -98,8 +159,8 @@ class Session implements WatchSession {
   #inner: Run.WatchSession;
   #config: ResolvedConfig;
   #reporting: ResolvedReporting;
-  #queued: RunResult[];
-  #waiting: ((result: IteratorResult<RunResult>) => void) | null = null;
+  #results = new Channel<RunResult>();
+  #events: Channel<RunEvent> | null = null;
   #latest: RunResult;
   #published = 0;
   #closed = false;
@@ -117,7 +178,7 @@ class Session implements WatchSession {
     this.#latest = initial;
     // The initial run is the iteration's first element, so a `for await` sees the whole history
     // rather than starting from whatever happens to change next.
-    this.#queued = [initial];
+    this.#results.push(initial);
     // Every rerun goes through the same reporters, and `onRunEnd` is the last thing a run does —
     // which makes it the one honest signal that a result is complete and ready to snapshot.
     reporting.reporters.push({
@@ -129,38 +190,59 @@ class Session implements WatchSession {
     return this.#inner.url;
   }
 
-  async rerun(files?: string[]): Promise<RunResult> {
-    const before = this.#published;
-    const startedAt = Date.now();
-    await this.#inner.rerun(files);
-    // A rerun that died in the bundler never reaches `onRunEnd`, so nothing was published.
-    // Snapshot it anyway: the build error is on the result as a notice, which is precisely what
-    // the caller needs, and returning the *previous* run's result would be a lie.
-    if (this.#published === before) this.#publish(Date.now() - startedAt);
-
+  get latest(): RunResult {
     return this.#latest;
+  }
+
+  get running(): boolean {
+    return this.#inner.running;
+  }
+
+  run(files?: string[]): Promise<RunResult> {
+    return this.#drive(() => this.#inner.run(files));
+  }
+
+  runAll(): Promise<RunResult> {
+    return this.#drive(() => this.#inner.runAll());
+  }
+
+  runFailed(): Promise<RunResult> {
+    return this.#drive(() => this.#inner.runFailed());
+  }
+
+  async abort(): Promise<void> {
+    this.#inner.abort();
+    // Waiting for quiet, NOT driving a run: the interrupted run publishes its own truncated
+    // result through `onRunEnd` like any other, and `#drive` would have manufactured a second,
+    // empty one for an abort that arrived while nothing was running.
+    await this.#inner.settled();
+  }
+
+  events(): AsyncIterable<RunEvent> {
+    // Attached on the first call and kept: a second call must not hand back a feed that starts
+    // mid-run, and attaching a second reporter would double every event on the first feed.
+    if (!this.#events) {
+      const channel = new Channel<RunEvent>();
+      this.#events = channel;
+      this.#reporting.reporters.push(eventReporter(channel));
+    }
+
+    return this.#events;
   }
 
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
     await this.#inner.close();
-    // Wake a consumer parked on a rerun that is never going to come.
-    this.#waiting?.({ done: true, value: undefined });
-    this.#waiting = null;
+    this.#results.close();
+    this.#events?.close();
   }
 
   [Symbol.asyncIterator](): AsyncIterator<RunResult> {
-    return {
-      next: (): Promise<IteratorResult<RunResult>> => {
-        // Queue first, even when closed: results that arrived before shutdown are still results,
-        // and dropping them would make `close()` racy from the consumer's point of view.
-        const queued = this.#queued.shift();
-        if (queued) return Promise.resolve({ done: false, value: queued });
-        if (this.#closed) return Promise.resolve({ done: true, value: undefined });
+    const inner = this.#results[Symbol.asyncIterator]();
 
-        return new Promise((resolve) => (this.#waiting = resolve));
-      },
+    return {
+      next: () => inner.next(),
       return: async (): Promise<IteratorResult<RunResult>> => {
         // `break` out of a for-await closes the session: leaving a browser running after the
         // loop that was reading it has stopped is never what was meant.
@@ -171,15 +253,29 @@ class Session implements WatchSession {
     };
   }
 
+  /**
+   * Runs one verb and answers with the result it produced.
+   *
+   * The `#published` comparison is what makes that "the result it produced" rather than "whatever
+   * is latest": a rerun that died in the bundler never reaches `onRunEnd`, so nothing was
+   * published, and returning the previous run's result would report a build error as the last
+   * green run.
+   */
+  async #drive(verb: () => Promise<void>): Promise<RunResult> {
+    const before = this.#published;
+    const startedAt = Date.now();
+    await verb();
+    if (this.#published === before) this.#publish(Date.now() - startedAt);
+
+    return this.#latest;
+  }
+
   /** Hands a finished run to whoever is iterating, or queues it until someone is. */
   #publish(durationMs: number): void {
     this.#published++;
     this.#latest = snapshot(this.#config, this.#reporting, durationMs);
-    if (!this.#waiting) return void this.#queued.push(this.#latest);
-
-    const resolve = this.#waiting;
-    this.#waiting = null;
-    resolve({ done: false, value: this.#latest });
+    this.#results.push(this.#latest);
+    this.#events?.push({ kind: 'runEnd', result: this.#latest });
   }
 }
 
