@@ -40,6 +40,76 @@ import { partition, type Result } from '../result/result.ts';
 /** Anything a Stream can be built from or flattened into: sync or async iterables (a web `ReadableStream` is async-iterable on every modern runtime). */
 export type Source<T> = AsyncIterable<T> | Iterable<T>;
 
+/**
+ * Which end a full channel drops from — GenStage's `:buffer_keep`, named for the element that
+ * goes rather than the one that stays, because that is what a reader of the call site needs.
+ *
+ * ```ts
+ * const keepNewest: Overflow = 'dropOldest'; // GenStage's :last, and the default
+ * const keepOldest: Overflow = 'dropNewest'; // GenStage's :first
+ * ```
+ */
+export type Overflow = 'dropOldest' | 'dropNewest';
+
+/**
+ * How a {@link Channel} behaves when its consumer cannot keep up.
+ *
+ * ```ts
+ * const options: ChannelOptions<number> = { capacity: 1_000, overflow: 'dropNewest' };
+ * options.capacity; // 1000 — past this, `overflow` decides which element is lost
+ * ```
+ */
+export interface ChannelOptions<T, E = never> {
+  /** How many elements to buffer for a consumer that has not taken them yet. Default `10_000`. */
+  capacity?: number;
+  /** Which end to drop from once `capacity` is reached. Default `'dropOldest'`. */
+  overflow?: Overflow;
+  /**
+   * Called with each element the buffer actually lost, and the depth after the loss. The only
+   * place overflow is observable — make it fatal from here by calling `fail` or `abort`.
+   */
+  onDiscard?: (dropped: T | E, buffered: number) => void;
+  /**
+   * Called once, when a consumer first attaches. A producer that can defer starting should start
+   * here: it is the difference between a buffer that stays near empty and one that races ahead
+   * of a consumer that has not arrived.
+   */
+  onDemand?: () => void;
+}
+
+/**
+ * The producer half of {@link StreamClass.channel}: emit into it, consume `stream` out of it.
+ *
+ * ```ts
+ * const channel: Channel<string> = Stream.channel<string>();
+ * channel.emit('a'); // true — buffered, room to spare
+ * channel.buffered; // 1
+ * ```
+ */
+export interface Channel<T, E = never> {
+  /** The consuming half. One consumer only; a second pass throws. */
+  readonly stream: Stream<T, E>;
+  /** Elements buffered for a consumer that has not taken them yet. */
+  readonly buffered: number;
+  /** How many elements the buffer has lost to overflow. `0` unless a consumer fell behind. */
+  readonly dropped: number;
+  /** Whether the channel has been closed, aborted, or abandoned by its consumer. */
+  readonly closed: boolean;
+  /**
+   * Offers a value. Returns `false` when there is no room left — Node's `write()` convention:
+   * advisory for a producer that can slow down, ignorable for one that cannot.
+   */
+  emit(value: T): boolean;
+  /** Offers a declared failure as an **element** — the railway, not a rejection. */
+  fail(error: E): boolean;
+  /** Ends the stream once the buffer drains. Idempotent. */
+  close(): void;
+  /** Rejects the consuming Task with `reason` — the two-tier rule's bug tier. Idempotent. */
+  abort(reason: unknown): void;
+  /** Resolves once there is room to emit again — Node's `'drain'`, i.e. GenStage demand. */
+  drained(): Promise<void>;
+}
+
 async function* iterate<T>(source: Source<T>): AsyncGenerator<T> {
   yield* source as AsyncIterable<T>;
 }
@@ -414,6 +484,178 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
         }
       }
     }) as never;
+  }
+
+  /**
+   * The one **push** source: a handle whose producer emits whenever it likes, and a Stream that
+   * consumes what it emitted. Every other builder pulls — `unfold`, `resource` and `iterate` all
+   * *ask* for the next element — but the most common real source in JS cannot be asked: an
+   * EventEmitter, a WebSocket, `fs.watch`, SSE, a browser running tests.
+   *
+   * **Backpressure is not on offer for such a producer, so the ruling is explicit.** Node's own
+   * adapter assumes the producer is pausable (`events.on(emitter, 'x', { highWaterMark: 2 })`
+   * throws `emitter.pause is not a function` on a plain EventEmitter, and without it queues
+   * without bound); web streams report `desiredSize` but enforce nothing. GenStage is the one
+   * design that makes the caller choose, and this is its `:buffer_size` / `:buffer_keep` pair:
+   * buffer up to `capacity`, and past it drop from one end or the other. There is no third
+   * option — you cannot have both "no loss" and "bounded memory" from a producer that will not
+   * slow down.
+   *
+   * `onDemand` is what makes the good case reachable: it fires when a consumer actually attaches,
+   * so a producer that can defer starting keeps the buffer near empty instead of racing ahead of
+   * a consumer that is not there yet. Measured against an unslowable producer of 5000 events,
+   * attaching from the first event held the peak buffer at 50 with nothing dropped; attaching
+   * 80ms late dropped 2250 at `capacity: 1000`, or held 3650 in memory uncapped.
+   *
+   * **A consumer attaches when its Task is awaited, not when it is built.** `channel.stream
+   * .values()` returns a lazy Task like every other consumer here, so nothing drains until
+   * something awaits it, and everything emitted in the meantime goes to the buffer. That is the
+   * module's laziness working as designed rather than an exception to it — but a live producer is
+   * where it becomes visible, so `onDemand` is the hook that ties the two together.
+   *
+   * A producer that *can* slow down should honour `emit`'s return value: `if (!emit(x)) await
+   * drained()` moves 200 elements through a buffer of 10 without losing one. Merely yielding to
+   * the microtask queue between emits does not — the consumer's own path through the generator
+   * costs several turns per element, so it is outrun about three to one and overflows anyway.
+   *
+   * `fail` puts a declared failure **in the flow** (the railway); `abort` rejects the consuming
+   * Task — the two-tier rule, kept. For overflow that must be fatal rather than lossy, call
+   * either one from `onDiscard`; that is why there is no third overflow mode, and why the
+   * failure type stays whatever you declared instead of widening for a case you may not use.
+   *
+   * One consumer: the buffer is drained, not replayed, so a second pass would take the elements
+   * the first was owed. Opening one is a bug and throws — this being silent is exactly the class
+   * of defect a push source should not have.
+   *
+   * ```ts
+   * const channel = Stream.channel<number>();
+   * const collected = channel.stream.take(2).values();
+   * channel.emit(1);
+   * channel.emit(2);
+   * await collected; // [1, 2]
+   * ```
+   */
+  static channel<U, F = never>(options: ChannelOptions<U, F> = {}): Channel<U, F> {
+    // GenStage's `:buffer_size` default, and its `:buffer_keep :last` — keep the newest, which
+    // under a flood are the ones adjacent to whatever the consumer is trying to diagnose.
+    const { capacity = 10_000, overflow = 'dropOldest', onDiscard, onDemand } = options;
+    const queue: (U | F)[] = [];
+    let waiting: ((result: IteratorResult<U | F>) => void) | null = null;
+    let roomWaiters: (() => void)[] = [];
+    let aborted: { reason: unknown } | null = null;
+    let closed = false;
+    let opened = false;
+    let dropped = 0;
+
+    const releaseRoom = () => {
+      if (queue.length >= capacity) return;
+      const waiters = roomWaiters;
+      roomWaiters = [];
+      waiters.forEach((resume) => resume());
+    };
+    // Wakes a consumer parked on an element that is never going to arrive. It re-reads `closed`
+    // and `aborted` itself, so one signal serves both endings.
+    const wake = () => {
+      const resolve = waiting;
+      waiting = null;
+      resolve?.({ done: true, value: undefined });
+    };
+    const push = (element: U | F): boolean => {
+      if (closed || aborted) return false;
+      if (waiting) {
+        const resolve = waiting;
+        waiting = null;
+        resolve({ done: false, value: element });
+
+        return true;
+      }
+      if (queue.length >= capacity) {
+        dropped++;
+        // 'dropNewest' refuses the arrival; 'dropOldest' evicts the front to make room. Either
+        // way `onDiscard` is handed the element that was actually lost, not the one that caused
+        // the loss — GenStage's `format_discarded/2`, whose whole use is saying what went.
+        if (overflow === 'dropNewest') {
+          onDiscard?.(element, queue.length);
+
+          return false;
+        }
+        const evicted = queue.shift() as U | F;
+        queue.push(element);
+        onDiscard?.(evicted, queue.length);
+
+        return false;
+      }
+      queue.push(element);
+
+      return queue.length < capacity;
+    };
+
+    const stream = new StreamClass<U, F>(async function* () {
+      if (opened) {
+        throw new Error(
+          'Stream.channel: this stream has already been consumed — a channel buffers for one ' +
+            'consumer, so a second pass would take elements the first was owed.',
+        );
+      }
+      opened = true;
+      onDemand?.();
+      try {
+        for (;;) {
+          if (queue.length > 0) {
+            const element = queue.shift() as U | F;
+            releaseRoom();
+            yield element;
+            continue;
+          }
+          // Checked with the queue empty, so everything emitted before the ending still reaches
+          // the consumer — closing would otherwise be racy from the producer's side.
+          if (aborted) throw aborted.reason;
+          if (closed) return;
+
+          const next = await new Promise<IteratorResult<U | F>>((resolve) => (waiting = resolve));
+          if (!next.done) yield next.value;
+        }
+      } finally {
+        // The consumer left — `take(n)`, a `break`, or a throw downstream. Nothing will drain
+        // this buffer again, so stop accepting and release a producer parked on `drained()`
+        // rather than leaving it waiting on room that will never be needed.
+        closed = true;
+        waiting = null;
+        queue.length = 0;
+        releaseRoom();
+      }
+    });
+
+    return {
+      stream,
+      get buffered() {
+        return queue.length;
+      },
+      get dropped() {
+        return dropped;
+      },
+      get closed() {
+        return closed || aborted !== null;
+      },
+      emit: (value: U) => push(value),
+      fail: (error: F) => push(error),
+      close: () => {
+        if (closed || aborted) return;
+        closed = true;
+        wake();
+        releaseRoom();
+      },
+      abort: (reason: unknown) => {
+        if (closed || aborted) return;
+        aborted = { reason };
+        wake();
+        releaseRoom();
+      },
+      drained: () =>
+        queue.length < capacity || closed || aborted !== null
+          ? Promise.resolve()
+          : new Promise<void>((resume) => void roomWaiters.push(resume)),
+    };
   }
 
   // ── Transforms — lazy, failures pass through untouched ──────────────────────
@@ -1022,6 +1264,42 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
       { values: T[]; errors: E[] },
       never
     >;
+  }
+
+  /**
+   * Folds every value into one, **fail-fast** like {@link StreamClass#values} — the terminal
+   * counterpart to {@link StreamClass#scan}'s lazy running fold, and the reason a ten-million-row
+   * stream can answer with a single number.
+   *
+   * Without it the only route is `(await stream.values()).reduce(…)`, which buffers the whole
+   * source to produce one value and gives back everything the module exists to avoid. Elixir does
+   * not need a member here because `Enum.reduce` accepts any Enumerable; JS has no such fallback.
+   *
+   * `initial` is required. The seedless form would have to raise on an empty stream — the way
+   * `[].reduce(fn)` does — and a stream's emptiness is not knowable before it is drained, so the
+   * failure would arrive at the worst possible moment. Naming the seed also names `A`.
+   *
+   * ```ts
+   * const total = await Stream.from([1, 2, 3]).reduce((sum, n) => sum + n, 0);
+   * total; // 6
+   * ```
+   */
+  reduce<A>(
+    fn: (accumulator: A, value: T, index: number) => A | PromiseLike<A>,
+    initial: A,
+  ): Task<A, E> {
+    const open = this.#open;
+
+    return Task(async () => {
+      let accumulator = initial;
+      let index = 0;
+      for await (const element of open()) {
+        if (isFailure(element)) throw element;
+        accumulator = await fn(accumulator, element as T, index++);
+      }
+
+      return accumulator;
+    });
   }
 
   /**
