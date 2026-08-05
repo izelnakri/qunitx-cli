@@ -17,7 +17,8 @@
  */
 import { Collector, buildResult } from '../lib/api/result.ts';
 import { resolveReporting, toConfigOptions } from '../lib/api/options.ts';
-import { run, search } from '../lib/api/index.ts';
+import { Channel, eventReporter, type RunEvent } from '../lib/api/events.ts';
+import { run, runSession, search } from '../lib/api/index.ts';
 import type { Config } from '../lib/types.ts';
 import type { TestDetails } from '../lib/reporters/types.ts';
 
@@ -47,6 +48,21 @@ Deno.bench('api: run() one file, tap reporter', { group: 'api-run', n: 3, warmup
     stdout: { write: () => {} },
   });
 });
+
+// What the event feed costs over the plain value: same run, same browser, one extra reporter and
+// one channel push per event. If watching a run is meaningfully slower than waiting one out, the
+// session abstraction is not worth having.
+Deno.bench(
+  'api: runSession() one file, events consumed',
+  { group: 'api-run', n: 3, warmup: 1 },
+  async () => {
+    await using session = await runSession({
+      inputs: [FIXTURE],
+      output: `tmp/bench-api-${crypto.randomUUID()}`,
+    });
+    for await (const _event of session);
+  },
+);
 
 Deno.bench('api: search() one file, no browser', { group: 'api-scan', n: 20 }, async () => {
   await search({ inputs: [FIXTURE] });
@@ -93,6 +109,7 @@ const benchConfig = (): Config =>
         failedFiles: new Set<string>(),
         failedTests: [],
         coverage: null,
+        aborted: false,
       },
     },
   }) as unknown as Config;
@@ -113,4 +130,25 @@ Deno.bench('api: buildResult over 10k tests', { group: 'api-collect' }, () => {
 Deno.bench('api: resolve options + reporters', { group: 'api-collect' }, () => {
   const reporting = resolveReporting({ inputs: [FIXTURE], reporter: 'tap' });
   toConfigOptions({ inputs: [FIXTURE], reporter: 'tap' }, reporting);
+});
+
+// The event path's own cost, with no browser in the way: 10k pushes through a channel a consumer
+// is draining as fast as it can. This is the number that would move if the queue grew an
+// allocation per event.
+Deno.bench('api: channel round-trips 10k events', { group: 'api-collect' }, async () => {
+  const channel = new Channel<RunEvent>();
+  const drained = (async () => {
+    let seen = 0;
+    for await (const _event of channel) seen++;
+
+    return seen;
+  })();
+
+  // One config, hoisted: the reporter ignores it, and rebuilding it per event would price the
+  // fixture rather than the channel.
+  const config = benchConfig();
+  const reporter = eventReporter(channel);
+  for (let index = 0; index < 10_000; index++) reporter.onTestEnd?.(config, details(index));
+  channel.close();
+  await drained;
 });

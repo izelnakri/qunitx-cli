@@ -4,6 +4,7 @@ import * as Qunitx from '../../lib/api/index.ts';
 import type { RunOptions } from '../../lib/api/options.ts';
 import type { RunResult } from '../../lib/api/result.ts';
 import type { WatchSession } from '../../lib/api/watch.ts';
+import type { RunSession } from '../../lib/api/session.ts';
 
 // The API tests are the only ones that drive a browser *in this process* rather than through
 // `node cli.ts`. Two things have to be arranged by hand as a result:
@@ -58,6 +59,33 @@ export async function withWatch<T>(
   await using output = outputDir('api-watch');
   const permit = await acquireBrowser();
   const session = await Qunitx.watch({ output: output.path, ...options });
+  try {
+    return await body(session);
+  } finally {
+    await session.close();
+    permit.release();
+  }
+}
+
+/**
+ * Starts a run session with a permit held, hands it to `body`, and closes it.
+ *
+ * ```ts
+ * import { withRunSession } from './helpers.ts';
+ *
+ * // Defined, not invoked: launches a real browser.
+ * async function eventCount() {
+ *   return await withRunSession({}, async (session) => (await session.result()).counts.total);
+ * }
+ * ```
+ */
+export async function withRunSession<T>(
+  options: RunOptions,
+  body: (session: RunSession) => Promise<T> | T,
+): Promise<T> {
+  await using output = outputDir('api-session');
+  const permit = await acquireBrowser();
+  const session = await Qunitx.runSession({ output: output.path, ...options });
   try {
     return await body(session);
   } finally {
