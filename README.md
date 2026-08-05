@@ -234,6 +234,7 @@ result.junitXml; // the XML document, or null
 result.startedAt; // epoch ms
 result.finishedAt; //  ″
 result.groupCount; // how many concurrent groups the files were split across
+result.aborted; // true when something stopped the run — see below
 result.resolved; // { browser, projectRoot, output, port, extensions, coverageFormats, filter? }
 ```
 
@@ -243,6 +244,16 @@ browser ran, and which port was actually bound (it auto-increments past a busy o
 `file` on a test is populated **for failures only**: QUnit's `testEnd` carries no file, so the
 path is recovered from the failing assertion's stack through the source map. A passing test
 leaves no stack to map.
+
+`aborted` distinguishes *stopped* from *red* — both end with `ok: false`. Check it before
+reporting failures, or a UI says "3 failures" when someone pressed stop. Pass a `signal` to
+cancel; an already-aborted one answers without launching a browser at all.
+
+```js
+const controller = new AbortController();
+const result = await run({ inputs: ['test/'], signal: controller.signal });
+result.aborted; // true — counts are a prefix of the suite, not a verdict on it
+```
 
 ### Notices — why `ok` alone is not enough
 
@@ -271,7 +282,8 @@ Every CLI flag has an option; see the [CLI Reference](#cli-reference). `run('tes
 ### watch
 
 An async-iterable session that yields a complete result per rerun, and closes deterministically.
-No keyboard shortcuts are installed and your stdin is left alone.
+No keyboard shortcuts are installed and your stdin is left alone — the behaviours behind them are
+methods instead.
 
 ```js
 import { watch } from 'qunitx-cli';
@@ -285,8 +297,47 @@ for await (const result of session) {
 }
 ```
 
-`session.rerun(files?)` forces a run and resolves with it; `session.close()` releases the browser
-and the port.
+The session is a handle with the same verbs the CLI's keyboard shortcuts are bound to — the CLI
+binds keys to these methods, so a terminal UI built on this API is not reimplementing them:
+
+```js
+await session.run(files?); // rerun, optionally scoped     (the file watcher's own path)
+await session.runAll(); // whole suite, drops line targets  (`qa`)
+await session.runFailed(); // only what failed last run     (`qf`)
+await session.abort(); // stop the run in flight            (`qq`)
+await session.close(); // release the browser and the port
+
+session.latest; // the most recent result, without consuming the iteration
+session.running; // is a run executing or queued
+```
+
+`session.events()` is the fine-grained feed — every event of every rerun, flat and in order, for
+progress bars and live logs.
+
+### runSession
+
+One run, watched as it happens. `run()` is the smaller thing when only the outcome matters; this
+is for when the *progress* is the point.
+
+```js
+import { runSession } from 'qunitx-cli';
+
+await using session = await runSession('test/');
+
+for await (const event of session) {
+  if (event.kind === 'test') process.stdout.write(event.test.status === 'passed' ? '.' : 'F');
+}
+
+const result = await session.result(); // RunResult — never undefined
+```
+
+Events are `runStart`, `test`, `notice`, `browserLog`, and finally `runEnd`, which carries the
+complete result — so a consumer reading only this feed never needs a second channel. Watch
+sessions emit the same shape, so a display written against one works against the other.
+
+**The run does not start until you consume it.** That is the correctness property, not an
+optimization: a browser cannot be told to slow down, so a run started before anyone was reading
+would either drop events or buffer the whole suite. Awaiting `result()` counts as consuming.
 
 ### search
 
