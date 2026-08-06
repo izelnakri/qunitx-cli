@@ -810,3 +810,45 @@ module('Stream | reduce', { concurrency: true }, () => {
     );
   });
 });
+
+// ── Sequencing: what awaits what, and where to go when you want parallelism ──
+
+module('Stream | per-element sequencing', { concurrency: true }, () => {
+  // Asserted on OBSERVED concurrency rather than wall-clock, so a loaded CI box cannot
+  // turn a contract into a flake. `asyncStream`'s own bounding is covered in its module;
+  // these two pin the contrast the `map`/`each` docs now draw.
+  const watcher = () => {
+    const state = { live: 0, peak: 0 };
+    const fn = async (value: number) => {
+      state.live += 1;
+      state.peak = Math.max(state.peak, state.live);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      state.live -= 1;
+
+      return value;
+    };
+
+    return { state, fn };
+  };
+
+  test('map awaits one element at a time', async (assert) => {
+    const { state, fn } = watcher();
+    await Stream.from([1, 2, 3, 4]).map(fn).values();
+
+    assert.strictEqual(state.peak, 1, 'one suspended generator has one resume point');
+  });
+
+  test('each drains one element at a time', async (assert) => {
+    const { state, fn } = watcher();
+    await Stream.from([1, 2, 3, 4]).each(fn);
+
+    assert.strictEqual(state.peak, 1, 'the next element is not pulled until fn settles');
+  });
+
+  test('asyncStream is the escape hatch, bounded by maxConcurrency', async (assert) => {
+    const { state, fn } = watcher();
+    await Stream.asyncStream([1, 2, 3, 4, 5, 6], fn, { maxConcurrency: 3 }).values();
+
+    assert.strictEqual(state.peak, 3, 'exactly the window asked for — never more, never one');
+  });
+});
