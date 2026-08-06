@@ -39,6 +39,7 @@ import {
   isFailure,
   observed,
   type Any as AnyFailure,
+  type FailureFactory,
   type Of,
 } from '../result/failure.ts';
 import { Task } from '../task/task.ts';
@@ -70,7 +71,7 @@ export type Overflow = 'dropOldest' | 'dropNewest' | 'fail';
  * ChannelOverflow({ capacity: 1_000 }).code; // 'ChannelOverflow'
  * ```
  */
-export const ChannelOverflow = define(
+export const ChannelOverflow: FailureFactory<'ChannelOverflow', { capacity: number }> = define(
   'ChannelOverflow',
   (data: { capacity: number }) =>
     `channel overflowed: ${data.capacity} buffered and the consumer did not keep up`,
