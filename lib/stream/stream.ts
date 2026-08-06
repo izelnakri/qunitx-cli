@@ -661,6 +661,41 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
   // ── Transforms — lazy, failures pass through untouched ──────────────────────
 
   /**
+   * {@link StreamClass.asyncStream} as a **stage**: the same bounded fan-out, usable in the
+   * middle of a pipeline instead of only at the start of one.
+   *
+   * ```ts
+   * const rows = await Stream.from([1, 2, 3, 4])
+   *   .filter((n) => n % 2 === 0)
+   *   .mapConcurrent((n) => n * 10, { maxConcurrency: 2 })
+   *   .values();
+   * rows; // [20, 40]
+   * ```
+   *
+   * **Why concurrency is a stage rather than a `.limit(n)` you append.** The obvious API is
+   * TC39's — `.map(fetch).limit(5)` — and it cannot work on top of async generators. A generator
+   * has one suspended body, so it has exactly one resume point, and it serializes `.next()` no
+   * matter how many calls are in flight. Measured: a downstream limiter aggressively keeping
+   * three `.next()` calls outstanding over a generator-backed `map` of six 40ms elements still
+   * took 242ms at peak concurrency 1 — identical to serial. Nothing downstream can parallelise
+   * work that upstream has already awaited.
+   *
+   * So the stage that *performs* the async work is the only place that can introduce
+   * concurrency, which is what this is. It is also why TC39's helpers are still unshipped: to
+   * make `.limit` composable they must first respecify the helpers as something other than async
+   * generators.
+   */
+  mapConcurrent<R>(
+    fn: (value: T, signal: AbortSignal) => R | PromiseLike<R>,
+    options: { maxConcurrency?: number; timeoutMs?: number; ordered?: boolean } = {},
+  ): StreamClass<Exclude<R, AnyFailure>, E | Extract<R, AnyFailure> | AnyFailure> {
+    // Literally `asyncStream` with `this` as the source — a Stream is an AsyncIterable, so the
+    // static already accepts it. One grammar, two entry points, no second implementation to
+    // drift: whatever the window and ordering rules are, they are the same rules.
+    return StreamClass.asyncStream(this, fn as never, options) as never;
+  }
+
+  /**
    * Transforms each **value**; failure elements flow past untouched (the railway, per
    * element). `fn` may itself return a Failure — that widens the stream's `E`, which is how
    * a parse step turns raw input into `Row | BadRow` without a wrapper per element. A throw

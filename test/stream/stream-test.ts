@@ -852,3 +852,45 @@ module('Stream | per-element sequencing', { concurrency: true }, () => {
     assert.strictEqual(state.peak, 3, 'exactly the window asked for — never more, never one');
   });
 });
+
+module('Stream | mapConcurrent', { concurrency: true }, () => {
+  test('fans out mid-pipeline, bounded by maxConcurrency', async (assert) => {
+    let live = 0;
+    let peak = 0;
+    const rows = await Stream.from([1, 2, 3, 4, 5, 6])
+      .filter((n) => n % 2 === 0)
+      .mapConcurrent(
+        async (n) => {
+          live += 1;
+          peak = Math.max(peak, live);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          live -= 1;
+
+          return n * 10;
+        },
+        { maxConcurrency: 2 },
+      )
+      .values();
+
+    assert.deepEqual(rows, [20, 40, 60], 'source order by default');
+    assert.strictEqual(peak, 2, 'and never wider than asked — mid-chain, after a filter');
+  });
+
+  test('composes downstream too — it is an ordinary stage', async (assert) => {
+    const total = await Stream.from([1, 2, 3, 4])
+      .mapConcurrent((n) => n * 2, { maxConcurrency: 4 })
+      .filter((n) => n > 2)
+      .reduce((sum, n) => sum + n, 0);
+
+    assert.strictEqual(total, 18, '4 + 6 + 8');
+  });
+
+  test('failure elements ride past unmapped, like every other transform', async (assert) => {
+    const { values, errors } = await Stream.from([1, BadRow({ line: 2 }), 3])
+      .mapConcurrent((n) => (n as number) * 10, { maxConcurrency: 2 })
+      .partition();
+
+    assert.deepEqual(values, [10, 30]);
+    assert.strictEqual(errors.length, 1, 'the railway holds through a concurrent stage');
+  });
+});
