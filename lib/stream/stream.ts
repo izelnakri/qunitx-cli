@@ -33,7 +33,14 @@
  * errors.map((failure) => failure.data.line); // [2]
  * ```
  */
-import { Failure, isFailure, observed, type Any as AnyFailure } from '../result/failure.ts';
+import {
+  Failure,
+  define,
+  isFailure,
+  observed,
+  type Any as AnyFailure,
+  type Of,
+} from '../result/failure.ts';
 import { Task } from '../task/task.ts';
 import { partition, type Result } from '../result/result.ts';
 
@@ -41,15 +48,43 @@ import { partition, type Result } from '../result/result.ts';
 export type Source<T> = AsyncIterable<T> | Iterable<T>;
 
 /**
- * Which end a full channel drops from — GenStage's `:buffer_keep`, named for the element that
- * goes rather than the one that stays, because that is what a reader of the call site needs.
+ * What a full channel does — the two GenStage `:buffer_keep` choices, named for the element that
+ * goes rather than the one that stays, plus the option of refusing to lose anything silently.
  *
  * ```ts
  * const keepNewest: Overflow = 'dropOldest'; // GenStage's :last, and the default
  * const keepOldest: Overflow = 'dropNewest'; // GenStage's :first
+ * const refuse: Overflow = 'fail';           // stop the stream instead of dropping
  * ```
  */
-export type Overflow = 'dropOldest' | 'dropNewest';
+export type Overflow = 'dropOldest' | 'dropNewest' | 'fail';
+
+/**
+ * A channel with `overflow: 'fail'` filled up: the consumer fell far enough behind that the
+ * buffer could not hold the difference, and dropping was not on the table.
+ *
+ * A declared failure rather than a throw, because it is an expected operating condition of a
+ * producer nobody can slow down — the two-tier rule puts it in the flow, not in the bug tier.
+ *
+ * ```ts
+ * ChannelOverflow({ capacity: 1_000 }).code; // 'ChannelOverflow'
+ * ```
+ */
+export const ChannelOverflow = define(
+  'ChannelOverflow',
+  (data: { capacity: number }) =>
+    `channel overflowed: ${data.capacity} buffered and the consumer did not keep up`,
+);
+
+/**
+ * The failure element a `'fail'` channel ends with.
+ *
+ * ```ts
+ * const failure: ChannelOverflowFailure = ChannelOverflow({ capacity: 10 });
+ * failure.data.capacity; // 10
+ * ```
+ */
+export type ChannelOverflowFailure = Of<typeof ChannelOverflow>;
 
 /**
  * How a {@link Channel} behaves when its consumer cannot keep up.
@@ -62,7 +97,11 @@ export type Overflow = 'dropOldest' | 'dropNewest';
 export interface ChannelOptions<T, E = never> {
   /** How many elements to buffer for a consumer that has not taken them yet. Default `10_000`. */
   capacity?: number;
-  /** Which end to drop from once `capacity` is reached. Default `'dropOldest'`. */
+  /**
+   * What to do once `capacity` is reached: drop from either end, or `'fail'` — end the stream
+   * with a {@link ChannelOverflowFailure} element instead of losing anything quietly.
+   * Default `'dropOldest'`.
+   */
   overflow?: Overflow;
   /**
    * Called with each element the buffer actually lost, and the depth after the loss. The only
@@ -535,6 +574,10 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * await collected; // [1, 2]
    * ```
    */
+  static channel<U, F = never>(
+    options: ChannelOptions<U, F> & { overflow: 'fail' },
+  ): Channel<U, F | ChannelOverflowFailure>;
+  static channel<U, F = never>(options?: ChannelOptions<U, F>): Channel<U, F>;
   static channel<U, F = never>(options: ChannelOptions<U, F> = {}): Channel<U, F> {
     // GenStage's `:buffer_size` default, and its `:buffer_keep :last` — keep the newest, which
     // under a flood are the ones adjacent to whatever the consumer is trying to diagnose.
@@ -571,6 +614,18 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
       }
       if (queue.length >= capacity) {
         dropped++;
+        // 'fail' keeps everything already accepted and appends the reason it stopped — so the
+        // consumer gets a full prefix plus an explanation, rather than a silently short stream.
+        // Deliberately one past `capacity`: the terminal failure is not a buffered element, it
+        // is the ending, and refusing to store it would be the one drop that actually matters.
+        if (overflow === 'fail') {
+          onDiscard?.(element, queue.length);
+          queue.push(ChannelOverflow({ capacity }) as unknown as F);
+          closed = true;
+          releaseRoom();
+
+          return false;
+        }
         // 'dropNewest' refuses the arrival; 'dropOldest' evicts the front to make room. Either
         // way `onDiscard` is handed the element that was actually lost, not the one that caused
         // the loss — GenStage's `format_discarded/2`, whose whole use is saying what went.

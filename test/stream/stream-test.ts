@@ -853,6 +853,71 @@ module('Stream | per-element sequencing', { concurrency: true }, () => {
   });
 });
 
+module('Stream | channel overflow: fail', { concurrency: true }, () => {
+  test('ends with a ChannelOverflow element instead of losing anything quietly', async (assert) => {
+    const channel = Stream.channel<number>({ capacity: 2, overflow: 'fail' });
+    channel.emit(1);
+    channel.emit(2);
+    assert.false(channel.emit(3), 'the third has nowhere to go');
+
+    const { values, errors } = await channel.stream.partition();
+    assert.deepEqual(values, [1, 2], 'everything already accepted still arrives');
+    assert.strictEqual(errors.length, 1);
+    assert.strictEqual(errors[0].code, 'ChannelOverflow');
+    assert.strictEqual(errors[0].data.capacity, 2, 'and says what it could hold');
+  });
+
+  test('the failure is the LAST element, not a replacement for the prefix', async (assert) => {
+    const channel = Stream.channel<number>({ capacity: 2, overflow: 'fail' });
+    for (const n of [1, 2, 3, 4]) channel.emit(n);
+
+    const elements = await channel.stream.results();
+    assert.strictEqual(elements.length, 3, 'two values then the ending');
+    assert.true(Failure.is(elements[2]));
+  });
+
+  test('fail-fast consumers reject with it, declared and typed', async (assert) => {
+    const channel = Stream.channel<number>({ capacity: 1, overflow: 'fail' });
+    channel.emit(1);
+    channel.emit(2);
+
+    const outcome = await channel.stream.values().result();
+    assert.true(Failure.is(outcome), 'values() fail-fasts on it like any other failure element');
+  });
+
+  test('the channel closes — a fatal overflow is not a hiccup', (assert) => {
+    const channel = Stream.channel<number>({ capacity: 1, overflow: 'fail' });
+    channel.emit(1);
+    channel.emit(2);
+
+    assert.true(channel.closed);
+    assert.false(channel.emit(3), 'nothing more is accepted');
+  });
+
+  test('a channel that never overflows never mentions ChannelOverflow', async (assert) => {
+    const channel = Stream.channel<number>({ capacity: 10, overflow: 'fail' });
+    channel.emit(1);
+    channel.emit(2);
+    channel.close();
+
+    assert.deepEqual(await channel.stream.values(), [1, 2], 'the mode costs nothing when unused');
+    assert.strictEqual(channel.dropped, 0);
+  });
+
+  test('onDiscard still reports the element that could not be taken', (assert) => {
+    const refused: number[] = [];
+    const channel = Stream.channel<number>({
+      capacity: 1,
+      overflow: 'fail',
+      onDiscard: (element) => void refused.push(element as number),
+    });
+    channel.emit(1);
+    channel.emit(2);
+
+    assert.deepEqual(refused, [2], 'the arrival that triggered the failure');
+  });
+});
+
 module('Stream | mapConcurrent', { concurrency: true }, () => {
   test('fans out mid-pipeline, bounded by maxConcurrency', async (assert) => {
     let live = 0;
