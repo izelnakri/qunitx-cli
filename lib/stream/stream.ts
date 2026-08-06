@@ -666,6 +666,14 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * a parse step turns raw input into `Row | BadRow` without a wrapper per element. A throw
    * inside `fn` is a bug and rejects the consumer.
    *
+   * **`fn` is awaited one element at a time.** `map((url) => fetch(url))` issues its requests
+   * strictly in sequence — six 60ms calls take 360ms, not 60ms. That is not an oversight to
+   * route around: a stream is one suspended generator, so it has exactly one resume point, and
+   * the same constraint is why TC39's async iterator helpers are still unshipped over precisely
+   * this question. For concurrent per-element work use {@link StreamClass.asyncStream}, whose
+   * `maxConcurrency` bounds the window and whose `ordered` decides whether results keep source
+   * order or arrive as they finish.
+   *
    * ```ts
    * const tagged = await Stream.from([1, 2]).map((n, i) => `${i}:${n}`).values();
    * tagged; // ['0:1', '1:2']
@@ -1305,6 +1313,10 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
   /**
    * Drains the stream, running `fn` per value — **fail-fast** like {@link StreamClass#values}.
    * The Task resolves when the source ends; use it when the work is the side effect.
+   *
+   * Sequential, for the same reason {@link StreamClass#map} is: the next element is not pulled
+   * until `fn` has settled. That is what makes it safe to write to a database from here, and
+   * what makes it the wrong place to fan out — {@link StreamClass.asyncStream} is.
    *
    * ```ts
    * const seen: number[] = [];
