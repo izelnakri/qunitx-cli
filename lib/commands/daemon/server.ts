@@ -548,7 +548,8 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
   // run. state.browser is non-null here — awaitBrowser succeeded above and
   // recoverBrowser (if it ran) reassigned it; the non-null assertion lets us
   // reuse the existing isConnected() check verbatim.
-  if (state.browser!.isConnected()) state.consecutiveCrashes = 0;
+  // One policy, both outcomes — `recoverBrowser` re-enters it for the crash arithmetic.
+  if (state.browser!.isConnected()) noteBrowserOutcome(state, true);
   else await recoverBrowser(state);
 
   if (!socket.destroyed) {
@@ -621,12 +622,44 @@ export async function browserResponsive(
 }
 
 /**
+ * The crash-budget policy, as one pure decision: what a run's outcome does to the counter, and
+ * what should happen next.
+ *
+ * Extracted so the rule can be proven without launching Chrome. It used to live at two call
+ * sites — a reset here, an increment there — and the only coverage for "a successful run resets
+ * the counter" was an end-to-end test that killed Chrome twice and waited out two real relaunches.
+ * That test could not fit inside the per-test deadline on a loaded runner, so the property was
+ * expensive AND unreliable to check. See `test/commands/daemon-crash-budget-test.ts`.
+ *
+ * ```ts
+ * import * as Server from './server.ts';
+ *
+ * Server.noteBrowserOutcome({ consecutiveCrashes: 1 }, true); // 'ok' — and the counter is reset
+ * Server.noteBrowserOutcome({ consecutiveCrashes: 0 }, false); // 'relaunch'
+ * ```
+ */
+export function noteBrowserOutcome(
+  state: Pick<DaemonState, 'consecutiveCrashes'>,
+  connected: boolean,
+): 'ok' | 'relaunch' | 'shutdown' {
+  if (connected) {
+    // The reset is the whole point of the budget being CONSECUTIVE: a daemon that recovers and
+    // then serves a run is healthy, however many times it crashed before that.
+    state.consecutiveCrashes = 0;
+
+    return 'ok';
+  }
+
+  return ++state.consecutiveCrashes > MAX_CONSECUTIVE_CRASHES ? 'shutdown' : 'relaunch';
+}
+
+/**
  * Relaunches the daemon's persistent browser after a crash. Bounded by
  * `MAX_CONSECUTIVE_CRASHES` so a broken environment shuts the daemon down instead of
  * looping forever — the next client respawns a fresh daemon.
  */
 async function recoverBrowser(state: DaemonState): Promise<void> {
-  if (++state.consecutiveCrashes > MAX_CONSECUTIVE_CRASHES) {
+  if (noteBrowserOutcome(state, false) === 'shutdown') {
     return void shutdown(state, `${state.consecutiveCrashes} consecutive browser crashes`);
   }
   process.stderr.write(

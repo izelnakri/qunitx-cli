@@ -6,7 +6,12 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import * as Paths from '../../lib/commands/daemon/paths.ts';
 import * as Client from '../../lib/commands/daemon/client.ts';
-import { spawnCapture, type CapturedError, type CapturedResult } from '../helpers/shell.ts';
+import {
+  spawnCapture,
+  type CapturedError,
+  type CapturedResult,
+  CHROME_RELAUNCH_TIMEOUT_MS,
+} from '../helpers/shell.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 import '../helpers/custom-asserts.ts';
 import { ignore } from '../../lib/result/failure.ts';
@@ -56,14 +61,6 @@ async function makeDaemonProject(): Promise<DaemonProject> {
   ]);
   return { cwd, socketPath: Paths.socket(cwd), infoPath: Paths.info(cwd) };
 }
-
-// For the `cli()` calls that must cold-start Chrome rather than reuse the daemon's: the ones
-// after a killDaemonChrome. The suite's 180s default covers "daemon spawn + run against a live
-// browser"; these additionally pay a relaunch whose tail exceeds 100s under CI load (see
-// DaemonState.browser in daemon/server.ts) — a 1.8x margin, and the deno lane duly timed out here
-// at 180007ms on commits that passed on every branch stacked above it. A wedged daemon still
-// surfaces, 2 minutes later.
-const CHROME_RELAUNCH_TIMEOUT_MS = 300_000;
 
 // Spawn via shared helper so QUNITX_BIN is honored: when scripts/test-release.sh sets
 // it to the installed binary (or the SEA blob), every daemon invocation here actually
@@ -756,37 +753,34 @@ module('Commands | Daemon | crash recovery', { concurrency: true }, () => {
   });
 
   daemonTest(
-    'successful run resets the crash counter (consecutive crashes survive)',
+    'a killed browser is relaunched by the SAME daemon process',
     async (assert, project) => {
       if (!isLinux) return assert.ok(true, 'skipped on non-linux');
 
-      // Two back-to-back kill+run cycles. If the counter were not reset by the successful
-      // run between, the second cycle would push the daemon past MAX_CONSECUTIVE_CRASHES
-      // and the third invocation (status check) would fail.
+      // ONE kill+run cycle, because one is all an end-to-end test can prove that a unit test
+      // cannot: that a real Chrome relaunch works and the same daemon process serves the run.
+      //
+      // This used to run TWO cycles to show the crash counter resets in between. Two real
+      // relaunches (tail >100s each under CI load) plus a spawn and a status could not fit inside
+      // PER_TEST_TIMEOUT_MS, so the suite's most important daemon invariant was also its least
+      // reliable check — it timed out on the deno lane with no indication of which call hung.
+      // The counting is now proven in microseconds by test/commands/daemon-crash-budget-test.ts,
+      // against the very function this path calls.
       await cli(project, 'daemon start');
       const startupPid = await readDaemonPid(project);
 
-      // Cycle 1
-      const cycle1Killed = await killDaemonChrome(startupPid);
-      assert.ok(cycle1Killed, 'cycle 1: killed Chrome');
+      const killed = await killDaemonChrome(startupPid);
+      assert.ok(killed, 'killed Chrome');
       await new Promise((r) => setTimeout(r, 200));
-      const cycle1 = await cli(project, FIXTURE_PASS, { timeout: CHROME_RELAUNCH_TIMEOUT_MS });
-      assert.exitCode(cycle1, 0);
-      assert.includes(cycle1, '# pass 3');
+      const recovered = await cli(project, FIXTURE_PASS, { timeout: CHROME_RELAUNCH_TIMEOUT_MS });
+      assert.exitCode(recovered, 0);
+      assert.includes(recovered, '# pass 3');
 
-      // Cycle 2
-      const cycle2Killed = await killDaemonChrome(startupPid);
-      assert.ok(cycle2Killed, 'cycle 2: killed Chrome');
-      await new Promise((r) => setTimeout(r, 200));
-      const cycle2 = await cli(project, FIXTURE_PASS, { timeout: CHROME_RELAUNCH_TIMEOUT_MS });
-      assert.exitCode(cycle2, 0);
-      assert.includes(cycle2, '# pass 3');
-
-      // Daemon must still be the same process (not restarted, not dead).
+      // Same process — it relaunched the browser rather than restarting itself or dying.
       const status = await cli(project, 'daemon status');
       assert.exitCode(status, 0);
       const stillAlivePid = Number(/pid:\s+(\d+)/.exec(status.stdout)?.[1]);
-      assert.strictEqual(stillAlivePid, startupPid, 'daemon process survived both crash cycles');
+      assert.strictEqual(stillAlivePid, startupPid, 'daemon process survived the crash cycle');
     },
   );
 
