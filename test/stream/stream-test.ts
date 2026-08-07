@@ -14,14 +14,14 @@ module('Stream | lazy', { concurrency: true }, () => {
       })(),
     ).map((n) => n * 10);
     assert.strictEqual(pulled, 0, 'building a pipeline pulls nothing');
-    assert.deepEqual(await stream.take(2).values(), [10, 20]);
+    assert.deepEqual(await stream.take(2).collect(), [10, 20]);
     assert.strictEqual(pulled, 2, 'only the taken elements were pulled — backpressure');
   });
 
   test('a Stream from a re-iterable source is re-consumable', async (assert) => {
     const stream = Stream.from([1, 2]);
-    assert.deepEqual(await stream.values(), [1, 2]);
-    assert.deepEqual(await stream.values(), [1, 2], 'arrays re-open per consumer');
+    assert.deepEqual(await stream.collect(), [1, 2]);
+    assert.deepEqual(await stream.collect(), [1, 2], 'arrays re-open per consumer');
   });
 
   test('unfold grows lazily from a seed and stops on null', async (assert) => {
@@ -30,15 +30,15 @@ module('Stream | lazy', { concurrency: true }, () => {
       fetches += 1;
       return page > 3 ? null : ([`page-${page}`, page + 1] as const);
     });
-    assert.deepEqual(await pages.values(), ['page-1', 'page-2', 'page-3']);
-    assert.deepEqual(await pages.take(1).values(), ['page-1']);
+    assert.deepEqual(await pages.collect(), ['page-1', 'page-2', 'page-3']);
+    assert.deepEqual(await pages.take(1).collect(), ['page-1']);
     assert.strictEqual(fetches, 5, 'take(1) fetched one page, not all');
   });
 
   test('lines splits across chunk boundaries and flushes the tail', async (assert) => {
     const encode = (s: string) => new TextEncoder().encode(s);
     const chunks = [encode('alpha\nbe'), encode('ta\nga'), encode('mma')];
-    assert.deepEqual(await Stream.lines(chunks).values(), ['alpha', 'beta', 'gamma']);
+    assert.deepEqual(await Stream.lines(chunks).collect(), ['alpha', 'beta', 'gamma']);
   });
 });
 
@@ -80,7 +80,7 @@ module('Stream | railway', { concurrency: true }, () => {
     const buggy = Stream.from([1]).map(() => {
       throw new TypeError('boom');
     });
-    await assert.rejects(buggy.values(), TypeError);
+    await assert.rejects(buggy.collect(), TypeError);
     await assert.rejects(buggy.results(), TypeError, 'even the keep-everything consumer');
   });
 });
@@ -91,7 +91,7 @@ module('Stream | consumers', { concurrency: true }, () => {
   const withFailure = () => Stream.from([1, BadRow({ line: 9 }), 3]);
 
   test('values() fail-fasts on the first failure element, as a declared rejection', async (assert) => {
-    const outcome = await withFailure().values().result(); // number[] | BadRow — bare
+    const outcome = await withFailure().collect().result(); // number[] | BadRow — bare
     assert.true(BadRow.is(outcome));
     assert.strictEqual((outcome as Failure.Of<typeof BadRow>).data.line, 9);
   });
@@ -104,10 +104,10 @@ module('Stream | consumers', { concurrency: true }, () => {
 
   test('each() drains with side effects and fail-fasts like values()', async (assert) => {
     const seen: number[] = [];
-    await Stream.from([1, 2]).each((n) => void seen.push(n));
+    await Stream.from([1, 2]).forEach((n) => void seen.push(n));
     assert.deepEqual(seen, [1, 2]);
     await assert.rejects(
-      withFailure().each(() => {}),
+      withFailure().forEach(() => {}),
       /bad row 9/,
     );
   });
@@ -147,27 +147,27 @@ module('Stream | observation seam', () => {
 
 module('Stream | builders', { concurrency: true }, () => {
   test('concat, duplicate and fromIndex compose in order', async (assert) => {
-    assert.deepEqual(await Stream.concat([1], [2, 3]).values(), [1, 2, 3]);
-    assert.deepEqual(await Stream.duplicate('x', 2).values(), ['x', 'x']);
-    assert.deepEqual(await Stream.fromIndex(5).take(2).values(), [5, 6]);
+    assert.deepEqual(await Stream.concat([1], [2, 3]).collect(), [1, 2, 3]);
+    assert.deepEqual(await Stream.duplicate('x', 2).collect(), ['x', 'x']);
+    assert.deepEqual(await Stream.fromIndex(5).take(2).collect(), [5, 6]);
   });
 
   test('cycle, iterate and repeatedly are infinite until bounded', async (assert) => {
-    assert.deepEqual(await Stream.cycle([1, 2]).take(5).values(), [1, 2, 1, 2, 1]);
+    assert.deepEqual(await Stream.cycle([1, 2]).take(5).collect(), [1, 2, 1, 2, 1]);
     assert.deepEqual(
       await Stream.iterate(1, (n) => n * 3)
         .take(3)
-        .values(),
+        .collect(),
       [1, 3, 9],
     );
     let calls = 0;
     assert.deepEqual(
       await Stream.repeatedly(() => ++calls)
         .take(2)
-        .values(),
+        .collect(),
       [1, 2],
     );
-    assert.deepEqual(await Stream.cycle([]).values(), [], 'an empty cycle ends, never spins');
+    assert.deepEqual(await Stream.cycle([]).collect(), [], 'an empty cycle ends, never spins');
   });
 });
 
@@ -199,8 +199,8 @@ module('Stream | tier-1 transforms', { concurrency: true }, () => {
   });
 
   test('takeEvery/dropEvery/mapEvery count values only', async (assert) => {
-    assert.deepEqual(await Stream.from([0, 1, 2, 3, 4]).takeEvery(2).values(), [0, 2, 4]);
-    assert.deepEqual(await Stream.from([0, 1, 2, 3, 4]).dropEvery(2).values(), [1, 3]);
+    assert.deepEqual(await Stream.from([0, 1, 2, 3, 4]).takeEvery(2).collect(), [0, 2, 4]);
+    assert.deepEqual(await Stream.from([0, 1, 2, 3, 4]).dropEvery(2).collect(), [1, 3]);
     const everied = await withFailure()
       .mapEvery(2, (n) => n * 10)
       .partition();
@@ -211,10 +211,10 @@ module('Stream | tier-1 transforms', { concurrency: true }, () => {
     assert.deepEqual(
       await Stream.from([1, 2, 3])
         .reject((n) => n === 2)
-        .values(),
+        .collect(),
       [1, 3],
     );
-    assert.deepEqual(await Stream.from([1, 2]).intersperse(0).values(), [1, 0, 2]);
+    assert.deepEqual(await Stream.from([1, 2]).intersperse(0).collect(), [1, 0, 2]);
     const indexed = await withFailure().withIndex().partition();
     assert.deepEqual(
       indexed.values,
@@ -233,14 +233,14 @@ module('Stream | tier-1 transforms', { concurrency: true }, () => {
       .partition();
     assert.deepEqual(deduped.values, [1, 2], 'equal values around a failure stay consecutive');
     assert.strictEqual(deduped.errors.length, 1);
-    assert.deepEqual(await Stream.from([1, 2, 1, 3]).uniq().values(), [1, 2, 3]);
+    assert.deepEqual(await Stream.from([1, 2, 1, 3]).uniq().collect(), [1, 2, 3]);
   });
 
   test('scan folds values, seeded or seeded-by-first, and passes failures', async (assert) => {
     assert.deepEqual(
       await Stream.from([1, 2, 3])
         .scan((a, n) => a + n)
-        .values(),
+        .collect(),
       [1, 3, 6],
     );
     const seeded = await withFailure()
@@ -270,7 +270,7 @@ module('Stream | chunking and the general engine', { concurrency: true }, () => 
         else yield element * 10;
       }
     });
-    assert.deepEqual(await cleaned.values(), [10, 20]);
+    assert.deepEqual(await cleaned.collect(), [10, 20]);
     assert.deepEqual(codes, ['BadRow'], 'through saw the failure raw — no auto-pass');
   });
 });
@@ -289,7 +289,7 @@ module('Stream | cleanup', { concurrency: true }, () => {
         }
       })(),
     );
-    assert.deepEqual(await resource.take(2).values(), [0, 1]);
+    assert.deepEqual(await resource.take(2).collect(), [0, 1]);
     assert.true(cleaned, 'take() closed the source — no leaked handle');
   });
 });
@@ -306,7 +306,7 @@ module('Stream | zip', { concurrency: true }, () => {
         cleaned = true;
       }
     })();
-    assert.deepEqual(await Stream.zip(['a', 'b'], longer).values(), [
+    assert.deepEqual(await Stream.zip(['a', 'b'], longer).collect(), [
       ['a', 0],
       ['b', 1],
     ]);
@@ -337,7 +337,7 @@ module('Stream | zip', { concurrency: true }, () => {
           [10, 20],
         ],
         (a, b) => a + b,
-      ).values(),
+      ).collect(),
       [11, 22],
     );
   });
@@ -345,8 +345,8 @@ module('Stream | zip', { concurrency: true }, () => {
 
 module('Stream | timers and resource', { concurrency: true }, () => {
   test('interval ticks and timer emits once', async (assert) => {
-    assert.deepEqual(await Stream.interval(1).take(3).values(), [0, 1, 2]);
-    assert.deepEqual(await Stream.timer(1).values(), [0]);
+    assert.deepEqual(await Stream.interval(1).take(3).collect(), [0, 1, 2]);
+    assert.deepEqual(await Stream.timer(1).collect(), [0]);
   });
 
   test('resource runs after() on normal end AND on early exit', async (assert) => {
@@ -357,8 +357,8 @@ module('Stream | timers and resource', { concurrency: true }, () => {
         (n) => (n < 3 ? ([n, n + 1] as const) : null),
         () => void events.push('close'),
       );
-    assert.deepEqual(await make().values(), [0, 1, 2]);
-    assert.deepEqual(await make().take(1).values(), [0], 'early exit');
+    assert.deepEqual(await make().collect(), [0, 1, 2]);
+    assert.deepEqual(await make().take(1).collect(), [0], 'early exit');
     assert.deepEqual(events, ['open', 'close', 'open', 'close']);
   });
 });
@@ -377,13 +377,13 @@ module('Stream | tee and chunk family', { concurrency: true }, () => {
 
   test('chunkEvery full arity: sliding windows, skipping steps, leftover rules', async (assert) => {
     const src = () => Stream.from([1, 2, 3, 4, 5]);
-    assert.deepEqual(await src().chunkEvery(3, 2).values(), [[1, 2, 3], [3, 4, 5], [5]]);
-    assert.deepEqual(await src().chunkEvery(3, 2, 'discard').values(), [
+    assert.deepEqual(await src().chunkEvery(3, 2).collect(), [[1, 2, 3], [3, 4, 5], [5]]);
+    assert.deepEqual(await src().chunkEvery(3, 2, 'discard').collect(), [
       [1, 2, 3],
       [3, 4, 5],
     ]);
     assert.deepEqual(
-      await src().chunkEvery(2, 3).values(),
+      await src().chunkEvery(2, 3).collect(),
       [
         [1, 2],
         [4, 5],
@@ -391,7 +391,7 @@ module('Stream | tee and chunk family', { concurrency: true }, () => {
       'step > count skips',
     );
     assert.deepEqual(
-      await Stream.from([1, 2, 3, 4]).chunkEvery(3, 3, [0, 0]).values(),
+      await Stream.from([1, 2, 3, 4]).chunkEvery(3, 3, [0, 0]).collect(),
       [
         [1, 2, 3],
         [4, 0, 0],
@@ -414,7 +414,7 @@ module('Stream | tee and chunk family', { concurrency: true }, () => {
       (n, acc) => (n < 0 ? { acc, halt: true } : { acc: [...acc, n] }),
       (acc) => (acc.length > 0 ? acc : undefined),
     );
-    assert.deepEqual(await untilNegative.values(), [[1, 2]], 'halted before 9, flushed the acc');
+    assert.deepEqual(await untilNegative.collect(), [[1, 2]], 'halted before 9, flushed the acc');
   });
 });
 
@@ -443,7 +443,7 @@ module('Stream | asyncStream', { concurrency: true }, () => {
         return ms;
       },
       { maxConcurrency: 2 },
-    ).values();
+    ).collect();
     assert.deepEqual(out, [30, 10, 20, 5], 'source order, whatever finished first');
     assert.strictEqual(peak, 2, 'never more than maxConcurrency in flight');
   });
@@ -453,7 +453,7 @@ module('Stream | asyncStream', { concurrency: true }, () => {
       [50, 5],
       async (ms) => (await new Promise((r) => setTimeout(r, ms)), ms),
       { maxConcurrency: 2, ordered: false },
-    ).values();
+    ).collect();
     assert.deepEqual(out, [5, 50], 'the fast element surfaced first');
   });
 
@@ -479,7 +479,7 @@ module('Stream | asyncStream', { concurrency: true }, () => {
     await assert.rejects(
       Stream.asyncStream([1], () => {
         throw new TypeError('boom');
-      }).values(),
+      }).collect(),
       TypeError,
     );
   });
@@ -488,7 +488,7 @@ module('Stream | asyncStream', { concurrency: true }, () => {
     let started = 0;
     const stream = Stream.asyncStream([1, 2, 3], (n) => (started++, n));
     assert.strictEqual(started, 0, 'building the pipeline ran nothing');
-    await stream.values();
+    await stream.collect();
     assert.strictEqual(started, 3);
   });
 });
@@ -498,7 +498,7 @@ module('Stream | asyncStream', { concurrency: true }, () => {
 module('Stream | channel', { concurrency: true }, () => {
   test('emits arrive in order', async (assert) => {
     const channel = Stream.channel<number>();
-    const collected = channel.stream.values();
+    const collected = channel.stream.collect();
     channel.emit(1);
     channel.emit(2);
     channel.close();
@@ -511,7 +511,7 @@ module('Stream | channel', { concurrency: true }, () => {
     channel.emit(2);
     channel.close();
     assert.strictEqual(channel.buffered, 2, 'held for whoever arrives');
-    assert.deepEqual(await channel.stream.values(), [1, 2], 'and delivered on arrival');
+    assert.deepEqual(await channel.stream.collect(), [1, 2], 'and delivered on arrival');
   });
 
   test('close() ends the stream only after the buffer drains', async (assert) => {
@@ -520,7 +520,7 @@ module('Stream | channel', { concurrency: true }, () => {
     channel.close();
     assert.true(channel.closed);
     assert.deepEqual(
-      await channel.stream.values(),
+      await channel.stream.collect(),
       [1],
       'closing is not a discard — what was emitted still arrives',
     );
@@ -528,7 +528,7 @@ module('Stream | channel', { concurrency: true }, () => {
 
   test('close() is idempotent and wakes a parked consumer', async (assert) => {
     const channel = Stream.channel<number>();
-    const collected = channel.stream.values();
+    const collected = channel.stream.collect();
     await Promise.resolve();
     channel.close();
     channel.close();
@@ -551,7 +551,7 @@ module('Stream | channel', { concurrency: true }, () => {
 
   test('abort() rejects the consuming Task — the bug tier, not the flow', async (assert) => {
     const channel = Stream.channel<number>();
-    const collected = channel.stream.values();
+    const collected = channel.stream.collect();
     channel.emit(1);
     channel.abort(new TypeError('producer exploded'));
     await assert.rejects(collected, TypeError, 'a bug is never boxed into the element flow');
@@ -569,8 +569,8 @@ module('Stream | channel', { concurrency: true }, () => {
     const channel = Stream.channel<number>();
     channel.emit(1);
     channel.close();
-    assert.deepEqual(await channel.stream.values(), [1]);
-    await assert.rejects(channel.stream.values(), /already been consumed/);
+    assert.deepEqual(await channel.stream.collect(), [1]);
+    await assert.rejects(channel.stream.collect(), /already been consumed/);
   });
 });
 
@@ -592,7 +592,7 @@ module('Stream | channel backpressure', { concurrency: true }, () => {
     channel.emit(3);
     channel.close();
 
-    assert.deepEqual(await channel.stream.values(), [2, 3], 'the oldest was evicted');
+    assert.deepEqual(await channel.stream.collect(), [2, 3], 'the oldest was evicted');
     assert.strictEqual(channel.dropped, 1);
     assert.deepEqual(discarded, [1], 'onDiscard is handed what was lost, not what caused it');
   });
@@ -609,11 +609,11 @@ module('Stream | channel backpressure', { concurrency: true }, () => {
     channel.emit(3);
     channel.close();
 
-    assert.deepEqual(await channel.stream.values(), [1, 2]);
+    assert.deepEqual(await channel.stream.collect(), [1, 2]);
     assert.deepEqual(discarded, [3], 'the arrival was the casualty');
   });
 
-  test('a producer that honours emit()/drained() loses nothing at any capacity', async (assert) => {
+  test('a producer that honours emit()/ready() loses nothing at any capacity', async (assert) => {
     // The whole point of the pair, and the only way an unslowable-looking producer becomes a
     // pausable one: 200 elements through a buffer of 10, nothing dropped. Merely yielding to the
     // microtask queue between emits is NOT enough — the consumer's own path through the generator
@@ -623,12 +623,12 @@ module('Stream | channel backpressure', { concurrency: true }, () => {
     const seen: number[] = [];
     const produce = (async () => {
       for (let index = 0; index < 200; index++) {
-        if (!channel.emit(index)) await channel.drained();
+        if (!channel.emit(index)) await channel.ready();
       }
       channel.close();
     })();
 
-    await Promise.all([channel.stream.each((n) => void seen.push(n)), produce]);
+    await Promise.all([channel.stream.forEach((n) => void seen.push(n)), produce]);
     assert.strictEqual(channel.dropped, 0, 'nothing lost');
     assert.deepEqual(seen.length, 200, 'and everything arrived');
   });
@@ -644,41 +644,41 @@ module('Stream | channel backpressure', { concurrency: true }, () => {
       'bounded memory costs elements — there is no third option',
     );
     assert.deepEqual(
-      await channel.stream.take(1).values(),
+      await channel.stream.take(1).collect(),
       [490],
       'and the newest are what survived',
     );
   });
 
-  test('drained() resolves once the consumer has made room', async (assert) => {
+  test('ready() resolves once the consumer has made room', async (assert) => {
     const channel = Stream.channel<number>({ capacity: 1 });
     channel.emit(1);
 
     let resumed = false;
-    const waiting = channel.drained().then(() => void (resumed = true));
+    const waiting = channel.ready().then(() => void (resumed = true));
     await Promise.resolve();
     assert.false(resumed, 'still full — the producer waits');
 
     // Awaited together: the consuming Task is lazy, so `values()` alone attaches nothing and
     // the slot would never free.
-    const [, collected] = await Promise.all([waiting, channel.stream.take(1).values()]);
+    const [, collected] = await Promise.all([waiting, channel.stream.take(1).collect()]);
     assert.true(resumed, 'the take freed the slot');
     assert.deepEqual(collected, [1]);
   });
 
-  test('drained() resolves immediately when there is already room', async (assert) => {
+  test('ready() resolves immediately when there is already room', async (assert) => {
     const channel = Stream.channel<number>({ capacity: 4 });
-    await channel.drained();
+    await channel.ready();
     assert.true(true, 'no wait when nothing is full');
   });
 
-  test('a consumer that leaves early releases a producer parked on drained()', async (assert) => {
+  test('a consumer that leaves early releases a producer parked on ready()', async (assert) => {
     const channel = Stream.channel<number>({ capacity: 1 });
     channel.emit(1);
     channel.emit(2);
-    const waiting = channel.drained();
+    const waiting = channel.ready();
 
-    assert.deepEqual(await channel.stream.take(1).values(), [2], 'take(1) ends the consumer');
+    assert.deepEqual(await channel.stream.take(1).collect(), [2], 'take(1) ends the consumer');
     await waiting;
     assert.true(channel.closed, 'an abandoned channel stops accepting rather than leaking');
   });
@@ -688,7 +688,7 @@ module('Stream | channel demand', { concurrency: true }, () => {
   test('onDemand fires exactly once, when a consumer actually starts draining', async (assert) => {
     let started = 0;
     const channel = Stream.channel<number>({ onDemand: () => void (started += 1) });
-    const collected = channel.stream.values();
+    const collected = channel.stream.collect();
     assert.strictEqual(started, 0, 'building the channel and the consumer started nothing');
 
     channel.close();
@@ -705,7 +705,7 @@ module('Stream | channel demand', { concurrency: true }, () => {
       onDemand: () => {
         void (async () => {
           for (let index = 0; index < 200; index++) {
-            if (!channel.emit(index)) await channel.drained();
+            if (!channel.emit(index)) await channel.ready();
           }
           channel.close();
         })();
@@ -713,7 +713,7 @@ module('Stream | channel demand', { concurrency: true }, () => {
     });
     assert.strictEqual(channel.buffered, 0, 'nothing emitted before anyone asked');
 
-    assert.strictEqual((await channel.stream.values()).length, 200);
+    assert.strictEqual((await channel.stream.collect()).length, 200);
     assert.strictEqual(channel.dropped, 0, 'and nothing was lost getting there');
   });
 
@@ -724,7 +724,7 @@ module('Stream | channel demand', { concurrency: true }, () => {
     // for, and what `onDemand` exists to let a deferrable producer avoid entirely.
     let started = 0;
     const channel = Stream.channel<number>({ onDemand: () => void (started += 1) });
-    const collected = channel.stream.values();
+    const collected = channel.stream.collect();
     channel.emit(1);
     assert.strictEqual(started, 0, 'building the consumer attached nothing');
     assert.strictEqual(channel.buffered, 1, 'so the emit went to the buffer');
@@ -740,7 +740,7 @@ module('Stream | channel demand', { concurrency: true }, () => {
       .filter((n) => n % 2 === 0)
       .map((n) => n * 10)
       .take(2)
-      .values();
+      .collect();
     for (let index = 0; index < 10; index++) channel.emit(index);
 
     assert.deepEqual(await collected, [0, 20]);
@@ -833,21 +833,21 @@ module('Stream | per-element sequencing', { concurrency: true }, () => {
 
   test('map awaits one element at a time', async (assert) => {
     const { state, fn } = watcher();
-    await Stream.from([1, 2, 3, 4]).map(fn).values();
+    await Stream.from([1, 2, 3, 4]).map(fn).collect();
 
     assert.strictEqual(state.peak, 1, 'one suspended generator has one resume point');
   });
 
   test('each drains one element at a time', async (assert) => {
     const { state, fn } = watcher();
-    await Stream.from([1, 2, 3, 4]).each(fn);
+    await Stream.from([1, 2, 3, 4]).forEach(fn);
 
     assert.strictEqual(state.peak, 1, 'the next element is not pulled until fn settles');
   });
 
   test('asyncStream is the escape hatch, bounded by maxConcurrency', async (assert) => {
     const { state, fn } = watcher();
-    await Stream.asyncStream([1, 2, 3, 4, 5, 6], fn, { maxConcurrency: 3 }).values();
+    await Stream.asyncStream([1, 2, 3, 4, 5, 6], fn, { maxConcurrency: 3 }).collect();
 
     assert.strictEqual(state.peak, 3, 'exactly the window asked for — never more, never one');
   });
@@ -881,7 +881,7 @@ module('Stream | channel overflow: fail', { concurrency: true }, () => {
     channel.emit(1);
     channel.emit(2);
 
-    const outcome = await channel.stream.values().result();
+    const outcome = await channel.stream.collect().result();
     assert.true(Failure.is(outcome), 'values() fail-fasts on it like any other failure element');
   });
 
@@ -900,7 +900,7 @@ module('Stream | channel overflow: fail', { concurrency: true }, () => {
     channel.emit(2);
     channel.close();
 
-    assert.deepEqual(await channel.stream.values(), [1, 2], 'the mode costs nothing when unused');
+    assert.deepEqual(await channel.stream.collect(), [1, 2], 'the mode costs nothing when unused');
     assert.strictEqual(channel.dropped, 0);
   });
 
@@ -935,7 +935,7 @@ module('Stream | mapConcurrent', { concurrency: true }, () => {
         },
         { maxConcurrency: 2 },
       )
-      .values();
+      .collect();
 
     assert.deepEqual(rows, [20, 40, 60], 'source order by default');
     assert.strictEqual(peak, 2, 'and never wider than asked — mid-chain, after a filter');
@@ -957,5 +957,81 @@ module('Stream | mapConcurrent', { concurrency: true }, () => {
 
     assert.deepEqual(values, [10, 30]);
     assert.strictEqual(errors.length, 1, 'the railway holds through a concurrent stage');
+  });
+});
+
+// ── The short-circuiting query terminals ─────────────────────────────────────
+
+module('Stream | some / every / find', { concurrency: true }, () => {
+  const counting = () => {
+    const state = { pulled: 0 };
+    const stream = Stream.from(
+      (function* () {
+        for (;;) yield ++state.pulled;
+      })(),
+    );
+
+    return { state, stream };
+  };
+
+  test('some stops pulling at the first match', async (assert) => {
+    const { state, stream } = counting();
+
+    assert.true(await stream.some((n) => n > 2));
+    assert.strictEqual(state.pulled, 3, 'an infinite source is fine — it never reached a fourth');
+  });
+
+  test('some is false when nothing matches', async (assert) => {
+    assert.false(await Stream.from([1, 2]).some((n) => n > 5));
+  });
+
+  test('every stops pulling at the first failure to match', async (assert) => {
+    const { state, stream } = counting();
+
+    assert.false(await stream.every((n) => n < 3));
+    assert.strictEqual(state.pulled, 3, 'stopped on the one that broke it');
+  });
+
+  test('every is vacuously true on an empty stream, like Array.prototype.every', async (assert) => {
+    assert.true(await Stream.from([] as number[]).every(() => false));
+  });
+
+  test('find returns the first match and stops', async (assert) => {
+    const { state, stream } = counting();
+
+    assert.strictEqual(await stream.find((n) => n > 1), 2);
+    assert.strictEqual(state.pulled, 2);
+  });
+
+  test('find returns undefined when nothing matches — absence is not a failure', async (assert) => {
+    assert.strictEqual(await Stream.from([1, 2]).find((n) => n > 5), undefined);
+  });
+
+  test('an async predicate is awaited', async (assert) => {
+    assert.true(await Stream.from([1, 2]).some(async (n) => (await Promise.resolve(n)) === 2));
+  });
+
+  test('all three fail-fast on a failure element, declared and typed', async (assert) => {
+    const withFailure = () => Stream.from([1, BadRow({ line: 4 }), 3]);
+
+    for (const outcome of [
+      await withFailure()
+        .some((n) => n > 99)
+        .result(),
+      await withFailure()
+        .every(() => true)
+        .result(),
+      await withFailure()
+        .find((n) => n > 99)
+        .result(),
+    ]) {
+      assert.true(BadRow.is(outcome), 'a question about values cannot be answered past a failure');
+    }
+  });
+
+  test('a failure AFTER the short-circuit is never reached', async (assert) => {
+    const answer = await Stream.from([1, 2, BadRow({ line: 9 })]).some((n) => n === 1);
+
+    assert.true(answer, 'short-circuiting means the failure was never pulled');
   });
 });
