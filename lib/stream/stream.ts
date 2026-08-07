@@ -722,6 +722,591 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
     };
   }
 
+  // ── Static mirrors — the same members, source-first ─────────────────────────
+  //
+  // `Stream.map(source, fn)` IS `Stream.from(source).map(fn)`: one-line delegations, so there is
+  // one implementation and the two spellings cannot drift. They exist for the pipe operator —
+  // `source |> Stream.map(^, fn) |> Stream.filter(^, ok)` reads left-to-right the way Elixir's
+  // `|> Stream.map(fn)` does, which is the whole reason Elixir's API is function-first. Until
+  // `|>` lands, chaining is the readable spelling and these nest inside-out; prefer the methods.
+
+  /**
+   * {@link StreamClass#map} as a static: `Stream.map(source, …)` is
+   * `Stream.from(source).map(…)`.
+   *
+   * ```ts
+   * await Stream.map([1, 2], (n) => n * 2).collect(); // [2, 4]
+   * ```
+   */
+  static map<S, U>(
+    source: Source<S>,
+    fn: (value: Exclude<S, AnyFailure>, index: number) => U | PromiseLike<U>,
+  ): StreamClass<Exclude<U, AnyFailure>, Extract<S, AnyFailure> | Extract<U, AnyFailure>> {
+    return StreamClass.from(source).map(fn) as StreamClass<
+      Exclude<U, AnyFailure>,
+      Extract<S, AnyFailure> | Extract<U, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#filter} as a static: `Stream.filter(source, …)` is
+   * `Stream.from(source).filter(…)`.
+   *
+   * ```ts
+   * await Stream.filter([1, 2, 3], (n) => n % 2 === 1).collect(); // [1, 3]
+   * ```
+   */
+  static filter<S>(
+    source: Source<S>,
+    predicate: (value: Exclude<S, AnyFailure>, index: number) => boolean,
+  ): StreamClass<Exclude<S, AnyFailure>, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).filter(predicate) as StreamClass<
+      Exclude<S, AnyFailure>,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#reject} as a static: `Stream.reject(source, …)` is
+   * `Stream.from(source).reject(…)`.
+   *
+   * ```ts
+   * await Stream.reject([1, 2, 3], (n) => n === 2).collect(); // [1, 3]
+   * ```
+   */
+  static reject<S>(
+    source: Source<S>,
+    predicate: (value: Exclude<S, AnyFailure>, index: number) => boolean,
+  ): StreamClass<Exclude<S, AnyFailure>, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).reject(predicate) as StreamClass<
+      Exclude<S, AnyFailure>,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#flatMap} as a static: `Stream.flatMap(source, …)` is
+   * `Stream.from(source).flatMap(…)`.
+   *
+   * ```ts
+   * await Stream.flatMap([1, 2], (n) => [n, n]).collect(); // [1, 1, 2, 2]
+   * ```
+   */
+  static flatMap<S, U>(
+    source: Source<S>,
+    fn: (value: Exclude<S, AnyFailure>, index: number) => Source<U>,
+  ): StreamClass<Exclude<U, AnyFailure>, Extract<S, AnyFailure> | Extract<U, AnyFailure>> {
+    return StreamClass.from(source).flatMap(fn) as StreamClass<
+      Exclude<U, AnyFailure>,
+      Extract<S, AnyFailure> | Extract<U, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#take} as a static: `Stream.take(source, …)` is
+   * `Stream.from(source).take(…)`.
+   *
+   * ```ts
+   * await Stream.take([1, 2, 3], 2).collect(); // [1, 2]
+   * ```
+   */
+  static take<S>(
+    source: Source<S>,
+    count: number,
+  ): StreamClass<Exclude<S, AnyFailure>, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).take(count) as StreamClass<
+      Exclude<S, AnyFailure>,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#drop} as a static: `Stream.drop(source, …)` is
+   * `Stream.from(source).drop(…)`.
+   *
+   * ```ts
+   * await Stream.drop([1, 2, 3], 1).collect(); // [2, 3]
+   * ```
+   */
+  static drop<S>(
+    source: Source<S>,
+    count: number,
+  ): StreamClass<Exclude<S, AnyFailure>, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).drop(count) as StreamClass<
+      Exclude<S, AnyFailure>,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#takeWhile} as a static: `Stream.takeWhile(source, …)` is
+   * `Stream.from(source).takeWhile(…)`.
+   *
+   * ```ts
+   * await Stream.takeWhile([1, 2, 3], (n) => n < 3).collect(); // [1, 2]
+   * ```
+   */
+  static takeWhile<S>(
+    source: Source<S>,
+    predicate: (value: Exclude<S, AnyFailure>, index: number) => boolean,
+  ): StreamClass<Exclude<S, AnyFailure>, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).takeWhile(predicate) as StreamClass<
+      Exclude<S, AnyFailure>,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#dropWhile} as a static: `Stream.dropWhile(source, …)` is
+   * `Stream.from(source).dropWhile(…)`.
+   *
+   * ```ts
+   * await Stream.dropWhile([1, 2, 3], (n) => n < 3).collect(); // [3]
+   * ```
+   */
+  static dropWhile<S>(
+    source: Source<S>,
+    predicate: (value: Exclude<S, AnyFailure>, index: number) => boolean,
+  ): StreamClass<Exclude<S, AnyFailure>, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).dropWhile(predicate) as StreamClass<
+      Exclude<S, AnyFailure>,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#takeEvery} as a static: `Stream.takeEvery(source, …)` is
+   * `Stream.from(source).takeEvery(…)`.
+   *
+   * ```ts
+   * await Stream.takeEvery([1, 2, 3, 4], 2).collect(); // [1, 3]
+   * ```
+   */
+  static takeEvery<S>(
+    source: Source<S>,
+    every: number,
+  ): StreamClass<Exclude<S, AnyFailure>, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).takeEvery(every) as StreamClass<
+      Exclude<S, AnyFailure>,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#dropEvery} as a static: `Stream.dropEvery(source, …)` is
+   * `Stream.from(source).dropEvery(…)`.
+   *
+   * ```ts
+   * await Stream.dropEvery([1, 2, 3, 4], 2).collect(); // [2, 4]
+   * ```
+   */
+  static dropEvery<S>(
+    source: Source<S>,
+    every: number,
+  ): StreamClass<Exclude<S, AnyFailure>, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).dropEvery(every) as StreamClass<
+      Exclude<S, AnyFailure>,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#mapEvery} as a static: `Stream.mapEvery(source, …)` is
+   * `Stream.from(source).mapEvery(…)`.
+   *
+   * ```ts
+   * await Stream.mapEvery([1, 2, 3, 4], 2, (n) => n * 10).collect(); // [10, 2, 30, 4]
+   * ```
+   */
+  static mapEvery<S>(
+    source: Source<S>,
+    every: number,
+    fn: (
+      value: Exclude<S, AnyFailure>,
+    ) => Exclude<S, AnyFailure> | PromiseLike<Exclude<S, AnyFailure>>,
+  ): StreamClass<Exclude<S, AnyFailure>, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).mapEvery(every, fn) as StreamClass<
+      Exclude<S, AnyFailure>,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#withIndex} as a static: `Stream.withIndex(source, …)` is
+   * `Stream.from(source).withIndex(…)`.
+   *
+   * ```ts
+   * await Stream.withIndex(['a', 'b']).collect(); // [['a', 0], ['b', 1]]
+   * ```
+   */
+  static withIndex<S>(
+    source: Source<S>,
+    offset = 0,
+  ): StreamClass<readonly [Exclude<S, AnyFailure>, number], Extract<S, AnyFailure>> {
+    return StreamClass.from(source).withIndex(offset) as StreamClass<
+      readonly [Exclude<S, AnyFailure>, number],
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#intersperse} as a static: `Stream.intersperse(source, …)` is
+   * `Stream.from(source).intersperse(…)`.
+   *
+   * ```ts
+   * await Stream.intersperse([1, 2], 0).collect(); // [1, 0, 2]
+   * ```
+   */
+  static intersperse<S, Sep>(
+    source: Source<S>,
+    separator: Sep,
+  ): StreamClass<Exclude<S, AnyFailure> | Sep, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).intersperse(separator) as StreamClass<
+      Exclude<S, AnyFailure> | Sep,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#dedup} as a static: `Stream.dedup(source, …)` is
+   * `Stream.from(source).dedup(…)`.
+   *
+   * ```ts
+   * await Stream.dedup([1, 1, 2, 1]).collect(); // [1, 2, 1]
+   * ```
+   */
+  static dedup<S>(source: Source<S>): StreamClass<Exclude<S, AnyFailure>, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).dedup() as StreamClass<
+      Exclude<S, AnyFailure>,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#dedupBy} as a static: `Stream.dedupBy(source, …)` is
+   * `Stream.from(source).dedupBy(…)`.
+   *
+   * ```ts
+   * await Stream.dedupBy([1, 1, 2], (n) => n).collect(); // [1, 2]
+   * ```
+   */
+  static dedupBy<S>(
+    source: Source<S>,
+    key: (value: Exclude<S, AnyFailure>) => unknown,
+  ): StreamClass<Exclude<S, AnyFailure>, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).dedupBy(key) as StreamClass<
+      Exclude<S, AnyFailure>,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#uniq} as a static: `Stream.uniq(source, …)` is
+   * `Stream.from(source).uniq(…)`.
+   *
+   * ```ts
+   * await Stream.uniq([1, 1, 2, 1]).collect(); // [1, 2]
+   * ```
+   */
+  static uniq<S>(source: Source<S>): StreamClass<Exclude<S, AnyFailure>, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).uniq() as StreamClass<
+      Exclude<S, AnyFailure>,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#uniqBy} as a static: `Stream.uniqBy(source, …)` is
+   * `Stream.from(source).uniqBy(…)`.
+   *
+   * ```ts
+   * await Stream.uniqBy([1, 1, 2], (n) => n).collect(); // [1, 2]
+   * ```
+   */
+  static uniqBy<S>(
+    source: Source<S>,
+    key: (value: Exclude<S, AnyFailure>) => unknown,
+  ): StreamClass<Exclude<S, AnyFailure>, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).uniqBy(key) as StreamClass<
+      Exclude<S, AnyFailure>,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#tap} as a static: `Stream.tap(source, …)` is
+   * `Stream.from(source).tap(…)`.
+   *
+   * ```ts
+   * await Stream.tap([1, 2], () => {}).collect(); // [1, 2]
+   * ```
+   */
+  static tap<S>(
+    source: Source<S>,
+    fn: (value: Exclude<S, AnyFailure>, index: number) => void | PromiseLike<void>,
+  ): StreamClass<Exclude<S, AnyFailure>, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).tap(fn) as StreamClass<
+      Exclude<S, AnyFailure>,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#into} as a static: `Stream.into(source, …)` is
+   * `Stream.from(source).into(…)`.
+   *
+   * ```ts
+   * await Stream.into([1, 2], new WritableStream()).collect(); // [1, 2]
+   * ```
+   */
+  static into<S>(
+    source: Source<S>,
+    sink: WritableStream<Exclude<S, AnyFailure>>,
+  ): StreamClass<Exclude<S, AnyFailure>, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).into(sink) as StreamClass<
+      Exclude<S, AnyFailure>,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#chunkEvery} as a static: `Stream.chunkEvery(source, …)` is
+   * `Stream.from(source).chunkEvery(…)`.
+   *
+   * ```ts
+   * await Stream.chunkEvery([1, 2, 3], 2).collect(); // [[1, 2], [3]]
+   * ```
+   */
+  static chunkEvery<S>(
+    source: Source<S>,
+    count: number,
+    step = count,
+    leftover: Exclude<S, AnyFailure>[] | 'discard' = [],
+  ): StreamClass<Exclude<S, AnyFailure>[], Extract<S, AnyFailure>> {
+    return StreamClass.from(source).chunkEvery(count, step, leftover) as StreamClass<
+      Exclude<S, AnyFailure>[],
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#chunkBy} as a static: `Stream.chunkBy(source, …)` is
+   * `Stream.from(source).chunkBy(…)`.
+   *
+   * ```ts
+   * await Stream.chunkBy([1, 1, 2], (n) => n).collect(); // [[1, 1], [2]]
+   * ```
+   */
+  static chunkBy<S>(
+    source: Source<S>,
+    key: (value: Exclude<S, AnyFailure>) => unknown,
+  ): StreamClass<Exclude<S, AnyFailure>[], Extract<S, AnyFailure>> {
+    return StreamClass.from(source).chunkBy(key) as StreamClass<
+      Exclude<S, AnyFailure>[],
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#chunkWhile} as a static: `Stream.chunkWhile(source, …)` is
+   * `Stream.from(source).chunkWhile(…)`.
+   *
+   * ```ts
+   * await Stream.chunkWhile([1, 2], 0, (v, acc) => ({ acc: acc + v, emit: [v] })).collect(); // [[1], [2]]
+   * ```
+   */
+  static chunkWhile<S, A, C>(
+    source: Source<S>,
+    initial: A,
+    step: (value: Exclude<S, AnyFailure>, accumulator: A) => { acc: A; emit?: C; halt?: boolean },
+    flush?: (accumulator: A) => C | undefined,
+  ): StreamClass<C, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).chunkWhile(initial, step, flush) as StreamClass<
+      C,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#through} as a static: `Stream.through(source, …)` is
+   * `Stream.from(source).through(…)`.
+   *
+   * ```ts
+   * await Stream.through([1, 2], async function* (els) { yield* els; }).collect(); // [1, 2]
+   * ```
+   */
+  static through<S, U>(
+    source: Source<S>,
+    fn: (elements: AsyncIterable<S>) => Source<U>,
+  ): StreamClass<Exclude<U, AnyFailure>, Extract<U, AnyFailure>> {
+    return StreamClass.from(source).through(fn as never) as StreamClass<
+      Exclude<U, AnyFailure>,
+      Extract<U, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#mapConcurrent} as a static: `Stream.mapConcurrent(source, …)` is
+   * `Stream.from(source).mapConcurrent(…)`.
+   *
+   * ```ts
+   * await Stream.mapConcurrent([1, 2], (n) => n * 2, { maxConcurrency: 2 }).collect(); // [2, 4]
+   * ```
+   */
+  static mapConcurrent<S, R>(
+    source: Source<S>,
+    fn: (value: Exclude<S, AnyFailure>, signal: AbortSignal) => R | PromiseLike<R>,
+    options: { maxConcurrency?: number; timeoutMs?: number; ordered?: boolean } = {},
+  ): StreamClass<
+    Exclude<R, AnyFailure>,
+    Extract<S, AnyFailure> | Extract<R, AnyFailure> | AnyFailure
+  > {
+    return StreamClass.from(source).mapConcurrent(fn, options) as StreamClass<
+      Exclude<R, AnyFailure>,
+      Extract<S, AnyFailure> | Extract<R, AnyFailure> | AnyFailure
+    >;
+  }
+
+  /**
+   * {@link StreamClass#collect} as a static: `Stream.collect(source, …)` is
+   * `Stream.from(source).collect(…)`.
+   *
+   * ```ts
+   * await Stream.collect([1, 2]); // [1, 2]
+   * ```
+   */
+  static collect<S>(source: Source<S>): Task<Exclude<S, AnyFailure>[], Extract<S, AnyFailure>> {
+    return StreamClass.from(source).collect() as Task<
+      Exclude<S, AnyFailure>[],
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#results} as a static: `Stream.results(source, …)` is
+   * `Stream.from(source).results(…)`.
+   *
+   * ```ts
+   * (await Stream.results([1, 2])).length; // 2
+   * ```
+   */
+  static results<S>(
+    source: Source<S>,
+  ): Task<Result<Exclude<S, AnyFailure>, Extract<S, AnyFailure>>[], never> {
+    return StreamClass.from(source).results() as Task<
+      Result<Exclude<S, AnyFailure>, Extract<S, AnyFailure>>[],
+      never
+    >;
+  }
+
+  /**
+   * {@link StreamClass#partition} as a static: `Stream.partition(source, …)` is
+   * `Stream.from(source).partition(…)`.
+   *
+   * ```ts
+   * (await Stream.partition([1, 2])).values; // [1, 2]
+   * ```
+   */
+  static partition<S>(
+    source: Source<S>,
+  ): Task<{ values: Exclude<S, AnyFailure>[]; errors: Extract<S, AnyFailure>[] }, never> {
+    return StreamClass.from(source).partition() as Task<
+      { values: Exclude<S, AnyFailure>[]; errors: Extract<S, AnyFailure>[] },
+      never
+    >;
+  }
+
+  /**
+   * {@link StreamClass#reduce} as a static: `Stream.reduce(source, …)` is
+   * `Stream.from(source).reduce(…)`.
+   *
+   * ```ts
+   * await Stream.reduce([1, 2, 3], (sum, n) => sum + n, 0); // 6
+   * ```
+   */
+  static reduce<S, A>(
+    source: Source<S>,
+    fn: (accumulator: A, value: Exclude<S, AnyFailure>, index: number) => A | PromiseLike<A>,
+    initial: A,
+  ): Task<A, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).reduce(fn, initial) as Task<A, Extract<S, AnyFailure>>;
+  }
+
+  /**
+   * {@link StreamClass#some} as a static: `Stream.some(source, …)` is
+   * `Stream.from(source).some(…)`.
+   *
+   * ```ts
+   * await Stream.some([1, 2], (n) => n > 1); // true
+   * ```
+   */
+  static some<S>(
+    source: Source<S>,
+    predicate: (value: Exclude<S, AnyFailure>, index: number) => boolean | PromiseLike<boolean>,
+  ): Task<boolean, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).some(predicate) as Task<boolean, Extract<S, AnyFailure>>;
+  }
+
+  /**
+   * {@link StreamClass#every} as a static: `Stream.every(source, …)` is
+   * `Stream.from(source).every(…)`.
+   *
+   * ```ts
+   * await Stream.every([2, 4], (n) => n % 2 === 0); // true
+   * ```
+   */
+  static every<S>(
+    source: Source<S>,
+    predicate: (value: Exclude<S, AnyFailure>, index: number) => boolean | PromiseLike<boolean>,
+  ): Task<boolean, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).every(predicate) as Task<boolean, Extract<S, AnyFailure>>;
+  }
+
+  /**
+   * {@link StreamClass#find} as a static: `Stream.find(source, …)` is
+   * `Stream.from(source).find(…)`.
+   *
+   * ```ts
+   * await Stream.find([1, 2], (n) => n > 1); // 2
+   * ```
+   */
+  static find<S>(
+    source: Source<S>,
+    predicate: (value: Exclude<S, AnyFailure>, index: number) => boolean | PromiseLike<boolean>,
+  ): Task<Exclude<S, AnyFailure> | undefined, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).find(predicate) as Task<
+      Exclude<S, AnyFailure> | undefined,
+      Extract<S, AnyFailure>
+    >;
+  }
+
+  /**
+   * {@link StreamClass#forEach} as a static: `Stream.forEach(source, …)` is
+   * `Stream.from(source).forEach(…)`.
+   *
+   * ```ts
+   * await Stream.forEach([1, 2], () => {}); // undefined
+   * ```
+   */
+  static forEach<S>(
+    source: Source<S>,
+    fn: (value: Exclude<S, AnyFailure>, index: number) => void | PromiseLike<void>,
+  ): Task<void, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).forEach(fn) as Task<void, Extract<S, AnyFailure>>;
+  }
+
+  /**
+   * {@link StreamClass#run} as a static: `Stream.run(source, …)` is
+   * `Stream.from(source).run(…)`.
+   *
+   * ```ts
+   * await Stream.run([1, 2]); // undefined
+   * ```
+   */
+  static run<S>(source: Source<S>): Task<void, Extract<S, AnyFailure>> {
+    return StreamClass.from(source).run() as Task<void, Extract<S, AnyFailure>>;
+  }
+
   // ── Transforms — lazy, failures pass through untouched ──────────────────────
 
   /**
