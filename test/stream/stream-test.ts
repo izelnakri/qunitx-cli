@@ -1035,3 +1035,90 @@ module('Stream | some / every / find', { concurrency: true }, () => {
     assert.true(answer, 'short-circuiting means the failure was never pulled');
   });
 });
+
+// ── The static mirrors ───────────────────────────────────────────────────────
+//
+// Per-member behaviour is covered by the instance tests above: every static is a one-line
+// delegation, so testing both spellings would test the same code twice. What is NOT covered
+// there is the BRIDGE — that a static exists for every member and forwards faithfully — and
+// that is what these two tests pin. A member added later without its mirror fails the first.
+
+module('Stream | static mirrors', { concurrency: true }, () => {
+  const MIRRORED = [
+    'map',
+    'filter',
+    'reject',
+    'flatMap',
+    'take',
+    'drop',
+    'takeWhile',
+    'dropWhile',
+    'takeEvery',
+    'dropEvery',
+    'mapEvery',
+    'withIndex',
+    'intersperse',
+    'dedup',
+    'dedupBy',
+    'uniq',
+    'uniqBy',
+    'tap',
+    'into',
+    'chunkEvery',
+    'chunkBy',
+    'chunkWhile',
+    'through',
+    'mapConcurrent',
+    'collect',
+    'results',
+    'partition',
+    'reduce',
+    'some',
+    'every',
+    'find',
+    'forEach',
+    'run',
+  ] as const;
+
+  test('every instance member has a static counterpart', (assert) => {
+    const instance = Stream.from([]) as unknown as Record<string, unknown>;
+    const missing = MIRRORED.filter(
+      (name) => typeof (Stream as unknown as Record<string, unknown>)[name] !== 'function',
+    );
+    const notOnInstance = MIRRORED.filter((name) => typeof instance[name] !== 'function');
+
+    assert.deepEqual(missing, [], 'no member is method-only');
+    assert.deepEqual(notOnInstance, [], 'and the list itself has not gone stale');
+  });
+
+  test('a static produces what the instance spelling does', async (assert) => {
+    // A representative of each shape — transform, terminal, and one that takes options — rather
+    // than all 33: the delegation is the same line in every case.
+    assert.deepEqual(
+      await Stream.map([1, 2, 3], (n) => n * 2).collect(),
+      await Stream.from([1, 2, 3])
+        .map((n) => n * 2)
+        .collect(),
+      'transform',
+    );
+    assert.deepEqual(
+      await Stream.reduce([1, 2, 3], (sum, n) => sum + n, 0),
+      await Stream.from([1, 2, 3]).reduce((sum, n) => sum + n, 0),
+      'terminal',
+    );
+    assert.deepEqual(
+      await Stream.mapConcurrent([1, 2, 3], (n) => n * 2, { maxConcurrency: 2 }).collect(),
+      await Stream.from([1, 2, 3])
+        .mapConcurrent((n) => n * 2, { maxConcurrency: 2 })
+        .collect(),
+      'options bag forwarded',
+    );
+  });
+
+  test('the railway survives the static spelling', async (assert) => {
+    const { values, errors } = await Stream.partition([1, BadRow({ line: 2 }), 3]);
+
+    assert.deepEqual(values, [1, 3]);
+    assert.strictEqual(errors.length, 1, 'failures are lifted by `from`, not swallowed');
+  });
+});
