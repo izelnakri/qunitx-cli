@@ -217,6 +217,14 @@ module('API | runSession | events() as a Stream', { concurrency: true }, () => {
     });
   });
 
+  test('droppedEvents is 0 for a run nobody stalls', async (assert) => {
+    await withRunSession({ inputs: [PASSING] }, async (session) => {
+      await session.result();
+
+      assert.strictEqual(session.droppedEvents, 0, 'a real suite is nowhere near the cap');
+    });
+  });
+
   test('the session stays a handle — it is not itself a Stream', async (assert) => {
     await withRunSession({ inputs: [PASSING] }, (session) => {
       assert.strictEqual(
