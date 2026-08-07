@@ -107,4 +107,11 @@ export { type Output, processOutput, silentOutput, streamOutput } from '../repor
  */
 export { Task, type Result } from '../task/index.ts';
 
+/**
+ * The lazy pipeline the sessions hand back: `session.events()` and `w.results()` are Streams, so
+ * the combinators are already attached. Re-exported so a consumer of this API never has to reach
+ * past it for the type.
+ */
+export { Stream } from '../stream/index.ts';
+
 export { Failure, type AnyFailure } from './failure.ts';

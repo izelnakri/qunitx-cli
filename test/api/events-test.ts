@@ -1,115 +1,18 @@
 import { module, test } from 'qunitx';
-import {
-  Channel,
-  MAX_BUFFERED_EVENTS,
-  eventReporter,
-  type RunEvent,
-} from '../../lib/api/events.ts';
+import { openFeed, eventReporter, FEED_CAPACITY } from '../../lib/api/events.ts';
 import type { Config } from '../../lib/types.ts';
 import '../helpers/custom-asserts.ts';
 
-// No browser here: the channel is the piece both sessions are built on, and its awkward cases —
-// a consumer arriving late, a producer flooding, a close with values still buffered — are far
-// easier to provoke directly than through a real run.
+// No browser here. The queue mechanics these used to cover — late consumer, flood, close with
+// values still buffered — now belong to `Stream.channel` and are pinned in test/stream/. What is
+// left is this module's own contribution: the projection from reporter callbacks to RunEvents,
+// and the feed's configuration.
 
 const CONFIG = {} as Config;
 
-module('API | events | Channel', { concurrency: true }, () => {
-  test('a late consumer still sees everything that was pushed', async (assert) => {
-    const channel = new Channel<number>();
-    channel.push(1);
-    channel.push(2);
-    channel.close();
-
-    const seen: number[] = [];
-    for await (const value of channel) seen.push(value);
-
-    assert.deepEqual(seen, [1, 2], 'buffered until someone asked');
-  });
-
-  test('a waiting consumer is handed values as they arrive', async (assert) => {
-    const channel = new Channel<string>();
-    const iterator = channel[Symbol.asyncIterator]();
-    const pending = iterator.next();
-
-    assert.equal(channel.buffered, 0, 'nothing buffers while a consumer is parked');
-    channel.push('a');
-
-    assert.deepEqual(await pending, { done: false, value: 'a' });
-  });
-
-  test('close() drains the buffer before ending', async (assert) => {
-    const channel = new Channel<number>();
-    channel.push(1);
-    channel.close();
-
-    const iterator = channel[Symbol.asyncIterator]();
-
-    assert.deepEqual(await iterator.next(), { done: false, value: 1 }, 'the queued value survives');
-    assert.deepEqual(await iterator.next(), { done: true, value: undefined });
-  });
-
-  test('close() wakes a consumer parked on a value that never comes', async (assert) => {
-    const channel = new Channel<number>();
-    const pending = channel[Symbol.asyncIterator]().next();
-    channel.close();
-
-    assert.deepEqual(await pending, { done: true, value: undefined }, 'released rather than hung');
-  });
-
-  test('pushing after close is ignored rather than thrown', (assert) => {
-    const channel = new Channel<number>();
-    channel.close();
-    channel.push(1);
-
-    assert.equal(channel.buffered, 0, 'a late event from a run being torn down is dropped');
-  });
-
-  test('close() is idempotent', (assert) => {
-    const channel = new Channel<number>();
-    channel.close();
-    channel.close();
-
-    assert.true(channel.closed);
-  });
-
-  test('a flood past the cap drops the oldest and counts what it dropped', async (assert) => {
-    const channel = new Channel<number>();
-    for (let index = 0; index < MAX_BUFFERED_EVENTS + 10; index++) channel.push(index);
-
-    assert.equal(channel.buffered, MAX_BUFFERED_EVENTS, 'the buffer holds at the cap');
-    assert.equal(channel.dropped, 10, 'and says how many it lost');
-
-    const iterator = channel[Symbol.asyncIterator]();
-
-    assert.deepEqual(
-      await iterator.next(),
-      { done: false, value: 10 },
-      'the oldest went, the newest stayed — they are the ones next to whatever went wrong',
-    );
-  });
-
-  test('an ordinary run drops nothing', (assert) => {
-    const channel = new Channel<number>();
-    for (let index = 0; index < 500; index++) channel.push(index);
-
-    assert.equal(channel.dropped, 0, 'the cap is far above any real suite');
-  });
-
-  test('breaking out of the loop closes the channel', async (assert) => {
-    const channel = new Channel<number>();
-    channel.push(1);
-    channel.push(2);
-
-    for await (const _value of channel) break;
-
-    assert.true(channel.closed);
-  });
-});
-
 module('API | events | eventReporter', { concurrency: true }, () => {
   test('projects each reporter callback into one ordered feed', async (assert) => {
-    const channel = new Channel<RunEvent>();
+    const channel = openFeed();
     const reporter = eventReporter(channel);
 
     reporter.onRunStart?.(CONFIG, { fileCount: 2, groupCount: 1 });
@@ -118,24 +21,60 @@ module('API | events | eventReporter', { concurrency: true }, () => {
     reporter.onBrowserLog?.(CONFIG, { type: 'error', text: 'boom', args: [] });
     channel.close();
 
-    const seen = (await Array.fromAsync(channel)).map((event) => event.kind);
+    const seen = (await Array.fromAsync(channel.stream)).map((event) => event.kind);
 
     assert.deepEqual(seen, ['runStart', 'test', 'notice', 'browserLog'], 'in emission order');
   });
 
   test('test events carry the same projection the result does', async (assert) => {
-    const channel = new Channel<RunEvent>();
+    const channel = openFeed();
     const reporter = eventReporter(channel);
 
     reporter.onTestEnd?.(CONFIG, { status: 'failed', fullName: ['Cart', 'empties'], runtime: 1 });
     channel.close();
 
-    const [event] = await Array.fromAsync(channel);
+    const [event] = await Array.fromAsync(channel.stream);
 
     assert.equal(
       event.kind === 'test' && event.test.fullName,
       'Cart: empties',
       'the display name, not the raw array',
     );
+  });
+});
+
+module('API | events | openFeed', { concurrency: true }, () => {
+  test('is a Stream.channel configured for a test run', async (assert) => {
+    const feed = openFeed();
+    feed.emit({ kind: 'notice', notice: { level: 'info', message: 'hello' } });
+
+    assert.strictEqual(feed.buffered, 1, 'buffers for a consumer that has not arrived');
+    feed.close();
+    assert.deepEqual(
+      (await feed.stream.collect()).map((e) => e.kind),
+      ['notice'],
+      'and its stream is an ordinary Stream — combinators included',
+    );
+  });
+
+  test('drops the OLDEST past the cap, so the newest survive a flood', (assert) => {
+    const feed = openFeed();
+    for (let index = 0; index < FEED_CAPACITY + 5; index++) {
+      feed.emit({ kind: 'browserLog', log: { type: 'log', text: String(index), args: [] } });
+    }
+
+    assert.strictEqual(feed.buffered, FEED_CAPACITY, 'held at the cap');
+    assert.strictEqual(feed.dropped, 5, 'and says how many it lost');
+  });
+
+  test('onDemand fires when a consumer attaches — the lazy-start hook', async (assert) => {
+    let started = 0;
+    const feed = openFeed({ onDemand: () => void (started += 1) });
+    const collected = feed.stream.collect();
+
+    assert.strictEqual(started, 0, 'building the feed started nothing');
+    feed.close();
+    await collected;
+    assert.strictEqual(started, 1, 'the consumer is what started it');
   });
 });

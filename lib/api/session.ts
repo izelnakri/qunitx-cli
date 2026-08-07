@@ -3,7 +3,8 @@ import * as Run from '../commands/run.ts';
 import { Task } from '../task/index.ts';
 import { unwrap } from '../result/result.ts';
 import { buildResult, type RunResult } from './result.ts';
-import { Channel, eventReporter, type RunEvent } from './events.ts';
+import { openFeed, eventReporter, type RunEvent } from './events.ts';
+import type { Channel, Stream } from '../stream/index.ts';
 import { abortedBeforeStart, junitXml, type RunFailure } from './run.ts';
 import * as RunState from '../setup/run-state.ts';
 import {
@@ -59,6 +60,22 @@ export interface RunSession extends AsyncIterable<RunEvent> {
    * that ends the session immediately.
    */
   abort(): Promise<void>;
+  /**
+   * The same events as iterating the session, as a {@link Stream} — so the combinators are
+   * there without a `Stream.from` wrapper.
+   *
+   * The session stays a HANDLE rather than becoming a Stream: every combinator returns a new
+   * Stream, so `session.filter(…)` would hand back an object with no `close()` and a live
+   * browser with no owner.
+   *
+   * ```ts
+   * // Defined, not invoked: a real session launches a browser.
+   * async function firstTen(session: RunSession) {
+   *   return await session.events().filter((e) => e.kind === 'test').take(10).collect();
+   * }
+   * ```
+   */
+  events(): Stream<RunEvent>;
   /** Closes the session, ending iteration. Idempotent; implied by `await using`. */
   close(): Promise<void>;
   /** Closes the session at the end of an `await using` block. */
@@ -95,7 +112,7 @@ export function runSession(
     const resolved = normalizeOptions(options);
     validate(resolved);
     const reporting = resolveReporting(resolved);
-    const channel = new Channel<RunEvent>();
+    const channel = openFeed();
     reporting.reporters.push(eventReporter(channel));
     // Config assembly happens eagerly — it reads package.json and resolves inputs, so a bad option
     // is a failure from `runSession(...)` itself rather than a surprise on first iteration. Only
@@ -161,10 +178,17 @@ class Session implements RunSession {
     return this.close();
   }
 
+  events(): Stream<RunEvent> {
+    // The first read is what starts the run — same rule as iterating the session.
+    void this.#start().catch(() => {});
+
+    return this.#channel.stream;
+  }
+
   [Symbol.asyncIterator](): AsyncIterator<RunEvent> {
     // The first read is what starts the run — see the laziness note on `RunSession`.
     void this.#start().catch(() => {});
-    const inner = this.#channel[Symbol.asyncIterator]();
+    const inner = this.#channel.stream[Symbol.asyncIterator]();
 
     return {
       next: () => inner.next(),
@@ -191,7 +215,7 @@ class Session implements RunSession {
 
     this.#started = Run.run(this.#config).then((outcome) => {
       const result = this.#snapshot(outcome);
-      this.#channel.push({ kind: 'runEnd', result });
+      this.#channel.emit({ kind: 'runEnd', result });
       this.#channel.close();
 
       return result;

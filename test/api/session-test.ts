@@ -188,3 +188,43 @@ module('API | runSession | lifecycle', { concurrency: true }, () => {
     }
   });
 });
+
+module('API | runSession | events() as a Stream', { concurrency: true }, () => {
+  test('combinators are attached — no Stream.from wrapper needed', async (assert) => {
+    await withRunSession({ inputs: [PASSING] }, async (session) => {
+      const names = await session
+        .events()
+        .filter((e) => e.kind === 'test')
+        .map((e) => (e.kind === 'test' ? e.test.fullName : ''))
+        .take(2)
+        .collect();
+
+      assert.strictEqual(names.length, 2, 'take(2) bounded the pull');
+      assert.true(names.every((n) => n.length > 0));
+    });
+  });
+
+  test('events() starts the run, exactly like iterating does', async (assert) => {
+    await withRunSession({ inputs: [PASSING] }, async (session) => {
+      const kinds = await session
+        .events()
+        .map((e) => e.kind)
+        .collect();
+
+      assert.strictEqual(kinds[0], 'runStart');
+      assert.strictEqual(kinds.at(-1), 'runEnd', 'the feed ran to completion');
+      assert.true((await session.result()).ok, 'and the result is there afterwards');
+    });
+  });
+
+  test('the session stays a handle — it is not itself a Stream', async (assert) => {
+    await withRunSession({ inputs: [PASSING] }, (session) => {
+      assert.strictEqual(
+        typeof (session as unknown as { filter?: unknown }).filter,
+        'undefined',
+        'combinators live on events(), so nothing can strip close() off a live browser',
+      );
+      assert.strictEqual(typeof session.close, 'function');
+    });
+  });
+});
