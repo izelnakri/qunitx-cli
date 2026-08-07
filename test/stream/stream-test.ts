@@ -1148,3 +1148,331 @@ module('Stream | static mirrors', { concurrency: true }, () => {
     assert.strictEqual(errors.length, 1, 'failures are lifted by `from`, not swallowed');
   });
 });
+
+// ── The railway, member by member ────────────────────────────────────────────
+//
+// One table stating, for every transform, exactly what a failure element does to it. This is the
+// module's two-rule taxonomy made checkable in one place:
+//
+//   POSITIONAL ops (take, drop, intersperse) count EVERY element — a failure occupies a slot,
+//                  because discarding a prefix is a decision about position, not about values.
+//   VALUE ops      (predicates, folds, chunkers, dedup/uniq) speak only about values — a failure
+//                  passes untested, invisible to a predicate, a counter or an accumulator.
+//
+// A new transform with no row here is a transform whose ruling nobody wrote down.
+
+module('Stream | the railway, member by member', { concurrency: true }, () => {
+  const IN = () => Stream.from([1, BadRow({ line: 9 }), 2]);
+
+  const CASES: Array<{
+    name: string;
+    kind: 'positional' | 'value';
+    apply: (s: ReturnType<typeof IN>) => {
+      partition(): Promise<{ values: unknown[]; errors: unknown[] }>;
+    };
+    values: unknown[];
+    why: string;
+  }> = [
+    {
+      name: 'map',
+      kind: 'value',
+      apply: (s) => s.map((n) => n * 10),
+      values: [10, 20],
+      why: 'fn never sees the failure',
+    },
+    {
+      name: 'filter',
+      kind: 'value',
+      apply: (s) => s.filter((n) => n > 0),
+      values: [1, 2],
+      why: 'the predicate is not consulted about a failure',
+    },
+    {
+      name: 'reject',
+      kind: 'value',
+      apply: (s) => s.reject((n) => n === 1),
+      values: [2],
+      why: 'rejecting values cannot reject a failure',
+    },
+    {
+      name: 'flatMap',
+      kind: 'value',
+      apply: (s) => s.flatMap((n) => [n, n]),
+      values: [1, 1, 2, 2],
+      why: 'the failure is not expanded, it rides past',
+    },
+    {
+      name: 'take(2)',
+      kind: 'positional',
+      apply: (s) => s.take(2),
+      values: [1],
+      why: 'the failure occupied the second slot',
+    },
+    {
+      name: 'drop(1)',
+      kind: 'positional',
+      apply: (s) => s.drop(1),
+      values: [2],
+      why: 'the dropped prefix was the value 1, so the failure survives',
+    },
+    {
+      name: 'takeWhile',
+      kind: 'value',
+      apply: (s) => s.takeWhile((n) => n < 2),
+      values: [1],
+      why: 'the window closed on the value 2; the failure inside it passed',
+    },
+    {
+      name: 'dropWhile',
+      kind: 'value',
+      apply: (s) => s.dropWhile((n) => n < 2),
+      values: [2],
+      why: 'a failure is emitted even while values are being dropped',
+    },
+    {
+      name: 'takeEvery(2)',
+      kind: 'value',
+      apply: (s) => s.takeEvery(2),
+      values: [1],
+      why: 'the failure did not advance the value counter',
+    },
+    {
+      name: 'dropEvery(2)',
+      kind: 'value',
+      apply: (s) => s.dropEvery(2),
+      values: [2],
+      why: 'same counter, other end',
+    },
+    {
+      name: 'mapEvery(2)',
+      kind: 'value',
+      apply: (s) => s.mapEvery(2, (n) => n * 10),
+      values: [10, 2],
+      why: 'only value positions are counted for mapping',
+    },
+    {
+      name: 'withIndex',
+      kind: 'value',
+      apply: (s) => s.withIndex(),
+      values: [
+        [1, 0],
+        [2, 1],
+      ],
+      why: 'the index numbers values, not elements',
+    },
+    {
+      name: 'intersperse',
+      kind: 'positional',
+      apply: (s) => s.intersperse(0),
+      values: [1, 0, 0, 2],
+      why: 'a separator goes between every ELEMENT, the failure included',
+    },
+    {
+      name: 'dedup',
+      kind: 'value',
+      apply: (s) => s.dedup(),
+      values: [1, 2],
+      why: 'a failure is transparent to the last-seen memory',
+    },
+    {
+      name: 'dedupBy',
+      kind: 'value',
+      apply: (s) => s.dedupBy((n) => n),
+      values: [1, 2],
+      why: 'the key function never sees a failure',
+    },
+    {
+      name: 'uniq',
+      kind: 'value',
+      apply: (s) => s.uniq(),
+      values: [1, 2],
+      why: 'a failure is never added to the seen set',
+    },
+    {
+      name: 'uniqBy',
+      kind: 'value',
+      apply: (s) => s.uniqBy((n) => n),
+      values: [1, 2],
+      why: 'same set, keyed',
+    },
+    {
+      name: 'scan',
+      kind: 'value',
+      apply: (s) => s.scan((a, b) => a + b),
+      values: [1, 3],
+      why: 'the accumulator is untouched by the failure',
+    },
+    {
+      name: 'tap',
+      kind: 'value',
+      apply: (s) => s.tap(() => {}),
+      values: [1, 2],
+      why: 'the side effect does not fire for a failure',
+    },
+    {
+      name: 'chunkEvery(2)',
+      kind: 'value',
+      apply: (s) => s.chunkEvery(2),
+      values: [[1, 2]],
+      why: 'a bad row never voids the batch around it — the failure passes BETWEEN chunks',
+    },
+    {
+      name: 'chunkBy',
+      kind: 'value',
+      apply: (s) => s.chunkBy((n) => n),
+      values: [[1], [2]],
+      why: 'the key change is judged on values only',
+    },
+  ];
+
+  for (const { name, kind, apply, values, why } of CASES) {
+    test(`${name} is a ${kind} op — ${why}`, async (assert) => {
+      const { values: got, errors } = await apply(IN()).partition();
+
+      assert.deepEqual(got, values, `${name}: values`);
+      assert.strictEqual(errors.length, 1, `${name}: the failure survived, exactly once`);
+      assert.true(BadRow.is(errors[0]), `${name}: and arrived intact, still typed`);
+      assert.strictEqual(
+        (errors[0] as Failure.Of<typeof BadRow>).data.line,
+        9,
+        `${name}: with its payload — no re-wrapping along the way`,
+      );
+    });
+  }
+
+  test('every transform in the module has a row above', (assert) => {
+    const RULED = new Set(CASES.map(({ name }) => name.replace(/\(.*\)$/, '')));
+    // `through` owns its own ruling by design (the user's generator sees the raw flow), and
+    // `into`/`mapConcurrent` are pinned in their own modules.
+    const EXEMPT = new Set(['through', 'into', 'mapConcurrent']);
+    const TRANSFORMS = [
+      'map',
+      'filter',
+      'reject',
+      'flatMap',
+      'take',
+      'drop',
+      'takeWhile',
+      'dropWhile',
+      'takeEvery',
+      'dropEvery',
+      'mapEvery',
+      'withIndex',
+      'intersperse',
+      'dedup',
+      'dedupBy',
+      'uniq',
+      'uniqBy',
+      'scan',
+      'tap',
+      'chunkEvery',
+      'chunkBy',
+      'chunkWhile',
+      'through',
+      'into',
+      'mapConcurrent',
+    ];
+    const unruled = TRANSFORMS.filter((n) => !RULED.has(n) && !EXEMPT.has(n));
+
+    assert.deepEqual(unruled, ['chunkWhile'], 'only chunkWhile is ruled elsewhere');
+  });
+});
+
+// ── Consuming the same Stream more than once ─────────────────────────────────
+//
+// A Stream is a RECIPE, not a result: `#open` is a thunk, so every terminal opens a fresh pass.
+// Nothing is memoised. That is Elixir's `Stream` and Rust's `Iterator`, and it has four
+// consequences a reader should meet here rather than in production. The array is the cache: if
+// you want one pass, take one — `const rows = await stream.collect()` — and work on `rows`.
+
+module('Stream | re-consumption', { concurrency: true }, () => {
+  test('a re-iterable source answers twice, but does the WORK twice', async (assert) => {
+    let work = 0;
+    const base = Stream.from([1, 2, 3]).map((n) => {
+      work += 1;
+
+      return n * 10;
+    });
+
+    assert.deepEqual(await base.collect(), [10, 20, 30]);
+    assert.deepEqual(await base.collect(), [10, 20, 30], 'same answer');
+    assert.strictEqual(work, 6, 'and six calls for three elements — nothing was cached');
+  });
+
+  test('branching recomputes the shared upstream per branch', async (assert) => {
+    // The one that surprises people: `shared` looks like a variable holding results. It is a
+    // description, so each branch re-derives it from the source.
+    let expensive = 0;
+    const shared = Stream.from([1, 2, 3, 4]).map((n) => {
+      expensive += 1;
+
+      return n;
+    });
+
+    assert.deepEqual(await shared.filter((n) => n % 2 === 0).collect(), [2, 4]);
+    assert.deepEqual(await shared.filter((n) => n % 2 === 1).collect(), [1, 3]);
+    assert.strictEqual(expensive, 8, 'four per branch, not four in total');
+  });
+
+  test('side effects fire once per consumption', async (assert) => {
+    const seen: number[] = [];
+    const tapped = Stream.from([1, 2]).tap((n) => void seen.push(n));
+    await tapped.collect();
+    await tapped.collect();
+
+    assert.deepEqual(seen, [1, 2, 1, 2], 'tap is not a cache either');
+  });
+
+  test('a one-shot source is empty the second time — silently', async (assert) => {
+    const live = Stream.from(
+      (async function* () {
+        yield 1;
+        yield 2;
+      })(),
+    );
+
+    assert.deepEqual(await live.collect(), [1, 2]);
+    assert.deepEqual(await live.collect(), [], 'exhausted; no error, because none is owed');
+  });
+
+  test('two consumers racing a one-shot source SPLIT it between them', async (assert) => {
+    // The sharpest edge in the module, pinned so nobody discovers it in production: this is not
+    // an empty result you would notice, it is a plausible-looking partial one. Deliberately left
+    // unguarded — a Stream cannot tell a one-shot source from a re-iterable one without
+    // heuristics that would catch generators and miss `ReadableStream`, so the honest rule stays
+    // "re-iterability follows the source". Consume once, or consume an array.
+    const raced = Stream.from(
+      (async function* () {
+        yield 1;
+        yield 2;
+        yield 3;
+      })(),
+    );
+
+    const [left, right] = await Promise.all([raced.collect(), raced.collect()]);
+
+    assert.strictEqual(left.length + right.length, 3, 'between them they got every element once');
+    assert.notDeepEqual(left, [1, 2, 3], 'but neither consumer got the whole stream');
+  });
+
+  test('collecting once and reusing the array is the fix', async (assert) => {
+    let work = 0;
+    const rows = await Stream.from([1, 2, 3])
+      .map((n) => {
+        work += 1;
+
+        return n * 10;
+      })
+      .collect();
+
+    assert.deepEqual(
+      rows.filter((n) => n > 10),
+      [20, 30],
+    );
+    assert.deepEqual(
+      rows.filter((n) => n < 30),
+      [10, 20],
+    );
+    assert.strictEqual(work, 3, 'one pass, however many times the array is read');
+  });
+});
