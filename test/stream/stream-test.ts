@@ -116,7 +116,7 @@ module('Stream | railway', { concurrency: true }, () => {
 module('Stream | consumers', { concurrency: true }, () => {
   const withFailure = () => Stream.from([1, BadRow({ line: 9 }), 3]);
 
-  test('values() fail-fasts on the first failure element, as a declared rejection', async (assert) => {
+  test('collect() fail-fasts on the first failure element, as a declared rejection', async (assert) => {
     const outcome = await withFailure().collect().result(); // number[] | BadRow — bare
     assert.true(BadRow.is(outcome));
     assert.strictEqual((outcome as Failure.Of<typeof BadRow>).data.line, 9);
@@ -128,7 +128,7 @@ module('Stream | consumers', { concurrency: true }, () => {
     assert.true(Failure.is(outcomes[1]));
   });
 
-  test('each() drains with side effects and fail-fasts like values()', async (assert) => {
+  test('forEach() drains with side effects, and fail-fasts the way collect does', async (assert) => {
     const seen: number[] = [];
     await Stream.from([1, 2]).forEach((n) => void seen.push(n));
     assert.deepEqual(seen, [1, 2]);
@@ -154,7 +154,7 @@ module('Stream | consumers', { concurrency: true }, () => {
 });
 
 // Serial on purpose: onObserved is a process-wide single slot, and concurrent siblings that
-// consume failures (values().result(), partition()) would report into this test's collector.
+// consume failures (collect().result(), partition()) would report into this test's collector.
 module('Stream | observation seam', () => {
   test('results() reports each kept failure to Failure.onObserved exactly once', async (assert) => {
     const seen: string[] = [];
@@ -685,7 +685,7 @@ module('Stream | channel backpressure', { concurrency: true }, () => {
     await Promise.resolve();
     assert.false(resumed, 'still full — the producer waits');
 
-    // Awaited together: the consuming Task is lazy, so `values()` alone attaches nothing and
+    // Awaited together: the consuming Task is lazy, so `collect()` alone attaches nothing and
     // the slot would never free.
     const [, collected] = await Promise.all([waiting, channel.stream.take(1).collect()]);
     assert.true(resumed, 'the take freed the slot');
@@ -745,7 +745,7 @@ module('Stream | channel demand', { concurrency: true }, () => {
 
   test('a consumer attaches when its Task is awaited, not when it is built', async (assert) => {
     // The sharp edge of a lazy module meeting a live producer, pinned so it cannot drift:
-    // `values()` returns a Task and Tasks do nothing until awaited, so building a consumer does
+    // `collect()` returns a Task and Tasks do nothing until awaited, so building a consumer does
     // NOT start draining. Anything emitted in between is buffered — which is what `capacity` is
     // for, and what `onDemand` exists to let a deferrable producer avoid entirely.
     let started = 0;
@@ -908,7 +908,7 @@ module('Stream | channel overflow: fail', { concurrency: true }, () => {
     channel.emit(2);
 
     const outcome = await channel.stream.collect().result();
-    assert.true(Failure.is(outcome), 'values() fail-fasts on it like any other failure element');
+    assert.true(Failure.is(outcome), 'collect() fail-fasts on it like any other failure element');
   });
 
   test('the channel closes — a fatal overflow is not a hiccup', (assert) => {
