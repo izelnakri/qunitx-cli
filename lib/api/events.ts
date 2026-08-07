@@ -1,4 +1,5 @@
 import { toTestResult, type RunResult, type TestResult } from './result.ts';
+import { Stream, type Channel } from '../stream/index.ts';
 import type {
   BrowserLog,
   Notice,
@@ -34,144 +35,40 @@ export type RunEvent =
   | { kind: 'runEnd'; result: RunResult };
 
 /**
- * How many events a feed buffers for a consumer that has stopped reading.
+ * The buffer a feed keeps for a consumer that has stopped reading.
  *
  * Generous enough that no real suite reaches it: tests and notices are bounded by the suite, and
  * the only unbounded channel is page output — the same flood `MAX_BROWSER_LOGS` exists for.
+ * Past it the oldest events go, matching the page-log cap for the same reason: under a flood the
+ * newest are the ones adjacent to whatever went wrong.
  *
  * ```ts
- * MAX_BUFFERED_EVENTS; // 10000
+ * FEED_CAPACITY; // 10000
  * ```
  */
-export const MAX_BUFFERED_EVENTS = 10_000;
+export const FEED_CAPACITY = 10_000;
 
 /**
- * A one-consumer async queue: the producer pushes whenever it likes, the consumer iterates.
+ * Opens a channel for one run's events.
  *
- * The shape every push-source in this API needs, because the producer is a browser and cannot be
- * slowed down. Backpressure is therefore not on offer: the choice is buffer or drop, and this
- * buffers up to {@link MAX_BUFFERED_EVENTS} before dropping the oldest — the same trade, for the
- * same reason, as the page-log cap on a result. Both sessions keep the buffer near zero in
- * practice by not starting the run until someone is actually consuming.
- *
- * One consumer. Two concurrent `for await` loops would each take half the events rather than both
- * seeing all of them; fan out inside the single loop instead.
+ * This used to be ninety lines of hand-rolled queue in this file — a buffer, a parked-consumer
+ * slot, a drop-oldest cap and a dropped counter. `Stream.channel` is that, generalised, and it
+ * arrives with three things the local copy never had: `ready()` for a producer that CAN slow
+ * down, `fail()` to put a declared failure on the railway rather than in a notice, and
+ * `onDemand`, which is exactly the lazy-start rule `runSession` used to implement by hand.
  *
  * ```ts
- * const channel = new Channel<number>();
- * channel.push(1);
- * channel.close();
- * channel.buffered; // 1 — waiting for whoever iterates
+ * const feed = openFeed();
+ * feed.emit({ kind: 'notice', notice: { level: 'info', message: 'scoped to 2 files' } });
+ * feed.buffered; // 1 — held for whoever consumes it
  * ```
  */
-export class Channel<T> implements AsyncIterable<T> {
-  /** How many pushes were dropped to stay under the cap. `0` in every ordinary run. */
-  dropped = 0;
-  #queued: T[] = [];
-  #waiting: ((result: IteratorResult<T>) => void) | null = null;
-  #closed = false;
-
-  /**
-   * How many values are buffered for a consumer that has not asked for them yet.
-   *
-   * ```ts
-   * const channel = new Channel<number>();
-   * channel.push(1);
-   * channel.buffered; // 1
-   * ```
-   */
-  get buffered(): number {
-    return this.#queued.length;
-  }
-
-  /**
-   * Whether {@link close} has been called.
-   *
-   * ```ts
-   * const channel = new Channel<number>();
-   * channel.closed; // false — still accepting pushes
-   * ```
-   */
-  get closed(): boolean {
-    return this.#closed;
-  }
-
-  /**
-   * Hands a value to whoever is iterating, or buffers it until someone is. Silently ignored once
-   * closed — a late event from a run being torn down is not worth a throw at the producer, which
-   * is a browser callback with nowhere to report it.
-   *
-   * ```ts
-   * const channel = new Channel<string>();
-   * channel.push('a');
-   * channel.buffered; // 1
-   * ```
-   */
-  push(value: T): void {
-    if (this.#closed) return;
-    if (this.#waiting) {
-      const resolve = this.#waiting;
-      this.#waiting = null;
-
-      return resolve({ done: false, value });
-    }
-
-    this.#queued.push(value);
-    // Oldest first, matching the page-log cap: under a flood the newest entries are the ones
-    // adjacent to whatever went wrong, and they are what a consumer catching up wants to see.
-    if (this.#queued.length > MAX_BUFFERED_EVENTS) {
-      this.#queued.shift();
-      this.dropped++;
-    }
-  }
-
-  /**
-   * Ends the iteration once the buffer drains. Idempotent.
-   *
-   * ```ts
-   * const channel = new Channel<string>();
-   * channel.close();
-   * channel.closed; // true
-   * ```
-   */
-  close(): void {
-    if (this.#closed) return;
-    this.#closed = true;
-    // Wake a consumer parked on a value that is never going to arrive.
-    this.#waiting?.({ done: true, value: undefined });
-    this.#waiting = null;
-  }
-
-  /**
-   * ```ts
-   * // Defined, not invoked: iterating a live channel waits for its producer.
-   * async function drain(channel: Channel<number>) {
-   *   const seen: number[] = [];
-   *   for await (const value of channel) seen.push(value);
-   *   return seen;
-   * }
-   * ```
-   */
-  [Symbol.asyncIterator](): AsyncIterator<T> {
-    return {
-      next: (): Promise<IteratorResult<T>> => {
-        // Buffer first, even when closed: values that arrived before the close are still values,
-        // and dropping them would make closing racy from the consumer's side.
-        if (this.#queued.length > 0) {
-          return Promise.resolve({ done: false, value: this.#queued.shift() as T });
-        } else if (this.#closed) {
-          return Promise.resolve({ done: true, value: undefined });
-        }
-
-        return new Promise((resolve) => (this.#waiting = resolve));
-      },
-      return: (): Promise<IteratorResult<T>> => {
-        this.close();
-
-        return Promise.resolve({ done: true, value: undefined });
-      },
-    };
-  }
+export function openFeed(options: { onDemand?: () => void } = {}): Channel<RunEvent> {
+  return Stream.channel<RunEvent>({
+    capacity: FEED_CAPACITY,
+    overflow: 'dropOldest',
+    ...options,
+  });
 }
 
 /**
@@ -184,7 +81,7 @@ export class Channel<T> implements AsyncIterable<T> {
  * ```ts
  * import type { Config } from '../types.ts';
  *
- * const channel = new Channel<RunEvent>();
+ * const channel = openFeed();
  * const reporter = eventReporter(channel);
  * reporter.onNotice?.({} as Config, { level: 'info', message: 'scoped to 2 files' });
  * channel.buffered; // 1
@@ -193,10 +90,10 @@ export class Channel<T> implements AsyncIterable<T> {
 export function eventReporter(channel: Channel<RunEvent>): Reporter {
   return {
     onRunStart: (_config: Config, info: RunStartInfo) =>
-      channel.push({ kind: 'runStart', ...info }),
+      channel.emit({ kind: 'runStart', ...info }),
     onTestEnd: (_config: Config, details: TestDetails) =>
-      channel.push({ kind: 'test', test: toTestResult(details) }),
-    onNotice: (_config: Config, notice: Notice) => channel.push({ kind: 'notice', notice }),
-    onBrowserLog: (_config: Config, log: BrowserLog) => channel.push({ kind: 'browserLog', log }),
+      channel.emit({ kind: 'test', test: toTestResult(details) }),
+    onNotice: (_config: Config, notice: Notice) => channel.emit({ kind: 'notice', notice }),
+    onBrowserLog: (_config: Config, log: BrowserLog) => channel.emit({ kind: 'browserLog', log }),
   };
 }

@@ -226,3 +226,32 @@ module('API | watch | reruns', { concurrency: true }, () => {
     });
   });
 });
+
+module('API | watch | results() as a Stream', { concurrency: true }, () => {
+  test('the coarse feed carries combinators', async (assert) => {
+    await withWatch({ inputs: [FAILING] }, async (session) => {
+      const [red] = await session
+        .results()
+        .filter((r) => !r.ok)
+        .take(1)
+        .collect();
+
+      assert.false(red.ok);
+      assert.true(red.failures.length > 0, 'notify-on-first-red, in one expression');
+    });
+  });
+
+  test('events() is a Stream too, flat across reruns', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      const ends = session
+        .events()
+        .filter((e) => e.kind === 'runEnd')
+        .take(2)
+        .collect();
+      await session.run();
+      await session.run();
+
+      assert.strictEqual((await ends).length, 2, 'one runEnd per rerun');
+    });
+  });
+});

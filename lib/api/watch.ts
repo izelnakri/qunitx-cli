@@ -3,7 +3,8 @@ import * as Run from '../commands/run.ts';
 import { Task } from '../task/index.ts';
 import { unwrap } from '../result/result.ts';
 import { buildResult, type RunResult } from './result.ts';
-import { Channel, eventReporter, type RunEvent } from './events.ts';
+import { openFeed, eventReporter, type RunEvent } from './events.ts';
+import { Stream, type Channel } from '../stream/index.ts';
 import {
   normalizeOptions,
   resolveReporting,
@@ -84,7 +85,21 @@ export interface WatchSession extends AsyncIterable<RunResult> {
    * Buffers from the first call, not from the first read, so events between calling this and
    * starting to iterate are not lost. One consumer, like the session's own iteration.
    */
-  events(): AsyncIterable<RunEvent>;
+  events(): Stream<RunEvent>;
+  /**
+   * The coarse feed as a {@link Stream}: one complete {@link RunResult} per rerun, with the
+   * combinators attached. `for await (const r of session)` is the same sequence.
+   *
+   * ```ts
+   * // Defined, not invoked: a real session holds a browser open.
+   * async function untilGreen(session: WatchSession) {
+   *   const [red] = await session.results().filter((r) => !r.ok).take(1).collect();
+   *
+   *   return red.failures;
+   * }
+   * ```
+   */
+  results(): Stream<RunResult>;
   /** Stops watching, closes the browser and server, and ends the iteration. Idempotent. */
   close(): Promise<void>;
 }
@@ -159,7 +174,7 @@ class Session implements WatchSession {
   #inner: Run.WatchSession;
   #config: ResolvedConfig;
   #reporting: ResolvedReporting;
-  #results = new Channel<RunResult>();
+  #results = Stream.channel<RunResult>({ capacity: 1_000, overflow: 'dropOldest' });
   #events: Channel<RunEvent> | null = null;
   #latest: RunResult;
   #published = 0;
@@ -178,7 +193,7 @@ class Session implements WatchSession {
     this.#latest = initial;
     // The initial run is the iteration's first element, so a `for await` sees the whole history
     // rather than starting from whatever happens to change next.
-    this.#results.push(initial);
+    this.#results.emit(initial);
     // Every rerun goes through the same reporters, and `onRunEnd` is the last thing a run does —
     // which makes it the one honest signal that a result is complete and ready to snapshot.
     reporting.reporters.push({
@@ -218,16 +233,20 @@ class Session implements WatchSession {
     await this.#inner.settled();
   }
 
-  events(): AsyncIterable<RunEvent> {
+  events(): Stream<RunEvent> {
     // Attached on the first call and kept: a second call must not hand back a feed that starts
     // mid-run, and attaching a second reporter would double every event on the first feed.
     if (!this.#events) {
-      const channel = new Channel<RunEvent>();
+      const channel = openFeed();
       this.#events = channel;
       this.#reporting.reporters.push(eventReporter(channel));
     }
 
-    return this.#events;
+    return this.#events.stream;
+  }
+
+  results(): Stream<RunResult> {
+    return this.#results.stream;
   }
 
   async close(): Promise<void> {
@@ -239,7 +258,7 @@ class Session implements WatchSession {
   }
 
   [Symbol.asyncIterator](): AsyncIterator<RunResult> {
-    const inner = this.#results[Symbol.asyncIterator]();
+    const inner = this.#results.stream[Symbol.asyncIterator]();
 
     return {
       next: () => inner.next(),
@@ -274,8 +293,8 @@ class Session implements WatchSession {
   #publish(durationMs: number): void {
     this.#published++;
     this.#latest = snapshot(this.#config, this.#reporting, durationMs);
-    this.#results.push(this.#latest);
-    this.#events?.push({ kind: 'runEnd', result: this.#latest });
+    this.#results.emit(this.#latest);
+    this.#events?.emit({ kind: 'runEnd', result: this.#latest });
   }
 }
 
