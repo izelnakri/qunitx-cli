@@ -18,6 +18,32 @@ module('Stream | lazy', { concurrency: true }, () => {
     assert.strictEqual(pulled, 2, 'only the taken elements were pulled — backpressure');
   });
 
+  test('every rung of the ladder is inert except the last', async (assert) => {
+    // Two lazy gates sit between a pipeline and its work, and `await` only opens the second.
+    // Pinned rung by rung because the middle two are the surprising ones: `await stream` looks
+    // like it should run something and does not, since a Stream is AsyncIterable and NOT a
+    // thenable — `await` on a non-thenable hands the object straight back.
+    let pulled = 0;
+    const stream = Stream.from(
+      (function* () {
+        for (;;) yield ++pulled;
+      })(),
+    ).map((n) => n * 10);
+
+    const taken = stream.take(2);
+    assert.strictEqual(pulled, 0, 'a transform returns a Stream and runs nothing');
+
+    const awaited = await taken;
+    assert.strictEqual(pulled, 0, 'awaiting a STREAM runs nothing either');
+    assert.strictEqual(awaited, taken, 'it resolves to the very same Stream object');
+
+    const task = taken.collect();
+    assert.strictEqual(pulled, 0, 'a terminal returns a Task — still nothing has run');
+
+    assert.deepEqual(await task, [10, 20], 'awaiting the TASK is what runs it');
+    assert.strictEqual(pulled, 2);
+  });
+
   test('a Stream from a re-iterable source is re-consumable', async (assert) => {
     const stream = Stream.from([1, 2]);
     assert.deepEqual(await stream.collect(), [1, 2]);
