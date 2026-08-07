@@ -78,3 +78,24 @@ module('API | events | openFeed', { concurrency: true }, () => {
     assert.strictEqual(started, 1, 'the consumer is what started it');
   });
 });
+
+module('API | events | drops are observable', { concurrency: true }, () => {
+  test('a capped feed reports what it lost, so a gap is never silent', (assert) => {
+    const feed = openFeed();
+    for (let index = 0; index < FEED_CAPACITY + 3; index++) {
+      feed.emit({ kind: 'browserLog', log: { type: 'log', text: String(index), args: [] } });
+    }
+
+    assert.strictEqual(feed.dropped, 3, 'the count is the signal');
+    assert.strictEqual(feed.buffered, FEED_CAPACITY, 'and memory stays bounded');
+  });
+
+  test('an ordinary run drops nothing at all', (assert) => {
+    const feed = openFeed();
+    for (let index = 0; index < 500; index++) {
+      feed.emit({ kind: 'test', test: { name: `t${index}` } as never });
+    }
+
+    assert.strictEqual(feed.dropped, 0, 'the cap is far above any real suite');
+  });
+});

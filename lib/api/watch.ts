@@ -100,6 +100,13 @@ export interface WatchSession extends AsyncIterable<RunResult> {
    * ```
    */
   results(): Stream<RunResult>;
+  /**
+   * How many events the feed dropped because a consumer fell behind. `0` unless something stalls.
+   *
+   * A watch session has no natural end, so an `events()` feed nobody drains would grow for as
+   * long as the session lives — the cap is what stops that, and this is how you see it happen.
+   */
+  readonly droppedEvents: number;
   /** Stops watching, closes the browser and server, and ends the iteration. Idempotent. */
   close(): Promise<void>;
 }
@@ -247,6 +254,10 @@ class Session implements WatchSession {
 
   results(): Stream<RunResult> {
     return this.#results.stream;
+  }
+
+  get droppedEvents(): number {
+    return (this.#events?.dropped ?? 0) + this.#results.dropped;
   }
 
   async close(): Promise<void> {

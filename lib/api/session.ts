@@ -76,6 +76,15 @@ export interface RunSession extends AsyncIterable<RunEvent> {
    * ```
    */
   events(): Stream<RunEvent>;
+  /**
+   * How many events the feed dropped because a consumer fell behind. `0` in every ordinary run.
+   *
+   * The feed is capped, so a consumer that stalls under a flood of page output loses the oldest
+   * events. That has to be visible: {@link RunResult.browserLogsTruncated} already keeps the
+   * result path honest about the same trade, and a silent gap in the event path would be the one
+   * kind of loss a consumer cannot detect for itself.
+   */
+  readonly droppedEvents: number;
   /** Closes the session, ending iteration. Idempotent; implied by `await using`. */
   close(): Promise<void>;
   /** Closes the session at the end of an `await using` block. */
@@ -146,6 +155,10 @@ class Session implements RunSession {
     }
   }
 
+  get droppedEvents(): number {
+    return this.#channel.dropped;
+  }
+
   result(): Promise<RunResult> {
     return this.#start();
   }
@@ -179,15 +192,18 @@ class Session implements RunSession {
   }
 
   events(): Stream<RunEvent> {
-    // The first read is what starts the run — same rule as iterating the session.
-    void this.#start().catch(() => {});
+    // The first read is what starts the run — same rule as iterating the session. `void` and no
+    // `.catch` here on purpose: `#start` attaches the rejection handler itself (it also closes
+    // the feed), so a second one at every call site would suppress nothing and imply the hazard
+    // lives here rather than there.
+    void this.#start();
 
     return this.#channel.stream;
   }
 
   [Symbol.asyncIterator](): AsyncIterator<RunEvent> {
     // The first read is what starts the run — see the laziness note on `RunSession`.
-    void this.#start().catch(() => {});
+    void this.#start();
     const inner = this.#channel.stream[Symbol.asyncIterator]();
 
     return {
