@@ -8,6 +8,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { setTimeout, clearTimeout } from 'node:timers';
 import { acquireBrowser } from './browser-semaphore-queue.ts';
 import * as Result from '../../lib/result/index.ts';
+import { PER_TEST_TIMEOUT_MS } from './per-test-timeout.ts';
 
 // When QUNITX_BROWSER is set, all browser test runs use that engine (firefox, webkit, chromium).
 const QUNITX_BROWSER = process.env.QUNITX_BROWSER;
@@ -40,7 +41,22 @@ const SEARCH_FLAG = /(^|\s)(-s|--search|--print|--preview)(=|\s|$)/;
 // stall the suite indefinitely. Cost is asymmetric — green runs finish in
 // 2–10 s and aren't affected; a real hang takes 180 s to surface vs 90 s
 // before. CI job budgets (15–25 min) absorb several such hangs.
-const DEFAULT_EXEC_TIMEOUT_MS = 180_000;
+export const DEFAULT_EXEC_TIMEOUT_MS = 180_000;
+
+/**
+ * The per-call budget for `cli()` invocations that must cold-start Chrome rather than reuse the
+ * daemon's — the ones after a `killDaemonChrome`. They pay a relaunch whose tail has been observed
+ * past 100s under CI load, on top of the ordinary spawn-and-run.
+ *
+ * Derived from {@link PER_TEST_TIMEOUT_MS}, never a bare literal, because the two are a hierarchy:
+ * a per-call budget cuts off ONE invocation, the per-test net catches the test around it. That
+ * only works while the inner number is strictly smaller. It was raised 180s -> 300s once to stop a
+ * cli timeout, which made it EQUAL to the net — from then on a slow call and the outer net expired
+ * together and the failure surfaced as an unattributable "test exceeded 300000ms" instead of
+ * naming the call. Half the net keeps two such calls inside one test, with room to spare.
+ * `test/helpers/timeout-budget-test.ts` fails if this drifts back.
+ */
+export const CHROME_RELAUNCH_TIMEOUT_MS = PER_TEST_TIMEOUT_MS / 2;
 // Default timeout for shellWatch — sized to the CLI's own startup safety net.
 // lib/commands/run/tests-in-browser.ts STARTUP_TIMEOUT_FACTOR (9) × default
 // config.timeout (20s) = 180s of CLI-internal WS-open wait, plus 30s for
