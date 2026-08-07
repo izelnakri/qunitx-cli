@@ -146,8 +146,16 @@ export interface Channel<T, E = never> {
   close(): void;
   /** Rejects the consuming Task with `reason` — the two-tier rule's bug tier. Idempotent. */
   abort(reason: unknown): void;
-  /** Resolves once there is room to emit again — Node's `'drain'`, i.e. GenStage demand. */
-  drained(): Promise<void>;
+  /**
+   * Resolves once there is room to emit again — Web Streams' `writer.ready`, and the promise
+   * form of Node's `'drain'`.
+   *
+   * Named for the condition it actually reports. It resolves when the buffer is **below
+   * capacity**, not when it is empty: with 9 of 10 buffered it resolves immediately, because
+   * there is room for a tenth. "Drained" would claim the opposite. It is also awaited in a loop
+   * rather than once, so it names a recurring gate, unlike the genuinely final `closed`.
+   */
+  ready(): Promise<void>;
 }
 
 async function* iterate<T>(source: Source<T>): AsyncGenerator<T> {
@@ -157,11 +165,11 @@ async function* iterate<T>(source: Source<T>): AsyncGenerator<T> {
 /**
  * The stream pipeline: build with a static (`from`/`unfold`/`lines`), shape with lazy
  * transforms (`map`/`filter`/`flatMap`/`take`), finish with a Task-returning consumer
- * (`values`/`results`/`partition`/`each`) — or `for await` the bare elements directly.
+ * (`collect`/`results`/`partition`/`forEach`) — or `for await` the bare elements directly.
  *
  * ```ts
  * const evens = Stream.from([1, 2, 3, 4]).filter((n) => n % 2 === 0);
- * await evens.map((n) => n * 10).values(); // [20, 40]
+ * await evens.map((n) => n * 10).collect(); // [20, 40]
  * ```
  */
 class StreamClass<T, E = never> implements AsyncIterable<T | E> {
@@ -179,7 +187,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * start; everything else is `T`.
    *
    * ```ts
-   * const doubled = await Stream.from([1, 2, 3]).map((n) => n * 2).values();
+   * const doubled = await Stream.from([1, 2, 3]).map((n) => n * 2).collect();
    * doubled; // [2, 4, 6]
    * ```
    */
@@ -198,7 +206,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    *
    * ```ts
    * const countdown = Stream.unfold(3, (n) => (n === 0 ? null : [n, n - 1] as const));
-   * await countdown.values(); // [3, 2, 1]
+   * await countdown.collect(); // [3, 2, 1]
    * ```
    */
   static unfold<S, U>(
@@ -222,7 +230,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    *
    * ```ts
    * const bytes = [new TextEncoder().encode('a\nb'), new TextEncoder().encode('c\nd')];
-   * await Stream.lines(bytes).values(); // ['a', 'bc', 'd']
+   * await Stream.lines(bytes).collect(); // ['a', 'bc', 'd']
    * ```
    */
   static lines(bytes: Source<Uint8Array>): StreamClass<string> {
@@ -244,7 +252,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * Concatenates sources in order — Elixir's `Stream.concat`, variadic.
    *
    * ```ts
-   * await Stream.concat([1, 2], [3]).values(); // [1, 2, 3]
+   * await Stream.concat([1, 2], [3]).collect(); // [1, 2, 3]
    * ```
    */
   static concat<U>(
@@ -259,7 +267,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * Repeats a re-iterable source forever — always bound it (`take`, `takeWhile`).
    *
    * ```ts
-   * await Stream.cycle([1, 2]).take(5).values(); // [1, 2, 1, 2, 1]
+   * await Stream.cycle([1, 2]).take(5).collect(); // [1, 2, 1, 2, 1]
    * ```
    */
   static cycle<U>(source: Source<U>): StreamClass<Exclude<U, AnyFailure>, Extract<U, AnyFailure>> {
@@ -279,7 +287,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * `seed, fn(seed), fn(fn(seed)), …` — Elixir's `Stream.iterate/2`, infinite.
    *
    * ```ts
-   * await Stream.iterate(1, (n) => n * 2).take(4).values(); // [1, 2, 4, 8]
+   * await Stream.iterate(1, (n) => n * 2).take(4).collect(); // [1, 2, 4, 8]
    * ```
    */
   static iterate<U>(seed: U, fn: (previous: U) => U): StreamClass<U> {
@@ -293,7 +301,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    *
    * ```ts
    * let n = 0;
-   * await Stream.repeatedly(() => ++n).take(3).values(); // [1, 2, 3]
+   * await Stream.repeatedly(() => ++n).take(3).collect(); // [1, 2, 3]
    * ```
    */
   static repeatedly<U>(fn: () => U | PromiseLike<U>): StreamClass<U> {
@@ -306,7 +314,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * `count` copies of one value.
    *
    * ```ts
-   * await Stream.duplicate('x', 3).values(); // ['x', 'x', 'x']
+   * await Stream.duplicate('x', 3).collect(); // ['x', 'x', 'x']
    * ```
    */
   static duplicate<U>(value: U, count: number): StreamClass<U> {
@@ -319,7 +327,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * The infinite integers `offset, offset + 1, …` — Elixir's `Stream.from_index/1`.
    *
    * ```ts
-   * await Stream.fromIndex(10).take(3).values(); // [10, 11, 12]
+   * await Stream.fromIndex(10).take(3).collect(); // [10, 11, 12]
    * ```
    */
   static fromIndex(offset = 0): StreamClass<number> {
@@ -335,7 +343,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * from the other sources — failures cannot pair.
    *
    * ```ts
-   * await Stream.zip([1, 2, 3], ['a', 'b']).values(); // [[1, 'a'], [2, 'b']]
+   * await Stream.zip([1, 2, 3], ['a', 'b']).collect(); // [[1, 'a'], [2, 'b']]
    * ```
    */
   static zip<U extends readonly unknown[]>(
@@ -369,7 +377,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * `zip` plus a combiner — Elixir's `Stream.zip_with`; the tuple arrives spread.
    *
    * ```ts
-   * await Stream.zipWith([[1, 2], [10, 20]], (a, b) => a + b).values(); // [11, 22]
+   * await Stream.zipWith([[1, 2], [10, 20]], (a, b) => a + b).collect(); // [11, 22]
    * ```
    */
   static zipWith<U extends readonly unknown[], R>(
@@ -384,7 +392,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * on `setTimeout` (universal). Infinite: always bound it.
    *
    * ```ts
-   * await Stream.interval(1).take(3).values(); // [0, 1, 2]
+   * await Stream.interval(1).take(3).collect(); // [0, 1, 2]
    * ```
    */
   static interval(ms: number): StreamClass<number> {
@@ -400,7 +408,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * Emits a single `0` after `ms` milliseconds, then ends — Elixir's `Stream.timer/1`.
    *
    * ```ts
-   * await Stream.timer(1).values(); // [0]
+   * await Stream.timer(1).collect(); // [0]
    * ```
    */
   static timer(ms: number): StreamClass<number> {
@@ -420,7 +428,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    *   (db) => (db.cursor < 2 ? ([`row-${db.cursor}`, { cursor: db.cursor + 1 }] as const) : null),
    *   () => void opened.push('close'),
    * );
-   * await rows.values(); // ['row-0', 'row-1'] — and opened is ['open', 'close']
+   * await rows.collect(); // ['row-0', 'row-1'] — and opened is ['open', 'close']
    * ```
    */
   static resource<S, U>(
@@ -457,7 +465,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * from the source pass through unmapped.
    *
    * ```ts
-   * const doubled = await Stream.asyncStream([1, 2, 3, 4], (n) => n * 2, { maxConcurrency: 2 }).values();
+   * const doubled = await Stream.asyncStream([1, 2, 3, 4], (n) => n * 2, { maxConcurrency: 2 }).collect();
    * doubled; // [2, 4, 6, 8] — at most 2 in flight at any moment
    * ```
    */
@@ -548,13 +556,13 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * 80ms late dropped 2250 at `capacity: 1000`, or held 3650 in memory uncapped.
    *
    * **A consumer attaches when its Task is awaited, not when it is built.** `channel.stream
-   * .values()` returns a lazy Task like every other consumer here, so nothing drains until
+   * .collect()` returns a lazy Task like every other consumer here, so nothing drains until
    * something awaits it, and everything emitted in the meantime goes to the buffer. That is the
    * module's laziness working as designed rather than an exception to it — but a live producer is
    * where it becomes visible, so `onDemand` is the hook that ties the two together.
    *
    * A producer that *can* slow down should honour `emit`'s return value: `if (!emit(x)) await
-   * drained()` moves 200 elements through a buffer of 10 without losing one. Merely yielding to
+   * ready()` moves 200 elements through a buffer of 10 without losing one. Merely yielding to
    * the microtask queue between emits does not — the consumer's own path through the generator
    * costs several turns per element, so it is outrun about three to one and overflows anyway.
    *
@@ -569,7 +577,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    *
    * ```ts
    * const channel = Stream.channel<number>();
-   * const collected = channel.stream.take(2).values();
+   * const collected = channel.stream.take(2).collect();
    * channel.emit(1);
    * channel.emit(2);
    * await collected; // [1, 2]
@@ -673,7 +681,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
         }
       } finally {
         // The consumer left — `take(n)`, a `break`, or a throw downstream. Nothing will drain
-        // this buffer again, so stop accepting and release a producer parked on `drained()`
+        // this buffer again, so stop accepting and release a producer parked on `ready()`
         // rather than leaving it waiting on room that will never be needed.
         closed = true;
         waiting = null;
@@ -707,7 +715,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
         wake();
         releaseRoom();
       },
-      drained: () =>
+      ready: () =>
         queue.length < capacity || closed || aborted !== null
           ? Promise.resolve()
           : new Promise<void>((resume) => void roomWaiters.push(resume)),
@@ -724,7 +732,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * const rows = await Stream.from([1, 2, 3, 4])
    *   .filter((n) => n % 2 === 0)
    *   .mapConcurrent((n) => n * 10, { maxConcurrency: 2 })
-   *   .values();
+   *   .collect();
    * rows; // [20, 40]
    * ```
    *
@@ -766,7 +774,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * order or arrive as they finish.
    *
    * ```ts
-   * const tagged = await Stream.from([1, 2]).map((n, i) => `${i}:${n}`).values();
+   * const tagged = await Stream.from([1, 2]).map((n, i) => `${i}:${n}`).collect();
    * tagged; // ['0:1', '1:2']
    * ```
    */
@@ -788,7 +796,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * filtering values.
    *
    * ```ts
-   * await Stream.from([1, 2, 3, 4]).filter((n) => n % 2 === 0).values(); // [2, 4]
+   * await Stream.from([1, 2, 3, 4]).filter((n) => n % 2 === 0).collect(); // [2, 4]
    * ```
    */
   filter(predicate: (value: T, index: number) => boolean): StreamClass<T, E> {
@@ -806,7 +814,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * cells. Failure elements pass through unexpanded.
    *
    * ```ts
-   * await Stream.from([[1, 2], [3]]).flatMap((page) => page).values(); // [1, 2, 3]
+   * await Stream.from([[1, 2], [3]]).flatMap((page) => page).collect(); // [1, 2, 3]
    * ```
    */
   flatMap<U>(
@@ -830,7 +838,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * ```ts
    * let pulled = 0;
    * const firstTwo = Stream.unfold(0, (n) => ((pulled += 1), [n, n + 1] as const)).take(2);
-   * await firstTwo.values(); // [0, 1] — and pulled is 2, not ∞
+   * await firstTwo.collect(); // [0, 1] — and pulled is 2, not ∞
    * ```
    */
   take(count: number): StreamClass<T, E> {
@@ -849,7 +857,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * Drops the values `predicate` accepts — `filter`'s complement; failures pass through.
    *
    * ```ts
-   * await Stream.from([1, 2, 3, 4]).reject((n) => n % 2 === 0).values(); // [1, 3]
+   * await Stream.from([1, 2, 3, 4]).reject((n) => n % 2 === 0).collect(); // [1, 3]
    * ```
    */
   reject(predicate: (value: T, index: number) => boolean): StreamClass<T, E> {
@@ -861,7 +869,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * through and are never tested — the predicate speaks about values only.
    *
    * ```ts
-   * await Stream.from([1, 2, 9, 1]).takeWhile((n) => n < 5).values(); // [1, 2]
+   * await Stream.from([1, 2, 9, 1]).takeWhile((n) => n < 5).collect(); // [1, 2]
    * ```
    */
   takeWhile(predicate: (value: T, index: number) => boolean): StreamClass<T, E> {
@@ -880,7 +888,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * values and failures both count (dropping a prefix is an explicit consumer decision).
    *
    * ```ts
-   * await Stream.from([1, 2, 3, 4]).drop(2).values(); // [3, 4]
+   * await Stream.from([1, 2, 3, 4]).drop(2).collect(); // [3, 4]
    * ```
    */
   drop(count: number): StreamClass<T, E> {
@@ -900,7 +908,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * value predicate.
    *
    * ```ts
-   * await Stream.from([1, 2, 9, 1]).dropWhile((n) => n < 5).values(); // [9, 1]
+   * await Stream.from([1, 2, 9, 1]).dropWhile((n) => n < 5).collect(); // [9, 1]
    * ```
    */
   dropWhile(predicate: (value: T, index: number) => boolean): StreamClass<T, E> {
@@ -920,7 +928,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * counting values; failures pass through). `every` of 0 keeps nothing.
    *
    * ```ts
-   * await Stream.from([0, 1, 2, 3, 4]).takeEvery(2).values(); // [0, 2, 4]
+   * await Stream.from([0, 1, 2, 3, 4]).takeEvery(2).collect(); // [0, 2, 4]
    * ```
    */
   takeEvery(every: number): StreamClass<T, E> {
@@ -939,7 +947,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * counting values; failures pass through).
    *
    * ```ts
-   * await Stream.from([0, 1, 2, 3, 4]).dropEvery(2).values(); // [1, 3]
+   * await Stream.from([0, 1, 2, 3, 4]).dropEvery(2).collect(); // [1, 3]
    * ```
    */
   dropEvery(every: number): StreamClass<T, E> {
@@ -958,7 +966,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * failure — through unchanged (Elixir's `map_every/3`).
    *
    * ```ts
-   * await Stream.from([1, 1, 1, 1]).mapEvery(2, (n) => n * 10).values(); // [10, 1, 10, 1]
+   * await Stream.from([1, 1, 1, 1]).mapEvery(2, (n) => n * 10).collect(); // [10, 1, 10, 1]
    * ```
    */
   mapEvery(every: number, fn: (value: T) => T | PromiseLike<T>): StreamClass<T, E> {
@@ -978,7 +986,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * index — pairs stay contiguous.
    *
    * ```ts
-   * await Stream.from(['a', 'b']).withIndex(1).values(); // [['a', 1], ['b', 2]]
+   * await Stream.from(['a', 'b']).withIndex(1).collect(); // [['a', 1], ['b', 2]]
    * ```
    */
   withIndex(offset = 0): StreamClass<readonly [T, number], E> {
@@ -997,7 +1005,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * from a passing failure.
    *
    * ```ts
-   * await Stream.from([1, 2, 3]).intersperse(0).values(); // [1, 0, 2, 0, 3]
+   * await Stream.from([1, 2, 3]).intersperse(0).collect(); // [1, 0, 2, 0, 3]
    * ```
    */
   intersperse<S>(separator: S): StreamClass<T | S, E> {
@@ -1017,7 +1025,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * through without resetting the last-seen memory.
    *
    * ```ts
-   * await Stream.from([1, 1, 2, 2, 1]).dedupBy((n) => n).values(); // [1, 2, 1]
+   * await Stream.from([1, 1, 2, 2, 1]).dedupBy((n) => n).collect(); // [1, 2, 1]
    * ```
    */
   dedupBy(key: (value: T) => unknown): StreamClass<T, E> {
@@ -1039,7 +1047,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * Drops consecutive duplicate values — `dedupBy` with identity.
    *
    * ```ts
-   * await Stream.from([1, 1, 2, 1]).dedup().values(); // [1, 2, 1]
+   * await Stream.from([1, 1, 2, 1]).dedup().collect(); // [1, 2, 1]
    * ```
    */
   dedup(): StreamClass<T, E> {
@@ -1051,7 +1059,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * bound infinite streams). Failures pass through.
    *
    * ```ts
-   * await Stream.from([1, 2, 1, 3, 2]).uniqBy((n) => n).values(); // [1, 2, 3]
+   * await Stream.from([1, 2, 1, 3, 2]).uniqBy((n) => n).collect(); // [1, 2, 3]
    * ```
    */
   uniqBy(key: (value: T) => unknown): StreamClass<T, E> {
@@ -1075,7 +1083,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * Keeps the first occurrence of each value — `uniqBy` with identity.
    *
    * ```ts
-   * await Stream.from([1, 2, 1, 2, 3]).uniq().values(); // [1, 2, 3]
+   * await Stream.from([1, 2, 1, 2, 3]).uniq().collect(); // [1, 2, 3]
    * ```
    */
   uniq(): StreamClass<T, E> {
@@ -1088,7 +1096,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * untouched.
    *
    * ```ts
-   * await Stream.from([1, 2, 3]).scan((acc, n) => acc + n).values(); // [1, 3, 6]
+   * await Stream.from([1, 2, 3]).scan((acc, n) => acc + n).collect(); // [1, 3, 6]
    * ```
    */
   scan(fn: (accumulator: T, value: T) => T | PromiseLike<T>): StreamClass<T, E>;
@@ -1120,7 +1128,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    *
    * ```ts
    * const seen: number[] = [];
-   * await Stream.from([1, 2]).tap((n) => void seen.push(n)).values(); // [1, 2]
+   * await Stream.from([1, 2]).tap((n) => void seen.push(n)).collect(); // [1, 2]
    * seen; // [1, 2]
    * ```
    */
@@ -1144,7 +1152,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * ```ts
    * const written: number[] = [];
    * const sink = new WritableStream<number>({ write: (n) => void written.push(n) });
-   * await Stream.from([1, 2, 3]).into(sink).values(); // [1, 2, 3]
+   * await Stream.from([1, 2, 3]).into(sink).collect(); // [1, 2, 3]
    * written; // [1, 2, 3]
    * ```
    */
@@ -1172,9 +1180,9 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * without breaking the one being assembled — a bad row never voids the batch around it.
    *
    * ```ts
-   * await Stream.from([1, 2, 3, 4, 5]).chunkEvery(2).values(); // [[1, 2], [3, 4], [5]]
-   * await Stream.from([1, 2, 3, 4, 5]).chunkEvery(3, 2, 'discard').values(); // [[1, 2, 3], [3, 4, 5]]
-   * await Stream.from([1, 2, 3, 4]).chunkEvery(3, 3, [0, 0]).values(); // [[1, 2, 3], [4, 0, 0]]
+   * await Stream.from([1, 2, 3, 4, 5]).chunkEvery(2).collect(); // [[1, 2], [3, 4], [5]]
+   * await Stream.from([1, 2, 3, 4, 5]).chunkEvery(3, 2, 'discard').collect(); // [[1, 2, 3], [3, 4, 5]]
+   * await Stream.from([1, 2, 3, 4]).chunkEvery(3, 3, [0, 0]).collect(); // [[1, 2, 3], [4, 0, 0]]
    * ```
    */
   chunkEvery(count: number, step = count, leftover: T[] | 'discard' = []): StreamClass<T[], E> {
@@ -1212,7 +1220,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * around them, consistent with `dedup`.
    *
    * ```ts
-   * await Stream.from([1, 3, 2, 4, 5]).chunkBy((n) => n % 2).values(); // [[1, 3], [2, 4], [5]]
+   * await Stream.from([1, 3, 2, 4, 5]).chunkBy((n) => n % 2).collect(); // [[1, 3], [2, 4], [5]]
    * ```
    */
   chunkBy(key: (value: T) => unknown): StreamClass<T[], E> {
@@ -1248,7 +1256,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    *   (n, acc) => (acc.length === 1 ? { acc: [], emit: [...acc, n] } : { acc: [...acc, n] }),
    *   (acc) => (acc.length > 0 ? acc : undefined),
    * );
-   * await batchesOfTwo.values(); // [[1, 2], [3, 4], [5]]
+   * await batchesOfTwo.collect(); // [[1, 2], [3, 4], [5]]
    * ```
    */
   chunkWhile<A, C>(
@@ -1287,7 +1295,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    *     previous = n;
    *   }
    * });
-   * await pairs.values(); // [[1, 2], [2, 3], [3, 4]]
+   * await pairs.collect(); // [[1, 2], [2, 3], [3, 4]]
    * ```
    */
   through<U>(
@@ -1303,11 +1311,23 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * Collects every value, **fail-fast**: the first failure element rejects the Task with it
    * (declared — so `.result()` reflects it bare and typed). The `Result.all` of streams.
    *
+   * NOT `values()`: in JS `.values()` *produces* an iterator (`Array`, `Map`, `Set`,
+   * `ReadableStream`) rather than consuming one, and `partition().values` filters failures out
+   * while this throws on them — the same word for opposite behaviour inside one module.
+   *
+   * NOT `all()` either, tempting as the `Result.all` mirror was: every other language in this
+   * module's lineage spends "all" on the **predicate** — Rust's `StreamExt::all(pred)`, Elixir's
+   * `Enum.all?/2` — which is {@link StreamClass#every} here. `collect` is Rust's word for
+   * gathering and collides with nothing.
+   *
+   * Rust gets one `collect` for both this and {@link StreamClass#results} because the target
+   * type picks the behaviour; JS cannot dispatch on return type, so the two need two names.
+   *
    * ```ts
-   * await Stream.from(['a', 'b']).values(); // ['a', 'b']
+   * await Stream.from(['a', 'b']).collect(); // ['a', 'b']
    * ```
    */
-  values(): Task<T[], E> {
+  collect(): Task<T[], E> {
     const open = this.#open;
     return Task(async () => {
       const collected: T[] = [];
@@ -1366,11 +1386,11 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
   }
 
   /**
-   * Folds every value into one, **fail-fast** like {@link StreamClass#values} — the terminal
+   * Folds every value into one, **fail-fast** like {@link StreamClass#collect} — the terminal
    * counterpart to {@link StreamClass#scan}'s lazy running fold, and the reason a ten-million-row
    * stream can answer with a single number.
    *
-   * Without it the only route is `(await stream.values()).reduce(…)`, which buffers the whole
+   * Without it the only route is `(await stream.collect()).reduce(…)`, which buffers the whole
    * source to produce one value and gives back everything the module exists to avoid. Elixir does
    * not need a member here because `Enum.reduce` accepts any Enumerable; JS has no such fallback.
    *
@@ -1402,8 +1422,94 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
   }
 
   /**
-   * Drains the stream, running `fn` per value — **fail-fast** like {@link StreamClass#values}.
+   * Whether **any** value satisfies `predicate` — short-circuiting: the source is not pulled past
+   * the first match. JS's name for Elixir's `Enum.any?/2` and Rust's `StreamExt::any`.
+   *
+   * Fail-fast like the other terminals: a failure element rejects, because a stream that could
+   * not produce one of its values cannot honestly answer a question about all of them.
+   *
+   * ```ts
+   * await Stream.from([1, 2, 3]).some((n) => n > 2); // true
+   * ```
+   */
+  some(predicate: (value: T, index: number) => boolean | PromiseLike<boolean>): Task<boolean, E> {
+    const open = this.#open;
+
+    return Task(async () => {
+      let index = 0;
+      for await (const element of open()) {
+        if (isFailure(element)) throw element;
+        if (await predicate(element as T, index++)) return true;
+      }
+
+      return false;
+    });
+  }
+
+  /**
+   * Whether **every** value satisfies `predicate` — short-circuiting on the first that does not.
+   *
+   * This is the member Rust and Elixir both call `all`; JS calls it `every`, and JS wins here for
+   * the same reason `forEach` did. {@link StreamClass#collect} is the collector, and the two are
+   * told apart by their arguments as much as their names: `every` takes a predicate, `collect`
+   * takes nothing.
+   *
+   * Vacuously `true` on an empty stream, matching `Array.prototype.every`.
+   *
+   * ```ts
+   * await Stream.from([2, 4]).every((n) => n % 2 === 0); // true
+   * ```
+   */
+  every(predicate: (value: T, index: number) => boolean | PromiseLike<boolean>): Task<boolean, E> {
+    const open = this.#open;
+
+    return Task(async () => {
+      let index = 0;
+      for await (const element of open()) {
+        if (isFailure(element)) throw element;
+        if (!(await predicate(element as T, index++))) return false;
+      }
+
+      return true;
+    });
+  }
+
+  /**
+   * The first value satisfying `predicate`, or `undefined` — short-circuiting, so an infinite
+   * source is fine as long as a match exists.
+   *
+   * `undefined` rather than a Failure for "not found": absence is an ordinary answer to a search,
+   * not a failure of the run, and `Array.prototype.find` sets the expectation.
+   *
+   * ```ts
+   * await Stream.from([1, 2, 3]).find((n) => n > 1); // 2
+   * ```
+   */
+  find(
+    predicate: (value: T, index: number) => boolean | PromiseLike<boolean>,
+  ): Task<T | undefined, E> {
+    const open = this.#open;
+
+    return Task(async () => {
+      let index = 0;
+      for await (const element of open()) {
+        if (isFailure(element)) throw element;
+        if (await predicate(element as T, index++)) return element as T;
+      }
+
+      return undefined;
+    });
+  }
+
+  /**
+   * Drains the stream, running `fn` per value — **fail-fast** like {@link StreamClass#collect}.
    * The Task resolves when the source ends; use it when the work is the side effect.
+   *
+   * Elixir's `Stream.each/2` is the lazy tap, which lives here as {@link StreamClass#tap} because
+   * that is the name JS gave it. This is the terminal drain, and it takes JS's name for that:
+   * every iterable in the language spells it `forEach` — Array, Map, Set, and
+   * `Iterator.prototype` since ES2025 — as do Rust's `StreamExt::for_each` and TC39's pending
+   * async iterator helpers. `Array.prototype.each` has never existed.
    *
    * Sequential, for the same reason {@link StreamClass#map} is: the next element is not pulled
    * until `fn` has settled. That is what makes it safe to write to a database from here, and
@@ -1411,11 +1517,11 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    *
    * ```ts
    * const seen: number[] = [];
-   * await Stream.from([1, 2, 3]).each((n) => void seen.push(n));
+   * await Stream.from([1, 2, 3]).forEach((n) => void seen.push(n));
    * seen; // [1, 2, 3]
    * ```
    */
-  each(fn: (value: T, index: number) => void | PromiseLike<void>): Task<void, E> {
+  forEach(fn: (value: T, index: number) => void | PromiseLike<void>): Task<void, E> {
     const open = this.#open;
     return Task(async () => {
       let index = 0;
@@ -1428,7 +1534,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
 
   /**
    * Forces the stream for its side effects alone — Elixir's `Stream.run/1`. Fail-fast like
-   * {@link StreamClass#each}: pair with {@link StreamClass#tap} for the effects.
+   * {@link StreamClass#forEach}: pair with {@link StreamClass#tap} for the effects.
    *
    * ```ts
    * const seen: number[] = [];
@@ -1437,7 +1543,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * ```
    */
   run(): Task<void, E> {
-    return this.each(() => {});
+    return this.forEach(() => {});
   }
 
   /**
@@ -1465,7 +1571,7 @@ Object.defineProperty(StreamClass, 'name', { value: 'Stream' });
  *
  * ```ts
  * const stream = Stream.from([1, 2, 3]);
- * await stream.map((n) => n + 1).values(); // [2, 3, 4]
+ * await stream.map((n) => n + 1).collect(); // [2, 3, 4]
  * ```
  */
 export const Stream = StreamClass;
@@ -1476,7 +1582,7 @@ export const Stream = StreamClass;
  *
  * ```ts
  * const rows = (): Stream<number> => Stream.from([1, 2, 3]);
- * await rows().values(); // [1, 2, 3]
+ * await rows().collect(); // [1, 2, 3]
  * ```
  */
 export type Stream<T, E = never> = StreamClass<T, E>;
