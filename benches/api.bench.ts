@@ -17,7 +17,7 @@
  */
 import { Collector, buildResult } from '../lib/api/result.ts';
 import { resolveReporting, toConfigOptions } from '../lib/api/options.ts';
-import { Channel, eventReporter, type RunEvent } from '../lib/api/events.ts';
+import { openFeed, eventReporter } from '../lib/api/events.ts';
 import { run, runSession, search } from '../lib/api/index.ts';
 import type { Config } from '../lib/types.ts';
 import type { TestDetails } from '../lib/reporters/types.ts';
@@ -132,14 +132,15 @@ Deno.bench('api: resolve options + reporters', { group: 'api-collect' }, () => {
   toConfigOptions({ inputs: [FIXTURE], reporter: 'tap' }, reporting);
 });
 
-// The event path's own cost, with no browser in the way: 10k pushes through a channel a consumer
-// is draining as fast as it can. This is the number that would move if the queue grew an
-// allocation per event.
+// The event path's own cost, with no browser in the way: 10k emits through the feed while a
+// consumer drains it as fast as it can. Now measuring `Stream.channel` rather than the local
+// queue it replaced — the number to watch if the shared implementation ever grows an allocation
+// per event, since every push source in the codebase would pay it.
 Deno.bench('api: channel round-trips 10k events', { group: 'api-collect' }, async () => {
-  const channel = new Channel<RunEvent>();
+  const channel = openFeed();
   const drained = (async () => {
     let seen = 0;
-    for await (const _event of channel) seen++;
+    for await (const _event of channel.stream) seen++;
 
     return seen;
   })();
