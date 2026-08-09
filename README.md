@@ -311,8 +311,19 @@ session.latest; // the most recent result, without consuming the iteration
 session.running; // is a run executing or queued
 ```
 
-`session.events()` is the fine-grained feed — every event of every rerun, flat and in order, for
-progress bars and live logs.
+Both feeds are **Streams**, so the combinators are already attached — no wrapper:
+
+```js
+// notify on the first red run, and stop watching for it
+const [red] = await session.results().filter((r) => !r.ok).take(1).collect();
+
+// every event of every rerun, flat and in order — for progress bars and live logs
+await session.events().filter((e) => e.kind === 'test').forEach(render);
+```
+
+`results()` is one complete `RunResult` per rerun; `events()` is the fine-grained view. The
+session stays a *handle* rather than being a Stream itself: combinators return new Streams, and
+one with no `close()` would leave a browser with no owner.
 
 ### runSession
 
@@ -338,6 +349,10 @@ sessions emit the same shape, so a display written against one works against the
 **The run does not start until you consume it.** That is the correctness property, not an
 optimization: a browser cannot be told to slow down, so a run started before anyone was reading
 would either drop events or buffer the whole suite. Awaiting `result()` counts as consuming.
+
+The event feed is capped, so a consumer that falls behind under a flood of page output loses the
+oldest events — `session.droppedEvents` says how many, `0` in any ordinary run. `runEnd` is
+emitted last and always survives, so the result reaches you either way.
 
 ### search
 
