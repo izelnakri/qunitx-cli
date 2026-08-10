@@ -151,6 +151,9 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+          # Warm DENO_DIR (keyed on deno.lock, content-keyed within), so type-check and npm
+          # work carries across runs: 4213ms cold vs 1678ms warm for `deno check` here.
+          cache: true
       - uses: browser-actions/setup-chrome@v2
         id: setup-chrome
       - run: npm ci
@@ -197,6 +200,10 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+          # Same DENO_DIR cache as lint/bench. This job runs `deno task build:binary`, so its
+          # cache also carries the 35MB denort runtime — which is what the tag-gated release
+          # jobs restore via setup-deno's `deno-cache-<os>-<arch>` prefix key.
+          cache: true
       - uses: browser-actions/setup-chrome@v2
         id: setup-chrome
       - run: npm ci
@@ -277,6 +284,8 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+          # Same DENO_DIR cache as lint and test-deno; see the note there.
+          cache: true
       - uses: browser-actions/setup-chrome@v2
         id: setup-chrome
       - run: npm ci
@@ -515,6 +524,11 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+          # Tag-only, and setup-deno's primary key carries the job name, so this never hits its
+          # own cache — but the `deno-cache-<os>-<arch>` prefix fallback restores test-deno's
+          # main-branch DENO_DIR, denort included: 14.2s -> 4.3s for `build:binary`. A corrupt
+          # entry fails the compile loudly rather than quietly shipping a bad binary.
+          cache: true
 
       - uses: browser-actions/setup-chrome@v2
         if: matrix.browser == 'chromium'
@@ -762,6 +776,9 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+          # Same prefix-restore of test-deno's DENO_DIR as release-consumer-test-deno.
+          # The two ARM targets have no main-branch producer, so they miss and download.
+          cache: true
       - run: npm ci
 
       - name: Build Deno binary + esbuild sidecar
