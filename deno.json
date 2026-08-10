@@ -2,8 +2,7 @@
   "nodeModulesDir": "auto",
   "imports": {
     "esbuild": "npm:esbuild",
-    "ws": "npm:ws",
-    "@std/fmt/colors": "jsr:@std/fmt@^1/colors"
+    "ws": "npm:ws"
   },
   "tasks": {
     "bench": "deno bench --allow-all benches/esbuild.bench.ts benches/server.bench.ts benches/tap.bench.ts benches/e2e.bench.ts",

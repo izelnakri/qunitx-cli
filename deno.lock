@@ -1,8 +1,6 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@std/fmt@*": "1.0.9",
-    "jsr:@std/fmt@1": "1.0.9",
     "npm:@types/ws@*": "8.18.1",
     "npm:esbuild@*": "0.28.1",
     "npm:esbuild@~0.28.1": "0.28.1",
@@ -17,11 +15,6 @@
     "npm:vue@^3.5.39": "3.5.39_typescript@7.0.2",
     "npm:ws@*": "8.21.0",
     "npm:ws@^8.21.0": "8.21.0"
-  },
-  "jsr": {
-    "@std/fmt@1.0.9": {
-      "integrity": "2487343e8899fb2be5d0e3d35013e54477ada198854e52dd05ed0422eddcabe0"
-    }
   },
   "npm": {
     "@babel/helper-string-parser@7.29.7": {
@@ -1120,7 +1113,6 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@std/fmt@1",
       "npm:esbuild@*",
       "npm:ws@*"
     ],
