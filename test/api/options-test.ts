@@ -1,140 +1,116 @@
 import { module, test } from 'qunitx';
-import {
-  InvalidOption,
-  normalizeOptions,
-  resolveReporting,
-  toConfigOptions,
-  validate,
-} from '../../lib/api/options.ts';
-import { Collector } from '../../lib/api/result.ts';
+import * as Options from '../../lib/api/options.ts';
+import { InvalidOption, validate } from '../../lib/api/options.ts';
+import { APIReporter } from '../../lib/api/reporter.ts';
 import { TAPReporter } from '../../lib/reporters/tap.ts';
-import { processOutput, silentOutput } from '../../lib/reporters/output.ts';
+import { processConsole, silentConsole, streamConsole } from '../../lib/console.ts';
 import '../helpers/custom-asserts.ts';
-
-module('API | options | shorthands', { concurrency: true }, () => {
-  test('a bare string is one input', (assert) => {
-    assert.deepEqual(normalizeOptions('test/cart-test.ts').inputs, ['test/cart-test.ts']);
-  });
-
-  test('a bare array is the input list', (assert) => {
-    assert.deepEqual(normalizeOptions(['a.ts', 'b.ts']).inputs, ['a.ts', 'b.ts']);
-  });
-
-  test('an options object passes through untouched', (assert) => {
-    const options = { filter: 'Cart', coverage: true };
-    assert.equal(normalizeOptions(options), options, 'the same object, not a copy');
-  });
-
-  test('no argument at all is an empty run request', (assert) => {
-    assert.deepEqual(normalizeOptions(), {});
-  });
-});
 
 module('API | options | reporting', { concurrency: true }, () => {
   test('silence is the default — no reporter, and an output that discards', (assert) => {
-    const reporting = resolveReporting({});
+    const { reporters } = Options.from({});
 
-    assert.equal(reporting.reporters.length, 1, 'only the collector');
-    assert.true(reporting.reporters[0] instanceof Collector);
-    assert.equal(reporting.output, silentOutput);
+    assert.equal(reporters.length, 1, 'only the collector');
+    assert.true(reporters[0] instanceof APIReporter);
+    assert.equal(Options.from({}).console, silentConsole);
   });
 
   test('naming a reporter opts back into the process streams', (assert) => {
-    const reporting = resolveReporting({ reporter: 'tap' });
+    const { reporters } = Options.from({ reporter: 'tap' });
 
-    assert.equal(reporting.reporters.length, 2);
-    assert.true(reporting.reporters[0] instanceof Collector, 'collector first');
-    assert.true(reporting.reporters[1] instanceof TAPReporter);
-    assert.equal(reporting.output, processOutput);
+    assert.equal(reporters.length, 2);
+    assert.true(reporters[0] instanceof APIReporter, 'collector first');
+    assert.true(reporters[1] instanceof TAPReporter);
+    assert.equal(Options.from({ reporter: 'tap' }).console, processConsole);
   });
 
-  test('a stdout of your own is used instead, reporter or not', (assert) => {
+  test('a console of your own is used instead, reporter or not', (assert) => {
     const chunks: string[] = [];
-    const reporting = resolveReporting({ stdout: { write: (text) => void chunks.push(text) } });
+    // Destructured under another name: a local `console` would shadow the global one.
+    const { console: runConsole } = Options.from({
+      console: streamConsole({ write: (text: string) => void chunks.push(text) }),
+    });
 
-    reporting.output.write('hello');
-    reporting.output.error('problem');
+    runConsole!.log('hello');
+    runConsole!.error('problem');
 
     assert.deepEqual(chunks, ['hello', 'problem'], 'stderr falls back to the one stream given');
   });
 
   test('a reporter instance is used as-is, and several stack', (assert) => {
     const mine = { onTestEnd: () => {} };
-    const reporting = resolveReporting({ reporter: ['dot', mine] });
+    const { reporters } = Options.from({ reporters: ['dot', mine] });
 
-    assert.equal(reporting.reporters.length, 3);
-    assert.equal(reporting.reporters[2], mine, 'the object is not copied or wrapped');
+    assert.equal(reporters.length, 3);
+    assert.equal(reporters[2], mine, 'the object is not copied or wrapped');
   });
 
   test('`reporter: false` is silence even alongside a stdout', (assert) => {
-    const reporting = resolveReporting({ reporter: false });
+    const { reporters } = Options.from({ reporter: false });
 
-    assert.equal(reporting.reporters.length, 1, 'the collector, and nothing that prints');
+    assert.equal(reporters.length, 1, 'the collector, and nothing that prints');
   });
 
   test('a reporter OBJECT does not turn on the process streams', (assert) => {
     // Passing a collector is a request to observe, not to print. Only a named built-in — or an
     // explicit stdout — means "put text on my terminal".
-    const reporting = resolveReporting({ reporter: { onTestEnd: () => {} } });
-
-    assert.equal(reporting.output, silentOutput);
+    assert.equal(Options.from({ reporter: { onTestEnd: () => {} } }).console, silentConsole);
   });
 
   test('a named reporter among objects still opts into them', (assert) => {
-    const reporting = resolveReporting({ reporter: [{ onTestEnd: () => {} }, 'dot'] });
-
-    assert.equal(reporting.output, processOutput);
+    assert.equal(
+      Options.from({ reporters: [{ onTestEnd: () => {} }, 'dot'] }).console,
+      processConsole,
+    );
   });
 
   test('junit is additive rather than a choice of format', (assert) => {
-    const reporting = resolveReporting({ reporter: 'spec', junit: true });
+    const { reporters } = Options.from({ reporter: 'spec', junit: true });
 
-    assert.equal(reporting.reporters.length, 3, 'collector + spec + junit');
+    assert.equal(reporters.length, 3, 'collector + spec + junit');
   });
 
-  test('the callbacks become one reporter', (assert) => {
-    const reporting = resolveReporting({ onTest: () => {}, onNotice: () => {} });
+  test('a console of your own does not by itself add a reporter', (assert) => {
+    const { reporters } = Options.from({ console: silentConsole });
 
-    assert.equal(reporting.reporters.length, 2, 'collector + the callback adapter');
+    assert.equal(reporters.length, 1, 'the collector, and nothing that prints');
   });
 });
 
-module('API | options | config translation', { concurrency: true }, () => {
-  const reporting = () => resolveReporting({});
-
-  test('an unset option is absent, not undefined', (assert) => {
+module('API | options | translation', { concurrency: true }, () => {
+  test('an unset option carries no value', (assert) => {
     // Load-bearing: `Config.setup` spreads these over `package.json#qunitx`, so a key present
     // with an undefined value would erase the project's own setting.
-    const config = toConfigOptions({}, reporting());
+    const config = Options.from({});
 
-    assert.false('browser' in config, 'browser');
-    assert.false('coverage' in config, 'coverage');
-    assert.false('portExplicit' in config, 'portExplicit');
+    // Absent as a value, not necessarily as a key: `Config.setup` is what strips undefined
+    // before the merge, and `test/setup/config-test.ts` is where that promise is asserted.
+    assert.equal(config.browser, undefined, 'browser');
+    assert.equal(config.coverage, undefined, 'coverage');
+    assert.equal(config.portExplicit, undefined, 'portExplicit');
   });
 
   test('coverage formats come out of the nested shape', (assert) => {
-    const config = toConfigOptions({ coverage: { formats: ['lcov'] } }, reporting());
+    const config = Options.from({ coverage: { formats: ['lcov'] } });
 
     assert.true(config.coverage);
     assert.deepEqual(config.coverageFormats, ['lcov']);
   });
 
   test('bare `coverage: true` asks for the terminal summary only', (assert) => {
-    const config = toConfigOptions({ coverage: true }, reporting());
+    const config = Options.from({ coverage: true });
 
     assert.true(config.coverage);
     assert.deepEqual(config.coverageFormats, undefined, 'no artifact formats');
   });
 
   test('an explicit port is marked explicit, so a busy port fails rather than sliding', (assert) => {
-    assert.true(toConfigOptions({ port: 4321 }, reporting()).portExplicit);
-    assert.false('portExplicit' in toConfigOptions({}, reporting()));
+    assert.true(Options.from({ port: 4321 }).portExplicit);
+    assert.equal(Options.from({}).portExplicit, undefined);
   });
 
   test('`html` maps onto the internal htmlPaths', (assert) => {
-    assert.deepEqual(toConfigOptions({ html: ['test/index.html'] }, reporting()).htmlPaths, [
-      'test/index.html',
-    ]);
+    assert.deepEqual(Options.from({ html: ['test/index.html'] }).htmlPaths, ['test/index.html']);
   });
 });
 
@@ -174,6 +150,29 @@ module('API | options | validation', { concurrency: true }, () => {
     assert.false(InvalidOption.is(failureOf(() => validate({ timeout: 1 }))));
   });
 
+  test('`reporter` and `reporters` together is refused, and the message says which to use', (assert) => {
+    const failure = failureOf(() => validate({ reporter: 'tap', reporters: ['dot'] }));
+
+    assert.true(InvalidOption.is(failure));
+    assert.includes(
+      InvalidOption.is(failure) ? failure.message : '',
+      '`reporter` for one reporter or `reporters` for several',
+    );
+  });
+
+  test('either one on its own is fine', (assert) => {
+    assert.equal(
+      failureOf(() => validate({ reporter: 'tap' })),
+      null,
+      'one',
+    );
+    assert.equal(
+      failureOf(() => validate({ reporters: ['tap', 'dot'] })),
+      null,
+      'several',
+    );
+  });
+
   test('an unknown coverage format is rejected', (assert) => {
     const failure = failureOf(() => validate({ coverage: { formats: ['pdf' as 'lcov'] } }));
 
@@ -186,7 +185,7 @@ module('API | options | validation', { concurrency: true }, () => {
       validate({
         inputs: ['test/'],
         browser: 'firefox',
-        reporter: ['tap', 'github'],
+        reporters: ['tap', 'github'],
         coverage: { formats: ['lcov', 'html'] },
         port: 8080,
         timeout: 5000,

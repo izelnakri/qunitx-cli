@@ -138,7 +138,7 @@ module('Setup | WebServer | WS testEnd dedup', { concurrency: true }, () => {
       await done;
       ws.close();
       assert.equal(
-        config.state.results.counter.testCount,
+        config.state.results.counter.total,
         1,
         'second testEnd is dropped (counter stays at 1)',
       );
@@ -173,7 +173,7 @@ module('Setup | WebServer | WS testEnd dedup', { concurrency: true }, () => {
         }),
       );
       await done1;
-      assert.equal(config.state.results.counter.testCount, 1, 'first run counter = 1');
+      assert.equal(config.state.results.counter.total, 1, 'first run counter = 1');
 
       // Simulate watch-rerun lifecycle: run reset for the next
       // run. WS connection from this new run arrives, then a STALE testEnd
@@ -181,7 +181,7 @@ module('Setup | WebServer | WS testEnd dedup', { concurrency: true }, () => {
       // because the dedup map remembers the previous run's name.
       // (Without the run-tied reset, the map is wiped on 'connection' and
       // the stale event leaks into the new run's count — the original bug.)
-      config.state.results.counter.testCount = 0;
+      config.state.results.counter.total = 0;
       // NOTE: deliberately do NOT reset config.state.group.testEndCounts here. In real
       // code, run would reset both the counter and testEndCounts
       // together; this test is verifying that the WS handler does not
@@ -202,7 +202,7 @@ module('Setup | WebServer | WS testEnd dedup', { concurrency: true }, () => {
       await done2;
       ws2.close();
       assert.equal(
-        config.state.results.counter.testCount,
+        config.state.results.counter.total,
         0,
         'stale testEnd from previous run is dropped (counter stays at 0)',
       );

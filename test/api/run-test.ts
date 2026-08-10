@@ -1,7 +1,8 @@
 import { module, test } from 'qunitx';
 import { apiRun, captureStream } from './helpers.ts';
-import * as Qunitx from '../../lib/api/index.ts';
+import * as QunitX from '../../lib/api/index.ts';
 import { outputDir } from '../helpers/temp-dir.ts';
+import { streamConsole } from '../../lib/console.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 import '../helpers/custom-asserts.ts';
 
@@ -132,7 +133,7 @@ module('API | run | options', { concurrency: true }, () => {
   });
 
   test('a line target runs just that test', async (assert) => {
-    const declarations = await Qunitx.search({ inputs: [PASSING] });
+    const declarations = await QunitX.search({ inputs: [PASSING] });
     const target = declarations.matches[1];
 
     const result = await apiRun({ inputs: [`${target.file}#${target.line}`] });
@@ -145,9 +146,9 @@ module('API | run | options', { concurrency: true }, () => {
 module('API | run | reporters', { concurrency: true }, () => {
   test('nothing is printed unless a reporter is asked for', async (assert) => {
     const stdout = captureStream();
-    // `stdout` alone still routes the run's own `#` diagnostics, so the assertion below is about
-    // the test document: with no reporter there is no TAP, no spec output, nothing.
-    const result = await apiRun({ inputs: [PASSING], stdout });
+    // A `console` alone still routes the run's own `#` diagnostics, so the assertion below is
+    // about the test document: with no reporter there is no TAP, no spec output, nothing.
+    const result = await apiRun({ inputs: [PASSING], console: streamConsole(stdout) });
 
     assert.true(result.ok);
     assert.notIncludes(stdout.text(), 'TAP version 13');
@@ -157,7 +158,11 @@ module('API | run | reporters', { concurrency: true }, () => {
   test('a named reporter writes to the given stream and still returns the result', async (assert) => {
     const stdout = captureStream();
 
-    const result = await apiRun({ inputs: [PASSING], reporter: 'tap', stdout });
+    const result = await apiRun({
+      inputs: [PASSING],
+      reporter: 'tap',
+      console: streamConsole(stdout),
+    });
 
     assert.includes(stdout.text(), 'TAP version 13');
     assert.includes(stdout.text(), 'ok 1');
@@ -198,17 +203,21 @@ module('API | run | reporters', { concurrency: true }, () => {
     assert.equal(result.tests.length, 3);
   });
 
-  test('onTest streams the same shape the result collects', async (assert) => {
+  test('a reporter sees each test as it finishes, in result order', async (assert) => {
     const streamed: string[] = [];
 
+    // The `run()` way to observe a run in flight: a reporter. For the public event shapes
+    // (`TestResult`, `Notice`, `BrowserLog`) use `runSession().events()` instead.
     const result = await apiRun({
       inputs: [PASSING],
-      onTest: (one) => void streamed.push(one.fullName),
+      reporter: {
+        onTestEnd: (_config, details) => void streamed.push(details.fullName.join(' > ')),
+      },
     });
 
     assert.deepEqual(
       streamed,
-      result.tests.map((one) => one.fullName),
+      result.tests.map((one) => [...one.modules, one.name].join(' > ')),
       'same tests, same order',
     );
   });
@@ -216,26 +225,26 @@ module('API | run | reporters', { concurrency: true }, () => {
 
 module('API | run | failures', { concurrency: true }, () => {
   test('an unreadable project rejects with a discriminable failure', async (assert) => {
-    const outcome = await Qunitx.run({ inputs: ['nope'], cwd: '/' }).result();
+    const outcome = await QunitX.run({ inputs: ['nope'], cwd: '/' }).result();
 
-    assert.true(Qunitx.Failure.is(outcome), 'a run that cannot happen is a Failure');
+    assert.true(QunitX.Failure.is(outcome), 'a run that cannot happen is a Failure');
     assert.equal(
-      Qunitx.Failure.is(outcome) ? outcome.code : null,
+      QunitX.Failure.is(outcome) ? outcome.code : null,
       'ProjectRootNotFound',
       'named, so a caller can branch on it rather than parse a message',
     );
   });
 
   test('an invalid option is reported rather than thrown as a bug', async (assert) => {
-    const outcome = await Qunitx.run({
+    const outcome = await QunitX.run({
       inputs: ['test/'],
       browser: 'netscape' as 'chromium',
     }).result();
 
-    assert.true(Qunitx.Failure.is(outcome), 'a value the runner cannot honour is a Failure');
-    assert.equal(Qunitx.Failure.is(outcome) ? outcome.code : null, 'InvalidOption');
+    assert.true(QunitX.Failure.is(outcome), 'a value the runner cannot honour is a Failure');
+    assert.equal(QunitX.Failure.is(outcome) ? outcome.code : null, 'InvalidOption');
     assert.includes(
-      Qunitx.Failure.is(outcome) ? outcome.message : '',
+      QunitX.Failure.is(outcome) ? outcome.message : '',
       'chromium, firefox, webkit',
       'and names what it would have accepted',
     );
@@ -243,15 +252,15 @@ module('API | run | failures', { concurrency: true }, () => {
 
   test('a bad option is caught before a browser is launched', async (assert) => {
     // No semaphore permit taken, and none needed: rejecting here is the point.
-    const outcome = await Qunitx.run({ inputs: ['test/'], port: 99999 }).result();
+    const outcome = await QunitX.run({ inputs: ['test/'], port: 99999 }).result();
 
-    assert.equal(Qunitx.Failure.is(outcome) ? outcome.code : null, 'InvalidOption');
+    assert.equal(QunitX.Failure.is(outcome) ? outcome.code : null, 'InvalidOption');
   });
 
   test('an already-aborted signal answers without launching a browser', async (assert) => {
     await using output = outputDir('api-signal-pre');
     // No permit: not launching a browser is exactly what is being asserted.
-    const result = await Qunitx.run({
+    const result = await QunitX.run({
       inputs: [PASSING],
       output: output.path,
       signal: AbortSignal.abort(),
@@ -278,7 +287,7 @@ module('API | run | failures', { concurrency: true }, () => {
 
   test('the Task is lazy — nothing runs until it is awaited', async (assert) => {
     await using output = outputDir('api-lazy');
-    const task = Qunitx.run({ inputs: [PASSING], output: output.path });
+    const task = QunitX.run({ inputs: [PASSING], output: output.path });
 
     // Nothing has happened yet: no browser, no bundle, no result. The proof is that the same
     // Task can be discarded without ever having cost a browser launch.

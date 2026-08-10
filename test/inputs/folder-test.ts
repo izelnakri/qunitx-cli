@@ -23,7 +23,7 @@ module('Inputs | folder', { concurrency: true }, (_hooks, moduleMetadata) => {
       { moduleName: `${folderName} | subdir-nested` },
       { moduleName: `${folderName} | subdir-deeper-deep` },
     ]);
-    assert.tapResult(result, { testCount: 9 });
+    assert.tapResult(result, { total: 9 });
   });
 
   test('runs every test file in a passing folder as one plan', async (assert, testMetadata) => {
@@ -38,7 +38,7 @@ module('Inputs | folder', { concurrency: true }, (_hooks, moduleMetadata) => {
       { moduleName: `${folderName} | first-module-pass` },
       { moduleName: `${folderName} | second-module-pass` },
     ]);
-    assert.tapResult(result, { testCount: 6 });
+    assert.tapResult(result, { total: 6 });
   });
 
   test('exits 1 and reports the passing and failing modules of one folder side by side', async (assert, testMetadata) => {
@@ -64,7 +64,7 @@ module('Inputs | folder', { concurrency: true }, (_hooks, moduleMetadata) => {
       { contains: [/actual:\n\s+firstName: Izel/, /expected:\n\s+firstName: Isaac/] },
       'deepEqual failure shows structured YAML object diff',
     );
-    assert.tapResult(cmd, { testCount: 18, failCount: 9 });
+    assert.tapResult(cmd, { total: 18, failed: 9 });
   });
 
   test('aggregates several folders into one plan, counting failures across all of them', async (assert, testMetadata) => {
@@ -94,6 +94,6 @@ module('Inputs | folder', { concurrency: true }, (_hooks, moduleMetadata) => {
       { moduleName: `${firstFolderName} | third-module-fail` },
     ]);
     // firstFolder: 2×3 + 3×4 = 18 tests (9 fail); secondFolder: 2×3 = 6 tests → 24 total, 9 fail
-    assert.tapResult(cmd, { testCount: 24, failCount: 9 });
+    assert.tapResult(cmd, { total: 24, failed: 9 });
   });
 });

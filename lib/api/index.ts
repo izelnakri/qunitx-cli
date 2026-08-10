@@ -24,29 +24,44 @@
  *   config and take the same code path; there is no second implementation to drift.
  */
 
+import { is, format, hasCode, type Any } from '../result/failure.ts';
+
 export { run, type RunFailure } from './run.ts';
 export { runSession, type RunSession } from './session.ts';
 export { watch, type WatchSession } from './watch.ts';
-export { search, type SearchMatch, type SearchResult } from './search.ts';
-export { init, generate, type InitOptions, type GenerateOptions } from './scaffold.ts';
+export { search, type SearchMatch, type SearchResult, type UnlistableCounts } from './search.ts';
+// Straight off the commands rather than through a wrapper module: they already return a Task
+// and already carry these docs, so re-exporting them under their public names is the whole job.
+export { run as init, type InitOptions, type InitResult } from '../commands/init.ts';
+export {
+  run as generate,
+  type GenerateOptions,
+  type GenerateResult,
+} from '../commands/generate.ts';
 /**
  * Daemon control: `start`, `stop`, `status`, and a `run` that reuses the daemon's warm browser
  * and returns the same {@link RunResult} a local run does.
  *
  * ```ts
- * import * as daemon from './daemon.ts';
+ * import * as Daemon from './daemon.ts';
  *
  * // Defined, not invoked: spawns and talks to a real background process.
  * async function warmRun() {
- *   await daemon.start();
- *   return await daemon.run({ inputs: ['test/'] });
+ *   await Daemon.start();
+ *   return await Daemon.run({ inputs: ['test/'] });
  * }
  * ```
  */
-export * as daemon from './daemon.ts';
-export type { DaemonRunOptions, DaemonStatus } from './daemon.ts';
+export * as Daemon from './daemon.ts';
+export type { DaemonRunOptions, DaemonRunFailure, DaemonStatus } from './daemon.ts';
 
-export type { RunOptions, ReporterOption, WritableLike } from './options.ts';
+/**
+ * Rejects options the runner will not accept — a browser that does not exist, a port out of
+ * range — without launching anything. `run()` does this itself; call it directly to check a set
+ * of options before committing to a run.
+ */
+export { validate, InvalidOption, type InvalidOptionFailure } from './options.ts';
+export type { UserRunOptions, ReporterOption } from './options.ts';
 export type {
   RunResult,
   RunCounts,
@@ -54,7 +69,7 @@ export type {
   ResolvedRun,
   CoverageSummary,
   FileCoverageSummary,
-} from './result.ts';
+} from './run.ts';
 
 /**
  * The live view of a run: what a session yields, in the order it happened.
@@ -62,7 +77,7 @@ export type {
  * The fine-grained counterpart to {@link RunResult} — the same run, as it happens rather than once
  * it is over. Both sessions produce the same events, so a progress display works against either.
  */
-export type { RunEvent } from './events.ts';
+export type { RunEvent } from './reporter.ts';
 
 /**
  * The reporter contract and its payloads. Implement {@link Reporter} to observe a run as it
@@ -70,6 +85,7 @@ export type { RunEvent } from './events.ts';
  */
 export type {
   Reporter,
+  ReporterContext,
   ReporterName,
   Notice,
   BrowserLog,
@@ -81,10 +97,10 @@ export type {
 export { REPORTERS } from '../reporters/types.ts';
 
 /**
- * Where reporters write. `processOutput` is the CLI's, `silentOutput` discards, and
- * `streamOutput` adapts anything with a `write(string)`.
+ * Where reporters write. `processConsole` is the CLI's, `silentConsole` discards, and
+ * `streamConsole` adapts anything with a `write(string)`.
  */
-export { type Output, processOutput, silentOutput, streamOutput } from '../reporters/output.ts';
+export { type Console, processConsole, silentConsole, streamConsole } from '../console.ts';
 
 /**
  * The error-handling primitives these functions are built on.
@@ -96,7 +112,7 @@ export { type Output, processOutput, silentOutput, streamOutput } from '../repor
  *
  * ```ts
  * import { run } from './run.ts';
- * import { Failure } from './failure.ts';
+ * import { Failure } from './index.ts';
  *
  * // Defined, not invoked: launches a browser.
  * async function branchOnFailure() {
@@ -114,4 +130,33 @@ export { Task, type Result } from '../task/index.ts';
  */
 export { Stream } from '../stream/index.ts';
 
-export { Failure, type AnyFailure } from './failure.ts';
+/**
+ * A declared failure: something the runner decided it could not do, carrying a `code` to branch
+ * on and a `message` to show.
+ */
+export type AnyFailure = Any;
+
+/**
+ * The failure taxonomy, as this API's public surface.
+ *
+ * A hand-picked subset rather than the internal module re-exported whole: these three are what a
+ * consumer needs in order to handle a failure, and freezing only them leaves the rest — `define`,
+ * the tracing hooks, the ignore channel — free to change without breaking anyone.
+ *
+ * ```ts
+ * import { Failure } from './index.ts';
+ *
+ * Failure.is(new Error('plain')); // false — only declared failures answer to this
+ * ```
+ */
+export const Failure: {
+  /** Narrows an unknown value to a declared failure. The guard to reach for after `.result()`. */
+  is: (value: unknown) => value is AnyFailure;
+  /** Renders a failure as the one-line message the CLI would print. */
+  format: (error: unknown, options?: { stacks?: boolean }) => string;
+  /** Narrows to a specific set of codes, for handling some failures and rethrowing the rest. */
+  hasCode: <const Codes extends readonly string[]>(
+    value: unknown,
+    ...codes: Codes
+  ) => value is AnyFailure & { code: Codes[number] };
+} = { is, format, hasCode };

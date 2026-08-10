@@ -1,70 +1,27 @@
-import * as Config from '../setup/config.ts';
 import * as Search from '../commands/search.ts';
 import { Task } from '../task/index.ts';
-import { unwrap } from '../result/result.ts';
-import {
-  normalizeOptions,
-  resolveReporting,
-  toConfigOptions,
-  validate,
-  type RunOptions,
-} from './options.ts';
+import * as Options from './options.ts';
+import * as Config from '../setup/config.ts';
 import type { RunFailure } from './run.ts';
+import type { SearchReport as SearchResult } from '../commands/search.ts';
+import type { UserRunOptions } from './options.ts';
 
 /**
- * One test the static scan found.
+ * What `search()` found, and one match in it.
+ *
+ * The scan's own types, not re-shaped copies: `Search.scan` already produces exactly this — a
+ * structured `modules` path and a numeric `line` — so the API publishes it rather than
+ * transcribing it into a second set of identical interfaces.
  *
  * ```ts
- * const match: SearchMatch = {
- *   fullName: 'Cart > Coupons: applies code',
- *   name: 'applies code',
- *   modules: ['Cart', 'Coupons'],
- *   file: '/proj/test/cart-test.ts',
- *   line: 6,
- * };
- * `${match.file}#${match.line}`; // paste it straight back as a line target
- * ```
- */
-export interface SearchMatch {
-  /** `"Module > Sub: test name"` — the string `filter` matches against. */
-  fullName: string;
-  /** The test's own name. */
-  name: string;
-  /** The QUnit module path it is declared under; empty for a top-level test. */
-  modules: string[];
-  /** Absolute path of the file it is declared in. */
-  file: string;
-  /** 1-based line of the declaration. */
-  line: number;
-}
-
-/**
- * What `search()` found.
- *
- * ```ts
+ * const unlistable = { total: 0, computedNames: 0, unparseable: 0, silent: 0 };
  * const result: SearchResult =
- *   { matches: [], total: 12, files: 3, filter: 'Cart', warnings: [], unlistable: 0 };
+ *   { matches: [], total: 12, files: 3, filter: 'Cart', warnings: [], unlistable };
  * result.matches.length; // 0 of 12 — nothing matched
  * ```
  */
-export interface SearchResult {
-  /** The matching tests, in declaration order. */
-  matches: SearchMatch[];
-  /** Every listable test in the scanned files, matched or not. */
-  total: number;
-  /** How many files were scanned. */
-  files: number;
-  /** The expression matched against, or `undefined` when everything was listed. */
-  filter?: string;
-  /** Line-target resolution warnings. */
-  warnings: string[];
-  /**
-   * Declarations the scan could not name: a runtime-computed name (``test(`case ${i}`)``), an
-   * unparseable file, or a declarator reached through a local alias. They may still match at
-   * run time — a non-zero count means `total` is a lower bound.
-   */
-  unlistable: number;
-}
+export type { UnlistableCounts } from '../commands/search.ts';
+export type { FoundTest as SearchMatch, SearchReport as SearchResult } from '../commands/search.ts';
 
 /**
  * Lists the tests a selection would run, without running them.
@@ -80,35 +37,16 @@ export interface SearchResult {
  * // Defined, not invoked: reads and parses the project's test files.
  * async function whatMatches() {
  *   const { matches } = await search({ filter: 'Cart' });
- *   return matches.map((test) => `${test.fullName}  ${test.file}#${test.line}`);
+ *   return matches.map((one) => `${one.fullName}  ${one.file}#${one.line}`);
  * }
  * ```
  */
 export function search(
-  options: RunOptions | string | string[] = {},
+  options: UserRunOptions | string | string[] = {},
 ): Task<SearchResult, RunFailure> {
   return Task(async () => {
-    const resolved = normalizeOptions(options);
-    validate(resolved);
-    const reporting = resolveReporting(resolved);
-    const config = unwrap(await Config.setup(toConfigOptions(resolved, reporting)).result());
-    const report = await Search.scan(config);
+    const config = await Config.setup(Options.from(options));
 
-    return {
-      matches: report.matches.map((match) => ({
-        fullName: match.fullName,
-        name: match.testName,
-        modules: match.module === '' ? [] : match.module.split(' > '),
-        file: match.file,
-        // `location` is the display path plus `#line`; the line is what a caller can act on, and
-        // `file` already carries the absolute path in a form they can pass straight back in.
-        line: Number(match.location.slice(match.location.lastIndexOf('#') + 1)),
-      })),
-      total: report.total,
-      files: report.files,
-      filter: report.filter,
-      warnings: report.warnings,
-      unlistable: report.computedNames + report.unparseable + report.silent,
-    };
+    return await Search.scan(config);
   });
 }

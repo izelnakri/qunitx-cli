@@ -29,7 +29,7 @@ module('Flags | file#line targeting', { concurrency: true }, (_hooks, moduleMeta
       ...tm,
     });
 
-    assert.tapResult(result, { testCount: 1 });
+    assert.tapResult(result, { total: 1 });
     assert.includes(result.stdout, 'Outer | outer first');
   });
 
@@ -39,10 +39,10 @@ module('Flags | file#line targeting', { concurrency: true }, (_hooks, moduleMeta
       shell(`node cli.ts ${NESTED}#${OUTER}`, { ...moduleMetadata, ...tm }),
     ]);
 
-    assert.tapResult(inner, { testCount: 1 });
+    assert.tapResult(inner, { total: 1 });
     assert.includes(inner.stdout, 'Outer | Inner | inner only');
 
-    assert.tapResult(outer, { testCount: 3 });
+    assert.tapResult(outer, { total: 3 });
     assert.includes(outer.stdout, 'Outer | Inner | inner only');
     assert.notIncludes(outer.stdout, 'separate one');
   });
@@ -53,7 +53,7 @@ module('Flags | file#line targeting', { concurrency: true }, (_hooks, moduleMeta
       ...tm,
     });
 
-    assert.tapResult(result, { testCount: 2 });
+    assert.tapResult(result, { total: 2 });
     assert.includes(result.stdout, 'outer first');
     assert.includes(result.stdout, 'separate one');
   });
@@ -66,7 +66,7 @@ module('Flags | file#line targeting', { concurrency: true }, (_hooks, moduleMeta
 
     // The whole point of running each line-targeted file as its own group: one page has one
     // QUnit config, so a shared page could not scope one file without scoping the other.
-    assert.tapResult(result, { testCount: 4 });
+    assert.tapResult(result, { total: 4 });
     assert.includes(result.stdout, 'Outer | outer first');
     assert.includes(result.stdout, 'deepEqual true works');
     assert.notIncludes(result.stdout, 'outer second');
@@ -79,7 +79,7 @@ module('Flags | file#line targeting', { concurrency: true }, (_hooks, moduleMeta
       ...tm,
     });
 
-    assert.tapResult(result, { testCount: 1 });
+    assert.tapResult(result, { total: 1 });
     assert.includes(result.stdout, 'outer second');
   });
 
@@ -90,7 +90,7 @@ module('Flags | file#line targeting', { concurrency: true }, (_hooks, moduleMeta
       ...tm,
     });
 
-    assert.tapResult(result, { testCount: 1 });
+    assert.tapResult(result, { total: 1 });
   });
 
   test('a broader input supersedes a line target on a file it already includes whole', async (assert, tm) => {

@@ -10,7 +10,7 @@ module('Flags | --watch', { concurrency: true }, () => {
     });
 
     assert.passingTestCaseFor(stdout, { moduleName: '{{moduleName}}' });
-    assert.tapResult(stdout, { testCount: 3 });
+    assert.tapResult(stdout, { total: 3 });
     assert.includes(stdout, 'Watching files...');
     assert.includes(stdout, 'http://localhost:');
     assert.includes(stdout, 'Press "qq"');

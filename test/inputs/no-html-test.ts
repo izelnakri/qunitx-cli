@@ -28,12 +28,12 @@ module(
       // Scenario A: no htmlPaths configured (qunitx init never run)
       assert.includes(resultA, 'TAP version 13');
       assert.passingTestCaseFor(resultA, { moduleName: projectA.id });
-      assert.tapResult(resultA, { testCount: 3 });
+      assert.tapResult(resultA, { total: 3 });
 
       // Scenario B: htmlPaths configured but test/tests.html was deleted
       assert.includes(resultB, 'TAP version 13');
       assert.passingTestCaseFor(resultB, { moduleName: projectB.id });
-      assert.tapResult(resultB, { testCount: 3 });
+      assert.tapResult(resultB, { total: 3 });
     });
 
     // Same pairing for watch mode.
@@ -51,7 +51,7 @@ module(
       // Scenario A: no htmlPaths configured
       assert.includes({ stdout: stdoutA }, 'TAP version 13');
       assert.passingTestCaseFor({ stdout: stdoutA }, { moduleName: projectA.id });
-      assert.tapResult({ stdout: stdoutA }, { testCount: 3 });
+      assert.tapResult({ stdout: stdoutA }, { total: 3 });
       assert.includes({ stdout: stdoutA }, 'Watching files...');
       assert.includes({ stdout: stdoutA }, 'http://localhost:');
       assert.includes({ stdout: stdoutA }, 'Press "qq"');
@@ -59,7 +59,7 @@ module(
       // Scenario B: htmlPaths configured but tests.html deleted
       assert.includes({ stdout: stdoutB }, 'TAP version 13');
       assert.passingTestCaseFor({ stdout: stdoutB }, { moduleName: projectB.id });
-      assert.tapResult({ stdout: stdoutB }, { testCount: 3 });
+      assert.tapResult({ stdout: stdoutB }, { total: 3 });
       assert.includes({ stdout: stdoutB }, 'Watching files...');
       assert.includes({ stdout: stdoutB }, 'http://localhost:');
       assert.includes({ stdout: stdoutB }, 'Press "qq"');

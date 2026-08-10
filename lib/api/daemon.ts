@@ -2,21 +2,24 @@ import * as Client from '../commands/daemon/client.ts';
 import * as Daemon from '../commands/daemon/index.ts';
 import * as Paths from '../commands/daemon/paths.ts';
 import { Task } from '../task/index.ts';
-import { streamOutput } from '../reporters/output.ts';
-import type { DaemonRunOptions } from './options.ts';
-import type { RunResult } from './result.ts';
+import type { DaemonRunOptions } from '../commands/daemon/protocol.ts';
+import type { RunResult } from './run.ts';
 
-export type { DaemonRunOptions } from './options.ts';
+// Defined with the wire contract, because that is exactly why it is narrower than
+// `UserRunOptions`: it is `UserRunOptions` minus everything that cannot cross a socket.
+export type { DaemonRunOptions } from '../commands/daemon/protocol.ts';
+/** Why a daemon run could not happen: the daemon was unreachable, or it died mid-run. */
+export type { DaemonRunFailure } from '../commands/daemon/client.ts';
 
 /**
  * A live daemon, as reported by {@link status}.
  *
  * ```ts
- * const daemon: DaemonStatus = {
+ * const info: DaemonStatus = {
  *   running: true, pid: 4242, cwd: '/proj',
  *   nodeVersion: 'v24.14.0', startedAt: 1_760_000_000_000, socketPath: '/tmp/qunitx-…sock',
  * };
- * daemon.running; // true — the other fields are absent when it is false
+ * info.running; // true — the other fields are absent when it is false
  * ```
  */
 export type DaemonStatus =
@@ -83,8 +86,8 @@ export function stop(): Task<boolean, never> {
  *
  * // Defined, not invoked: opens a real socket connection.
  * async function uptimeMinutes() {
- *   const daemon = await status();
- *   return daemon.running ? Math.round((Date.now() - daemon.startedAt) / 60_000) : null;
+ *   const info = await status();
+ *   return info.running ? Math.round((Date.now() - info.startedAt) / 60_000) : null;
  * }
  * ```
  */
@@ -112,31 +115,27 @@ export function status(): Task<DaemonStatus, never> {
  * Spawns the daemon if one isn't running, so a first call is not measurably faster than
  * {@link run}; every call after it is.
  *
- * {@link DaemonRunOptions} is narrower than the local `RunOptions` by exactly what cannot cross
- * a process boundary: plugin objects, reporter instances and callbacks. `stdout`/`stderr` still
- * work — the daemon's text is streamed back and written there.
+ * {@link DaemonRunOptions} is narrower than the local `UserRunOptions` by exactly what cannot cross
+ * a process boundary: plugin objects and reporter instances. `console` still works — the daemon's
+ * text is streamed back and written there.
  *
  * ```ts
- * import { run as runViaDaemon } from './daemon.ts';
+ * import { run as runOnDaemon } from './daemon.ts';
  *
  * // Defined, not invoked: dispatches a real run to the daemon.
  * async function fastCheck() {
- *   const result = await runViaDaemon({ inputs: ['test/'] });
+ *   const result = await runOnDaemon({ inputs: ['test/'] });
  *   return result.ok;
  * }
  * ```
  */
-export function run(options: DaemonRunOptions = {}): Task<RunResult, Client.RunViaFailure> {
+export function run(options: DaemonRunOptions = {}): Task<RunResult, Client.DaemonRunFailure> {
   return Task(async () => {
     // The boolean matters: `ensureRunning` returns false when the spawn never became reachable
     // within its budget. Proceeding anyway meant dialling a socket that certainly is not there
     // and reporting `DaemonUnreachable` a connect-timeout later — the same failure, minutes
     // after it was already known.
     if (!(await Daemon.ensureRunning())) throw Client.DaemonUnreachable();
-    const sink = options.stdout
-      ? streamOutput(options.stdout, options.stderr ?? options.stdout)
-      : undefined;
-
-    return await Client.runOptionsVia(options, sink);
+    return await Client.run(options, options.console);
   });
 }

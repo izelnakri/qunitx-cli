@@ -66,20 +66,16 @@ const ARTIFACTS = [
 export async function write(config: Config, testFiles: string[]): Promise<void> {
   const collector = config.state.results.coverage;
   if (!collector || collector.size === 0) {
-    Reporter.notice(config, {
-      level: 'info',
-      message:
-        'Coverage: no coverable sources found (bundle mapped only to node_modules / test files)',
-    });
+    Reporter.info(
+      config,
+      'Coverage: no coverable sources found (bundle mapped only to node_modules / test files)',
+    );
     return;
   }
 
   const rows = buildRows(collector, new Set(testFiles), config.projectRoot);
   if (rows.length === 0) {
-    Reporter.notice(config, {
-      level: 'info',
-      message: 'Coverage: no non-test sources found to report',
-    });
+    Reporter.info(config, 'Coverage: no non-test sources found to report');
     return;
   }
 
@@ -101,11 +97,7 @@ export async function write(config: Config, testFiles: string[]): Promise<void> 
       return `# wrote coverage ${format} to ${toDisplayPath(filePath, config.projectRoot)}\n`;
     },
   );
-  Reporter.notice(config, {
-    level: 'info',
-    raw: true,
-    message: (await Promise.all(formatWrites)).join(''),
-  });
+  Reporter.info(config, (await Promise.all(formatWrites)).join(''), { raw: true });
 }
 
 /**
@@ -162,10 +154,9 @@ function printTerminalSummary(config: Config, rows: FileRow[]): void {
   // Assemble, then write once. The table is one frame of output, and a concurrent group's TAP
   // interleaving between rows would tear it apart — a per-row write invites exactly that. Raw,
   // because every line already carries the `#` its own alignment depends on.
-  Reporter.notice(config, {
-    level: 'info',
-    raw: true,
-    message: [
+  Reporter.info(
+    config,
+    [
       '#',
       '# Coverage (V8 line coverage)',
       divider,
@@ -177,7 +168,8 @@ function printTerminalSummary(config: Config, rows: FileRow[]): void {
       divider,
       '',
     ].join('\n'),
-  });
+    { raw: true },
+  );
 }
 
 function formatRow(

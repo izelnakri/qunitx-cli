@@ -15,12 +15,14 @@
  * the runner, at a scale (10k) no real suite reaches, so a per-event regression shows up as a
  * number rather than as a vague sense that large suites got slower.
  */
-import { Collector, buildResult } from '../lib/api/result.ts';
-import { resolveReporting, toConfigOptions } from '../lib/api/options.ts';
-import { openFeed, eventReporter } from '../lib/api/events.ts';
+import { buildResult } from '../lib/api/run.ts';
+import { APIReporter } from '../lib/api/reporter.ts';
+import { silentConsole } from '../lib/console.ts';
+import * as Options from '../lib/api/options.ts';
+import { EventsChannel } from '../lib/api/reporter.ts';
 import { run, runSession, search } from '../lib/api/index.ts';
 import type { Config } from '../lib/types.ts';
-import type { TestDetails } from '../lib/reporters/types.ts';
+import type { ReporterContext, TestDetails } from '../lib/reporters/types.ts';
 
 const PROJECT_ROOT = new URL('..', import.meta.url).pathname;
 const FIXTURE = 'test/fixtures/passing-tests.ts';
@@ -45,7 +47,7 @@ Deno.bench('api: run() one file, tap reporter', { group: 'api-run', n: 3, warmup
     reporter: 'tap',
     // Into a sink rather than the process stream: the bench measures the fan-out and rendering,
     // not the terminal's ability to absorb it.
-    stdout: { write: () => {} },
+    console: silentConsole,
   });
 });
 
@@ -64,9 +66,20 @@ Deno.bench(
   },
 );
 
-Deno.bench('api: search() one file, no browser', { group: 'api-scan', n: 20 }, async () => {
-  await search({ inputs: [FIXTURE] });
-});
+// The realistic call: `search()` with a filter, which is what every `-s Cart` / `--print` does.
+//
+// Deliberately ONE bench rather than a filtered-vs-unfiltered group. Measured before writing it:
+// the matcher is free next to the scan — one file is 4.30ms unfiltered / 4.20ms substring /
+// 3.74ms regex, and the whole suite (1380 tests) is 109.5 / 114.2 / 110.3ms. Those spreads are
+// under the run-to-run variance, so a comparison group would price nothing and fail CI on noise.
+// What this number protects is the scan: parsing files and building match objects.
+Deno.bench(
+  'api: search() one file with a filter, no browser',
+  { group: 'api-scan', n: 20 },
+  async () => {
+    await search({ inputs: [FIXTURE], filter: 'deepEqual' });
+  },
+);
 
 // ─── in-memory bookkeeping ───────────────────────────────────────────────────
 // What the API adds per test on top of the runner: one projection and one array push.
@@ -79,11 +92,29 @@ const details = (index: number): TestDetails => ({
 });
 
 Deno.bench('api: collector records 10k testEnd events', { group: 'api-collect' }, () => {
-  const collector = new Collector();
+  const collector = new APIReporter();
   for (let index = 0; index < 10_000; index++) {
-    collector.onTestEnd(undefined as unknown as Config, details(index));
+    collector.onTestEnd(CONTEXT, details(index));
   }
 });
+
+// The hooks below ignore their context, but the contract passes one — so build a real one once
+// rather than casting at every call. `counts` is the live object a run would mutate.
+const CONTEXT: ReporterContext = {
+  console: silentConsole,
+  counts: {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    skipped: 0,
+    todo: 0,
+    assertionsFailed: 0,
+  },
+  projectRoot: PROJECT_ROOT,
+  output: 'tmp',
+  sourceMapDecoder: null,
+  daemon: false,
+};
 
 const benchConfig = (): Config =>
   ({
@@ -99,12 +130,12 @@ const benchConfig = (): Config =>
       group: { lastRanFiles: [`${PROJECT_ROOT}${FIXTURE}`] },
       results: {
         counter: {
-          testCount: 10_000,
-          passCount: 9_000,
-          failCount: 1_000,
-          skipCount: 0,
-          todoCount: 0,
-          errorCount: 1_000,
+          total: 10_000,
+          passed: 9_000,
+          failed: 1_000,
+          skipped: 0,
+          todo: 0,
+          assertionsFailed: 1_000,
         },
         failedFiles: new Set<string>(),
         failedTests: [],
@@ -115,41 +146,35 @@ const benchConfig = (): Config =>
   }) as unknown as Config;
 
 Deno.bench('api: buildResult over 10k tests', { group: 'api-collect' }, () => {
-  const collector = new Collector();
+  const collector = new APIReporter();
   for (let index = 0; index < 10_000; index++) {
-    collector.onTestEnd(undefined as unknown as Config, details(index));
+    collector.onTestEnd(CONTEXT, details(index));
   }
-  buildResult(
-    benchConfig(),
-    { exitCode: 1, durationMs: 100, startedAt: 0, finishedAt: 100 },
-    collector,
-    null,
-  );
+  // On the run's reporter list, where `buildResult` looks for it — the same place `Config.setup`
+  // puts it, so this measures the real lookup rather than a hand-passed reference.
+  const config = benchConfig();
+  config.state.reporters = [collector];
+
+  buildResult(config, { exitCode: 1, durationMs: 100, startedAt: 0, finishedAt: 100 });
 });
 
 Deno.bench('api: resolve options + reporters', { group: 'api-collect' }, () => {
-  const reporting = resolveReporting({ inputs: [FIXTURE], reporter: 'tap' });
-  toConfigOptions({ inputs: [FIXTURE], reporter: 'tap' }, reporting);
+  // `Options.from` normalizes, validates and builds the reporter set, so this one call is the
+  // public-options -> runner-input translation the API does before every run.
+  Options.from({ inputs: [FIXTURE], reporter: 'tap' });
 });
 
-// The event path's own cost, with no browser in the way: 10k emits through the feed while a
-// consumer drains it as fast as it can. Now measuring `Stream.channel` rather than the local
-// queue it replaced — the number to watch if the shared implementation ever grows an allocation
-// per event, since every push source in the codebase would pay it.
+// The event path's own cost, with no browser in the way: 10k emits through the channel while a
+// consumer drains it as fast as it can. Measures `Stream.channel` — the number to watch if the
+// shared implementation ever grows an allocation per event, since every push source pays it.
 Deno.bench('api: channel round-trips 10k events', { group: 'api-collect' }, async () => {
-  const channel = openFeed();
-  const drained = (async () => {
-    let seen = 0;
-    for await (const _event of channel.stream) seen++;
+  const channel = EventsChannel.build();
+  // Drained through the Stream's own terminal — the same call an end-user makes on
+  // `session.events()`. The emit loop never yields, so this measures 10k enqueues followed by 10k
+  // dequeues rather than a true interleave; that is the shape a synchronous reporter produces.
+  const drained = (async () => await channel.stream.forEach(() => {}))();
 
-    return seen;
-  })();
-
-  // One config, hoisted: the reporter ignores it, and rebuilding it per event would price the
-  // fixture rather than the channel.
-  const config = benchConfig();
-  const reporter = eventReporter(channel);
-  for (let index = 0; index < 10_000; index++) reporter.onTestEnd?.(config, details(index));
+  for (let index = 0; index < 10_000; index++) channel.reporter.onTestEnd?.(CONTEXT, details(index));
   channel.close();
   await drained;
 });

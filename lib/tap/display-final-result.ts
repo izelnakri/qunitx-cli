@@ -1,4 +1,4 @@
-import { processOutput, type Output } from '../reporters/output.ts';
+import { processConsole, type Console } from '../console.ts';
 import type { Counter } from '../types.ts';
 
 /**
@@ -20,17 +20,17 @@ import type { Counter } from '../types.ts';
  */
 
 export function displayFinalResult(
-  { testCount, passCount, skipCount, todoCount, failCount }: Counter,
+  { total, passed, skipped, todo, failed }: Counter,
   timeTaken: number,
-  output: Output = processOutput,
+  output: Console = processConsole,
 ): void {
-  output.write('\n');
-  output.write(`1..${testCount}\n`);
-  output.write(`# tests ${testCount}\n`);
-  output.write(`# pass ${passCount}\n`);
-  output.write(`# skip ${skipCount}\n`);
-  output.write(`# todo ${todoCount}\n`);
-  output.write(`# fail ${failCount}\n`);
-  output.write(`# duration ${timeTaken}\n`);
-  output.write('\n');
+  output.log('\n');
+  output.log(`1..${total}\n`);
+  output.log(`# tests ${total}\n`);
+  output.log(`# pass ${passed}\n`);
+  output.log(`# skip ${skipped}\n`);
+  output.log(`# todo ${todo}\n`);
+  output.log(`# fail ${failed}\n`);
+  output.log(`# duration ${timeTaken}\n`);
+  output.log('\n');
 }

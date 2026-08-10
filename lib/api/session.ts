@@ -1,20 +1,14 @@
-import * as Config from '../setup/config.ts';
-import * as Run from '../commands/run.ts';
-import { Task } from '../task/index.ts';
-import { unwrap } from '../result/result.ts';
-import { buildResult, type RunResult } from './result.ts';
-import { openFeed, eventReporter, type RunEvent } from './events.ts';
-import type { Channel, Stream } from '../stream/index.ts';
-import { abortedBeforeStart, junitXml, type RunFailure } from './run.ts';
+import * as RunCommand from '../commands/run.ts';
 import * as RunState from '../setup/run-state.ts';
-import {
-  normalizeOptions,
-  resolveReporting,
-  toConfigOptions,
-  validate,
-  type ResolvedReporting,
-  type RunOptions,
-} from './options.ts';
+import { Task } from '../task/index.ts';
+import * as Run from './run.ts';
+import { EventsChannel, type RunEvent } from './reporter.ts';
+
+import * as Options from './options.ts';
+import * as Config from '../setup/config.ts';
+import type { Stream } from '../stream/index.ts';
+import type { RunFailure, RunResult } from './run.ts';
+import type { UserRunOptions } from './options.ts';
 import type { Config as ResolvedConfig } from '../types.ts';
 
 /**
@@ -115,39 +109,33 @@ export interface RunSession extends AsyncIterable<RunEvent> {
  * ```
  */
 export function runSession(
-  options: RunOptions | string | string[] = {},
+  options: UserRunOptions | string | string[] = {},
 ): Task<RunSession, RunFailure> {
   return Task(async () => {
-    const resolved = normalizeOptions(options);
-    validate(resolved);
-    const reporting = resolveReporting(resolved);
-    const channel = openFeed();
-    reporting.reporters.push(eventReporter(channel));
-    // Config assembly happens eagerly — it reads package.json and resolves inputs, so a bad option
-    // is a failure from `runSession(...)` itself rather than a surprise on first iteration. Only
-    // the browser is deferred.
-    const config = unwrap(await Config.setup(toConfigOptions(resolved, reporting)).result());
+    const channel = EventsChannel.build();
+    const configOptions = Options.from(options);
+    // Joins the reporters BEFORE assembly, not after: `Config.setup` emits notices of its own — a
+    // superseded line target, `--only-failed` finding no cache — and a feed attached afterwards
+    // would miss them while `result.notices` still carried them.
+    configOptions.reporters.push(channel.reporter);
+    // Assembly is eager: it reads package.json and resolves inputs, so a bad option is a failure
+    // from `runSession(...)` itself rather than a surprise on first iteration. Only the browser
+    // is deferred.
+    const config = await Config.setup(configOptions);
 
-    return new Session(config, reporting, channel, resolved.signal);
+    return new Session(config, channel, config.state.signal);
   });
 }
 
 /** The live session; a class because it owns the run's lifecycle and has to start it exactly once. */
 class Session implements RunSession {
   #config: ResolvedConfig;
-  #reporting: ResolvedReporting;
-  #channel: Channel<RunEvent>;
+  #channel: EventsChannel;
   #started: Promise<RunResult> | null = null;
   #closed = false;
 
-  constructor(
-    config: ResolvedConfig,
-    reporting: ResolvedReporting,
-    channel: Channel<RunEvent>,
-    signal?: AbortSignal,
-  ) {
+  constructor(config: ResolvedConfig, channel: EventsChannel, signal?: AbortSignal) {
     this.#config = config;
-    this.#reporting = reporting;
     this.#channel = channel;
     if (signal) {
       if (signal.aborted) this.#closed = true;
@@ -224,12 +212,12 @@ class Session implements RunSession {
     if (this.#closed) {
       // Aborted or closed before it ever ran: answer with the empty result rather than launch a
       // browser nobody is waiting for. The counts are zeroes, `aborted` says why.
-      this.#started = Promise.resolve(abortedBeforeStart(this.#config, this.#reporting));
+      this.#started = Promise.resolve(Run.abort(this.#config));
 
       return this.#started;
     }
 
-    this.#started = Run.run(this.#config).then((outcome) => {
+    this.#started = RunCommand.run(this.#config).then((outcome) => {
       const result = this.#snapshot(outcome);
       this.#channel.emit({ kind: 'runEnd', result });
       this.#channel.close();
@@ -243,12 +231,7 @@ class Session implements RunSession {
     return this.#started;
   }
 
-  #snapshot(outcome: Run.RunOutcome): RunResult {
-    return buildResult(
-      this.#config,
-      outcome,
-      this.#reporting.collector,
-      junitXml(this.#reporting.reporters),
-    );
+  #snapshot(outcome: RunCommand.RunOutcome): RunResult {
+    return Run.buildResult(this.#config, outcome);
   }
 }

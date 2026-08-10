@@ -14,7 +14,7 @@ module('Inputs | jsx + tsx', { concurrency: true }, (_hooks, moduleMetadata) => 
     });
 
     assert.includes(result, 'TAP version 13');
-    assert.tapResult(result, { testCount: 5 });
+    assert.tapResult(result, { total: 5 });
 
     assert.outputContains(result, {
       contains: [

@@ -52,7 +52,7 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   } else if (cmd === 'init') {
     const { written, skipped } = await (await import('./lib/commands/init.ts')).run();
     // The scaffolding commands report what they did and let this decide how to say it — the same
-    // split as everywhere else, so `Qunitx.init()` returns the facts instead of printing them.
+    // split as everywhere else, so `QUnitX.init()` returns the facts instead of printing them.
     skipped.forEach((file) => console.log(`${file} already exists`));
     return written.forEach((file) => console.log(`${file} written`));
   } else if (cmd === 'daemon') {
@@ -76,7 +76,7 @@ const EXIT_CODE_SIGTERM = 128 + 15;
     // did — but in the same chain, so `.result()` yields one union to discriminate rather than a
     // box wrapping one. The fall-through stays unconditional; only "the daemon died mid-run"
     // says so, because it used to be indistinguishable from exit 1.
-    const routed = await Client.runVia(process.argv.slice(2)).mapErr(Failure.from).result();
+    const routed = await Client.runArgv(process.argv.slice(2)).mapErr(Failure.from).result();
     if (!Failure.is(routed)) return exitAfterFlush(routed);
     if (routed.code !== 'DaemonUnreachable') {
       process.stderr.write(`# [qunitx] ${Failure.format(routed)} — running locally\n`);

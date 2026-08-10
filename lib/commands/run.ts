@@ -194,10 +194,10 @@ export async function watch(config: Config): Promise<WatchSession> {
 // firefox/webkit, warn once and disable so the rest of the pipeline treats it as off.
 function disableUnsupportedCoverage(config: Config): void {
   if (!config.coverage || config.browser === 'chromium') return;
-  Reporter.notice(config, {
-    level: 'warning',
-    message: `Warning: --coverage requires the chromium browser; skipping coverage for ${config.browser}.`,
-  });
+  Reporter.warning(
+    config,
+    `Warning: --coverage requires the chromium browser; skipping coverage for ${config.browser}.`,
+  );
   config.coverage = false;
 }
 
@@ -265,17 +265,14 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
     );
     if (failed && failed.length > 0) {
       initialFilter = failed;
-      Reporter.notice(config, {
-        level: 'info',
-        message: blue(
+      Reporter.info(
+        config,
+        blue(
           `qunitx --only-failed: first run scoped to ${failed.length} previously-failing test file${failed.length === 1 ? '' : 's'} — press "qa" to run all`,
         ),
-      });
+      );
     } else {
-      Reporter.notice(config, {
-        level: 'info',
-        message: blue(`qunitx --only-failed: no cached failures — running all tests`),
-      });
+      Reporter.info(config, blue(`qunitx --only-failed: no cached failures — running all tests`));
     }
   } else if (config.changedSince) {
     // getChangedFsTree logs its own affected/fallback counts and returns the full tree on
@@ -284,10 +281,10 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
     if (changed.length < Object.keys(config.fsTree).length) {
       initialFilter = changed;
       if (changed.length > 0) {
-        Reporter.notice(config, {
-          level: 'info',
-          message: blue(`qunitx --changed/--since: first run scoped — press "qa" to run all`),
-        });
+        Reporter.info(
+          config,
+          blue(`qunitx --changed/--since: first run scoped — press "qa" to run all`),
+        );
       }
     }
   }
@@ -365,18 +362,18 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
         // a run already in flight, which then bailed out of its own post-navigation check having
         // registered nothing. Serialized reruns make "at the start of the work" the safe moment.
         if (config.debug) {
-          Reporter.notice(config, {
-            level: 'info',
-            message: `Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
-          });
+          Reporter.info(
+            config,
+            `Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
+          );
         }
         return await rerun();
       }
       if (config.debug) {
-        Reporter.notice(config, {
-          level: 'info',
-          message: `Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
-        });
+        Reporter.info(
+          config,
+          `Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
+        );
       }
       await rerun([file]);
     },
@@ -438,10 +435,7 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
         // This one is the per-file attribution the result reports, so the rerun is actually scoped.
         const failed = Array.from(config.state.results.failedFiles);
         if (failed.length === 0) {
-          Reporter.notice(config, {
-            level: 'info',
-            message: 'QUnitX: No tests failed in the last run, so repeating it',
-          });
+          Reporter.info(config, 'QUnitX: No tests failed in the last run, so repeating it');
         }
 
         return runFiles(
@@ -735,32 +729,27 @@ async function runConcurrentMode(
       if (result.status !== 'rejected') return code;
       // Raw and stderr-only: a rejected group's reason is an Error whose stack IS the diagnostic,
       // and un-prefixed multi-line text on stdout would corrupt the TAP document.
-      Reporter.notice(config, {
-        level: 'error',
+      Reporter.error(config, `${(result.reason as Error)?.stack ?? String(result.reason)}\n`, {
         raw: true,
         stream: 'error',
-        message: `${(result.reason as Error)?.stack ?? String(result.reason)}\n`,
       });
       return 1;
     },
-    config.state.results.counter.failCount > 0 ? 1 : 0,
+    config.state.results.counter.failed > 0 ? 1 : 0,
   );
 
-  if (config.state.results.counter.testCount === 0 && exitCode === 0) {
+  if (config.state.results.counter.total === 0 && exitCode === 0) {
     if (isFilteredRun(config)) {
       // A filter matching nothing is a typo, not a green run — every neighbouring runner
       // fails here, and passing CI on a mistyped -t is the worst outcome available.
-      Reporter.notice(config, {
-        level: 'warning',
-        message: `No tests matched ${describeActiveFilters(config)}`,
-      });
+      Reporter.warning(config, `No tests matched ${describeActiveFilters(config)}`);
       exitCode = 1;
     } else {
       const fileWord = allFiles.length === 1 ? 'file' : 'files';
-      Reporter.notice(config, {
-        level: 'warning',
-        message: `Warning: 0 tests registered — no QUnit test cases found in ${allFiles.length} ${fileWord}`,
-      });
+      Reporter.warning(
+        config,
+        `Warning: 0 tests registered — no QUnit test cases found in ${allFiles.length} ${fileWord}`,
+      );
     }
   }
 
@@ -852,12 +841,12 @@ async function resolveHtmlFixtures(config: Config): Promise<void> {
       htmlAssets.dynamicContentHTMLs[filePath] = html;
       result.htmlPathsToRunTests.push(filePath.replace(config.projectRoot, ''));
     } else {
-      Reporter.notice(config, {
-        level: 'warning',
-        message: yellow(
+      Reporter.warning(
+        config,
+        yellow(
           `WARNING: Static html file with no {{qunitxScript}} or handlebars-style tokens detected. Therefore ignoring ${filePath}`,
         ),
-      });
+      );
       htmlAssets.staticHTMLs[filePath] = html;
     }
 

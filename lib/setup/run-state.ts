@@ -1,7 +1,7 @@
 import type { BuildState, Counter, GroupState, RunResults, RunState } from '../types.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
 import type { Page } from 'playwright-core';
-import { processOutput } from '../reporters/output.ts';
+import { processConsole } from '../console.ts';
 
 /**
  * The daemon's reusable Page slot, or `null` when reuse does not apply.
@@ -29,12 +29,12 @@ export function reusablePageSlot(state: RunState): { page: Page | null } | null 
 /** A zeroed outcome counter. */
 function newCounter(): Counter {
   return {
-    testCount: 0,
-    failCount: 0,
-    skipCount: 0,
-    todoCount: 0,
-    passCount: 0,
-    errorCount: 0,
+    total: 0,
+    failed: 0,
+    skipped: 0,
+    todo: 0,
+    passed: 0,
+    assertionsFailed: 0,
   };
 }
 
@@ -84,7 +84,7 @@ export function newGroup(index = 0, selectors?: QUnitSelector[]): GroupState {
  *
  * const state = RunState.create();
  * state.groupCount; // 1
- * state.results.counter.testCount; // 0
+ * state.results.counter.total; // 0
  * ```
  */
 export function create(): RunState {
@@ -94,7 +94,7 @@ export function create(): RunState {
     groupCount: 1,
     aborters: new Set(),
     reporters: [],
-    output: processOutput,
+    console: processConsole,
     htmlAssets: {
       assets: new Set(),
       mainHTML: { filePath: null, html: null },
@@ -131,10 +131,10 @@ export function create(): RunState {
  * import * as RunState from './run-state.ts';
  *
  * const { results } = RunState.create();
- * results.counter.failCount = 3;
+ * results.counter.failed = 3;
  * results.failedFiles.add('/proj/test/cart-test.ts');
  * RunState.reset(results, false);
- * [results.counter.failCount, results.failedFiles.size]; // [0, 0] — same objects, cleared in place
+ * [results.counter.failed, results.failedFiles.size]; // [0, 0] — same objects, cleared in place
  * ```
  */
 export function reset(results: RunResults, coverageEnabled: boolean): void {
