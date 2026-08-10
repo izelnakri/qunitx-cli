@@ -97,9 +97,7 @@ Deno.bench('exec: Task(recipe) — plain', { group: 'executor' }, async () => {
 });
 
 Deno.bench('exec: Task(signal => new Promise(exec))', { group: 'executor' }, async () => {
-  await Task<number>(
-    (_signal) => new Promise<number>((resolve) => resolve(21)),
-  );
+  await Task<number>((_signal) => new Promise<number>((resolve) => resolve(21)));
 });
 
 Deno.bench('exec: Task.withResolvers settle+await', { group: 'executor' }, async () => {
@@ -127,11 +125,16 @@ Deno.bench('elixir: task.await(ms) settled', { group: 'elixir' }, async () => {
 });
 
 Deno.bench('elixir: task.shutdown(ms) on settled', { group: 'elixir' }, async () => {
-  await Task(() => 21).perform().shutdown(1000);
+  await Task(() => 21)
+    .perform()
+    .shutdown(1000);
 });
 
 Deno.bench('elixir: Task.awaitMany over 10', { group: 'elixir' }, async () => {
-  await Task.awaitMany(TEN.map((n) => Task(() => n)), 1000);
+  await Task.awaitMany(
+    TEN.map((n) => Task(() => n)),
+    1000,
+  );
 });
 
 Deno.bench('elixir: Task.completed passthrough', { group: 'elixir' }, async () => {

@@ -11,7 +11,7 @@ module('Flags | --after', { concurrency: true }, (_hooks, moduleMetadata) => {
 
     assert.includes(result, 'This is running from after script!!');
     assert.passingTestCaseFor(result, { moduleName: '{{moduleName}}' });
-    assert.tapResult(result, { testCount: 3 });
+    assert.tapResult(result, { total: 3 });
   });
 
   test('exits 1 and reports the error when the script throws', async (assert, testMetadata) => {
@@ -35,12 +35,12 @@ module('Flags | --after', { concurrency: true }, (_hooks, moduleMetadata) => {
     assert.includes(
       result,
       JSON.stringify(
-        { testCount: 3, failCount: 0, skipCount: 0, todoCount: 0, passCount: 3, errorCount: 0 },
+        { total: 3, failed: 0, skipped: 0, todo: 0, passed: 3, assertionsFailed: 0 },
         null,
         2,
       ),
     );
     assert.passingTestCaseFor(result, { moduleName: '{{moduleName}}' });
-    assert.tapResult(result, { testCount: 3 });
+    assert.tapResult(result, { total: 3 });
   });
 });

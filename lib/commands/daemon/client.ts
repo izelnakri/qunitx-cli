@@ -7,9 +7,9 @@ import * as Socket from './socket.ts';
 import { Failure } from '../../result/index.ts';
 import { Task } from '../../task/index.ts';
 import { readJsonCache } from '../../utils/read-json-cache.ts';
-import { processOutput, type Output } from '../../reporters/output.ts';
-import type { DaemonRunOptions } from '../../api/options.ts';
-import type { RunResult } from '../../api/result.ts';
+import { processConsole, type Console } from '../../console.ts';
+import type { DaemonRunOptions } from './protocol.ts';
+import type { RunResult } from '../../api/run.ts';
 import type { Request, ResponseChunk } from './protocol.ts';
 
 const CONNECT_TIMEOUT_MS = 1_000;
@@ -204,28 +204,27 @@ export const DaemonDisconnected: Failure.FailureFactory<
  * ```ts
  * import * as Client from './client.ts';
  *
- * const failure: Client.RunViaFailure = Client.DaemonDisconnected({ reason: 'error' });
+ * const failure: Client.DaemonRunFailure = Client.DaemonDisconnected({ reason: 'error' });
  * failure.code; // 'DaemonDisconnected' — or 'DaemonUnreachable'; narrow with a switch
  * ```
  */
-export type RunViaFailure = Failure.Of<typeof DaemonUnreachable | typeof DaemonDisconnected>;
+export type DaemonRunFailure = Failure.Of<typeof DaemonUnreachable | typeof DaemonDisconnected>;
 
 /**
- * Sends `argv` to the daemon and streams its TAP output back to local stdout/stderr.
- * Succeeds with the exit code the daemon reported; fails with one the caller can act on:
- * `DaemonUnreachable` means "fall through to a local run", `DaemonDisconnected` means the
- * daemon died mid-run and the user should be told.
+ * The CLI's path: sends raw `argv` and answers with the exit code the daemon reported.
  *
- * A Task rather than a promise of a `Result`, because the two say the same thing and only
- * one of them nests: `Promise<Result<number, E>>` hands the caller a union it must unwrap
- * *inside* whatever it already uses to catch bugs, while `.result()` here produces that union
- * on demand and `await` alone gets the exit code.
+ * Exists as its own entry point so that argv is parsed on the DAEMON. `Args.parse` needs a
+ * project root, so converting argv into {@link DaemonRunOptions} here would make every
+ * daemon-routed `qunitx` load `setup/config.ts` and its `find-project-root`/`fs-tree` chain —
+ * measured at ~48 ms of module evaluation (63 ms -> 111 ms), against the ~800 ms the daemon
+ * saves. {@link run} is the one to reach for otherwise; this trades a narrower answer for the
+ * startup latency the daemon exists to protect.
  *
- * Not idempotent — it streams a whole test run to stdio — so `retry()` would replay the
- * output. There is nothing here to retry anyway: both failures mean the daemon is gone.
- *
- * Forwards the user's Ctrl+C: client exits with 130; daemon abandons the run cleanly
- * when it sees the socket close (clientAlive=false stops further writes).
+ * A Task rather than a promise of a `Result`, because the two say the same thing and only one of
+ * them nests: `await` alone gets the exit code, `.result()` gets the union. Not idempotent — it
+ * streams a whole test run to stdio — and nothing here is worth retrying, since both failures
+ * mean the daemon is gone. Forwards Ctrl+C: the client exits 130 and the daemon abandons the run
+ * when it sees the socket close.
  *
  * ```ts
  * import * as Client from './client.ts';
@@ -233,22 +232,22 @@ export type RunViaFailure = Failure.Of<typeof DaemonUnreachable | typeof DaemonD
  *
  * // Defined, not invoked: streams the daemon's TAP output to this process's stdio.
  * async function runOnDaemon() {
- *   const outcome = await Client.runVia(['test/foo-test.ts']).result(); // number | RunViaFailure
+ *   const outcome = await Client.runArgv(['test/foo-test.ts']).result(); // number | DaemonRunFailure
  *   return Failure.is(outcome) ? null : outcome; // exit code out; a failure the caller acts on
  * }
  * ```
  */
-export function runVia(argv: string[]): Task<number, RunViaFailure> {
+export function runArgv(argv: string[]): Task<number, DaemonRunFailure> {
   return Task(async () => (await dispatchRun({ argv })).exitCode);
 }
 
 /**
- * The options-driven twin of {@link runVia}: sends resolved options rather than an argv and
- * resolves with the run's structured result.
+ * Runs the suite inside the daemon and answers with the same {@link RunResult} a local run
+ * produces. The one to reach for; {@link runArgv} is the CLI's narrower variant.
  *
- * Streams the daemon's text back the same way — into `sink` when one is given, so a caller that
- * asked for a reporter still gets its output locally — and additionally receives the `result`
- * chunk the daemon sends just before `done`.
+ * Streams the daemon's text into `console` when one is given, so a caller that asked for a
+ * reporter still sees its output locally, and reads the `result` chunk the daemon sends just
+ * before `done`.
  *
  * ```ts
  * import * as Client from './client.ts';
@@ -256,22 +255,19 @@ export function runVia(argv: string[]): Task<number, RunViaFailure> {
  *
  * // Defined, not invoked: dispatches a real run to the project's daemon.
  * async function runOnDaemon() {
- *   const outcome = await Client.runOptionsVia({ inputs: ['test/'] }).result();
+ *   const outcome = await Client.run({ inputs: ['test/'] }).result();
  *   return Failure.is(outcome) ? null : outcome.counts;
  * }
  * ```
  */
-export function runOptionsVia(
-  options: DaemonRunOptions,
-  sink?: Output,
-): Task<RunResult, RunViaFailure> {
+export function run(options: DaemonRunOptions, sink?: Console): Task<RunResult, DaemonRunFailure> {
   return Task(async () => {
-    // `stdout`/`stderr` are the CLIENT's sinks for the text streamed back — they are objects
-    // carrying a function, so they do not survive `JSON.stringify`. Sent anyway, the daemon
-    // received `{}`, built an `Output` whose `write` was `undefined`, and died on the first
-    // write — taking the daemon down and every run queued behind it. They are dropped here, at
-    // the one place that knows which half of the options crosses the socket.
-    const { stdout: _stdout, stderr: _stderr, ...overWire } = options;
+    // `console` is the CLIENT's, for the text streamed back — an object carrying functions, so it
+    // does not survive `JSON.stringify`. Sent anyway, the daemon received `{}`, built a `Console`
+    // whose `log` was `undefined`, and died on the first call — taking the daemon down and every
+    // run queued behind it. Dropped here, at the one place that knows which half of the options
+    // crosses the socket.
+    const { console: _console, ...overWire } = options;
     const { result } = await dispatchRun({ options: overWire, sink });
     // The daemon sends `result` before `done` on every options-driven request, so its absence
     // means the daemon answered a request it did not understand — a version skew between a
@@ -283,9 +279,10 @@ export function runOptionsVia(
 }
 
 /**
- * One run over the socket. Shared by both entry points because everything except what is sent
- * and what is read back — connect, SIGINT forwarding, terminal-chunk handling, the two ways a
- * daemon can vanish — is identical between them.
+ * One run over the socket. {@link runArgv} sends an argv and wants an exit code, {@link run}
+ * sends options and wants a {@link RunResult}; everything between those two ends — connect,
+ * SIGINT forwarding, the terminal chunk, the two ways a daemon can vanish — is identical, and
+ * lives here.
  */
 function dispatchRun({
   argv = [],
@@ -294,12 +291,12 @@ function dispatchRun({
 }: {
   argv?: string[];
   options?: DaemonRunOptions;
-  sink?: Output;
+  sink?: Console;
 }): Promise<{ exitCode: number; result: RunResult | null }> {
   return (async () => {
     const socket = await tryConnect();
     if (!socket) throw DaemonUnreachable();
-    const out = sink ?? processOutput;
+    const out = sink ?? processConsole;
     let result: RunResult | null = null;
 
     // Per protocol.ts: exactly one terminal message ('done' or 'fatal') ends the
@@ -308,7 +305,7 @@ function dispatchRun({
     // folded into the same exit code a failing test run produces.
     const outcome = new Promise<number>((resolve, reject) => {
       Socket.readMessages<ResponseChunk>(socket, (chunk) => {
-        if (chunk.type === 'stdout') out.write(chunk.data);
+        if (chunk.type === 'stdout') out.log(chunk.data);
         else if (chunk.type === 'stderr') out.error(chunk.data);
         else if (chunk.type === 'result') result = chunk.result;
         else if (chunk.type === 'done') resolve(chunk.exitCode);

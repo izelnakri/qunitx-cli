@@ -46,10 +46,10 @@ export async function getChangedFsTree(
   const { projectRoot } = config;
   const cache = await MetafileCache.read(projectRoot);
   if (!cache) {
-    Reporter.notice(config, {
-      level: 'info',
-      message: `--changed: no metafile cache yet — running all ${testFiles.length} test files (cache populates on this run)`,
-    });
+    Reporter.info(
+      config,
+      `--changed: no metafile cache yet — running all ${testFiles.length} test files (cache populates on this run)`,
+    );
     return fsTree;
   }
 
@@ -64,29 +64,29 @@ export async function getChangedFsTree(
   // scanner still rejects and crashes the run loudly.
   const scan = await getChanged(projectRoot, changedSince).result();
   if (Failure.is(scan)) {
-    Reporter.notice(config, {
-      level: 'info',
-      message: `--changed: ${scan.message} — running all ${testFiles.length} test files`,
-    });
+    Reporter.info(
+      config,
+      `--changed: ${scan.message} — running all ${testFiles.length} test files`,
+    );
     return fsTree;
   } else if (scan.scope === 'everything') {
-    Reporter.notice(config, {
-      level: 'info',
-      message: `--changed: blast-radius file changed (${scan.trigger}) — running all ${testFiles.length} test files`,
-    });
+    Reporter.info(
+      config,
+      `--changed: blast-radius file changed (${scan.trigger}) — running all ${testFiles.length} test files`,
+    );
     return fsTree;
   } else if (scan.paths.size === 0) {
-    Reporter.notice(config, {
-      level: 'info',
-      message: `--changed: 0 files changed since ${changedSince} — running 0 test files`,
-    });
+    Reporter.info(
+      config,
+      `--changed: 0 files changed since ${changedSince} — running 0 test files`,
+    );
     return {};
   }
 
   const affected = getChangedFiles(cache.metafile, cache.esbuildCwd, scan.paths, testFiles);
-  Reporter.notice(config, {
-    level: 'info',
-    message: `--changed: ${affected.size} of ${testFiles.length} test files affected by changes since ${changedSince}`,
-  });
+  Reporter.info(
+    config,
+    `--changed: ${affected.size} of ${testFiles.length} test files affected by changes since ${changedSince}`,
+  );
   return Object.fromEntries(testFiles.filter((f) => affected.has(f)).map((f) => [f, null]));
 }

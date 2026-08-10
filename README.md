@@ -221,7 +221,6 @@ const result = await run({
   coverage: { formats: ['lcov'] },
   junit: true,
   reporter: 'spec', // omit for silence
-  onTest: (test) => console.log(test.status, test.fullName), // streamed as they finish
 });
 
 result.tests; // every test: name, modules, fullName, status, durationMs, assertions, file
@@ -375,7 +374,7 @@ Passing an object does **not** turn on printing — only a built-in _name_, or a
 
 ```js
 await run({
-  reporter: [
+  reporters: [
     'tap',
     {
       onRunStart: (config, info) => {},
@@ -385,23 +384,26 @@ await run({
       onRunEnd: (config, info) => {},
     },
   ],
-  stdout: myWritable, // where the built-in reporter writes; defaults to process.stdout
+  console: streamConsole(myWritable), // capture what the built-ins print
 });
 ```
+
+To watch a run as it happens with the *public* shapes — `TestResult`, `Notice`, `BrowserLog` —
+use `runSession().events()` rather than a reporter; the reporter hooks are the internal ones.
 
 ### daemon
 
 Reuses a persistent browser and warm bundle across runs — worth roughly 800 ms per run once it
-is up. `daemon.run` takes the options that survive a socket, so plugin objects, reporter
+is up. `Daemon.run` takes the options that survive a socket, so plugin objects, reporter
 instances and callbacks are a compile error rather than a silent drop.
 
 ```js
-import { daemon } from 'qunitx-cli';
+import { Daemon } from 'qunitx-cli';
 
-await daemon.start();
-const result = await daemon.run({ inputs: ['test/'] }); // same RunResult
-await daemon.status(); // { running: true, pid, cwd, socketPath, … }
-await daemon.stop();
+await Daemon.start();
+const result = await Daemon.run({ inputs: ['test/'] }); // same RunResult
+await Daemon.status(); // { running: true, pid, cwd, socketPath, … }
+await Daemon.stop();
 ```
 
 ### Errors

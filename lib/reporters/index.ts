@@ -14,10 +14,56 @@ import type {
   TestDetails,
 } from './types.ts';
 import type { Config } from '../types.ts';
+import type { ReporterContext } from './types.ts';
 
-// The `--reporter` value -> stdout reporter. Keyed by ReporterName so adding a name to
-// REPORTERS without wiring it up here is a type error rather than a silent fall back to tap.
-const STDOUT_REPORTERS: Record<ReporterName, new () => Reporter> = {
+// One context per config, not per event: 10k tests would otherwise allocate 10k of them. Keyed by
+// config so a concurrent group gets its own — the group spread hands each one its own `state`.
+const CONTEXTS = new WeakMap<Config, ReporterContext>();
+
+/**
+ * The read-only view a reporter is handed, built once per config.
+ *
+ * `counts` and `sourceMapDecoder` read through rather than being copied: the counter object is
+ * mutated in place by the runner, and the decoder is attached partway through a run.
+ */
+function contextOf(config: Config): ReporterContext {
+  let context = CONTEXTS.get(config);
+  if (!context) {
+    context = {
+      get console() {
+        return config.state.console;
+      },
+      get counts() {
+        return config.state.results.counter;
+      },
+      get sourceMapDecoder() {
+        return config.state.group.sourceMapDecoder;
+      },
+      get daemon() {
+        return config.state.daemon !== null;
+      },
+      projectRoot: config.projectRoot,
+      output: config.output,
+      junit: config.junit,
+    };
+    CONTEXTS.set(config, context);
+  }
+
+  return context;
+}
+
+/**
+ * The `--reporter` value -> its class. Keyed by `ReporterName`, so adding a name to `REPORTERS`
+ * without wiring it up here is a type error rather than a silent fall back to tap.
+ *
+ * Exported because the JS API instantiates the same four by name; a second copy of this table
+ * would mean a new reporter worked from the CLI and not from `run({ reporter: … })`.
+ *
+ * ```ts
+ * new BUILT_IN_REPORTERS.tap(); // the same instance `--reporter=tap` builds
+ * ```
+ */
+export const BUILT_IN_REPORTERS: Record<ReporterName, new () => Reporter> = {
   tap: TAPReporter,
   spec: SpecReporter,
   dot: DotReporter,
@@ -60,7 +106,13 @@ export function create(config: Config): Reporter[] {
  * ```
  */
 export function runStart(config: Config, info: RunStartInfo): void {
-  fanOut(config, 'onRunStart', (reporter) => reporter.onRunStart?.(config, info));
+  for (const reporter of config.state.reporters) {
+    try {
+      reporter.onRunStart?.(contextOf(config), info);
+    } catch (error) {
+      reporterThrew(config, 'onRunStart', error);
+    }
+  }
 }
 
 /**
@@ -82,7 +134,13 @@ export function runStart(config: Config, info: RunStartInfo): void {
  */
 export function testEnd(config: Config, details: TestDetails): void {
   updateCounter(config.state.results.counter, details);
-  fanOut(config, 'onTestEnd', (reporter) => reporter.onTestEnd?.(config, details));
+  for (const reporter of config.state.reporters) {
+    try {
+      reporter.onTestEnd?.(contextOf(config), details);
+    } catch (error) {
+      reporterThrew(config, 'onTestEnd', error);
+    }
+  }
 }
 
 /**
@@ -105,39 +163,103 @@ export async function runEnd(config: Config, info: RunEndInfo): Promise<void> {
     // Awaited one at a time, and isolated the same way the sync hooks are: JUnit writes a file
     // here, and a third-party reporter that rejects must not cost the run its artifacts.
     try {
-      await reporter.onRunEnd?.(config, info);
+      await reporter.onRunEnd?.(contextOf(config), info);
     } catch (error) {
-      reportReporterFailure(config, 'onRunEnd', error);
+      reporterThrew(config, 'onRunEnd', error);
     }
   }
 }
 
 /**
- * Emits one of qunitx's own diagnostics: renders it to the run's output as a TAP `#` comment,
- * then hands the structured form to any reporter that wants it.
- *
- * Both halves matter. The rendering is what every `console.log('#', …)` scattered through the
- * run pipeline used to do inline — which meant a run could not be made quiet, and a caller
- * could not read the diagnostics back. Going through here, silence is a matter of the run's
- * `output`, and capture is a matter of a reporter.
+ * Options a diagnostic can carry beyond its text. Both default to the CLI's long-standing
+ * behaviour, so only the handful of call sites that need something else say so.
+ */
+export interface NoticeOptions {
+  /**
+   * Write the message verbatim rather than as a `# `-prefixed TAP comment. For pre-formatted
+   * blocks — the coverage table, a stack trace — whose own layout is the point.
+   */
+  raw?: boolean;
+  /** Which of the run's two streams the default rendering goes to. `output` by default. */
+  stream?: 'output' | 'error' | 'both';
+}
+
+/**
+ * A decision the runner made and wants on the record — what it chose to run, what it skipped.
  *
  * ```ts
  * import * as Reporter from './index.ts';
  *
  * import type { Config } from '../types.ts';
  *
- * // Defined, not invoked: writes '# No tests matched …' to the run's output.
- * function warnNoMatches(config: Config, filter: string) {
- *   Reporter.notice(config, { level: 'warning', message: `No tests matched ${filter}` });
+ * // Defined, not invoked: writes '# scoped to 2 files' to the run's sink.
+ * function announce(config: Config) {
+ *   Reporter.info(config, 'scoped to 2 files');
  * }
  * ```
  */
-export function notice(config: Config, notice: Notice): void {
+export function info(config: Config, message: string, options: NoticeOptions = {}): void {
+  emit(config, { level: 'info', message, ...options });
+}
+
+/**
+ * Something surprising that did not stop the run — a filter that matched nothing, a flag that
+ * does not apply to the chosen browser.
+ *
+ * ```ts
+ * import * as Reporter from './index.ts';
+ *
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: writes '# No tests matched Cart' to the run's sink.
+ * function warnNoMatches(config: Config, filter: string) {
+ *   Reporter.warning(config, `No tests matched ${filter}`);
+ * }
+ * ```
+ */
+export function warning(config: Config, message: string, options: NoticeOptions = {}): void {
+  emit(config, { level: 'warning', message, ...options });
+}
+
+/**
+ * A diagnostic that also belongs on stderr — a stack trace, a timeout, a page that crashed.
+ *
+ * ```ts
+ * import * as Reporter from './index.ts';
+ *
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: writes the trace to the run's error stream, unprefixed.
+ * function reportCrash(config: Config, stack: string) {
+ *   Reporter.error(config, stack, { raw: true, stream: 'error' });
+ * }
+ * ```
+ */
+export function error(config: Config, message: string, options: NoticeOptions = {}): void {
+  emit(config, { level: 'error', message, ...options });
+}
+
+/**
+ * Renders one diagnostic to the run's sink, then hands the structured form to every reporter.
+ *
+ * Both halves matter. The rendering is what every `console.log('#', …)` scattered through the run
+ * pipeline used to do inline — which meant a run could not be made quiet, and a caller could not
+ * read the diagnostics back. Going through here, silence is a matter of the run's `sink` and
+ * capture is a matter of a reporter.
+ */
+function emit(config: Config, notice: Notice): void {
   const line = notice.raw ? notice.message : `# ${notice.message}\n`;
   const stream = notice.stream ?? 'output';
-  if (stream !== 'error') config.state.output.write(line);
-  if (stream !== 'output') config.state.output.error(line);
-  fanOut(config, 'onNotice', (reporter) => reporter.onNotice?.(config, notice));
+  if (stream !== 'error') config.state.console.log(line);
+  if (stream !== 'output') config.state.console.error(line);
+
+  for (const reporter of config.state.reporters) {
+    try {
+      reporter.onNotice?.(contextOf(config), notice);
+    } catch (caught) {
+      reporterThrew(config, 'onNotice', caught);
+    }
+  }
 }
 
 /**
@@ -160,40 +282,33 @@ export function browserLog(config: Config, log: BrowserLog): void {
   const line = `${log.text}\n`;
   // Matches what the page-event handlers did directly: console.log for everything, console.error
   // for an uncaught pageerror, so a crashed page is visible in a stdout-only or stderr-only log.
-  if (log.type === 'pageerror') config.state.output.error(line);
-  else config.state.output.write(line);
-  fanOut(config, 'onBrowserLog', (reporter) => reporter.onBrowserLog?.(config, log));
-}
-
-/**
- * Delivers one event to every reporter, isolating each from the others.
- *
- * `Reporter` is public surface, so a reporter is third-party code, and a plain `forEach` gives
- * the first one that throws the power to stop delivery to the rest — including the collector the
- * JS API builds its result from, and the counter reconciliation that depends on it. A reporter
- * that throws should cost its own output and nothing else.
- */
-function fanOut(config: Config, hook: string, deliver: (reporter: Reporter) => void): void {
+  if (log.type === 'pageerror') config.state.console.error(line);
+  else config.state.console.log(line);
   for (const reporter of config.state.reporters) {
     try {
-      deliver(reporter);
+      reporter.onBrowserLog?.(contextOf(config), log);
     } catch (error) {
-      reportReporterFailure(config, hook, error);
+      reporterThrew(config, 'onBrowserLog', error);
     }
   }
 }
 
 /**
- * Reports a throwing reporter straight to the output rather than through `notice` — a reporter
- * that throws from `onNotice` would otherwise be handed the notice about itself, and throw again.
+ * Reports a throwing reporter straight to the sink rather than through `notice` — a reporter that
+ * throws from `onNotice` would otherwise be handed the notice about itself, and throw again.
+ *
+ * Every emitter above delivers in its own `for`/`try` rather than through a shared fan-out
+ * helper. `Reporter` is public surface, so a reporter is third-party code and one that throws
+ * must cost only its own output — and the loop that guarantees that is worth seeing at each of
+ * the five places it happens, especially since `onRunEnd` awaits and cannot share them anyway.
  */
-function reportReporterFailure(config: Config, hook: string, error: unknown): void {
+function reporterThrew(config: Config, hook: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
-  config.state.output.error(`# [qunitx] reporter ${hook} threw: ${message}\n`);
+  config.state.console.error(`# [qunitx] reporter ${hook} threw: ${message}\n`);
 }
 
 // Exactly one stdout reporter per run. `--reporter` is validated in Args.parse, so an
 // unknown value never reaches here; tap is the default and the fallback.
 function stdoutReporter(config: Config): Reporter {
-  return new (STDOUT_REPORTERS[config.reporter ?? 'tap'] ?? TAPReporter)();
+  return new (BUILT_IN_REPORTERS[config.reporter ?? 'tap'] ?? TAPReporter)();
 }

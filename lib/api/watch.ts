@@ -1,19 +1,13 @@
-import * as Config from '../setup/config.ts';
-import * as Run from '../commands/run.ts';
+import * as RunCommand from '../commands/run.ts';
 import { Task } from '../task/index.ts';
-import { unwrap } from '../result/result.ts';
-import { buildResult, type RunResult } from './result.ts';
-import { openFeed, eventReporter, type RunEvent } from './events.ts';
-import { Stream, type Channel } from '../stream/index.ts';
-import {
-  normalizeOptions,
-  resolveReporting,
-  toConfigOptions,
-  validate,
-  type ResolvedReporting,
-  type RunOptions,
-} from './options.ts';
-import { junitXml, type RunFailure } from './run.ts';
+import * as Run from './run.ts';
+import { EventsChannel, findAPIReporterFrom, type RunEvent } from './reporter.ts';
+
+import { Stream } from '../stream/index.ts';
+import * as Options from './options.ts';
+import * as Config from '../setup/config.ts';
+import type { RunFailure, RunResult } from './run.ts';
+import type { UserRunOptions } from './options.ts';
 import type { Config as ResolvedConfig } from '../types.ts';
 
 /**
@@ -136,35 +130,25 @@ export interface WatchSession extends AsyncIterable<RunResult> {
  * ```
  */
 export function watch(
-  options: RunOptions | string | string[] = {},
+  options: UserRunOptions | string | string[] = {},
 ): Task<WatchSession, RunFailure> {
   return Task(async () => {
-    const resolved = normalizeOptions(options);
-    validate(resolved);
-    const reporting = resolveReporting(resolved);
-    const configOptions = toConfigOptions(resolved, reporting);
-    const config = unwrap(await Config.setup({ ...configOptions, watch: true }).result());
+    const config = await Config.setup({ ...Options.from(options), watch: true });
     const begunAt = Date.now();
-    const inner = await Run.watch(config);
+    const inner = await RunCommand.watch(config);
 
-    // Snapshotted here, before the session installs its own rerun listener: the initial run has
-    // already finished by the time `Run.watch` resolves, so it has no listener to fire and would
-    // otherwise be the one result that never reaches the iterator.
-    // The initial run's duration is the one number this path cannot recover after the fact —
-    // `Run.watch` has already returned by the time the session exists — so it is measured here,
-    // around the call that performs it.
-    const session = new Session(
-      inner,
-      config,
-      reporting,
-      snapshot(config, reporting, Date.now() - begunAt),
-    );
+    // The initial run is snapshotted here, before the session installs its rerun listener: it has
+    // already finished by the time `RunCommand.watch` resolves, so it would never fire one and
+    // the one result missing from the iteration. Its duration has to be measured around that call
+    // for the same reason — nothing can recover it afterwards.
+    const session = new Session(inner, config, snapshot(config, Date.now() - begunAt));
     // For a watch session `signal` means "stop watching" — there is no single run to cut short,
     // and the session's own `abort()` covers the one in flight. An already-aborted signal still
     // pays for the initial run, because the session's contract is that `initial` is a real result.
-    if (resolved.signal) {
-      if (resolved.signal.aborted) await session.close();
-      else resolved.signal.addEventListener('abort', () => void session.close(), { once: true });
+    const signal = config.state.signal;
+    if (signal) {
+      if (signal.aborted) await session.close();
+      else signal.addEventListener('abort', () => void session.close(), { once: true });
     }
 
     return session;
@@ -178,24 +162,17 @@ export function watch(
  */
 class Session implements WatchSession {
   readonly initial: RunResult;
-  #inner: Run.WatchSession;
+  #inner: RunCommand.WatchSession;
   #config: ResolvedConfig;
-  #reporting: ResolvedReporting;
   #results = Stream.channel<RunResult>({ capacity: 1_000, overflow: 'dropOldest' });
-  #events: Channel<RunEvent> | null = null;
+  #events: EventsChannel | null = null;
   #latest: RunResult;
   #published = 0;
   #closed = false;
 
-  constructor(
-    inner: Run.WatchSession,
-    config: ResolvedConfig,
-    reporting: ResolvedReporting,
-    initial: RunResult,
-  ) {
+  constructor(inner: RunCommand.WatchSession, config: ResolvedConfig, initial: RunResult) {
     this.#inner = inner;
     this.#config = config;
-    this.#reporting = reporting;
     this.initial = initial;
     this.#latest = initial;
     // The initial run is the iteration's first element, so a `for await` sees the whole history
@@ -203,8 +180,8 @@ class Session implements WatchSession {
     this.#results.emit(initial);
     // Every rerun goes through the same reporters, and `onRunEnd` is the last thing a run does —
     // which makes it the one honest signal that a result is complete and ready to snapshot.
-    reporting.reporters.push({
-      onRunEnd: (_config, info) => this.#publish(info.durationMs),
+    config.state.reporters.push({
+      onRunEnd: (_context, info) => this.#publish(info.durationMs),
     });
   }
 
@@ -244,9 +221,9 @@ class Session implements WatchSession {
     // Attached on the first call and kept: a second call must not hand back a feed that starts
     // mid-run, and attaching a second reporter would double every event on the first feed.
     if (!this.#events) {
-      const channel = openFeed();
+      const channel = EventsChannel.build();
       this.#events = channel;
-      this.#reporting.reporters.push(eventReporter(channel));
+      this.#config.state.reporters.push(channel.reporter);
     }
 
     return this.#events.stream;
@@ -303,7 +280,7 @@ class Session implements WatchSession {
   /** Hands a finished run to whoever is iterating, or queues it until someone is. */
   #publish(durationMs: number): void {
     this.#published++;
-    this.#latest = snapshot(this.#config, this.#reporting, durationMs);
+    this.#latest = snapshot(this.#config, durationMs);
     this.#results.emit(this.#latest);
     this.#events?.emit({ kind: 'runEnd', result: this.#latest });
   }
@@ -314,22 +291,18 @@ class Session implements WatchSession {
  *
  * The exit code is derived here rather than carried in: a watch rerun has no exit code, because
  * nothing exits — but "did this rerun pass" is exactly as meaningful, and is the same question
- * `failCount` answers for the batch runner.
+ * `failed` answers for the batch runner.
  */
-function snapshot(
-  config: ResolvedConfig,
-  reporting: ResolvedReporting,
-  durationMs: number,
-): RunResult {
-  const failed = config.state.results.counter.failCount > 0;
+function snapshot(config: ResolvedConfig, durationMs: number): RunResult {
+  const failed = config.state.results.counter.failed > 0;
   const finishedAt = Date.now();
-  const result = buildResult(
-    config,
-    { exitCode: failed ? 1 : 0, durationMs, startedAt: finishedAt - durationMs, finishedAt },
-    reporting.collector,
-    junitXml(reporting.reporters),
-  );
-  reporting.collector.reset();
+  const result = Run.buildResult(config, {
+    exitCode: failed ? 1 : 0,
+    durationMs,
+    startedAt: finishedAt - durationMs,
+    finishedAt,
+  });
+  findAPIReporterFrom(config).reset();
 
   return result;
 }

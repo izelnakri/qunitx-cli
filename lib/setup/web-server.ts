@@ -134,15 +134,14 @@ export function setup(config: Config): HTTPServer {
       config.state.group.wsConnectionCount > 1 &&
       (config.debug || !(config.watch || config.open))
     ) {
-      Reporter.notice(config, {
-        level: 'warning',
-        stream: 'both',
-        message:
-          `[qunitx][diag] wss accepted connection #${config.state.group.wsConnectionCount} — ` +
+      Reporter.warning(
+        config,
+        `[qunitx][diag] wss accepted connection #${config.state.group.wsConnectionCount} — ` +
           `single-group runs should see exactly one WS connection per run. ` +
           `Multiple connections from one page are the prime suspect for the 2× testEnd flake ` +
           `(WS retry race in the injected runtime).`,
-      });
+        { stream: 'both' },
+      );
     }
     socket.on('message', function message(data) {
       const { event, details, qunitResult, abort } = JSON.parse(String(data));
@@ -182,14 +181,13 @@ export function setup(config: Config): HTTPServer {
         const count = (config.state.group.testEndCounts?.get(fullName) ?? 0) + 1;
         config.state.group.testEndCounts?.set(fullName, count);
         if (count > 1) {
-          Reporter.notice(config, {
-            level: 'warning',
-            stream: 'both',
-            message:
-              `[qunitx] WARNING: duplicate testEnd ignored for "${fullName}" — ` +
+          Reporter.warning(
+            config,
+            `[qunitx] WARNING: duplicate testEnd ignored for "${fullName}" — ` +
               `browser/Playwright fired the event twice in one run. ` +
               `Counter not incremented; see Config.state.group.testEndCounts for details.`,
-          });
+            { stream: 'both' },
+          );
           return;
         }
 
@@ -796,13 +794,12 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
         const count = (config.state.group.testEndCounts?.get(fullName) ?? 0) + 1;
         config.state.group.testEndCounts?.set(fullName, count);
         if (count > 1) {
-          Reporter.notice(config, {
-            level: 'warning',
-            stream: 'both',
-            message:
-              `[qunitx] WARNING: group ${resolvedGroupId} duplicate testEnd ignored for "${fullName}" — ` +
+          Reporter.warning(
+            config,
+            `[qunitx] WARNING: group ${resolvedGroupId} duplicate testEnd ignored for "${fullName}" — ` +
               `single-run testEnds should be unique.`,
-          });
+            { stream: 'both' },
+          );
           return;
         }
         if (details.status === 'failed') {

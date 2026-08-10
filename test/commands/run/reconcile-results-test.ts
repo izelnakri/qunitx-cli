@@ -9,12 +9,12 @@ import type { Counter, QUnitResult } from '../../../lib/types.ts';
 // is authoritative, so the runner reconciles from it instead of reporting an empty, passing run.
 
 const counter = (over: Partial<Counter> = {}): Counter => ({
-  testCount: 0,
-  failCount: 0,
-  skipCount: 0,
-  todoCount: 0,
-  passCount: 0,
-  errorCount: 0,
+  total: 0,
+  failed: 0,
+  skipped: 0,
+  todo: 0,
+  passed: 0,
+  assertionsFailed: 0,
   ...over,
 });
 
@@ -32,9 +32,9 @@ module('Commands | run | reconcileUndeliveredResults', { concurrency: true }, ()
     const undelivered = reconcileUndeliveredResults(c, qunit({ finishedTests: 4, failedTests: 0 }));
 
     assert.equal(undelivered, 4, 'four results were missing from the stream');
-    assert.equal(c.testCount, 4, 'total reconciled from QUnit');
-    assert.equal(c.passCount, 4, 'all four counted as passing');
-    assert.equal(c.failCount, 0, 'exit code stays 0');
+    assert.equal(c.total, 4, 'total reconciled from QUnit');
+    assert.equal(c.passed, 4, 'all four counted as passing');
+    assert.equal(c.failed, 0, 'exit code stays 0');
   });
 
   test('a lost failure is never masked as a pass', (assert) => {
@@ -42,46 +42,46 @@ module('Commands | run | reconcileUndeliveredResults', { concurrency: true }, ()
     const undelivered = reconcileUndeliveredResults(c, qunit({ finishedTests: 4, failedTests: 1 }));
 
     assert.equal(undelivered, 4);
-    assert.equal(c.testCount, 4);
-    assert.equal(c.failCount, 1, 'the dropped failure still counts — exit code becomes non-zero');
-    assert.equal(c.passCount, 3, 'the other three counted as passing');
+    assert.equal(c.total, 4);
+    assert.equal(c.failed, 1, 'the dropped failure still counts — exit code becomes non-zero');
+    assert.equal(c.passed, 3, 'the other three counted as passing');
   });
 
   test('partial delivery: only the missing tail is reconciled', (assert) => {
-    const c = counter({ testCount: 2, passCount: 2 }); // two arrived, two lost
+    const c = counter({ total: 2, passed: 2 }); // two arrived, two lost
     const undelivered = reconcileUndeliveredResults(c, qunit({ finishedTests: 4, failedTests: 0 }));
 
     assert.equal(undelivered, 2, 'two results were missing');
-    assert.equal(c.testCount, 4);
-    assert.equal(c.passCount, 4);
+    assert.equal(c.total, 4);
+    assert.equal(c.passed, 4);
   });
 
   test('clean run: everything delivered, nothing touched', (assert) => {
-    const c = counter({ testCount: 4, passCount: 4 });
+    const c = counter({ total: 4, passed: 4 });
     const undelivered = reconcileUndeliveredResults(c, qunit({ finishedTests: 4, failedTests: 0 }));
 
     assert.equal(undelivered, 0, 'no reconciliation needed');
-    assert.equal(c.testCount, 4);
-    assert.equal(c.passCount, 4);
+    assert.equal(c.total, 4);
+    assert.equal(c.passed, 4);
   });
 
-  test('all delivered but a failure was undercounted: failCount still corrected', (assert) => {
-    // finishedTests === testCount, so no total gap — but the browser saw a failure the stream
-    // dropped. This is the pre-existing safety net, preserved: bump failCount, return 0.
-    const c = counter({ testCount: 4, passCount: 4, failCount: 0 });
+  test('all delivered but a failure was undercounted: failed still corrected', (assert) => {
+    // finishedTests === total, so no total gap — but the browser saw a failure the stream
+    // dropped. This is the pre-existing safety net, preserved: bump failed, return 0.
+    const c = counter({ total: 4, passed: 4, failed: 0 });
     const undelivered = reconcileUndeliveredResults(c, qunit({ finishedTests: 4, failedTests: 1 }));
 
     assert.equal(undelivered, 0, 'nothing was missing from the total');
-    assert.equal(c.failCount, 1, 'the dropped failure is still counted');
-    assert.equal(c.passCount, 3, 'and a pass is corrected back to a fail');
+    assert.equal(c.failed, 1, 'the dropped failure is still counted');
+    assert.equal(c.passed, 3, 'and a pass is corrected back to a fail');
   });
 
   test('does not invent tests when the browser finished fewer than counted', (assert) => {
     // Defensive: a stale/lower QUnit tally must never shrink an accurate counter.
-    const c = counter({ testCount: 4, passCount: 4 });
+    const c = counter({ total: 4, passed: 4 });
     const undelivered = reconcileUndeliveredResults(c, qunit({ finishedTests: 2, failedTests: 0 }));
 
     assert.equal(undelivered, 0);
-    assert.equal(c.testCount, 4, 'the accurate count is left alone');
+    assert.equal(c.total, 4, 'the accurate count is left alone');
   });
 });

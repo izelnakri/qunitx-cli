@@ -15,7 +15,7 @@ module('Flags | --timezone | OS default', { concurrency: true }, (_hooks, module
     });
 
     assert.includes(result, `BROWSER_TZ:${nodeTz}`);
-    assert.tapResult(result, { testCount: 1 });
+    assert.tapResult(result, { total: 1 });
   });
 });
 
@@ -33,7 +33,7 @@ if (process.platform === 'linux') {
       );
 
       assert.includes(result, 'BROWSER_TZ:America/Los_Angeles');
-      assert.tapResult(result, { testCount: 1 });
+      assert.tapResult(result, { total: 1 });
     });
   });
 }

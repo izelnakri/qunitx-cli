@@ -37,17 +37,14 @@ export async function applyWatchLineTargets(config: Config): Promise<void> {
   config.fsTree = Object.fromEntries([...targetedPaths].map((file) => [file, config.fsTree[file]]));
   config.state.group.selectors = targets.flatMap((target) => target.selectors);
   if (dropped.length > 0) {
-    Reporter.notice(config, {
-      level: 'info',
-      message: blue(
+    Reporter.info(
+      config,
+      blue(
         `qunitx: --watch with a line target runs only the targeted file${targetedPaths.size === 1 ? '' : 's'} — ${dropped.length} other file${dropped.length === 1 ? '' : 's'} excluded from this session`,
       ),
-    });
+    );
   }
-  Reporter.notice(config, {
-    level: 'info',
-    message: blue(`qunitx: press "qa" to run every test in the watched file(s)`),
-  });
+  Reporter.info(config, blue(`qunitx: press "qa" to run every test in the watched file(s)`));
 }
 
 /**
@@ -99,9 +96,7 @@ export async function resolveTargetedFiles(
   );
   // Logged after the parallel resolve so warnings print in input order, not resolution order.
   resolved.forEach((entry) => {
-    entry.warnings.forEach((warning) =>
-      Reporter.notice(config, { level: 'warning', message: blue(`qunitx: ${warning}`) }),
-    );
+    entry.warnings.forEach((warning) => Reporter.warning(config, blue(`qunitx: ${warning}`)));
   });
 
   // Null selectors mean the target degraded to "run the whole file" — there is nothing to scope,

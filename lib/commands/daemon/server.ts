@@ -10,13 +10,13 @@ import { parseIdleTimeout } from './parse-idle-timeout.ts';
 import * as Socket from './socket.ts';
 import * as Config from '../../setup/config.ts';
 import * as Browser from '../../setup/browser.ts';
-import { run } from '../run.ts';
+import * as RunCommand from '../run.ts';
 import { borrowArgv, borrowEnv } from '../../utils/borrowed-globals.ts';
 import * as Result from '../../result/index.ts';
 import { Failure } from '../../result/index.ts';
-import { resolveReporting, toConfigOptions } from '../../api/options.ts';
-import { buildResult, type RunResult } from '../../api/result.ts';
-import { junitXml } from '../../api/run.ts';
+import * as Options from '../../api/options.ts';
+import * as Run from '../../api/run.ts';
+import type { RunResult } from '../../api/run.ts';
 import type { Request, ResponseChunk, RunRequest, DaemonInfo } from './protocol.ts';
 import type { Browser as PlaywrightBrowser } from 'playwright-core';
 import { Task } from '../../task/index.ts';
@@ -170,8 +170,8 @@ export async function serve(): Promise<void> {
   // nothing valid to serve, and refusing to start beats accepting runs it will fail.
   const baseConfig = Result.expect(configured, 'daemon could not assemble its startup config');
   // baseConfig is only ever handed to Browser.launch (initial launch + crash recovery), never
-  // to run() — so it needs no daemon handles. watch/open still matter: Browser.launch derives
-  // `headless` from them.
+  // to RunCommand.run() — so it needs no daemon handles. watch/open still matter: Browser.launch
+  // derives `headless` from them.
   baseConfig.watch = false;
   baseConfig.open = false;
 
@@ -701,8 +701,8 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
 }
 
 /**
- * Performs one test run inside the daemon by delegating to `run()` — the same code path local
- * invocations use, with `state.daemon` set so it reuses the daemon's persistent browser and
+ * Performs one test run inside the daemon by delegating to `RunCommand.run()` — the same code
+ * path local invocations use, with `state.daemon` set so it reuses the daemon's browser and
  * leaves it open. Concurrent group orchestration, timing-cache persistence, and after-hook all
  * come for free from the shared run pipeline.
  */
@@ -724,18 +724,15 @@ async function runOnce(
   // An options-driven request answers with a structured result, which means it needs a collector
   // — and a reporter set built here rather than by `Reporter.create`, because the client asked
   // for specific ones by name.
-  // `stdout`/`stderr` are stripped again here, not only by the client. They cannot survive JSON,
-  // so anything arriving under those keys is a `{}` from an older client — and building an
-  // `Output` from it would give the daemon a `write` of `undefined` and kill it on first use.
-  // The daemon serves every invocation in the project; it does not get to trust one of them.
-  const wireOptions = req.options && { ...req.options, stdout: undefined, stderr: undefined };
-  const reporting = wireOptions ? resolveReporting(wireOptions) : null;
+  // `console` is stripped again here, not only by the client. It cannot survive JSON, so anything
+  // arriving under that key is a `{}` from an older client — and building from it would give the
+  // daemon a `log` of `undefined` and kill it on first use. The daemon serves every invocation in
+  // the project; it does not get to trust one of them.
+  const wireOptions = req.options && { ...req.options, console: undefined };
   const configured = (await Config.setup(
     // `cwd` is forced to the daemon's: `handleRun` already rejected a mismatched client cwd, and
     // a daemon serving one project must not be talked into resolving another.
-    wireOptions && reporting
-      ? { ...toConfigOptions(wireOptions, reporting), cwd: state.cwd }
-      : undefined,
+    wireOptions ? { ...Options.from(wireOptions), cwd: state.cwd } : undefined,
   ).result()) as Result.Result<ResolvedConfig, Config.ConfigFailure>;
   // A bad flag from one client is that client's problem, not the daemon's. This is the whole
   // reason config assembly returns instead of exiting: `process.exit(1)` inside `Args.parse`
@@ -747,8 +744,8 @@ async function runOnce(
   const config = configured;
 
   // Lending the daemon's persistent handles to this run also marks it as a daemon run:
-  // a non-null state.daemon makes run() reuse the browser rather than launching one, and leave
-  // it open at the end. watch/open are forced off — neither makes sense inside a daemon run.
+  // a non-null state.daemon makes RunCommand.run() reuse the browser rather than launching one,
+  // and leave it open at the end. watch/open are forced off — neither fits inside a daemon run.
   //
   // state.browser is non-null here — runOnce only fires from handleRun after awaitBrowser
   // has resolved (and recoverBrowser, if it ran, reassigned it).
@@ -760,13 +757,12 @@ async function runOnce(
   config.watch = false;
   config.open = false;
 
-  const outcome = await run(config);
+  const outcome = await RunCommand.run(config);
 
   return {
     exitCode: outcome.exitCode,
-    result: reporting
-      ? buildResult(config, outcome, reporting.collector, junitXml(reporting.reporters))
-      : null,
+    // Only an options-driven request answers with a structured result; an argv one wants a code.
+    result: wireOptions ? Run.buildResult(config, outcome) : null,
   };
 }
 

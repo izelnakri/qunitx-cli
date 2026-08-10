@@ -3,7 +3,7 @@ import { runSession } from '../../lib/api/index.ts';
 import { withRunSession } from './helpers.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 import { outputDir } from '../helpers/temp-dir.ts';
-import type { RunEvent } from '../../lib/api/events.ts';
+import type { RunEvent } from '../../lib/api/reporter.ts';
 import '../helpers/custom-asserts.ts';
 
 const PASSING = 'test/fixtures/passing-tests.ts';

@@ -246,7 +246,7 @@ export async function setup(
   });
   page.on('pageerror', (error) => {
     Reporter.browserLog(config, { type: 'pageerror', text: error.toString(), args: [error] });
-    config.state.results.counter.failCount++;
+    config.state.results.counter.failed++;
   });
 
   return { server, browser, page };

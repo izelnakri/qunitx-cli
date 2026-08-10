@@ -1,4 +1,6 @@
-import type { Config, Counter } from '../types.ts';
+import type { Counter } from '../types.ts';
+import type { Console } from '../console.ts';
+import type { SourceMapDecoder } from '../utils/source-map.ts';
 
 /**
  * Every stdout reporter `--reporter` accepts, in help/error-message order. Exactly one is
@@ -24,6 +26,44 @@ export const REPORTERS = ['tap', 'spec', 'dot', 'github'] as const;
 export type ReporterName = (typeof REPORTERS)[number];
 
 /**
+ * What a reporter is given on every hook: where to write, what the run has counted so far, and
+ * the few resolved paths a message needs.
+ *
+ * Deliberately not the run's `Config`. A reporter is third-party code, and handing it the whole
+ * config would hand it the mutable state of the run it is reporting on — plus a type it cannot
+ * name, since `Config` is internal. Everything here is read-only from a reporter's side.
+ *
+ * `counts` and `sourceMapDecoder` are live: `counts` is the same object the runner mutates, and
+ * the decoder arrives partway through a run, so both read through rather than being snapshots.
+ *
+ * ```ts
+ * // Defined, not invoked: a reporter that prints a running tally.
+ * const tally = {
+ *   onTestEnd({ console, counts }: ReporterContext) {
+ *     console.log(`# ${counts.passed}/${counts.total}\n`);
+ *   },
+ * };
+ * tally.onTestEnd.length; // 1 — the context is the only thing a simple reporter needs
+ * ```
+ */
+export interface ReporterContext {
+  /** Where this reporter's text goes. `silentConsole` when the run was asked to print nothing. */
+  console: Console;
+  /** The run's live outcome totals — the same object the runner updates, not a copy. */
+  counts: Counter;
+  /** Absolute path of the directory holding `package.json`, for rendering paths relative to it. */
+  projectRoot: string;
+  /** Absolute path of the build output directory. */
+  output: string;
+  /** `--junit`'s value: `true` for the default path, a string for an explicit one. */
+  junit?: boolean | string;
+  /** Maps a bundle stack frame back to source, once the run has built one. */
+  sourceMapDecoder: SourceMapDecoder | null;
+  /** Whether this run is executing inside the persistent daemon. */
+  daemon: boolean;
+}
+
+/**
  * The reporter contract — the public extension point for observing a run. Reporters render it
  * to text (the built-in `tap`/`spec`/`dot`/`github`), write an artifact (`junit`), or simply
  * collect, which is how the JS API turns a run into a value.
@@ -37,40 +77,38 @@ export type ReporterName = (typeof REPORTERS)[number];
  * configs are spread off the parent config, so `state.reporters` is the same array). `onTestEnd`
  * therefore arrives interleaved across groups.
  *
- * Text goes through `config.state.output`, never `process.stdout` — that indirection is what
- * lets a caller redirect or silence a built-in reporter.
+ * Text goes through `context.console`, never `process.stdout` — that indirection is what lets a
+ * caller redirect or silence a built-in reporter.
  *
  * ```ts
- * import type { Config } from '../types.ts';
- *
  * const names: string[] = [];
  * const reporter: Reporter = {
- *   onTestEnd(_config, details) {
+ *   onTestEnd(_context, details) {
  *     names.push(details.fullName.join(' | ')); // one entry per finished test
  *   },
  * };
- * reporter.onTestEnd?.({} as Config, { status: 'passed', fullName: ['Math', 'adds'], runtime: 2 });
+ * reporter.onTestEnd?.({} as ReporterContext, { status: 'passed', fullName: ['Math', 'adds'], runtime: 2 });
  * names; // ['Math | adds']
  * ```
  */
 export interface Reporter {
   /** Called once before any test output. In watch mode, once per rerun. */
-  onRunStart?(config: Config, info: RunStartInfo): void;
+  onRunStart?(context: ReporterContext, info: RunStartInfo): void;
   /** Called once per test, after `counter` has already been updated for this test. */
-  onTestEnd?(config: Config, details: TestDetails): void;
+  onTestEnd?(context: ReporterContext, details: TestDetails): void;
   /** Called once when the run finishes, with the final counts on `config.state.results.counter`. */
-  onRunEnd?(config: Config, info: RunEndInfo): void | Promise<void>;
+  onRunEnd?(context: ReporterContext, info: RunEndInfo): void | Promise<void>;
   /**
    * Called for each of qunitx's own diagnostics — the `# …` lines about what it decided to run,
    * what it could not find, what timed out. The default rendering has already gone to
-   * `config.state.output`; implement this only to capture them as data.
+   * `config.state.console`; implement this only to capture them as data.
    */
-  onNotice?(config: Config, notice: Notice): void;
+  onNotice?(context: ReporterContext, notice: Notice): void;
   /**
    * Called for each `console.*` call and uncaught error from the page under test. Only warnings
    * and errors arrive unless `debug` is on — the same selection the CLI prints.
    */
-  onBrowserLog?(config: Config, log: BrowserLog): void;
+  onBrowserLog?(context: ReporterContext, log: BrowserLog): void;
 }
 
 /**
@@ -205,27 +243,27 @@ export interface RunEndInfo {
  * and the TAP plan both read `counter`, so it must be updated exactly once per test.
  *
  * ```ts
- * const counter = { testCount: 0, failCount: 0, skipCount: 0, todoCount: 0, passCount: 0, errorCount: 0 };
+ * const counter = { total: 0, failed: 0, skipped: 0, todo: 0, passed: 0, assertionsFailed: 0 };
  * updateCounter(counter, { status: 'passed', fullName: ['Math', 'adds'], runtime: 2 });
- * counter.testCount; // 1
- * counter.passCount; // 1
+ * counter.total; // 1
+ * counter.passed; // 1
  * ```
  */
 export function updateCounter(counter: Counter, details: TestDetails): void {
-  counter.testCount++;
+  counter.total++;
 
   if (details.status === 'skipped') {
-    counter.skipCount++;
+    counter.skipped++;
   } else if (details.status === 'todo') {
-    counter.todoCount = (counter.todoCount ?? 0) + 1;
+    counter.todo = (counter.todo ?? 0) + 1;
   } else if (details.status === 'failed') {
-    counter.failCount++;
+    counter.failed++;
     (details.assertions ?? []).forEach((assertion) => {
       if (!assertion.passed && assertion.todo === false) {
-        counter.errorCount = (counter.errorCount ?? 0) + 1;
+        counter.assertionsFailed = (counter.assertionsFailed ?? 0) + 1;
       }
     });
   } else if (details.status === 'passed') {
-    counter.passCount++;
+    counter.passed++;
   }
 }

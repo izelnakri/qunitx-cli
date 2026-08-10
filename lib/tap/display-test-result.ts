@@ -1,5 +1,5 @@
 import { dumpYaml } from './dump-yaml.ts';
-import { processOutput, type Output } from '../reporters/output.ts';
+import { processConsole, type Console } from '../console.ts';
 import { indentString } from '../utils/indent-string.ts';
 import type { TestDetails } from '../reporters/types.ts';
 import type { FailureInfo } from '../reporters/failure.ts';
@@ -30,20 +30,20 @@ export function displayTestResult(
   testNumber: number,
   details: TestDetails,
   failures: FailureInfo[] = [],
-  output: Output = processOutput,
+  output: Console = processConsole,
 ): void {
   // NOTE: https://github.com/qunitjs/qunit/blob/master/src/html-reporter/diff.js
   const name = details.fullName.join(' | ');
 
   if (details.status === 'skipped') {
-    output.write(`ok ${testNumber} ${name} # skip\n`);
+    output.log(`ok ${testNumber} ${name} # skip\n`);
   } else if (details.status === 'todo') {
-    output.write(`not ok ${testNumber} ${name} # TODO\n`);
+    output.log(`not ok ${testNumber} ${name} # TODO\n`);
   } else if (details.status === 'failed') {
-    output.write(`not ok ${testNumber} ${name} # (${details.runtime.toFixed(0)} ms)\n`);
+    output.log(`not ok ${testNumber} ${name} # (${details.runtime.toFixed(0)} ms)\n`);
     failures.forEach((failure) => {
-      output.write('  ---\n');
-      output.write(
+      output.log('  ---\n');
+      output.log(
         indentString(
           dumpYaml({
             name: `Assertion #${failure.index}`,
@@ -57,10 +57,10 @@ export function displayTestResult(
           4,
         ),
       );
-      output.write('  ...\n');
+      output.log('  ...\n');
     });
   } else if (details.status === 'passed') {
-    output.write(`ok ${testNumber} ${name} # (${details.runtime.toFixed(0)} ms)\n`);
+    output.log(`ok ${testNumber} ${name} # (${details.runtime.toFixed(0)} ms)\n`);
   }
 }
 

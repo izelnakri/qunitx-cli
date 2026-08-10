@@ -1,8 +1,8 @@
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 import { outputDir } from '../helpers/temp-dir.ts';
-import * as Qunitx from '../../lib/api/index.ts';
-import type { RunOptions } from '../../lib/api/options.ts';
-import type { RunResult } from '../../lib/api/result.ts';
+import * as QUnitX from '../../lib/api/index.ts';
+import type { UserRunOptions } from '../../lib/api/options.ts';
+import type { RunResult } from '../../lib/api/run.ts';
 import type { WatchSession } from '../../lib/api/watch.ts';
 import type { RunSession } from '../../lib/api/session.ts';
 
@@ -29,11 +29,11 @@ import type { RunSession } from '../../lib/api/session.ts';
  * }
  * ```
  */
-export async function apiRun(options: RunOptions): Promise<RunResult> {
+export async function apiRun(options: UserRunOptions): Promise<RunResult> {
   await using output = outputDir('api-run');
   const permit = await acquireBrowser();
   try {
-    return await Qunitx.run({ output: output.path, ...options });
+    return await QUnitX.run({ output: output.path, ...options });
   } finally {
     permit.release();
   }
@@ -53,12 +53,12 @@ export async function apiRun(options: RunOptions): Promise<RunResult> {
  * ```
  */
 export async function withWatch<T>(
-  options: RunOptions,
+  options: UserRunOptions,
   body: (session: WatchSession) => Promise<T> | T,
 ): Promise<T> {
   await using output = outputDir('api-watch');
   const permit = await acquireBrowser();
-  const session = await Qunitx.watch({ output: output.path, ...options });
+  const session = await QUnitX.watch({ output: output.path, ...options });
   try {
     return await body(session);
   } finally {
@@ -80,12 +80,12 @@ export async function withWatch<T>(
  * ```
  */
 export async function withRunSession<T>(
-  options: RunOptions,
+  options: UserRunOptions,
   body: (session: RunSession) => Promise<T> | T,
 ): Promise<T> {
   await using output = outputDir('api-session');
   const permit = await acquireBrowser();
-  const session = await Qunitx.runSession({ output: output.path, ...options });
+  const session = await QUnitX.runSession({ output: output.path, ...options });
   try {
     return await body(session);
   } finally {
@@ -94,7 +94,7 @@ export async function withRunSession<T>(
   }
 }
 
-/** Collects everything written to a `stdout`/`stderr` option, for asserting on reporter output. */
+/** Collects everything written through a run's `console`, for asserting on reporter output. */
 export function captureStream(): { write(text: string): void; text(): string } {
   const chunks: string[] = [];
 

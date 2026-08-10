@@ -21,7 +21,7 @@ module('Flags | --output', { concurrency: true }, (_hooks, moduleMetadata) => {
     );
 
     assert.passingTestCaseFor(result, { testNo: 1, moduleName: '{{moduleName}}' });
-    assert.tapResult(result, { testCount: 3 });
+    assert.tapResult(result, { total: 3 });
 
     const [indexStat, testsStat] = await Promise.allSettled([
       fs.stat(`${customOutput}/index.html`),

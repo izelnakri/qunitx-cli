@@ -14,15 +14,15 @@
  * each) so each bench iteration measures true steady-state rebuild cost — the
  * 2nd+ save in watch mode, after the module graph is already hot.
  */
-import esbuild from "esbuild";
-import { rm, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import esbuild from 'esbuild';
+import { rm, mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
-const PROJECT_ROOT = new URL("..", import.meta.url).pathname;
+const PROJECT_ROOT = new URL('..', import.meta.url).pathname;
 // Fixtures must live inside the project tree so Node's module resolution can find `qunitx`
 // by walking up to the project's node_modules. /tmp would have no node_modules to find.
-const FIXTURE_DIR = join(PROJECT_ROOT, "tmp", "bench-esbuild-fixtures");
+const FIXTURE_DIR = join(PROJECT_ROOT, 'tmp', 'bench-esbuild-fixtures');
 await rm(FIXTURE_DIR, { recursive: true, force: true });
 await mkdir(FIXTURE_DIR, { recursive: true });
 
@@ -32,31 +32,34 @@ await mkdir(FIXTURE_DIR, { recursive: true });
 const ALL_PATHS: string[] = [];
 for (let i = 0; i < 30; i++) {
   const filePath = join(FIXTURE_DIR, `fixture-${i}.ts`);
-  await writeFile(filePath, [
-    `import { module, test } from 'qunitx';`,
-    `module('Fixture ${i}', function() {`,
-    `  test('fixture test ${i}a', function(assert) { assert.ok(true); });`,
-    `  test('fixture test ${i}b', function(assert) { assert.ok(true); });`,
-    `});`,
-  ].join("\n"));
+  await writeFile(
+    filePath,
+    [
+      `import { module, test } from 'qunitx';`,
+      `module('Fixture ${i}', function() {`,
+      `  test('fixture test ${i}a', function(assert) { assert.ok(true); });`,
+      `  test('fixture test ${i}b', function(assert) { assert.ok(true); });`,
+      `});`,
+    ].join('\n'),
+  );
   ALL_PATHS.push(filePath);
 }
 
-const PATHS_3  = ALL_PATHS.slice(0, 3);
+const PATHS_3 = ALL_PATHS.slice(0, 3);
 const PATHS_10 = ALL_PATHS.slice(0, 10);
 const PATHS_30 = ALL_PATHS;
 
 function buildOptions(paths: string[]): esbuild.BuildOptions {
   return {
     stdin: {
-      contents: paths.map((p) => `import "${p}";`).join("\n"),
+      contents: paths.map((p) => `import "${p}";`).join('\n'),
       resolveDir: FIXTURE_DIR,
     },
     bundle: true,
     write: false,
     keepNames: true,
-    legalComments: "none",
-    logLevel: "silent",
+    legalComments: 'none',
+    logLevel: 'silent',
   };
 }
 
@@ -65,24 +68,36 @@ function bundle(paths: string[]) {
 }
 
 // ─── fresh build ─────────────────────────────────────────────────────────────
-Deno.bench("esbuild: fresh build, 3 test files", {
-  group: "esbuild-fresh",
-  baseline: true,
-}, async () => {
-  await bundle(PATHS_3);
-});
+Deno.bench(
+  'esbuild: fresh build, 3 test files',
+  {
+    group: 'esbuild-fresh',
+    baseline: true,
+  },
+  async () => {
+    await bundle(PATHS_3);
+  },
+);
 
-Deno.bench("esbuild: fresh build, 10 test files", {
-  group: "esbuild-fresh",
-}, async () => {
-  await bundle(PATHS_10);
-});
+Deno.bench(
+  'esbuild: fresh build, 10 test files',
+  {
+    group: 'esbuild-fresh',
+  },
+  async () => {
+    await bundle(PATHS_10);
+  },
+);
 
-Deno.bench("esbuild: fresh build, 30 test files", {
-  group: "esbuild-fresh",
-}, async () => {
-  await bundle(PATHS_30);
-});
+Deno.bench(
+  'esbuild: fresh build, 30 test files',
+  {
+    group: 'esbuild-fresh',
+  },
+  async () => {
+    await bundle(PATHS_30);
+  },
+);
 
 // ─── incremental rebuild (watch mode) ────────────────────────────────────────
 // Contexts are warmed with one initial rebuild before any bench iteration runs.
@@ -96,26 +111,38 @@ const [ctx3, ctx10, ctx30] = await Promise.all([
 ]);
 await Promise.all([ctx3.rebuild(), ctx10.rebuild(), ctx30.rebuild()]);
 
-Deno.bench("esbuild: incremental rebuild, 3 test files", {
-  group: "esbuild-incremental",
-  baseline: true,
-}, async () => {
-  await ctx3.rebuild();
-});
+Deno.bench(
+  'esbuild: incremental rebuild, 3 test files',
+  {
+    group: 'esbuild-incremental',
+    baseline: true,
+  },
+  async () => {
+    await ctx3.rebuild();
+  },
+);
 
-Deno.bench("esbuild: incremental rebuild, 10 test files", {
-  group: "esbuild-incremental",
-}, async () => {
-  await ctx10.rebuild();
-});
+Deno.bench(
+  'esbuild: incremental rebuild, 10 test files',
+  {
+    group: 'esbuild-incremental',
+  },
+  async () => {
+    await ctx10.rebuild();
+  },
+);
 
-Deno.bench("esbuild: incremental rebuild, 30 test files", {
-  group: "esbuild-incremental",
-}, async () => {
-  await ctx30.rebuild();
-});
+Deno.bench(
+  'esbuild: incremental rebuild, 30 test files',
+  {
+    group: 'esbuild-incremental',
+  },
+  async () => {
+    await ctx30.rebuild();
+  },
+);
 
-globalThis.addEventListener("unload", async () => {
+globalThis.addEventListener('unload', async () => {
   await Promise.all([ctx3.dispose(), ctx10.dispose(), ctx30.dispose()]);
   await esbuild.stop();
   await rm(FIXTURE_DIR, { recursive: true, force: true });

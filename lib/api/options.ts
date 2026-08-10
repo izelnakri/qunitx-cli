@@ -1,25 +1,15 @@
-import { DotReporter } from '../reporters/dot.ts';
-import { GithubReporter } from '../reporters/github.ts';
 import { JUnitReporter } from '../reporters/junit.ts';
-import { SpecReporter } from '../reporters/spec.ts';
-import { TAPReporter } from '../reporters/tap.ts';
-import { processOutput, silentOutput, streamOutput, type Output } from '../reporters/output.ts';
-import { Collector, toTestResult } from './result.ts';
+import { BUILT_IN_REPORTERS } from '../reporters/index.ts';
+import { processConsole, silentConsole, type Console } from '../console.ts';
+import { APIReporter } from './reporter.ts';
 import { REPORTERS } from '../reporters/types.ts';
 import { Failure } from '../task/index.ts';
-import type { BrowserLog, Notice, Reporter, ReporterName } from '../reporters/types.ts';
-import type { TestResult } from './result.ts';
+import type { Reporter, ReporterName } from '../reporters/types.ts';
 import type { ConfigOptions } from '../setup/config.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
 
 /** `--reporter` by name, a reporter of your own, or `false` for none. */
 export type ReporterOption = ReporterName | Reporter | false;
-
-/** Anything that can take a chunk of text — a `node:fs` write stream, a socket, a fake. */
-export interface WritableLike {
-  /** Called with each chunk. The return value is ignored. */
-  write(text: string): unknown;
-}
 
 /**
  * Everything a run can be told to do. Every field is optional: `run()` with no arguments runs
@@ -29,11 +19,11 @@ export interface WritableLike {
  * `plugins` takes live esbuild plugin objects, and `cwd` picks the project.
  *
  * ```ts
- * const options: RunOptions = { inputs: ['test/'], filter: 'Cart', coverage: true };
+ * const options: UserRunOptions = { inputs: ['test/'], filter: 'Cart', coverage: true };
  * options.reporter; // undefined — nothing is printed unless you ask for it
  * ```
  */
-export interface RunOptions {
+export interface UserRunOptions {
   /**
    * Files, directories, globs, or `file.ts#34` line targets — the same grammar as the
    * command line's positional arguments. Defaults to `package.json#qunitx.inputs`.
@@ -61,21 +51,25 @@ export interface RunOptions {
   /** Write a JUnit XML report. `true` writes `<output>/junit.xml`; a string is a path. */
   junit?: boolean | string;
   /**
-   * Print the run. A built-in name (`'tap'`, `'spec'`, `'dot'`, `'github'`), your own
-   * {@link Reporter}, an array of either, or `false`. **Omitted means nothing is printed** —
-   * the result value is the output.
+   * Print the run with ONE reporter: a built-in name (`'tap'`, `'spec'`, `'dot'`, `'github'`),
+   * your own {@link Reporter}, or `false`. The same spelling as the CLI's `--reporter`.
+   *
+   * **Omitted means nothing is printed** — the result value is the output.
    */
-  reporter?: ReporterOption | ReadonlyArray<ReporterOption>;
-  /** Where a reporter writes. Defaults to `process.stdout` when a reporter is set. */
-  stdout?: WritableLike;
-  /** Where error-level output goes. Defaults to `stdout` when that is set, else `process.stderr`. */
-  stderr?: WritableLike;
-  /** Called as each test finishes — the streaming half of `result.tests`. */
-  onTest?: (test: TestResult) => void;
-  /** Called for each of qunitx's own diagnostics. */
-  onNotice?: (notice: Notice) => void;
-  /** Called for each `console.*` call and uncaught error from the page. */
-  onBrowserLog?: (log: BrowserLog) => void;
+  reporter?: ReporterOption;
+  /**
+   * Print the run with SEVERAL. Mutually exclusive with {@link UserRunOptions.reporter}: pass
+   * `reporter` for one, `reporters` for many, and {@link validate} rejects both at once.
+   */
+  reporters?: ReadonlyArray<ReporterOption>;
+  /**
+   * Where the run's text goes. Defaults to the process streams when a reporter is NAMED, and to
+   * {@link silentConsole} otherwise — so a programmatic run prints nothing unless it was asked to.
+   *
+   * Set it to capture the built-in reporters' output, which is the only way to reach it:
+   * `console: streamConsole(myBuffer)`.
+   */
+  console?: Console;
   /** Directory for the compiled bundle and HTML output. Defaults to `'tmp'`. */
   output?: string;
   /** Port for the local test server. Defaults to 1234, incrementing on conflict. */
@@ -105,43 +99,6 @@ export interface RunOptions {
    * An already-aborted signal short-circuits: no browser is launched at all.
    */
   signal?: AbortSignal;
-}
-
-/**
- * The options a daemon run accepts: everything from {@link RunOptions} that survives a socket.
- *
- * A daemon run happens in another process, so a plugin object, a reporter instance, a callback
- * and a `plugins` array cannot come along — they are functions, and functions do not serialize.
- * Rather than accepting them and silently dropping them, they are simply not in this type: the
- * limitation is a compile error at the call site instead of a surprise at run time.
- *
- * `reporter` narrows to the built-in names for the same reason. `stdout`/`stderr` stay, because
- * they are the *client's* sinks for the text the daemon streams back — they never cross.
- *
- * ```ts
- * const options: DaemonRunOptions = { inputs: ['test/'], reporter: 'tap' };
- * options.reporter; // 'tap' — a name, not an instance
- * ```
- */
-export interface DaemonRunOptions extends Omit<
-  RunOptions,
-  'reporter' | 'plugins' | 'onTest' | 'onNotice' | 'onBrowserLog' | 'open' | 'signal'
-> {
-  /** A built-in reporter's name, several of them, or `false`. Instances cannot cross a socket. */
-  reporter?: ReporterName | ReadonlyArray<ReporterName> | false;
-}
-
-/**
- * The reporters and output a set of options resolves to, plus the collector that will observe
- * the run either way.
- */
-export interface ResolvedReporting {
-  /** What to hand `Config.setup` as `reporters`. Always ends with the collector. */
-  reporters: Reporter[];
-  /** Where those reporters write. */
-  output: Output;
-  /** The collector the result is built from. */
-  collector: Collector;
 }
 
 /**
@@ -189,15 +146,22 @@ const COVERAGE_FORMATS = ['lcov', 'html'];
  * }
  * ```
  */
-export function validate(options: RunOptions): void {
-  if (options.browser !== undefined && !BROWSERS.includes(options.browser)) {
+export function validate(userRunOptions: UserRunOptions): void {
+  if (userRunOptions.browser !== undefined && !BROWSERS.includes(userRunOptions.browser)) {
     throw InvalidOption({
       option: 'browser',
-      value: options.browser,
+      value: userRunOptions.browser,
       expected: `one of ${BROWSERS.join(', ')}`,
     });
   }
-  for (const entry of Array.isArray(options.reporter) ? options.reporter : [options.reporter]) {
+  if (userRunOptions.reporter !== undefined && userRunOptions.reporters !== undefined) {
+    throw InvalidOption({
+      option: 'reporters',
+      value: userRunOptions.reporters,
+      expected: '`reporter` for one reporter or `reporters` for several, not both',
+    });
+  }
+  for (const entry of getReportersOf(userRunOptions)) {
     if (typeof entry === 'string' && !(REPORTERS as readonly string[]).includes(entry)) {
       throw InvalidOption({
         option: 'reporter',
@@ -206,7 +170,8 @@ export function validate(options: RunOptions): void {
       });
     }
   }
-  const formats = typeof options.coverage === 'object' ? (options.coverage.formats ?? []) : [];
+  const formats =
+    typeof userRunOptions.coverage === 'object' ? (userRunOptions.coverage.formats ?? []) : [];
   for (const format of formats) {
     if (!COVERAGE_FORMATS.includes(format)) {
       throw InvalidOption({
@@ -216,161 +181,102 @@ export function validate(options: RunOptions): void {
       });
     }
   }
-  if (options.port !== undefined && !isPort(options.port)) {
-    throw InvalidOption({ option: 'port', value: options.port, expected: 'an integer 0-65535' });
+  const port = userRunOptions.port;
+  if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port <= 65535)) {
+    throw InvalidOption({ option: 'port', value: port, expected: 'an integer 0-65535' });
   }
-  if (options.timeout !== undefined && !(Number.isFinite(options.timeout) && options.timeout > 0)) {
+  if (
+    userRunOptions.timeout !== undefined &&
+    !(Number.isFinite(userRunOptions.timeout) && userRunOptions.timeout > 0)
+  ) {
     throw InvalidOption({
       option: 'timeout',
-      value: options.timeout,
+      value: userRunOptions.timeout,
       expected: 'a positive number of milliseconds',
     });
   }
 }
 
-function isPort(value: number): boolean {
-  return Number.isInteger(value) && value >= 0 && value <= 65535;
+/**
+ * The reporters asked for, however they were spelled — `reporter` for one, `reporters` for many.
+ * {@link validate} has already refused both at once, so reading them in this order is total.
+ */
+function getReportersOf(userRunOptions: UserRunOptions): ReadonlyArray<ReporterOption | undefined> {
+  return userRunOptions.reporters ?? [userRunOptions.reporter];
 }
 
 /**
- * Accepts the shorthands: a single path, a list of paths, or the full options object. So
- * `run('test/')` and `run({ inputs: ['test/'] })` are the same call.
+ * Public options in, runner input out — this is the API's `Args.parse`, and the only reason
+ * {@link UserRunOptions} and `ConfigOptions` are separate types.
+ *
+ * Takes the same shorthands every verb does: a single path, a list of paths, or the options
+ * object, so `run('test/')` and `run({ inputs: ['test/'] })` reach here identically.
+ *
+ * `ConfigOptions` extends the CLI's parsed flags, so its shape is the flag grammar's: `htmlPaths`,
+ * `coverageFormats`, `portExplicit`. Publishing that would make every flag rename a breaking API
+ * change and would expose `portExplicit`, which only exists to record whether the user typed
+ * `--port`. This is where the two vocabularies meet, and it is the only place that knows both.
+ *
+ * The returned `reporters` is a fresh array, and typed as always present, so a caller with a
+ * reporter of its own can push onto it before handing the whole thing to `Config.setup`.
  *
  * ```ts
- * normalizeOptions('test/cart-test.ts').inputs; // ['test/cart-test.ts']
- * normalizeOptions(['a.ts', 'b.ts']).inputs; // ['a.ts', 'b.ts']
- * normalizeOptions({ filter: 'Cart' }).filter; // 'Cart'
+ * import * as Options from './options.ts';
+ *
+ * Options.from('test/cart-test.ts').inputs; // ['test/cart-test.ts'] — the bare-path shorthand
+ * Options.from({ coverage: { formats: ['lcov'] } }).coverageFormats; // ['lcov']
+ * Options.from({ html: ['test/index.html'] }).htmlPaths; // ['test/index.html']
  * ```
  */
-export function normalizeOptions(options: RunOptions | string | string[] = {}): RunOptions {
-  if (typeof options === 'string') return { inputs: [options] };
-  if (Array.isArray(options)) return { inputs: options };
-
-  return options;
-}
-
-/**
- * Builds the run's reporter set and output stream.
- *
- * The default is silence: with no `reporter`, nothing is printed and the run's diagnostics exist
- * only as data on the result. Naming one opts back into text, and `stdout` says where it goes.
- *
- * ```ts
- * resolveReporting({}).reporters.length; // 1 — the collector, which prints nothing
- * resolveReporting({ reporter: 'tap' }).reporters.length; // 2 — the collector, then TAP
- * ```
- */
-export function resolveReporting(options: RunOptions): ResolvedReporting {
-  const collector = new Collector();
-  const requested = (Array.isArray(options.reporter) ? options.reporter : [options.reporter])
-    .filter((entry): entry is ReporterName | Reporter => Boolean(entry))
-    .map(instantiate);
-  // The JUnit reporter is additive rather than a choice of format, exactly as `--junit` is.
-  if (options.junit) requested.push(new JUnitReporter());
-  const callbacks = callbackReporter(options);
-  if (callbacks) requested.push(callbacks);
+export function from(
+  input: UserRunOptions | string | string[] = {},
+): ConfigOptions & { reporters: Reporter[] } {
+  const userRunOptions =
+    typeof input === 'string' || Array.isArray(input) ? { inputs: [input].flat() } : input;
+  validate(userRunOptions);
+  const coverage = userRunOptions.coverage;
+  const requestedReporters = getReportersOf(userRunOptions);
+  // Recorder, then whatever was asked for, then artifacts — JUnit is additive rather than a choice
+  // of format, exactly as `--junit` is. Delivery isolates each reporter, so the order is not
+  // load-bearing; it just puts the run's own bookkeeping ahead of a caller's.
+  const reporters: Reporter[] = [new APIReporter()];
+  for (const entry of requestedReporters) {
+    if (entry) reporters.push(typeof entry === 'string' ? new BUILT_IN_REPORTERS[entry]() : entry);
+  }
+  if (userRunOptions.junit) reporters.push(new JUnitReporter());
 
   return {
-    // Collector FIRST: the fan-out in `Reporter.testEnd` is a plain forEach, so a reporter that
-    // throws stops the ones after it. Recording before printing means a broken custom reporter
-    // costs the caller some output, never the result.
-    reporters: [collector, ...requested],
-    output: resolveOutput(options),
-    collector,
-  };
-}
-
-/**
- * Translates public options into the internal {@link ConfigOptions}. The two are deliberately
- * separate types: the public one is stable, ergonomic, and free to disagree with the flag names
- * (`html` rather than `htmlPaths`, `coverage: { formats }` rather than two parallel fields).
- *
- * ```ts
- * const reporting = resolveReporting({});
- * toConfigOptions({ coverage: { formats: ['lcov'] } }, reporting).coverageFormats; // ['lcov']
- * toConfigOptions({ html: ['test/index.html'] }, reporting).htmlPaths; // ['test/index.html']
- * ```
- */
-export function toConfigOptions(options: RunOptions, reporting: ResolvedReporting): ConfigOptions {
-  const coverage = options.coverage;
-
-  // `withoutUndefined` is load-bearing, not tidiness: `Config.setup` merges these over
-  // `package.json#qunitx` with a spread, and a key present-but-undefined overwrites the
-  // package.json value with nothing. An option the caller did not set must not silently
-  // un-set the project's own configuration.
-  return withoutUndefined({
-    inputs: options.inputs,
-    cwd: options.cwd,
-    filter: options.filter,
-    browser: options.browser,
-    timeout: options.timeout,
-    failFast: options.failFast,
-    onlyFailed: options.onlyFailed,
-    changedSince: options.changedSince,
+    inputs: userRunOptions.inputs,
+    cwd: userRunOptions.cwd,
+    filter: userRunOptions.filter,
+    browser: userRunOptions.browser,
+    timeout: userRunOptions.timeout,
+    failFast: userRunOptions.failFast,
+    onlyFailed: userRunOptions.onlyFailed,
+    changedSince: userRunOptions.changedSince,
     coverage: coverage === undefined ? undefined : Boolean(coverage),
     coverageFormats: typeof coverage === 'object' ? (coverage.formats ?? []) : undefined,
-    junit: options.junit,
-    output: options.output,
-    port: options.port,
+    junit: userRunOptions.junit,
+    output: userRunOptions.output,
+    port: userRunOptions.port,
     // An explicitly requested port must not silently slide to the next free one — the caller
     // picked it because something else is about to connect there.
-    portExplicit: options.port === undefined ? undefined : true,
-    extensions: options.extensions,
-    htmlPaths: options.html,
-    before: options.before,
-    after: options.after,
-    debug: options.debug,
-    open: options.open,
-    esbuildPlugins: options.plugins,
-    reporters: reporting.reporters,
-    reporterOutput: reporting.output,
-  });
-}
-
-/** Drops keys whose value is `undefined`, so a spread over defaults leaves them alone. */
-function withoutUndefined<T extends object>(value: T): T {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
-}
-
-const BUILT_IN: Record<ReporterName, new () => Reporter> = {
-  tap: TAPReporter,
-  spec: SpecReporter,
-  dot: DotReporter,
-  github: GithubReporter,
-};
-
-function instantiate(entry: ReporterName | Reporter): Reporter {
-  return typeof entry === 'string' ? new BUILT_IN[entry]() : entry;
-}
-
-/**
- * Silence unless something is going to be printed.
- *
- * A *named* reporter is a request for the CLI's text, so it defaults to the process streams. A
- * reporter **object** is not: it is a request to observe the run programmatically, and turning on
- * the host's stdout because someone passed a collector would break the silent-by-default promise
- * in the exact case they were being careful. Naming `stdout`/`stderr` opts in either way — and
- * does so even with no reporter at all, which is how you get just the `#` diagnostics.
- */
-function resolveOutput(options: RunOptions): Output {
-  if (options.stdout) {
-    return streamOutput(options.stdout, options.stderr ?? options.stdout);
-  } else if (options.stderr) {
-    return streamOutput(process.stdout, options.stderr);
-  }
-  const requested = Array.isArray(options.reporter) ? options.reporter : [options.reporter];
-
-  return requested.some((entry) => typeof entry === 'string') ? processOutput : silentOutput;
-}
-
-/** Wraps the three convenience callbacks into one reporter, or nothing when none were given. */
-function callbackReporter(options: RunOptions): Reporter | null {
-  const { onTest, onNotice, onBrowserLog } = options;
-  if (!onTest && !onNotice && !onBrowserLog) return null;
-
-  return {
-    onTestEnd: onTest && ((_config, details) => onTest(toTestResult(details))),
-    onNotice: onNotice && ((_config, notice) => onNotice(notice)),
-    onBrowserLog: onBrowserLog && ((_config, log) => onBrowserLog(log)),
+    portExplicit: userRunOptions.port === undefined ? undefined : true,
+    extensions: userRunOptions.extensions,
+    htmlPaths: userRunOptions.html,
+    before: userRunOptions.before,
+    after: userRunOptions.after,
+    debug: userRunOptions.debug,
+    open: userRunOptions.open,
+    esbuildPlugins: userRunOptions.plugins,
+    signal: userRunOptions.signal,
+    reporters,
+    // A reporter NAME asks for the CLI's text; a reporter OBJECT is a request to observe, not to
+    // print, so it stays silent. A `console` of your own wins either way.
+    console:
+      userRunOptions.console ??
+      (requestedReporters.some((entry) => typeof entry === 'string')
+        ? processConsole
+        : silentConsole),
   };
 }

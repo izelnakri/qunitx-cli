@@ -508,9 +508,9 @@ export function handleWatchEvent(
     ? filePath.slice(config.projectRoot.length)
     : filePath;
   const rule = magenta().bold('==================================================================');
-  Reporter.notice(config, { level: 'info', message: rule });
-  Reporter.notice(config, { level: 'info', message: `${colorEvent(event)} ${displayPath}` });
-  Reporter.notice(config, { level: 'info', message: rule });
+  Reporter.info(config, rule);
+  Reporter.info(config, `${colorEvent(event)} ${displayPath}`);
+  Reporter.info(config, rule);
 
   if (event === 'add') config.state.watch.justAddedAt.set(filePath, Date.now());
 
@@ -536,10 +536,8 @@ export function handleWatchEvent(
   return result
     .then(() => onFinishFunc?.(filePath, event))
     .catch((error) =>
-      Reporter.notice(config, {
-        level: 'error',
+      Reporter.error(config, `${red('Build error:')} ${error.message || error}`, {
         stream: 'error',
-        message: `${red('Build error:')} ${error.message || error}`,
       }),
     )
     .finally(() => {

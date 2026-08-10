@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import * as Qunitx from '../../lib/api/index.ts';
+import * as QUnitX from '../../lib/api/index.ts';
 import { tempDir } from '../helpers/temp-dir.ts';
 import '../helpers/custom-asserts.ts';
 
@@ -22,7 +22,7 @@ module('API | init', { concurrency: true }, () => {
   test('reports the files it created', async (assert) => {
     await using dir = await project();
 
-    const result = await Qunitx.init({ cwd: dir.path });
+    const result = await QUnitX.init({ cwd: dir.path });
 
     assert.deepEqual(result.skipped, []);
     assert.true(
@@ -38,7 +38,7 @@ module('API | init', { concurrency: true }, () => {
   test('writes the qunitx block into package.json', async (assert) => {
     await using dir = await project();
 
-    await Qunitx.init({ cwd: dir.path });
+    await QUnitX.init({ cwd: dir.path });
     const packageJSON = JSON.parse(
       await fs.readFile(path.join(dir.path, 'package.json'), 'utf8'),
     ) as { qunitx?: { htmlPaths?: string[] } };
@@ -49,8 +49,8 @@ module('API | init', { concurrency: true }, () => {
   test('never overwrites — a second call reports skips instead', async (assert) => {
     await using dir = await project();
 
-    await Qunitx.init({ cwd: dir.path });
-    const again = await Qunitx.init({ cwd: dir.path });
+    await QUnitX.init({ cwd: dir.path });
+    const again = await QUnitX.init({ cwd: dir.path });
 
     assert.deepEqual(again.written, [], 'nothing was rewritten');
     assert.deepEqual(again.skipped, ['test/tests.html']);
@@ -59,7 +59,7 @@ module('API | init', { concurrency: true }, () => {
   test('honours the html paths it is given', async (assert) => {
     await using dir = await project();
 
-    const result = await Qunitx.init({ cwd: dir.path, htmlPaths: ['test/custom.html'] });
+    const result = await QUnitX.init({ cwd: dir.path, htmlPaths: ['test/custom.html'] });
 
     assert.true(result.written.some((file) => file.endsWith('test/custom.html')));
   });
@@ -67,10 +67,10 @@ module('API | init', { concurrency: true }, () => {
   test('a directory with no package.json above it is a named failure', async (assert) => {
     await using dir = await tempDir('api-scaffold-bare');
     // os.tmpdir() has no package.json above it on any supported platform, so the walk bottoms out.
-    const outcome = await Qunitx.init({ cwd: dir.path }).result();
+    const outcome = await QUnitX.init({ cwd: dir.path }).result();
 
     assert.equal(
-      Qunitx.Failure.is(outcome) ? outcome.code : 'not-a-failure',
+      QUnitX.Failure.is(outcome) ? outcome.code : 'not-a-failure',
       'ProjectRootNotFound',
     );
   });
@@ -80,7 +80,7 @@ module('API | generate', { concurrency: true }, () => {
   test('writes the file and says where', async (assert) => {
     await using dir = await project();
 
-    const result = await Qunitx.generate({ cwd: dir.path, target: 'test/login-test.ts' });
+    const result = await QUnitX.generate({ cwd: dir.path, target: 'test/login-test.ts' });
 
     assert.true(result.created);
     assert.true(result.path.endsWith('test/login-test.ts'));
@@ -90,7 +90,7 @@ module('API | generate', { concurrency: true }, () => {
   test('derives the module name from the path, minus the test/ segment', async (assert) => {
     await using dir = await project();
 
-    const { path: written } = await Qunitx.generate({
+    const { path: written } = await QUnitX.generate({
       cwd: dir.path,
       target: 'test/users/contact-details-test.ts',
     });
@@ -101,7 +101,7 @@ module('API | generate', { concurrency: true }, () => {
   test('appends .js when the target has no extension', async (assert) => {
     await using dir = await project();
 
-    const result = await Qunitx.generate({ cwd: dir.path, target: 'test/login-test' });
+    const result = await QUnitX.generate({ cwd: dir.path, target: 'test/login-test' });
 
     assert.true(result.path.endsWith('test/login-test.js'));
   });
@@ -110,9 +110,9 @@ module('API | generate', { concurrency: true }, () => {
     await using dir = await project();
     const target = 'test/login-test.ts';
 
-    const first = await Qunitx.generate({ cwd: dir.path, target });
+    const first = await QUnitX.generate({ cwd: dir.path, target });
     await fs.writeFile(first.path, '// mine\n');
-    const second = await Qunitx.generate({ cwd: dir.path, target });
+    const second = await QUnitX.generate({ cwd: dir.path, target });
 
     assert.false(second.created);
     assert.equal(await fs.readFile(second.path, 'utf8'), '// mine\n', 'left exactly as it was');

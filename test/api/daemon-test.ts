@@ -1,8 +1,9 @@
 import { module, test } from 'qunitx';
-import { daemon } from '../../lib/api/index.ts';
+import { Daemon } from '../../lib/api/index.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 import { outputDir } from '../helpers/temp-dir.ts';
 import '../helpers/custom-asserts.ts';
+import { streamConsole } from '../../lib/console.ts';
 
 const PASSING = 'test/fixtures/passing-tests.ts';
 const FAILING = 'test/fixtures/failing-tests.ts';
@@ -14,19 +15,19 @@ const FAILING = 'test/fixtures/failing-tests.ts';
 // there is covered by the CLI suite, and doubling it doubles the flakiest lane's cost.
 const SKIP = process.platform === 'win32';
 
-module('API | daemon', { concurrency: false, skip: SKIP }, () => {
+module('API | Daemon', { concurrency: false, skip: SKIP }, () => {
   test('status reports no daemon before one is started', async (assert) => {
-    await daemon.stop();
+    await Daemon.stop();
 
-    assert.deepEqual(await daemon.status(), { running: false });
+    assert.deepEqual(await Daemon.status(), { running: false });
   });
 
   test('start brings one up, status describes it, stop takes it down', async (assert) => {
     const permit = await acquireBrowser();
     try {
-      assert.true(await daemon.start(), 'started');
+      assert.true(await Daemon.start(), 'started');
 
-      const running = await daemon.status();
+      const running = await Daemon.status();
       assert.true(running.running);
       if (running.running) {
         assert.true(running.pid > 0, 'with a pid');
@@ -34,8 +35,8 @@ module('API | daemon', { concurrency: false, skip: SKIP }, () => {
         assert.includes(running.socketPath, 'qunitx');
       }
 
-      assert.true(await daemon.stop(), 'stopped');
-      assert.deepEqual(await daemon.status(), { running: false });
+      assert.true(await Daemon.stop(), 'stopped');
+      assert.deepEqual(await Daemon.status(), { running: false });
     } finally {
       permit.release();
     }
@@ -44,18 +45,18 @@ module('API | daemon', { concurrency: false, skip: SKIP }, () => {
   test('start is idempotent', async (assert) => {
     const permit = await acquireBrowser();
     try {
-      assert.true(await daemon.start());
-      assert.true(await daemon.start(), 'a second call is a liveness probe, not a second daemon');
+      assert.true(await Daemon.start());
+      assert.true(await Daemon.start(), 'a second call is a liveness probe, not a second daemon');
     } finally {
-      await daemon.stop();
+      await Daemon.stop();
       permit.release();
     }
   });
 
   test('stop on nothing reports false rather than failing', async (assert) => {
-    await daemon.stop();
+    await Daemon.stop();
 
-    assert.false(await daemon.stop(), 'nothing was running');
+    assert.false(await Daemon.stop(), 'nothing was running');
   });
 
   // From here on the tests SHARE one daemon: the first spawns it, the rest reuse it, and only
@@ -69,9 +70,9 @@ module('API | daemon', { concurrency: false, skip: SKIP }, () => {
     try {
       // Spawned explicitly rather than left to `run`'s auto-spawn, so a spawn that never became
       // reachable is reported as such instead of surfacing as `DaemonUnreachable` mid-assertion.
-      assert.true(await daemon.start(), 'the shared daemon came up');
+      assert.true(await Daemon.start(), 'the shared daemon came up');
 
-      const result = await daemon.run({ inputs: [PASSING], output: output.path });
+      const result = await Daemon.run({ inputs: [PASSING], output: output.path });
 
       assert.true(result.ok);
       assert.equal(result.counts.total, 3);
@@ -86,7 +87,7 @@ module('API | daemon', { concurrency: false, skip: SKIP }, () => {
     await using output = outputDir('api-daemon-fail');
     const permit = await acquireBrowser();
     try {
-      const result = await daemon.run({ inputs: [FAILING], output: output.path });
+      const result = await Daemon.run({ inputs: [FAILING], output: output.path });
 
       assert.false(result.ok);
       assert.true(result.failures.length > 0);
@@ -100,8 +101,8 @@ module('API | daemon', { concurrency: false, skip: SKIP }, () => {
     await using output = outputDir('api-daemon-warm');
     const permit = await acquireBrowser();
     try {
-      const first = await daemon.run({ inputs: [PASSING], output: output.path });
-      const second = await daemon.run({ inputs: [PASSING], output: output.path });
+      const first = await Daemon.run({ inputs: [PASSING], output: output.path });
+      const second = await Daemon.run({ inputs: [PASSING], output: output.path });
 
       assert.equal(first.counts.total, 3);
       assert.equal(second.counts.total, 3, 'reuse does not leak state between runs');
@@ -114,23 +115,23 @@ module('API | daemon', { concurrency: false, skip: SKIP }, () => {
     }
   });
 
-  test('a named reporter streams the daemon text into the given stdout', async (assert) => {
+  test('a named reporter streams the daemon text into the given console', async (assert) => {
     await using output = outputDir('api-daemon-tap');
     const chunks: string[] = [];
     const permit = await acquireBrowser();
     try {
-      const result = await daemon.run({
+      const result = await Daemon.run({
         inputs: [PASSING],
         output: output.path,
         reporter: 'tap',
-        stdout: { write: (text) => void chunks.push(text) },
+        console: streamConsole({ write: (text: string) => void chunks.push(text) }),
       });
 
       assert.includes(chunks.join(''), 'TAP version 13', 'the daemon-side output arrives here');
       assert.equal(result.counts.passed, 3, 'and the structured result comes back too');
     } finally {
       // The last of the shared-daemon tests owns the teardown.
-      await daemon.stop();
+      await Daemon.stop();
       permit.release();
     }
   });

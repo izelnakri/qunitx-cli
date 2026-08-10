@@ -4,8 +4,35 @@
 //
 // Type-only imports: erased at runtime, so this leaf module stays free of the
 // api/ dependency it names in its types.
-import type { DaemonRunOptions } from '../../api/options.ts';
-import type { RunResult } from '../../api/result.ts';
+import type { UserRunOptions } from '../../api/options.ts';
+import type { RunResult } from '../../api/run.ts';
+import type { ReporterName } from '../../reporters/types.ts';
+
+/**
+ * The options a daemon run accepts: everything from {@link UserRunOptions} that survives a socket.
+ *
+ * A daemon run happens in another process, so a plugin object and a reporter instance cannot come
+ * along — they are functions, and functions do not serialize. Rather than accepting them and
+ * silently dropping them, they are simply not in this type: the limitation is a compile error at
+ * the call site instead of a surprise at run time.
+ *
+ * `reporter` narrows to the built-in names for the same reason. `console` stays, because it is the
+ * *client's* console for the text the daemon streams back — it never crosses.
+ *
+ * ```ts
+ * const options: DaemonRunOptions = { inputs: ['test/'], reporter: 'tap' };
+ * options.reporter; // 'tap' — a name, not an instance
+ * ```
+ */
+export interface DaemonRunOptions extends Omit<
+  UserRunOptions,
+  'reporter' | 'reporters' | 'plugins' | 'open' | 'signal'
+> {
+  /** One built-in reporter by name, or `false`. An instance cannot cross a socket. */
+  reporter?: ReporterName | false;
+  /** Several built-in reporters by name. Mutually exclusive with `reporter`, as it is locally. */
+  reporters?: ReadonlyArray<ReporterName>;
+}
 
 /**
  * Client → daemon: request to execute a test run with the given argv/env in the daemon's persistent Chrome.

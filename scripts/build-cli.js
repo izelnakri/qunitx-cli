@@ -9,7 +9,7 @@
 // (esbuild, playwright-core, ws) remain external so they continue to be resolved from the
 // consumer's node_modules at runtime.
 import { build } from 'esbuild';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -19,29 +19,30 @@ const API_ENTRY = 'lib/api/index.ts';
 
 await mkdir('dist', { recursive: true });
 
-await Promise.all([
-  build({
-    entryPoints: ['cli.ts'],
-    bundle: true,
-    platform: 'node',
-    format: 'esm',
-    outfile: 'dist/cli.js',
-    external: EXTERNAL,
-    logLevel: 'warning',
-  }),
-  build({
-    entryPoints: [API_ENTRY],
-    bundle: true,
-    platform: 'node',
-    format: 'esm',
-    outfile: 'dist/index.js',
-    external: EXTERNAL,
-    logLevel: 'warning',
-  }),
-]);
-console.log('Built dist/cli.js and dist/index.js');
+// The bundles and the declarations read the same sources but write different trees, so nothing
+// downstream waits on the other — `tsc` is the slow half and now overlaps esbuild rather than
+// following it.
+await Promise.all([buildBundles(), buildTypes()]);
 
-await buildTypes();
+/** Bundles both npm entry points. */
+async function buildBundles() {
+  await Promise.all(
+    [
+      { entryPoints: ['cli.ts'], outfile: 'dist/cli.js' },
+      { entryPoints: [API_ENTRY], outfile: 'dist/index.js' },
+    ].map((entry) =>
+      build({
+        ...entry,
+        bundle: true,
+        platform: 'node',
+        format: 'esm',
+        external: EXTERNAL,
+        logLevel: 'warning',
+      }),
+    ),
+  );
+  console.log('Built dist/cli.js and dist/index.js');
+}
 
 /**
  * Emits the API's `.d.ts` tree.
@@ -54,28 +55,32 @@ await buildTypes();
  * TypeScript is configured instead of gaining a second one that only the build reads.
  */
 async function buildTypes() {
-  const result = spawnSync(
-    process.execPath,
-    [
-      path.join('node_modules', 'typescript', 'bin', 'tsc'),
-      API_ENTRY,
-      '--declaration',
-      '--emitDeclarationOnly',
-      '--noCheck',
-      '--skipLibCheck',
-      '--outDir',
-      TYPES_DIR,
-      '--module',
-      'nodenext',
-      '--moduleResolution',
-      'nodenext',
-      '--target',
-      'esnext',
-      '--allowImportingTsExtensions',
-    ],
-    { stdio: 'inherit' },
-  );
-  if (result.status !== 0) throw new Error(`tsc declaration emit failed (${result.status})`);
+  const status = await new Promise((resolve, reject) => {
+    const tsc = spawn(
+      process.execPath,
+      [
+        path.join('node_modules', 'typescript', 'bin', 'tsc'),
+        API_ENTRY,
+        '--declaration',
+        '--emitDeclarationOnly',
+        '--noCheck',
+        '--skipLibCheck',
+        '--outDir',
+        TYPES_DIR,
+        '--module',
+        'nodenext',
+        '--moduleResolution',
+        'nodenext',
+        '--target',
+        'esnext',
+        '--allowImportingTsExtensions',
+      ],
+      { stdio: 'inherit' },
+    );
+    tsc.once('error', reject);
+    tsc.once('close', resolve);
+  });
+  if (status !== 0) throw new Error(`tsc declaration emit failed (${status})`);
 
   await rewriteTsSpecifiers(TYPES_DIR);
   console.log(`Built ${TYPES_DIR}/`);

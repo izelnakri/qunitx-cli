@@ -46,9 +46,10 @@ const result = await run({
   output: 'tmp/js-api-example',
   coverage: true,
   junit: 'tmp/js-api-example/junit.xml',
-  // Omit `reporter` entirely and nothing is printed at all; `--verbose` opts into the CLI's
-  // spec output alongside the custom reporter, which runs either way.
-  reporter: verbose ? ['spec', slowestReporter] : slowestReporter,
+  // Omit both entirely and nothing is printed at all; `--verbose` opts into the CLI's spec
+  // output alongside the custom reporter, which runs either way. `reporter` takes one,
+  // `reporters` takes several — passing both is an InvalidOption.
+  ...(verbose ? { reporters: ['spec' as const, slowestReporter] } : { reporter: slowestReporter }),
 });
 
 report(result);

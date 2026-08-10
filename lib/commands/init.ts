@@ -3,6 +3,8 @@ import path from 'node:path';
 import { findProjectRoot } from '../utils/find-project-root.ts';
 import { pathExists } from '../utils/path-exists.ts';
 import { defaultProjectConfigValues } from '../setup/default-project-config-values.ts';
+import { Task } from '../task/index.ts';
+import type { ProjectRootNotFoundFailure } from '../utils/find-project-root.ts';
 import { readTemplate } from '../utils/read-template.ts';
 
 /**
@@ -37,29 +39,31 @@ export interface InitResult {
  * }
  * ```
  */
-export async function run(options: InitOptions = {}): Promise<InitResult> {
-  const projectRoot = await findProjectRoot(options.cwd);
-  const oldPackageJSON = JSON.parse(await fs.readFile(`${projectRoot}/package.json`, 'utf8'));
-  const existingQunitx = oldPackageJSON.qunitx || {};
-  const requestedHtmlPaths =
-    options.htmlPaths ?? process.argv.slice(2).filter((arg) => arg.endsWith('.html'));
-  const config = Object.assign({}, defaultProjectConfigValues, existingQunitx, {
-    htmlPaths:
-      requestedHtmlPaths.length > 0
-        ? requestedHtmlPaths
-        : existingQunitx.htmlPaths || ['test/tests.html'],
+export function run(options: InitOptions = {}): Task<InitResult, ProjectRootNotFoundFailure> {
+  return Task(async () => {
+    const projectRoot = await findProjectRoot(options.cwd);
+    const oldPackageJSON = JSON.parse(await fs.readFile(`${projectRoot}/package.json`, 'utf8'));
+    const existingQUnitX = oldPackageJSON.qunitx || {};
+    const requestedHtmlPaths =
+      options.htmlPaths ?? process.argv.slice(2).filter((arg) => arg.endsWith('.html'));
+    const config = Object.assign({}, defaultProjectConfigValues, existingQUnitX, {
+      htmlPaths:
+        requestedHtmlPaths.length > 0
+          ? requestedHtmlPaths
+          : existingQUnitX.htmlPaths || ['test/tests.html'],
+    });
+
+    const [html, , tsconfig] = await Promise.all([
+      writeTestsHTML(projectRoot, config, oldPackageJSON),
+      rewritePackageJSON(projectRoot, config, oldPackageJSON),
+      writeTSConfigIfNeeded(projectRoot),
+    ]);
+
+    return {
+      written: [...html.written, ...(tsconfig ? [tsconfig] : [])],
+      skipped: html.skipped,
+    };
   });
-
-  const [html, , tsconfig] = await Promise.all([
-    writeTestsHTML(projectRoot, config, oldPackageJSON),
-    rewritePackageJSON(projectRoot, config, oldPackageJSON),
-    writeTSConfigIfNeeded(projectRoot),
-  ]);
-
-  return {
-    written: [...html.written, ...(tsconfig ? [tsconfig] : [])],
-    skipped: html.skipped,
-  };
 }
 
 /**

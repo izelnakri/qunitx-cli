@@ -20,7 +20,7 @@ module('Inputs | file + folder', { concurrency: true }, (_hooks, moduleMetadata)
       { moduleName: `${folderName} | subdir-deeper-deep` },
       { moduleName: '{{moduleName}}' },
     ]);
-    assert.tapResult(result, { testCount: 12 });
+    assert.tapResult(result, { total: 12 });
   });
 
   test('runs a file and a folder together when all tests pass', async (assert, testMetadata) => {
@@ -37,7 +37,7 @@ module('Inputs | file + folder', { concurrency: true }, (_hooks, moduleMetadata)
       { moduleName: '{{moduleName}}' },
     ]);
     // folder: 2 files × 3 tests = 6; extra file: 3 tests → 9 total
-    assert.tapResult(result, { testCount: 9 });
+    assert.tapResult(result, { total: 9 });
   });
 
   test('runs a file and a folder together when the folder has failing tests', async (assert, testMetadata) => {
@@ -66,6 +66,6 @@ module('Inputs | file + folder', { concurrency: true }, (_hooks, moduleMetadata)
     );
     // folder (addFailingTests:true): 2 passing files×3 + 3 failing files×4 = 18 tests (9 pass, 9 fail)
     // extra passing-tests.js: 3 tests → grand total 21 tests (12 pass, 9 fail)
-    assert.tapResult(cmd, { testCount: 21, failCount: 9 });
+    assert.tapResult(cmd, { total: 21, failed: 9 });
   });
 });

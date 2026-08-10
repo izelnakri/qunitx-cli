@@ -2,6 +2,8 @@ import fs from 'node:fs/promises';
 import { findProjectRoot } from '../utils/find-project-root.ts';
 import { pathExists } from '../utils/path-exists.ts';
 import { readTemplate } from '../utils/read-template.ts';
+import { Task } from '../task/index.ts';
+import type { ProjectRootNotFoundFailure } from '../utils/find-project-root.ts';
 import { convertToPascalCase } from '../utils/convert-to-pascal-case.ts';
 
 /**
@@ -49,22 +51,24 @@ export interface GenerateOptions {
  * }
  * ```
  */
-export async function run(options?: GenerateOptions): Promise<GenerateResult> {
-  const target = options?.target ?? process.argv[3];
-  const projectRoot = await findProjectRoot(options?.cwd);
-  const moduleName = pathToModuleName(target);
-  const filePath =
-    target.endsWith('.js') || target.endsWith('.ts')
-      ? `${projectRoot}/${target}`
-      : `${projectRoot}/${target}.js`;
+export function run(options?: GenerateOptions): Task<GenerateResult, ProjectRootNotFoundFailure> {
+  return Task(async () => {
+    const target = options?.target ?? process.argv[3];
+    const projectRoot = await findProjectRoot(options?.cwd);
+    const moduleName = pathToModuleName(target);
+    const filePath =
+      target.endsWith('.js') || target.endsWith('.ts')
+        ? `${projectRoot}/${target}`
+        : `${projectRoot}/${target}.js`;
 
-  if (await pathExists(filePath)) return { path: filePath, created: false };
+    if (await pathExists(filePath)) return { path: filePath, created: false };
 
-  const testJSContent = await readTemplate('test.js');
-  await fs.mkdir(filePath.split('/').slice(0, -1).join('/'), { recursive: true });
-  await fs.writeFile(filePath, testJSContent.replace('{{moduleName}}', moduleName));
+    const testJSContent = await readTemplate('test.js');
+    await fs.mkdir(filePath.split('/').slice(0, -1).join('/'), { recursive: true });
+    await fs.writeFile(filePath, testJSContent.replace('{{moduleName}}', moduleName));
 
-  return { path: filePath, created: true };
+    return { path: filePath, created: true };
+  });
 }
 
 function pathToModuleName(filePath: string): string {
