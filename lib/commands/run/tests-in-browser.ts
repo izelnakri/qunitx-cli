@@ -854,7 +854,7 @@ async function runTestInsideHTMLFile(
   // startupMs / 80s testsJsMs / 25s per-test timer — a 60s hang is the exact window where
   // the test runner's 60s SIGTERM beats the daemon's 'done' message, leaving the client
   // with code=null instead of an exit code. Catch-block diagnostics then fire as for any
-  // other timeout, and failOnNonWatchMode rejects the group so the orchestrator finishes the
+  // other timeout, and the non-watch throw below rejects the group so the orchestrator finishes
   // run promptly — which is what lets the daemon write 'done' to its socket fast.
   page.on('close', resolveTestRace);
 
@@ -960,7 +960,10 @@ async function runTestInsideHTMLFile(
   } catch (error) {
     // Dumped once, here. The outcome branches below used to re-log the same error before their
     // own `# TIMEOUT:` line, printing every navigation failure twice.
-    dumpError(config, error);
+    Reporter.error(config, `${(error as Error)?.stack ?? String(error)}\n`, {
+      raw: true,
+      stream: 'both',
+    });
   } finally {
     clearTimeout(timeoutHandle);
     page.off('close', resolveTestRace);
@@ -979,7 +982,12 @@ async function runTestInsideHTMLFile(
   }
 
   const outcome = classifyRunOutcome(QUNIT_RESULT, doneReceived);
-  const failRun = () => failOnNonWatchMode(config.watch);
+  // Watch mode keeps going — the next save is the retry. Anything else throws, and
+  // `runConcurrentMode` turns the rejected group into an exit code; it owns the browser, the
+  // server and the process's fate, so nothing here cleans up or exits.
+  const failRun = () => {
+    if (!config.watch) throw new Error('Browser test run failed');
+  };
 
   if (outcome.kind === 'no-tests-ran') {
     // No 'done' arrived: either no QUnit tally at all, or a zero tally the runtime pre-initialised
@@ -1105,27 +1113,6 @@ export function reconcileUndeliveredResults(counter: Counter, result: QUnitResul
   // is a no-op on a clean run and keeps the three consistent after either correction above.
   counter.passed = Math.max(0, counter.total - counter.failed - counter.skipped - counter.todo);
   return undelivered;
-}
-
-/**
- * Emits a caught error verbatim on both streams — the shape `console.log(err)` +
- * `console.error(err)` produced, minus the `#` prefix a stack must not carry.
- */
-function dumpError(config: Config, error: unknown): void {
-  Reporter.error(config, `${(error as Error)?.stack ?? String(error)}\n`, {
-    raw: true,
-    stream: 'both',
-  });
-}
-
-/**
- * A run that timed out or stalled. Watch mode keeps going — the next save is the retry. Anything
- * else throws, and `runConcurrentMode` turns the rejected group into an exit code. It owns the
- * browser, the server and the process's fate; this function owns none of the three, which is why
- * the cleanup-and-exit arms it used to carry are gone.
- */
-function failOnNonWatchMode(watchMode: boolean | undefined): void {
-  if (!watchMode) throw new Error('Browser test run failed');
 }
 
 // Converts an absolute file path to a relative import path esbuild can resolve from the run's

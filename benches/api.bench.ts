@@ -174,7 +174,8 @@ Deno.bench('api: channel round-trips 10k events', { group: 'api-collect' }, asyn
   // dequeues rather than a true interleave; that is the shape a synchronous reporter produces.
   const drained = (async () => await channel.stream.forEach(() => {}))();
 
-  for (let index = 0; index < 10_000; index++) channel.reporter.onTestEnd?.(CONTEXT, details(index));
+  for (let index = 0; index < 10_000; index++)
+    channel.reporter.onTestEnd?.(CONTEXT, details(index));
   channel.close();
   await drained;
 });
