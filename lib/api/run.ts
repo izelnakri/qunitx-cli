@@ -242,14 +242,14 @@ export interface RunResult {
   /**
    * `console.*` calls and uncaught errors from the page — warnings and errors unless `debug`.
    *
-   * Capped at the most recent {@link MAX_BROWSER_LOGS}; `browserLogsTruncated` counts what was
+   * Capped at the most recent {@link MAX_BROWSER_LOGS}; `browserLogsDropped` counts what was
    * dropped. The cap is not tidiness: unlike tests and notices, page output is bounded by nothing
    * — one `for` loop around `console.warn` produced 50,001 entries and 252 MB of retained heap.
    * The newest are kept because they are the ones adjacent to the failure being diagnosed.
    */
   browserLogs: BrowserLog[];
   /** How many page-log entries were dropped to stay under the cap. `0` in every ordinary run. */
-  browserLogsTruncated: number;
+  browserLogsDropped: number;
   /** Line coverage, or `null` when `coverage` was not requested. */
   coverage: CoverageSummary | null;
   /** The JUnit XML document, when `junit` was requested. Written to disk as well. */
@@ -332,7 +332,7 @@ export function buildResult(config: ResolvedConfig, outcome: RunOutcome): RunRes
     failedFiles: Array.from(failedFiles),
     notices: reporter.notices.slice(),
     browserLogs: reporter.browserLogs.slice(),
-    browserLogsTruncated: reporter.browserLogsTruncated,
+    browserLogsDropped: reporter.browserLogsDropped,
     coverage: coverage ? summarizeCoverage(config) : null,
     junitXml,
     startedAt: outcome.startedAt,
