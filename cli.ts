@@ -155,6 +155,13 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   // daemon's own local run produced it inside the socket stream already.
   process.stdout.write('\n');
 
+  // First-time nudge toward the daemon, here rather than inside `run()`: it writes to stderr
+  // directly and is gated on a TTY, so from the JS API it printed something the caller never
+  // asked for, past whatever `console` they had set. A terminal concern, like the watch banner
+  // and the keyboard shortcuts. `Hint.shouldShow` owns the rest (CI, env opt-outs, sentinel).
+  const Hint = await import('./lib/commands/daemon/hint.ts');
+  await Hint.maybePrint({ durationMs: process.uptime() * 1000 });
+
   return exitAfterFlush(outcome.exitCode);
 })().catch(async (error) => {
   // The program's ONE crash boundary, and the two-tier rule at the very edge: a declared failure
