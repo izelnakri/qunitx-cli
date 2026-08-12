@@ -1,5 +1,11 @@
 import { module, test } from 'qunitx';
-import { CHANNEL_CAPACITY, EventsChannel } from '../../lib/api/reporter.ts';
+import {
+  APIReporter,
+  CHANNEL_CAPACITY,
+  EventsChannel,
+  MAX_BROWSER_LOGS,
+} from '../../lib/api/reporter.ts';
+import type { BrowserLog, ReporterContext } from '../../lib/reporters/types.ts';
 import type { Config } from '../../lib/types.ts';
 import '../helpers/custom-asserts.ts';
 
@@ -97,5 +103,48 @@ module('API | events | drops are observable', { concurrency: true }, () => {
     }
 
     assert.strictEqual(channel.dropped, 0, 'the cap is far above any real suite');
+  });
+});
+
+// The recorder that turns a run into a `RunResult`. No browser: the hooks are called directly,
+// exactly as `Reporter.fanOut` calls them.
+module('API | APIReporter | the page-log cap', { concurrency: true }, () => {
+  const log = (text: string): BrowserLog => ({ type: 'log', text, args: [] });
+  const CONTEXT = {} as ReporterContext;
+
+  test('an ordinary run keeps every page log and drops none', (assert) => {
+    const reporter = new APIReporter();
+    for (let index = 0; index < 50; index++) reporter.onBrowserLog(CONTEXT, log(`line ${index}`));
+
+    assert.strictEqual(reporter.browserLogs.length, 50);
+    assert.strictEqual(reporter.browserLogsDropped, 0, 'nothing dropped below the cap');
+  });
+
+  test('past the cap it keeps the NEWEST and counts what it lost', (assert) => {
+    const reporter = new APIReporter();
+    const overflow = 5;
+    for (let index = 0; index < MAX_BROWSER_LOGS + overflow; index++) {
+      reporter.onBrowserLog(CONTEXT, log(`line ${index}`));
+    }
+
+    assert.strictEqual(reporter.browserLogs.length, MAX_BROWSER_LOGS, 'held at the cap');
+    assert.strictEqual(reporter.browserLogsDropped, overflow, 'and says how many it lost');
+    // Newest kept, oldest dropped: under a flood the lines next to the failure are the last ones.
+    assert.strictEqual(
+      reporter.browserLogs.at(-1)?.text,
+      `line ${MAX_BROWSER_LOGS + overflow - 1}`,
+    );
+    assert.strictEqual(reporter.browserLogs[0].text, `line ${overflow}`, 'the first 5 are gone');
+  });
+
+  test('reset() clears the logs and the drop count for the next rerun', (assert) => {
+    const reporter = new APIReporter();
+    for (let index = 0; index < MAX_BROWSER_LOGS + 3; index++) {
+      reporter.onBrowserLog(CONTEXT, log(`line ${index}`));
+    }
+    reporter.reset();
+
+    assert.strictEqual(reporter.browserLogs.length, 0);
+    assert.strictEqual(reporter.browserLogsDropped, 0, 'a rerun does not inherit the last flood');
   });
 });
