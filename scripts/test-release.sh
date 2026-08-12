@@ -58,8 +58,24 @@ cd "$BARE"
 printf '{"name":"bare","version":"1.0.0","type":"module"}' > package.json
 printf "import { module, test } from 'qunitx';\nmodule('Bare', () => { test('runs', (assert) => assert.ok(true)); });\n" > bare-test.js
 
+# npm puts global shims in `<prefix>/bin` on POSIX but directly in `<prefix>` on Windows, so the
+# shim is searched for rather than assumed — hardcoding `bin/` failed every Windows run with a bare
+# `qunitx: command not found`, which says nothing about which of the two layouts was there.
+GLOBAL_QUNITX=""
+for candidate in "$GLOBAL_PREFIX/bin/qunitx" "$GLOBAL_PREFIX/qunitx"; do
+  if [ -f "$candidate" ]; then
+    GLOBAL_QUNITX="$candidate"
+    break
+  fi
+done
+if [ -z "$GLOBAL_QUNITX" ]; then
+  echo "test-release: no global qunitx shim under $GLOBAL_PREFIX — npm's layout changed:" >&2
+  ls -R "$GLOBAL_PREFIX" >&2
+  exit 1
+fi
+
 echo "test-release: running a globally-installed qunitx in a project with no node_modules"
-PATH="$GLOBAL_PREFIX/bin:$PATH" qunitx bare-test.js
+"$GLOBAL_QUNITX" bare-test.js
 cd "$ROOT"
 
 # Run the test suite from the source root so test fixtures are reachable,
