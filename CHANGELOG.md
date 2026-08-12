@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.34.2] - 2026-08-12
+[`v0.34.1...v0.34.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.34.1...v0.34.2)
+
+### Bug Fixes
+- A missing referenced asset must not fail the run — 2026-08-12 by [@izelnakri](https://github.com/izelnakri) ([`cbcf874`](https://github.com/izelnakri/qunitx-cli/commit/cbcf8749c267c9da108a6485d466eafc69034598))
+- Find the global shim instead of assuming npm's POSIX layout — 2026-08-12 by [@izelnakri](https://github.com/izelnakri) ([`6cd05ce`](https://github.com/izelnakri/qunitx-cli/commit/6cd05ce8ec3a8a5913674dc3f5a6a86c63e12933))
+
 ## [0.34.1] - 2026-08-12
 [`v0.34.0...v0.34.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.34.0...v0.34.1)
 
