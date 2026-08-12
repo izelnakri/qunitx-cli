@@ -65,6 +65,7 @@ export type { UserRunOptions, ReporterOption } from './options.ts';
 export type {
   RunResult,
   RunCounts,
+  RunGroup,
   TestResult,
   ResolvedRun,
   CoverageSummary,

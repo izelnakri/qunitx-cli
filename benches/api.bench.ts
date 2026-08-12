@@ -127,6 +127,7 @@ const benchConfig = (): Config =>
     fsTree: { [`${PROJECT_ROOT}${FIXTURE}`]: null },
     state: {
       groupCount: 1,
+      groups: [],
       group: { lastRanFiles: [`${PROJECT_ROOT}${FIXTURE}`] },
       results: {
         counter: {

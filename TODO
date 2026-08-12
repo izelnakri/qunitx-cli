@@ -1,14 +1,19 @@
-(a) On groupMode qunitx runs things against different bundles and urls, should we add some metadata for debugging to RunResult about these? In addition metadat about the previously run webserver? and/or should we have these metadata on session or watch? Also the daemon metadata, is it completely seperate thing that doesnt need to be referenced in the RunResult? Evaluate these from end-user perspective, their debuggability and functionality/features and long-running process using this API for performance/memory.
-
-(b) Should we make it so webServer this run creates can be still runnable even if test run completes?(I suppose not if we had the watch? or session?)
 - investigate take screenshot feature & visual diffing(implement it percy-like)
 
 - enhance flake.nix and README.md
 
 - Test and optimize Dockerfile
 
-Implement: qunitx upgrade 
+Implement: qunitx upgrade
 
 Should we allow passing the browser as absolute path since JS API now accepts it?
 
-Should I build `qunitx script-file.ts/js`? Like `deno run` AND `deno repl` -> `qunitx repl`
+Should I build `qunitx script-file.ts/js`? Maybe scope it to `run` keyword(probably not for the ultimate end-user experience, if this isn't create great complexity), otherwise like `deno run`
+
+AND in another PR: `deno repl` -> `qunitx repl`
+
+Implement QunitX.registerReporter(name, reporter) also make it play with the CLI, make nyan cat example work with it 'nyan' is the name on registerReporter . Maybe use package.json `qunitx` namespace for full circle integration
+
+Should there be a "server, but don't watch files" mode? watch() is currently the only way to keep
+the qunitx page served, and it always installs file watchers + reruns on save.
+

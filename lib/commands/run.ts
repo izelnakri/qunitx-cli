@@ -5,7 +5,7 @@ import { bindServerToPort } from '../setup/bind-server-to-port.ts';
 import * as WebServer from '../setup/web-server.ts';
 import { openOutputInBrowser } from '../utils/open-output-in-browser.ts';
 import fs from 'node:fs/promises';
-import { normalize } from 'node:path';
+import { normalize, resolve as resolvePath } from 'node:path';
 import { availableParallelism } from 'node:os';
 // node:timers returns Timer objects with .unref()/.ref() in both Node and Deno.
 // The bare `setTimeout` global in Deno is the Web platform variant, which returns
@@ -556,6 +556,16 @@ async function runConcurrentMode(
   const groupCount = groups.length;
   // Shared with every group config below; RunState.reusablePageSlot() reads it to decide page reuse.
   config.state.groupCount = groupCount;
+  // Recorded before the group configs are spread off, because the split is decided here and
+  // nowhere else — the result reports it so a caller can reproduce one group's bundle exactly.
+  config.state.groups = groups.map(({ files }, i) => ({
+    index: i,
+    files,
+    output: resolvePath(
+      config.projectRoot,
+      groupCount === 1 ? config.output : `${config.output}/group-${i}`,
+    ),
+  }));
 
   // All run accumulators — counter, failure sets, coverage — are cleared here, on the parent,
   // BEFORE the group configs are spread off it below. The spread copies `state` by reference, so

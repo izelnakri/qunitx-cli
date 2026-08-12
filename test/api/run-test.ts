@@ -1,4 +1,5 @@
 import { module, test } from 'qunitx';
+import path from 'node:path';
 import { apiRun, captureStream } from './helpers.ts';
 import * as QUnitX from '../../lib/api/index.ts';
 import { outputDir } from '../helpers/temp-dir.ts';
@@ -83,7 +84,38 @@ module('API | run | results', { concurrency: true }, () => {
     assert.equal(result.resolved.projectRoot, process.cwd());
     assert.true(result.resolved.port > 0, 'the port actually bound');
     assert.true(result.resolved.output.startsWith(process.cwd()), 'output is absolute');
-    assert.equal(result.groupCount, 1, 'one file, one group');
+    assert.equal(result.groups.length, 1, 'one file, one group');
+    assert.deepEqual(result.groups[0].files, result.files, "the one group ran the run's files");
+    assert.equal(
+      result.groups[0].output,
+      result.resolved.output,
+      'and wrote to the run output dir',
+    );
+  });
+
+  test('a multi-file run reports the split it chose, partitioning every file exactly once', async (assert) => {
+    const result = await apiRun({ inputs: [PASSING, SKIP_TODO] });
+
+    // How many groups is up to the machine — `availableParallelism()` bounds it, so a 1-core
+    // runner legitimately produces one. What must hold everywhere is that the split is a
+    // partition: every file the run executed lands in exactly one group.
+    const assigned = result.groups.flatMap((group) => group.files);
+    assert.deepEqual(assigned.slice().sort(), result.files.slice().sort(), 'every file, once');
+    assert.deepEqual(
+      result.groups.map((group) => group.index),
+      result.groups.map((_group, index) => index),
+      'indexes are positional',
+    );
+    // The index is not decoration: it names the output subdirectory the artifacts went to.
+    for (const group of result.groups) {
+      assert.equal(
+        group.output,
+        result.groups.length === 1
+          ? result.resolved.output
+          : // path.join, not a '/' template: `output` is a native path, separated by '\' on Windows.
+            path.join(result.resolved.output, `group-${group.index}`),
+      );
+    }
   });
 
   test('timings bracket the run', async (assert) => {
