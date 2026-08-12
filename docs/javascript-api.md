@@ -293,7 +293,7 @@ result.files; // absolute paths of the test files this run executed
 result.failedFiles; // absolute paths, attributed through source maps
 result.notices; // qunitx's own `# …` diagnostics, as data — see below
 result.browserLogs; // console.* and uncaught errors from the page (newest 1000)
-result.browserLogsTruncated; // how many were dropped past that cap
+result.browserLogsDropped; // how many were dropped past that cap
 result.coverage; // per-file line coverage, or null
 result.junitXml; // the XML document, or null
 result.durationMs;

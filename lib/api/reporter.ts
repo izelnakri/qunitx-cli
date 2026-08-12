@@ -45,7 +45,7 @@ export class APIReporter implements Reporter {
   /** The most recent page console calls and uncaught errors, capped at {@link MAX_BROWSER_LOGS}. */
   readonly browserLogs: BrowserLog[] = [];
   /** How many page-log entries the cap dropped. */
-  browserLogsTruncated = 0;
+  browserLogsDropped = 0;
 
   /**
    * Drops everything from a previous run. Watch sessions reuse one collector across reruns, so
@@ -62,7 +62,7 @@ export class APIReporter implements Reporter {
     this.tests.length = 0;
     this.notices.length = 0;
     this.browserLogs.length = 0;
-    this.browserLogsTruncated = 0;
+    this.browserLogsDropped = 0;
   }
 
   /**
@@ -111,7 +111,7 @@ export class APIReporter implements Reporter {
     // Drop from the front: a flood's newest lines are the ones next to whatever went wrong.
     if (this.browserLogs.length > MAX_BROWSER_LOGS) {
       this.browserLogs.shift();
-      this.browserLogsTruncated++;
+      this.browserLogsDropped++;
     }
   }
 }

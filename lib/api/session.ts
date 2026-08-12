@@ -74,7 +74,7 @@ export interface RunSession extends AsyncIterable<RunEvent> {
    * How many events the feed dropped because a consumer fell behind. `0` in every ordinary run.
    *
    * The feed is capped, so a consumer that stalls under a flood of page output loses the oldest
-   * events. That has to be visible: {@link RunResult.browserLogsTruncated} already keeps the
+   * events. That has to be visible: {@link RunResult.browserLogsDropped} already keeps the
    * result path honest about the same trade, and a silent gap in the event path would be the one
    * kind of loss a consumer cannot detect for itself.
    */
