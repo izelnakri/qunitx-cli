@@ -1,14 +1,14 @@
-Explain why snapshotOnce was needed in Combinators?
+(a) On groupMode qunitx runs things against different bundles and urls, should we add some metadata for debugging to RunResult about these? In addition metadat about the previously run webserver? and/or should we have these metadata on session or watch? Also the daemon metadata, is it completely seperate thing that doesnt need to be referenced in the RunResult? Evaluate these from end-user perspective, their debuggability and functionality/features and long-running process using this API for performance/memory.
 
-instead of kind: , it could be an instance call with new or .build() then I wont need deriveBuildErrorType and formatBuildErrors neither
-many static methods under 'setup/run-state.ts'
-
+(b) Should we make it so webServer this run creates can be still runnable even if test run completes?(I suppose not if we had the watch? or session?)
 - investigate take screenshot feature & visual diffing(implement it percy-like)
 
 - enhance flake.nix and README.md
 
 - Test and optimize Dockerfile
 
-Also optimize someFuncCall();return; to return someFuncCall() to save lines whenever possible. 
-
 Implement: qunitx upgrade 
+
+Should we allow passing the browser as absolute path since JS API now accepts it?
+
+Should I build `qunitx script-file.ts/js`? Like `deno run` AND `deno repl` -> `qunitx repl`
