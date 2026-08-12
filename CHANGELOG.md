@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.34.1] - 2026-08-12
+[`v0.34.0...v0.34.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.34.0...v0.34.1)
+
+### Bug Fixes
+- Don't hand off to the SEA binary when the CWD cannot feed it — 2026-08-12 by [@izelnakri](https://github.com/izelnakri) ([`6b56f0f`](https://github.com/izelnakri/qunitx-cli/commit/6b56f0f8f9987126126e14ea951e3ea4c01038f2))
+
 ## [0.34.0] - 2026-08-12
 [`v0.33.0...v0.34.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.33.0...v0.34.0)
 
