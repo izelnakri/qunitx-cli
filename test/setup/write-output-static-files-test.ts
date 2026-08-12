@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { module, test } from 'qunitx';
 import { writeOutputStaticFiles } from '../../lib/setup/write-output-static-files.ts';
+import { pathExists } from '../../lib/utils/path-exists.ts';
 import type { HtmlAssets } from '../../lib/types.ts';
 
 // The two collections writeOutputStaticFiles iterates over; the rest of HtmlAssets is
@@ -117,6 +118,56 @@ module('Setup | writeOutputStaticFiles', { concurrency: true }, () => {
     ]);
     assert.strictEqual(contentA, '/* shared */');
     assert.strictEqual(contentB, '/* shared */');
+  });
+});
+
+// A globally-installed CLI running in a project that never installed `qunitx` has no
+// `node_modules/qunitx/vendor/qunit.css` — but `qunitx init` writes a page that links it. Copying
+// it blindly used to abort the whole run with ENOENT before a single test could report.
+module('Setup | writeOutputStaticFiles | missing assets', { concurrency: true }, () => {
+  test('a missing qunit.css falls back to the CLI copy, as the server already does', async (assert) => {
+    const dir = await tempDir('assets-no-qunitx');
+    const missing = path.join(dir, 'node_modules/qunitx/vendor/qunit.css');
+
+    await writeOutputStaticFiles(
+      { projectRoot: dir, output: 'out' },
+      htmlAssetsFor({ assets: [missing] }),
+    );
+
+    const written = await fs.readFile(
+      path.join(dir, 'out/node_modules/qunitx/vendor/qunit.css'),
+      'utf8',
+    );
+    assert.true(written.length > 0, 'the embedded stylesheet was written instead');
+    assert.true(written.includes('#qunit'), 'and it really is qunit.css, not an empty placeholder');
+  });
+
+  test('any other missing asset is skipped rather than failing the run', async (assert) => {
+    const dir = await tempDir('assets-missing');
+    const missing = path.join(dir, 'app.css');
+
+    await writeOutputStaticFiles(
+      { projectRoot: dir, output: 'out' },
+      htmlAssetsFor({ assets: [missing] }),
+    );
+
+    assert.false(
+      await pathExists(path.join(dir, 'out/app.css')),
+      'nothing invented for an asset the page names but the project does not have',
+    );
+  });
+
+  test('a real asset alongside a missing one is still copied', async (assert) => {
+    const dir = await tempDir('assets-mixed');
+    const real = path.join(dir, 'real.css');
+    await writeAsset(real, '/* real */');
+
+    await writeOutputStaticFiles(
+      { projectRoot: dir, output: 'out' },
+      htmlAssetsFor({ assets: [real, path.join(dir, 'gone.css')] }),
+    );
+
+    assert.strictEqual(await fs.readFile(path.join(dir, 'out/real.css'), 'utf8'), '/* real */');
   });
 });
 
