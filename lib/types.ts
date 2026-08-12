@@ -287,6 +287,17 @@ export interface RunState {
   /** Number of concurrent groups in this run; 1 for watch and single-group runs. */
   groupCount: number;
   /**
+   * How this run's files were split across those groups — the descriptive record `RunResult`
+   * reports. Assigned once per run alongside `groupCount` and shared by reference, so a group
+   * can read the whole split rather than only its own slice.
+   *
+   * Empty until a split is computed, which is why `groupCount` stays the authority the runner
+   * branches on: page reuse is decided during daemon setup, before any grouping exists. Watch
+   * never splits at all, so it leaves this empty and the result names its one group from the
+   * files that rerun ran.
+   */
+  groups: RunGroup[];
+  /**
    * One callback per live server that tells its connected pages to drop the rest of the QUnit
    * queue — what `qq`, `session.abort()` and an aborted `signal` all go through.
    *
@@ -308,6 +319,28 @@ export interface RunState {
    * `RunState` is shared by reference), so it is the one place per-group slots may live.
    */
   group: GroupState;
+}
+
+/**
+ * One concurrent group of a run: the files bundled into a single page, and where that page's
+ * artifacts were written.
+ *
+ * Which files land together is decided per run from recorded timings and the core count, so it
+ * is neither stable across runs nor derivable by the caller — and it is exactly what you need to
+ * reproduce a failure that only happens when two files share a bundle.
+ *
+ * ```ts
+ * const group: RunGroup = { index: 1, files: ['/proj/test/cart.ts'], output: '/proj/tmp/group-1' };
+ * group.output; // '/proj/tmp/group-1' — still on disk after the run, unlike the group's URL
+ * ```
+ */
+export interface RunGroup {
+  /** Position in the run's group list, and the `group-<index>` suffix on `output`. */
+  index: number;
+  /** Absolute paths of the test files this group bundled and ran together. */
+  files: string[];
+  /** Absolute path of this group's build output directory. */
+  output: string;
 }
 
 /**

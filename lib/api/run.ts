@@ -11,7 +11,7 @@ import type { BrowserLog, Notice, TestAssertion } from '../reporters/types.ts';
 import type { InvalidOptionFailure, UserRunOptions } from './options.ts';
 import type { ConfigFailure } from '../setup/config.ts';
 import type { Config as ResolvedConfig } from '../types.ts';
-import type { Counter } from '../types.ts';
+import type { Counter, RunGroup } from '../types.ts';
 import type { RunOutcome } from '../commands/run.ts';
 
 /**
@@ -132,6 +132,8 @@ export interface TestResult {
  * ```
  */
 export type RunCounts = Counter;
+
+export type { RunGroup };
 
 /**
  * Per-file line coverage, when `coverage` was requested.
@@ -258,8 +260,20 @@ export interface RunResult {
   startedAt: number;
   /** Epoch ms when it ended. */
   finishedAt: number;
-  /** How many concurrent groups the files were split across; `1` for watch and single-file runs. */
-  groupCount: number;
+  /**
+   * How the files were split across concurrent groups — one entry per group, never empty.
+   * `groups.length` is the concurrency the run actually used; `1` for watch and single-file runs.
+   *
+   * Worth having because the split is not reproducible from the outside: it is recomputed each
+   * run from recorded timings and the core count. When a test only fails alongside a particular
+   * neighbour, this is what identifies the neighbour — and
+   * `run({ inputs: result.groups[2].files })` re-runs that bundle on its own.
+   *
+   * There is deliberately no URL here. A group's server is closed by the time this result
+   * exists, so an address would be a link that never resolves; {@link RunGroup.output} is the
+   * durable equivalent, still on disk, and it is what `--open` points a browser at.
+   */
+  groups: RunGroup[];
   /**
    * How the run finished: whether it got through everything it selected, and if not, what stopped
    * it. Distinct from {@link RunResult.ok}, which is the verdict — a `completed` run can be
@@ -315,6 +329,11 @@ export function buildResult(config: ResolvedConfig, outcome: RunOutcome): RunRes
     ...test,
     file: fileByTest.get(`${test.modules.join(' > ')}\u0000${test.name}`) ?? null,
   }));
+  // `lastRanFiles` rather than the whole fsTree: a watch-mode rerun scoped to one saved file ran
+  // that file, not everything being watched. The batch runner sets it to the full set, so the two
+  // agree there.
+  const files = config.state.group.lastRanFiles ?? Object.keys(config.fsTree);
+  const output = path.resolve(config.projectRoot, config.output);
 
   return {
     ok: outcome.exitCode === 0,
@@ -325,10 +344,7 @@ export function buildResult(config: ResolvedConfig, outcome: RunOutcome): RunRes
     counts: { ...counter },
     tests,
     failures: tests.filter((test) => test.status === 'failed'),
-    // `lastRanFiles` rather than the whole fsTree: a watch-mode rerun scoped to one saved file
-    // ran that file, not everything being watched. The batch runner sets it to the full set, so
-    // the two agree there.
-    files: config.state.group.lastRanFiles ?? Object.keys(config.fsTree),
+    files,
     failedFiles: Array.from(failedFiles),
     notices: reporter.notices.slice(),
     browserLogs: reporter.browserLogs.slice(),
@@ -337,7 +353,9 @@ export function buildResult(config: ResolvedConfig, outcome: RunOutcome): RunRes
     junitXml,
     startedAt: outcome.startedAt,
     finishedAt: outcome.finishedAt,
-    groupCount: config.state.groupCount,
+    // Watch never goes through the concurrent split, so it records none; there its one group is
+    // by definition the files the rerun ran.
+    groups: config.state.groups.length ? config.state.groups : [{ index: 0, files, output }],
     // Derived, not tracked: `failFast` empties QUnit's queue inside the page, so the only signal
     // reaching here is that the policy was on and something failed.
     status: config.state.results.aborted
@@ -348,7 +366,7 @@ export function buildResult(config: ResolvedConfig, outcome: RunOutcome): RunRes
     resolved: {
       browser: config.browser,
       projectRoot: config.projectRoot,
-      output: path.resolve(config.projectRoot, config.output),
+      output,
       port: config.port,
       extensions: config.extensions,
       coverageFormats: config.coverageFormats ?? [],

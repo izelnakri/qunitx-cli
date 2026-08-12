@@ -92,6 +92,7 @@ export function create(): RunState {
     daemon: null,
     group: newGroup(),
     groupCount: 1,
+    groups: [],
     aborters: new Set(),
     reporters: [],
     console: processConsole,

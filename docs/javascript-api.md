@@ -299,7 +299,8 @@ result.junitXml; // the XML document, or null
 result.durationMs;
 result.startedAt; // epoch ms
 result.finishedAt; //  ″
-result.groupCount; // how many concurrent groups the files were split across
+result.groups; // one entry per concurrent group: its files and its output directory
+result.groups.length; // the concurrency the run used; 1 for watch and single-file runs
 result.status; // 'completed' | 'aborted' | 'failFast' — see above
 result.resolved; // { browser, projectRoot, output, port, extensions, coverageFormats, filter? }
 ```
@@ -310,6 +311,29 @@ browser ran, and which port was actually bound (it auto-increments past a busy o
 `file` on a test is populated **for failures only**: QUnit's `testEnd` carries no file, so the
 path is recovered from the failing assertion's stack through the source map. A passing test leaves
 no stack to map.
+
+### `groups` — reproducing a failure that only happens in company
+
+A run spreads its files across concurrent groups, and each group bundles its files into one page.
+Tests in the same group therefore share globals and a DOM, which is where "passes alone, fails in
+the suite" comes from. The split is recomputed every run from recorded timings and the core count,
+so it is not stable and not something you can work out from the outside — `groups` is the only
+record of it:
+
+```js
+const result = await run({ inputs: ['test/'] });
+const suspect = result.failures[0];
+const group = result.groups.find((one) => one.files.includes(suspect.file));
+
+await run({ inputs: group.files }); // same bundle, on its own
+await run({ inputs: [suspect.file] }); // just the one file — green here means co-bundling
+```
+
+`group.output` is where that group's bundle and artifacts were written, and it is still there
+after the run. There is deliberately **no URL**: the group's server is closed by the time you hold
+the result, so an address would be a dead link. To look at a page yourself, use the durable
+artifact (`--open` opens exactly that `file://` path for a finished run) or keep a run alive with
+[`watch()`](#watch), whose `url` points at a server that is genuinely still listening.
 
 ## Notices — why `ok` alone is not enough
 
