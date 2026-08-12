@@ -162,6 +162,45 @@ jobs:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
 
+  # ── Global install (packaging smoke) ──────────────────────────────────────────
+  # The end-user shape: installed globally, run in a project with no node_modules. Three shipped
+  # bugs lived here — the SEA resolving playwright-core against the CWD, the static output copying
+  # a qunit.css only a local install has, and the shim lookup assuming npm's POSIX layout. All
+  # three were invisible to `release-consumer-test`, which installs LOCALLY and is tag-gated, so
+  # each was found from a red release instead of a red PR.
+  #
+  # Deliberately NOT restricted by paths. The obvious filter — bin/, scripts/, package.json — would
+  # have missed the qunit.css bug outright: that one lived in lib/setup/write-output-static-files.ts
+  # and only manifested through packaging. What breaks this shape is not confined to the files that
+  # describe it. ~4 minutes per PR against release-breaking bugs found from red releases twice.
+  #
+  # Windows is not redundant with ubuntu: npm's global layout differs there, which is exactly what
+  # the third bug was.
+  global-install:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
+    name: Global install · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: package.json
+          cache: npm
+      - uses: browser-actions/setup-chrome@v2
+        id: setup-chrome
+      - run: npm ci
+      - run: bash scripts/test-global-install.sh
+        shell: bash
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+          FORCE_COLOR: 0
+
   # ── Test (Deno end-to-end) ────────────────────────────────────────────────────
   # Runs the entire test pipeline through Deno:
   #   • test/runner.ts itself runs under `deno run -A` (`npm run test:deno`).
