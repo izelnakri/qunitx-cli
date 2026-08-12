@@ -56,16 +56,59 @@ all, and a cancelled run still resolves with the tests that finished:
 ```js
 const controller = new AbortController();
 const result = await run({ inputs: ['test/'], signal: controller.signal });
-result.aborted; // true — counts are a prefix of the suite, not a verdict on it
+result.status; // 'aborted' — counts are a prefix of the suite, not a verdict on it
 ```
 
-`aborted` distinguishes *stopped* from *red* — both end with `ok: false`. Check it before
-reporting failures, or a UI says "3 failures" when someone pressed stop.
+`status` distinguishes _stopped_ from _red_ — both come back `ok: false`:
+
+| `result.status` |                                                                               |
+| --------------- | ----------------------------------------------------------------------------- |
+| `'completed'`   | every selected test reached an outcome; `counts.total` is the whole selection |
+| `'aborted'`     | cut short by `session.abort()`, the CLI's `qq`, or a `signal`                 |
+| `'failFast'`    | `failFast` was set and a test failed, so the rest of the queue was dropped    |
+
+Check it before reporting a red run as red. Without it, a `failFast` run of a 200-test suite is
+indistinguishable from a complete run of a 2-test one — both `ok: false`, both `counts.total: 2`.
+
+### Picking up where a run stopped
+
+There is no `resume()`, and there cannot be a real one: QUnit 2.x has no pause/resume — `abort`
+empties its queue, and `QUnit.start()` throws if the run is already going — and the browser is
+torn down afterwards, so no page state survives to resume _into_.
+
+What you usually want instead is "run the ones that never ran", and that composes out of what is
+already here: `search()` knows the whole selection, the result knows what ran, and a line target
+addresses an exact declaration.
+
+```js
+const first = await run({ inputs: ['test/'], failFast: true });
+
+if (first.status !== 'completed') {
+  const { matches } = await search({ inputs: ['test/'] });
+  const ran = new Set(first.tests.map((test) => test.fullName));
+  const remaining = matches.filter((match) => !ran.has(match.fullName));
+
+  const rest = await run({ inputs: remaining.map((match) => `${match.file}#${match.line}`) });
+}
+```
+
+Three things this leans on, all of them worth knowing before you rely on it:
+
+- **A fresh browser, not a continuation.** Each run starts clean, so this only holds if your tests
+  are independent of one another — which they should be anyway, but nothing here enforces it.
+- **Runtime-named tests are invisible to it.** ``test(`case ${index}`)`` in a loop is _one_
+  declaration with no literal name, so `search()` counts it under `unlistable.computedNames` and
+  cannot list the tests it becomes. They would never be picked up. Check
+  `unlistable.total === 0` before trusting the remainder, and fall back to re-running whole files
+  if it is not.
+- **The selection must not have changed** between the two calls — `search()` re-reads from disk.
+
+For a watch session, prefer `session.run(files?)`, which reuses the browser that is already open.
 
 ## runSession
 
 One run, watched as it happens. `run()` is the smaller thing when only the outcome matters; this
-is for when the *progress* is the point.
+is for when the _progress_ is the point.
 
 ```js
 import { runSession } from 'qunitx-cli';
@@ -128,29 +171,36 @@ already exists, so `void session.runAll()` from a keypress handler must actually
 
 **`abort` vs `close` vs `signal`** — three different scopes, easy to mix up:
 
-| | |
-|---|---|
-| `session.abort()` | cut the run in flight short; the session stays open and watching |
-| `session.close()` | end the session: browser down, port released, iteration over |
-| `signal` on `watch()` | **closes** the session — for a watcher there is no single run to cut short |
-| `signal` on `run()` / `runSession()` | aborts that one run, which is the whole session there |
+|                                      |                                                                            |
+| ------------------------------------ | -------------------------------------------------------------------------- |
+| `session.abort()`                    | cut the run in flight short; the session stays open and watching           |
+| `session.close()`                    | end the session: browser down, port released, iteration over               |
+| `signal` on `watch()`                | **closes** the session — for a watcher there is no single run to cut short |
+| `signal` on `run()` / `runSession()` | aborts that one run, which is the whole session there                      |
 
-`abort` is deliberately the platform's word: you hand in an `AbortSignal`, and a run cut short
-comes back with `result.aborted` — the same spelling as `signal.aborted`, because it is the same
-idea arriving from a different direction.
+`abort` is deliberately the platform's word: you hand in an `AbortSignal`, `signal.aborted` is
+how the platform spells it, and a run cut short comes back as `result.status === 'aborted'` — one
+idea, arriving from three directions.
 
 Both feeds are **Streams**, so the combinators are already attached — no wrapper:
 
 ```js
 // notify on the first red run, and stop watching for it
-const [red] = await session.results().filter((r) => !r.ok).take(1).collect();
+const [red] = await session
+  .results()
+  .filter((r) => !r.ok)
+  .take(1)
+  .collect();
 
 // every event of every rerun, flat and in order — for progress bars and live logs
-await session.events().filter((e) => e.kind === 'test').forEach(render);
+await session
+  .events()
+  .filter((e) => e.kind === 'test')
+  .forEach(render);
 ```
 
 `results()` is one complete `RunResult` per rerun; `events()` is the fine-grained view. The
-session stays a *handle* rather than being a Stream itself: combinators return new Streams, and
+session stays a _handle_ rather than being a Stream itself: combinators return new Streams, and
 one with no `close()` would leave a browser with no owner.
 
 ### The page it serves
@@ -186,7 +236,7 @@ matches.map((test) => `${test.fullName}  ${test.file}#${test.line}`);
 unlistable.total; // declarations the scan could not name — see `.computedNames` / `.unparseable`
 ```
 
-A non-zero `unlistable.total` means `total` is a lower bound: `` test(`case ${i}`) `` has no name
+A non-zero `unlistable.total` means `total` is a lower bound: ``test(`case ${i}`)`` has no name
 until the browser runs it.
 
 ## Daemon
@@ -250,7 +300,7 @@ result.durationMs;
 result.startedAt; // epoch ms
 result.finishedAt; //  ″
 result.groupCount; // how many concurrent groups the files were split across
-result.aborted; // true when something stopped the run
+result.status; // 'completed' | 'aborted' | 'failFast' — see above
 result.resolved; // { browser, projectRoot, output, port, extensions, coverageFormats, filter? }
 ```
 
@@ -279,7 +329,7 @@ went to stderr). So a cheap gate is `result.notices.some((n) => n.level !== 'inf
 ones: a filter that matched nothing, `--changed` narrowing the run, a line target superseded by a
 broader input, coverage skipped on a non-chromium browser, build errors, timeouts.
 
-They are *not* captured stdout — text is a rendering **of** these, not their source.
+They are _not_ captured stdout — text is a rendering **of** these, not their source.
 
 ## Custom reporters
 
@@ -312,7 +362,7 @@ your own keeps the run silent.
 
 ### What a hook receives
 
-`ReporterContext` — deliberately *not* the run's config, which would hand third-party code the
+`ReporterContext` — deliberately _not_ the run's config, which would hand third-party code the
 mutable state of the run it is reporting on:
 
 ```ts
@@ -325,7 +375,7 @@ context.sourceMapDecoder; // maps a bundle frame back to source, once the run ha
 context.daemon; // is this run inside the persistent daemon
 ```
 
-To watch a run with the *public* shapes — `TestResult`, `Notice`, `BrowserLog` — use
+To watch a run with the _public_ shapes — `TestResult`, `Notice`, `BrowserLog` — use
 `runSession().events()` instead; the reporter hooks carry QUnit's own payloads.
 
 ## Tutorial: a nyan cat reporter

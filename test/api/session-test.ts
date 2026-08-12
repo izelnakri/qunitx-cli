@@ -66,7 +66,7 @@ module('API | runSession | events', { concurrency: true }, () => {
 
       assert.false(result.ok);
       assert.true(result.failures.length > 0);
-      assert.false(result.aborted, 'red is not the same as interrupted');
+      assert.equal(result.status, 'completed', 'red is not the same as interrupted');
     });
   });
 
@@ -99,7 +99,7 @@ module('API | runSession | lifecycle', { concurrency: true }, () => {
       await session.close();
 
       assert.equal((await session.result()).counts.total, 0, 'no tests ran');
-      assert.true((await session.result()).aborted, 'and it says why');
+      assert.equal((await session.result()).status, 'aborted', 'and it says why');
     } finally {
       permit.release();
     }
@@ -163,7 +163,7 @@ module('API | runSession | lifecycle', { concurrency: true }, () => {
       });
       const result = await session.result();
 
-      assert.true(result.aborted);
+      assert.equal(result.status, 'aborted');
       assert.equal(result.counts.total, 0, 'cancelled before it began');
     } finally {
       permit.release();

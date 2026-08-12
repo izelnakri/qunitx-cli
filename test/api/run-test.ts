@@ -279,7 +279,7 @@ module('API | run | failures', { concurrency: true }, () => {
       signal: AbortSignal.abort(),
     });
 
-    assert.true(result.aborted, 'the result says it was cancelled');
+    assert.equal(result.status, 'aborted', 'the result says it was cancelled');
     assert.equal(result.counts.total, 0, 'and nothing ran');
     assert.equal(result.exitCode, 1, 'a run that never happened is not a pass');
     assert.false(result.ok);
@@ -288,14 +288,24 @@ module('API | run | failures', { concurrency: true }, () => {
   test('an ordinary run is not marked aborted', async (assert) => {
     const result = await greenRun();
 
-    assert.false(result.aborted, 'green and complete');
+    assert.equal(result.status, 'completed', 'green and complete');
+  });
+
+  test('failFast says the suite was cut off, not that it is two tests long', async (assert) => {
+    const result = await apiRun({ inputs: [FAILING], failFast: true });
+
+    assert.equal(result.status, 'failFast', 'the ending names the policy that stopped it');
+    assert.true(
+      result.counts.total < (await redRun()).counts.total,
+      'and it really did run fewer tests than the whole file',
+    );
   });
 
   test('a red run is not marked aborted either', async (assert) => {
     const result = await redRun();
 
     assert.false(result.ok);
-    assert.false(result.aborted, 'failing is not the same as interrupted');
+    assert.equal(result.status, 'completed', 'failing is not the same as interrupted');
   });
 
   test('the Task is lazy — nothing runs until it is awaited', async (assert) => {
