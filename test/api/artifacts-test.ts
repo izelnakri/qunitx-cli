@@ -2,10 +2,19 @@ import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { apiRun } from './helpers.ts';
+import type { RunResult } from '../../lib/api/run.ts';
 import '../helpers/custom-asserts.ts';
 
 const PASSING = 'test/fixtures/passing-tests.ts';
 const COVERED = 'test/fixtures/coverage/calculator-test.ts';
+
+// Two pairs of tests each read a different facet of one finished run; the assertions are reads,
+// so a second browser per pair would buy nothing. Lazy, so a filtered run launches only its own.
+let bare: Promise<RunResult> | null = null;
+const bareRun = (): Promise<RunResult> => (bare ??= apiRun({ inputs: [PASSING] }));
+let covered: Promise<RunResult> | null = null;
+const coveredRun = (): Promise<RunResult> =>
+  (covered ??= apiRun({ inputs: [COVERED], coverage: true }));
 
 module('API | artifacts | junit', { concurrency: true }, () => {
   test('the XML comes back on the result, not only as a file', async (assert) => {
@@ -27,7 +36,7 @@ module('API | artifacts | junit', { concurrency: true }, () => {
   });
 
   test('no junit option means no document', async (assert) => {
-    const result = await apiRun({ inputs: [PASSING] });
+    const result = await bareRun();
 
     assert.equal(result.junitXml, null);
   });
@@ -35,7 +44,7 @@ module('API | artifacts | junit', { concurrency: true }, () => {
 
 module('API | artifacts | coverage', { concurrency: true }, () => {
   test('per-file line coverage comes back as data', async (assert) => {
-    const result = await apiRun({ inputs: [COVERED], coverage: true });
+    const result = await coveredRun();
 
     assert.ok(result.coverage, 'a summary is present when coverage was asked for');
     assert.true(result.coverage!.files.length > 0, 'with at least one source file');
@@ -52,7 +61,7 @@ module('API | artifacts | coverage', { concurrency: true }, () => {
   });
 
   test('the test file itself is excluded from the report', async (assert) => {
-    const result = await apiRun({ inputs: [COVERED], coverage: true });
+    const result = await coveredRun();
 
     assert.false(
       result.coverage!.files.some((file) => file.path.endsWith('calculator-test.ts')),
@@ -62,7 +71,7 @@ module('API | artifacts | coverage', { concurrency: true }, () => {
   });
 
   test('no coverage option means no summary', async (assert) => {
-    const result = await apiRun({ inputs: [PASSING] });
+    const result = await bareRun();
 
     assert.equal(result.coverage, null);
   });
