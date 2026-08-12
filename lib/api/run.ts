@@ -261,14 +261,24 @@ export interface RunResult {
   /** How many concurrent groups the files were split across; `1` for watch and single-file runs. */
   groupCount: number;
   /**
-   * Whether this run was cut short — `session.abort()`, the CLI's `qq`, or an aborted `signal`.
+   * How the run finished: whether it got through everything it selected, and if not, what stopped
+   * it. Distinct from {@link RunResult.ok}, which is the verdict — a `completed` run can be
+   * entirely red, and an `aborted` one can have no failures at all.
    *
-   * Check it before reporting a red run as red. An aborted run also has `ok: false` and
-   * `exitCode: 1`, because tests that never ran did not pass — but its counts are a prefix of the
-   * suite rather than a verdict on it, and a UI that conflates the two says "3 failures" when the
-   * user pressed stop.
+   * A boolean `aborted` could not tell a suite that stopped at its first failure from one that
+   * genuinely has two tests — both come back `ok: false` with a small `counts.total` — so the
+   * three endings are named instead:
+   *
+   * - `completed` — every selected test reached an outcome.
+   * - `aborted` — something cut it short: `session.abort()`, the CLI's `qq`, or a `signal`. An
+   *   already-aborted signal lands here too, having launched no browser at all.
+   * - `failFast` — `failFast` was set and a test failed, so the rest of the queue was dropped.
+   *   Reported whenever the policy ended the run, including when the failure was the last test.
+   *
+   * `completed` is the only one where `counts.total` is the whole selection. Check it before
+   * reporting a red run as red, or a UI says "1 failure" about a suite it never finished.
    */
-  aborted: boolean;
+  status: 'completed' | 'aborted' | 'failFast';
   /** What the run resolved to — see {@link ResolvedRun}. */
   resolved: ResolvedRun;
 }
@@ -328,7 +338,13 @@ export function buildResult(config: ResolvedConfig, outcome: RunOutcome): RunRes
     startedAt: outcome.startedAt,
     finishedAt: outcome.finishedAt,
     groupCount: config.state.groupCount,
-    aborted: config.state.results.aborted,
+    // Derived, not tracked: `failFast` empties QUnit's queue inside the page, so the only signal
+    // reaching here is that the policy was on and something failed.
+    status: config.state.results.aborted
+      ? 'aborted'
+      : config.failFast && counter.failed > 0
+        ? 'failFast'
+        : 'completed',
     resolved: {
       browser: config.browser,
       projectRoot: config.projectRoot,
@@ -353,7 +369,7 @@ export function buildResult(config: ResolvedConfig, outcome: RunOutcome): RunRes
  *
  * // Defined, not invoked: needs a resolved Config.
  * function cancelled(config: Config) {
- *   return abort(config).aborted; // true
+ *   return abort(config).status; // 'aborted'
  * }
  * ```
  */
