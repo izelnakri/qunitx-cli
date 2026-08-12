@@ -248,15 +248,14 @@ release:
 	  npm install --package-lock-only --ignore-scripts; \
 	fi
 	npm publish --access public
-# Publish to JSR alongside npm. One arch-agnostic package with two exports: `.` is the
-# bootstrap (jsr/cli.ts resolves os-arch at runtime and fetches the matching prebuilt binary
-# from the GitHub release, so a single publish covers every platform), and `./api` is the JS
-# API. The staging step copies lib/, templates/ and package.json into jsr/ first, because JSR
-# resolves every export relative to the package root and a specifier may not climb above it.
-# --allow-dirty: jsr/deno.json's bumped version is not committed yet at this point in the
-# recipe, and the staged files are generated and gitignored.
-	node scripts/stage-jsr-library.ts
-	cd jsr && deno publish --allow-dirty
+# JSR is NOT published here. The `publish-jsr` job in ci.yml does it when the tag lands, so the
+# release carries provenance — `deno publish` needs the Actions OIDC token to mint a transparency
+# log entry, which a laptop cannot produce. jsr/deno.json's version is bumped and committed above;
+# CI stages lib/, templates/ and package.json into jsr/ and publishes from the tag.
+#
+# The trade: npm is live the moment this recipe finishes, JSR a few minutes later when CI reaches
+# the tag. If that job fails, the version exists on npm but not JSR — re-run the job rather than
+# re-tagging.
 	@node scripts/remove-optional-deps.js
 	@npm install --package-lock-only --ignore-scripts
 	git-cliff --tag "v$$(node -p 'require("./package.json").version')" --output CHANGELOG.md
