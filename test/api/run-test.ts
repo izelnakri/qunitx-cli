@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import { apiRun, captureStream } from './helpers.ts';
-import * as QunitX from '../../lib/api/index.ts';
+import * as QUnitX from '../../lib/api/index.ts';
 import { outputDir } from '../helpers/temp-dir.ts';
 import { streamConsole } from '../../lib/console.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
@@ -10,9 +10,20 @@ const PASSING = 'test/fixtures/passing-tests.ts';
 const FAILING = 'test/fixtures/failing-tests.ts';
 const SKIP_TODO = 'test/fixtures/skip-todo-tests.ts';
 
+// Tests below assert different facets of one green run, and of one red run. Every assertion on
+// them is a read of the finished result, so re-running per test would buy no isolation and cost a
+// browser each time. Lazy, so a filtered run launches only what it asks for.
+//
+// A test that asserts WHEN the run happened must NOT use these — the run may already have been
+// started by whichever test reached the memo first. `timings bracket the run` does its own.
+let green: Promise<QUnitX.RunResult> | null = null;
+const greenRun = (): Promise<QUnitX.RunResult> => (green ??= apiRun({ inputs: [PASSING] }));
+let red: Promise<QUnitX.RunResult> | null = null;
+const redRun = (): Promise<QUnitX.RunResult> => (red ??= apiRun({ inputs: [FAILING] }));
+
 module('API | run | results', { concurrency: true }, () => {
   test('a green run resolves ok with every test recorded', async (assert) => {
-    const result = await apiRun({ inputs: [PASSING] });
+    const result = await greenRun();
 
     assert.true(result.ok);
     assert.equal(result.exitCode, 0);
@@ -31,7 +42,7 @@ module('API | run | results', { concurrency: true }, () => {
   test('failing tests are a result, not a rejection', async (assert) => {
     // The whole contract in one test: `run` resolves for a red suite. Rejection is reserved for
     // the run not happening, so `catch` never has to mean "some tests failed".
-    const result = await apiRun({ inputs: [FAILING] });
+    const result = await redRun();
 
     assert.false(result.ok);
     assert.equal(result.exitCode, 1);
@@ -44,7 +55,7 @@ module('API | run | results', { concurrency: true }, () => {
   });
 
   test('failures carry their assertions and the file they came from', async (assert) => {
-    const result = await apiRun({ inputs: [FAILING] });
+    const result = await redRun();
     const withAssertions = result.failures.find((one) => one.assertions.length > 0);
 
     assert.ok(withAssertions, 'a failing test reports its assertions');
@@ -66,7 +77,7 @@ module('API | run | results', { concurrency: true }, () => {
   });
 
   test('the result carries what the run resolved to, not just what was asked', async (assert) => {
-    const result = await apiRun({ inputs: [PASSING] });
+    const result = await greenRun();
 
     assert.equal(result.resolved.browser, 'chromium');
     assert.equal(result.resolved.projectRoot, process.cwd());
@@ -76,6 +87,8 @@ module('API | run | results', { concurrency: true }, () => {
   });
 
   test('timings bracket the run', async (assert) => {
+    // Its own run, not the shared one: this asserts WHEN the run happened relative to this test,
+    // so a run someone else already started would put `startedAt` before our `before`.
     const before = Date.now();
     const result = await apiRun({ inputs: [PASSING] });
 
@@ -88,7 +101,7 @@ module('API | run | results', { concurrency: true }, () => {
   });
 
   test('a failing test is attributed to its source file', async (assert) => {
-    const result = await apiRun({ inputs: [FAILING] });
+    const result = await redRun();
 
     assert.true(
       result.failures.every((one) => one.file?.endsWith('failing-tests.ts')),
@@ -97,7 +110,7 @@ module('API | run | results', { concurrency: true }, () => {
   });
 
   test('a passing test has no file — QUnit gives no stack to map', async (assert) => {
-    const result = await apiRun({ inputs: [PASSING] });
+    const result = await greenRun();
 
     assert.true(
       result.tests.every((one) => one.file === null),
@@ -106,7 +119,7 @@ module('API | run | results', { concurrency: true }, () => {
   });
 
   test('`files` reports what actually ran', async (assert) => {
-    const result = await apiRun({ inputs: [PASSING] });
+    const result = await greenRun();
 
     assert.equal(result.files.length, 1);
     assert.true(result.files[0].endsWith('passing-tests.ts'));
@@ -133,7 +146,7 @@ module('API | run | options', { concurrency: true }, () => {
   });
 
   test('a line target runs just that test', async (assert) => {
-    const declarations = await QunitX.search({ inputs: [PASSING] });
+    const declarations = await QUnitX.search({ inputs: [PASSING] });
     const target = declarations.matches[1];
 
     const result = await apiRun({ inputs: [`${target.file}#${target.line}`] });
@@ -225,26 +238,26 @@ module('API | run | reporters', { concurrency: true }, () => {
 
 module('API | run | failures', { concurrency: true }, () => {
   test('an unreadable project rejects with a discriminable failure', async (assert) => {
-    const outcome = await QunitX.run({ inputs: ['nope'], cwd: '/' }).result();
+    const outcome = await QUnitX.run({ inputs: ['nope'], cwd: '/' }).result();
 
-    assert.true(QunitX.Failure.is(outcome), 'a run that cannot happen is a Failure');
+    assert.true(QUnitX.Failure.is(outcome), 'a run that cannot happen is a Failure');
     assert.equal(
-      QunitX.Failure.is(outcome) ? outcome.code : null,
+      QUnitX.Failure.is(outcome) ? outcome.code : null,
       'ProjectRootNotFound',
       'named, so a caller can branch on it rather than parse a message',
     );
   });
 
   test('an invalid option is reported rather than thrown as a bug', async (assert) => {
-    const outcome = await QunitX.run({
+    const outcome = await QUnitX.run({
       inputs: ['test/'],
       browser: 'netscape' as 'chromium',
     }).result();
 
-    assert.true(QunitX.Failure.is(outcome), 'a value the runner cannot honour is a Failure');
-    assert.equal(QunitX.Failure.is(outcome) ? outcome.code : null, 'InvalidOption');
+    assert.true(QUnitX.Failure.is(outcome), 'a value the runner cannot honour is a Failure');
+    assert.equal(QUnitX.Failure.is(outcome) ? outcome.code : null, 'InvalidOption');
     assert.includes(
-      QunitX.Failure.is(outcome) ? outcome.message : '',
+      QUnitX.Failure.is(outcome) ? outcome.message : '',
       'chromium, firefox, webkit',
       'and names what it would have accepted',
     );
@@ -252,15 +265,15 @@ module('API | run | failures', { concurrency: true }, () => {
 
   test('a bad option is caught before a browser is launched', async (assert) => {
     // No semaphore permit taken, and none needed: rejecting here is the point.
-    const outcome = await QunitX.run({ inputs: ['test/'], port: 99999 }).result();
+    const outcome = await QUnitX.run({ inputs: ['test/'], port: 99999 }).result();
 
-    assert.equal(QunitX.Failure.is(outcome) ? outcome.code : null, 'InvalidOption');
+    assert.equal(QUnitX.Failure.is(outcome) ? outcome.code : null, 'InvalidOption');
   });
 
   test('an already-aborted signal answers without launching a browser', async (assert) => {
     await using output = outputDir('api-signal-pre');
     // No permit: not launching a browser is exactly what is being asserted.
-    const result = await QunitX.run({
+    const result = await QUnitX.run({
       inputs: [PASSING],
       output: output.path,
       signal: AbortSignal.abort(),
@@ -273,13 +286,13 @@ module('API | run | failures', { concurrency: true }, () => {
   });
 
   test('an ordinary run is not marked aborted', async (assert) => {
-    const result = await apiRun({ inputs: [PASSING] });
+    const result = await greenRun();
 
     assert.false(result.aborted, 'green and complete');
   });
 
   test('a red run is not marked aborted either', async (assert) => {
-    const result = await apiRun({ inputs: [FAILING] });
+    const result = await redRun();
 
     assert.false(result.ok);
     assert.false(result.aborted, 'failing is not the same as interrupted');
@@ -287,7 +300,7 @@ module('API | run | failures', { concurrency: true }, () => {
 
   test('the Task is lazy — nothing runs until it is awaited', async (assert) => {
     await using output = outputDir('api-lazy');
-    const task = QunitX.run({ inputs: [PASSING], output: output.path });
+    const task = QUnitX.run({ inputs: [PASSING], output: output.path });
 
     // Nothing has happened yet: no browser, no bundle, no result. The proof is that the same
     // Task can be discarded without ever having cost a browser launch.
