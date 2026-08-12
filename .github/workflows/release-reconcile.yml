@@ -1,10 +1,12 @@
-name: Reconcile GitHub releases
+name: Reconcile releases
 
 # Weekly safety net for the release pipeline. `make release` publishes to
-# npm and pushes a `v*` tag; ci.yml's github-release job then creates the
-# matching GitHub release. If that job is skipped (gate failure, GH API
-# outage, runner death, etc.) the npm package ships but the GitHub release
-# is missing — this workflow detects that drift and backfills.
+# npm and pushes a `v*` tag; ci.yml then creates the matching GitHub release
+# (github-release) and publishes to JSR (publish-jsr). If either job is
+# skipped (gate failure, API outage, runner death, etc.) the npm package
+# ships without its counterpart — this workflow detects both kinds of drift
+# and backfills. npm itself is published from `make release` directly, so it
+# is never the side that goes missing.
 #
 # Cron only fires from the default branch. Use the workflow_dispatch input
 # `dry_run` to verify behaviour without creating releases.
@@ -77,6 +79,99 @@ jobs:
           json=$(echo "$missing_sorted" | jq -Rcs 'split("\n") | map(select(length>0))')
           echo "has_missing=true" >> "$GITHUB_OUTPUT"
           echo "missing=$json" >> "$GITHUB_OUTPUT"
+
+  # ── JSR arm ───────────────────────────────────────────────────────────────────
+  # Same drift, other registry. JSR is published by ci.yml from the tag rather than from
+  # `make release`, precisely so the release carries provenance — which also means it can fail
+  # independently of npm, leaving a version on npm but not JSR.
+  detect-jsr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      missing: ${{ steps.scan.outputs.missing }}
+      has_missing: ${{ steps.scan.outputs.has_missing }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # need full tag history
+      - id: scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          published=$(curl -fsSL \
+            "https://api.jsr.io/scopes/izelnakri/packages/qunitx-cli/versions?limit=100" \
+            | jq -r '.items[].version' | sort -V)
+
+          # Floor at the earliest version JSR actually holds. Most tags predate the JSR package
+          # entirely (85 tags, 14 JSR versions, earliest 0.26.5); without this they would read as
+          # missing forever and the publish arm would try to ship trees that have no jsr/ at all.
+          floor=$(echo "$published" | head -1)
+
+          missing=()
+          for tag in $(git tag -l 'v*'); do
+            version=${tag#v}
+            # version >= floor iff sorting the pair puts floor first
+            [ "$(printf '%s\n%s\n' "$version" "$floor" | sort -V | head -1)" = "$floor" ] || continue
+            echo "$published" | grep -qx "$version" && continue
+            missing+=("$tag")
+          done
+
+          {
+            echo "## JSR reconcile scan"
+            echo ""
+            echo "- versions on JSR: $(echo "$published" | grep -c .)"
+            echo "- floor (earliest published): $floor"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ ${#missing[@]} -eq 0 ]; then
+            echo "Every tag at or above $floor is on JSR. ✅"
+            echo "- missing: 0 ✅" >> "$GITHUB_STEP_SUMMARY"
+            echo "has_missing=false" >> "$GITHUB_OUTPUT"
+            echo "missing=[]" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          printf '%s\n' "${missing[@]}" | sed 's/^/  - /'
+          {
+            echo "- missing: ${#missing[@]}"
+            echo ""
+            printf '%s\n' "${missing[@]}" | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          json=$(printf '%s\n' "${missing[@]}" | jq -Rcs 'split("\n") | map(select(length>0))')
+          echo "has_missing=true" >> "$GITHUB_OUTPUT"
+          echo "missing=$json" >> "$GITHUB_OUTPUT"
+
+  publish-jsr:
+    # `always()` so a skipped GitHub-release arm (nothing missing there) does not block this one.
+    # Ordered after it regardless, because jsr/cli.ts fetches its binary from the GitHub release —
+    # publishing the launcher first would hand users a version whose binary does not exist yet.
+    needs: [detect-jsr, publish]
+    if: always() && needs.detect-jsr.outputs.has_missing == 'true' && inputs.dry_run != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # OIDC — the backfill gets provenance too
+    strategy:
+      fail-fast: false
+      max-parallel: 1 # one publish at a time; a version can never be replaced
+      matrix:
+        tag: ${{ fromJSON(needs.detect-jsr.outputs.missing) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.tag }} # publish that tag's tree, not main's
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: package.json
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+          cache: true
+      - run: node scripts/stage-jsr-library.ts
+      - run: deno publish --allow-dirty
+        working-directory: jsr
 
   publish:
     needs: detect
