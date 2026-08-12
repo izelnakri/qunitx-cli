@@ -30,7 +30,6 @@ import * as Reporter from '../reporters/index.ts';
 import { readTemplate } from '../utils/read-template.ts';
 import { isCustomTemplate } from '../utils/html.ts';
 import { closeWithGrace } from '../utils/close-with-grace.ts';
-import * as Hint from './daemon/hint.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
 import * as Coverage from '../coverage/index.ts';
 import { isFilteredRun, describeActiveFilters } from '../selection/filter.ts';
@@ -793,11 +792,6 @@ async function runConcurrentMode(
     clearInterval(keepAlive);
     return { exitCode, durationMs, startedAt, finishedAt };
   }
-
-  // First-time discoverability nudge for the daemon — only on local-mode runs that
-  // took long enough to actually benefit. shouldShowDaemonHint() handles the rest of
-  // the suppression matrix (CI / env opt-outs / TTY / sentinel).
-  await Hint.maybePrint({ durationMs: process.uptime() * 1000 });
 
   // Cleanup happens here, before returning, rather than inside a `process.stdout.write` drain
   // callback racing an unref'd exit timer. The old shape existed because this function ended the
