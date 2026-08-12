@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.34.0] - 2026-08-12
+[`v0.33.0...v0.34.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.33.0...v0.34.0)
+
+### Bug Fixes
+- Settle asyncStream's per-element Task through its resolver — 2026-08-01 by [@izelnakri](https://github.com/izelnakri) ([`f9c84a7`](https://github.com/izelnakri/qunitx-cli/commit/f9c84a78ea091f267c4aa1b5010abd9d70306b1c))
+- Annotate ChannelOverflow so JSR's no-slow-types accepts it — 2026-08-06 by [@izelnakri](https://github.com/izelnakri) ([`59b8ad9`](https://github.com/izelnakri/qunitx-cli/commit/59b8ad93b5de5432288e9c9f2bf3da18f40142e0))
+- Un-invert the timeout hierarchy that hid the daemon flake — 2026-08-07 by [@izelnakri](https://github.com/izelnakri) ([`9866a2e`](https://github.com/izelnakri/qunitx-cli/commit/9866a2e876bc2b8007b2394866b4e58f55c1d2f3))
+- Never let a group kill widen into a session kill — 2026-08-03 by [@izelnakri](https://github.com/izelnakri) ([`8f00f7d`](https://github.com/izelnakri/qunitx-cli/commit/8f00f7d55d2cf5c9273e21bdd6dca0587cfe01b8))
+- Three defects CI caught that local runs could not — 2026-08-03 by [@izelnakri](https://github.com/izelnakri) ([`f367496`](https://github.com/izelnakri/qunitx-cli/commit/f3674960ace7b2c6a9ae63cc15b5329056b43b92))
+- Do not send the client's output sinks over the socket — 2026-08-03 by [@izelnakri](https://github.com/izelnakri) ([`a141dcd`](https://github.com/izelnakri/qunitx-cli/commit/a141dcdabc1ac47b806fc563fe24a0c18c2b8dff))
+- Resolve qunitx's entry under Deno too, not the caller's — 2026-08-05 by [@izelnakri](https://github.com/izelnakri) ([`4f750d6`](https://github.com/izelnakri/qunitx-cli/commit/4f750d6882442d33df9054fa018c456b731ad5f2))
+- SIGTERM closes the server, not the whole session — 2026-08-05 by [@izelnakri](https://github.com/izelnakri) ([`a7d277c`](https://github.com/izelnakri/qunitx-cli/commit/a7d277ca1f3e92cd8bfd71e85f4cc1ad1dabf784))
+- Report a daemon that never started, and stop respawning it per test — 2026-08-05 by [@izelnakri](https://github.com/izelnakri) ([`1e15651`](https://github.com/izelnakri/qunitx-cli/commit/1e15651f322b5fb9adcc849ebac44a6d9c63f7d6))
+- Cap the page logs a result retains — 2026-08-05 by [@izelnakri](https://github.com/izelnakri) ([`429de82`](https://github.com/izelnakri/qunitx-cli/commit/429de82c07b0aa7697991edcadf0d8a7d1efcdf2))
+- Make the session own its verbs, and fix three that were broken — 2026-08-05 by [@izelnakri](https://github.com/izelnakri) ([`abe3e5d`](https://github.com/izelnakri/qunitx-cli/commit/abe3e5d420f8221709a18fdf578aad5f4b596d69))
+- Api.bench still constructed the Channel class this PR removed — 2026-08-07 by [@izelnakri](https://github.com/izelnakri) ([`66e5af8`](https://github.com/izelnakri/qunitx-cli/commit/66e5af813a07584af5576626682cdc3cd1aa496a))
+- The daemon hint is a terminal concern, so move it to cli.ts — 2026-08-12 by [@izelnakri](https://github.com/izelnakri) ([`c897ad6`](https://github.com/izelnakri/qunitx-cli/commit/c897ad6a1f5a1ce724076dbd1fc1bbf6d1b1a8a5))
+
+### Documentation
+- Say that map and each are sequential, and pin it — 2026-08-06 by [@izelnakri](https://github.com/izelnakri) ([`bce47e5`](https://github.com/izelnakri/qunitx-cli/commit/bce47e5e3aa0f270ecb20778400971c6df633ba7))
+- Document the JavaScript API — 2026-08-03 by [@izelnakri](https://github.com/izelnakri) ([`234ae5d`](https://github.com/izelnakri/qunitx-cli/commit/234ae5dba9e3f9a0b9a106278d441ecb47d58467))
+- A runnable quality gate built on the JS API — 2026-08-03 by [@izelnakri](https://github.com/izelnakri) ([`874399c`](https://github.com/izelnakri/qunitx-cli/commit/874399cce052a62f99b9dea8e9445c7e66a06758))
+- Document the Stream feeds and droppedEvents in the README — 2026-08-09 by [@izelnakri](https://github.com/izelnakri) ([`330ba96`](https://github.com/izelnakri/qunitx-cli/commit/330ba963ac2130b029b5c2f08b82eef05d0e18a1))
+- A nyan cat reporter, and the deep JS/TS API out of the README — 2026-08-12 by [@izelnakri](https://github.com/izelnakri) ([`197c0d3`](https://github.com/izelnakri/qunitx-cli/commit/197c0d30ef2355e15a759f1a045f0146c8a4e4fe))
+
+### Features
+- Stream<T, E> — the third leg: many outcomes over time — 2026-07-27 by [@izelnakri](https://github.com/izelnakri) ([`7c88b23`](https://github.com/izelnakri/qunitx-cli/commit/7c88b2315379e0132245f350376b39419f884af7))
+- Elixir Stream parity — tier-1 sweep, chunkEvery, and through — 2026-07-27 by [@izelnakri](https://github.com/izelnakri) ([`4c13762`](https://github.com/izelnakri/qunitx-cli/commit/4c137626e3ffebb6adc38bcd0d8fc9812e21ebd2))
+- Complete Elixir Stream parity — zip, timers, into, resource, chunk family, tap/run — 2026-07-27 by [@izelnakri](https://github.com/izelnakri) ([`493a22c`](https://github.com/izelnakri/qunitx-cli/commit/493a22cb64bca0c525f242648c32098feec7fb2f))
+- Elixir Task parity — async/await pair, yield, shutdown, completed, asyncStream — 2026-07-28 by [@izelnakri](https://github.com/izelnakri) ([`4c099e6`](https://github.com/izelnakri/qunitx-cli/commit/4c099e66d9bd6bbe2e72e87dd3d4a13fd15e0e6a))
+- Channel — the push source — and reduce, the terminal fold — 2026-08-05 by [@izelnakri](https://github.com/izelnakri) ([`f68d69f`](https://github.com/izelnakri/qunitx-cli/commit/f68d69f5ce10b82961efde96b6676e6aba99c029))
+- MapConcurrent — bounded fan-out as a stage, not an entry point — 2026-08-06 by [@izelnakri](https://github.com/izelnakri) ([`4bf28ab`](https://github.com/izelnakri/qunitx-cli/commit/4bf28ab9356b4fb686aa4d1ddc4ab2d2149cbe07))
+- Overflow: 'fail' — refuse to lose events quietly — 2026-08-06 by [@izelnakri](https://github.com/izelnakri) ([`feb16eb`](https://github.com/izelnakri/qunitx-cli/commit/feb16ebcdb1a278668935b4f18287ad6b7cb47af))
+- Static mirrors for every member, source-first — 2026-08-07 by [@izelnakri](https://github.com/izelnakri) ([`0530e1d`](https://github.com/izelnakri/qunitx-cli/commit/0530e1d7c97b3f146b5e147d3d2c6362d4089bf4))
+- Make the reporter contract the public one — 2026-08-03 by [@izelnakri](https://github.com/izelnakri) ([`4302e34`](https://github.com/izelnakri/qunitx-cli/commit/4302e340eec8755dab96babb1adac20f930c10db))
+- Run qunitx from JavaScript — 2026-08-03 by [@izelnakri](https://github.com/izelnakri) ([`20751b9`](https://github.com/izelnakri/qunitx-cli/commit/20751b95f75d56d338a8a18ecea406dbf6553d21))
+- Publish the JS API as the package's main entry — 2026-08-03 by [@izelnakri](https://github.com/izelnakri) ([`02d2c77`](https://github.com/izelnakri/qunitx-cli/commit/02d2c7710201e0d5c410460afc53a0e6a04fcffa))
+- Export the daemon option and status types from the barrel — 2026-08-03 by [@izelnakri](https://github.com/izelnakri) ([`7a0ccaa`](https://github.com/izelnakri/qunitx-cli/commit/7a0ccaa9653ed23e42e48480dfe22519b2ed5331))
+- Publish the JS API as @izelnakri/qunitx-cli/api — 2026-08-03 by [@izelnakri](https://github.com/izelnakri) ([`3850a97`](https://github.com/izelnakri/qunitx-cli/commit/3850a9753f83f179efca4473f5464029961e755d))
+- Make the result comprehensive, and benchmark the public surface — 2026-08-05 by [@izelnakri](https://github.com/izelnakri) ([`9733ad5`](https://github.com/izelnakri/qunitx-cli/commit/9733ad5835f7b52888cf6d586c056a25a360dcf6))
+- Aborted results, signal, and the watch session's TUI surface — 2026-08-05 by [@izelnakri](https://github.com/izelnakri) ([`dd75e23`](https://github.com/izelnakri/qunitx-cli/commit/dd75e2347e78d40662d2a2c216c1c8400d369d9e))
+- RunSession — one run, watched as it happens — 2026-08-05 by [@izelnakri](https://github.com/izelnakri) ([`b71bf7d`](https://github.com/izelnakri/qunitx-cli/commit/b71bf7dc962af144fd7b4158eafe5007494e4698))
+- The sessions hand back Streams, and the queue they needed is gone — 2026-08-07 by [@izelnakri](https://github.com/izelnakri) ([`f9ef3a7`](https://github.com/izelnakri/qunitx-cli/commit/f9ef3a71a7f300edecf877213b4904d1b1ef9200))
+- Make dropped events visible, and drop a redundant catch — 2026-08-07 by [@izelnakri](https://github.com/izelnakri) ([`07a7927`](https://github.com/izelnakri/qunitx-cli/commit/07a7927d841ec4bd6b168ed657367dc9e6739646))
+- `result.status` names how a run finished, replacing `aborted` — 2026-08-12 by [@izelnakri](https://github.com/izelnakri) ([`de08908`](https://github.com/izelnakri/qunitx-cli/commit/de089087fd8d3e8683281426a954e1887c44039d))
+- Result.groups — the file split, which nothing else can tell you — 2026-08-12 by [@izelnakri](https://github.com/izelnakri) ([`eb0052f`](https://github.com/izelnakri/qunitx-cli/commit/eb0052f6c97e5be5e8d2253ce277277cb881209e))
+
+### Refactoring
+- [**breaking**] Name the terminals the way JS, Rust and Elixir already do — 2026-08-07 by [@izelnakri](https://github.com/izelnakri) ([`30cdc5f`](https://github.com/izelnakri/qunitx-cli/commit/30cdc5fabac77d8d743a4340e1c01ae647397d3c))
+- Assemble a run from options, not only from argv — 2026-08-03 by [@izelnakri](https://github.com/izelnakri) ([`d7d1970`](https://github.com/izelnakri/qunitx-cli/commit/d7d19701bdc068a8a517e0dd0395f2dd58c2cd60))
+- Return an outcome instead of ending the process — 2026-08-03 by [@izelnakri](https://github.com/izelnakri) ([`8a6390f`](https://github.com/izelnakri/qunitx-cli/commit/8a6390f44babfe1a60be9214d8623962c75ee2b1))
+- Report the files a run actually ran — 2026-08-03 by [@izelnakri](https://github.com/izelnakri) ([`dbfe6c5`](https://github.com/izelnakri/qunitx-cli/commit/dbfe6c50070dda3bb7a9e065cd14d1feaa88f118))
+- Fewer files, fewer hops, docs next to the code — 2026-08-10 by [@izelnakri](https://github.com/izelnakri) ([`d99903c`](https://github.com/izelnakri/qunitx-cli/commit/d99903c36853396b37f6a8dbabad7bb0237b3998))
+- Inline two one-line helpers on the browser run path — 2026-08-12 by [@izelnakri](https://github.com/izelnakri) ([`05aa431`](https://github.com/izelnakri/qunitx-cli/commit/05aa43180edd7968b3b12ccf0979acd1cd9085cf))
+- BrowserLogsTruncated -> browserLogsDropped — 2026-08-12 by [@izelnakri](https://github.com/izelnakri) ([`5a1790c`](https://github.com/izelnakri/qunitx-cli/commit/5a1790cb60146616d06d77ae56b70163db1bd749))
+
 ## [0.33.0] - 2026-08-02
 [`v0.31.1...v0.33.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.31.1...v0.33.0)
 
