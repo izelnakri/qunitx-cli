@@ -1,5 +1,6 @@
 import { module, test } from 'qunitx';
 import * as Server from '../../lib/commands/daemon/server.ts';
+import * as Client from '../../lib/commands/daemon/client.ts';
 import '../helpers/custom-asserts.ts';
 
 // Regression coverage for the CI hang where a browser killed while the daemon was idle
@@ -95,6 +96,26 @@ module('Commands | Daemon | Server.browserResponsive', { concurrency: true }, ()
       );
     }
     assert.notOk(probed, 'no CDP round-trip attempted for non-chromium browsers');
+  });
+
+  test('Server.BROWSER_RELAUNCH_TIMEOUT_MS keeps the daemon the first to report', (assert) => {
+    // `Browser.launch` had no bound, and it runs before handleRun installs the interceptors that
+    // forward daemon output — so a launch that never returned showed up as a client with empty
+    // stdout and a harness SIGTERM two and a half minutes later. Bounded below both the group
+    // deadline and the client's silence budget, the daemon reports `browser recovery failed`
+    // instead of everyone waiting on it.
+    assert.true(
+      Server.BROWSER_RELAUNCH_TIMEOUT_MS < 180_000,
+      `${Server.BROWSER_RELAUNCH_TIMEOUT_MS}ms is under GROUP_TIMEOUT_MS`,
+    );
+    assert.true(
+      Server.BROWSER_RELAUNCH_TIMEOUT_MS < Client.RUN_SILENCE_TIMEOUT_MS,
+      'and under the client budget, so the daemon explains the failure rather than the client',
+    );
+    assert.true(
+      Server.BROWSER_RELAUNCH_TIMEOUT_MS > 30_000,
+      'while leaving a real launch an order of magnitude more time than it needs',
+    );
   });
 
   test('Server.BROWSER_PROBE_TIMEOUT_MS is well under the 180s GROUP_TIMEOUT backstop', (assert) => {

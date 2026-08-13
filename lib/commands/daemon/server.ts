@@ -666,6 +666,27 @@ export function noteBrowserOutcome(
  * `MAX_CONSECUTIVE_CRASHES` so a broken environment shuts the daemon down instead of
  * looping forever — the next client respawns a fresh daemon.
  */
+/**
+ * How long a crash relaunch may take before the daemon declares itself unrecoverable.
+ *
+ * `Browser.launch` had no bound, and it runs BEFORE `handleRun` installs the interceptors that
+ * forward daemon output to the client — so a launch that never returns produced the exact shape
+ * CI kept hitting: a client with an empty stdout, a daemon log ending at `listening`, and a
+ * harness SIGTERM 150s later with nothing to diagnose. Bounded, the same situation reaches the
+ * client as `browser recovery failed` in seconds.
+ *
+ * Chosen well above a real launch (single-digit seconds, even on a loaded runner) and well below
+ * both the 180s `GROUP_TIMEOUT_MS` and the client's silence budget, so the daemon always reports
+ * first.
+ *
+ * ```ts
+ * import * as Server from './server.ts';
+ *
+ * Server.BROWSER_RELAUNCH_TIMEOUT_MS < 180_000; // true — the daemon reports before the deadline
+ * ```
+ */
+export const BROWSER_RELAUNCH_TIMEOUT_MS = 90_000;
+
 async function recoverBrowser(state: DaemonState): Promise<void> {
   if (noteBrowserOutcome(state, false) === 'shutdown') {
     return void shutdown(state, `${state.consecutiveCrashes} consecutive browser crashes`);
@@ -694,7 +715,16 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
     );
   });
   try {
-    state.browser = await state.browserReady;
+    state.browser = await Promise.race([
+      state.browserReady,
+      new Promise<never>((_resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error(`no browser after ${BROWSER_RELAUNCH_TIMEOUT_MS / 1000}s`)),
+          BROWSER_RELAUNCH_TIMEOUT_MS,
+        );
+        timer.unref?.();
+      }),
+    ]);
   } catch (err) {
     void shutdown(state, `browser relaunch failed: ${(err as Error).message || err}`);
   }
