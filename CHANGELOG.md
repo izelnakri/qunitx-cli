@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.34.3] - 2026-08-13
+[`v0.34.2...v0.34.3`](https://github.com/izelnakri/qunitx-cli/compare/v0.34.2...v0.34.3)
+
+### Bug Fixes
+- Pin esbuild and the SEA package to exact versions — 2026-08-13 by [@izelnakri](https://github.com/izelnakri) ([`65919d0`](https://github.com/izelnakri/qunitx-cli/commit/65919d03be338aa224ee23cc80561b30d1172c1d))
+- Catch an esbuild host/binary skew before the suite, not after — 2026-08-13 by [@izelnakri](https://github.com/izelnakri) ([`c1e4ad1`](https://github.com/izelnakri/qunitx-cli/commit/c1e4ad1097953bf36396876fac2ad42d6794c5bd))
+
 ## [0.34.2] - 2026-08-12
 [`v0.34.1...v0.34.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.34.1...v0.34.2)
 
