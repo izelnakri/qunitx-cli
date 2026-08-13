@@ -1,6 +1,6 @@
 {
   "name": "@izelnakri/qunitx-cli",
-  "version": "0.34.3",
+  "version": "0.34.4",
   "description": "qunitx-cli: the JS API under ./api, plus a bootstrap that fetches and caches the matching prebuilt binary for the CLI.",
   "license": "MIT",
   "nodeModulesDir": "auto",

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.34.4] - 2026-08-13
+[`v0.34.3...v0.34.4`](https://github.com/izelnakri/qunitx-cli/compare/v0.34.3...v0.34.4)
+
+### Bug Fixes
+- Bound the client's wait, so a wedged daemon cannot hang the CLI — 2026-08-13 by [@izelnakri](https://github.com/izelnakri) ([`a571a33`](https://github.com/izelnakri/qunitx-cli/commit/a571a3315f69460cd03c1094e05f1c5236db6508))
+
 ## [0.34.3] - 2026-08-13
 [`v0.34.2...v0.34.3`](https://github.com/izelnakri/qunitx-cli/compare/v0.34.2...v0.34.3)
 
