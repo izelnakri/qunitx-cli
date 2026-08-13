@@ -24,4 +24,15 @@ export { AwaitTimeout, Shutdown, Abandoned } from './task.ts';
  */
 export * as Failure from '../result/failure.ts';
 
+/**
+ * The value half, re-exported so a Task's `.result()` and its union can be handled without a
+ * second import: `Result<T, E>` is the bare `T | E` that settles out of it, `unwrap` moves a
+ * failure back into a throwing channel, and `partition` splits a batch of them.
+ *
+ * ```ts
+ * import { partition } from './index.ts';
+ *
+ * partition([1, new Error('nope'), 3]); // one pass, values and errors separated
+ * ```
+ */
 export { type Result, unwrap, partition } from '../result/result.ts';

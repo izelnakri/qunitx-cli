@@ -21,7 +21,7 @@ module('Flags | --filter', { concurrency: true }, (_hooks, moduleMetadata) => {
       ...tm,
     });
 
-    assert.tapResult(result, { testCount: 1 });
+    assert.tapResult(result, { total: 1 });
     assert.includes(result.stdout, 'Outer | outer first');
   });
 
@@ -33,7 +33,7 @@ module('Flags | --filter', { concurrency: true }, (_hooks, moduleMetadata) => {
       ...tm,
     });
 
-    assert.tapResult(result, { testCount: 2 });
+    assert.tapResult(result, { total: 2 });
     assert.notIncludes(
       result.stdout,
       'inner only',
@@ -65,7 +65,7 @@ module('Flags | --filter', { concurrency: true }, (_hooks, moduleMetadata) => {
 
     // Only the two passing-tests files hold a deepEqual test; the nested fixture's group
     // matches nothing and must contribute neither a test nor a failure.
-    assert.tapResult(result, { testCount: 2, failCount: 0 });
+    assert.tapResult(result, { total: 2, failed: 0 });
     assert.includes(result.stdout, 'across 3 groups');
     assert.notIncludes(result.stdout, 'not ok');
   });
@@ -79,11 +79,11 @@ module('Flags | --filter', { concurrency: true }, (_hooks, moduleMetadata) => {
       shell(`node cli.ts ${NESTED} -m Inner`, { ...moduleMetadata, ...tm }),
     ]);
 
-    assert.tapResult(outer, { testCount: 3 });
+    assert.tapResult(outer, { total: 3 });
     assert.includes(outer.stdout, 'Outer | Inner | inner only', 'nested children come along');
     assert.notIncludes(outer.stdout, 'separate one');
 
-    assert.tapResult(inner, { testCount: 1 });
+    assert.tapResult(inner, { total: 1 });
     assert.includes(inner.stdout, 'Outer | Inner | inner only');
   });
 });

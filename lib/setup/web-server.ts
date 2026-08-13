@@ -12,6 +12,7 @@ import { HTTPServer, MIME_TYPES } from '../web/index.ts';
 import { createReconnectingSocket } from './ws-client.js';
 import { readTemplate } from '../utils/read-template.ts';
 import type { Config } from '../types.ts';
+import type { QUnitSelector } from '../selection/line-targets.ts';
 import { Task } from '../task/index.ts';
 
 const fsPromise = fs.promises;
@@ -83,29 +84,47 @@ export function setup(config: Config): HTTPServer {
   const STATIC_FILES_PATH = path.resolve(config.projectRoot, config.output);
   const consumerQunitCssCandidate = resolveConsumerQunitCssCandidate(config.projectRoot);
   const server = new HTTPServer();
+  // Registered at construction rather than by the caller, so every server that can run tests can
+  // also be told to stop — including the per-group servers a custom HTML template forces.
+  config.state.aborters.add(() => server.publish('abort'));
   const mainHTMLWithReplacedAssets = replaceAssetPaths(
     config.state.htmlAssets.mainHTML.html ?? '',
     config.state.htmlAssets.mainHTML.filePath,
     config.projectRoot,
   );
-  // Cache the runtime script and both normal HTML responses — stable for this server's lifetime.
-  const runtimeScript = testRuntimeToInject(config);
-  const mainIndexHTML = escapeAndInjectTestsToHTML(
-    mainHTMLWithReplacedAssets,
-    runtimeScript,
-    './tests.js',
-  );
-  const mainQunitxHTML = escapeAndInjectTestsToHTML(
-    mainHTMLWithReplacedAssets,
-    runtimeScript,
-    './filtered-tests.js',
-  );
+  // Cached, but keyed on the selectors rather than for the server's whole lifetime: the runtime
+  // script bakes the line-target filter into the page, so a session that cleared its selectors
+  // (`qa`, `session.runAll()`) went on being served the pinned page and kept running one test.
+  // Recomputed only when they actually change, which in a normal run is never.
+  let pages: { selectors: QUnitSelector[] | undefined; index: string; qunitx: string } | null =
+    null;
+  const htmlPages = () => {
+    const selectors = config.state.group.selectors;
+    if (!pages || pages.selectors !== selectors) {
+      const runtimeScript = testRuntimeToInject(config);
+      pages = {
+        selectors,
+        index: escapeAndInjectTestsToHTML(mainHTMLWithReplacedAssets, runtimeScript, './tests.js'),
+        qunitx: escapeAndInjectTestsToHTML(
+          mainHTMLWithReplacedAssets,
+          runtimeScript,
+          './filtered-tests.js',
+        ),
+      };
+    }
+
+    return pages;
+  };
   const saveHTML = (filePath: string, html: string) =>
     Task(fsPromise.writeFile(filePath, html)).ignore(`writeFile ${filePath}`);
 
   config.state.group.wsConnectionCount = 0;
   server.wss.on('connection', function connection(socket) {
     config.state.group.wsConnectionCount = (config.state.group.wsConnectionCount ?? 0) + 1;
+    // The abort was requested before this page existed — `signal` already aborted, or `qq` pressed
+    // while the browser was still starting. Without this the request would reach nobody and the
+    // run it was meant to stop would go on to completion.
+    if (config.state.results.aborted) socket.send('abort');
     // A second WS connection is expected in watch/--open mode — the user opening http://localhost:PORT
     // in their own browser (the watch banner invites it) or a headed reload — so warning there is
     // noise. In a plain single run (e.g. CI) the lone headless page must connect exactly once, so a
@@ -115,11 +134,13 @@ export function setup(config: Config): HTTPServer {
       config.state.group.wsConnectionCount > 1 &&
       (config.debug || !(config.watch || config.open))
     ) {
-      diagWrite(
-        `# [qunitx][diag] wss accepted connection #${config.state.group.wsConnectionCount} — ` +
+      Reporter.warning(
+        config,
+        `[qunitx][diag] wss accepted connection #${config.state.group.wsConnectionCount} — ` +
           `single-group runs should see exactly one WS connection per run. ` +
           `Multiple connections from one page are the prime suspect for the 2× testEnd flake ` +
-          `(WS retry race in the injected runtime).\n`,
+          `(WS retry race in the injected runtime).`,
+        { stream: 'both' },
       );
     }
     socket.on('message', function message(data) {
@@ -160,16 +181,17 @@ export function setup(config: Config): HTTPServer {
         const count = (config.state.group.testEndCounts?.get(fullName) ?? 0) + 1;
         config.state.group.testEndCounts?.set(fullName, count);
         if (count > 1) {
-          diagWrite(
-            `# [qunitx] WARNING: duplicate testEnd ignored for "${fullName}" — ` +
+          Reporter.warning(
+            config,
+            `[qunitx] WARNING: duplicate testEnd ignored for "${fullName}" — ` +
               `browser/Playwright fired the event twice in one run. ` +
-              `Counter not incremented; see Config.state.group.testEndCounts for details.\n`,
+              `Counter not incremented; see Config.state.group.testEndCounts for details.`,
+            { stream: 'both' },
           );
           return;
         }
 
         if (details.status === 'failed') {
-          config.state.group.lastFailedFiles = config.state.group.lastRanFiles;
           FailureCache.record(config, details);
         }
 
@@ -319,12 +341,10 @@ export function setup(config: Config): HTTPServer {
       res.writeHead(200, HTML_HEADERS);
       return res.end(buildNoTestsHTML(fallback.files));
     }
+    const { index } = htmlPages();
     res.writeHead(200, HTML_HEADERS);
-    res.end(mainIndexHTML);
-    saveHTML(
-      path.join(path.resolve(config.projectRoot, config.output), 'index.html'),
-      mainIndexHTML,
-    );
+    res.end(index);
+    saveHTML(path.join(path.resolve(config.projectRoot, config.output), 'index.html'), index);
   });
 
   server.get('/qunitx.html', (_req, res) => {
@@ -342,12 +362,10 @@ export function setup(config: Config): HTTPServer {
       res.writeHead(200, HTML_HEADERS);
       return res.end(buildNoTestsHTML(fallback.files));
     }
+    const { qunitx } = htmlPages();
     res.writeHead(200, HTML_HEADERS);
-    res.end(mainQunitxHTML);
-    saveHTML(
-      path.join(path.resolve(config.projectRoot, config.output), 'qunitx.html'),
-      mainQunitxHTML,
-    );
+    res.end(qunitx);
+    saveHTML(path.join(path.resolve(config.projectRoot, config.output), 'qunitx.html'), qunitx);
   });
 
   server.get('/*', (req, res) => {
@@ -356,7 +374,7 @@ export function setup(config: Config): HTTPServer {
     if (possibleDynamicHTML) {
       const htmlContent = escapeAndInjectTestsToHTML(
         possibleDynamicHTML,
-        runtimeScript,
+        testRuntimeToInject(config),
         '/tests.js',
       );
       res.writeHead(200, HTML_HEADERS);
@@ -776,14 +794,15 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
         const count = (config.state.group.testEndCounts?.get(fullName) ?? 0) + 1;
         config.state.group.testEndCounts?.set(fullName, count);
         if (count > 1) {
-          diagWrite(
-            `# [qunitx] WARNING: group ${resolvedGroupId} duplicate testEnd ignored for "${fullName}" — ` +
-              `single-run testEnds should be unique.\n`,
+          Reporter.warning(
+            config,
+            `[qunitx] WARNING: group ${resolvedGroupId} duplicate testEnd ignored for "${fullName}" — ` +
+              `single-run testEnds should be unique.`,
+            { stream: 'both' },
           );
           return;
         }
         if (details.status === 'failed') {
-          config.state.group.lastFailedFiles = config.state.group.lastRanFiles;
           FailureCache.record(config, details);
         }
         if (config.debug && details.runtime > config.timeout * 0.8) {
@@ -1106,17 +1125,4 @@ function debugGroupHeader(config: Config): void {
   process.stdout.write(
     `# ${blue(`── ${shown.join('  ')}${rest > 0 ? `  +${rest} more` : ''} ──`)}\n`,
   );
-}
-
-// Writes a diagnostic warning to BOTH stdout and stderr. stderr is the natural
-// stream for warnings but is captured-then-discarded by many test helpers
-// (e.g. test/inputs/plugins-test.ts's runFixtureCli), making warnings invisible
-// when a test fails. stdout writes the same text as a TAP `#` comment — TAP
-// parsers ignore `#` lines, so it does not affect test outcomes, and assertion-
-// failure dumps that snapshot stdout (custom-asserts.tapResult) now include the
-// warning surface. Dual write keeps either stream a sufficient signal in CI
-// logs.
-function diagWrite(msg: string): void {
-  process.stderr.write(msg);
-  process.stdout.write(msg);
 }

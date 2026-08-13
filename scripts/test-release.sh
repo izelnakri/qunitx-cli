@@ -40,6 +40,12 @@ case "$(uname -s)" in
 esac
 echo "test-release: running full test suite with QUNITX_BIN=$QUNITX_BIN"
 
+# The local install above is not the shape end users have — it drops the runner's dependencies into
+# the consumer's own node_modules, so anything resolving from the CWD succeeds by accident. The
+# global-install check covers that gap and lives in its own script so CI can run it on every PR
+# that touches packaging, rather than only here at tag time.
+bash "$ROOT/scripts/test-global-install.sh"
+
 # Run the test suite from the source root so test fixtures are reachable,
 # but with QUNITX_BIN set so every `node cli.ts` invocation uses the binary.
 # TEST_SCRIPT defaults to 'test' (full suite on chromium).

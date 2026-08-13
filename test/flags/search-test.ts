@@ -107,7 +107,7 @@ module('Flags | --search', { concurrency: true }, (_hooks, moduleMetadata) => {
     assert.notIncludes(preview.stdout, 'outer first');
     assert.includes(preview.stdout, '1 of 4 tests match "inner"');
 
-    assert.tapResult(run, { testCount: 1 });
+    assert.tapResult(run, { total: 1 });
     assert.includes(run.stdout, 'Outer | Inner | inner only');
   });
 

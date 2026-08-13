@@ -10,11 +10,13 @@ import { parseIdleTimeout } from './parse-idle-timeout.ts';
 import * as Socket from './socket.ts';
 import * as Config from '../../setup/config.ts';
 import * as Browser from '../../setup/browser.ts';
-import { DaemonRunError } from '../run/tests-in-browser.ts';
-import { run } from '../run.ts';
+import * as RunCommand from '../run.ts';
 import { borrowArgv, borrowEnv } from '../../utils/borrowed-globals.ts';
 import * as Result from '../../result/index.ts';
 import { Failure } from '../../result/index.ts';
+import * as Options from '../../api/options.ts';
+import * as Run from '../../api/run.ts';
+import type { RunResult } from '../../api/run.ts';
 import type { Request, ResponseChunk, RunRequest, DaemonInfo } from './protocol.ts';
 import type { Browser as PlaywrightBrowser } from 'playwright-core';
 import { Task } from '../../task/index.ts';
@@ -168,8 +170,8 @@ export async function serve(): Promise<void> {
   // nothing valid to serve, and refusing to start beats accepting runs it will fail.
   const baseConfig = Result.expect(configured, 'daemon could not assemble its startup config');
   // baseConfig is only ever handed to Browser.launch (initial launch + crash recovery), never
-  // to run() — so it needs no daemon handles. watch/open still matter: Browser.launch derives
-  // `headless` from them.
+  // to RunCommand.run() — so it needs no daemon handles. watch/open still matter: Browser.launch
+  // derives `headless` from them.
   baseConfig.watch = false;
   baseConfig.open = false;
 
@@ -532,7 +534,13 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
 
   let exitCode = 0;
   try {
-    exitCode = await runOnce(req.argv, req.env, state);
+    const outcome = await runOnce(req, state);
+    exitCode = outcome.exitCode;
+    // Before `done`, so a client reading the stream in order has the result in hand by the time
+    // the terminal chunk tells it the run is over.
+    if (outcome.result && !socket.destroyed) {
+      writeChunk(socket, { type: 'result', result: outcome.result });
+    }
   } catch (err) {
     process.stderr.write = origStderrWrite;
     origStderrWrite(`# [qunitx daemon] run error: ${(err as Error).stack || err}\n`);
@@ -548,7 +556,8 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
   // run. state.browser is non-null here — awaitBrowser succeeded above and
   // recoverBrowser (if it ran) reassigned it; the non-null assertion lets us
   // reuse the existing isConnected() check verbatim.
-  if (state.browser!.isConnected()) state.consecutiveCrashes = 0;
+  // One policy, both outcomes — `recoverBrowser` re-enters it for the crash arithmetic.
+  if (state.browser!.isConnected()) noteBrowserOutcome(state, true);
   else await recoverBrowser(state);
 
   if (!socket.destroyed) {
@@ -621,12 +630,44 @@ export async function browserResponsive(
 }
 
 /**
+ * The crash-budget policy, as one pure decision: what a run's outcome does to the counter, and
+ * what should happen next.
+ *
+ * Extracted so the rule can be proven without launching Chrome. It used to live at two call
+ * sites — a reset here, an increment there — and the only coverage for "a successful run resets
+ * the counter" was an end-to-end test that killed Chrome twice and waited out two real relaunches.
+ * That test could not fit inside the per-test deadline on a loaded runner, so the property was
+ * expensive AND unreliable to check. See `test/commands/daemon-crash-budget-test.ts`.
+ *
+ * ```ts
+ * import * as Server from './server.ts';
+ *
+ * Server.noteBrowserOutcome({ consecutiveCrashes: 1 }, true); // 'ok' — and the counter is reset
+ * Server.noteBrowserOutcome({ consecutiveCrashes: 0 }, false); // 'relaunch'
+ * ```
+ */
+export function noteBrowserOutcome(
+  state: Pick<DaemonState, 'consecutiveCrashes'>,
+  connected: boolean,
+): 'ok' | 'relaunch' | 'shutdown' {
+  if (connected) {
+    // The reset is the whole point of the budget being CONSECUTIVE: a daemon that recovers and
+    // then serves a run is healthy, however many times it crashed before that.
+    state.consecutiveCrashes = 0;
+
+    return 'ok';
+  }
+
+  return ++state.consecutiveCrashes > MAX_CONSECUTIVE_CRASHES ? 'shutdown' : 'relaunch';
+}
+
+/**
  * Relaunches the daemon's persistent browser after a crash. Bounded by
  * `MAX_CONSECUTIVE_CRASHES` so a broken environment shuts the daemon down instead of
  * looping forever — the next client respawns a fresh daemon.
  */
 async function recoverBrowser(state: DaemonState): Promise<void> {
-  if (++state.consecutiveCrashes > MAX_CONSECUTIVE_CRASHES) {
+  if (noteBrowserOutcome(state, false) === 'shutdown') {
     return void shutdown(state, `${state.consecutiveCrashes} consecutive browser crashes`);
   }
   process.stderr.write(
@@ -660,41 +701,51 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
 }
 
 /**
- * Performs one test run inside the daemon by delegating to `run()` — the same code
- * path local non-watch invocations use, but with state.daemon set so it reuses the
- * daemon's persistent browser and throws `DaemonRunError` instead of `process.exit`.
- * Concurrent group orchestration, timing-cache persistence, and after-hook all come
- * for free from the shared run pipeline.
+ * Performs one test run inside the daemon by delegating to `RunCommand.run()` — the same code
+ * path local invocations use, with `state.daemon` set so it reuses the daemon's browser and
+ * leaves it open. Concurrent group orchestration, timing-cache persistence, and after-hook all
+ * come for free from the shared run pipeline.
  */
 async function runOnce(
-  argv: string[],
-  env: Record<string, string | undefined>,
+  req: RunRequest,
   state: DaemonState,
-): Promise<number> {
+): Promise<{ exitCode: number; result: RunResult | null }> {
   // Both globals are lent for the whole call and given back however it ends. They used to be
   // restored by two separate mechanisms at three separate places, and `env` was not among them
   // when `Config.setup()` THREW — the argv `finally` ran, the exception left runOnce, and that
   // client's environment stayed on the daemon for every later run.
-  using _env = borrowEnv(env);
-  using _argv = borrowArgv(['node', process.argv[1] ?? 'cli.ts', ...argv]);
+  //
+  // An options-driven request needs neither, strictly — `Config.setup(options)` reads no globals
+  // — but `env` still shapes the run (QUNITX_BROWSER, TZ, anything a --before hook reads), so
+  // both stay lent for every request rather than only some of them.
+  using _env = borrowEnv(req.env);
+  using _argv = borrowArgv(['node', process.argv[1] ?? 'cli.ts', ...req.argv]);
 
-  const configured = (await Config.setup().result()) as Result.Result<
-    ResolvedConfig,
-    Config.ConfigFailure
-  >;
+  // An options-driven request answers with a structured result, which means it needs a collector
+  // — and a reporter set built here rather than by `Reporter.create`, because the client asked
+  // for specific ones by name.
+  // `console` is stripped again here, not only by the client. It cannot survive JSON, so anything
+  // arriving under that key is a `{}` from an older client — and building from it would give the
+  // daemon a `log` of `undefined` and kill it on first use. The daemon serves every invocation in
+  // the project; it does not get to trust one of them.
+  const wireOptions = req.options && { ...req.options, console: undefined };
+  const configured = (await Config.setup(
+    // `cwd` is forced to the daemon's: `handleRun` already rejected a mismatched client cwd, and
+    // a daemon serving one project must not be talked into resolving another.
+    wireOptions ? { ...Options.from(wireOptions), cwd: state.cwd } : undefined,
+  ).result()) as Result.Result<ResolvedConfig, Config.ConfigFailure>;
   // A bad flag from one client is that client's problem, not the daemon's. This is the whole
   // reason config assembly returns instead of exiting: `process.exit(1)` inside `Args.parse`
   // would have taken down a daemon serving every other invocation in the project.
   if (Failure.is(configured)) {
     process.stderr.write(`${Failure.format(configured)}\n`);
-    return 1;
+    return { exitCode: 1, result: null };
   }
   const config = configured;
 
   // Lending the daemon's persistent handles to this run also marks it as a daemon run:
-  // a non-null state.daemon makes run() reuse the browser rather than launching one, throw
-  // DaemonRunError instead of calling process.exit, and leave the browser open at the end.
-  // watch/open are forced off — those modes don't make sense inside a daemon run.
+  // a non-null state.daemon makes RunCommand.run() reuse the browser rather than launching one,
+  // and leave it open at the end. watch/open are forced off — neither fits inside a daemon run.
   //
   // state.browser is non-null here — runOnce only fires from handleRun after awaitBrowser
   // has resolved (and recoverBrowser, if it ran, reassigned it).
@@ -706,15 +757,13 @@ async function runOnce(
   config.watch = false;
   config.open = false;
 
-  try {
-    await run(config);
-    // run() throws DaemonRunError on success in daemon mode; reaching here means it
-    // returned without exiting — fall back on the counter.
-    return config.state.results.counter.failCount > 0 ? 1 : 0;
-  } catch (err) {
-    if (err instanceof DaemonRunError) return err.exitCode;
-    throw err;
-  }
+  const outcome = await RunCommand.run(config);
+
+  return {
+    exitCode: outcome.exitCode,
+    // Only an options-driven request answers with a structured result; an argv one wants a code.
+    result: wireOptions ? Run.buildResult(config, outcome) : null,
+  };
 }
 
 async function readPkgMtime(cwd: string): Promise<number> {

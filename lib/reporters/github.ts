@@ -1,8 +1,7 @@
 import { SpecReporter } from './spec.ts';
 import * as Result from '../result/index.ts';
 import { failedAssertions, parseAt, type FailureInfo } from './failure.ts';
-import type { Reporter, RunStartInfo, RunEndInfo, TestDetails } from './types.ts';
-import type { Config } from '../types.ts';
+import type { Reporter, RunStartInfo, RunEndInfo, TestDetails, ReporterContext } from './types.ts';
 
 /**
  * GitHub Actions reporter: spec output, plus a `::error` workflow command per failure so the
@@ -16,15 +15,16 @@ import type { Config } from '../types.ts';
  * spec run, and annotations are strictly additional.
  *
  * ```ts
- * import type { Config } from '../types.ts';
+ * import type { ReporterContext } from './types.ts';
+ *
  * import type { TestDetails } from './types.ts';
  *
  * // Defined, not invoked: streams spec output plus ::error commands to stdout.
- * function example(config: Config, details: TestDetails) {
+ * function example(context: ReporterContext, details: TestDetails) {
  *   const reporter = new GithubReporter();
- *   reporter.onRunStart(config, { fileCount: 1, groupCount: 1 });
- *   reporter.onTestEnd(config, details); // spec line, plus "::error …" per failing assertion
- *   reporter.onRunEnd(config, { durationMs: 800 });
+ *   reporter.onRunStart(context, { fileCount: 1, groupCount: 1 });
+ *   reporter.onTestEnd(context, details); // spec line, plus "::error …" per failing assertion
+ *   reporter.onRunEnd(context, { durationMs: 800 });
  * }
  * ```
  */
@@ -35,41 +35,42 @@ export class GithubReporter implements Reporter {
    * Delegates the run banner to the spec renderer.
    *
    * ```ts
-   * import type { Config } from '../types.ts';
+   * import type { ReporterContext } from './types.ts';
    *
    * // Defined, not invoked: prints the banner to stdout.
-   * function example(reporter: GithubReporter, config: Config) {
-   *   reporter.onRunStart(config, { fileCount: 2, groupCount: 1 }); // "Running 2 test files …"
+   * function example(reporter: GithubReporter, context: ReporterContext) {
+   *   reporter.onRunStart(context, { fileCount: 2, groupCount: 1 }); // "Running 2 test files …"
    * }
    * ```
    */
-  onRunStart(config: Config, info: RunStartInfo): void {
-    this.#spec.onRunStart(config, info);
+  onRunStart(context: ReporterContext, info: RunStartInfo): void {
+    this.#spec.onRunStart(context, info);
   }
 
   /**
    * Renders the spec line, then annotates each failing assertion for the PR diff.
    *
    * ```ts
-   * import type { Config } from '../types.ts';
+   * import type { ReporterContext } from './types.ts';
+   *
    * import type { TestDetails } from './types.ts';
    *
    * // Defined, not invoked: writes the spec line and one ::error command per failing assertion.
-   * function example(reporter: GithubReporter, config: Config, failed: TestDetails) {
-   *   reporter.onTestEnd(config, failed);
+   * function example(reporter: GithubReporter, context: ReporterContext, failed: TestDetails) {
+   *   reporter.onTestEnd(context, failed);
    *   // "  ✖ adds (3ms)" … then "::error file=lib/math.ts,line=4,col=3,title=Math | adds::…"
    * }
    * ```
    */
-  onTestEnd(config: Config, details: TestDetails): void {
-    this.#spec.onTestEnd(config, details);
+  onTestEnd(context: ReporterContext, details: TestDetails): void {
+    this.#spec.onTestEnd(context, details);
     if (details.status !== 'failed') return;
 
     // One annotation per failing assertion: each has its own location, and GitHub renders
     // them at their exact line. Emitted as one write so the block can't be split apart.
     const title = details.fullName.join(' | ');
-    process.stdout.write(
-      failedAssertions(details, config.state.group.sourceMapDecoder, config.projectRoot)
+    context.console.log(
+      failedAssertions(details, context.sourceMapDecoder, context.projectRoot)
         .map((failure) => `${annotation(title, failure)}\n`)
         .join(''),
     );
@@ -79,16 +80,16 @@ export class GithubReporter implements Reporter {
    * Delegates the summary + failure recap to the spec renderer.
    *
    * ```ts
-   * import type { Config } from '../types.ts';
+   * import type { ReporterContext } from './types.ts';
    *
    * // Defined, not invoked: prints the summary to stdout.
-   * function example(reporter: GithubReporter, config: Config) {
-   *   reporter.onRunEnd(config, { durationMs: 800 }); // "  5 passing (800ms)" …
+   * function example(reporter: GithubReporter, context: ReporterContext) {
+   *   reporter.onRunEnd(context, { durationMs: 800 }); // "  5 passing (800ms)" …
    * }
    * ```
    */
-  onRunEnd(config: Config, info: RunEndInfo): void {
-    this.#spec.onRunEnd(config, info);
+  onRunEnd(context: ReporterContext, info: RunEndInfo): void {
+    this.#spec.onRunEnd(context, info);
   }
 }
 

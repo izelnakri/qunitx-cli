@@ -7,6 +7,9 @@ import * as Socket from './socket.ts';
 import { Failure } from '../../result/index.ts';
 import { Task } from '../../task/index.ts';
 import { readJsonCache } from '../../utils/read-json-cache.ts';
+import { processConsole, type Console } from '../../console.ts';
+import type { DaemonRunOptions } from './protocol.ts';
+import type { RunResult } from '../../api/run.ts';
 import type { Request, ResponseChunk } from './protocol.ts';
 
 const CONNECT_TIMEOUT_MS = 1_000;
@@ -160,7 +163,11 @@ export async function shutdown(cwd: string = process.cwd()): Promise<boolean> {
  * failure.message; // 'no daemon is listening for this project'
  * ```
  */
-export const DaemonUnreachable = Failure.define(
+export const DaemonUnreachable: Failure.FailureFactory<'DaemonUnreachable', undefined> &
+  ((
+    data?: undefined,
+    options?: Failure.FailureOptions,
+  ) => Failure.Failure<'DaemonUnreachable', undefined>) = Failure.define(
   'DaemonUnreachable',
   'no daemon is listening for this project',
 );
@@ -180,11 +187,62 @@ export const DaemonUnreachable = Failure.define(
  * // 'daemon closed the connection (close) without reporting a result'
  * ```
  */
-export const DaemonDisconnected = Failure.define(
+export const DaemonDisconnected: Failure.FailureFactory<
   'DaemonDisconnected',
-  (data: { reason: 'close' | 'error' }) =>
+  { reason: 'close' | 'error' | 'no-result' }
+> = Failure.define(
+  'DaemonDisconnected',
+  // 'no-result' is the version-skew case: a daemon older than the client answered an
+  // options-driven request without the `result` chunk that request is defined by.
+  (data: { reason: 'close' | 'error' | 'no-result' }) =>
     `daemon closed the connection (${data.reason}) without reporting a result`,
 );
+
+/**
+ * The daemon accepted the connection and then said nothing for {@link RUN_SILENCE_TIMEOUT_MS}.
+ *
+ * `dispatchRun` settles on a terminal `done`/`fatal` chunk, or on the socket closing. A daemon
+ * wedged mid-run sends neither, and the client waited forever: no output, no error, a terminal
+ * that never comes back. CI saw the same shape as an empty stdout and a harness SIGTERM.
+ *
+ * Measured on silence rather than total duration, because a long suite is not a wedged one — the
+ * daemon streams a chunk per test, so any run making progress keeps resetting the clock.
+ *
+ * ```ts
+ * import * as Client from './client.ts';
+ *
+ * Client.DaemonSilent({ ms: 240_000 }).message;
+ * // 'daemon accepted the run but sent nothing for 240s — it is wedged, not slow'
+ * ```
+ */
+export const DaemonSilent: Failure.FailureFactory<'DaemonSilent', { ms: number }> = Failure.define(
+  'DaemonSilent',
+  (data: { ms: number }) =>
+    `daemon accepted the run but sent nothing for ` +
+    `${data.ms < 1000 ? `${data.ms}ms` : `${Math.round(data.ms / 1000)}s`} — ` +
+    `it is wedged, not slow. Run \`qunitx daemon stop\` and retry, or pass --no-daemon.`,
+);
+
+/**
+ * How long the client waits on total silence before declaring the daemon wedged.
+ *
+ * Above the daemon's own per-group deadline (`GROUP_TIMEOUT_MS`, 180s): while a group runs down
+ * that clock the daemon is legitimately quiet, and giving up first would turn a run the daemon was
+ * about to fail properly into a transport error. `QUNITX_DAEMON_RUN_TIMEOUT` overrides it, in ms —
+ * the regression test uses a small value to prove the path without waiting minutes.
+ *
+ * ```ts
+ * import * as Client from './client.ts';
+ *
+ * Client.RUN_SILENCE_TIMEOUT_MS > 180_000; // true — the daemon gets to report first
+ * ```
+ */
+export const RUN_SILENCE_TIMEOUT_MS = 240_000;
+
+function silenceBudget(): number {
+  const override = Number(process.env.QUNITX_DAEMON_RUN_TIMEOUT);
+  return Number.isFinite(override) && override > 0 ? override : RUN_SILENCE_TIMEOUT_MS;
+}
 
 /**
  * Every way a daemon-routed run can fail to produce an exit code.
@@ -192,28 +250,29 @@ export const DaemonDisconnected = Failure.define(
  * ```ts
  * import * as Client from './client.ts';
  *
- * const failure: Client.RunViaFailure = Client.DaemonDisconnected({ reason: 'error' });
+ * const failure: Client.DaemonRunFailure = Client.DaemonDisconnected({ reason: 'error' });
  * failure.code; // 'DaemonDisconnected' — or 'DaemonUnreachable'; narrow with a switch
  * ```
  */
-export type RunViaFailure = Failure.Of<typeof DaemonUnreachable | typeof DaemonDisconnected>;
+export type DaemonRunFailure = Failure.Of<
+  typeof DaemonUnreachable | typeof DaemonDisconnected | typeof DaemonSilent
+>;
 
 /**
- * Sends `argv` to the daemon and streams its TAP output back to local stdout/stderr.
- * Succeeds with the exit code the daemon reported; fails with one the caller can act on:
- * `DaemonUnreachable` means "fall through to a local run", `DaemonDisconnected` means the
- * daemon died mid-run and the user should be told.
+ * The CLI's path: sends raw `argv` and answers with the exit code the daemon reported.
  *
- * A Task rather than a promise of a `Result`, because the two say the same thing and only
- * one of them nests: `Promise<Result<number, E>>` hands the caller a union it must unwrap
- * *inside* whatever it already uses to catch bugs, while `.result()` here produces that union
- * on demand and `await` alone gets the exit code.
+ * Exists as its own entry point so that argv is parsed on the DAEMON. `Args.parse` needs a
+ * project root, so converting argv into {@link DaemonRunOptions} here would make every
+ * daemon-routed `qunitx` load `setup/config.ts` and its `find-project-root`/`fs-tree` chain —
+ * measured at ~48 ms of module evaluation (63 ms -> 111 ms), against the ~800 ms the daemon
+ * saves. {@link run} is the one to reach for otherwise; this trades a narrower answer for the
+ * startup latency the daemon exists to protect.
  *
- * Not idempotent — it streams a whole test run to stdio — so `retry()` would replay the
- * output. There is nothing here to retry anyway: both failures mean the daemon is gone.
- *
- * Forwards the user's Ctrl+C: client exits with 130; daemon abandons the run cleanly
- * when it sees the socket close (clientAlive=false stops further writes).
+ * A Task rather than a promise of a `Result`, because the two say the same thing and only one of
+ * them nests: `await` alone gets the exit code, `.result()` gets the union. Not idempotent — it
+ * streams a whole test run to stdio — and nothing here is worth retrying, since both failures
+ * mean the daemon is gone. Forwards Ctrl+C: the client exits 130 and the daemon abandons the run
+ * when it sees the socket close.
  *
  * ```ts
  * import * as Client from './client.ts';
@@ -221,34 +280,112 @@ export type RunViaFailure = Failure.Of<typeof DaemonUnreachable | typeof DaemonD
  *
  * // Defined, not invoked: streams the daemon's TAP output to this process's stdio.
  * async function runOnDaemon() {
- *   const outcome = await Client.runVia(['test/foo-test.ts']).result(); // number | RunViaFailure
+ *   const outcome = await Client.runArgv(['test/foo-test.ts']).result(); // number | DaemonRunFailure
  *   return Failure.is(outcome) ? null : outcome; // exit code out; a failure the caller acts on
  * }
  * ```
  */
-export function runVia(argv: string[]): Task<number, RunViaFailure> {
+export function runArgv(argv: string[]): Task<number, DaemonRunFailure> {
+  return Task(async () => (await dispatchRun({ argv })).exitCode);
+}
+
+/**
+ * Runs the suite inside the daemon and answers with the same {@link RunResult} a local run
+ * produces. The one to reach for; {@link runArgv} is the CLI's narrower variant.
+ *
+ * Streams the daemon's text into `console` when one is given, so a caller that asked for a
+ * reporter still sees its output locally, and reads the `result` chunk the daemon sends just
+ * before `done`.
+ *
+ * ```ts
+ * import * as Client from './client.ts';
+ * import * as Failure from '../../result/failure.ts';
+ *
+ * // Defined, not invoked: dispatches a real run to the project's daemon.
+ * async function runOnDaemon() {
+ *   const outcome = await Client.run({ inputs: ['test/'] }).result();
+ *   return Failure.is(outcome) ? null : outcome.counts;
+ * }
+ * ```
+ */
+export function run(options: DaemonRunOptions, sink?: Console): Task<RunResult, DaemonRunFailure> {
   return Task(async () => {
+    // `console` is the CLIENT's, for the text streamed back — an object carrying functions, so it
+    // does not survive `JSON.stringify`. Sent anyway, the daemon received `{}`, built a `Console`
+    // whose `log` was `undefined`, and died on the first call — taking the daemon down and every
+    // run queued behind it. Dropped here, at the one place that knows which half of the options
+    // crosses the socket.
+    const { console: _console, ...overWire } = options;
+    const { result } = await dispatchRun({ options: overWire, sink });
+    // The daemon sends `result` before `done` on every options-driven request, so its absence
+    // means the daemon answered a request it did not understand — a version skew between a
+    // running daemon and a newer client, which is exactly the case `fatal` cannot describe.
+    if (!result) throw DaemonDisconnected({ reason: 'no-result' });
+
+    return result;
+  });
+}
+
+/**
+ * One run over the socket. {@link runArgv} sends an argv and wants an exit code, {@link run}
+ * sends options and wants a {@link RunResult}; everything between those two ends — connect,
+ * SIGINT forwarding, the terminal chunk, the two ways a daemon can vanish — is identical, and
+ * lives here.
+ */
+function dispatchRun({
+  argv = [],
+  options,
+  sink,
+}: {
+  argv?: string[];
+  options?: DaemonRunOptions;
+  sink?: Console;
+}): Promise<{ exitCode: number; result: RunResult | null }> {
+  return (async () => {
     const socket = await tryConnect();
     if (!socket) throw DaemonUnreachable();
+    const out = sink ?? processConsole;
+    let result: RunResult | null = null;
 
     // Per protocol.ts: exactly one terminal message ('done' or 'fatal') ends the
     // stream. close/error here are last-resort fallbacks for a daemon that drops
     // the connection without sending one — reported as declared failures rather than
     // folded into the same exit code a failing test run produces.
     const outcome = new Promise<number>((resolve, reject) => {
+      // Reset by every chunk, so a run that is merely long never trips it; only a daemon that has
+      // stopped talking does. Without this the promise has no losing branch at all: a wedged
+      // daemon leaves the CLI waiting with no output and no error, forever.
+      const budget = silenceBudget();
+      let silence: ReturnType<typeof setTimeout>;
+      const heard = () => {
+        clearTimeout(silence);
+        silence = setTimeout(() => {
+          socket.destroy();
+          reject(DaemonSilent({ ms: budget }));
+        }, budget);
+        silence.unref?.();
+      };
+      const settle = (finish: () => void) => {
+        clearTimeout(silence);
+        finish();
+      };
+      heard();
+
       Socket.readMessages<ResponseChunk>(socket, (chunk) => {
-        if (chunk.type === 'stdout') process.stdout.write(chunk.data);
-        else if (chunk.type === 'stderr') process.stderr.write(chunk.data);
-        else if (chunk.type === 'done') resolve(chunk.exitCode);
+        heard();
+        if (chunk.type === 'stdout') out.log(chunk.data);
+        else if (chunk.type === 'stderr') out.error(chunk.data);
+        else if (chunk.type === 'result') result = chunk.result;
+        else if (chunk.type === 'done') settle(() => resolve(chunk.exitCode));
         else if (chunk.type === 'fatal') {
           // A reported fatal IS a terminal result: the daemon ran, decided the run failed, and
           // said so. That is an exit code, not a transport failure.
-          process.stderr.write(`# [qunitx daemon] ${chunk.message}\n`);
-          resolve(1);
+          out.error(`# [qunitx daemon] ${chunk.message}\n`);
+          settle(() => resolve(1));
         }
       });
-      socket.once('close', () => reject(DaemonDisconnected({ reason: 'close' })));
-      socket.once('error', () => reject(DaemonDisconnected({ reason: 'error' })));
+      socket.once('close', () => settle(() => reject(DaemonDisconnected({ reason: 'close' }))));
+      socket.once('error', () => settle(() => reject(DaemonDisconnected({ reason: 'error' }))));
     });
 
     const onSigint = () => {
@@ -260,17 +397,18 @@ export function runVia(argv: string[]): Task<number, RunViaFailure> {
     send(socket, {
       type: 'run',
       argv,
+      options,
       cwd: process.cwd(),
       env: { ...process.env },
       nodeVersion: process.version,
     });
 
     try {
-      return await outcome;
+      return { exitCode: await outcome, result };
     } finally {
       process.removeListener('SIGINT', onSigint);
     }
-  });
+  })();
 }
 
 /**

@@ -32,7 +32,7 @@ module('Flags | --port', { concurrency: true }, (_hooks, moduleMetadata) => {
       'URL shows the explicitly requested port',
     );
     assert.passingTestCaseFor(result, { debug: true, moduleName: '{{moduleName}}' });
-    assert.tapResult(result, { testCount: 3 });
+    assert.tapResult(result, { total: 3 });
   });
 
   test('accepts TCP connections on the bound port while running, and frees it on exit', async (assert) => {

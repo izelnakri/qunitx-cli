@@ -36,6 +36,7 @@ output to the terminal.
 - `--junit` writes a JUnit XML report for CI dashboards, alongside the normal terminal output
 - `--coverage` reports V8 line coverage (terminal summary, plus optional `lcov` and `html` reports)
 - `--version` / `-v` prints the installed version
+- [JavaScript API](#javascript-api) — `await run('test/')` returns the results as data; silent by default, with `watch`, `search`, custom reporters and daemon control. On npm and JSR (`jsr:@izelnakri/qunitx-cli/api`)
 - Optional daemon mode (`qunitx daemon start`) keeps Chrome and the esbuild context warm across runs — roughly halves the wall-clock time of repeated invocations
 - Docker image for zero-install CI usage
 
@@ -183,6 +184,44 @@ qunitx test/**/*.js --browser=webkit
 > npx playwright install firefox
 > npx playwright install webkit
 > ```
+
+## JavaScript API
+
+Everything the CLI does, available as a function — for CI scripts, editor integrations, agents,
+and anything else that needs the results as data rather than as text on a terminal.
+
+```js
+import { run } from 'qunitx-cli';
+
+const result = await run('test/');
+
+result.ok; // false
+result.counts; // { total: 42, passed: 41, failed: 1, skipped: 0, todo: 0, assertionsFailed: 1 }
+result.failures.map((test) => test.fullName); // ['Cart > Coupons: applies code']
+```
+
+| | |
+|---|---|
+| `run(options)` | run once; the full result as a value |
+| `runSession(options)` | one run, watched as it happens — `events()`, `result()`, `abort()` |
+| `watch(options)` | async-iterable session; `run`/`runAll`/`runFailed`/`abort`, `results()` |
+| `search(options)` | what a selection would run — no browser, milliseconds |
+| `Daemon.{start,stop,status,run}` | reuse a warm browser between runs |
+| `init` / `generate` | scaffolding, reporting what they wrote |
+| `validate(options)` | reject bad options without launching anything |
+
+Four things to know:
+
+- **Nothing is printed unless you ask.** The returned result is the whole answer. Pass
+  `reporter: 'tap'` (or `'spec'`, `'dot'`, `'github'`) to get the CLI's output too.
+- **Failing tests are not an error.** `run()` resolves with `ok: false`. It rejects only when the
+  run could not happen — a bad option, an unreadable input, no `package.json`.
+- **It is lazy.** These return a `Task` (a Promise superset), so nothing starts until you `await`.
+- **It is the same engine as the CLI**, taking the same code path, so behaviour cannot drift.
+
+**→ [Full JavaScript / TypeScript API documentation](docs/javascript-api.md)** — every verb and
+option, the result shape, notices, custom reporters (with a
+[nyan cat reporter](examples/nyan-reporter.ts) tutorial), Streams, errors, Deno and JSR.
 
 ## Daemon mode
 
@@ -383,11 +422,11 @@ Don't forget to add the plugin's file extension(s) to `qunitx.extensions` so dir
 
 ### Environment variables
 
-| Variable              | Description                                                                                                                                                                                                                                                                                                                                  |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CHROME_BIN`          | Path to the Chrome/Chromium executable. Required on systems where Chrome is not on `PATH` (e.g. many CI environments). Set automatically when using `browser-actions/setup-chrome` in GitHub Actions.                                                                                                                                        |
-| `QUNITX_BROWSER`      | Browser engine to use (`chromium`, `firefox`, `webkit`). Equivalent to `--browser` on the CLI. Useful in CI matrix jobs.                                                                                                                                                                                                                     |
-| `NODE_COMPILE_CACHE`  | Standard Node env, auto-enabled by qunitx. Stores V8 bytecode for the CLI + its dep graph on disk so the second and subsequent `qunitx` runs skip the parser pass — measured ~8% faster end-to-end (more on slow CI disks). Defaults to `${TMPDIR}/node-compile-cache`; set to a path to relocate (handy for a CI cache key) or `""` to disable. |
+| Variable             | Description                                                                                                                                                                                                                                                                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `CHROME_BIN`         | Path to the Chrome/Chromium executable. Required on systems where Chrome is not on `PATH` (e.g. many CI environments). Set automatically when using `browser-actions/setup-chrome` in GitHub Actions.                                                                                                                                            |
+| `QUNITX_BROWSER`     | Browser engine to use (`chromium`, `firefox`, `webkit`). Equivalent to `--browser` on the CLI. Useful in CI matrix jobs.                                                                                                                                                                                                                         |
+| `NODE_COMPILE_CACHE` | Standard Node env, auto-enabled by qunitx. Stores V8 bytecode for the CLI + its dep graph on disk so the second and subsequent `qunitx` runs skip the parser pass — measured ~8% faster end-to-end (more on slow CI disks). Defaults to `${TMPDIR}/node-compile-cache`; set to a path to relocate (handy for a CI cache key) or `""` to disable. |
 
 If you do not provide any HTML template, qunitx falls back to its built-in `test/tests.html` boilerplate internally, so `qunitx init` is optional.
 

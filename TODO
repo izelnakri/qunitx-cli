@@ -1,14 +1,19 @@
-Explain why snapshotOnce was needed in Combinators?
-
-instead of kind: , it could be an instance call with new or .build() then I wont need deriveBuildErrorType and formatBuildErrors neither
-many static methods under 'setup/run-state.ts'
-
 - investigate take screenshot feature & visual diffing(implement it percy-like)
 
 - enhance flake.nix and README.md
 
 - Test and optimize Dockerfile
 
-Also optimize someFuncCall();return; to return someFuncCall() to save lines whenever possible. 
+Implement: qunitx upgrade
 
-Implement: qunitx upgrade 
+Should we allow passing the browser as absolute path since JS API now accepts it?
+
+Should I build `qunitx script-file.ts/js`? Maybe scope it to `run` keyword(probably not for the ultimate end-user experience, if this isn't create great complexity), otherwise like `deno run`
+
+AND in another PR: `deno repl` -> `qunitx repl`
+
+Implement QunitX.registerReporter(name, reporter) also make it play with the CLI, make nyan cat example work with it 'nyan' is the name on registerReporter . Maybe use package.json `qunitx` namespace for full circle integration
+
+Should there be a "server, but don't watch files" mode? watch() is currently the only way to keep
+the qunitx page served, and it always installs file watchers + reruns on save.
+

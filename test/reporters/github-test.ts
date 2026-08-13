@@ -1,19 +1,9 @@
 import { module, test } from 'qunitx';
 import { GithubReporter, annotation } from '../../lib/reporters/github.ts';
-import { updateCounter } from '../../lib/reporters/types.ts';
-import * as RunState from '../../lib/setup/run-state.ts';
 import type { FailureInfo } from '../../lib/reporters/failure.ts';
-import type { TestDetails } from '../../lib/reporters/types.ts';
-import type { Config } from '../../lib/types.ts';
 import '../helpers/custom-asserts.ts';
 import { captureStdout } from '../helpers/capture-stdout.ts';
-
-const makeConfig = (): Config =>
-  ({
-    projectRoot: '/proj',
-    reporter: 'github',
-    state: RunState.create(),
-  }) as unknown as Config;
+import { feed, makeContext } from '../helpers/reporter-context.ts';
 
 const failure = (overrides: Partial<FailureInfo> = {}): FailureInfo => ({
   index: 1,
@@ -83,14 +73,8 @@ module('Reporters | github annotation', { concurrency: true }, () => {
 });
 
 module('Reporters | GithubReporter', { concurrency: true }, () => {
-  const feed = (reporter: GithubReporter, config: Config, details: TestDetails): string =>
-    captureStdout(() => {
-      updateCounter(config.state.results.counter, details);
-      reporter.onTestEnd(config, details);
-    });
-
   test('passing tests render like spec and emit no annotation', (assert) => {
-    const output = feed(new GithubReporter(), makeConfig(), {
+    const output = feed(new GithubReporter(), makeContext(), {
       status: 'passed',
       fullName: ['Math', 'adds'],
       runtime: 2,
@@ -101,7 +85,7 @@ module('Reporters | GithubReporter', { concurrency: true }, () => {
   });
 
   test('a failing test emits spec output plus one annotation per failing assertion', (assert) => {
-    const output = feed(new GithubReporter(), makeConfig(), {
+    const output = feed(new GithubReporter(), makeContext(), {
       status: 'failed',
       fullName: ['Math', 'adds'],
       runtime: 2,
@@ -128,7 +112,7 @@ module('Reporters | GithubReporter', { concurrency: true }, () => {
   });
 
   test('skipped tests emit no annotation', (assert) => {
-    const output = feed(new GithubReporter(), makeConfig(), {
+    const output = feed(new GithubReporter(), makeContext(), {
       status: 'skipped',
       fullName: ['Math', 'later'],
       runtime: 0,
@@ -137,15 +121,15 @@ module('Reporters | GithubReporter', { concurrency: true }, () => {
   });
 
   test('delegates run start and run end to the spec renderer', (assert) => {
-    const config = makeConfig();
+    const context = makeContext();
     const reporter = new GithubReporter();
     assert.includes(
-      captureStdout(() => reporter.onRunStart(config, { fileCount: 1, groupCount: 1 })),
+      captureStdout(() => reporter.onRunStart(context, { fileCount: 1, groupCount: 1 })),
       'Running 1 test file across 1 worker(s)',
     );
-    feed(reporter, config, { status: 'passed', fullName: ['M', 't'], runtime: 1, assertions: [] });
+    feed(reporter, context, { status: 'passed', fullName: ['M', 't'], runtime: 1, assertions: [] });
     assert.includes(
-      captureStdout(() => reporter.onRunEnd(config, { durationMs: 7 })),
+      captureStdout(() => reporter.onRunEnd(context, { durationMs: 7 })),
       '1 passing (7ms)',
     );
   });

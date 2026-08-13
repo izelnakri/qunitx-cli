@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { failedAssertions } from './failure.ts';
-import type { Reporter, RunEndInfo, TestDetails } from './types.ts';
-import type { Config, JUnitCase } from '../types.ts';
+import type { Reporter, RunEndInfo, TestDetails, ReporterContext } from './types.ts';
+import type { JUnitCase } from '../types.ts';
 
 /**
  * JUnit XML reporter — an *additive artifact* reporter, not a stdout format. Enabled with
@@ -11,19 +11,20 @@ import type { Config, JUnitCase } from '../types.ts';
  * CI wants a readable log *and* a machine-readable file, and it's what `--coverage=lcov`
  * already does for coverage artifacts.
  *
- * Cases live on the instance (not on `config`), and the instance is shared across concurrent
+ * Cases live on the instance (not on `context`), and the instance is shared across concurrent
  * groups, so one document covers the whole run. `onRunStart` resets it for watch reruns.
  *
  * ```ts
- * import type { Config } from '../types.ts';
+ * import type { ReporterContext } from './types.ts';
+ *
  * import type { TestDetails } from './types.ts';
  *
  * // Defined, not invoked: onRunEnd writes junit.xml to disk.
- * async function example(config: Config, details: TestDetails) {
+ * async function example(context: ReporterContext, details: TestDetails) {
  *   const reporter = new JUnitReporter();
  *   reporter.onRunStart();
- *   reporter.onTestEnd(config, details); // one <testcase> recorded
- *   await reporter.onRunEnd(config, { durationMs: 40 }); // document written to outputPath(config)
+ *   reporter.onTestEnd(context, details); // one <testcase> recorded
+ *   await reporter.onRunEnd(context, { durationMs: 40 }); // document written to outputPath(context)
  * }
  * ```
  */
@@ -46,35 +47,61 @@ export class JUnitReporter implements Reporter {
    * Accumulates one `<testcase>`; the document is written once at run end.
    *
    * ```ts
-   * import type { Config } from '../types.ts';
+   * import type { ReporterContext } from './types.ts';
    *
    * const reporter = new JUnitReporter();
-   * reporter.onTestEnd({} as Config, { status: 'passed', fullName: ['Math', 'adds'], runtime: 2 });
-   * // recorded as <testcase name="adds" classname="Math"/> (config is only read for failures)
+   * reporter.onTestEnd({} as ReporterContext, { status: 'passed', fullName: ['Math', 'adds'], runtime: 2 });
+   * // recorded as <testcase name="adds" classname="Math"/> (context is only read for failures)
    * ```
    */
-  onTestEnd(config: Config, details: TestDetails): void {
-    this.#cases.push(toCase(config, details));
+  onTestEnd(context: ReporterContext, details: TestDetails): void {
+    this.#cases.push(toCase(context, details));
   }
 
   /**
    * Serializes the accumulated cases and writes the XML document to disk.
    *
    * ```ts
-   * import type { Config } from '../types.ts';
+   * import type { ReporterContext } from './types.ts';
    *
    * // Defined, not invoked: writes the XML document to disk.
-   * async function example(reporter: JUnitReporter, config: Config) {
-   *   await reporter.onRunEnd(config, { durationMs: 40 });
+   * async function example(reporter: JUnitReporter, context: ReporterContext) {
+   *   await reporter.onRunEnd(context, { durationMs: 40 });
    *   // "# wrote JUnit report to tmp/junit.xml" on stdout
    * }
    * ```
    */
-  async onRunEnd(config: Config, _info: RunEndInfo): Promise<void> {
-    const file = outputPath(config);
+  /**
+   * The XML document as it stands. `onRunEnd` writes exactly this to disk; the JS API reads it
+   * back so a caller can ship the report somewhere other than the filesystem.
+   *
+   * ```ts
+   * const reporter = new JUnitReporter();
+   * reporter.xml().startsWith('<?xml'); // true — an empty but well-formed document
+   * ```
+   */
+  xml(): string {
+    return buildXML(this.#cases);
+  }
+
+  /**
+   * Serializes the accumulated cases and writes the XML document to disk.
+   *
+   * ```ts
+   * import type { ReporterContext } from './types.ts';
+   *
+   * // Defined, not invoked: writes the XML document to disk.
+   * async function example(reporter: JUnitReporter, context: ReporterContext) {
+   *   await reporter.onRunEnd(context, { durationMs: 40 });
+   *   // "# wrote JUnit report to tmp/junit.xml" on the run's output
+   * }
+   * ```
+   */
+  async onRunEnd(context: ReporterContext, _info: RunEndInfo): Promise<void> {
+    const file = outputPath(context);
     await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file, buildXML(this.#cases));
-    process.stdout.write(`# wrote JUnit report to ${relativeToRoot(file, config.projectRoot)}\n`);
+    await fs.writeFile(file, this.xml());
+    context.console.log(`# wrote JUnit report to ${relativeToRoot(file, context.projectRoot)}\n`);
   }
 }
 
@@ -83,17 +110,17 @@ export class JUnitReporter implements Reporter {
  * root) when given a string, else `<output>/junit.xml`.
  *
  * ```ts
- * import type { Config } from '../types.ts';
+ * import type { ReporterContext } from './types.ts';
  *
- * const config = { projectRoot: '/repo', output: 'tmp', junit: true } as Partial<Config> as Config;
- * outputPath(config); // '/repo/tmp/junit.xml'
- * outputPath({ ...config, junit: 'reports/junit.xml' }); // '/repo/reports/junit.xml'
+ * const context = { projectRoot: '/repo', output: 'tmp', junit: true } as ReporterContext;
+ * outputPath(context); // '/repo/tmp/junit.xml'
+ * outputPath({ ...context, junit: 'reports/junit.xml' }); // '/repo/reports/junit.xml'
  * ```
  */
-export function outputPath(config: Config): string {
-  return typeof config.junit === 'string'
-    ? path.resolve(config.projectRoot, config.junit)
-    : path.join(path.resolve(config.projectRoot, config.output), 'junit.xml');
+export function outputPath(context: ReporterContext): string {
+  return typeof context.junit === 'string'
+    ? path.resolve(context.projectRoot, context.junit)
+    : path.join(path.resolve(context.projectRoot, context.output), 'junit.xml');
 }
 
 /**
@@ -101,14 +128,14 @@ export function outputPath(config: Config): string {
  * `failureDetail` with stacks resolved back to original sources (same as the TAP `at:` field).
  *
  * ```ts
- * import type { Config } from '../types.ts';
+ * import type { ReporterContext } from './types.ts';
  *
- * toCase({} as Config, { status: 'passed', fullName: ['Math', 'adds'], runtime: 1500 });
- * // { classname: 'Math', name: 'adds', time: 1.5, status: 'passed' } — config is only
+ * toCase({} as ReporterContext, { status: 'passed', fullName: ['Math', 'adds'], runtime: 1500 });
+ * // { classname: 'Math', name: 'adds', time: 1.5, status: 'passed' } — context is only
  * // read for failed tests (the group's source-map decoder resolves their stacks)
  * ```
  */
-export function toCase(config: Config, details: TestDetails): JUnitCase {
+export function toCase(context: ReporterContext, details: TestDetails): JUnitCase {
   const fullName = details.fullName;
   const name = fullName[fullName.length - 1] ?? fullName.join(' | ');
   const classname = fullName.slice(0, -1).join(' > ') || '(root)';
@@ -122,11 +149,7 @@ export function toCase(config: Config, details: TestDetails): JUnitCase {
 
   if (status !== 'failed') return testCase;
 
-  const failures = failedAssertions(
-    details,
-    config.state.group.sourceMapDecoder,
-    config.projectRoot,
-  );
+  const failures = failedAssertions(details, context.sourceMapDecoder, context.projectRoot);
   if (failures.length === 0) {
     // Failed status with no failing assertion recorded (e.g. an uncaught error mid-test).
     testCase.failureMessage = 'Test failed';

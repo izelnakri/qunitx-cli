@@ -6,6 +6,7 @@ import path from 'node:path';
 // See lib/commands/run.ts: node:timers preserves .unref() across Node and Deno.
 import { setInterval, clearInterval, setTimeout, clearTimeout } from 'node:timers';
 import { green, magenta, red, yellow } from '../utils/color.ts';
+import * as Reporter from '../reporters/index.ts';
 import { defaultProjectConfigValues } from './default-project-config-values.ts';
 import type { FSWatcher } from 'node:fs';
 import type { Config, FSTree } from '../types.ts';
@@ -503,18 +504,13 @@ export function handleWatchEvent(
 
   mutateFSTree(config.fsTree, event, filePath);
 
-  console.log(
-    '#',
-    magenta().bold('=================================================================='),
-  );
   const displayPath = filePath.startsWith(config.projectRoot)
     ? filePath.slice(config.projectRoot.length)
     : filePath;
-  console.log('#', colorEvent(event), displayPath);
-  console.log(
-    '#',
-    magenta().bold('=================================================================='),
-  );
+  const rule = magenta().bold('==================================================================');
+  Reporter.info(config, rule);
+  Reporter.info(config, `${colorEvent(event)} ${displayPath}`);
+  Reporter.info(config, rule);
 
   if (event === 'add') config.state.watch.justAddedAt.set(filePath, Date.now());
 
@@ -539,7 +535,11 @@ export function handleWatchEvent(
 
   return result
     .then(() => onFinishFunc?.(filePath, event))
-    .catch((error) => console.error('#', red('Build error:'), error.message || error))
+    .catch((error) =>
+      Reporter.error(config, `${red('Build error:')} ${error.message || error}`, {
+        stream: 'error',
+      }),
+    )
     .finally(() => {
       config.state.watch.building = false;
       // Only advance the "last successful build" timestamp on a clean build. A failed

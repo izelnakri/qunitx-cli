@@ -151,12 +151,91 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+          # Warm DENO_DIR (keyed on deno.lock, content-keyed within), so type-check and npm
+          # work carries across runs: 4213ms cold vs 1678ms warm for `deno check` here.
+          cache: true
       - uses: browser-actions/setup-chrome@v2
         id: setup-chrome
       - run: npm ci
       - run: deno task bench:check
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          FORCE_COLOR: 0
+
+  # ── Publish to JSR (tag only) ─────────────────────────────────────────────────
+  # Published from here rather than from a laptop so the release carries PROVENANCE: `deno publish`
+  # exchanges the Actions OIDC token (`id-token: write`) for a public transparency-log entry tying
+  # the package to this workflow and commit. A local publish cannot produce one, which is why JSR
+  # scored the package 0/1 on it.
+  #
+  # One arch-agnostic publish: `.` is jsr/cli.ts, which resolves os/arch at run time and fetches the
+  # matching prebuilt binary; `./api` is the JS API. The staging step copies lib/, templates/ and
+  # package.json into jsr/ first, because JSR resolves exports relative to the package root and a
+  # specifier may not climb above it. --allow-dirty: those staged files are generated and gitignored.
+  publish-jsr:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: package.json
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+          # Tag-only, so it never hits its own key — but the `deno-cache-<os>-<arch>` prefix
+          # restores lint's main-branch DENO_DIR, and `deno publish` type-checks the package and
+          # resolves its npm deps before uploading anything: 6.2s cold vs 0.3s warm for the dry
+          # run. What gets published is the staged tree, not the cache, and a corrupt entry fails
+          # that pre-upload check rather than publishing a version that cannot be replaced.
+          cache: true
+      # Node builtins only, so no install step is needed to stage.
+      - run: node scripts/stage-jsr-library.ts
+      - run: deno publish --allow-dirty
+        working-directory: jsr
+
+  # ── Global install (packaging smoke) ──────────────────────────────────────────
+  # The end-user shape: installed globally, run in a project with no node_modules. Three shipped
+  # bugs lived here — the SEA resolving playwright-core against the CWD, the static output copying
+  # a qunit.css only a local install has, and the shim lookup assuming npm's POSIX layout. All
+  # three were invisible to `release-consumer-test`, which installs LOCALLY and is tag-gated, so
+  # each was found from a red release instead of a red PR.
+  #
+  # Deliberately NOT restricted by paths. The obvious filter — bin/, scripts/, package.json — would
+  # have missed the qunit.css bug outright: that one lived in lib/setup/write-output-static-files.ts
+  # and only manifested through packaging. What breaks this shape is not confined to the files that
+  # describe it. ~4 minutes per PR against release-breaking bugs found from red releases twice.
+  #
+  # Windows is not redundant with ubuntu: npm's global layout differs there, which is exactly what
+  # the third bug was.
+  global-install:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
+    name: Global install · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: package.json
+          cache: npm
+      - uses: browser-actions/setup-chrome@v2
+        id: setup-chrome
+      - run: npm ci
+      - run: bash scripts/test-global-install.sh
+        shell: bash
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
           FORCE_COLOR: 0
 
   # ── Test (Deno end-to-end) ────────────────────────────────────────────────────
@@ -197,6 +276,10 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+          # Same DENO_DIR cache as lint/bench. This job runs `deno task build:binary`, so its
+          # cache also carries the 35MB denort runtime — which is what the tag-gated release
+          # jobs restore via setup-deno's `deno-cache-<os>-<arch>` prefix key.
+          cache: true
       - uses: browser-actions/setup-chrome@v2
         id: setup-chrome
       - run: npm ci
@@ -277,6 +360,8 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+          # Same DENO_DIR cache as lint and test-deno; see the note there.
+          cache: true
       - uses: browser-actions/setup-chrome@v2
         id: setup-chrome
       - run: npm ci
@@ -515,6 +600,11 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+          # Tag-only, and setup-deno's primary key carries the job name, so this never hits its
+          # own cache — but the `deno-cache-<os>-<arch>` prefix fallback restores test-deno's
+          # main-branch DENO_DIR, denort included: 14.2s -> 4.3s for `build:binary`. A corrupt
+          # entry fails the compile loudly rather than quietly shipping a bad binary.
+          cache: true
 
       - uses: browser-actions/setup-chrome@v2
         if: matrix.browser == 'chromium'
@@ -762,6 +852,9 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+          # Same prefix-restore of test-deno's DENO_DIR as release-consumer-test-deno.
+          # The two ARM targets have no main-branch producer, so they miss and download.
+          cache: true
       - run: npm ci
 
       - name: Build Deno binary + esbuild sidecar

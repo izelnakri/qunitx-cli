@@ -2,13 +2,14 @@ import { getChangedFiles } from '../utils/get-changed-files.ts';
 import { getChangedFilePathsInGitSince } from '../utils/get-changed-file-paths-in-git-since.ts';
 import * as MetafileCache from '../utils/metafile-cache.ts';
 import * as Failure from '../result/failure.ts';
-import type { FSTree } from '../types.ts';
+import * as Reporter from '../reporters/index.ts';
+import type { Config, FSTree } from '../types.ts';
 
 /**
  * Returns a new fsTree containing only the test files affected by changes
  * since `ref`, per the cached esbuild metafile's reverse-dependency graph.
  *
- * Falls back to returning the input fsTree unchanged (with a stdout note)
+ * Falls back to returning the input fsTree unchanged (with a notice)
  * when any of these hold — they are "run-all is the safe answer" scenarios,
  * not bugs:
  *   - blast-radius file changed (package.json, tsconfig.json, …): full graph
@@ -16,21 +17,21 @@ import type { FSTree } from '../types.ts';
  *   - no metafile cache yet: nothing built before this run.
  *   - git failed: not a repo, ref doesn't exist, git binary missing.
  *
- * Always logs how the filter resolved (full / filtered / fallback) so users can
+ * Always announces how the filter resolved (full / filtered / fallback) so users can
  * reason about why their selected suite ran.
  *
  * ```ts
- * import type { FSTree } from '../types.ts';
+ * import type { Config, FSTree } from '../types.ts';
  *
  * // Defined, not invoked: reads the metafile cache and runs git.
- * async function narrow(fsTree: FSTree, projectRoot: string) {
- *   return getChangedFsTree(fsTree, projectRoot, 'HEAD'); // only tests affected since HEAD
+ * async function narrow(fsTree: FSTree, config: Config) {
+ *   return getChangedFsTree(fsTree, config, 'HEAD'); // only tests affected since HEAD
  * }
  * ```
  */
 export async function getChangedFsTree(
   fsTree: FSTree,
-  projectRoot: string,
+  config: Config,
   changedSince: string,
   // The git-backed change detector is injectable so the filter branches can be
   // unit-tested deterministically — without spawning a real git subprocess, whose
@@ -42,10 +43,12 @@ export async function getChangedFsTree(
   const testFiles = Object.keys(fsTree);
   if (testFiles.length === 0) return fsTree;
 
+  const { projectRoot } = config;
   const cache = await MetafileCache.read(projectRoot);
   if (!cache) {
-    process.stdout.write(
-      `# --changed: no metafile cache yet — running all ${testFiles.length} test files (cache populates on this run)\n`,
+    Reporter.info(
+      config,
+      `--changed: no metafile cache yet — running all ${testFiles.length} test files (cache populates on this run)`,
     );
     return fsTree;
   }
@@ -61,25 +64,29 @@ export async function getChangedFsTree(
   // scanner still rejects and crashes the run loudly.
   const scan = await getChanged(projectRoot, changedSince).result();
   if (Failure.is(scan)) {
-    process.stdout.write(
-      `# --changed: ${scan.message} — running all ${testFiles.length} test files\n`,
+    Reporter.info(
+      config,
+      `--changed: ${scan.message} — running all ${testFiles.length} test files`,
     );
     return fsTree;
   } else if (scan.scope === 'everything') {
-    process.stdout.write(
-      `# --changed: blast-radius file changed (${scan.trigger}) — running all ${testFiles.length} test files\n`,
+    Reporter.info(
+      config,
+      `--changed: blast-radius file changed (${scan.trigger}) — running all ${testFiles.length} test files`,
     );
     return fsTree;
   } else if (scan.paths.size === 0) {
-    process.stdout.write(
-      `# --changed: 0 files changed since ${changedSince} — running 0 test files\n`,
+    Reporter.info(
+      config,
+      `--changed: 0 files changed since ${changedSince} — running 0 test files`,
     );
     return {};
   }
 
   const affected = getChangedFiles(cache.metafile, cache.esbuildCwd, scan.paths, testFiles);
-  process.stdout.write(
-    `# --changed: ${affected.size} of ${testFiles.length} test files affected by changes since ${changedSince}\n`,
+  Reporter.info(
+    config,
+    `--changed: ${affected.size} of ${testFiles.length} test files affected by changes since ${changedSince}`,
   );
   return Object.fromEntries(testFiles.filter((f) => affected.has(f)).map((f) => [f, null]));
 }
