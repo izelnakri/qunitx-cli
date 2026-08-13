@@ -223,6 +223,19 @@ release:
 		git status --short; \
 		echo ""; \
 	fi
+# esbuild refuses to start when its JS host and its native binary disagree on version, and
+# `npm audit fix` can bump the host while leaving the optional platform package stale on disk.
+# `npm ci` never reproduces that skew, so CI stays green and the only thing that notices is
+# build-sea — twenty minutes in, past the full suite, as `The service was stopped: write EPIPE`.
+# Detectable here in milliseconds instead.
+	@host=$$(node -p "require('esbuild/package.json').version"); \
+	target=$$(node -p "process.platform + '-' + process.arch"); \
+	binary=$$(node -p "require('@esbuild/$$target/package.json').version" 2>/dev/null || echo "not installed"); \
+	if [ "$$host" != "$$binary" ]; then \
+		echo "esbuild is out of sync: host $$host, @esbuild/$$target $$binary."; \
+		echo "Run 'npm install' to match node_modules to the lockfile, then retry."; \
+		exit 1; \
+	fi
 	@eval $$(ssh-agent -s); trap "ssh-agent -k > /dev/null" EXIT; ssh-add
 	@npm whoami > /dev/null 2>&1 || npm login
 	@echo "npm user: $$(npm whoami) | $$(date '+%Y-%m-%d %H:%M:%S %Z')"
