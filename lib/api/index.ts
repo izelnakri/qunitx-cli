@@ -22,6 +22,8 @@
  *   until you await it, and `.result()` hands back a `Result` union instead of throwing.
  * - **It is the same engine as the CLI.** `run(options)` and `qunitx <flags>` assemble the same
  *   config and take the same code path; there is no second implementation to drift.
+ *
+ * @module
  */
 
 import { is, format, hasCode, type Any } from '../result/failure.ts';
