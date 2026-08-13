@@ -1,4 +1,6 @@
-import type { Config, Counter } from '../types.ts';
+import type { Counter } from '../types.ts';
+import type { Console } from '../console.ts';
+import type { SourceMapDecoder } from '../utils/source-map.ts';
 
 /**
  * Every stdout reporter `--reporter` accepts, in help/error-message order. Exactly one is
@@ -24,39 +26,141 @@ export const REPORTERS = ['tap', 'spec', 'dot', 'github'] as const;
 export type ReporterName = (typeof REPORTERS)[number];
 
 /**
- * The internal reporter contract. Reporters render a run to stdout (or to a file, for
- * additive artifact reporters like JUnit). This is deliberately **not** public API — it is
- * not exported from the package entry point and carries no stability promise. Custom
- * reporters are expected to arrive later via the JS API's event stream, not by freezing
- * QUnit's `testEnd` payload as third-party surface.
+ * What a reporter is given on every hook: where to write, what the run has counted so far, and
+ * the few resolved paths a message needs.
  *
- * Lifecycle: `onRunStart` → `onTestEnd` (× N) → `onRunEnd`. In watch mode the whole cycle
- * repeats per rerun, so stateful reporters must reset in `onRunStart`.
+ * Deliberately not the run's `Config`. A reporter is third-party code, and handing it the whole
+ * config would hand it the mutable state of the run it is reporting on — plus a type it cannot
+ * name, since `Config` is internal. Everything here is read-only from a reporter's side.
+ *
+ * `counts` and `sourceMapDecoder` are live: `counts` is the same object the runner mutates, and
+ * the decoder arrives partway through a run, so both read through rather than being snapshots.
+ *
+ * ```ts
+ * // Defined, not invoked: a reporter that prints a running tally.
+ * const tally = {
+ *   onTestEnd({ console, counts }: ReporterContext) {
+ *     console.log(`# ${counts.passed}/${counts.total}\n`);
+ *   },
+ * };
+ * tally.onTestEnd.length; // 1 — the context is the only thing a simple reporter needs
+ * ```
+ */
+export interface ReporterContext {
+  /** Where this reporter's text goes. `silentConsole` when the run was asked to print nothing. */
+  console: Console;
+  /** The run's live outcome totals — the same object the runner updates, not a copy. */
+  counts: Counter;
+  /** Absolute path of the directory holding `package.json`, for rendering paths relative to it. */
+  projectRoot: string;
+  /** Absolute path of the build output directory. */
+  output: string;
+  /** `--junit`'s value: `true` for the default path, a string for an explicit one. */
+  junit?: boolean | string;
+  /** Maps a bundle stack frame back to source, once the run has built one. */
+  sourceMapDecoder: SourceMapDecoder | null;
+  /** Whether this run is executing inside the persistent daemon. */
+  daemon: boolean;
+}
+
+/**
+ * The reporter contract — the public extension point for observing a run. Reporters render it
+ * to text (the built-in `tap`/`spec`/`dot`/`github`), write an artifact (`junit`), or simply
+ * collect, which is how the JS API turns a run into a value.
+ *
+ * Every method is optional, so a reporter is any object carrying the handlers it cares about.
+ *
+ * Lifecycle: `onRunStart` → (`onTestEnd` | `onNotice` | `onBrowserLog`)* → `onRunEnd`. In watch
+ * mode the whole cycle repeats per rerun, so stateful reporters must reset in `onRunStart`.
  *
  * Concurrency: one reporter instance is shared across all concurrent groups (the group
  * configs are spread off the parent config, so `state.reporters` is the same array). `onTestEnd`
  * therefore arrives interleaved across groups.
  *
- * ```ts
- * import type { Config } from '../types.ts';
+ * Text goes through `context.console`, never `process.stdout` — that indirection is what lets a
+ * caller redirect or silence a built-in reporter.
  *
+ * ```ts
  * const names: string[] = [];
  * const reporter: Reporter = {
- *   onTestEnd(_config, details) {
+ *   onTestEnd(_context, details) {
  *     names.push(details.fullName.join(' | ')); // one entry per finished test
  *   },
  * };
- * reporter.onTestEnd?.({} as Config, { status: 'passed', fullName: ['Math', 'adds'], runtime: 2 });
+ * reporter.onTestEnd?.({} as ReporterContext, { status: 'passed', fullName: ['Math', 'adds'], runtime: 2 });
  * names; // ['Math | adds']
  * ```
  */
 export interface Reporter {
   /** Called once before any test output. In watch mode, once per rerun. */
-  onRunStart?(config: Config, info: RunStartInfo): void;
+  onRunStart?(context: ReporterContext, info: RunStartInfo): void;
   /** Called once per test, after `counter` has already been updated for this test. */
-  onTestEnd?(config: Config, details: TestDetails): void;
+  onTestEnd?(context: ReporterContext, details: TestDetails): void;
   /** Called once when the run finishes, with the final counts on `config.state.results.counter`. */
-  onRunEnd?(config: Config, info: RunEndInfo): void | Promise<void>;
+  onRunEnd?(context: ReporterContext, info: RunEndInfo): void | Promise<void>;
+  /**
+   * Called for each of qunitx's own diagnostics — the `# …` lines about what it decided to run,
+   * what it could not find, what timed out. The default rendering has already gone to
+   * `config.state.console`; implement this only to capture them as data.
+   */
+  onNotice?(context: ReporterContext, notice: Notice): void;
+  /**
+   * Called for each `console.*` call and uncaught error from the page under test. Only warnings
+   * and errors arrive unless `debug` is on — the same selection the CLI prints.
+   */
+  onBrowserLog?(context: ReporterContext, log: BrowserLog): void;
+}
+
+/**
+ * One diagnostic from qunitx itself: which files a narrowing flag scoped the run to, a filter
+ * that matched nothing, a build error, a timeout.
+ *
+ * Distinct from a test result, and distinct from the program failing — a notice is qunitx
+ * explaining what it did. The CLI renders these as TAP `#` comments, which is what they have
+ * always been; a programmatic caller reads them as a list.
+ *
+ * ```ts
+ * const notice: Notice = { level: 'warning', message: 'No tests matched --filter "Crat"' };
+ * notice.level; // 'warning' — an 'error' additionally goes to the error stream
+ * ```
+ */
+export interface Notice {
+  /** `info` is a decision, `warning` a surprise, `error` a diagnostic that also hits stderr. */
+  level: 'info' | 'warning' | 'error';
+  /** The text, already colored where the CLI colors it, with no `#` prefix and no newline. */
+  message: string;
+  /**
+   * Write `message` verbatim rather than as a `# `-prefixed comment. For pre-formatted blocks —
+   * the coverage table, a stack trace — whose own layout is the point.
+   */
+  raw?: boolean;
+  /**
+   * Which of the run's two streams the default rendering goes to; `output` by default.
+   *
+   * Separate from `level` because the two answer different questions: `level` is what kind of
+   * thing this is, which is what a consumer filters on, while this is where the CLI has always
+   * put it. A raw stack belongs on `error` alone — un-prefixed multi-line text on stdout would
+   * corrupt the TAP document — and a few diagnostics go to `both` deliberately, so a reader
+   * watching only one stream still sees them.
+   */
+  stream?: 'output' | 'error' | 'both';
+}
+
+/**
+ * A `console.*` call or an uncaught error from the page under test.
+ *
+ * ```ts
+ * const log: BrowserLog = { type: 'error', text: 'TypeError: x is not a function', args: [] };
+ * log.type; // 'error' — 'pageerror' marks an uncaught exception rather than a console call
+ * ```
+ */
+export interface BrowserLog {
+  /** The page console type (`log`/`warning`/`error`/`info`/`debug`), or `pageerror`. */
+  type: string;
+  /** The rendered single-line text. Always present. */
+  text: string;
+  /** The call's arguments, resolved to JSON values where the page could serialize them. */
+  args: unknown[];
 }
 
 /**
@@ -139,27 +243,27 @@ export interface RunEndInfo {
  * and the TAP plan both read `counter`, so it must be updated exactly once per test.
  *
  * ```ts
- * const counter = { testCount: 0, failCount: 0, skipCount: 0, todoCount: 0, passCount: 0, errorCount: 0 };
+ * const counter = { total: 0, failed: 0, skipped: 0, todo: 0, passed: 0, assertionsFailed: 0 };
  * updateCounter(counter, { status: 'passed', fullName: ['Math', 'adds'], runtime: 2 });
- * counter.testCount; // 1
- * counter.passCount; // 1
+ * counter.total; // 1
+ * counter.passed; // 1
  * ```
  */
 export function updateCounter(counter: Counter, details: TestDetails): void {
-  counter.testCount++;
+  counter.total++;
 
   if (details.status === 'skipped') {
-    counter.skipCount++;
+    counter.skipped++;
   } else if (details.status === 'todo') {
-    counter.todoCount = (counter.todoCount ?? 0) + 1;
+    counter.todo = (counter.todo ?? 0) + 1;
   } else if (details.status === 'failed') {
-    counter.failCount++;
+    counter.failed++;
     (details.assertions ?? []).forEach((assertion) => {
       if (!assertion.passed && assertion.todo === false) {
-        counter.errorCount = (counter.errorCount ?? 0) + 1;
+        counter.assertionsFailed = (counter.assertionsFailed ?? 0) + 1;
       }
     });
   } else if (details.status === 'passed') {
-    counter.passCount++;
+    counter.passed++;
   }
 }

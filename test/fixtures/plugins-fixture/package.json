@@ -4,7 +4,12 @@
   "type": "module",
   "qunitx": {
     "plugins": [
-      ["./virtual-greeting-plugin.js", { "greeting": "hello from package.json" }]
+      [
+        "./virtual-greeting-plugin.js",
+        {
+          "greeting": "hello from package.json"
+        }
+      ]
     ]
   }
 }

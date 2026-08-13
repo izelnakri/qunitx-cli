@@ -23,7 +23,7 @@ module('Inputs | custom html template', { concurrency: true }, () => {
     assert.includes(result, 'QUnitX running: http://localhost:');
     assert.includes(result, '/custom.html');
     assert.passingTestCaseFor(result, { moduleName: id });
-    assert.tapResult(result, { testCount: 3 });
+    assert.tapResult(result, { total: 3 });
   });
 
   test('serves the same custom.html in watch mode and keeps watching', async (assert) => {
@@ -40,7 +40,7 @@ module('Inputs | custom html template', { concurrency: true }, () => {
     assert.includes(stdout, 'QUnitX running: http://localhost:');
     assert.includes(stdout, '/custom.html');
     assert.passingTestCaseFor(stdout, { moduleName: id });
-    assert.tapResult(stdout, { testCount: 3 });
+    assert.tapResult(stdout, { total: 3 });
     assert.includes(stdout, 'Watching files...');
   });
 });

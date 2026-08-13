@@ -245,36 +245,36 @@ Assert.prototype.failingTestCasesFor = function (output, arrayOfOptions) {
 };
 
 /**
- * assert.tapResult(output, { testCount, failCount?, skipCount?, todoCount? })
+ * assert.tapResult(output, { total, failed?, skipped?, todo? })
  * Asserts that output's TAP summary line matches the expected counts.
  */
-Assert.prototype.tapResult = function (output, options = { testCount: 0, failCount: 0 }) {
-  const { testCount, failCount = 0, skipCount = 0, todoCount = 0 } = options;
+Assert.prototype.tapResult = function (output, options = { total: 0, failed: 0 }) {
+  const { total, failed = 0, skipped = 0, todo = 0 } = options;
   const ctx = normalize(output);
-  const expectedPass = testCount - failCount;
+  const expectedPass = total - failed;
   // Tail rather than full stdout: TAP summaries are large and test output tails are where
   // the # pass/# fail/# duration lines live; everything earlier is noise for this assert.
   const actual = humanize({ ...ctx, stdout: ctx.stdout.slice(-300) });
 
-  if (failCount) {
+  if (failed) {
     this.pushResult({
       result: new RegExp(
-        `# pass ${expectedPass}\n# skip ${skipCount}\n# todo ${todoCount}\n# fail (${failCount}|${failCount + 1})`,
+        `# pass ${expectedPass}\n# skip ${skipped}\n# todo ${todo}\n# fail (${failed}|${failed + 1})`,
       ).test(ctx.stdout),
       actual,
-      expected: `# pass ${expectedPass}\n# skip ${skipCount}\n# todo ${todoCount}\n# fail ${failCount}`,
-      message: `TAP summary should show pass=${expectedPass} skip=${skipCount} todo=${todoCount} fail=${failCount}`,
+      expected: `# pass ${expectedPass}\n# skip ${skipped}\n# todo ${todo}\n# fail ${failed}`,
+      message: `TAP summary should show pass=${expectedPass} skip=${skipped} todo=${todo} fail=${failed}`,
     });
     return;
   }
 
   this.pushResult({
-    result: new RegExp(
-      `# pass ${testCount}\n# skip ${skipCount}\n# todo ${todoCount}\n# fail 0`,
-    ).test(ctx.stdout),
+    result: new RegExp(`# pass ${total}\n# skip ${skipped}\n# todo ${todo}\n# fail 0`).test(
+      ctx.stdout,
+    ),
     actual,
-    expected: `# pass ${testCount}\n# skip ${skipCount}\n# todo ${todoCount}\n# fail 0`,
-    message: `TAP summary should show pass=${testCount} skip=${skipCount} todo=${todoCount} fail=0`,
+    expected: `# pass ${total}\n# skip ${skipped}\n# todo ${todo}\n# fail 0`,
+    message: `TAP summary should show pass=${total} skip=${skipped} todo=${todo} fail=0`,
   });
 };
 

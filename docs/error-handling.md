@@ -2,12 +2,12 @@
 
 A general-purpose error system for JS/TS, in three small modules with no dependencies.
 
-| module                                      | role                                                        |
-| ------------------------------------------- | ----------------------------------------------------------- |
-| [`lib/result/result.ts`](../lib/result/result.ts)    | the **value** — `Result<T, E>`, a bare union         |
-| [`lib/result/failure.ts`](../lib/result/failure.ts)  | the **taxonomy** — declared, serializable failures   |
-| [`lib/result/try.ts`](../lib/result/try.ts)          | the **boundary** — where a `throw` becomes a value   |
-| [`lib/task/task.ts`](../lib/task/task.ts)            | the **async half** — a lazy, retryable, typed Promise |
+| module                                              | role                                                  |
+| --------------------------------------------------- | ----------------------------------------------------- |
+| [`lib/result/result.ts`](../lib/result/result.ts)   | the **value** — `Result<T, E>`, a bare union          |
+| [`lib/result/failure.ts`](../lib/result/failure.ts) | the **taxonomy** — declared, serializable failures    |
+| [`lib/result/try.ts`](../lib/result/try.ts)         | the **boundary** — where a `throw` becomes a value    |
+| [`lib/task/task.ts`](../lib/task/task.ts)           | the **async half** — a lazy, retryable, typed Promise |
 
 Tests: [`test/result/`](../test/result/), [`test/task/`](../test/task/). A runnable end-to-end
 example lives in [`examples/error-handling-server.ts`](../examples/error-handling-server.ts).
@@ -22,7 +22,7 @@ A **bug** is a state you did not intend and cannot handle here: `undefined is no
 a violated invariant, a typo'd property. There is no correct local response. It should
 propagate loudly, keep its stack, and crash something small.
 
-An **expected failure** is a documented outcome of a *correct* program: the file was not there,
+An **expected failure** is a documented outcome of a _correct_ program: the file was not there,
 the port was taken, the token expired. The caller has a plan. It should be a **value**, in the
 signature, that the type system makes you address.
 
@@ -42,7 +42,7 @@ it into `error` and `panic`, Zig into error unions and `unreachable`, Swift into
 
 **The most common mistake in JS error handling is collapsing the two tiers into one** — which is
 what a bare `try/catch` does by default, and what every `Result.fromThrowable`-style helper does
-too. Catching everything is *worse than no error handling* for the bug case: without a `catch`, a
+too. Catching everything is _worse than no error handling_ for the bug case: without a `catch`, a
 `TypeError` produces a stack trace pointing at the broken line; with one, it becomes a tidy
 failure value flowing down the same path as a legitimate outcome — and it ships.
 
@@ -67,7 +67,8 @@ function bind(port: number): Result.Result<Server, PortTakenFailure> {
 
 // 3. Consume it. One guard, both branches narrowed.
 const server = bind(8080);
-if (Failure.is(server)) console.error(Failure.format(server)); // PortTakenFailure here
+if (Failure.is(server))
+  console.error(Failure.format(server)); // PortTakenFailure here
 else server.close(); //                                          Server here
 
 // 4. Async: a Task carries the failure type through the whole chain.
@@ -95,12 +96,12 @@ always be a `Failure` type, because the brand is the only discriminant.
 
 | call                          | returns           | on a failure                                    |
 | ----------------------------- | ----------------- | ----------------------------------------------- |
-| `Result.unwrap(outcome)`      | the value         | throws it **by identity** — original stack kept  |
-| `Result.expect(outcome, msg)` | the value         | throws `Error(msg)` with the failure as `cause`  |
+| `Result.unwrap(outcome)`      | the value         | throws it **by identity** — original stack kept |
+| `Result.expect(outcome, msg)` | the value         | throws `Error(msg)` with the failure as `cause` |
 | `Result.unwrapOr(outcome, x)` | the value, or `x` | returns the fallback                            |
 
 `unwrap` when you want the failure's own stack (debugging); `expect` when you want to record
-*this* site as the one that could not continue.
+_this_ site as the one that could not continue.
 
 ```ts
 const flags = Result.unwrap(Args.parse(projectRoot)); // ≡ if (Failure.is(f)) throw f;
@@ -126,7 +127,7 @@ const failed = applyFlag(flags, token.raw); // ParseFailure | undefined
 if (failed) return failed; // hand the SAME failure up, allocation-free
 ```
 
-This typechecks against *any* caller's Result, because a `Failure` is a union arm rather than a
+This typechecks against _any_ caller's Result, because a `Failure` is a union arm rather than a
 container bound to one success type: the same `ParseFailure` serves a function that succeeds
 with `undefined` and one that succeeds with `ParsedFlags`. It is Go's `if err != nil { return
 err }` without the ceremony. In async code the line disappears entirely — a `Task` failure is a
@@ -137,7 +138,10 @@ rejection, and rejections propagate themselves.
 ## `Failure` — the taxonomy
 
 ```ts
-const FileMissing = Failure.define('FileMissing', (d: { path: string }) => `no such file: ${d.path}`);
+const FileMissing = Failure.define(
+  'FileMissing',
+  (d: { path: string }) => `no such file: ${d.path}`,
+);
 
 const f = FileMissing({ path: 'a.ts' }, { cause: errno });
 f.code; //    'FileMissing' — the discriminant, a string
@@ -151,16 +155,16 @@ A `Failure` **extends `Error`**, so `util.inspect`, devtools stack expansion,
 
 | API                                    | purpose                                                        |
 | -------------------------------------- | -------------------------------------------------------------- |
-| `Failure.define(code, message, opts?)` | declare a factory; `message` is a string or `(data) => string`  |
-| `Failure.Of<typeof Factory>`           | the type a factory produces                                     |
+| `Failure.define(code, message, opts?)` | declare a factory; `message` is a string or `(data) => string` |
+| `Failure.Of<typeof Factory>`           | the type a factory produces                                    |
 | `Failure.is(value)`                    | the guard — narrows both branches                              |
-| `FileMissing.is(value)`                | the same, *and* matches the specific `code`                     |
-| `Failure.hasCode(value, 'X')`          | guard and discriminate in one step                              |
-| `Failure.format(f)`                    | human-readable, including the `cause` chain                     |
-| `Failure.causes(f)` / `rootCause(f)`   | walk the chain — cycle-safe and depth-bounded                   |
-| `Failure.toJSON(f)` / `fromJSON(json)` | cross a socket, a worker, a process                             |
-| `Failure.from(unknown)`                | the adapter edge — anything becomes a Failure                   |
-| `Failure.ignore(context)`              | a **labelled** swallow, observable under `--debug`              |
+| `FileMissing.is(value)`                | the same, _and_ matches the specific `code`                    |
+| `Failure.hasCode(value, 'X')`          | guard and discriminate in one step                             |
+| `Failure.format(f)`                    | human-readable, including the `cause` chain                    |
+| `Failure.causes(f)` / `rootCause(f)`   | walk the chain — cycle-safe and depth-bounded                  |
+| `Failure.toJSON(f)` / `fromJSON(json)` | cross a socket, a worker, a process                            |
+| `Failure.from(unknown)`                | the adapter edge — anything becomes a Failure                  |
+| `Failure.ignore(context)`              | a **labelled** swallow, observable under `--debug`             |
 
 ### Discriminate on `code`, never `instanceof`
 
@@ -168,7 +172,7 @@ A `Failure` **extends `Error`**, so `util.inspect`, devtools stack expansion,
 each have their own `Error` binding, so an error built in one and tested in another fails the
 check while being the same error in every sense that matters. That is not exotic here: qunitx
 runs tests **inside a browser page** and ships failures to Node over a WebSocket, so every error
-crossing that link is cross-realm by construction *and* JSON-serialized, which destroys the
+crossing that link is cross-realm by construction _and_ JSON-serialized, which destroys the
 prototype anyway.
 
 ```ts
@@ -203,9 +207,13 @@ payload field the mapper does not return cannot reach a span — redaction is th
 than a discipline:
 
 ```ts
-const Denied = Failure.define('Denied', (d: { user: string; token: string }) => `denied ${d.user}`, {
-  trace: (d) => ({ 'app.user': d.user }), // `token` can never be traced
-});
+const Denied = Failure.define(
+  'Denied',
+  (d: { user: string; token: string }) => `denied ${d.user}`,
+  {
+    trace: (d) => ({ 'app.user': d.user }), // `token` can never be traced
+  },
+);
 ```
 
 Bugs never pass either seam; they keep rejecting toward the crash boundary, so the two tiers
@@ -226,7 +234,7 @@ else console.error(parsed.error);
 ```
 
 `Result.try(fn, ...args)` mirrors `Promise.try`: sync-in/sync-out, async-in/async-out — it never
-turns a synchronous call into a promise — and because it owns the *call*, it also covers the
+turns a synchronous call into a promise — and because it owns the _call_, it also covers the
 synchronous prefix of an async function, which a trailing `.catch()` does not.
 
 ### The declaration is a flat line at the call site
@@ -259,7 +267,7 @@ return render(user.value);
 
 `grep "throw .*\.error"` finds every declaration in the codebase.
 
-When *every* throw at a boundary means one declared thing, `rescue` fuses the two steps and
+When _every_ throw at a boundary means one declared thing, `rescue` fuses the two steps and
 hands back a bare union instead of a box:
 
 ```ts
@@ -291,28 +299,28 @@ await scanChanges('.', 'HEAD').result(); // the bare union — never rejects on 
 ```
 
 - **Lazy and memoised.** The recipe runs on first `await`; every derivation shares one run.
-  `perform()` starts it *now* without suspending, so it can overlap other work.
+  `perform()` starts it _now_ without suspending, so it can overlap other work.
 - **Lineage.** Each derivation records its source, so `retry()` and `restart()` re-run the
-  *whole chain* — `scan.map(parse).context(msg).retry()` re-runs the git calls, not just the parse.
+  _whole chain_ — `scan.map(parse).context(msg).retry()` re-runs the git calls, not just the parse.
 
-| method                          | does                                                                   |
-| ------------------------------- | ---------------------------------------------------------------------- |
-| `.map(fn)`                      | transform the value; a throw inside stays a bug                        |
-| `.mapErr(fn \| Factory, data?)` | **the adapter edge** — classify anything foreign, once                 |
-| `.ensure(pred, Factory)`        | an invariant *on the success value* — wrong-but-resolved fails by name  |
-| `.orElse(fn)`                   | Rust's `or_else` — a second chance that may itself fail (`E` → `F`)     |
-| `.recover(fn)`                  | the crash boundary — promises none remains (`E` → `never`)              |
-| `.context(message)`             | anyhow's context: same `code`/`data`, message added, original as `cause` |
-| `.retry(times, opts)`           | re-run the chain; `{ when }` is tokio's `retry_if`, plus delay/backoff  |
-| `.finally(fn)`                  | cleanup that keeps the chain a **Task**, not a plain Promise            |
-| `.ignore(context)`              | the one **eager** method — labelled, with no unhandled-rejection window |
-| `.result()`                     | settle to the bare `T \| E` union                                       |
-| `.match({ ok, err })`           | branch on both arms                                                    |
-| `.unwrapOr(fallback)`           | the value, or the fallback                                             |
-| `.await(ms)` / `.yield(ms)` / `.shutdown(ms)` | Elixir's `Task.await` / `yield` / `shutdown`             |
+| method                                        | does                                                                     |
+| --------------------------------------------- | ------------------------------------------------------------------------ |
+| `.map(fn)`                                    | transform the value; a throw inside stays a bug                          |
+| `.mapErr(fn \| Factory, data?)`               | **the adapter edge** — classify anything foreign, once                   |
+| `.ensure(pred, Factory)`                      | an invariant _on the success value_ — wrong-but-resolved fails by name   |
+| `.orElse(fn)`                                 | Rust's `or_else` — a second chance that may itself fail (`E` → `F`)      |
+| `.recover(fn)`                                | the crash boundary — promises none remains (`E` → `never`)               |
+| `.context(message)`                           | anyhow's context: same `code`/`data`, message added, original as `cause` |
+| `.retry(times, opts)`                         | re-run the chain; `{ when }` is tokio's `retry_if`, plus delay/backoff   |
+| `.finally(fn)`                                | cleanup that keeps the chain a **Task**, not a plain Promise             |
+| `.ignore(context)`                            | the one **eager** method — labelled, with no unhandled-rejection window  |
+| `.result()`                                   | settle to the bare `T \| E` union                                        |
+| `.match({ ok, err })`                         | branch on both arms                                                      |
+| `.unwrapOr(fallback)`                         | the value, or the fallback                                               |
+| `.await(ms)` / `.yield(ms)` / `.shutdown(ms)` | Elixir's `Task.await` / `yield` / `shutdown`                             |
 
 **The two-tier rule threads through every consumer.** `result()`, `match`, `unwrapOr`, `orElse`
-and `ensure` act on *declared* failures and **rethrow bugs**. `mapErr` and `recover` are the two
+and `ensure` act on _declared_ failures and **rethrow bugs**. `mapErr` and `recover` are the two
 deliberate catch-alls, named so a reviewer can see them.
 
 ```ts
@@ -322,7 +330,7 @@ task.recover(() => null); //          Task<T | null, never>   — nothing declar
 ```
 
 **Prefer naming a failure at its condition** over a trailing `mapErr`, when the function can name
-it itself. A trailing `mapErr` sees *every* rejection, so an unrelated `EACCES` would be reported
+it itself. A trailing `mapErr` sees _every_ rejection, so an unrelated `EACCES` would be reported
 as your failure:
 
 ```ts
@@ -360,7 +368,7 @@ const scan = await scanChanges(root, ref).result();
 if (Failure.is(scan)) return runEverything(); // a failed git scan is not a failed run
 ```
 
-**Keep a cache miss out of the taxonomy.** A miss is the *absence* of a failure, so there is
+**Keep a cache miss out of the taxonomy.** A miss is the _absence_ of a failure, so there is
 nothing to declare and nothing for a caller to discriminate:
 
 ```ts
@@ -399,7 +407,7 @@ box survives, but it is a second vocabulary: a `Failure` is already a first-clas
 `Task.results`, `Result.partition`, `Result.all` and the wire format all speak the union.
 Boxing the Task boundary would mean translating at every one of them, allocating a wrapper per
 outcome in a stream, nesting matryoshka-style, and re-boxing after every network hop. And
-because `Failure.is` *narrows*, control flow hands you the value with no `.value` access at all.
+because `Failure.is` _narrows_, control flow hands you the value with no `.value` access at all.
 
 **The honest cost.** The box carried channel identity in the **envelope** — `.ok` was
 authoritative whatever `T` was. The union infers it from the **payload**, which is sound exactly
@@ -432,14 +440,14 @@ returns `[err, data]` and other libraries return `[data, err]`, and nothing catc
 the types are compatible. `T | null` also collides with the sentinel: if `T` can legitimately be
 `null`, `[null, null]` is ambiguous. The union has no sentinel to collide with, and it narrows
 across function boundaries, in `filter` callbacks, and on values revived from JSON, because the
-discriminant travels *inside* the failure rather than in a container positioned around it.
+discriminant travels _inside_ the failure rather than in a container positioned around it.
 
 **Why there are no `Result` combinators.** A bare value has nothing to hang methods on, so
 `map`/`andThen` could only be free functions, and free-function composition reads inside-out:
 `andThen(map(parse(raw), normalize), validate)`. An earlier iteration shipped them; nothing used
 them. In a language with `do`-notation, `?` or `try`, chaining is how you avoid pyramids —
 JavaScript already has what chaining substitutes for, which is early return. Where a pipeline is
-*not* settled yet, the value is not there to `if` on, and that is exactly where chaining earns
+_not_ settled yet, the value is not there to `if` on, and that is exactly where chaining earns
 its keep: it lives on `Task`, the producer, which may be a class because it never crosses a wire.
 
 ---
@@ -455,12 +463,12 @@ its keep: it lives on `Task`, the producer, which may be a class because it neve
   use `Failure.toJSON(anyError)` for everything else.
 - **`structuredClone` drops custom Error properties**, which is why the wire format is an explicit
   `toJSON`/`fromJSON` pair rather than a raw clone.
-- **A revived stack is the *remote* stack.** It is kept, and labelled as such.
+- **A revived stack is the _remote_ stack.** It is kept, and labelled as such.
 - **A Node system error is not a Failure.** `isErrno(value, 'ENOENT')` is the guard for those.
 - **`cause` chains can cycle.** `causes()` and `format()` are cycle-safe and depth-bounded.
 - **`finally` can swallow an in-flight exception** if it returns or throws. `Task#finally` follows
   the spec exactly: the callback takes no arguments, its return value is discarded, and only a
-  *throw* replaces the outcome.
+  _throw_ replaces the outcome.
 - **Cleanup errors mask the original.** `AsyncDisposableStack` raises `SuppressedError`, keeping both.
 - **Cancellation is not a failure.** An aborted operation did not fail; it was not wanted.
   `shutdown()` reports what had landed rather than inventing an error.
@@ -480,7 +488,7 @@ Node 24.16.0, x86-64 Linux, 1M iterations after warmup.
 | `try`/`catch` around a success | 65.7  |
 | `Result.try(fn)` on a success  | 60.8  |
 
-All within noise of one another. The first row *is* the union's happy path — a bare return with
+All within noise of one another. The first row _is_ the union's happy path — a bare return with
 no allocation per outcome, indistinguishable from code with no error handling, because on the
 success path that is what it is. `try`/`catch` has not been a deoptimization barrier in V8 since
 TurboFan (2017), so any argument for or against this design on happy-path performance grounds is

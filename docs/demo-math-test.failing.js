@@ -42,7 +42,9 @@ module('Math', (hooks) => {
 
 module('Assertions', () => {
   test('throws — match by constructor', (assert) => {
-    assert.throws(() => { throw new RangeError('out of bounds'); }, RangeError);
+    assert.throws(() => {
+      throw new RangeError('out of bounds');
+    }, RangeError);
   });
 
   test('step/verifySteps — execution order', (assert) => {

@@ -2,8 +2,7 @@ import { green, red, yellow } from '../utils/color.ts';
 import { failedAssertions } from './failure.ts';
 import { formatFailureBlock } from './spec.ts';
 import { indentString } from '../utils/indent-string.ts';
-import type { Reporter, RunStartInfo, RunEndInfo, TestDetails } from './types.ts';
-import type { Config } from '../types.ts';
+import type { Reporter, RunStartInfo, RunEndInfo, TestDetails, ReporterContext } from './types.ts';
 
 /** Dots per line before wrapping — comfortably inside an 80-column terminal. */
 const LINE_WIDTH = 72;
@@ -17,15 +16,16 @@ const LINE_WIDTH = 72;
  * blocks with the dot matrix would break the matrix apart and lose the at-a-glance shape.
  *
  * ```ts
- * import type { Config } from '../types.ts';
+ * import type { ReporterContext } from './types.ts';
+ *
  * import type { TestDetails } from './types.ts';
  *
  * // Defined, not invoked: streams the dot matrix to stdout.
- * function example(config: Config, details: TestDetails) {
+ * function example(context: ReporterContext, details: TestDetails) {
  *   const reporter = new DotReporter();
- *   reporter.onRunStart(config, { fileCount: 3, groupCount: 2 });
- *   reporter.onTestEnd(config, details); // one character per test: . F t s
- *   reporter.onRunEnd(config, { durationMs: 1200 }); // counts + buffered failure blocks
+ *   reporter.onRunStart(context, { fileCount: 3, groupCount: 2 });
+ *   reporter.onTestEnd(context, details); // one character per test: . F t s
+ *   reporter.onRunEnd(context, { durationMs: 1200 }); // counts + buffered failure blocks
  * }
  * ```
  */
@@ -37,52 +37,52 @@ export class DotReporter implements Reporter {
    * Resets the matrix column and buffered failures, then prints the run banner.
    *
    * ```ts
-   * import type { Config } from '../types.ts';
+   * import type { ReporterContext } from './types.ts';
    *
    * // Defined, not invoked: prints the banner to stdout.
-   * function example(config: Config) {
-   *   new DotReporter().onRunStart(config, { fileCount: 3, groupCount: 2 });
+   * function example(context: ReporterContext) {
+   *   new DotReporter().onRunStart(context, { fileCount: 3, groupCount: 2 });
    *   // "Running 3 test files across 2 worker(s)"
    * }
    * ```
    */
-  onRunStart(_config: Config, info: RunStartInfo): void {
+  onRunStart(context: ReporterContext, info: RunStartInfo): void {
     this.#column = 0;
     this.#failures = [];
     if (info.fileCount === null) return;
     if (info.fileCount === 0) {
-      process.stdout.write('\nNo test files found.\n');
+      context.console.log('\nNo test files found.\n');
       return;
     }
     const files = `${info.fileCount} test file${info.fileCount === 1 ? '' : 's'}`;
-    process.stdout.write(`\nRunning ${files} across ${info.groupCount} worker(s)\n\n`);
+    context.console.log(`\nRunning ${files} across ${info.groupCount} worker(s)\n\n`);
   }
 
   /**
    * Writes this test's character, wrapping the matrix, and buffers any failure detail.
    *
    * ```ts
-   * import type { Config } from '../types.ts';
+   * import type { ReporterContext } from './types.ts';
    *
    * // Defined, not invoked: writes one status character to stdout.
-   * function example(reporter: DotReporter, config: Config) {
-   *   reporter.onTestEnd(config, { status: 'passed', fullName: ['Math', 'adds'], runtime: 2 }); // '.'
-   *   reporter.onTestEnd(config, { status: 'skipped', fullName: ['Math', 'later'], runtime: 0 }); // 's'
+   * function example(reporter: DotReporter, context: ReporterContext) {
+   *   reporter.onTestEnd(context, { status: 'passed', fullName: ['Math', 'adds'], runtime: 2 }); // '.'
+   *   reporter.onTestEnd(context, { status: 'skipped', fullName: ['Math', 'later'], runtime: 0 }); // 's'
    * }
    * ```
    */
-  onTestEnd(config: Config, details: TestDetails): void {
+  onTestEnd(context: ReporterContext, details: TestDetails): void {
     // Dot and any wrap in one write: this runs per test, and a split write invites another
     // group's output between the character and its own newline.
     const wrapped = ++this.#column >= LINE_WIDTH;
     if (wrapped) this.#column = 0;
-    process.stdout.write(wrapped ? `${statusDot(details.status)}\n` : statusDot(details.status));
+    context.console.log(wrapped ? `${statusDot(details.status)}\n` : statusDot(details.status));
 
     if (details.status !== 'failed') return;
     this.#failures.push({
       name: details.fullName.join(' | '),
       block: formatFailureBlock(
-        failedAssertions(details, config.state.group.sourceMapDecoder, config.projectRoot),
+        failedAssertions(details, context.sourceMapDecoder, context.projectRoot),
       ),
     });
   }
@@ -91,22 +91,22 @@ export class DotReporter implements Reporter {
    * Closes the matrix line, then prints the counts and every buffered failure.
    *
    * ```ts
-   * import type { Config } from '../types.ts';
+   * import type { ReporterContext } from './types.ts';
    *
-   * // Defined, not invoked: reads config.state.results.counter and writes to stdout.
-   * function example(reporter: DotReporter, config: Config) {
-   *   reporter.onRunEnd(config, { durationMs: 1200 }); // "  12 passing (1200ms)" + failure recap
+   * // Defined, not invoked: reads context.counts and writes to stdout.
+   * function example(reporter: DotReporter, context: ReporterContext) {
+   *   reporter.onRunEnd(context, { durationMs: 1200 }); // "  12 passing (1200ms)" + failure recap
    * }
    * ```
    */
-  onRunEnd(config: Config, info: RunEndInfo): void {
-    const { passCount, failCount, skipCount, todoCount } = config.state.results.counter;
+  onRunEnd(context: ReporterContext, info: RunEndInfo): void {
+    const { passed, failed, skipped, todo } = context.counts;
     // Zero counts stay off the summary — "0 failing" is noise on a green run.
     const counts = [
-      `\n  ${green(`${passCount} passing`)} (${info.durationMs}ms)`,
-      ...(failCount > 0 ? [`  ${red(`${failCount} failing`)}`] : []),
-      ...(skipCount > 0 ? [`  ${yellow(`${skipCount} skipped`)}`] : []),
-      ...(todoCount > 0 ? [`  ${yellow(`${todoCount} todo`)}`] : []),
+      `\n  ${green(`${passed} passing`)} (${info.durationMs}ms)`,
+      ...(failed > 0 ? [`  ${red(`${failed} failing`)}`] : []),
+      ...(skipped > 0 ? [`  ${yellow(`${skipped} skipped`)}`] : []),
+      ...(todo > 0 ? [`  ${yellow(`${todo} todo`)}`] : []),
     ].join('\n');
 
     const recap = this.#failures.length
@@ -119,7 +119,7 @@ export class DotReporter implements Reporter {
       : '';
 
     // Leading newline closes the dot matrix when it ends mid-line.
-    process.stdout.write(`${this.#column > 0 ? '\n' : ''}${counts}\n${recap}\n`);
+    context.console.log(`${this.#column > 0 ? '\n' : ''}${counts}\n${recap}\n`);
   }
 }
 

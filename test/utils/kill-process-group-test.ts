@@ -1,6 +1,53 @@
 import { module, test } from 'qunitx';
 import { spawn } from 'node:child_process';
-import { killProcessGroup } from '../../lib/utils/kill-process-group.ts';
+import { isTargetablePid, killProcessGroup } from '../../lib/utils/kill-process-group.ts';
+
+module('Utils | killProcessGroup | pid guard', { concurrency: true }, () => {
+  // The blast radius of getting this wrong is the user's whole login session, and the kill
+  // itself is deliberately error-swallowing — so there is no failure mode to observe after the
+  // fact. These assertions are the only thing standing between a bad pid and `kill(-1)`.
+
+  test('rejects 1 — negating it means every process the user owns', (assert) => {
+    assert.false(isTargetablePid(1));
+  });
+
+  test('rejects 0 — negating it means the caller’s own process group', (assert) => {
+    assert.false(isTargetablePid(0));
+    assert.false(isTargetablePid(-0), 'the negative-zero spelling is the same value');
+  });
+
+  test('rejects a negative pid, which is already a group selector', (assert) => {
+    assert.false(isTargetablePid(-1));
+    assert.false(isTargetablePid(-4242));
+  });
+
+  test('rejects what a failed spawn or a bad parse produces', (assert) => {
+    assert.false(isTargetablePid(Number.NaN), 'parseInt of a vanished /proc entry');
+    assert.false(
+      isTargetablePid(undefined as unknown as number),
+      'ChildProcess.pid when unspawned',
+    );
+    assert.false(isTargetablePid(1.5), 'a non-integer is not a pid');
+    assert.false(isTargetablePid(Number.POSITIVE_INFINITY));
+  });
+
+  test('rejects our own pid — we are not a process group to reap', (assert) => {
+    assert.false(isTargetablePid(process.pid));
+  });
+
+  test('accepts a plausible child pid', (assert) => {
+    assert.true(isTargetablePid(4242));
+    assert.true(isTargetablePid(2), 'the smallest value that is not init');
+  });
+
+  test('killProcessGroup is a no-op for every rejected pid', (assert) => {
+    // If the guard were absent, this call alone would take down the test runner and the shell
+    // that started it. Reaching the next line IS the assertion.
+    for (const pid of [0, 1, -1, Number.NaN, process.pid]) killProcessGroup(pid);
+
+    assert.ok(true, 'survived — no signal was sent');
+  });
+});
 
 module('Utils | killProcessGroup', { concurrency: true }, () => {
   // POSIX-only tests use `sh -c` rather than process.execPath so they're

@@ -11,7 +11,7 @@ module('Flags | --before', { concurrency: true }, (_hooks, moduleMetadata) => {
 
     assert.includes(result, 'This is running from before script!!');
     assert.passingTestCaseFor(result, { moduleName: '{{moduleName}}' });
-    assert.tapResult(result, { testCount: 3 });
+    assert.tapResult(result, { total: 3 });
   });
 
   test('exits 1 and reports the error when the script throws', async (assert, testMetadata) => {
@@ -34,6 +34,6 @@ module('Flags | --before', { concurrency: true }, (_hooks, moduleMetadata) => {
     assert.includes(result, 'Starting before script with:');
     assert.passingTestCaseFor(result, { moduleName: '{{moduleName}}' });
     assert.includes(result, '{{moduleName}} Before script web server tests | assert true works');
-    assert.tapResult(result, { testCount: 4 });
+    assert.tapResult(result, { total: 4 });
   });
 });

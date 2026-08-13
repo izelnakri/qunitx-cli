@@ -1,7 +1,7 @@
 {
   "name": "qunitx-cli",
   "type": "module",
-  "version": "0.31.1",
+  "version": "0.34.4",
   "description": "Browser runner for QUnitx: run your qunitx tests in google-chrome",
   "author": "Izel Nakri",
   "license": "MIT",
@@ -16,15 +16,26 @@
   "files": [
     "bin/",
     "dist/",
+    "lib/",
     "templates/"
   ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/lib/api/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./lib/*": "./lib/*",
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/types/lib/api/index.d.ts",
   "scripts": {
     "build": "node scripts/build-cli.js",
     "bin": "chmod +x cli.ts && ./cli.ts",
     "prepublishOnly": "npm run build",
     "format": "prettier --check \"lib/**/*.ts\" \"test/**/*.ts\" \"examples/**/*.ts\" \"scripts/**/*.js\" \"bin/**/*.js\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
     "format:fix": "prettier --write \"lib/**/*.ts\" \"test/**/*.ts\" \"scripts/**/*.js\" \"bin/**/*.js\" \"*.ts\" \"package.json\" \".github/**/*.yml\"",
-    "lint": "deno lint lib/ bin/ test/ scripts/ examples/*.ts cli.ts",
+    "lint": "deno lint lib/ bin/ test/ scripts/ examples/*.ts cli.ts && npm run lint:test-types",
+    "lint:test-types": "deno check 'test/**/*.ts' 2>&1 | grep -E 'TS2307|TS2353' ; test $? -eq 1",
     "typecheck": "deno check --doc lib/ examples/*.ts cli.ts",
     "lint:docs": "node scripts/lint-docs.js",
     "docs": "deno doc --html --name=\"qunitx-cli\" --output=docs/lib 'lib/**/*.ts' README.md",
@@ -57,7 +68,7 @@
     "url": "git+https://github.com/izelnakri/qunitx-cli.git"
   },
   "dependencies": {
-    "esbuild": "^0.28.1",
+    "esbuild": "0.28.2",
     "playwright-core": "1.61.1",
     "ws": "^8.21.0"
   },

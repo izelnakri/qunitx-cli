@@ -327,6 +327,7 @@ function makeConfig(testFiles: string[], watch = false): Config {
     extensions: ['ts', 'js'],
     browser: 'chromium',
     projectRoot: CWD,
+    cwd: CWD,
     inputs: [],
     htmlPaths: [],
     testFileLookupPaths: [],

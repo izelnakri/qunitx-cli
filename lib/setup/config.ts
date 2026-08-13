@@ -15,6 +15,8 @@ import * as RunState from './run-state.ts';
 import * as Result from '../result/index.ts';
 import { Task } from '../task/index.ts';
 import type { Config, FSTree as FSTreeShape } from '../types.ts';
+import type { Reporter as ReporterInstance } from '../reporters/types.ts';
+import type { Console } from '../console.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
 
 /**
@@ -27,11 +29,12 @@ import type { Plugin as EsbuildPlugin } from 'esbuild';
  * failure.message; // 'package.json#qunitx.plugins must be an array, received string'
  * ```
  */
-export const InvalidPlugins = Result.Failure.define(
-  'InvalidPlugins',
-  (data: { received: string }) =>
-    `package.json#qunitx.plugins must be an array, received ${data.received}`,
-);
+export const InvalidPlugins: Result.Failure.FailureFactory<'InvalidPlugins', { received: string }> =
+  Result.Failure.define(
+    'InvalidPlugins',
+    (data: { received: string }) =>
+      `package.json#qunitx.plugins must be an array, received ${data.received}`,
+  );
 
 /**
  * A plugin specifier could not be resolved or imported.
@@ -47,7 +50,10 @@ export const InvalidPlugins = Result.Failure.define(
  * failure.data.specifier; // 'esbuild-plugin-vue' — the entry at fault, resolver error under `.cause`
  * ```
  */
-export const PluginLoadFailed = Result.Failure.define(
+export const PluginLoadFailed: Result.Failure.FailureFactory<
+  'PluginLoadFailed',
+  { specifier: string }
+> = Result.Failure.define(
   'PluginLoadFailed',
   (data: { specifier: string }) => `could not load esbuild plugin "${data.specifier}"`,
 );
@@ -69,16 +75,55 @@ export type ConfigFailure =
   | Result.Failure.Of<typeof InvalidPlugins | typeof PluginLoadFailed>;
 
 /**
- * Builds the merged qunitx config from package.json settings and CLI flags.
- * `package.json#qunitx.plugins` entries are dynamic-imported into esbuild plugin objects.
+ * Resolved settings handed to {@link setup} in place of an argv, by the JS API and by anyone
+ * else assembling a run programmatically. Every CLI flag has a field here — they are the same
+ * settings, arrived at by a different route — plus the two things argv cannot express: a working
+ * directory, and esbuild plugins as live objects rather than module specifiers.
+ *
+ * `inputs` are raw targets, exactly as they would be typed on the command line: relative or
+ * absolute, `.html` fixtures, `file.ts#34` line targets. {@link Args.applyInputs} classifies them.
+ *
+ * ```ts
+ * import * as Config from './config.ts';
+ *
+ * const options: Config.ConfigOptions = { inputs: ['test/cart-test.ts#34'], filter: 'Cart' };
+ * options.inputs; // ['test/cart-test.ts#34'] — resolved against `cwd` by setup()
+ * ```
+ */
+export interface ConfigOptions extends Partial<Args.ParsedFlags> {
+  /** Directory the project root and relative inputs resolve against. Defaults to `process.cwd()`. */
+  cwd?: string;
+  /** Live esbuild plugin objects, appended after any resolved from `package.json#qunitx.plugins`. */
+  esbuildPlugins?: EsbuildPlugin[];
+  /**
+   * Reporter instances for this run, replacing the one `reporter`/`junit` would have selected.
+   * The way a caller observes a run as data rather than as text.
+   */
+  reporters?: ReporterInstance[];
+  /** Cancels the run when it fires. Placed on `state.signal`; setup never subscribes to it. */
+  signal?: AbortSignal;
+  /**
+   * Where reporter text and `#` diagnostics go. Defaults to the process streams; pass
+   * `silentConsole` for a run that prints nothing at all. Named apart from `output` — the build
+   * directory — because they are unrelated and both spellings are load-bearing.
+   */
+  console?: Console;
+}
+
+/**
+ * Builds the merged qunitx config from package.json settings and either an argv or an explicit
+ * {@link ConfigOptions}. `package.json#qunitx.plugins` entries are dynamic-imported into esbuild
+ * plugin objects.
  *
  * `ConfigFailure` is *declared*, so `.result()` hands back the bare union to branch on with
  * `Failure.is`. It reports rather than exits so the daemon — which assembles a config per client
  * request — can reject one bad flag and stay up; `cli.ts` turns a failure into an exit.
  *
- * Lazy, like every Task: nothing is read until it is awaited. `setup` reads `process.argv` and
- * `process.env` at that moment, so a caller that lends those globals (the daemon, via
- * `borrowArgv`/`borrowEnv`) must await INSIDE the borrowing scope, not hold the Task past it.
+ * Lazy, like every Task: nothing is read until it is awaited. With no argument `setup` reads
+ * `process.argv` and `process.env` at that moment, so a caller that lends those globals (the
+ * daemon, via `borrowArgv`/`borrowEnv`) must await INSIDE the borrowing scope, not hold the Task
+ * past it. Passing options instead skips the argv read entirely — which is why the JS API needs
+ * no such borrowing.
  *
  * ```ts
  * import * as Config from './config.ts';
@@ -86,21 +131,42 @@ export type ConfigFailure =
  *
  * // Defined, not invoked: reads package.json and walks the real fs.
  * async function example() {
- *   const config = await Config.setup().result();
+ *   const config = await Config.setup({ inputs: ['test/'] }).result();
  *   return Result.Failure.is(config) ? config.code : config.inputs; // ConfigFailure, or the Config
  * }
  * ```
  */
-export function setup(): Task<Config, ConfigFailure> {
+export function setup(options?: ConfigOptions): Task<Config, ConfigFailure> {
   return Task(async () => {
     // Every declared failure below rejects rather than returning: the Task's E channel carries
     // them, so the guard-and-return-it ladder this function used to open with is gone. Args.parse
     // is synchronous, so it hands back a union rather than a Task — `unwrap` is the union's own
     // way into that channel, throwing the failure by identity so its stack still points at Args.
-    const projectRoot = await findProjectRoot();
-    const flags = Result.unwrap(Args.parse(projectRoot));
+    // `console` is destructured under another name: a local called `console` would shadow the
+    // global one for the rest of this function.
+    const {
+      cwd: requestedCwd,
+      esbuildPlugins,
+      reporters,
+      console: runConsole,
+      signal,
+      ...given
+    } = options ?? {};
+    // A key present-but-undefined would spread over `package.json#qunitx` and un-set it, so an
+    // option the caller never named must not reach the merge below. Stripped here, at the one
+    // place that does the merging, rather than by every caller that builds these options.
+    const provided = Object.fromEntries(
+      Object.entries(given).filter(([, value]) => value !== undefined),
+    ) as typeof given;
+    const cwd = requestedCwd ? path.resolve(requestedCwd) : process.cwd();
+    const projectRoot = await findProjectRoot(cwd);
+    // Given options, the positional grammar still applies — `applyInputs` is the same
+    // classification argv positionals go through, so `'a.ts#34'` targets a line either way.
+    const flags = options
+      ? Args.applyInputs({ ...provided, inputs: [] }, projectRoot, cwd, provided.inputs ?? [])
+      : Result.unwrap(Args.parse(projectRoot, process.argv.slice(2), cwd));
     const projectPackageJSON = await readConfigFromPackageJSON(projectRoot);
-    const { plugins: rawPlugins, ...userQunitx } =
+    const { plugins: rawPlugins, ...userQUnitX } =
       (projectPackageJSON.qunitx as Partial<Config> & {
         plugins?: unknown;
       }) ?? {};
@@ -108,9 +174,10 @@ export function setup(): Task<Config, ConfigFailure> {
     const config = {
       ...defaultProjectConfigValues,
       htmlPaths: [] as string[],
-      ...userQunitx,
+      ...userQUnitX,
       ...flags,
       projectRoot,
+      cwd,
       inputs,
       testFileLookupPaths: TestFilePaths.setup(inputs),
       state: RunState.create(),
@@ -119,6 +186,12 @@ export function setup(): Task<Config, ConfigFailure> {
       // complete Config is only guaranteed at the return. The later `as Config` casts this
       // function used to repeat are now redundant.
     } as Config;
+    // Wired before anything below can emit: `pruneSupersededLineTargets` and the narrowing
+    // filters all announce what they decided through `Reporter.notice`, and a run whose
+    // reporters were still an empty array at that point would drop those diagnostics.
+    if (runConsole) config.state.console = runConsole;
+    config.state.signal = signal;
+    config.state.reporters = reporters ?? Reporter.create(config);
     // `--debug` also reveals `.ignore(context)`-suppressed rejections as TAP comments —
     // one flag lights every deliberate swallow. (QUNITX_DEBUG covers the env path at
     // failure.ts load; enable-only, so a daemon run without the flag never turns it off.)
@@ -127,10 +200,14 @@ export function setup(): Task<Config, ConfigFailure> {
     // Started together, so plugin dynamic-imports overlap fsTree's I/O. The two used to be kicked
     // off on separate lines to get that overlap; they didn't need to be, because everything between
     // those lines was synchronous and no import could progress during it.
-    [config.fsTree, config.plugins] = await Task.all([
+    const [fsTree, resolvedPlugins] = await Task.all([
       FSTree.build(config.testFileLookupPaths, config),
       resolvePlugins(rawPlugins, projectRoot),
     ]);
+    config.fsTree = fsTree;
+    // package.json specifiers first, then the caller's live objects — the same order the two
+    // sources are declared in, so an API-supplied plugin can override an earlier one's handlers.
+    config.plugins = esbuildPlugins ? resolvedPlugins.concat(esbuildPlugins) : resolvedPlugins;
 
     pruneSupersededLineTargets(config);
 
@@ -138,11 +215,7 @@ export function setup(): Task<Config, ConfigFailure> {
     // include a changed file. Watch mode skips this — watch is for fast feedback
     // on every save, not "what does my working tree affect" semantics.
     if (config.changedSince && !config.watch) {
-      config.fsTree = await getChangedFsTree(
-        config.fsTree,
-        config.projectRoot,
-        config.changedSince,
-      );
+      config.fsTree = await getChangedFsTree(config.fsTree, config, config.changedSince);
     }
 
     // --only-failed: restrict the whole run to files that failed on the previous run (persistent
@@ -152,10 +225,6 @@ export function setup(): Task<Config, ConfigFailure> {
     if (config.onlyFailed && !config.watch) {
       config.fsTree = await applyOnlyFailedFilter(config);
     }
-
-    // Built last: reporter selection reads the fully-merged flags. One instance per run, shared
-    // by every concurrent group via the group-config spread in run.ts.
-    config.state.reporters = Reporter.create(config);
 
     return config;
   });
@@ -181,8 +250,8 @@ function pruneSupersededLineTargets(config: Config): void {
     const coveredBy = wholeInputs.find((input) => coversFileWhole(input, file));
     if (!coveredBy) continue;
     const rel = path.relative(config.projectRoot, file).replaceAll('\\', '/');
-    console.log(
-      '#',
+    Reporter.warning(
+      config,
       blue(
         `qunitx: ${rel}#${lineTargets[file].join(',')} line target ignored — a broader input runs the whole file`,
       ),
@@ -225,13 +294,13 @@ async function applyOnlyFailedFilter(config: Config): Promise<FSTreeShape> {
     config.fsTree,
   );
   if (failed === null) {
-    console.log('#', `qunitx --only-failed: no failure cache found — running all tests`);
+    Reporter.info(config, `qunitx --only-failed: no failure cache found — running all tests`);
     return config.fsTree;
   }
 
   const count = failed.length;
-  console.log(
-    '#',
+  Reporter.info(
+    config,
     count === 0
       ? `qunitx --only-failed: no previously-failing test files to run`
       : `qunitx --only-failed: re-running ${count} previously-failing test file${count === 1 ? '' : 's'}`,

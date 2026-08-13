@@ -24,7 +24,7 @@ module('Inputs | package.json plugins', { concurrency: true }, () => {
     });
 
     assert.includes(result, 'TAP version 13');
-    assert.tapResult(result, { testCount: 1 });
+    assert.tapResult(result, { total: 1 });
     assert.regex(
       result.stdout,
       /ok \d+ package\.json plugins \| virtual module produced by a factory plugin loads and respects its options # \(\d+ ms\)/,

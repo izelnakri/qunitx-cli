@@ -8,6 +8,7 @@ import * as FileWatcher from '../../lib/setup/file-watcher.ts';
 import type { RescanDeps } from '../../lib/setup/file-watcher.ts';
 import '../helpers/custom-asserts.ts';
 import * as RunState from '../../lib/setup/run-state.ts';
+import { captureStdout } from '../helpers/capture-stdout.ts';
 import type { Config, FSTree, RunState as RunStateShape } from '../../lib/types.ts';
 
 const sha1 = (content: string) => createHash('sha1').update(content).digest('hex');
@@ -353,19 +354,11 @@ module('Setup | FileWatcher.handleWatchEvent', { concurrency: true }, () => {
   test('CHANGED: log shows the full absolute path for files outside projectRoot', (assert) => {
     // Regression guard: the original code used `filePath.split(config.projectRoot)[1]`, which
     // returns undefined when filePath doesn't contain projectRoot. The fix uses startsWith/slice.
-    // console.log('#', colorEvent(event), displayPath) — the path is always the third arg.
     const config = { fsTree: { '/tmp/external.ts': null }, projectRoot: '/project' };
-    const logged: unknown[][] = [];
-    const origLog = console.log;
-    console.log = (...args: unknown[]) => logged.push(args);
-    try {
-      trackCalls(config, 'change', '/tmp/external.ts');
-    } finally {
-      console.log = origLog;
-    }
-    const allOutput = logged.flat().map(String).join(' ');
-    assert.includes(allOutput, '/tmp/external.ts');
-    assert.notIncludes(allOutput, 'undefined');
+    const output = captureStdout(() => void trackCalls(config, 'change', '/tmp/external.ts'));
+
+    assert.includes(output, '/tmp/external.ts');
+    assert.notIncludes(output, 'undefined');
   });
 
   test('onFinishFunc receives (filePath, event) — path first, event second', async (assert) => {
