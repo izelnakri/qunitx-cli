@@ -199,6 +199,52 @@ export const DaemonDisconnected: Failure.FailureFactory<
 );
 
 /**
+ * The daemon accepted the connection and then said nothing for {@link RUN_SILENCE_TIMEOUT_MS}.
+ *
+ * `dispatchRun` settles on a terminal `done`/`fatal` chunk, or on the socket closing. A daemon
+ * wedged mid-run sends neither, and the client waited forever: no output, no error, a terminal
+ * that never comes back. CI saw the same shape as an empty stdout and a harness SIGTERM.
+ *
+ * Measured on silence rather than total duration, because a long suite is not a wedged one — the
+ * daemon streams a chunk per test, so any run making progress keeps resetting the clock.
+ *
+ * ```ts
+ * import * as Client from './client.ts';
+ *
+ * Client.DaemonSilent({ ms: 240_000 }).message;
+ * // 'daemon accepted the run but sent nothing for 240s — it is wedged, not slow'
+ * ```
+ */
+export const DaemonSilent: Failure.FailureFactory<'DaemonSilent', { ms: number }> = Failure.define(
+  'DaemonSilent',
+  (data: { ms: number }) =>
+    `daemon accepted the run but sent nothing for ` +
+    `${data.ms < 1000 ? `${data.ms}ms` : `${Math.round(data.ms / 1000)}s`} — ` +
+    `it is wedged, not slow. Run \`qunitx daemon stop\` and retry, or pass --no-daemon.`,
+);
+
+/**
+ * How long the client waits on total silence before declaring the daemon wedged.
+ *
+ * Above the daemon's own per-group deadline (`GROUP_TIMEOUT_MS`, 180s): while a group runs down
+ * that clock the daemon is legitimately quiet, and giving up first would turn a run the daemon was
+ * about to fail properly into a transport error. `QUNITX_DAEMON_RUN_TIMEOUT` overrides it, in ms —
+ * the regression test uses a small value to prove the path without waiting minutes.
+ *
+ * ```ts
+ * import * as Client from './client.ts';
+ *
+ * Client.RUN_SILENCE_TIMEOUT_MS > 180_000; // true — the daemon gets to report first
+ * ```
+ */
+export const RUN_SILENCE_TIMEOUT_MS = 240_000;
+
+function silenceBudget(): number {
+  const override = Number(process.env.QUNITX_DAEMON_RUN_TIMEOUT);
+  return Number.isFinite(override) && override > 0 ? override : RUN_SILENCE_TIMEOUT_MS;
+}
+
+/**
  * Every way a daemon-routed run can fail to produce an exit code.
  *
  * ```ts
@@ -208,7 +254,9 @@ export const DaemonDisconnected: Failure.FailureFactory<
  * failure.code; // 'DaemonDisconnected' — or 'DaemonUnreachable'; narrow with a switch
  * ```
  */
-export type DaemonRunFailure = Failure.Of<typeof DaemonUnreachable | typeof DaemonDisconnected>;
+export type DaemonRunFailure = Failure.Of<
+  typeof DaemonUnreachable | typeof DaemonDisconnected | typeof DaemonSilent
+>;
 
 /**
  * The CLI's path: sends raw `argv` and answers with the exit code the daemon reported.
@@ -304,20 +352,40 @@ function dispatchRun({
     // the connection without sending one — reported as declared failures rather than
     // folded into the same exit code a failing test run produces.
     const outcome = new Promise<number>((resolve, reject) => {
+      // Reset by every chunk, so a run that is merely long never trips it; only a daemon that has
+      // stopped talking does. Without this the promise has no losing branch at all: a wedged
+      // daemon leaves the CLI waiting with no output and no error, forever.
+      const budget = silenceBudget();
+      let silence: ReturnType<typeof setTimeout>;
+      const heard = () => {
+        clearTimeout(silence);
+        silence = setTimeout(() => {
+          socket.destroy();
+          reject(DaemonSilent({ ms: budget }));
+        }, budget);
+        silence.unref?.();
+      };
+      const settle = (finish: () => void) => {
+        clearTimeout(silence);
+        finish();
+      };
+      heard();
+
       Socket.readMessages<ResponseChunk>(socket, (chunk) => {
+        heard();
         if (chunk.type === 'stdout') out.log(chunk.data);
         else if (chunk.type === 'stderr') out.error(chunk.data);
         else if (chunk.type === 'result') result = chunk.result;
-        else if (chunk.type === 'done') resolve(chunk.exitCode);
+        else if (chunk.type === 'done') settle(() => resolve(chunk.exitCode));
         else if (chunk.type === 'fatal') {
           // A reported fatal IS a terminal result: the daemon ran, decided the run failed, and
           // said so. That is an exit code, not a transport failure.
           out.error(`# [qunitx daemon] ${chunk.message}\n`);
-          resolve(1);
+          settle(() => resolve(1));
         }
       });
-      socket.once('close', () => reject(DaemonDisconnected({ reason: 'close' })));
-      socket.once('error', () => reject(DaemonDisconnected({ reason: 'error' })));
+      socket.once('close', () => settle(() => reject(DaemonDisconnected({ reason: 'close' }))));
+      socket.once('error', () => settle(() => reject(DaemonDisconnected({ reason: 'error' }))));
     });
 
     const onSigint = () => {
