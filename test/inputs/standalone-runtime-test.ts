@@ -47,7 +47,7 @@ module('Inputs | qunitx runtime resolution', { concurrency: true }, () => {
       const result = await runInDir(dir, 'my-test.js');
 
       assert.includes(result.stdout, 'TAP version 13');
-      assert.tapResult(result, { testCount: 1 });
+      assert.tapResult(result, { total: 1 });
       const output = result.stdout + result.stderr;
       assert.notIncludes(
         output,
@@ -75,12 +75,12 @@ module('Inputs | qunitx runtime resolution', { concurrency: true }, () => {
     try {
       const rootMatch = /^(.*[\\/]qunitx)[\\/]/.exec(require.resolve('qunitx'));
       assert.ok(rootMatch, 'resolves the repo-installed qunitx to copy');
-      const destQunitx = path.join(dir, 'node_modules/qunitx');
-      await fs.cp(rootMatch![1], destQunitx, { recursive: true });
+      const destQUnitX = path.join(dir, 'node_modules/qunitx');
+      await fs.cp(rootMatch![1], destQUnitX, { recursive: true });
       for (const entry of ['browser', 'node', 'deno']) {
         await fs
           .appendFile(
-            path.join(destQunitx, `dist/${entry}/index.js`),
+            path.join(destQUnitX, `dist/${entry}/index.js`),
             `\nexport const __PROVENANCE__ = 'project-node-modules';\n`,
           )
           .catch(ignore('provenance marker append'));
@@ -104,7 +104,7 @@ module('Inputs | qunitx runtime resolution', { concurrency: true }, () => {
       assert.includes(result.stdout, 'TAP version 13');
       // Green run ⇒ the provenance assertion passed ⇒ the project's qunitx (not the embedded
       // runtime) was bundled. A wrong precedence would surface as fail 1 or a resolve error.
-      assert.tapResult(result, { testCount: 1 });
+      assert.tapResult(result, { total: 1 });
       assert.notIncludes(result.stdout + result.stderr, 'Could not resolve');
     } finally {
       permit.release();

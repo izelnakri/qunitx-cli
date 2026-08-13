@@ -22,7 +22,7 @@ module('Flags | --junit', { concurrency: true }, (_hooks, moduleMetadata) => {
     );
 
     // TAP is unchanged — it still streams to stdout.
-    assert.tapResult(result, { testCount: 3 });
+    assert.tapResult(result, { total: 3 });
     assert.includes(result, 'wrote JUnit report');
 
     const xml = await fs.readFile(`${output}/junit.xml`, 'utf8');

@@ -1,10 +1,12 @@
 import type { HTTPServer } from './web/index.ts';
+import type { ParsedFlags } from './args/parse.ts';
 import type { Browser, Page } from 'playwright-core';
 import type { ChildProcess } from 'node:child_process';
 import type { Buffer } from 'node:buffer';
 import type { BuildContext, Plugin as EsbuildPlugin } from 'esbuild';
 import type { SourceMapDecoder } from './utils/source-map.ts';
-import type { Reporter, ReporterName } from './reporters/types.ts';
+import type { Reporter } from './reporters/types.ts';
+import type { Console } from './console.ts';
 import type { QUnitSelector } from './selection/line-targets.ts';
 import type { FailedTestRecord } from './utils/failure-cache.ts';
 
@@ -14,23 +16,23 @@ import type { FailedTestRecord } from './utils/failure-cache.ts';
  *
  * ```ts
  * const counter: Counter =
- *   { testCount: 3, failCount: 1, skipCount: 0, todoCount: 0, passCount: 2, errorCount: 0 };
- * counter.testCount; // 3 — the sum of the pass/fail/skip/todo buckets
+ *   { total: 3, failed: 1, skipped: 0, todo: 0, passed: 2, assertionsFailed: 0 };
+ * counter.total; // 3 — the sum of the pass/fail/skip/todo buckets
  * ```
  */
 export interface Counter {
   /** Total number of test cases registered. */
-  testCount: number;
+  total: number;
   /** Number of test cases that had at least one failing assertion. */
-  failCount: number;
+  failed: number;
   /** Number of test cases explicitly marked as skipped (not run). */
-  skipCount: number;
+  skipped: number;
   /** Number of test cases marked as todo (expected to fail, work in progress). */
-  todoCount: number;
+  todo: number;
   /** Number of test cases where every assertion passed. */
-  passCount: number;
+  passed: number;
   /** Number of test cases that threw an unexpected error outside of assertions. */
-  errorCount: number;
+  assertionsFailed: number;
 }
 
 /**
@@ -247,7 +249,7 @@ export type CoverageFileMap = Map<string, FileCoverage>;
  * import * as RunState from './setup/run-state.ts';
  *
  * const state = RunState.create();
- * state.results.counter.testCount; // 0 — one shared accumulator for the whole run
+ * state.results.counter.total; // 0 — one shared accumulator for the whole run
  * ```
  */
 export interface RunState {
@@ -259,14 +261,52 @@ export interface RunState {
    */
   reporters: Reporter[];
   /**
+   * Where this run's text goes: the TAP document, every reporter line, every `#` diagnostic and
+   * every forwarded page log. `processConsole` for the CLI, `silentConsole` for a programmatic run that
+   * only wants the result value. Shared by reference across concurrent groups.
+   *
+   * Named `console`, not `output`: `config.output` is the build DIRECTORY, and the two were one
+   * word apart on the same object graph.
+   */
+  console: Console;
+  /**
+   * Cancels this run when it fires, or absent when nothing can. Carried here rather than threaded
+   * alongside the config because it is per-run input like everything else in `state` — and it is
+   * what lets a verb reach it from the resolved config instead of re-reading the raw arguments.
+   *
+   * Only carried: `Config.setup` never subscribes. Whoever wires a listener has to unwire it, and
+   * setup has no teardown, so a shared controller would accumulate one listener per run.
+   */
+  signal?: AbortSignal;
+  /**
    * Non-null exactly when this run is executing inside the persistent daemon process — it is
-   * the daemon-mode flag as well as the handles. Daemon runs throw `DaemonRunError` instead of
-   * calling `process.exit`, suppress the per-connection TAP header, and leave the shared browser
-   * open at the end of the run.
+   * the daemon-mode flag as well as the handles. Daemon runs reuse the shared browser, suppress
+   * the per-connection TAP header, and leave that browser open at the end of the run.
    */
   daemon: DaemonState | null;
   /** Number of concurrent groups in this run; 1 for watch and single-group runs. */
   groupCount: number;
+  /**
+   * How this run's files were split across those groups — the descriptive record `RunResult`
+   * reports. Assigned once per run alongside `groupCount` and shared by reference, so a group
+   * can read the whole split rather than only its own slice.
+   *
+   * Empty until a split is computed, which is why `groupCount` stays the authority the runner
+   * branches on: page reuse is decided during daemon setup, before any grouping exists. Watch
+   * never splits at all, so it leaves this empty and the result names its one group from the
+   * files that rerun ran.
+   */
+  groups: RunGroup[];
+  /**
+   * One callback per live server that tells its connected pages to drop the rest of the QUnit
+   * queue — what `qq`, `session.abort()` and an aborted `signal` all go through.
+   *
+   * A set rather than a slot because a concurrent run may have one server per group, and
+   * aborting half a run is not aborting it. Shared by reference across groups, so a group
+   * registering its own server marks it for everyone. Entries for closed servers are harmless:
+   * publishing to a server with no clients reaches nobody.
+   */
+  aborters: Set<() => void>;
   /** File-watcher build bookkeeping. Only meaningful in watch mode, where there is one group. */
   watch: WatchState;
   /**
@@ -279,6 +319,28 @@ export interface RunState {
    * `RunState` is shared by reference), so it is the one place per-group slots may live.
    */
   group: GroupState;
+}
+
+/**
+ * One concurrent group of a run: the files bundled into a single page, and where that page's
+ * artifacts were written.
+ *
+ * Which files land together is decided per run from recorded timings and the core count, so it
+ * is neither stable across runs nor derivable by the caller — and it is exactly what you need to
+ * reproduce a failure that only happens when two files share a bundle.
+ *
+ * ```ts
+ * const group: RunGroup = { index: 1, files: ['/proj/test/cart.ts'], output: '/proj/tmp/group-1' };
+ * group.output; // '/proj/tmp/group-1' — still on disk after the run, unlike the group's URL
+ * ```
+ */
+export interface RunGroup {
+  /** Position in the run's group list, and the `group-<index>` suffix on `output`. */
+  index: number;
+  /** Absolute paths of the test files this group bundled and ran together. */
+  files: string[];
+  /** Absolute path of this group's build output directory. */
+  output: string;
 }
 
 /**
@@ -331,12 +393,10 @@ export interface GroupState {
    * failing assertion's stack can't be resolved to one file — scoped per group so an
    * unattributable failure blames only the files that group ran, not the whole invocation.
    *
-   * Watch mode runs exactly one group, so this doubles as the `ql` rerun target there. Named to
-   * pair with {@link lastFailedFiles}.
+   * Watch mode runs exactly one group, so this doubles as the `ql` rerun target there, and the
+   * `qf` fallback when the last run had no failures to scope to.
    */
   lastRanFiles: string[] | null;
-  /** Files treated as failed for the `qf` rerun shortcut. Watch mode only, hence single-group. */
-  lastFailedFiles: string[] | null;
   /**
    * Tracks `testEnd` arrivals per test fullName in this group's run. Reset in lockstep with the
    * run counter — explicitly NOT on every WS 'connection' event, which was the bug that broke
@@ -426,8 +486,8 @@ export interface WatchState {
  *
  * ```ts
  * // Defined, not invoked: only the daemon process (`qunitx daemon _serve`) owns a real one.
- * function warmHandles(daemon: DaemonState) {
- *   return daemon.pageSlot.page ?? daemon.browser; // reuse the stashed page when there is one
+ * function warmHandles(handles: DaemonState) {
+ *   return handles.pageSlot.page ?? handles.browser; // reuse the stashed page when there is one
  * }
  * ```
  */
@@ -451,7 +511,7 @@ export interface DaemonState {
  * import * as RunState from './setup/run-state.ts';
  *
  * const { results } = RunState.create();
- * results.counter.passCount += 1; // mutate the shared object in place — never replace it
+ * results.counter.passed += 1; // mutate the shared object in place — never replace it
  * ```
  */
 export interface RunResults {
@@ -469,6 +529,15 @@ export interface RunResults {
    * Reassigned only by `RunState.reset` (a fresh Map per run), never by a group.
    */
   coverage: CoverageFileMap | null;
+  /**
+   * Whether the browser confirmed it dropped this run's remaining queue — `qq`, `session.abort()`,
+   * or an aborted `signal`. Lives here rather than on the group because groups share this object
+   * by reference, so one aborted group marks the whole run without any cross-group plumbing.
+   *
+   * Load-bearing for the result: an aborted run and a red run both end with failures and exit 1,
+   * and nothing else distinguishes "I stopped it" from "it broke".
+   */
+  aborted: boolean;
 }
 
 /**
@@ -483,7 +552,10 @@ export interface RunResults {
  * }
  * ```
  */
-export interface Config {
+export interface Config extends ParsedFlags {
+  // A Config IS the parsed flags: everything `ParsedFlags` declares is inherited, the seven
+  // below are narrowed to required (their defaults have been applied), and the rest is the
+  // runtime state and resolved paths a run needs.
   /** Mutable state for this run; see {@link RunState} for the sharing rules. */
   state: RunState;
   /** Directory where the compiled test bundle and output HTML are written (default: `'tmp'`). */
@@ -494,26 +566,26 @@ export interface Config {
   failFast: boolean;
   /** TCP port the local test server listens on (default: `1234`, auto-increments on conflict). */
   port: number;
-  /** `true` when the user passed `--port` explicitly; startup fails if that port is already taken. */
-  portExplicit?: boolean;
   /** File extensions treated as test files (default: `['js', 'ts']`). */
   extensions: string[];
   /** Browser engine used for the test run (`'chromium'` | `'firefox'` | `'webkit'`). */
   browser: 'chromium' | 'firefox' | 'webkit';
   /** Absolute path to the project root (directory containing `package.json`). */
   projectRoot: string;
-  /** CLI input paths (files or directories) from which test files are discovered. */
-  inputs: string[];
+  /**
+   * Working directory this run resolves against: relative inputs, bare-specifier resolution
+   * inside the test bundle, and `--before`/`--after` hook paths. `process.cwd()` for the CLI;
+   * the JS API's `cwd` option otherwise. Distinct from {@link projectRoot}, which is wherever
+   * the nearest `package.json` sits — running from a subdirectory keeps that subdirectory's
+   * `node_modules` on the resolution chain, exactly as Node itself would.
+   */
+  cwd: string;
   /** Absolute paths to HTML fixture files that wrap the compiled test bundle. */
   htmlPaths: string[];
   /** Paths searched when globbing for test files. */
   testFileLookupPaths: string[];
   /** Current file-system snapshot, diffed in watch mode to detect added / removed files. */
   fsTree: FSTree;
-  /** Path to a script run before each test run; `false` disables the before-hook. */
-  before?: string | false;
-  /** Path to a script run after each test run; `false` disables the after-hook. */
-  after?: string | false;
   /**
    * Custom esbuild plugins applied during the test bundle build. Loaded from
    * `qunitx.config.{ts,js,mjs}` in the project root. Common use cases: SFC formats
@@ -521,72 +593,6 @@ export interface Config {
    * project-specific resolvers/loaders.
    */
   plugins?: EsbuildPlugin[];
-  /**
-   * The single stdout format for the run (default `'tap'`). Artifact outputs (`junit`,
-   * `coverage`) are separate additive options, not values of this field.
-   */
-  reporter?: ReporterName;
-  /**
-   * Write a JUnit XML report in addition to the `reporter` stdout stream. `true` writes
-   * `<output>/junit.xml`; a string is a path (resolved against `projectRoot`).
-   */
-  junit?: boolean | string;
-  /**
-   * When `true`, collect V8 line coverage of the test bundle and emit a terminal summary
-   * at run end. Chromium-only; ignored (with a warning) for firefox/webkit.
-   */
-  coverage?: boolean;
-  /**
-   * Extra coverage report formats beyond the always-on terminal summary:
-   * `'lcov'` writes `<output>/coverage/lcov.info`, `'html'` writes `<output>/coverage/index.html`.
-   */
-  coverageFormats?: string[];
-  /** Enable file-watch mode: re-run affected tests on every save. */
-  watch?: boolean;
-  /**
-   * When set, run only the test files that failed on the previous run, read from the persistent
-   * `tmp/.qunitx-last-failures.json` cache. With no input targets it re-runs exactly the cached
-   * files; with targets it intersects the cache with them. In watch mode only the initial run is
-   * scoped to the failures — the full set stays watched, and `qa` / `qf` / `ql` switch interactively.
-   */
-  onlyFailed?: boolean;
-  /** Open the test output in a browser window; a string value specifies the browser binary. */
-  open?: boolean | string;
-  /** Print the local server URL and forward browser console output to stdout. */
-  debug?: boolean;
-  /**
-   * When set, run only test files whose transitive imports include any file
-   * changed since this git ref. `--changed` is shorthand for `--since=HEAD`.
-   * Falls back to running all tests on git failure or missing metafile cache.
-   */
-  changedSince?: string;
-  /**
-   * The test filter — `-t`, `--filter`, `-m` and `--module` are four spellings of this one field.
-   * Matched against `"Module: test name"` and passed through to `QUnit.config.filter` verbatim, so
-   * it carries QUnit's own semantics: case-insensitive substring, `/regex/`, `/regex/i` (regexes
-   * are case-SENSITIVE without the flag), or a leading `!` to invert. `QUnit.config.module` is
-   * deliberately unused: it is exact against the *joined* module path, so it can match neither a
-   * nested module by its own name nor a prefix. `-t '/^Cart(:| >)/'` is the exact-module recipe.
-   */
-  filter?: string;
-  /**
-   * `--search` / `-s` / `--print` / `-p`: list the tests the filter matches and exit without
-   * running them. A string is the expression to preview; `true` means the flag was given bare,
-   * in which case `filter` supplies the expression (and listing everything when it too is unset).
-   */
-  search?: string | true;
-  /**
-   * Line targets from `file.ts#34` / `file.ts:34` inputs, keyed by absolute path. Resolved
-   * against the file's test declarations into exact `_qunitSelectors` per group; the bare
-   * path still goes into `inputs`, so discovery is unaffected.
-   */
-  lineTargets?: Record<string, number[]>;
-  /**
-   * Absolute paths mentioned on the command line WITHOUT a line target — i.e. whole-file requests.
-   * A directory or glob already supersedes a line target it covers; this additionally catches the
-   * exact-same-path case (`a.ts a.ts#34`), which `inputs` cannot because its Set collapses the two.
-   */
-  wholeInputPaths?: string[];
   /**
    * The run's HTTP server, exposed purely as `--before` / `--after` hook surface — qunitx itself
    * never reads it back. Hooks use it to register extra routes (mock APIs) before tests start.

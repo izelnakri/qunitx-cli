@@ -22,7 +22,10 @@ import { type Result, Failure } from '../result/index.ts';
  * failure.data.flag; // '--port' — typed payload, no message parsing
  * ```
  */
-export const InvalidFlag = Failure.define(
+export const InvalidFlag: Failure.FailureFactory<
+  'InvalidFlag',
+  { flag: string; value: string; expected: string }
+> = Failure.define(
   'InvalidFlag',
   (data: { flag: string; value: string; expected: string }) =>
     `Invalid ${data.flag} value: "${data.value}". ${data.expected}`,
@@ -63,73 +66,102 @@ const FILE_LOOKING = /\.(js|ts|jsx|tsx|html)$/;
  * }
  * ```
  */
-// { inputs: [], debug: true, watch: true, open: true, failFast: true, onlyFailed: true, htmlPaths: [], output }
-interface ParsedFlags {
+export interface ParsedFlags {
+  /** Absolute paths of the test targets, deduplicated. `.html` fixtures and `#line` suffixes
+   * are split out into `htmlPaths` and `lineTargets` rather than kept here. */
   inputs: string[];
+  /** `--debug`/`--console`: print the server URL and forward the page's console. */
   debug?: boolean;
+  /** `--watch`/`-w`: re-run on every save instead of exiting after one run. */
   watch?: boolean;
+  /** `--open`/`-o`: open the output in a browser; a string names a specific binary. */
   open?: boolean | string;
+  /** `--failFast`: stop at the first failing test. */
   failFast?: boolean;
+  /** `--only-failed`/`-f`: run only the files that failed on the previous run. */
   onlyFailed?: boolean;
+  /** `--timeout`: milliseconds a single test may take before the run is declared stalled. */
   timeout?: number;
+  /** `--output`: directory for the compiled bundle and HTML. */
   output?: string;
+  /** Positional `.html` fixtures the test bundle is injected into. */
   htmlPaths?: string[];
+  /** `--port`/`-p`: the port the local test server listens on. */
   port?: number;
+  /** `true` when `--port` was given explicitly, so a busy port fails instead of incrementing. */
   portExplicit?: boolean;
+  /** `--extensions`: file extensions treated as test files. */
   extensions?: string[];
+  /** `--browser`: the engine to run in. */
   browser?: 'chromium' | 'firefox' | 'webkit';
+  /** `--before`: module run before the tests, or `false` to disable a configured one. */
   before?: string | false;
+  /** `--after`: module run after the tests, or `false` to disable a configured one. */
   after?: string | false;
+  /** `--since`/`--changed`: run only files whose transitive imports changed since this git ref. */
   changedSince?: string;
+  /** `--reporter`/`-r`: the single stdout format. */
   reporter?: ReporterName;
+  /** `--junit`: write a JUnit report. `true` uses the default path; a string overrides it. */
   junit?: boolean | string;
+  /** `--coverage`: collect V8 line coverage. */
   coverage?: boolean;
+  /** Artifact formats beyond the terminal summary (`lcov`, `html`). */
   coverageFormats?: string[];
+  /** `-t`/`--filter`/`-m`/`--module`/`-n`: the one test-name matcher, in QUnit's own semantics. */
   filter?: string;
   /** `--search`/`--print` mode: the expression to preview, or `true` to list everything. */
   search?: string | true;
+  /** Absolute path → the `#34` line targets given for it. */
   lineTargets?: Record<string, number[]>;
   /** Absolute paths mentioned WITHOUT a line target — whole-file requests that supersede a line target. */
   wholeInputPaths?: string[];
 }
 
 /**
- * Parses `process.argv` into a qunitx flag object (`inputs`, `debug`, `watch`, `failFast`, `timeout`, `output`, `port`, `before`, `after`).
+ * Parses an argv into a qunitx flag object (`inputs`, `debug`, `watch`, `failFast`, `timeout`, `output`, `port`, `before`, `after`).
+ *
+ * `argv` and `cwd` default to the live process, which is the CLI's call. They are parameters
+ * rather than reads so the daemon and the JS API can parse someone else's invocation without
+ * borrowing process globals to do it.
  *
  * ```ts
  * import * as Args from './index.ts';
  *
- * // Defined, not invoked: reads the live process.argv.
- * function example(projectRoot: string) {
- *   const parsed = Args.parse(projectRoot); // ParsedFlags | ParseFailure — a bad flag reports, never exits
- *   return Args.InvalidFlag.is(parsed) ? parsed.code : parsed.inputs; // 'InvalidFlag' | absolute inputs
- * }
+ * const parsed = Args.parse('/proj', ['--timeout=5000'], '/proj');
+ * Args.InvalidFlag.is(parsed) ? parsed.code : parsed.timeout; // 5000
  * ```
  * @returns {object}
  */
-export function parse(projectRoot: string): Result<ParsedFlags, ParseFailure> {
-  const providedFlags = { inputs: new Set<string>() } as ParsedFlags & { inputs: Set<string> };
+export function parse(
+  projectRoot: string,
+  argv: readonly string[] = process.argv.slice(2),
+  cwd: string = process.cwd(),
+): Result<ParsedFlags, ParseFailure> {
+  const flags: ParsedFlags = { inputs: [] };
+  const positional: string[] = [];
   // The tokenizer owns how many argv entries a query flag swallows (see tokenize.ts); this
   // loop only interprets the resulting tokens. Query values and inputs are their own token kinds,
   // so the flag chain below never has to guess whether a bare word is a value or a path.
-  for (const token of tokenize(process.argv.slice(2))) {
+  for (const token of tokenize(argv)) {
     if (token.kind === 'query') {
-      applyQuery(providedFlags, token);
+      applyQuery(flags, token);
     } else if (token.kind === 'input') {
-      addInput(providedFlags, projectRoot, token.raw);
+      positional.push(token.raw);
     } else {
       // First bad flag wins, matching the previous exit-on-first-error behaviour. Collecting
       // every complaint would be a different (and arguably better) UX, but it is not what the
       // exits did and is not this change's business.
-      const failed = applyFlag(providedFlags, token.raw);
+      const failed = applyFlag(flags, token.raw);
       if (failed) return failed;
     }
   }
+  applyInputs(flags, projectRoot, cwd, positional);
 
   // QUNITX_BROWSER env var is a lower-priority fallback: --browser flag wins if present.
   // Setting it in the environment lets all spawned child processes inherit the browser
   // without needing to pass --browser on every CLI invocation.
-  if (!providedFlags.browser && process.env.QUNITX_BROWSER) {
+  if (!flags.browser && process.env.QUNITX_BROWSER) {
     const envBrowser = process.env.QUNITX_BROWSER;
     if (!BROWSERS.includes(envBrowser)) {
       return InvalidFlag({
@@ -138,26 +170,53 @@ export function parse(projectRoot: string): Result<ParsedFlags, ParseFailure> {
         expected: `Must be one of: ${BROWSERS.join(', ')}`,
       });
     }
-    providedFlags.browser = envBrowser as 'chromium' | 'firefox' | 'webkit';
+    flags.browser = envBrowser as 'chromium' | 'firefox' | 'webkit';
   }
 
   // QUNITX_DEBUG env mirrors --debug: lower-priority than the explicit flag so
   // `--debug=false` still wins per-invocation. Lets CI / scripts opt every child
   // process into debug TAP comments without rewriting commands.
-  if (providedFlags.debug === undefined && process.env.QUNITX_DEBUG) {
-    providedFlags.debug = true;
+  if (flags.debug === undefined && process.env.QUNITX_DEBUG) {
+    flags.debug = true;
   }
 
-  return { ...providedFlags, inputs: Array.from(providedFlags.inputs) };
+  return flags;
 }
 
-type Flags = ParsedFlags & { inputs: Set<string> };
+/**
+ * Classifies raw positional targets into `flags`, exactly as the CLI does with argv positionals:
+ * `.html` fixtures become `htmlPaths`, a trailing `#34`/`:34` becomes a `lineTargets` entry, and
+ * everything else is an absolute path in `inputs` (deduplicated) plus a `wholeInputPaths` mention.
+ *
+ * Shared with the JS API so `run({ inputs: ['test/cart-test.ts#34'] })` means precisely what
+ * `qunitx test/cart-test.ts#34` means — the same targeting grammar, resolved by the same code.
+ * Idempotent for already-absolute inputs, so re-normalizing a parsed flag object is safe.
+ *
+ * ```ts
+ * import * as Args from './index.ts';
+ *
+ * const flags = Args.applyInputs({ inputs: [] }, '/proj', '/proj', ['test/a-test.ts#4']);
+ * flags.lineTargets; // { '/proj/test/a-test.ts': [4] } — the bare path still lands in `inputs`
+ * ```
+ */
+export function applyInputs(
+  flags: ParsedFlags,
+  projectRoot: string,
+  cwd: string,
+  positional: readonly string[],
+): ParsedFlags {
+  const inputs = new Set(flags.inputs);
+  for (const raw of positional) addInput(flags, inputs, projectRoot, cwd, raw);
+  flags.inputs = Array.from(inputs);
+
+  return flags;
+}
 
 /**
  * Interprets one non-query flag token (`token.raw` verbatim). This is the original prefix/`=`
  * matching chain, unchanged — the tokenizer only lifted `-t`/`-m` and positional inputs out of it.
  */
-function applyFlag(result: Flags, arg: string): ParseFailure | undefined {
+function applyFlag(result: ParsedFlags, arg: string): ParseFailure | undefined {
   // Every value flag reads the same `=`-suffix, so split once here. A bare boolean flag has no
   // suffix (value === undefined) and falls back to true via parseBoolean.
   const value = arg.split('=')[1];
@@ -271,7 +330,13 @@ function applyFlag(result: Flags, arg: string): ParseFailure | undefined {
 }
 
 /** Adds a positional target: an `.html` fixture, or a test path with an optional `#34` line suffix. */
-function addInput(result: Flags, projectRoot: string, arg: string): void {
+function addInput(
+  result: ParsedFlags,
+  inputs: Set<string>,
+  projectRoot: string,
+  cwd: string,
+  arg: string,
+): void {
   if (arg.endsWith('.html')) {
     (result.htmlPaths ??= []).push(arg);
     return;
@@ -286,7 +351,7 @@ function addInput(result: Flags, projectRoot: string, arg: string): void {
   const absolutePath = path.normalize(
     filePath.startsWith(projectRoot) || path.isAbsolute(filePath)
       ? filePath
-      : path.join(process.cwd(), filePath),
+      : path.join(cwd, filePath),
   );
   if (line !== null) {
     result.lineTargets = result.lineTargets ?? {};
@@ -298,7 +363,7 @@ function addInput(result: Flags, projectRoot: string, arg: string): void {
     // one entry, losing the fact that a whole-file mention was made.
     (result.wholeInputPaths ??= []).push(absolutePath);
   }
-  result.inputs.add(absolutePath);
+  inputs.add(absolutePath);
 }
 
 /**
@@ -306,7 +371,7 @@ function addInput(result: Flags, projectRoot: string, arg: string): void {
  * second one overrides the first (last-wins, as for any repeated scalar flag) — but says so rather
  * than silently dropping the earlier expression.
  */
-function applyQuery(result: Flags, token: QueryToken): void {
+function applyQuery(result: ParsedFlags, token: QueryToken): void {
   if (token.action === 'list') {
     // A bare --search/--print (no expression) lists everything; run.ts falls back to `filter`.
     result.search = token.value ?? true;

@@ -6,44 +6,44 @@ import type { Counter } from '../../lib/types.ts';
 // identical no matter which (or how many) reporters are attached. The exit code and the TAP
 // plan both read counter, so these invariants are load-bearing.
 const newCounter = (): Counter => ({
-  testCount: 0,
-  failCount: 0,
-  skipCount: 0,
-  todoCount: 0,
-  passCount: 0,
-  errorCount: 0,
+  total: 0,
+  failed: 0,
+  skipped: 0,
+  todo: 0,
+  passed: 0,
+  assertionsFailed: 0,
 });
 
 module('Reporters | updateCounter', { concurrency: true }, () => {
-  test('passed status increments testCount and passCount only', (assert) => {
+  test('passed status increments total and passed only', (assert) => {
     const counter = newCounter();
     updateCounter(counter, { status: 'passed', fullName: ['m', 't'], runtime: 1, assertions: [] });
-    assert.strictEqual(counter.testCount, 1);
-    assert.strictEqual(counter.passCount, 1);
-    assert.strictEqual(counter.failCount, 0);
-    assert.strictEqual(counter.skipCount, 0);
+    assert.strictEqual(counter.total, 1);
+    assert.strictEqual(counter.passed, 1);
+    assert.strictEqual(counter.failed, 0);
+    assert.strictEqual(counter.skipped, 0);
   });
 
-  test('skipped status increments testCount and skipCount only', (assert) => {
+  test('skipped status increments total and skipped only', (assert) => {
     const counter = newCounter();
     updateCounter(counter, { status: 'skipped', fullName: ['m', 't'], runtime: 0, assertions: [] });
-    assert.strictEqual(counter.testCount, 1);
-    assert.strictEqual(counter.skipCount, 1);
-    assert.strictEqual(counter.passCount, 0);
-    assert.strictEqual(counter.failCount, 0);
+    assert.strictEqual(counter.total, 1);
+    assert.strictEqual(counter.skipped, 1);
+    assert.strictEqual(counter.passed, 0);
+    assert.strictEqual(counter.failed, 0);
   });
 
-  test('todo status increments testCount and todoCount only', (assert) => {
+  test('todo status increments total and todo only', (assert) => {
     const counter = newCounter();
     updateCounter(counter, { status: 'todo', fullName: ['m', 't'], runtime: 0, assertions: [] });
-    assert.strictEqual(counter.testCount, 1);
-    assert.strictEqual(counter.todoCount, 1);
-    assert.strictEqual(counter.failCount, 0);
-    assert.strictEqual(counter.skipCount, 0);
-    assert.strictEqual(counter.passCount, 0);
+    assert.strictEqual(counter.total, 1);
+    assert.strictEqual(counter.todo, 1);
+    assert.strictEqual(counter.failed, 0);
+    assert.strictEqual(counter.skipped, 0);
+    assert.strictEqual(counter.passed, 0);
   });
 
-  test('failed status increments testCount and failCount; errorCount counts assertions', (assert) => {
+  test('failed status increments total and failed; assertionsFailed counts assertions', (assert) => {
     const counter = newCounter();
     updateCounter(counter, {
       status: 'failed',
@@ -51,14 +51,14 @@ module('Reporters | updateCounter', { concurrency: true }, () => {
       runtime: 1,
       assertions: [{ passed: false, todo: false, actual: false, expected: true }],
     });
-    assert.strictEqual(counter.testCount, 1);
-    assert.strictEqual(counter.failCount, 1);
-    assert.strictEqual(counter.passCount, 0);
-    assert.strictEqual(counter.skipCount, 0);
-    assert.strictEqual(counter.errorCount, 1);
+    assert.strictEqual(counter.total, 1);
+    assert.strictEqual(counter.failed, 1);
+    assert.strictEqual(counter.passed, 0);
+    assert.strictEqual(counter.skipped, 0);
+    assert.strictEqual(counter.assertionsFailed, 1);
   });
 
-  test('errorCount counts each failing assertion, as a number (never NaN)', (assert) => {
+  test('assertionsFailed counts each failing assertion, as a number (never NaN)', (assert) => {
     const counter = newCounter();
     updateCounter(counter, {
       status: 'failed',
@@ -69,18 +69,26 @@ module('Reporters | updateCounter', { concurrency: true }, () => {
         { passed: false, todo: false, actual: 1, expected: 2, message: 'mismatch', stack: '' },
       ],
     });
-    assert.strictEqual(typeof counter.errorCount, 'number', 'errorCount must be a number, not NaN');
-    assert.strictEqual(counter.errorCount, 2, 'errorCount should count each failed assertion');
+    assert.strictEqual(
+      typeof counter.assertionsFailed,
+      'number',
+      'assertionsFailed must be a number, not NaN',
+    );
+    assert.strictEqual(
+      counter.assertionsFailed,
+      2,
+      'assertionsFailed should count each failed assertion',
+    );
   });
 
-  test('errorCount survives a counter created without the key (no NaN)', (assert) => {
-    // Mirrors how counter is built in run.ts / tests-in-browser.ts on older paths (no errorCount).
+  test('assertionsFailed survives a counter created without the key (no NaN)', (assert) => {
+    // Mirrors how counter is built in run.ts / tests-in-browser.ts on older paths (no assertionsFailed).
     const counter = {
-      testCount: 0,
-      failCount: 0,
-      skipCount: 0,
-      todoCount: 0,
-      passCount: 0,
+      total: 0,
+      failed: 0,
+      skipped: 0,
+      todo: 0,
+      passed: 0,
     } as Counter;
     updateCounter(counter, {
       status: 'failed',
@@ -90,11 +98,11 @@ module('Reporters | updateCounter', { concurrency: true }, () => {
         { passed: false, todo: false, actual: false, expected: true, message: 'x', stack: '' },
       ],
     });
-    assert.strictEqual(isNaN(counter.errorCount), false, 'errorCount must not be NaN');
-    assert.strictEqual(counter.errorCount, 1);
+    assert.strictEqual(isNaN(counter.assertionsFailed), false, 'assertionsFailed must not be NaN');
+    assert.strictEqual(counter.assertionsFailed, 1);
   });
 
-  test('passing and todo assertions inside a failed test do not raise errorCount', (assert) => {
+  test('passing and todo assertions inside a failed test do not raise assertionsFailed', (assert) => {
     const counter = newCounter();
     updateCounter(counter, {
       status: 'failed',
@@ -106,14 +114,14 @@ module('Reporters | updateCounter', { concurrency: true }, () => {
         { passed: false, todo: false, actual: 0, expected: 1 },
       ],
     });
-    assert.strictEqual(counter.errorCount, 1, 'only the genuine failure counts');
+    assert.strictEqual(counter.assertionsFailed, 1, 'only the genuine failure counts');
   });
 
   test('a failed test with no assertions array still counts the test', (assert) => {
     const counter = newCounter();
     updateCounter(counter, { status: 'failed', fullName: ['m', 't'], runtime: 1 });
-    assert.strictEqual(counter.testCount, 1);
-    assert.strictEqual(counter.failCount, 1);
-    assert.strictEqual(counter.errorCount, 0, 'no assertions to count');
+    assert.strictEqual(counter.total, 1);
+    assert.strictEqual(counter.failed, 1);
+    assert.strictEqual(counter.assertionsFailed, 0, 'no assertions to count');
   });
 });

@@ -1,8 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { blue, yellow } from '../../utils/color.ts';
-import { shutdownPrelaunch } from '../../chrome/prelaunch.ts';
-import { closeWithGrace } from '../../utils/close-with-grace.ts';
 import esbuild from 'esbuild';
 import * as TimeCounter from '../../utils/time-counter.ts';
 import { runUserModule } from '../../utils/run-user-module.ts';
@@ -25,7 +23,6 @@ import type {
   EsbuildCache,
   QUnitResult,
 } from '../../types.ts';
-import type { HTTPServer } from '../../web/index.ts';
 import { Task } from '../../task/index.ts';
 
 /**
@@ -41,10 +38,18 @@ const ancestorNodeModules = (dir: string): string[] =>
       path.join(parts.slice(0, parts.length - i).join(path.sep) || path.sep, 'node_modules'),
     );
 
-// process.cwd() is fixed for the lifetime of the process — compute once and reuse
-// across every buildTestBundle / buildFilteredTests call rather than reallocating
-// the array of ancestor paths on every esbuild invocation.
-const ANCESTOR_NODE_MODULES = ancestorNodeModules(process.cwd());
+// Memoized per directory: a process almost always runs from one cwd, so this is the same
+// compute-once it replaces — but the JS API can resolve a different project per call, and
+// recomputing the ancestor list on every esbuild invocation would be pure waste.
+const nodePathsCache = new Map<string, string[]>();
+function nodePathsFrom(cwd: string): string[] {
+  const cached = nodePathsCache.get(cwd);
+  if (cached) return cached;
+  const paths = ancestorNodeModules(cwd);
+  nodePathsCache.set(cwd, paths);
+
+  return paths;
+}
 
 const RETRY_DELAY_MS = 100;
 const MAX_RETRIES = 3;
@@ -184,8 +189,9 @@ export async function buildTestBundle(config: Config): Promise<void> {
   // with no test modules. The pending-trigger mechanism will fire a correct rebuild once
   // the IN_CREATE event re-adds the file to fsTree.
   if (allTestFilePaths.length === 0) {
-    return console.log(
-      '# [buildTestBundle] fsTree is empty — skipping build (no test files found)',
+    return Reporter.warning(
+      config,
+      '[buildTestBundle] fsTree is empty — skipping build (no test files found)',
     );
   }
 
@@ -202,14 +208,14 @@ export async function buildTestBundle(config: Config): Promise<void> {
   const buildOptions: esbuild.BuildOptions = {
     stdin: {
       contents: allTestFilePaths
-        .map((filePath) => `import "${toEsbuildImportPath(filePath)}";`)
+        .map((filePath) => `import "${toEsbuildImportPath(filePath, config.cwd)}";`)
         .join(''),
-      resolveDir: process.cwd(),
+      resolveDir: config.cwd,
     },
     // Allow test files outside the project root (e.g. /tmp/my-test.ts) to import
     // packages from any node_modules on the ancestor chain of cwd — the same lookup
-    // order Node itself uses when resolving require() from process.cwd().
-    nodePaths: ANCESTOR_NODE_MODULES,
+    // order Node itself uses when resolving require() from the run's cwd.
+    nodePaths: nodePathsFrom(config.cwd),
     bundle: true,
     logLevel: 'silent',
     outfile,
@@ -221,7 +227,7 @@ export async function buildTestBundle(config: Config): Promise<void> {
     // `import { jsx } from 'react/jsx-runtime'` for .tsx/.jsx files. Per-file overrides via
     // tsconfig's `jsxImportSource` or a `@jsxImportSource <pkg>` pragma cover Vue/Preact/Solid.
     jsx: 'automatic',
-    plugins: [qunitxRuntimePlugin(), ...(config.plugins ?? [])],
+    plugins: [qunitxRuntimePlugin(config.cwd), ...(config.plugins ?? [])],
     // Required for --changed/--since dep-graph filter on subsequent runs (cache
     // populates here, reads in Config.setup). Inputs map carries the full reverse-dep
     // graph; output cost is negligible.
@@ -244,8 +250,8 @@ export async function buildTestBundle(config: Config): Promise<void> {
   try {
     const [{ js: allTestCode, metafile }] = await Promise.all([
       config.watch || config.state.daemon
-        ? buildIncrementally(buildOptions, fileKey, cacheHolder, needsDisk)
-        : buildWithOverlayfsRetry(buildOptions, needsDisk),
+        ? buildIncrementally(buildOptions, fileKey, cacheHolder, needsDisk, config)
+        : buildWithOverlayfsRetry(buildOptions, needsDisk, config),
       Promise.all(
         build.htmlPathsToRunTests.map(async (htmlPath) => {
           const targetPath = path.join(outDir, htmlPath);
@@ -260,7 +266,7 @@ export async function buildTestBundle(config: Config): Promise<void> {
     config.state.group.sourceMapDecoder = SourceMap.extractInline(allTestCode, outDir);
     // Persist metafile for the next --changed run. Best-effort; cache miss
     // on subsequent reads degrades to "run all tests."
-    if (metafile) void MetafileCache.write(projectRoot, process.cwd(), metafile);
+    if (metafile) void MetafileCache.write(projectRoot, config.cwd, metafile);
     build.lastBuildErrored = false;
   } catch (error) {
     build.lastBuildErrored = true;
@@ -369,11 +375,14 @@ export async function run(
       build.activeRebuild = null;
       if (!build.allTestCode) {
         const fallback = build.fallbackPage;
-        config.watch &&
-          fallback?.kind === 'build-error' &&
-          console.log(
-            `# esbuild Bundle Error: ${fallback.error.formatted}`.split('\n').join('\n# '),
+        if (config.watch && fallback?.kind === 'build-error') {
+          // Every line of the block gets its own `#`, so a multi-line esbuild message stays
+          // inside the TAP document rather than breaking out of it.
+          Reporter.error(
+            config,
+            `esbuild Bundle Error: ${fallback.error.formatted}`.split('\n').join('\n# '),
           );
+        }
         return connections;
       }
     }
@@ -382,17 +391,15 @@ export async function run(
 
     // In group mode the parent orchestrator handles the final summary, after hook, and exit.
     if (!config.state.group.groupMode) {
-      if (
-        config.state.results.counter.testCount === 0 &&
-        build.fallbackPage?.kind !== 'build-error'
-      ) {
+      if (config.state.results.counter.total === 0 && build.fallbackPage?.kind !== 'build-error') {
         const displayFiles = allTestFilePaths.map((f) =>
           f.startsWith(`${projectRoot}/`) ? f.slice(projectRoot.length + 1) : f,
         );
         build.fallbackPage = { kind: 'no-tests', files: displayFiles };
         const fileWord = allTestFilePaths.length === 1 ? 'file' : 'files';
-        console.log(
-          `# Warning: 0 tests registered — no QUnit test cases found in ${allTestFilePaths.length} ${fileWord}`,
+        Reporter.warning(
+          config,
+          `Warning: 0 tests registered — no QUnit test cases found in ${allTestFilePaths.length} ${fileWord}`,
         );
         Task(
           fs.writeFile(path.join(outDir, 'index.html'), WebServer.buildNoTestsHTML(displayFiles)),
@@ -413,35 +420,17 @@ export async function run(
       if (config.coverage) await Coverage.Report.write(config, allTestFilePaths);
 
       if (config.after) {
-        await runUserModule(
-          `${process.cwd()}/${config.after}`,
-          config.state.results.counter,
-          'after',
-        );
+        await runUserModule(`${config.cwd}/${config.after}`, config.state.results.counter, 'after');
       }
 
-      if (!config.watch) {
-        await flushConsoleHandlers(config.state.group.pendingConsoleHandlers, connections.page);
-        // Daemon mode: the daemon owns the browser and server lifetimes, so we
-        // must not close them here. Throw instead so the daemon's run handler
-        // captures the exit code and keeps the process alive for the next run.
-        if (config.state.daemon) {
-          throw new DaemonRunError(config.state.results.counter.failCount > 0 ? 1 : 0);
-        }
-        await closeWithGrace([
-          connections.server?.close(),
-          connections.browser?.close(),
-          shutdownPrelaunch(),
-        ]);
-        return process.exit(config.state.results.counter.failCount > 0 ? 1 : 0);
-      }
+      // There is no non-watch branch here. Every non-watch run reaches this function through
+      // `runConcurrentMode`, which sets `groupMode` on all of its group configs — so this whole
+      // block only ever executes in watch mode, and reporting, cleanup and the exit code belong
+      // to the orchestrator either way. The unreachable branch that used to close this block
+      // held the last `process.exit` on the run path.
     }
   } catch (error) {
-    // DaemonRunError signals normal completion in daemon mode (replaces process.exit);
-    // pass it through unchanged so the daemon's run handler can capture the exit code.
-    if (error instanceof DaemonRunError) throw error;
     build.activeRebuild = null;
-    config.state.group.lastFailedFiles = config.state.group.lastRanFiles;
     const exception = new BundleError(error);
 
     // buildTestBundle's own catch sets the build-error fallback for full-bundle failures before rethrowing.
@@ -461,7 +450,7 @@ export async function run(
     }
 
     if (config.watch) {
-      console.log(`# ${exception}`);
+      Reporter.error(config, String(exception));
     } else {
       throw exception;
     }
@@ -529,7 +518,7 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
     groupConfig.state.group.build.fallbackPage = null;
   });
 
-  const { projectRoot, browser } = groupConfigs[0];
+  const { projectRoot, browser, cwd } = groupConfigs[0];
 
   // Build each group's descriptor in one pass, skipping empty groups (overlayfs race).
   // Their build.allTestCode stays null so run's early-return handles them.
@@ -554,8 +543,9 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
   );
 
   if (activeGroups.length === 0)
-    return console.log(
-      '# [buildAllGroupBundles] all groups empty — skipping build (no test files found)',
+    return Reporter.warning(
+      groupConfigs[0],
+      '[buildAllGroupBundles] all groups empty — skipping build (no test files found)',
     );
 
   await Promise.all(
@@ -579,9 +569,9 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
         const slotIndex = parseInt(args.path.replace('group-entry-', ''));
         return {
           contents: activeGroups[slotIndex].files
-            .map((filePath) => `import "${toEsbuildImportPath(filePath)}";`)
+            .map((filePath) => `import "${toEsbuildImportPath(filePath, cwd)}";`)
             .join(''),
-          resolveDir: process.cwd(),
+          resolveDir: cwd,
         };
       });
     },
@@ -598,8 +588,8 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
     // groupEntryPlugin must run first — it owns the virtual entry-point modules every other
     // plugin sees. User plugins follow and apply to the resolved test files just like in
     // single-group mode (`buildTestBundle`).
-    plugins: [groupEntryPlugin, qunitxRuntimePlugin(), ...(groupConfigs[0].plugins ?? [])],
-    nodePaths: ANCESTOR_NODE_MODULES,
+    plugins: [groupEntryPlugin, qunitxRuntimePlugin(cwd), ...(groupConfigs[0].plugins ?? [])],
+    nodePaths: nodePathsFrom(cwd),
     bundle: true,
     logLevel: 'silent',
     // outdir only labels the paths in outputFiles[].path — nothing is written to disk
@@ -662,7 +652,7 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
     );
     // Persist metafile for the next --changed run (same cache as single-group path).
     if (result.metafile) {
-      void MetafileCache.write(projectRoot, process.cwd(), result.metafile as AffectedMetafile);
+      void MetafileCache.write(projectRoot, cwd, result.metafile as AffectedMetafile);
     }
   } catch (error) {
     const buildError = { type: deriveBuildErrorType(error), formatted: formatBuildErrors(error) };
@@ -682,28 +672,6 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
   }
 }
 
-/**
- * Thrown in daemon mode in place of `process.exit(code)` so the caller (the daemon
- * server's run handler) can capture the exit code, restore stdout interception, and
- * keep the daemon process alive for the next run.
- *
- * ```ts
- * const error = new DaemonRunError(1);
- * error.exitCode; // 1
- * error instanceof Error; // true — passes through catch blocks unchanged
- * ```
- */
-export class DaemonRunError extends Error {
-  /** The exit code that the run would have passed to `process.exit()` outside of daemon mode. */
-  exitCode: number;
-  /** Constructs a DaemonRunError carrying the run's exit code. */
-  constructor(exitCode: number) {
-    super(`daemon run finished with exit code ${exitCode}`);
-    this.name = 'DaemonRunError';
-    this.exitCode = exitCode;
-  }
-}
-
 function buildFilteredTests(
   filteredTests: string[],
   outputPath: string,
@@ -719,9 +687,9 @@ function buildFilteredTests(
         contents: filteredTests
           .map((filePath) => `import "${filePath.replace(/\\/g, '/')}";`)
           .join(''),
-        resolveDir: process.cwd(),
+        resolveDir: config.cwd,
       },
-      nodePaths: ANCESTOR_NODE_MODULES,
+      nodePaths: nodePathsFrom(config.cwd),
       bundle: true,
       logLevel: 'silent',
       outfile: outputPath,
@@ -729,10 +697,11 @@ function buildFilteredTests(
       target: esbuildTarget(config.browser),
       sourcemap,
       jsx: 'automatic',
-      plugins: [qunitxRuntimePlugin(), ...(config.plugins ?? [])],
+      plugins: [qunitxRuntimePlugin(config.cwd), ...(config.plugins ?? [])],
       footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
     },
     needsDisk,
+    config,
   ).then((r) => r.js);
 }
 
@@ -748,6 +717,7 @@ function buildFilteredTests(
 async function runWithOverlayfsRetry(
   getContents: () => Promise<{ result: esbuild.BuildResult; js: Buffer }>,
   needsDisk: boolean,
+  config: Config,
 ): Promise<{ js: Buffer; metafile?: AffectedMetafile }> {
   let { result, js } = await getContents();
   const initialSize = js.length;
@@ -763,8 +733,9 @@ async function runWithOverlayfsRetry(
   // If the size never moved from the initial value, the file is just legitimately small
   // (no QUnit imports, tree-shaken to the footer only) and no warning is needed.
   if (js.length < EMPTY_BUNDLE_THRESHOLD && js.length !== initialSize) {
-    console.log(
-      `# [buildWithOverlayfsRetry] bundle is ${js.length} bytes after ${MAX_RETRIES} retries — proceeding`,
+    Reporter.warning(
+      config,
+      `[buildWithOverlayfsRetry] bundle is ${js.length} bytes after ${MAX_RETRIES} retries — proceeding`,
     );
   }
 
@@ -780,13 +751,18 @@ async function runWithOverlayfsRetry(
 function buildWithOverlayfsRetry(
   options: esbuild.BuildOptions,
   needsDisk: boolean,
+  config: Config,
 ): Promise<{ js: Buffer; metafile?: AffectedMetafile }> {
   const buildOpts: esbuild.BuildOptions = { ...options, write: false };
-  return runWithOverlayfsRetry(async () => {
-    const result = await esbuild.build(buildOpts);
-    const jsFile = result.outputFiles!.find((f) => !f.path.endsWith('.map'))!;
-    return { result, js: Buffer.from(jsFile.contents) };
-  }, needsDisk);
+  return runWithOverlayfsRetry(
+    async () => {
+      const result = await esbuild.build(buildOpts);
+      const jsFile = result.outputFiles!.find((f) => !f.path.endsWith('.map'))!;
+      return { result, js: Buffer.from(jsFile.contents) };
+    },
+    needsDisk,
+    config,
+  );
 }
 
 // Uses an esbuild incremental context so the module graph stays warm between rebuilds.
@@ -801,6 +777,7 @@ async function buildIncrementally(
   fileKey: string,
   cache: EsbuildCache,
   needsDisk: boolean,
+  config: Config,
 ): Promise<{ js: Buffer; metafile?: AffectedMetafile }> {
   const buildOpts: esbuild.BuildOptions = { ...options, write: false };
 
@@ -811,11 +788,15 @@ async function buildIncrementally(
   }
 
   const ctx = cache.context!;
-  return runWithOverlayfsRetry(async () => {
-    const result = await ctx.rebuild();
-    const jsFile = result.outputFiles!.find((f) => !f.path.endsWith('.map'))!;
-    return { result, js: Buffer.from(jsFile.contents) };
-  }, needsDisk);
+  return runWithOverlayfsRetry(
+    async () => {
+      const result = await ctx.rebuild();
+      const jsFile = result.outputFiles!.find((f) => !f.path.endsWith('.map'))!;
+      return { result, js: Buffer.from(jsFile.contents) };
+    },
+    needsDisk,
+    config,
+  );
 }
 
 /**
@@ -832,7 +813,7 @@ function esbuildTarget(browser?: string): string[] {
 
 async function runTestInsideHTMLFile(
   filePath: string,
-  { page, server, browser }: Connections,
+  { page }: Connections,
   config: Config,
 ): Promise<void> {
   let QUNIT_RESULT: QUnitResult | null | undefined;
@@ -840,7 +821,6 @@ async function runTestInsideHTMLFile(
   // this is what tells a genuinely-empty run (done, 0 tests) apart from a timeout that never ran
   // tests (no done, but the runtime pre-initialised window.QUNIT_RESULT to a 0 tally).
   let doneReceived = false;
-  let targetError: unknown;
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   // wsConnected is set by config.state.group.signals.onWsOpen when Chrome's WS socket opens (< 1s after navigation,
   // before test bundle compilation finishes). Distinguishes "WS never opened" from "WS opened
@@ -874,8 +854,8 @@ async function runTestInsideHTMLFile(
   // startupMs / 80s testsJsMs / 25s per-test timer — a 60s hang is the exact window where
   // the test runner's 60s SIGTERM beats the daemon's 'done' message, leaving the client
   // with code=null instead of an exit code. Catch-block diagnostics then fire as for any
-  // other timeout, and (in daemon mode) failOnNonWatchMode throws DaemonRunError so the
-  // daemon writes 'done' to its socket fast.
+  // other timeout, and the non-watch throw below rejects the group so the orchestrator finishes
+  // run promptly — which is what lets the daemon write 'done' to its socket fast.
   page.on('close', resolveTestRace);
 
   try {
@@ -883,7 +863,7 @@ async function runTestInsideHTMLFile(
     // spec/dot/github run. --debug forces it on regardless: the URL is the whole point of
     // debug mode (open it in a real browser), whatever the reporter.
     if (config.reporter === 'tap' || config.debug) {
-      console.log('#', blue(`QUnitX running: http://localhost:${config.port}${filePath}`));
+      Reporter.info(config, blue(`QUnitX running: http://localhost:${config.port}${filePath}`));
     }
 
     // navMs is the budget Playwright gets to commit the navigation. Startup race timers must
@@ -978,9 +958,12 @@ async function runTestInsideHTMLFile(
       config.state.group.lastQUnitResult ??
       (await page.evaluate(() => (globalThis as { QUNIT_RESULT?: QUnitResult }).QUNIT_RESULT));
   } catch (error) {
-    targetError = error;
-    console.log(error);
-    console.error(error);
+    // Dumped once, here. The outcome branches below used to re-log the same error before their
+    // own `# TIMEOUT:` line, printing every navigation failure twice.
+    Reporter.error(config, `${(error as Error)?.stack ?? String(error)}\n`, {
+      raw: true,
+      stream: 'both',
+    });
   } finally {
     clearTimeout(timeoutHandle);
     page.off('close', resolveTestRace);
@@ -999,40 +982,41 @@ async function runTestInsideHTMLFile(
   }
 
   const outcome = classifyRunOutcome(QUNIT_RESULT, doneReceived);
-  const failRun = () =>
-    failOnNonWatchMode(
-      config.watch,
-      { server, browser, page },
-      config.state.group.groupMode,
-      config.state.group.pendingConsoleHandlers,
-      !!config.state.daemon,
-    );
+  // Watch mode keeps going — the next save is the retry. Anything else throws, and
+  // `runConcurrentMode` turns the rejected group into an exit code; it owns the browser, the
+  // server and the process's fate, so nothing here cleans up or exits.
+  const failRun = () => {
+    if (!config.watch) throw new Error('Browser test run failed');
+  };
 
   if (outcome.kind === 'no-tests-ran') {
     // No 'done' arrived: either no QUnit tally at all, or a zero tally the runtime pre-initialised
     // before tests.js ran (a CPU-starved page load whose race timer fired first). Both mean the
     // tests never executed — a timeout, not a green run. This used to slip through as a silent
     // exit-0 when the pre-initialised {totalTests:0} looked like a genuinely empty file.
-    if (targetError) console.log(targetError);
     const wsReason = !wsConnected
       ? 'WebSocket connection never received — Chrome may be CPU-starved or the page failed to load'
       : 'WebSocket connected but no tests ran — QUnit may have failed to start';
-    console.log(`# TIMEOUT: ${wsReason}`);
-    console.log('BROWSER: runtime error thrown during executing tests');
-    console.error('BROWSER: runtime error thrown during executing tests');
-    await failRun();
+    Reporter.error(config, `TIMEOUT: ${wsReason}`);
+    Reporter.error(config, 'BROWSER: runtime error thrown during executing tests\n', {
+      raw: true,
+      stream: 'both',
+    });
+    failRun();
   } else if (outcome.kind === 'empty') {
     // QUnit fired 'done' with zero registered tests — a genuinely empty file (e.g. a helper).
     // Not a failure — handled at the run level as a warning.
     return;
   } else if (outcome.kind === 'stalled') {
-    if (targetError) console.log(targetError);
-    console.log(
-      `# TIMEOUT: test stalled after ${QUNIT_RESULT!.finishedTests}/${QUNIT_RESULT!.totalTests} finished — last active: ${QUNIT_RESULT!.currentTest}`,
+    Reporter.error(
+      config,
+      `TIMEOUT: test stalled after ${QUNIT_RESULT!.finishedTests}/${QUNIT_RESULT!.totalTests} finished — last active: ${QUNIT_RESULT!.currentTest}`,
     );
-    console.log(`BROWSER: TEST TIMED OUT: ${QUNIT_RESULT!.currentTest}`);
-    console.error(`BROWSER: TEST TIMED OUT: ${QUNIT_RESULT!.currentTest}`);
-    await failRun();
+    Reporter.error(config, `BROWSER: TEST TIMED OUT: ${QUNIT_RESULT!.currentTest}\n`, {
+      raw: true,
+      stream: 'both',
+    });
+    failRun();
   } else if (config.state.groupCount === 1) {
     // Every registered test finished. The WebSocket testEnd stream is the only channel that
     // feeds the counter, and under load (a CPU-starved CI runner, a dropped or duplicated
@@ -1044,19 +1028,20 @@ async function runTestInsideHTMLFile(
     // tally cannot safely rewrite it (the multi-group failure safety net below still applies).
     const undelivered = reconcileUndeliveredResults(config.state.results.counter, QUNIT_RESULT!);
     if (undelivered > 0) {
-      const warning =
-        `# [qunitx] WARNING: ${undelivered} test result(s) finished in the browser but never ` +
-        `reached the runner — the WebSocket stream under-delivered (CPU-starved runner or a ` +
-        `dropped connection). Reconciled from QUnit's own tally so the summary and exit code ` +
-        `are correct; re-run to get the per-test lines back.\n`;
-      process.stdout.write(warning);
-      process.stderr.write(warning);
+      Reporter.warning(
+        config,
+        `[qunitx] WARNING: ${undelivered} test result(s) finished in the browser but never ` +
+          `reached the runner — the WebSocket stream under-delivered (CPU-starved runner or a ` +
+          `dropped connection). Reconciled from QUnit's own tally so the summary and exit code ` +
+          `are correct; re-run to get the per-test lines back.`,
+        { stream: 'both' },
+      );
     }
-  } else if (QUNIT_RESULT!.failedTests > config.state.results.counter.failCount) {
+  } else if (QUNIT_RESULT!.failedTests > config.state.results.counter.failed) {
     // Multi-group safety net: the shared counter aggregates every group, so we cannot rewrite
     // its total from one group's tally — but a failure the WS stream dropped must still count,
-    // and only bumping failCount up is always safe. Keeps the exit code correct.
-    config.state.results.counter.failCount = QUNIT_RESULT!.failedTests;
+    // and only bumping `failed` up is always safe. Keeps the exit code correct.
+    config.state.results.counter.failed = QUNIT_RESULT!.failedTests;
   }
 }
 
@@ -1064,11 +1049,11 @@ async function runTestInsideHTMLFile(
  * How a browser run ended, decided from QUnit's tally plus whether a WS `done` arrived.
  *
  * ```ts
- * const outcome: RunOutcome = classifyRunOutcome(null, false);
+ * const outcome: BrowserRunOutcome = classifyRunOutcome(null, false);
  * outcome.kind; // 'no-tests-ran'
  * ```
  */
-export type RunOutcome =
+export type BrowserRunOutcome =
   | { kind: 'completed' } // every registered test finished; the caller reconciles the counter
   | { kind: 'empty' } // QUnit fired `done` with zero registered tests — a genuinely empty file
   | { kind: 'no-tests-ran' } // no `done`: a timeout that never executed tests (fail, not green)
@@ -1095,7 +1080,7 @@ export type RunOutcome =
 export function classifyRunOutcome(
   result: QUnitResult | null | undefined,
   doneReceived: boolean,
-): RunOutcome {
+): BrowserRunOutcome {
   if (!result) return { kind: 'no-tests-ran' };
   if (result.totalTests === 0) return doneReceived ? { kind: 'empty' } : { kind: 'no-tests-ran' };
   if (result.totalTests > result.finishedTests) return { kind: 'stalled' };
@@ -1114,55 +1099,27 @@ export function classifyRunOutcome(
  * which is exact for the common all-passing loss and best-effort if a skip/todo was also dropped.
  *
  * ```ts
- * const counter = { testCount: 2, failCount: 0, skipCount: 0, todoCount: 0, passCount: 2, errorCount: 0 };
+ * const counter = { total: 2, failed: 0, skipped: 0, todo: 0, passed: 2, assertionsFailed: 0 };
  * const tally = { totalTests: 3, finishedTests: 3, failedTests: 1, currentTest: null };
  * reconcileUndeliveredResults(counter, tally); // 1 — one result never reached the runner
- * counter; // { testCount: 3, failCount: 1, passCount: 2, … } — QUnit's tally wins
+ * counter; // { total: 3, failed: 1, passed: 2, … } — QUnit's tally wins
  * ```
  */
 export function reconcileUndeliveredResults(counter: Counter, result: QUnitResult): number {
-  if (result.failedTests > counter.failCount) counter.failCount = result.failedTests;
-  const undelivered = Math.max(0, result.finishedTests - counter.testCount);
-  if (undelivered > 0) counter.testCount = result.finishedTests;
+  if (result.failedTests > counter.failed) counter.failed = result.failedTests;
+  const undelivered = Math.max(0, result.finishedTests - counter.total);
+  if (undelivered > 0) counter.total = result.finishedTests;
   // pass = total − fail − skip − todo holds by construction after updateCounter, so recomputing
   // is a no-op on a clean run and keeps the three consistent after either correction above.
-  counter.passCount = Math.max(
-    0,
-    counter.testCount - counter.failCount - counter.skipCount - counter.todoCount,
-  );
+  counter.passed = Math.max(0, counter.total - counter.failed - counter.skipped - counter.todo);
   return undelivered;
 }
 
-async function failOnNonWatchMode(
-  watchMode: boolean = false,
-  connections: { server?: HTTPServer; browser?: { close(): Promise<void> }; page?: Page } = {},
-  groupMode: boolean = false,
-  pendingHandlers?: Set<Promise<void>> | null,
-  daemonMode: boolean = false,
-): Promise<void> {
-  if (watchMode) return;
-  if (groupMode) {
-    // Parent orchestrator handles cleanup and exit; signal failure via throw.
-    throw new Error('Browser test run failed');
-  }
-  await flushConsoleHandlers(pendingHandlers, connections.page);
-  if (daemonMode) {
-    // Daemon owns browser/server lifetimes — throw so its run handler captures the code.
-    throw new DaemonRunError(1);
-  }
-  await closeWithGrace([
-    connections.server?.close(),
-    connections.browser?.close(),
-    shutdownPrelaunch(),
-  ]);
-  process.exit(1);
-}
-
-// Converts an absolute file path to a relative import path esbuild can resolve from
-// process.cwd(). On Windows, absolute paths like "D:/..." are treated as bare module
-// specifiers in stdin content, so we must use relative paths instead.
-function toEsbuildImportPath(filePath: string): string {
-  const rel = path.relative(process.cwd(), filePath);
+// Converts an absolute file path to a relative import path esbuild can resolve from the run's
+// cwd. On Windows, absolute paths like "D:/..." are treated as bare module specifiers in stdin
+// content, so we must use relative paths instead.
+function toEsbuildImportPath(filePath: string, cwd: string): string {
+  const rel = path.relative(cwd, filePath);
   const normalized = rel.replace(/\\/g, '/');
   if (path.isAbsolute(rel)) return filePath.replace(/\\/g, '/');
   return normalized.startsWith('.') ? normalized : './' + normalized;

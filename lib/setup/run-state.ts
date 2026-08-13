@@ -1,6 +1,7 @@
 import type { BuildState, Counter, GroupState, RunResults, RunState } from '../types.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
 import type { Page } from 'playwright-core';
+import { processConsole } from '../console.ts';
 
 /**
  * The daemon's reusable Page slot, or `null` when reuse does not apply.
@@ -28,12 +29,12 @@ export function reusablePageSlot(state: RunState): { page: Page | null } | null 
 /** A zeroed outcome counter. */
 function newCounter(): Counter {
   return {
-    testCount: 0,
-    failCount: 0,
-    skipCount: 0,
-    todoCount: 0,
-    passCount: 0,
-    errorCount: 0,
+    total: 0,
+    failed: 0,
+    skipped: 0,
+    todo: 0,
+    passed: 0,
+    assertionsFailed: 0,
   };
 }
 
@@ -62,7 +63,6 @@ export function newGroup(index = 0, selectors?: QUnitSelector[]): GroupState {
     phase: 'bundling',
     selectors,
     lastRanFiles: null,
-    lastFailedFiles: null,
     testEndCounts: new Map(),
     wsConnectionCount: 0,
     lastQUnitResult: null,
@@ -84,7 +84,7 @@ export function newGroup(index = 0, selectors?: QUnitSelector[]): GroupState {
  *
  * const state = RunState.create();
  * state.groupCount; // 1
- * state.results.counter.testCount; // 0
+ * state.results.counter.total; // 0
  * ```
  */
 export function create(): RunState {
@@ -92,7 +92,10 @@ export function create(): RunState {
     daemon: null,
     group: newGroup(),
     groupCount: 1,
+    groups: [],
+    aborters: new Set(),
     reporters: [],
+    console: processConsole,
     htmlAssets: {
       assets: new Set(),
       mainHTML: { filePath: null, html: null },
@@ -112,6 +115,7 @@ export function create(): RunState {
       failedFiles: new Set(),
       failedTests: [],
       coverage: null,
+      aborted: false,
     },
   };
 }
@@ -128,10 +132,10 @@ export function create(): RunState {
  * import * as RunState from './run-state.ts';
  *
  * const { results } = RunState.create();
- * results.counter.failCount = 3;
+ * results.counter.failed = 3;
  * results.failedFiles.add('/proj/test/cart-test.ts');
  * RunState.reset(results, false);
- * [results.counter.failCount, results.failedFiles.size]; // [0, 0] — same objects, cleared in place
+ * [results.counter.failed, results.failedFiles.size]; // [0, 0] — same objects, cleared in place
  * ```
  */
 export function reset(results: RunResults, coverageEnabled: boolean): void {
@@ -139,6 +143,32 @@ export function reset(results: RunResults, coverageEnabled: boolean): void {
   results.failedFiles.clear();
   results.failedTests.length = 0;
   results.coverage = coverageEnabled ? new Map() : null;
+  results.aborted = false;
+}
+
+/**
+ * Asks every live server to tell its pages to drop the rest of the QUnit queue, and records that
+ * this run was cut short.
+ *
+ * The flag is set on intent, not on the browser's acknowledgement, and that is deliberate: an
+ * abort that arrives before any page has connected — a `signal` already aborted, a `qq` during
+ * start-up — would otherwise reach nobody and go unrecorded. `WebServer.setup` re-sends it to
+ * pages that connect afterwards, so the request survives the gap either way.
+ *
+ * Cleared by {@link reset} at the start of every run, so an abort while idle does not follow the
+ * session into its next run.
+ *
+ * ```ts
+ * import * as RunState from './run-state.ts';
+ *
+ * const state = RunState.create();
+ * RunState.requestAbort(state);
+ * state.results.aborted; // true — even with no server listening yet
+ * ```
+ */
+export function requestAbort(state: RunState): void {
+  state.results.aborted = true;
+  state.aborters.forEach((stop) => stop());
 }
 
 /**

@@ -3,9 +3,9 @@
  * With large test suites these functions are called thousands of times, so
  * per-call cost compounds directly into total wall-clock output time.
  */
-import * as TAP from "../lib/tap/index.ts";
-import { updateCounter } from "../lib/reporters/types.ts";
-import { failedAssertions } from "../lib/reporters/failure.ts";
+import * as TAP from '../lib/tap/index.ts';
+import { updateCounter } from '../lib/reporters/types.ts';
+import { failedAssertions } from '../lib/reporters/failure.ts';
 
 // Mirrors what a real run does per test (reportTestEnd -> TAPReporter.onTestEnd): count it,
 // resolve any failures, then render. TAP.displayTestResult is a pure formatter now, so calling
@@ -15,7 +15,7 @@ const displayTestResult = (
   details: Parameters<typeof failedAssertions>[0],
 ) => {
   updateCounter(counter, details);
-  TAP.displayTestResult(counter.testCount, details, failedAssertions(details));
+  TAP.displayTestResult(counter.total, details, failedAssertions(details));
 };
 
 // Suppress all output once at module level — patching inside each
@@ -27,64 +27,101 @@ console.log = () => {};
 process.stdout.write = () => true;
 
 const PASSING_DETAILS = {
-  status: "passed",
-  fullName: ["My Module", "does the thing correctly"],
+  status: 'passed',
+  fullName: ['My Module', 'does the thing correctly'],
   runtime: 42,
   assertions: [],
 };
 
 const FAILING_DETAILS = {
-  status: "failed",
-  fullName: ["My Module", "fails as expected"],
+  status: 'failed',
+  fullName: ['My Module', 'fails as expected'],
   runtime: 17,
   assertions: [
     {
       passed: false,
       todo: false,
-      actual: "foo",
-      expected: "bar",
-      message: "expected values to be equal",
-      stack: "Error\n    at (file:///src/my-test.js:10:5)",
+      actual: 'foo',
+      expected: 'bar',
+      message: 'expected values to be equal',
+      stack: 'Error\n    at (file:///src/my-test.js:10:5)',
     },
   ],
 };
 
 const SKIPPED_DETAILS = {
-  status: "skipped",
-  fullName: ["My Module", "skipped test"],
+  status: 'skipped',
+  fullName: ['My Module', 'skipped test'],
   runtime: 0,
   assertions: [],
 };
 
-Deno.bench("tap: display single passing result", {
-  group: "tap",
-  baseline: true,
-}, () => {
-  const counter = { testCount: 0, passCount: 0, skipCount: 0, todoCount: 0, failCount: 0, errorCount: 0 };
-  displayTestResult(counter, PASSING_DETAILS);
-});
+Deno.bench(
+  'tap: display single passing result',
+  {
+    group: 'tap',
+    baseline: true,
+  },
+  () => {
+    const counter = {
+      total: 0,
+      passed: 0,
+      skipped: 0,
+      todo: 0,
+      failed: 0,
+      assertionsFailed: 0,
+    };
+    displayTestResult(counter, PASSING_DETAILS);
+  },
+);
 
-Deno.bench("tap: display single failing result", {
-  group: "tap",
-}, () => {
-  const counter = { testCount: 0, passCount: 0, skipCount: 0, todoCount: 0, failCount: 0, errorCount: 0 };
-  displayTestResult(counter, FAILING_DETAILS);
-});
+Deno.bench(
+  'tap: display single failing result',
+  {
+    group: 'tap',
+  },
+  () => {
+    const counter = {
+      total: 0,
+      passed: 0,
+      skipped: 0,
+      todo: 0,
+      failed: 0,
+      assertionsFailed: 0,
+    };
+    displayTestResult(counter, FAILING_DETAILS);
+  },
+);
 
-Deno.bench("tap: display 100 mixed results", {
-  group: "tap",
-}, () => {
-  const counter = { testCount: 0, passCount: 0, skipCount: 0, todoCount: 0, failCount: 0, errorCount: 0 };
-  for (let i = 0; i < 80; i++) displayTestResult(counter, PASSING_DETAILS);
-  for (let i = 0; i < 10; i++) displayTestResult(counter, FAILING_DETAILS);
-  for (let i = 0; i < 10; i++) displayTestResult(counter, SKIPPED_DETAILS);
-});
+Deno.bench(
+  'tap: display 100 mixed results',
+  {
+    group: 'tap',
+  },
+  () => {
+    const counter = {
+      total: 0,
+      passed: 0,
+      skipped: 0,
+      todo: 0,
+      failed: 0,
+      assertionsFailed: 0,
+    };
+    for (let i = 0; i < 80; i++) displayTestResult(counter, PASSING_DETAILS);
+    for (let i = 0; i < 10; i++) displayTestResult(counter, FAILING_DETAILS);
+    for (let i = 0; i < 10; i++) displayTestResult(counter, SKIPPED_DETAILS);
+  },
+);
 
-Deno.bench("tap: display final result summary", {
-  group: "tap",
-}, () => {
-  TAP.displayFinalResult(
-    { testCount: 100, passCount: 80, skipCount: 5, todoCount: 5, failCount: 10, errorCount: 10 },
-    1234,
-  );
-});
+Deno.bench(
+  'tap: display final result summary',
+  {
+    group: 'tap',
+  },
+  () => {
+    TAP.displayFinalResult(
+      { total: 100, passed: 80, skipped: 5, todo: 5, failed: 10, assertionsFailed: 10 },
+      1234,
+    );
+  },
+);

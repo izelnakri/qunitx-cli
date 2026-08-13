@@ -13,7 +13,8 @@ import {
 } from '../../lib/utils/get-changed-file-paths-in-git-since.ts';
 import { Task } from '../../lib/task/index.ts';
 import type { AffectedMetafile } from '../../lib/utils/get-changed-files.ts';
-import type { FSTree } from '../../lib/types.ts';
+import * as RunState from '../../lib/setup/run-state.ts';
+import type { Config, FSTree } from '../../lib/types.ts';
 
 // getChangedFsTree's job is metafile-based FILTERING; git change-detection is an
 // injectable dependency. These tests drive the four outcome branches
@@ -23,6 +24,12 @@ import type { FSTree } from '../../lib/types.ts';
 // the full 300s per-test budget when a git child's exit event never arrived. The live
 // git integration is covered end-to-end against a real subprocess in
 // test/flags/changed-test.ts, so nothing is lost here.
+
+// getChangedFsTree announces how it resolved through `Reporter.notice`, which reads
+// `config.state`. A bare RunState is all it needs — nothing here asserts on the notices.
+function configFor(projectRoot: string): Config {
+  return { projectRoot, state: RunState.create() } as Config;
+}
 
 async function makeProject(): Promise<string> {
   const root = path.join(os.tmpdir(), `qunitx-get-changed-fs-tree-${crypto.randomUUID()}`);
@@ -65,7 +72,12 @@ module('Setup | getChangedFsTree | fallback paths', { concurrency: true }, () =>
   test('no metafile cache → returns input fsTree unchanged (git never consulted)', async (assert) => {
     const root = await makeProject();
     const tree = fsTreeFromAbs(root, ['test/a-test.ts']);
-    const result = await getChangedFsTree(tree, root, 'HEAD', gitChanged(root, ['src/a.ts']));
+    const result = await getChangedFsTree(
+      tree,
+      configFor(root),
+      'HEAD',
+      gitChanged(root, ['src/a.ts']),
+    );
     assert.strictEqual(result, tree);
   });
 
@@ -73,7 +85,7 @@ module('Setup | getChangedFsTree | fallback paths', { concurrency: true }, () =>
     const root = await makeProject();
     await MetafileCache.write(root, root, metafileFor({}));
     const tree = fsTreeFromAbs(root, ['test/a-test.ts']);
-    const result = await getChangedFsTree(tree, root, 'HEAD', gitFailed);
+    const result = await getChangedFsTree(tree, configFor(root), 'HEAD', gitFailed);
     assert.strictEqual(result, tree);
   });
 
@@ -81,7 +93,7 @@ module('Setup | getChangedFsTree | fallback paths', { concurrency: true }, () =>
     const root = await makeProject();
     await MetafileCache.write(root, root, metafileFor({ 'test/a-test.ts': [] }));
     const tree = fsTreeFromAbs(root, ['test/a-test.ts']);
-    const result = await getChangedFsTree(tree, root, 'HEAD', gitBlastRadius);
+    const result = await getChangedFsTree(tree, configFor(root), 'HEAD', gitBlastRadius);
     assert.strictEqual(result, tree);
   });
 });
@@ -100,7 +112,12 @@ module('Setup | getChangedFsTree | filtered runs', { concurrency: true }, () => 
       }),
     );
     const tree = fsTreeFromAbs(root, ['test/a-test.ts', 'test/b-test.ts']);
-    const result = await getChangedFsTree(tree, root, 'HEAD', gitChanged(root, ['src/a.ts']));
+    const result = await getChangedFsTree(
+      tree,
+      configFor(root),
+      'HEAD',
+      gitChanged(root, ['src/a.ts']),
+    );
     assert.deepEqual(
       Object.keys(result).sort(),
       [path.join(root, 'test/a-test.ts')],
@@ -112,14 +129,14 @@ module('Setup | getChangedFsTree | filtered runs', { concurrency: true }, () => 
     const root = await makeProject();
     await MetafileCache.write(root, root, metafileFor({ 'test/a-test.ts': [] }));
     const tree = fsTreeFromAbs(root, ['test/a-test.ts']);
-    const result = await getChangedFsTree(tree, root, 'HEAD', gitChanged(root, []));
+    const result = await getChangedFsTree(tree, configFor(root), 'HEAD', gitChanged(root, []));
     assert.equal(Object.keys(result).length, 0);
   });
 
   test('empty input fsTree short-circuits before any git or cache read', async (assert) => {
     const root = await makeProject();
     // Inject a detector that throws if called — proves the empty-tree guard returns first.
-    const result = await getChangedFsTree({}, root, 'HEAD', gitFailed);
+    const result = await getChangedFsTree({}, configFor(root), 'HEAD', gitFailed);
     assert.equal(Object.keys(result).length, 0);
   });
 });

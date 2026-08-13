@@ -5,7 +5,15 @@
 // One system, three shapes, one failure vocabulary: `Result` is a settled outcome, `Task` a
 // future outcome, `Stream` many outcomes over time — elements are the bare `T | E` union,
 // terminal consumers return Tasks, and `Failure` is the single error currency throughout.
-export { Stream, type Source } from './stream.ts';
+export {
+  Stream,
+  ChannelOverflow,
+  type Channel,
+  type ChannelOptions,
+  type ChannelOverflowFailure,
+  type Overflow,
+  type Source,
+} from './stream.ts';
 
 export { Task } from '../task/task.ts';
 

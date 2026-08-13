@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import { access, constants, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { canUseSea } from './sea-support.js';
 
 // Turn on V8's on-disk compile cache before importing dist/cli.js — caches
 // the bundle + its external deps (esbuild, playwright-core, ws) across cold
@@ -53,7 +54,7 @@ const platformMap = {
 const target = platformMap[`${process.platform}-${process.arch}`];
 
 async function trySeaBinary() {
-  if (!target) return false;
+  if (!target || !canUseSea(process.cwd())) return false;
   try {
     const pkgJsonPath = require.resolve(`${target.seaPkg}/package.json`);
     const seaVersion = JSON.parse(await readFile(pkgJsonPath, 'utf8')).version;

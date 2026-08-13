@@ -49,7 +49,22 @@
  *     --files benches/esbuild.bench.ts ...
  */
 
-import { bold, red, green, yellow, dim, gray } from "@std/fmt/colors";
+// ANSI helpers, inline rather than from `@std/fmt/colors`. That import was this repo's ONLY
+// registry dependency for Deno — `esbuild` and `ws` are bare `npm:` specifiers resolved out of
+// the `node_modules` npm already populated, so dropping it leaves Deno fetching nothing at all
+// and `deno.json`'s import map holding nothing to keep in step with `package.json`.
+//
+// Keyed on `Deno.noColor`, which is what `@std/fmt/colors` reads internally, so CI output is
+// unchanged: colour unless NO_COLOR is set.
+const paint = (open: number, close: number) => (text: string): string =>
+  Deno.noColor ? text : `\x1b[${open}m${text}\x1b[${close}m`;
+
+const bold = paint(1, 22);
+const dim = paint(2, 22);
+const red = paint(31, 39);
+const green = paint(32, 39);
+const yellow = paint(33, 39);
+const gray = paint(90, 39);
 
 const BASELINE_FILE = new URL("../benches/results.json", import.meta.url).pathname;
 
