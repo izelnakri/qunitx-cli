@@ -119,6 +119,20 @@ with APIs aligned to Elixir/Horde where they touch the developer surface:
 | load throttling      | `rateLimiter({ capacity, refillPerSec })` (token bucket)     | Erlang `:jobs` token bucket             | the throttle leg of load protection alongside GenStage backpressure and the circuit breaker — admit a burst + sustained rate, reject the rest                                                            |
 | instrumentation      | `Telemetry.execute` / `attach` / `span`                      | Elixir `:telemetry`                      | the standard decoupled metrics/tracing bus — emit named events with measurements, attach sinks separately; `span` brackets an op with start/stop/exception + duration                                    |
 
+### The realtime edge — Phoenix Channels + Presence (dogfooded here)
+
+`chat-channels.ts` builds the browser-facing edge on the same durable room actors: a client
+connects a `channelClient` (WebSocket, with heartbeat + auto-rejoin) to a gateway running
+`chatGateway`, `join`s `room:<key>` (tracked in **Presence** — who's in the room), and sends
+`message` events that are appended to the durable room actor and **broadcast** (PubSub) to every
+joined client. So the stateful-entity core (Registry + DynamicSupervisor + store) and the realtime
+layer (Channels + Presence + PubSub) compose end to end — proven in `chat-channels-test.ts`.
+
+The library also ships the scaling/hardening pieces this example would reach for next: a **mesh
+transport** (`meshTransport`) to retire the relay-hub SPOF, **`reliablePubSub`** for at-least-once
+topics, and **`shardedPresence`** — a partitioned tracker that decouples presence from the
+fully-replicated registry (the first concrete consumer of the sharding frontier below).
+
 ### What's built now — and the one honest frontier that remains
 
 The two gaps an earlier draft left open are closed:
