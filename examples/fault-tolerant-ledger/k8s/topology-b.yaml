@@ -1,0 +1,92 @@
+# Topology B — API and report node as SEPARATE Deployments, connected through a hub Service.
+# Use this ONLY when you need what separate pods buy you (README §4): independent scaling,
+# independent failure/OOM isolation, or independent deploy cadence. Otherwise use Topology A
+# (a Worker thread in one pod) — fewer moving parts, same CPU isolation.
+#
+# The probe/Deployment choices below ARE the library↔k8s contract; read §5 for why each.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: ledger-api }
+spec:
+  replicas: 3 # scale for REQUEST volume
+  selector: { matchLabels: { app: ledger-api } }
+  template:
+    metadata: { labels: { app: ledger-api } }
+    spec:
+      terminationGracePeriodSeconds: 30 # time for SIGTERM drain (api-node.ts) before SIGKILL
+      containers:
+        - name: api
+          image: ledger:latest
+          command: ['node', 'src/api-node.ts']
+          env:
+            - { name: DATABASE_URL, valueFrom: { secretKeyRef: { name: ledger-db, key: url } } }
+            - { name: REPORTS_HUB_URL, value: 'ws://ledger-hub:4369' } # → Topology B
+          ports: [{ containerPort: 8080 }]
+          # LIVENESS = "is the process alive?" → restart the pod if it fails. Local, cheap.
+          livenessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10 }
+          # READINESS = "can we serve?" → pull from the LB when degraded, do NOT restart.
+          # This is what lets the supervised heartbeat degrade us gracefully when reports die.
+          readinessProbe: { httpGet: { path: /ready, port: 8080 }, periodSeconds: 5 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: ledger-reports }
+spec:
+  replicas: 2 # scale for REPORT load — INDEPENDENT of the API's replica count
+  selector: { matchLabels: { app: ledger-reports } }
+  template:
+    metadata: { labels: { app: ledger-reports } }
+    spec:
+      containers:
+        - name: reports
+          image: ledger:latest
+          command: ['node', 'src/report-worker.ts']
+          env:
+            - { name: REPORTS_HUB_URL, value: 'ws://ledger-hub:4369' }
+          # A CPU-bound pod: give it real CPU, and let the OOM killer be its supervisor.
+          resources: { requests: { cpu: '1' }, limits: { cpu: '2', memory: 512Mi } }
+---
+# The hub: epmd + mesh. Two replicas + dual-dial in prod (README §5) removes the SPOF.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: ledger-hub }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: ledger-hub } }
+  template:
+    metadata: { labels: { app: ledger-hub } }
+    spec:
+      containers:
+        - name: hub
+          image: ledger:latest
+          command:
+            ['node', '-e', "import('./lib/node/hub.ts').then(m => m.startHub({ port: 4369 }))"]
+          ports: [{ containerPort: 4369 }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: ledger-hub }
+spec:
+  selector: { app: ledger-hub }
+  ports: [{ port: 4369, targetPort: 4369 }]
+---
+# Scale reports on CPU — the whole reason they are their own Deployment.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: ledger-reports }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: ledger-reports }
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+# Keep a quorum serving during voluntary disruptions (node drains, rollouts).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: ledger-api }
+spec:
+  minAvailable: 2
+  selector: { matchLabels: { app: ledger-api } }
