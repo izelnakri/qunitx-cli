@@ -9,7 +9,7 @@
     "npm:playwright-core@1.61.1": "1.61.1",
     "npm:prettier@^3.9.5": "3.9.5",
     "npm:promises-aplus-tests@^2.1.2": "2.1.2",
-    "npm:qunitx@^1.2.18": "1.2.18",
+    "npm:qunitx@^1.2.19": "1.2.19",
     "npm:react-dom@^19.2.7": "19.2.7_react@19.2.7",
     "npm:react@^19.2.7": "19.2.7",
     "npm:typescript@^7.0.2": "7.0.2",
@@ -885,8 +885,8 @@
       ],
       "bin": true
     },
-    "qunitx@1.2.18": {
-      "integrity": "sha512-evp1xkPLSgT4Cj+c72q2HMIvdlJw/3+3mzAZx+mSOPzpBpRiTpnAiSRl4lBpRppxLSCf9LNfwxoSkRS87IONgg=="
+    "qunitx@1.2.19": {
+      "integrity": "sha512-QDyY1yYz55JohvMpAcgqT2RhvI9+rDlN2NFlgqLWF5u/FQMiWCArHFbnoFA5rGTYPTdhf3EFjPmxWi4tlrHbhQ=="
     },
     "randombytes@2.1.0": {
       "integrity": "sha512-vYl3iOX+4CKUWuxGi9Ukhie6fsqXqS9FE2Zaic4tNFD2N2QQaXOMFbuKK4QmDHC0JO6B1Zp41J0LpT0oR68amQ==",
@@ -1124,7 +1124,7 @@
         "npm:playwright-core@1.61.1",
         "npm:prettier@^3.9.5",
         "npm:promises-aplus-tests@^2.1.2",
-        "npm:qunitx@^1.2.18",
+        "npm:qunitx@^1.2.19",
         "npm:react-dom@^19.2.7",
         "npm:react@^19.2.7",
         "npm:typescript@^7.0.2",
