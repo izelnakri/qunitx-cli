@@ -9,35 +9,13 @@ import '../helpers/custom-asserts.ts';
 const CWD = process.cwd();
 
 /**
- * Runs the generate command in-process against `target`, exactly as `qunitx generate <target>`
- * would: the command reads its argument off process.argv[3] and resolves paths from
- * findProjectRoot(), which walks up from the test worker's cwd to this repository's root.
- * Returns whatever the command printed.
- *
- * argv and console are process-wide, hence the `concurrency: false` on the modules below —
- * Generate.run() awaits, so a concurrent sibling could otherwise observe the stubs.
- *
- * console.log is swapped rather than process.stdout.write (what helpers/capture-stdout.ts
- * does): the node:test reporter writes this worker's results straight to the stdout stream,
- * and holding that stream across an await swallows the result lines of whatever else the
- * worker reports meanwhile — tests then silently disappear from the run summary.
+ * Runs `generate` the way the CLI does and returns the line the CLI would print, so these tests
+ * keep asserting on the user-visible message while `Generate.run` itself only reports facts.
  */
 async function generate(target: string): Promise<string> {
-  const originalArgv = process.argv;
-  const originalLog = console.log;
-  let printed = '';
+  const { path, created } = await Generate.run({ target });
 
-  process.argv = ['node', 'cli.ts', 'generate', target];
-  console.log = (...args: unknown[]) => {
-    printed += `${args.join(' ')}\n`;
-  };
-  try {
-    await Generate.run();
-  } finally {
-    console.log = originalLog;
-    process.argv = originalArgv;
-  }
-  return printed;
+  return created ? `${path} written\n` : `${path} already exists!\n`;
 }
 
 const readGenerated = (relativePath: string): Promise<string> =>

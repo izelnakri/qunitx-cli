@@ -26,18 +26,23 @@ interface ScannedFile {
   computedNames: number;
 }
 
-/** One test found by the static scan, named exactly as QUnit would name it. */
-interface FoundTest {
-  /** Absolute path of the file it was declared in — used to apply that file's line targets. */
-  file: string;
-  /** Module path, ' > '-joined; '' for a top-level test. */
-  module: string;
-  /** The test's own name. */
-  testName: string;
+/**
+ * One test found by the static scan, named exactly as QUnit would name it.
+ *
+ * Structured rather than pre-joined: `modules` and `line` are what a caller can act on, and the
+ * display forms (`'A > B'`, `path#12`) are one join away wherever they are actually printed.
+ */
+export interface FoundTest {
   /** `"Module > Sub: test name"` — the string a filter matches against. */
   fullName: string;
-  /** Where it is declared, `path#line`, ready to paste back as a line target. */
-  location: string;
+  /** The test's own name. */
+  name: string;
+  /** The QUnit module path it is declared under; empty for a top-level test. */
+  modules: string[];
+  /** Absolute path of the file it was declared in — used to apply that file's line targets. */
+  file: string;
+  /** 1-based line of the declaration. */
+  line: number;
 }
 
 /**
@@ -65,6 +70,120 @@ interface FoundTest {
  * @returns the process exit code: 0 when something matched, 1 when nothing did (as `grep` does).
  */
 export async function run(config: Config): Promise<number> {
+  const report = await scan(config);
+  // Folded rather than `Math.max(0, ...matches.map(…))`: the spread passes one argument per match,
+  // which throws RangeError once a suite is large enough, and the map allocates an array to throw
+  // away. One write rather than one per line — a big listing is thousands of syscalls otherwise.
+  const width = report.matches.reduce((widest, test) => Math.max(widest, test.fullName.length), 0);
+  config.state.console.log(
+    report.matches
+      .map((test) => `${test.fullName.padEnd(width)}  ${blue(locationOf(config, test))}\n`)
+      .join(''),
+  );
+
+  config.state.console.log(
+    `\n${report.matches.length} of ${report.total} test${report.total === 1 ? '' : 's'}` +
+      `${report.filter ? ` match ${JSON.stringify(report.filter)}` : ''}` +
+      ` in ${report.files} file${report.files === 1 ? '' : 's'}\n`,
+  );
+  for (const warning of report.warnings) {
+    config.state.console.log(yellow(`# qunitx: ${warning}\n`));
+  }
+  if (report.unlistable.computedNames > 0) {
+    // Deliberately "declaration", not "test": one `test(`case ${i}`)` inside a loop is a single
+    // declaration that becomes N tests at runtime, and the scan cannot know N.
+    config.state.console.log(
+      yellow(
+        `# ${report.unlistable.computedNames} test declaration${report.unlistable.computedNames === 1 ? '' : 's'} named at runtime ` +
+          `(e.g. test(\`case \${i}\`)) cannot be listed without running — they may still match.\n`,
+      ),
+    );
+  }
+  if (report.unlistable.unparseable > 0) {
+    config.state.console.log(
+      yellow(
+        `# ${report.unlistable.unparseable} file${report.unlistable.unparseable === 1 ? '' : 's'} could not be parsed.\n`,
+      ),
+    );
+  }
+  if (report.unlistable.silent > 0) {
+    config.state.console.log(
+      yellow(
+        `# ${report.unlistable.silent} file${report.unlistable.silent === 1 ? '' : 's'} declared no tests the scan could see — a ` +
+          `declarator reached through a local alias (const t = QUnit.test) is invisible to it.\n`,
+      ),
+    );
+  }
+
+  return report.matches.length > 0 ? 0 : 1;
+}
+
+/**
+ * What the static scan found, before anything is printed.
+ *
+ * Separated from {@link run} so the same answer can be a value: `run` is this plus a listing,
+ * and the JS API's `search()` is this plus nothing.
+ *
+ * ```ts
+ * const report: SearchReport = {
+ *   matches: [], total: 12, files: 3, filter: 'Cart', warnings: [],
+ *   unlistable: { total: 0, computedNames: 0, unparseable: 0, silent: 0 },
+ * };
+ * report.matches.length; // 0 of 12 — the filter matched nothing
+ * ```
+ */
+export interface SearchReport {
+  /** The tests the current selection matches, in declaration order. */
+  matches: FoundTest[];
+  /** Every listable test found, matched or not. */
+  total: number;
+  /** How many files were scanned. */
+  files: number;
+  /** The expression matched against, or `undefined` when everything was listed. */
+  filter?: string;
+  /** Line-target resolution warnings, in input order. */
+  warnings: string[];
+  /** What the scan could not name, split by cause. */
+  unlistable: UnlistableCounts;
+}
+
+/**
+ * Why some declarations could not be listed, split by cause.
+ *
+ * Broken out rather than summed, because the three are not the same news: computed names are
+ * normal in a parameterised suite, whereas an unparseable file is usually a real problem.
+ *
+ * ```ts
+ * const counts: UnlistableCounts = { total: 3, computedNames: 2, unparseable: 0, silent: 1 };
+ * counts.total === counts.computedNames + counts.unparseable + counts.silent; // true
+ * ```
+ */
+export interface UnlistableCounts {
+  /** The three below, added up. */
+  total: number;
+  /** Declarations whose name is computed at run time — ``test(`case ${index}`)``. */
+  computedNames: number;
+  /** Files that could not be read or parsed at all. */
+  unparseable: number;
+  /** Files that parsed but declared no test the scan could see, e.g. via a local alias. */
+  silent: number;
+}
+
+/**
+ * Scans the selected files and resolves which of their tests the current selection matches —
+ * no browser, no bundle, no execution.
+ *
+ * ```ts
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: reads and parses every selected file.
+ * async function preview(config: Config) {
+ *   const report = await scan(config);
+ *   return `${report.matches.length} of ${report.total}`;
+ * }
+ * ```
+ */
+export async function scan(config: Config): Promise<SearchReport> {
   // A bare --search/--print has no expression of its own, so it previews whatever -t/-m set; with
   // neither, an undefined filter matches everything and the command lists the whole suite.
   const filter = typeof config.search === 'string' ? config.search : config.filter;
@@ -89,7 +208,7 @@ export async function run(config: Config): Promise<number> {
 
   for (const record of scanned) {
     // Pushed one at a time rather than spread: `push(...tests)` passes one argument per test and
-    // throws RangeError once a suite is large enough — the same trap as the `Math.max` below.
+    // throws RangeError once a suite is large enough.
     for (const test of record.tests) found.push(test);
     computedNames += record.computedNames;
 
@@ -104,50 +223,16 @@ export async function run(config: Config): Promise<number> {
     }
   }
 
-  const matches = found.filter(
-    (test) => matchQUnitFilter(filter, test.fullName) && matchesLineTargets(test, lineSelectors),
-  );
-  // Folded rather than `Math.max(0, ...matches.map(…))`: the spread passes one argument per match,
-  // which throws RangeError once a suite is large enough, and the map allocates an array to throw
-  // away. One write rather than one per line — a big listing is thousands of syscalls otherwise.
-  const width = matches.reduce((widest, test) => Math.max(widest, test.fullName.length), 0);
-  process.stdout.write(
-    matches.map((test) => `${test.fullName.padEnd(width)}  ${blue(test.location)}\n`).join(''),
-  );
-
-  process.stdout.write(
-    `\n${matches.length} of ${found.length} test${found.length === 1 ? '' : 's'}` +
-      `${filter ? ` match ${JSON.stringify(filter)}` : ''}` +
-      ` in ${files.length} file${files.length === 1 ? '' : 's'}\n`,
-  );
-  for (const warning of warnings) {
-    process.stdout.write(yellow(`# qunitx: ${warning}\n`));
-  }
-  if (computedNames > 0) {
-    // Deliberately "declaration", not "test": one `test(`case ${i}`)` inside a loop is a single
-    // declaration that becomes N tests at runtime, and the scan cannot know N.
-    process.stdout.write(
-      yellow(
-        `# ${computedNames} test declaration${computedNames === 1 ? '' : 's'} named at runtime ` +
-          `(e.g. test(\`case \${i}\`)) cannot be listed without running — they may still match.\n`,
-      ),
-    );
-  }
-  if (unparseable > 0) {
-    process.stdout.write(
-      yellow(`# ${unparseable} file${unparseable === 1 ? '' : 's'} could not be parsed.\n`),
-    );
-  }
-  if (silent > 0) {
-    process.stdout.write(
-      yellow(
-        `# ${silent} file${silent === 1 ? '' : 's'} declared no tests the scan could see — a ` +
-          `declarator reached through a local alias (const t = QUnit.test) is invisible to it.\n`,
-      ),
-    );
-  }
-
-  return matches.length > 0 ? 0 : 1;
+  return {
+    matches: found.filter(
+      (test) => matchQUnitFilter(filter, test.fullName) && matchesLineTargets(test, lineSelectors),
+    ),
+    total: found.length,
+    files: files.length,
+    filter,
+    warnings,
+    unlistable: { total: computedNames + unparseable + silent, computedNames, unparseable, silent },
+  };
 }
 
 /** Per-file resolved line targets. `selectors: null` means "run the whole file" (no restriction). */
@@ -162,10 +247,14 @@ function matchesLineTargets(test: FoundTest, lineSelectors: FileSelectors): bool
   const resolved = lineSelectors.get(test.file);
   if (!resolved || resolved.selectors === null) return true;
 
+  // Joined here rather than stored joined: the selectors are ' > '-paths, and matching a module
+  // and its descendants is a string-prefix question. Same comparison as before, one line later.
+  const modulePath = test.modules.join(' > ');
+
   return resolved.selectors.some((selector) =>
     selector.test === undefined
-      ? test.module === selector.module || test.module.startsWith(`${selector.module} > `)
-      : test.module === selector.module && test.testName === selector.test,
+      ? modulePath === selector.module || modulePath.startsWith(`${selector.module} > `)
+      : modulePath === selector.module && test.name === selector.test,
   );
 }
 
@@ -189,14 +278,14 @@ async function scanFile(file: string, projectRoot: string): Promise<ScannedFile>
         acc.computedNames++;
         return acc;
       }
-      const module =
-        declaration.parent === null ? '' : modulePathOf(scan.declarations, declaration.parent);
+      const modules =
+        declaration.parent === null ? [] : modulePathOf(scan.declarations, declaration.parent);
       acc.tests.push({
+        fullName: buildQUnitFullName(modules.join(' > '), declaration.name),
+        name: declaration.name,
+        modules,
         file,
-        module,
-        testName: declaration.name,
-        fullName: buildQUnitFullName(module, declaration.name),
-        location: `${displayPath}#${declaration.startLine}`,
+        line: declaration.startLine,
       });
 
       return acc;
@@ -207,12 +296,17 @@ async function scanFile(file: string, projectRoot: string): Promise<ScannedFile>
   return { file, displayPath, scan, tests, computedNames };
 }
 
-/** Walks up `parent` links to build QUnit's ' > '-joined module name. */
-function modulePathOf(declarations: TestDeclaration[], index: number): string {
+/** Walks up `parent` links to the module path a test is declared under, outermost first. */
+function modulePathOf(declarations: TestDeclaration[], index: number): string[] {
   // Recursing to the outermost module first yields the names already in order, so there is no
   // reversing to reason about. Depth is module nesting (a handful), not input size.
   const ancestry = (at: number | null): string[] =>
     at === null ? [] : [...ancestry(declarations[at].parent), declarations[at].name ?? ''];
 
-  return ancestry(index).join(' > ');
+  return ancestry(index);
+}
+
+/** The `path#line` a listing prints, relative to the project root. */
+function locationOf(config: Config, test: FoundTest): string {
+  return `${path.relative(config.projectRoot, test.file).replaceAll('\\', '/')}#${test.line}`;
 }

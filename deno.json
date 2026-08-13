@@ -2,19 +2,24 @@
   "nodeModulesDir": "auto",
   "imports": {
     "esbuild": "npm:esbuild",
-    "ws": "npm:ws",
-    "@std/fmt/colors": "jsr:@std/fmt@^1/colors"
+    "ws": "npm:ws"
   },
   "tasks": {
-    "bench": "deno bench --allow-all benches/esbuild.bench.ts benches/server.bench.ts benches/tap.bench.ts benches/e2e.bench.ts",
-    "bench:check": "deno run --allow-all scripts/check-benchmarks.ts --files benches/esbuild.bench.ts benches/server.bench.ts benches/tap.bench.ts benches/e2e.bench.ts benches/daemon.bench.ts",
-    "bench:update": "deno run --allow-all scripts/check-benchmarks.ts --save --files benches/esbuild.bench.ts benches/server.bench.ts benches/tap.bench.ts benches/e2e.bench.ts benches/daemon.bench.ts",
+    "bench": "deno bench --allow-all benches/esbuild.bench.ts benches/server.bench.ts benches/tap.bench.ts benches/e2e.bench.ts benches/api.bench.ts",
+    "bench:check": "deno run --allow-all scripts/check-benchmarks.ts --files benches/esbuild.bench.ts benches/server.bench.ts benches/tap.bench.ts benches/e2e.bench.ts benches/api.bench.ts benches/daemon.bench.ts",
+    "bench:update": "deno run --allow-all scripts/check-benchmarks.ts --save --files benches/esbuild.bench.ts benches/server.bench.ts benches/tap.bench.ts benches/e2e.bench.ts benches/api.bench.ts benches/daemon.bench.ts",
     "build:binary": "deno compile --allow-all --no-check --include templates --include lib --include package.json --output dist/qunitx cli.ts"
   },
   "lint": {
-    "exclude": ["test/fixtures/"],
+    "exclude": [
+      "test/fixtures/"
+    ],
     "rules": {
-      "exclude": ["no-process-global", "no-node-globals", "no-window"]
+      "exclude": [
+        "no-process-global",
+        "no-node-globals",
+        "no-window"
+      ]
     }
   }
 }

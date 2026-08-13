@@ -20,7 +20,7 @@ module('Inputs | single file', { concurrency: true }, (_hooks, moduleMetadata) =
     for (const result of [js, ts]) {
       assert.includes(result, 'TAP version 13');
       assert.passingTestCaseFor(result, { testNo: 1, moduleName: '{{moduleName}}' });
-      assert.tapResult(result, { testCount: 3 });
+      assert.tapResult(result, { total: 3 });
     }
   });
 
@@ -40,7 +40,7 @@ module('Inputs | single file', { concurrency: true }, (_hooks, moduleMetadata) =
         { contains: [/actual:\n\s+firstName: Izel/, /expected:\n\s+firstName: Isaac/] },
         'deepEqual failure shows structured YAML object diff',
       );
-      assert.tapResult(cmd, { testCount: 4, failCount: 3 });
+      assert.tapResult(cmd, { total: 4, failed: 3 });
     }
   });
 
@@ -54,12 +54,12 @@ module('Inputs | single file', { concurrency: true }, (_hooks, moduleMetadata) =
     assert.hasDebugURL(passing);
     assert.includes(passing, 'TAP version 13');
     assert.passingTestCaseFor(passing, { debug: true, testNo: 1, moduleName: '{{moduleName}}' });
-    assert.tapResult(passing, { testCount: 3 });
+    assert.tapResult(passing, { total: 3 });
 
     assert.exitCode(failing, 1, 'debug mode: expected shell to exit non-zero due to failing tests');
     assert.includes(failing, 'TAP version 13');
     assert.failingTestCaseFor(failing, { debug: true, testNo: 1, moduleName: '{{moduleName}}' });
-    assert.tapResult(failing, { testCount: 4, failCount: 3 });
+    assert.tapResult(failing, { total: 4, failed: 3 });
   });
 
   test('test.skip reports "ok # skip", test.todo "not ok # TODO", neither as a failure', async (assert, testMetadata) => {
@@ -78,6 +78,6 @@ module('Inputs | single file', { concurrency: true }, (_hooks, moduleMetadata) =
       'todo test is expected to fail # TODO',
       'todo test appears as "not ok ... # TODO"',
     );
-    assert.tapResult(result, { testCount: 1, skipCount: 1, todoCount: 1 });
+    assert.tapResult(result, { total: 1, skipped: 1, todo: 1 });
   });
 });

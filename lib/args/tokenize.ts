@@ -118,7 +118,7 @@ export type ArgToken = QueryToken | FlagToken | InputToken;
  * Args.tokenize(['-t', 'a b', '--', 'test/cart-test.ts']).at(-1); // { kind: 'input', raw: 'test/cart-test.ts' }
  * ```
  */
-export function tokenize(args: string[]): ArgToken[] {
+export function tokenize(args: readonly string[]): ArgToken[] {
   // The fold carries two bits of cross-entry state: `rest` (past the `--` marker, everything is a
   // positional input) and `greedy` (the bare query flag currently absorbing following words — held
   // by reference so its value grows in place, no rescan or post-pass join needed).

@@ -7,7 +7,7 @@ module('TAP | displayFinalResult | output', { concurrency: true }, () => {
   test('emits plan line, all summary lines, and duration', (assert) => {
     const output = captureStdout(() => {
       TAP.displayFinalResult(
-        { testCount: 5, passCount: 3, skipCount: 1, todoCount: 1, failCount: 1, errorCount: 1 },
+        { total: 5, passed: 3, skipped: 1, todo: 1, failed: 1, assertionsFailed: 1 },
         2345,
       );
     });
@@ -23,7 +23,7 @@ module('TAP | displayFinalResult | output', { concurrency: true }, () => {
   test('output starts and ends with a blank line', (assert) => {
     const output = captureStdout(() => {
       TAP.displayFinalResult(
-        { testCount: 1, passCount: 1, skipCount: 0, todoCount: 0, failCount: 0, errorCount: 0 },
+        { total: 1, passed: 1, skipped: 0, todo: 0, failed: 0, assertionsFailed: 0 },
         100,
       );
     });
@@ -34,7 +34,7 @@ module('TAP | displayFinalResult | output', { concurrency: true }, () => {
   test('lines appear in the correct order', (assert) => {
     const output = captureStdout(() => {
       TAP.displayFinalResult(
-        { testCount: 3, passCount: 2, skipCount: 0, todoCount: 0, failCount: 1, errorCount: 1 },
+        { total: 3, passed: 2, skipped: 0, todo: 0, failed: 1, assertionsFailed: 1 },
         500,
       );
     });
@@ -50,7 +50,7 @@ module('TAP | displayFinalResult | output', { concurrency: true }, () => {
   test('all-passing run shows # fail 0', (assert) => {
     const output = captureStdout(() => {
       TAP.displayFinalResult(
-        { testCount: 10, passCount: 10, skipCount: 0, todoCount: 0, failCount: 0, errorCount: 0 },
+        { total: 10, passed: 10, skipped: 0, todo: 0, failed: 0, assertionsFailed: 0 },
         1000,
       );
     });
@@ -62,7 +62,7 @@ module('TAP | displayFinalResult | output', { concurrency: true }, () => {
   test('zero-test run emits plan "1..0"', (assert) => {
     const output = captureStdout(() => {
       TAP.displayFinalResult(
-        { testCount: 0, passCount: 0, skipCount: 0, todoCount: 0, failCount: 0, errorCount: 0 },
+        { total: 0, passed: 0, skipped: 0, todo: 0, failed: 0, assertionsFailed: 0 },
         0,
       );
     });

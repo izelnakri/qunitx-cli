@@ -1,13 +1,29 @@
-// JSR bootstrap for `deno install -Agf jsr:@izelnakri/qunitx-cli` users.
-// On first run, downloads the matching prebuilt qunitx-cli binary + esbuild
-// sidecar from the GitHub release for this package's version, caches them
-// under ~/.cache/qunitx/<version>/<target>/, then spawns the binary with
-// stdio inherited and forwards the exit code. Subsequent runs skip straight
-// to the spawn step.
-//
-// The cache is keyed on the published JSR version (NOT the latest GitHub
-// release), so two installed launchers pinning different versions never
-// race over the same on-disk binary.
+/**
+ * The `qunitx` command itself — the launcher behind
+ * `deno install -Agf jsr:@izelnakri/qunitx-cli`.
+ *
+ * On first run it downloads the prebuilt qunitx binary and its esbuild sidecar for this
+ * package's version from the matching GitHub release, caches them under
+ * `~/.cache/qunitx/<version>/<target>/`, then spawns the binary with stdio inherited and
+ * forwards its exit code. Later runs go straight to the spawn.
+ *
+ * One arch-agnostic publish therefore serves every platform: the os/arch is resolved here, at
+ * run time, rather than by shipping a binary per target to the registry.
+ *
+ * The cache is keyed on the published JSR version rather than the newest GitHub release, so two
+ * launchers pinned to different versions never race over the same file on disk.
+ *
+ * For the programmatic surface — running tests and getting a `RunResult` back instead of an exit
+ * code — import `@izelnakri/qunitx-cli/api` instead of this module.
+ *
+ * ```ts
+ * // Installed as a command, not imported:
+ * //   deno install -Agf jsr:@izelnakri/qunitx-cli
+ * //   qunitx test/
+ * ```
+ *
+ * @module
+ */
 
 import denoJson from './deno.json' with { type: 'json' };
 
@@ -25,11 +41,11 @@ interface Target {
 // job in .github/workflows/ci.yml — adding a target here without a release
 // runner produces a 404 for users on that platform.
 const TARGETS: Record<string, Target> = {
-  'linux-x86_64':   { archive: 'qunitx-deno-linux-x64.tar.gz',     bin: 'qunitx',     isZip: false },
-  'linux-aarch64':  { archive: 'qunitx-deno-linux-arm64.tar.gz',   bin: 'qunitx',     isZip: false },
-  'darwin-aarch64': { archive: 'qunitx-deno-macos-arm64.tar.gz',   bin: 'qunitx',     isZip: false },
-  'windows-x86_64': { archive: 'qunitx-deno-windows-x64.zip',      bin: 'qunitx.exe', isZip: true  },
-  'windows-aarch64':{ archive: 'qunitx-deno-windows-arm64.zip',    bin: 'qunitx.exe', isZip: true  },
+  'linux-x86_64': { archive: 'qunitx-deno-linux-x64.tar.gz', bin: 'qunitx', isZip: false },
+  'linux-aarch64': { archive: 'qunitx-deno-linux-arm64.tar.gz', bin: 'qunitx', isZip: false },
+  'darwin-aarch64': { archive: 'qunitx-deno-macos-arm64.tar.gz', bin: 'qunitx', isZip: false },
+  'windows-x86_64': { archive: 'qunitx-deno-windows-x64.zip', bin: 'qunitx.exe', isZip: true },
+  'windows-aarch64': { archive: 'qunitx-deno-windows-arm64.zip', bin: 'qunitx.exe', isZip: true },
 };
 
 const platformKey = `${Deno.build.os}-${Deno.build.arch}`;
@@ -51,8 +67,8 @@ if (!home) {
 // but surprises anyone inspecting %LOCALAPPDATA% to find it.
 const cacheRoot =
   Deno.build.os === 'windows'
-    ? Deno.env.get('LOCALAPPDATA') ?? `${home}/AppData/Local`
-    : Deno.env.get('XDG_CACHE_HOME') ?? `${home}/.cache`;
+    ? (Deno.env.get('LOCALAPPDATA') ?? `${home}/AppData/Local`)
+    : (Deno.env.get('XDG_CACHE_HOME') ?? `${home}/.cache`);
 const cacheDir = `${cacheRoot}/qunitx/${denoJson.version}/${platformKey}`;
 const binPath = `${cacheDir}/${target.bin}`;
 
@@ -132,7 +148,8 @@ async function extract(archivePath: string, dest: string, isZip: boolean): Promi
         ],
       });
       const psStatus = await ps.spawn().status;
-      if (!psStatus.success) throw new Error('extract failed: unzip and Expand-Archive both failed');
+      if (!psStatus.success)
+        throw new Error('extract failed: unzip and Expand-Archive both failed');
     }
   } else {
     const tar = new Deno.Command('tar', { args: ['xzf', archivePath, '-C', dest] });

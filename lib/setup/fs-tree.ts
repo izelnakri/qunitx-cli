@@ -14,10 +14,11 @@ import type { FSTree } from '../types.ts';
  * InputUnreadable({ input: 'test/**' }).message; // "could not read test input test/**"
  * ```
  */
-export const InputUnreadable = Failure.define(
-  'InputUnreadable',
-  (data: { input: string }) => `could not read test input ${data.input}`,
-);
+export const InputUnreadable: Failure.FailureFactory<'InputUnreadable', { input: string }> =
+  Failure.define(
+    'InputUnreadable',
+    (data: { input: string }) => `could not read test input ${data.input}`,
+  );
 
 /** The one failure {@link build} declares. */
 export type InputUnreadableFailure = Failure.Of<typeof InputUnreadable>;

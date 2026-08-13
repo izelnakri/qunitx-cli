@@ -192,10 +192,49 @@ lint-docs:
 # Usage: make release LEVEL=patch|minor|major
 release:
 	@test -n "$(LEVEL)" || (echo "Usage: make release LEVEL=patch|minor|major" && exit 1)
+# The branch gate, first and non-negotiable. `npm publish` runs BEFORE the commit and tag below,
+# so a release started on a topic branch ships THAT branch's code to npm — under a version main
+# never contained — and the bare `git push` at the end pushes the topic branch, leaving the tag
+# on a commit that is not in main. Both happen silently. v0.32.0 shipped the whole unmerged PR
+# stack this way.
+	@branch=$$(git rev-parse --abbrev-ref HEAD); \
+	if [ "$$branch" != "main" ]; then \
+		echo "make release must run on main — you are on '$$branch'."; \
+		echo "npm publish happens before the release commit, so this would publish '$$branch'."; \
+		exit 1; \
+	fi
+	@git fetch -q origin main; \
+	if [ "$$(git rev-parse HEAD)" != "$$(git rev-parse origin/main)" ]; then \
+		echo "main and origin/main differ — pull or push first, then release."; \
+		exit 1; \
+	fi
+# Fail here, not after ~10 minutes of vendor + bench + check + test:release, when the version the
+# bump would produce is already on npm — which `npm publish` rejects outright.
+	@name=$$(node -p "require('./package.json').name"); \
+	target=$$(node -p "const [a,b,c]=require('./package.json').version.split('.').map(Number); \
+		({patch:[a,b,c+1],minor:[a,b+1,0],major:[a+1,0,0]}['$(LEVEL)']||'$(LEVEL)'.split('.')).join('.')"); \
+	if npm view "$$name@$$target" version > /dev/null 2>&1; then \
+		echo "$$name@$$target is already published — pick the next free version, e.g. LEVEL=<x.y.z>."; \
+		exit 1; \
+	fi; \
+	echo "releasing $$name@$$target from main"
 	@if [ -n "$$(git status --porcelain)" ]; then \
 		echo "WARNING: Uncommitted changes detected — these will NOT be included in the release:"; \
 		git status --short; \
 		echo ""; \
+	fi
+# esbuild refuses to start when its JS host and its native binary disagree on version, and
+# `npm audit fix` can bump the host while leaving the optional platform package stale on disk.
+# `npm ci` never reproduces that skew, so CI stays green and the only thing that notices is
+# build-sea — twenty minutes in, past the full suite, as `The service was stopped: write EPIPE`.
+# Detectable here in milliseconds instead.
+	@host=$$(node -p "require('esbuild/package.json').version"); \
+	target=$$(node -p "process.platform + '-' + process.arch"); \
+	binary=$$(node -p "require('@esbuild/$$target/package.json').version" 2>/dev/null || echo "not installed"); \
+	if [ "$$host" != "$$binary" ]; then \
+		echo "esbuild is out of sync: host $$host, @esbuild/$$target $$binary."; \
+		echo "Run 'npm install' to match node_modules to the lockfile, then retry."; \
+		exit 1; \
 	fi
 	@eval $$(ssh-agent -s); trap "ssh-agent -k > /dev/null" EXIT; ssh-add
 	@npm whoami > /dev/null 2>&1 || npm login
@@ -222,18 +261,24 @@ release:
 	  npm install --package-lock-only --ignore-scripts; \
 	fi
 	npm publish --access public
-# Publish the jsr/ bootstrap package to JSR alongside npm. One arch-agnostic package
-# (jsr/cli.ts resolves os-arch at runtime and fetches the matching prebuilt binary
-# from the GitHub release), so a single publish covers every platform. --allow-dirty:
-# jsr/deno.json's bumped version is not committed yet at this point in the recipe.
-	cd jsr && deno publish --allow-dirty
+# JSR is NOT published here. The `publish-jsr` job in ci.yml does it when the tag lands, so the
+# release carries provenance — `deno publish` needs the Actions OIDC token to mint a transparency
+# log entry, which a laptop cannot produce. jsr/deno.json's version is bumped and committed above;
+# CI stages lib/, templates/ and package.json into jsr/ and publishes from the tag.
+#
+# The trade: npm is live the moment this recipe finishes, JSR a few minutes later when CI reaches
+# the tag. If that job fails, the version exists on npm but not JSR — re-run the job rather than
+# re-tagging.
 	@node scripts/remove-optional-deps.js
 	@npm install --package-lock-only --ignore-scripts
 	git-cliff --tag "v$$(node -p 'require("./package.json").version')" --output CHANGELOG.md
 	git add package.json package-lock.json CHANGELOG.md npm/*/package.json jsr/deno.json templates/vendor
 	git commit -m "Release $$(node -p 'require("./package.json").version')"
 	git tag "v$$(node -p 'require("./package.json").version')"
-	git push && git push --tags
+# Explicit remote and ref, not a bare `git push`: a bare push follows the current branch, which is
+# how a release can land on something other than main. The branch gate above makes that
+# unreachable, and naming main here means the two would have to disagree for it to happen again.
+	git push origin main && git push origin "v$$(node -p 'require("./package.json").version')"
 	$(MAKE) bench
 
 # Smoke-tests the locally-built dist/qunitx Deno binary against the same fixtures

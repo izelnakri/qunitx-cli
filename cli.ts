@@ -7,11 +7,15 @@ import './lib/utils/enable-compile-cache.ts';
 // env is already set or no sidecar is present (npm / source / Node SEA paths).
 import './lib/utils/find-sidecar-esbuild.ts';
 import process from 'node:process';
-import { shutdownPrelaunch } from './lib/chrome/prelaunch.ts';
+import { shutdownPrelaunch, startPrelaunch } from './lib/chrome/prelaunch.ts';
 import { Failure } from './lib/result/index.ts';
 import pkg from './package.json' with { type: 'json' };
 
 process.title = 'qunitx';
+// First statement, and deliberately so: this spawns Chrome for run commands, and the whole
+// point is that its ~150ms start-up overlaps the dynamic import of playwright-core below
+// rather than following it. Everything between here and that import is synchronous.
+startPrelaunch();
 
 // The timer is a LAST RESORT, not a routine path: whenever it fires before the drain callback,
 // process.exit() drops whatever is still queued. run.ts learned this the hard way and uses the
@@ -20,6 +24,8 @@ process.title = 'qunitx';
 // write queue stalls until the reader catches up. 250ms was tight enough to be the normal path
 // there, which is exactly what it must never be.
 const FLUSH_GRACE_MS = 30_000;
+// Conventional exit code for a process terminated by SIGTERM (128 + signal number 15).
+const EXIT_CODE_SIGTERM = 128 + 15;
 
 // Command-module imports are dynamic so the daemon-routed-run path doesn't
 // load `help.ts`, `init.ts`, `generate.ts`, or `setup/config.ts` (and its
@@ -40,9 +46,15 @@ const FLUSH_GRACE_MS = 30_000;
   } else if (['help', 'h', 'p', 'print'].includes(cmd)) {
     return await (await import('./lib/commands/help.ts')).run();
   } else if (['new', 'n', 'g', 'generate'].includes(cmd)) {
-    return await (await import('./lib/commands/generate.ts')).run();
+    const { path, created } = await (await import('./lib/commands/generate.ts')).run();
+    const { green } = await import('./lib/utils/color.ts');
+    return console.log(created ? green(`${path} written`) : `${path} already exists!`);
   } else if (cmd === 'init') {
-    return await (await import('./lib/commands/init.ts')).run();
+    const { written, skipped } = await (await import('./lib/commands/init.ts')).run();
+    // The scaffolding commands report what they did and let this decide how to say it — the same
+    // split as everywhere else, so `QUnitX.init()` returns the facts instead of printing them.
+    skipped.forEach((file) => console.log(`${file} already exists`));
+    return written.forEach((file) => console.log(`${file} written`));
   } else if (cmd === 'daemon') {
     const Daemon = await import('./lib/commands/daemon/index.ts');
     process.exit(await Daemon.run());
@@ -64,7 +76,7 @@ const FLUSH_GRACE_MS = 30_000;
     // did — but in the same chain, so `.result()` yields one union to discriminate rather than a
     // box wrapping one. The fall-through stays unconditional; only "the daemon died mid-run"
     // says so, because it used to be indistinguishable from exit 1.
-    const routed = await Client.runVia(process.argv.slice(2)).mapErr(Failure.from).result();
+    const routed = await Client.runArgv(process.argv.slice(2)).mapErr(Failure.from).result();
     if (!Failure.is(routed)) return exitAfterFlush(routed);
     if (routed.code !== 'DaemonUnreachable') {
       process.stderr.write(`# [qunitx] ${Failure.format(routed)} — running locally\n`);
@@ -74,7 +86,7 @@ const FLUSH_GRACE_MS = 30_000;
   // Local-run path: lazy-import Config.setup + run.ts (and their transitive
   // chains: esbuild, playwright-core, fs-tree, etc.). Loading in parallel lets
   // playwright-core's heavy module evaluation overlap with config assembly.
-  const [Config, { run }] = await Promise.all([
+  const [Config, { run, watch }] = await Promise.all([
     import('./lib/setup/config.ts'),
     import('./lib/commands/run.ts'),
   ]);
@@ -102,7 +114,55 @@ const FLUSH_GRACE_MS = 30_000;
     return exitAfterFlush(exitCode);
   }
 
-  return await run(config);
+  // Watch mode hands back a live session and leaves the process running. Everything that makes
+  // it a *terminal* session rather than a library call — stdin shortcuts, the SIGTERM handler,
+  // the banner — is wired up here, because `lib/` has no business owning any of the three.
+  if (config.watch) {
+    const session = await watch(config);
+    const [KeyboardEvents, { blue }, { closeWithGrace }] = await Promise.all([
+      import('./lib/setup/keyboard-events.ts'),
+      import('./lib/utils/color.ts'),
+      import('./lib/utils/close-with-grace.ts'),
+    ]);
+    KeyboardEvents.setup(session);
+    // Close the HTTP SERVER on SIGTERM — and only the server. The point is that the port is
+    // reclaimed by application code rather than as a side effect of OS process cleanup: on macOS,
+    // waitpid() can return a few ms before the socket is reclaimed, which makes the port look busy
+    // to whatever starts next. On Windows child.kill('SIGTERM') calls TerminateProcess(), so this
+    // never runs and the race does not exist there either.
+    //
+    // NOT `session.close()`, which also tears down the browser: Playwright's `browser.close()`
+    // deadlocks on WebKit often enough that the teardown outlived the 5s SIGTERM + 2s SIGKILL
+    // budget a supervising process allows, and the child had to be killed instead of exiting.
+    // Nothing needs closing here anyway — the process is about to exit, and the prelaunch exit
+    // hook SIGKILLs Chrome's whole process group on the way out.
+    process.once('SIGTERM', () => {
+      void closeWithGrace([session.connections.server.close()]).finally(() =>
+        process.exit(EXIT_CODE_SIGTERM),
+      );
+    });
+    console.log('#', blue(`Watching files... You can browse the tests on ${session.url} ...`));
+    return console.log(
+      '#',
+      blue(
+        `Shortcuts: Press "qq" to abort running tests, "qa" to run all the tests, "qf" to run last failing test, "ql" to repeat last test`,
+      ),
+    );
+  }
+
+  const outcome = await run(config);
+  // The trailing newline the batch run has always ended on. Daemon-routed runs skip it — the
+  // daemon's own local run produced it inside the socket stream already.
+  process.stdout.write('\n');
+
+  // First-time nudge toward the daemon, here rather than inside `run()`: it writes to stderr
+  // directly and is gated on a TTY, so from the JS API it printed something the caller never
+  // asked for, past whatever `console` they had set. A terminal concern, like the watch banner
+  // and the keyboard shortcuts. `Hint.shouldShow` owns the rest (CI, env opt-outs, sentinel).
+  const Hint = await import('./lib/commands/daemon/hint.ts');
+  await Hint.maybePrint({ durationMs: process.uptime() * 1000 });
+
+  return exitAfterFlush(outcome.exitCode);
 })().catch(async (error) => {
   // The program's ONE crash boundary, and the two-tier rule at the very edge: a declared failure
   // is a message (`init`/`generate` reach here when there is no package.json to work in), a bug

@@ -263,24 +263,60 @@ async function buildDaemonSpawn(): Promise<{ bin: string; args: string[] }> {
   const sea = await import('node:sea').catch(() => null);
   if (sea?.isSea()) return { bin: process.execPath, args: ['daemon', '_serve'] };
 
-  const deno = (globalThis as { Deno?: { mainModule: string } }).Deno;
+  const deno = (globalThis as { Deno?: unknown }).Deno;
   if (deno) {
     // Inside a `deno compile`d binary `Deno.mainModule` is also a `file:` URL
-    // (a virtual path under `/tmp/deno-compile-<name>/`), so the previous
-    // mainModule-prefix check always fell into the `deno run` branch and tried
-    // to spawn `<binary> run -A <virtual-path> daemon _serve` — the binary has
-    // no `run` subcommand and the spawn silently failed. process.execPath
-    // ending in `deno` (or `deno.exe`) is the reliable signal: only `deno run`
-    // preserves the runtime's name on the path.
+    // (a virtual path under `/tmp/deno-compile-<name>/`), so a mainModule-prefix
+    // check always fell into the `deno run` branch and tried to spawn
+    // `<binary> run -A <virtual-path> daemon _serve` — the binary has no `run`
+    // subcommand and the spawn silently failed. process.execPath ending in
+    // `deno` (or `deno.exe`) is the reliable signal: only `deno run` preserves
+    // the runtime's name on the path.
     if (!/[/\\]deno(\.exe)?$/i.test(process.execPath)) {
       return { bin: process.execPath, args: ['daemon', '_serve'] };
     }
-    const { fileURLToPath } = await import('node:url');
+    // `selfEntryPoint()`, not `Deno.mainModule`: under `deno test` — or anywhere the JS API is
+    // driven from a host program — mainModule is the *caller's* entry, so this spawned the host
+    // again instead of a daemon. Same defect the Node branch had, in the other runtime.
     return {
       bin: process.execPath,
-      args: ['run', '-A', fileURLToPath(deno.mainModule), 'daemon', '_serve'],
+      args: ['run', '-A', await selfEntryPoint(), 'daemon', '_serve'],
     };
   }
 
-  return { bin: process.execPath, args: [process.argv[1], 'daemon', '_serve'] };
+  return { bin: process.execPath, args: [await selfEntryPoint(), 'daemon', '_serve'] };
+}
+
+/**
+ * qunitx's own entry point, for re-entering it as the detached daemon child.
+ *
+ * `process.argv[1]` is only qunitx's entry when qunitx is what started the process. Called from
+ * the JS API — an embedding app, a test worker — it is the *host's* entry, and spawning that runs
+ * the host program a second time instead of a daemon. The spawn then "succeeds" and the client
+ * waits out its whole timeout for an info file nobody is going to write.
+ *
+ * Resolved from this module's own location instead, most-specific first:
+ *
+ *   dist/cli.js   this file IS the bundle when installed from npm
+ *   cli.ts        a source checkout
+ *   dist/cli.js   a deep-imported source tree next to its bundle
+ *   bin/qunitx.js the npm bin, which re-dispatches
+ *
+ * `process.argv[1]` remains the last resort, so the CLI path behaves exactly as it always has
+ * even if the layout is one this does not recognise.
+ */
+async function selfEntryPoint(): Promise<string> {
+  const { fileURLToPath } = await import('node:url');
+  const here = fileURLToPath(import.meta.url);
+  if (here.endsWith(`${path.sep}dist${path.sep}cli.js`)) return here;
+
+  // lib/commands/daemon/index.ts → three levels up is the package root.
+  const root = path.resolve(path.dirname(here), '..', '..', '..');
+  const candidates = [
+    path.join(root, 'cli.ts'),
+    path.join(root, 'dist', 'cli.js'),
+    path.join(root, 'bin', 'qunitx.js'),
+  ];
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? process.argv[1];
 }

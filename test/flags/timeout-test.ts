@@ -21,7 +21,7 @@ module('Flags | --timeout', { concurrency: true }, (_hooks, moduleMetadata) => {
       ],
       notContains: ['BROWSER: TEST TIMED OUT'],
     });
-    assert.tapResult(cmd, { testCount: 1, failCount: 1 });
+    assert.tapResult(cmd, { total: 1, failed: 1 });
   });
 });
 
@@ -42,7 +42,7 @@ module('Flags | --timeout | assert.timeout()', { concurrency: true }, (_hooks, m
         /ok \d+ .* assert\.timeout\(0\) passes for synchronous tests/,
       ],
     });
-    assert.tapResult(result, { testCount: 2 });
+    assert.tapResult(result, { total: 2 });
   });
 
   test('fails the individual test whose deadline is exceeded', async (assert, testMetadata) => {
@@ -62,7 +62,7 @@ module('Flags | --timeout | assert.timeout()', { concurrency: true }, (_hooks, m
       ],
       notContains: ['BROWSER: TEST TIMED OUT'],
     });
-    assert.tapResult(cmd, { testCount: 1, failCount: 1 });
+    assert.tapResult(cmd, { total: 1, failed: 1 });
   });
 
   test('fails an async test given assert.timeout(0)', async (assert, testMetadata) => {
