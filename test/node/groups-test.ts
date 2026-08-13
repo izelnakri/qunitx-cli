@@ -127,8 +127,8 @@ module('Node | point-to-point routing', () => {
     a.join('workers');
     await new Promise((r) => setTimeout(r, 10));
     assert.true(
-      seen.some((s) => s.startsWith('join:')),
-      'gossip broadcasts to all',
+      seen.some((s) => s.startsWith('crdt:')),
+      'gossip (a CRDT delta) broadcasts to all',
     );
     a.stop();
     b.stop();

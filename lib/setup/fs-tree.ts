@@ -102,12 +102,18 @@ async function readDirRecursive(dir: string, filter: (name: string) => boolean):
   const resolvedPaths = await Promise.all(
     candidates.map(async (dirent) => {
       const fullPath = path.join(dirent.parentPath, dirent.name);
-      if (dirent.isFile()) return fullPath;
-      // Symlink — follow it and verify it resolves to a file, not a directory or a broken target.
-      // A dangling link throws here, and "not a file to bundle" is the answer either way.
-      return await Task(() => fs.stat(fullPath))
-        .map((entry) => (entry.isFile() ? fullPath : null))
-        .recover(() => null);
+      // Trust an lstat, NOT the readdir dirent type: Windows reports a DANGLING file-symlink's
+      // dirent as isFile(), so the old `if (dirent.isFile()) return` fast path slipped a broken
+      // entry point into esbuild ("Could not resolve") and hung the watch. lstat flags the symlink
+      // on every platform; realpath then resolves the whole chain and THROWS on a broken target —
+      // which is why the recover is load-bearing, not defensive: a dangling link, a broken chain
+      // and an entry that vanished are all "not a file to bundle".
+      return await Task(async () => {
+        const info = await fs.lstat(fullPath);
+        if (!info.isSymbolicLink()) return info.isFile() ? fullPath : null;
+        await fs.realpath(fullPath);
+        return (await fs.stat(fullPath)).isFile() ? fullPath : null;
+      }).recover(() => null);
     }),
   );
 

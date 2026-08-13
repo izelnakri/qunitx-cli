@@ -43,6 +43,30 @@ console.log(
   (await revived.history()).map((m) => `${m.user}: ${m.text}`),
 );
 
+// Bring the crashed host back so there are two hosts to hand off BETWEEN.
+if (!hostA) hostA = startRoomHost('host-a@chat', hub.transport(), store);
+else hostB = startRoomHost('host-b@chat', hub.transport(), store);
+await settle();
+await revived.say('ada', 'anyone around for a graceful drain demo?');
+const liveOwner = gw1.whereis('rooms', 'lobby');
+console.log(
+  `\n--- ${liveOwner} DRAINS gracefully (planned) — it hands #lobby off BEFORE leaving ---`,
+);
+const draining = liveOwner === 'host-a@chat' ? hostA : hostB;
+await draining.drain();
+if (liveOwner === 'host-a@chat') hostA = null as never;
+else hostB = null as never;
+await settle(); // registry gossip settles on the successor
+
+// No client reconnect, no cold start: the room is ALREADY registered on the successor, pre-warmed
+// and rehydrated by the drain. whereis points at the new host and history is intact.
+const newOwner = gw1.whereis('rooms', 'lobby');
+console.log('#lobby now lives on:', newOwner, '(pre-warmed by the handoff — no cold miss)');
+console.log(
+  'history intact after handoff:',
+  (await chat(gw2, 'lobby').history()).map((m) => `${m.user}: ${m.text}`),
+);
+
 if (hostA) await hostA.stop();
 if (hostB) await hostB.stop();
 gw1.stop();

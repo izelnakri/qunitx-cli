@@ -12,8 +12,8 @@
  *
  * ```ts
  * const hub = memoryHub();
- * const a = start('a@memory', hub.transport());
- * const b = start('b@memory', hub.transport());
+ * const a = Node.start('a@memory', hub.transport());
+ * const b = Node.start('b@memory', hub.transport());
  * b.handle('math.add', (payload) => (payload as number[]).reduce((x, y) => x + y, 0));
  * await a.call('b@memory', 'math.add', [20, 22]); // 42 — across "nodes"
  * a.stop();
@@ -23,12 +23,34 @@
 import {
   Failure,
   isFailure,
+  observed,
   toJSON,
   fromJSON,
   type SerializedFailure,
   type Any as AnyFailure,
 } from '../result/failure.ts';
 import { Task } from '../task/task.ts';
+import { ORSet, type CrdtState, type CausalContext } from './crdt.ts';
+import { execute as emit } from '../telemetry/telemetry.ts';
+import type { Priority } from './scheduler.ts';
+
+/**
+ * A distributed trace context — OpenTelemetry's shape, sized for this wire. Every `call`/`cast`
+ * carries one: `id` names the whole request tree, `span` this hop, `parent` the hop that caused
+ * it. A handler's nested calls continue the trace automatically (same `id`, `parent` = the
+ * incoming span), so a metrics sink attached to the `['node','call','stop']` telemetry event can
+ * reassemble cross-node request trees without any app code.
+ */
+export interface Trace {
+  /** The whole request tree — constant across every hop. */
+  id: string;
+  /** This hop. */
+  span: string;
+  /** The hop that caused this one (absent at the root). */
+  parent?: string;
+}
+
+const newSpan = (): string => crypto.randomUUID().slice(0, 8);
 
 /** One frame on the wire. Payloads must be structured-clone-safe; Failures ride `$failure`. */
 export type Frame = {
@@ -39,13 +61,29 @@ export type Frame = {
     | 'leave'
     | 'register'
     | 'unregister'
+    | 'crdt'
+    | 'sync'
     | 'cast'
     | 'call'
     | 'reply'
     | 'ping'
-    | 'pong';
+    | 'pong'
+    | 'link'
+    | 'unitexit'
+    | 'challenge'
+    | 'auth';
   from: string;
   to?: string;
+  /** On a `challenge`/`auth` frame: the per-connection nonce (transport-level cluster-join auth). */
+  nonce?: string;
+  /** On an `auth` frame: HMAC-SHA-256(secret, nonce) — the cookie proof (see auth.ts). */
+  digest?: string;
+  /** On a `hello`: whether the sender is a HIDDEN node — attached but not a full member. */
+  hidden?: boolean;
+  /** On a `link`/`unitexit` frame: the target unit's name on the RECEIVING node. */
+  unit?: string;
+  /** On a `link`/`unitexit` frame: the peer unit's name on the SENDING node (`from`). */
+  peer?: string;
   subject?: string;
   /** Process-group name for join/leave frames. */
   group?: string;
@@ -56,6 +94,27 @@ export type Frame = {
   ref?: number;
   payload?: unknown;
   $failure?: SerializedFailure;
+  /** CRDT payload for 'crdt' frames (a delta or full state). */
+  crdt?: CrdtState;
+  /** Whether a 'crdt' frame carries FULL state (anti-entropy) vs a one-op delta. */
+  full?: boolean;
+  /** A batch of catch-up deltas on a 'crdt' anti-entropy reply — applied in order via mergeDelta. */
+  deltas?: CrdtState[];
+  /** On a 'sync': the last seq of the RECIPIENT's deltas the sender has applied (its catch-up cursor). */
+  want?: number;
+  /** On a 'crdt' anti-entropy reply: the sender's seq this payload brings the receiver up to. */
+  upto?: number;
+  /** A node's causal context for a 'sync' request — the peer replies with what's beyond it. */
+  cc?: CausalContext;
+  /** The distributed trace this call/cast belongs to — see {@link Trace}. */
+  trace?: Trace;
+  /** Scheduling priority carried by a `call`/`cast` — the receiving unit's pump drains this message
+   *  at (at least) this priority. Absent = the unit's own base priority. */
+  priority?: Priority;
+  /** Transport-internal epidemic-gossip envelope (mesh `gossipFanout`): dedup id + hops left. */
+  gossip?: { id: string; ttl: number };
+  /** Absolute epoch-ms when the ROOT caller gives up — nested calls inherit and never outlive it. */
+  deadline?: number;
 };
 
 /**
@@ -81,12 +140,19 @@ export interface Transport {
 }
 
 /**
+ * Which peers {@link NodeHandle.list} returns — Erlang's `Node.list/1` node types. `visible`
+ * (default) is connected non-hidden members; `hidden` the attached-but-not-member nodes; `connected`
+ * both; `this` just self; `known` self plus every connected peer.
+ */
+export type NodeListKind = 'visible' | 'hidden' | 'connected' | 'this' | 'known';
+
+/**
  * A running node — Elixir's Node functions as methods, plus the call/cast/handle trio that
  * replaces remote spawns.
  *
  * ```ts
  * const hub = memoryHub();
- * const node = start('worker@memory', hub.transport());
+ * const node = Node.start('worker@memory', hub.transport());
  * node.self(); // 'worker@memory'
  * node.alive(); // true
  * node.stop();
@@ -98,8 +164,19 @@ export interface NodeHandle {
   self(): string;
   /** Whether the node participates in the cluster — Elixir's `Node.alive?/0`. */
   alive(): boolean;
-  /** Peers seen via hello and not yet said bye — Elixir's `Node.list/0`. */
-  list(): string[];
+  /**
+   * Resolves once this node has merged a peer's full state (the hello handshake), or after a short
+   * grace window if no peer answers. A node REUSING a name (a respawned worker pool slot) must await
+   * this before it mints its own CRDT dots — otherwise a fresh dot collides with the dead
+   * incarnation's and its registrations are silently dropped as already-seen.
+   */
+  synced(): Promise<void>;
+  /**
+   * Connected peers — Erlang's `Node.list/0,1`. Defaults to `visible` (non-hidden members); pass a
+   * {@link NodeListKind} for `hidden` / `connected` / `this` / `known`. Excludes peers that said bye
+   * or went nodedown.
+   */
+  list(kind?: NodeListKind): string[];
   /** Joins a process group — Elixir's `:pg.join/2` (AP-style: membership gossips, prunes on bye). */
   join(group: string): void;
   /** Leaves a process group. */
@@ -124,32 +201,103 @@ export interface NodeHandle {
   whereis(registry: string, key: string): string | null;
   /** Every registered key in `registry` — `Registry.keys`. */
   registered(registry: string): string[];
+  /**
+   * Add an arbitrary `fact` to the cluster-wide convergent set and gossip it — the low-level
+   * primitive that `join`/`register` are conveniences over. A fact converges under frame loss and
+   * partition heal (same CRDT + anti-entropy), so higher layers like Presence get distribution for
+   * free. The fact string carries whatever structure the caller wants (topic, key, owner, meta).
+   */
+  putFact(fact: string): void;
+  /** Remove a replicated `fact` (observed-remove) and gossip the removal. */
+  dropFact(fact: string): void;
+  /**
+   * DISTRIBUTED-LINK plumbing (used by `genServer`; rarely called directly). A unit registers its
+   * exit-delivery under its `name` so a remote link can reach it; `unlink` runs on the unit's death.
+   */
+  registerLinkTarget(name: string, deliver: (from: string, reason: AnyFailure) => void): () => void;
+  /**
+   * Link a LOCAL unit to a REMOTE one — Erlang's `link/1` across the wire. An exit on either side (or
+   * `remoteNode` going nodedown) signals the other. Symmetric: the far node records the reverse link.
+   */
+  linkUnit(localName: string, remoteNode: string, remoteName: string): void;
+  /** A local unit died — signal its remote linkers (called by `genServer` on `down`). */
+  notifyRemoteLinks(localName: string, reason: AnyFailure): void;
+  /**
+   * Every replicated fact currently present with `prefix` — RAW, with no liveness filter: the
+   * caller decides which segment is the owning node and intersects with {@link NodeHandle.list} /
+   * {@link NodeHandle.self} to hide facts owned by a downed peer (as the registry does internally).
+   */
+  facts(prefix: string): string[];
   /** Round-trip liveness — Elixir's `Node.ping/1`: `'pong'` or, after `timeoutMs`, `'pang'`. */
   ping(name: string, timeoutMs?: number): Task<'pong' | 'pang', never>;
   /** Fires `fn(name)` when a peer says bye or its transport drops — Elixir's `Node.monitor/2`. Returns the un-monitor. */
   monitor(fn: (name: string) => void): () => void;
-  /** Registers the handler for a subject; the reply (value or Failure) travels back to callers. */
-  handle(subject: string, handler: (payload: unknown, from: string) => unknown): void;
+  /**
+   * Reports every peer coming UP and going DOWN — Erlang's `:net_kernel.monitor_nodes(true)`
+   * (`{nodeup, node}` / `{nodedown, node}`). Unlike {@link NodeHandle.monitor} (down only), this
+   * also fires on a first hello and on a reconnect, so membership-driven work — rebalancing a
+   * key range onto a newly-joined host, warming a cache — can react to scale-up too. Returns the
+   * un-monitor.
+   */
+  monitorNodes(
+    fn: (event: { node: string; status: 'up' | 'down' }) => void,
+    options?: { nodeType?: 'visible' | 'hidden' | 'all' },
+  ): () => void;
+  /** Registers the handler for a subject; the reply (value or Failure) travels back to callers.
+   *  `meta.trace` is the incoming {@link Trace} and `meta.deadline` the root caller's absolute
+   *  budget — nested calls in the SYNCHRONOUS handler body continue both automatically (a nested
+   *  call's timeout is CAPPED at the remaining budget, gRPC-style, so doomed downstream work
+   *  stops when the root gives up); async continuations wrap nested calls in
+   *  {@link NodeHandle.withTrace}, passing the whole `meta`. */
+  handle(
+    subject: string,
+    handler: (
+      payload: unknown,
+      from: string,
+      meta?: { trace?: Trace; deadline?: number; priority?: Priority },
+    ) => unknown,
+  ): void;
+  /** The trace of the message currently being handled (synchronous window), if any. */
+  trace(): Trace | undefined;
+  /** Runs `fn` with the given context ambient — a bare {@link Trace} or a handler's whole `meta`
+   *  (trace + deadline) — so nested `call`/`cast` continue it in async handler bodies. */
+  withTrace<T>(context: Trace | { trace?: Trace; deadline?: number } | undefined, fn: () => T): T;
   /** Request/response with a deadline. `to` may be a node name, `'group:<name>'` (round-robin
    *  the members — a service), or `'via:<registry>/<key>'` (route to the ONE owner of a key —
    *  an entity). Empty group → declared `NoGroupMembers`; unowned key → `NotRegistered`.
-   *  Declared failures cross intact. */
+   *  Declared failures cross intact. The send is eager (in flight before the returned Task is
+   *  awaited), but the Task is also **retryable**: `.retry(n)` re-runs the whole round-trip —
+   *  re-resolving `to` (a group retry can land on a different member) and re-checking the
+   *  remaining deadline — so it re-sends, not just re-waits. Retry only calls the caller wants,
+   *  since a retried non-idempotent write executes twice. */
   call<T = unknown>(
     to: string,
     subject: string,
     payload?: unknown,
-    timeoutMs?: number,
+    opts?: number | { timeoutMs?: number; priority?: Priority },
   ): Task<T, AnyFailure>;
-  /** Fire-and-forget message — no reply, no deadline. */
-  cast(to: string, subject: string, payload?: unknown): void;
+  /** Fire-and-forget message — no reply, no deadline. `opts.priority` elevates the receiving unit's
+   *  pump for this message (see {@link Priority}). */
+  cast(to: string, subject: string, payload?: unknown, opts?: { priority?: Priority }): void;
   /** Says bye to peers and closes the transport — Elixir's `Node.stop/0`. */
   stop(): void;
   /**
    * Registers a live introspection source under `name` — what `sys.node.info` (and thus an
-   * observer dashboard) reports. `serve()` calls this for you; call it yourself to surface
+   * observer dashboard) reports. `genServer()` calls this for you; call it yourself to surface
    * any custom unit. Returns the un-register.
    */
   inspect(name: string, report: () => Record<string, unknown>): () => void;
+  /**
+   * The names of the units served LOCALLY on this node right now — the local process table (Elixir's
+   * `Process.registered/0`). A unit joins on {@link inspect} and leaves when its un-register runs
+   * (`genServer` does this on death), so a name here means it is alive on THIS node.
+   */
+  units(): string[];
+  /**
+   * The live introspection report for a LOCAL unit (`{ version, mailboxDepth, alive, … }`), or
+   * `undefined` if no unit named `name` is served here — the local `Process.whereis/1` lookup.
+   */
+  unit(name: string): Record<string, unknown> | undefined;
 }
 
 /**
@@ -160,7 +308,7 @@ export interface NodeHandle {
  *
  * ```ts
  * const hub = memoryHub();
- * const watcher = start('watcher@memory', hub.transport());
+ * const watcher = Node.start('watcher@memory', hub.transport());
  * const downs: string[] = [];
  * await heartbeat(watcher, 'ghost@memory', { everyMs: 5, missAfter: 2, onDown: (p) => void downs.push(p) })(
  *   new AbortController().signal,
@@ -200,8 +348,8 @@ export function heartbeat(
  *
  * ```ts
  * const hub = memoryHub();
- * const left = start('left@memory', hub.transport());
- * const right = start('right@memory', hub.transport());
+ * const left = Node.start('left@memory', hub.transport());
+ * const right = Node.start('right@memory', hub.transport());
  * left.list(); // ['right@memory'] — hellos exchanged on start
  * right.list(); // ['left@memory']
  * left.stop();
@@ -211,54 +359,223 @@ export function heartbeat(
 export function start(
   name: string,
   transport: Transport,
-  options: { tick?: { everyMs?: number; missAfter?: number } | false } = {},
+  options: {
+    tick?: { everyMs?: number; missAfter?: number } | false;
+    antiEntropyMs?: number | false;
+    /**
+     * Start as a HIDDEN node — Erlang's `-hidden`. It connects and can observe the cluster
+     * (`sys.node.info`, whereis, CRDT state), but peers keep it out of their default `list()`, so it
+     * is excluded from rendezvous placement and `:global` — an observer/tooling node that attaches
+     * without becoming a member. It still participates in process groups (`:pg`, like Erlang).
+     */
+    hidden?: boolean;
+    /**
+     * Per-message authorization — the application-level gate above the transport's cluster-join auth
+     * (see `wsTransport`'s `secret`). Runs before every inbound `call`/`cast` handler; return `false`
+     * to deny. A denied `call` is answered with a declared `Unauthorized` failure; a denied `cast` is
+     * dropped. Wire it to a capability/role check on `(subject, from, payload)`.
+     */
+    authorize?: (request: { subject: string; from: string; payload: unknown }) => boolean;
+  } = {},
 ): NodeHandle {
-  const peers = new Set<string>();
-  const handlers = new Map<string, (payload: unknown, from: string) => unknown>();
+  const hidden = options.hidden ?? false;
+  const authorize = options.authorize;
+  const peers = new Map<string, { hidden: boolean }>(); // name -> its visibility (Erlang's node table)
+  const handlers = new Map<
+    string,
+    (payload: unknown, from: string, meta?: { trace?: Trace; deadline?: number }) => unknown
+  >();
   const monitors = new Set<(name: string) => void>();
+  type NodeListener = {
+    fn: (event: { node: string; status: 'up' | 'down' }) => void;
+    nodeType: 'visible' | 'hidden' | 'all';
+  };
+  const nodeListeners = new Set<NodeListener>();
+  // Fire nodeup/nodedown only to listeners whose node_type matches the peer's visibility — Erlang's
+  // `net_kernel:monitor_nodes(Pid, [{node_type, visible|hidden|all}])`; the default is visible-only.
+  const notifyNode = (peer: string, peerHidden: boolean, status: 'up' | 'down'): void => {
+    for (const listener of nodeListeners)
+      if (listener.nodeType === 'all' || (listener.nodeType === 'hidden') === peerHidden)
+        listener.fn({ node: peer, status });
+  };
   const pending = new Map<number, (frame: Frame) => void>();
-  const groups = new Map<string, Set<string>>(); // group -> members (peers and self)
+  // Distributed links: a local unit registers its exit-delivery by name; `remoteLinks` maps a local
+  // unit to the remote units it is linked to (`node<NUL>unit`), so a unit death or a nodedown signals
+  // the far side. In-process links stay in gen-server's exitPorts; THIS is the cross-wire half.
+  const LINKSEP = String.fromCharCode(0);
+  const linkTargets = new Map<string, (from: string, reason: AnyFailure) => void>();
+  const remoteLinks = new Map<string, Set<string>>();
+  const addRemoteLink = (localUnit: string, remoteNode: string, remoteUnit: string): void => {
+    let set = remoteLinks.get(localUnit);
+    if (!set) remoteLinks.set(localUnit, (set = new Set()));
+    set.add(`${remoteNode}${LINKSEP}${remoteUnit}`);
+  };
+  // Membership + registry live in ONE convergent CRDT (ORSet of facts) — a dropped
+  // join/register self-heals via anti-entropy, and a healed partition reconciles.
+  const crdt = new ORSet(name);
+  const appliedFrom = new Map<string, number>(); // peer -> last seq of ITS deltas I have applied
+  // First-sync gate: a node REUSING a name (a respawned worker) must merge the cluster's context —
+  // learning its own high-water dot — BEFORE it mints a fresh dot, or that dot collides with the dead
+  // incarnation's and its registrations are silently dropped. `synced()` resolves on the first
+  // full-state a peer hands back (hello anti-entropy), or a timeout if none comes (no peers / fresh).
+  let firstSyncDone = false;
+  let onFirstSync = (): void => {};
+  const syncedPromise = new Promise<void>((resolve) => (onFirstSync = resolve));
+  const markSynced = (): void => {
+    if (firstSyncDone) return;
+    firstSyncDone = true;
+    onFirstSync();
+  };
   const myGroups = new Set<string>();
   const roundRobin = new Map<string, number>();
-  // Registry: registry -> (key -> owner node). Unique key = single owner, conflicts resolved
-  // deterministically (smallest node name) so every node converges. myKeys = what I own.
-  const registries = new Map<string, Map<string, string>>();
-  const myKeys = new Set<string>(); // "registry\u0000key"
+  const myKeys = new Set<string>(); // "registry\u0000key" — what I own
   const conflictHandlers = new Map<string, () => void>(); // rk -> fire when superseded
-  const claim = (registry: string, key: string, owner: string): void => {
-    if (!registries.has(registry)) registries.set(registry, new Map());
-    const table = registries.get(registry)!;
-    const held = table.get(key);
-    // Deterministic tiebreak: the smaller node name wins, so a race converges everywhere.
-    if (held === undefined || owner < held) table.set(key, owner);
+  const gfact = (group: string, member: string) => `g\u001f${group}\u001f${member}`;
+  const rfact = (registry: string, key: string, owner: string) =>
+    `r\u001f${registry}\u001f${key}\u001f${owner}`;
+
+  // Liveness (`peers`) is SEPARATE from registrations (`crdt`): reads intersect them, so a
+  // nodedown HIDES a peer's entries (routing fails over) without touching the CRDT, and they
+  // reappear if it returns — no flapping, no lost registrations on a false nodedown.
+  const isLive = (node: string) => node === name || peers.has(node);
+  // SECONDARY INDEXES over the CRDT facts, so routing is O(matching entries) — not O(all facts).
+  // Every route (`group:`/`via:`), `whereis`, and conflict check reads these instead of scanning
+  // the whole replicated fact set. Kept exactly in step with the CRDT by subscribing to its
+  // presence transitions — local add/remove AND remote merge/delta all flow through `crdt.onChange`.
+  const US = String.fromCharCode(0x1f);
+  const groupIndex = new Map<string, Set<string>>(); // group -> members
+  const registryIndex = new Map<string, Set<string>>(); // `registry${US}key` -> owners
+  const indexFact = (fact: string, present: boolean): void => {
+    if (fact.startsWith(`g${US}`)) {
+      const rest = fact.slice(2);
+      const sep = rest.lastIndexOf(US); // member (a node name) is the LAST segment; the group may
+      const group = rest.slice(0, sep); // itself contain U+001F (e.g. pubsub's `pubsub<topic>`)
+      const member = rest.slice(sep + 1);
+      if (present) {
+        let members = groupIndex.get(group);
+        if (!members) groupIndex.set(group, (members = new Set()));
+        members.add(member);
+      } else {
+        const members = groupIndex.get(group);
+        if (members) {
+          members.delete(member);
+          if (members.size === 0) {
+            groupIndex.delete(group);
+            roundRobin.delete(group); // a group emptied — drop its round-robin cursor (no leak)
+          }
+        }
+      }
+    } else if (fact.startsWith(`r${US}`)) {
+      const rest = fact.slice(2);
+      const firstSep = rest.indexOf(US);
+      const afterReg = rest.slice(firstSep + 1);
+      const lastSep = afterReg.lastIndexOf(US);
+      const rk = `${rest.slice(0, firstSep)}${US}${afterReg.slice(0, lastSep)}`;
+      const owner = afterReg.slice(lastSep + 1);
+      if (present) {
+        let owners = registryIndex.get(rk);
+        if (!owners) registryIndex.set(rk, (owners = new Set()));
+        owners.add(owner);
+      } else {
+        const owners = registryIndex.get(rk);
+        if (owners) {
+          owners.delete(owner);
+          if (owners.size === 0) registryIndex.delete(rk);
+        }
+      }
+    }
+    // Other fact prefixes (e.g. Presence's putFact) aren't indexed here — they read via node.facts().
   };
-  const release = (registry: string, key: string, owner: string): void => {
-    const table = registries.get(registry);
-    if (table?.get(key) === owner) table.delete(key);
+  crdt.onChange((added, removed) => {
+    for (const fact of added) indexFact(fact, true);
+    for (const fact of removed) indexFact(fact, false);
+  });
+  const groupMembersOf = (group: string): string[] => {
+    const members = groupIndex.get(group);
+    return members ? [...members].filter(isLive) : [];
   };
-  const pruneOwner = (owner: string): void => {
-    for (const table of registries.values())
-      for (const [key, held] of [...table]) if (held === owner) table.delete(key);
+  const allGroups = (): Record<string, string[]> => {
+    const out: Record<string, string[]> = {};
+    for (const [group, members] of groupIndex) {
+      const live = [...members].filter(isLive);
+      if (live.length > 0) out[group] = live;
+    }
+    return out;
+  };
+  const ownersOf = (registry: string, key: string): string[] => {
+    const owners = registryIndex.get(`${registry}${US}${key}`);
+    return owners ? [...owners].filter(isLive) : [];
   };
 
-  // A peer is gone (a polite bye, a dropped socket, OR a net-tick timeout): prune it from
-  // every group and registry and fire monitors — Erlang's nodedown, one place.
+  // Broadcast a one-op CRDT delta (from crdt.add/remove) to every peer — immediate propagation;
+  // anti-entropy (full state) backstops any that's dropped.
+  const broadcastDelta = (delta: CrdtState): void =>
+    transport.send({ kind: 'crdt', from: name, crdt: delta, full: false });
+
+  // After any merge: a key I own may now have a smaller LIVE owner — fire its conflict handler
+  // (drives genServer({via}) self-terminate). A partition that elected two owners heals to one.
+  const checkConflicts = (): void => {
+    for (const rk of [...myKeys]) {
+      const [registry, key] = rk.split('\u0000');
+      const owners = ownersOf(registry, key);
+      const winner = owners.length ? owners.reduce((a, b) => (a < b ? a : b)) : name;
+      if (winner !== name) {
+        myKeys.delete(rk);
+        const onConflict = conflictHandlers.get(rk);
+        conflictHandlers.delete(rk);
+        onConflict?.();
+      }
+    }
+  };
+
+  // A peer is gone (bye, dropped socket, or net-tick timeout): drop it from liveness — its
+  // entries are hidden at once and monitors fire; the CRDT is left intact so it recovers
+  // cleanly if it returns.
   const declareDown = (peer: string): void => {
-    for (const group of [...groups.keys()]) memberLeft(group, peer);
-    pruneOwner(peer);
-    if (peers.delete(peer)) for (const fn of monitors) fn(peer);
+    const wasHidden = peers.get(peer)?.hidden ?? false; // capture visibility before we drop it
+    if (peers.delete(peer)) {
+      for (const fn of monitors) fn(peer);
+      appliedFrom.delete(peer); // a returned/restarted peer re-syncs from its current seq
+      notifyNode(peer, wasHidden, 'down'); // Erlang nodedown, node_type-filtered
+      // A distributed link to a unit on the dead peer fires as if that unit exited (Erlang: nodedown
+      // breaks remote links). Synthesize the exit for each local unit linked across.
+      const prefix = `${peer}${LINKSEP}`;
+      for (const [localUnit, set] of remoteLinks) {
+        for (const key of [...set]) {
+          if (!key.startsWith(prefix)) continue;
+          set.delete(key);
+          linkTargets.get(localUnit)?.(
+            `${key.slice(prefix.length)}@${peer}`,
+            new Failure('NodeDown', `${peer} went down`, { node: peer }),
+          );
+        }
+        if (set.size === 0) remoteLinks.delete(localUnit);
+      }
+    }
   };
   const inspectors = new Map<string, () => Record<string, unknown>>();
   let ref = 0;
   let alive = true;
 
-  const memberJoined = (group: string, member: string): void => {
-    if (!groups.has(group)) groups.set(group, new Set());
-    groups.get(group)!.add(member);
-  };
-  const memberLeft = (group: string, member: string): void => {
-    groups.get(group)?.delete(member);
-    if (groups.get(group)?.size === 0) groups.delete(group);
+  // The context of the message being handled RIGHT NOW (synchronous window) — nested call/cast
+  // inherit it: the trace threads one correlation id across every hop of a request tree, and the
+  // deadline caps every nested timeout so downstream work never outlives the root caller.
+  let ambient: { trace?: Trace; deadline?: number } | undefined;
+  const childTrace = (): Trace =>
+    ambient?.trace
+      ? { id: ambient.trace.id, span: newSpan(), parent: ambient.trace.span }
+      : { id: crypto.randomUUID(), span: newSpan() };
+  const handling = <R>(
+    context: { trace?: Trace; deadline?: number } | undefined,
+    fn: () => R,
+  ): R => {
+    const prior = ambient;
+    ambient = context;
+    try {
+      return fn();
+    } finally {
+      ambient = prior;
+    }
   };
 
   const encode = (value: unknown): Pick<Frame, 'payload' | '$failure'> =>
@@ -277,33 +594,65 @@ export function start(
       return;
     if (frame.kind === 'hello') {
       if (!peers.has(frame.from)) {
-        peers.add(frame.from);
-        transport.send({ kind: 'hello', from: name, to: frame.from }); // answer so both sides list()
-        // Gossip my group memberships AND registry keys to the newcomer — a late joiner learns
-        // the whole topology from the hello answer.
-        for (const group of myGroups)
-          transport.send({ kind: 'join', from: name, to: frame.from, group });
-        for (const rk of myKeys) {
-          const [registry, key] = rk.split('\u0000');
-          transport.send({ kind: 'register', from: name, to: frame.from, registry, key });
-        }
+        const peerHidden = frame.hidden ?? false;
+        peers.set(frame.from, { hidden: peerHidden });
+        notifyNode(frame.from, peerHidden, 'up'); // Erlang nodeup, node_type-filtered
+        transport.send({ kind: 'hello', from: name, to: frame.from, hidden }); // answer + my own visibility
+        // Hand the newcomer my full CRDT state — anti-entropy on join, so it converges at once.
+        transport.send({
+          kind: 'crdt',
+          from: name,
+          to: frame.from,
+          crdt: crdt.state(),
+          full: true,
+          upto: crdt.seq(),
+        });
       }
-    } else if (frame.kind === 'join') {
-      memberJoined(frame.group!, frame.from);
-    } else if (frame.kind === 'leave') {
-      memberLeft(frame.group!, frame.from);
-    } else if (frame.kind === 'register') {
-      const rk = `${frame.registry}\u0000${frame.key}`;
-      // I am superseded if I hold this key and a SMALLER-named node now claims it.
-      if (myKeys.has(rk) && frame.from < name) {
-        myKeys.delete(rk);
-        const onConflict = conflictHandlers.get(rk);
-        conflictHandlers.delete(rk);
-        onConflict?.(); // the loser tears down its unit
-      }
-      claim(frame.registry!, frame.key!, frame.from);
-    } else if (frame.kind === 'unregister') {
-      release(frame.registry!, frame.key!, frame.from);
+    } else if (frame.kind === 'link') {
+      // A remote unit `frame.peer@frame.from` links to my local unit `frame.unit`. Record the reverse
+      // link if the unit exists; otherwise tell them it is already down (noproc), so their link fires.
+      const local = frame.unit!;
+      if (linkTargets.has(local)) addRemoteLink(local, frame.from, frame.peer!);
+      else
+        dispatch({
+          kind: 'unitexit',
+          from: name,
+          to: frame.from,
+          unit: frame.peer,
+          peer: local,
+          ...encode(new Failure('NoProc', `no unit ${local} on ${name}`, { unit: local })),
+        });
+    } else if (frame.kind === 'unitexit') {
+      // The remote unit `frame.peer@frame.from` exited — signal my local unit `frame.unit`.
+      const local = frame.unit!;
+      remoteLinks.get(local)?.delete(`${frame.from}${LINKSEP}${frame.peer}`);
+      linkTargets.get(local)?.(`${frame.peer}@${frame.from}`, decode(frame) as AnyFailure);
+    } else if (frame.kind === 'crdt') {
+      // A convergent update: a one-op delta (broadcast) or full state (anti-entropy / hello).
+      if (frame.deltas)
+        for (const d of frame.deltas) crdt.mergeDelta(d); // anti-entropy catch-up
+      else if (frame.full) {
+        crdt.merge(frame.crdt!);
+        markSynced(); // got the cluster's context (incl. my own high-water) — safe to mint dots
+      } else crdt.mergeDelta(frame.crdt!); // one-op broadcast
+      if (frame.upto !== undefined) appliedFrom.set(frame.from, frame.upto);
+      checkConflicts();
+    } else if (frame.kind === 'sync') {
+      // A peer asked what it is missing (its causal context) — reply with full state iff I know
+      // anything beyond it (otherwise the sync is a no-op).
+      const catchUp = crdt.deltasSince(frame.want ?? 0);
+      if (catchUp === null)
+        // the peer is behind my delta buffer — fall back to full state
+        dispatch({
+          kind: 'crdt',
+          from: name,
+          to: frame.from,
+          crdt: crdt.state(),
+          full: true,
+          upto: crdt.seq(),
+        });
+      else if (catchUp.length > 0)
+        dispatch({ kind: 'crdt', from: name, to: frame.from, deltas: catchUp, upto: crdt.seq() });
     } else if (frame.kind === 'bye') {
       declareDown(frame.from);
     } else if (frame.kind === 'ping') {
@@ -311,17 +660,72 @@ export function start(
     } else if (frame.kind === 'pong' || frame.kind === 'reply') {
       pending.get(frame.ref!)?.(frame);
     } else if (frame.kind === 'cast') {
-      handlers.get(frame.subject!)?.(decode(frame), frame.from);
+      emit(
+        ['node', 'handle'],
+        {},
+        { subject: frame.subject, from: frame.from, trace: frame.trace },
+      );
+      const meta = { trace: frame.trace, deadline: frame.deadline, priority: frame.priority };
+      if (
+        authorize &&
+        !authorize({ subject: frame.subject!, from: frame.from, payload: decode(frame) })
+      )
+        return; // denied cast — silently dropped, like a message to a process that isn't listening
+      handling(meta, () => handlers.get(frame.subject!)?.(decode(frame), frame.from, meta));
     } else if (frame.kind === 'call') {
+      // Shed doomed work: a call that arrives PAST its root deadline is answered with the
+      // failure the caller already concluded — the handler never runs (gRPC's deadline shed).
+      if (frame.deadline !== undefined && Date.now() > frame.deadline) {
+        return void dispatch({
+          kind: 'reply',
+          from: name,
+          to: frame.from,
+          ref: frame.ref,
+          ...encode(
+            new Failure('DeadlineExceeded', `${frame.subject} arrived past its deadline`, {
+              subject: frame.subject,
+            }),
+          ),
+        });
+      }
+      if (
+        authorize &&
+        !authorize({ subject: frame.subject!, from: frame.from, payload: decode(frame) })
+      ) {
+        return void dispatch({
+          kind: 'reply',
+          from: name,
+          to: frame.from,
+          ref: frame.ref,
+          ...encode(
+            new Failure('Unauthorized', `${frame.from} may not call ${frame.subject}`, {
+              subject: frame.subject,
+              from: frame.from,
+            }),
+          ),
+        });
+      }
       const handler = handlers.get(frame.subject!);
+      emit(
+        ['node', 'handle'],
+        {},
+        { subject: frame.subject, from: frame.from, trace: frame.trace },
+      );
+      const meta = { trace: frame.trace, deadline: frame.deadline, priority: frame.priority };
       const outcome = handler
         ? Promise.resolve()
-            .then(() => handler(decode(frame), frame.from))
-            .catch((thrown: unknown) =>
-              isFailure(thrown)
-                ? thrown
-                : new Failure('RemoteCrash', String(thrown), { subject: frame.subject }),
-            )
+            .then(() => handling(meta, () => handler(decode(frame), frame.from, meta)))
+            .catch((thrown: unknown) => {
+              // A DECLARED failure a handler throws is routed to the observation seam HERE, at its
+              // origin — so a bare `throw SomeFailure()` reaches Failure.onObserved / a trace span
+              // without the handler having to `.result()` purely for observability. No-op unless an
+              // observer is installed; a bug (non-Failure throw) becomes RemoteCrash, unobserved.
+              if (isFailure(thrown)) {
+                observed(thrown);
+                return thrown;
+              }
+              return new Failure('RemoteCrash', String(thrown), { subject: frame.subject });
+            })
         : Promise.resolve(
             new Failure('NoHandler', `no handler for ${frame.subject} on ${name}`, {
               subject: frame.subject,
@@ -340,14 +744,19 @@ export function start(
     }
   };
   transport.onFrame((frame) => receive(frame));
-  transport.send({ kind: 'hello', from: name });
+  transport.send({ kind: 'hello', from: name, hidden });
+  // If no peer answers with state within the grace window (no cluster, or a whole-cluster restart
+  // where every vv is fresh anyway), unblock `synced()` so a waiting join doesn't hang.
+  const syncGraceTimer = setTimeout(markSynced, 1000);
+  (syncGraceTimer as { unref?: () => void }).unref?.();
 
   // The observer protocol — one subject any node (or a browser dashboard node) can call to
   // read this node's live state. Erlang's :observer, reduced to data over the same wire.
   handlers.set('sys.node.info', () => ({
     name,
-    peers: [...peers],
-    groups: Object.fromEntries([...groups].map(([g, m]) => [g, [...m]])),
+    peers: [...peers.keys()],
+    groups: allGroups(),
+    registered: crdt.values().length,
     units: [...inspectors].map(([unit, report]) => ({ name: unit, ...report() })),
   }));
 
@@ -360,7 +769,7 @@ export function start(
   const resolveTarget = (to: string): { node: string } | { empty: 'group' | 'via' } => {
     if (to.startsWith('group:')) {
       const group = to.slice('group:'.length);
-      const members = [...(groups.get(group) ?? [])];
+      const members = groupMembersOf(group);
       if (members.length === 0) return { empty: 'group' };
       const at = roundRobin.get(group) ?? 0;
       roundRobin.set(group, at + 1);
@@ -370,20 +779,18 @@ export function start(
       const slash = to.indexOf('/', 'via:'.length);
       const registry = to.slice('via:'.length, slash);
       const key = to.slice(slash + 1);
-      const owner = registries.get(registry)?.get(key);
-      return owner === undefined ? { empty: 'via' } : { node: owner };
+      const owners = ownersOf(registry, key);
+      if (owners.length === 0) return { empty: 'via' };
+      return { node: owners.reduce((a, b) => (a < b ? a : b)) };
     }
     return { node: to };
   };
   // Erlang reconnects re-run the handshake; so do we: a transport that redials (wsTransport
   // with reconnect) re-announces this node, and peers answer hello, rebuilding list().
   transport.onReopen?.(() => {
-    transport.send({ kind: 'hello', from: name });
-    for (const group of myGroups) transport.send({ kind: 'join', from: name, group }); // re-announce
-    for (const rk of myKeys) {
-      const [registry, key] = rk.split('\u0000');
-      transport.send({ kind: 'register', from: name, registry, key });
-    }
+    transport.send({ kind: 'hello', from: name, hidden });
+    // Re-push my full CRDT state after a reconnect so peers re-learn my registrations.
+    transport.send({ kind: 'crdt', from: name, crdt: crdt.state(), full: true, upto: crdt.seq() });
   });
 
   const awaitRef = <R>(
@@ -421,34 +828,80 @@ export function start(
   const nodeHandle: NodeHandle = {
     self: () => name,
     alive: () => alive,
-    list: () => [...peers],
+    synced: () => syncedPromise,
+    list: (kind = 'visible') => {
+      if (kind === 'this') return [name];
+      if (kind === 'known') return [name, ...peers.keys()];
+      const entries = [...peers];
+      const wanted =
+        kind === 'connected'
+          ? entries
+          : entries.filter(([, v]) => (kind === 'hidden' ? v.hidden : !v.hidden));
+      return wanted.map(([n]) => n);
+    },
     join(group) {
       myGroups.add(group);
-      memberJoined(group, name);
-      transport.send({ kind: 'join', from: name, group });
+      broadcastDelta(crdt.add(gfact(group, name)));
     },
     leave(group) {
       myGroups.delete(group);
-      memberLeft(group, name);
-      transport.send({ kind: 'leave', from: name, group });
+      broadcastDelta(crdt.remove(gfact(group, name)));
     },
-    groupMembers: (group) => [...(groups.get(group) ?? [])],
+    groupMembers: (group) => groupMembersOf(group),
     register(registry, key, onConflict) {
-      const rk = `${registry} ${key}`;
+      const rk = `${registry}\u0000${key}`;
       myKeys.add(rk);
       if (onConflict) conflictHandlers.set(rk, onConflict);
-      claim(registry, key, name);
-      transport.send({ kind: 'register', from: name, registry, key });
+      broadcastDelta(crdt.add(rfact(registry, key, name)));
+      checkConflicts();
     },
     unregister(registry, key) {
-      const rk = `${registry} ${key}`;
+      const rk = `${registry}\u0000${key}`;
       myKeys.delete(rk);
       conflictHandlers.delete(rk);
-      release(registry, key, name);
-      transport.send({ kind: 'unregister', from: name, registry, key });
+      broadcastDelta(crdt.remove(rfact(registry, key, name)));
     },
-    whereis: (registry, key) => registries.get(registry)?.get(key) ?? null,
-    registered: (registry) => [...(registries.get(registry)?.keys() ?? [])],
+    whereis: (registry, key) => {
+      const owners = ownersOf(registry, key);
+      return owners.length ? owners.reduce((a, b) => (a < b ? a : b)) : null;
+    },
+    registered: (registry) => {
+      const prefix = `r\u001f${registry}\u001f`;
+      const keys = new Set(
+        crdt
+          .values()
+          .filter((f) => f.startsWith(prefix))
+          .map((f) => f.slice(prefix.length, f.indexOf('\u001f', prefix.length))),
+      );
+      return [...keys];
+    },
+    putFact: (fact) => broadcastDelta(crdt.add(fact)),
+    dropFact: (fact) => broadcastDelta(crdt.remove(fact)),
+    registerLinkTarget: (unitName, deliver) => {
+      linkTargets.set(unitName, deliver);
+      return () => linkTargets.delete(unitName);
+    },
+    linkUnit: (localName, remoteNode, remoteName) => {
+      addRemoteLink(localName, remoteNode, remoteName);
+      dispatch({ kind: 'link', from: name, to: remoteNode, unit: remoteName, peer: localName });
+    },
+    notifyRemoteLinks: (localName, reason) => {
+      const set = remoteLinks.get(localName);
+      if (!set) return;
+      for (const key of set) {
+        const sep = key.indexOf(LINKSEP);
+        dispatch({
+          kind: 'unitexit',
+          from: name,
+          to: key.slice(0, sep),
+          unit: key.slice(sep + 1),
+          peer: localName,
+          ...encode(reason),
+        });
+      }
+      remoteLinks.delete(localName);
+    },
+    facts: (prefix) => crdt.values().filter((f) => f.startsWith(prefix)),
     ping(peer, timeoutMs = 5000) {
       const task = awaitRef<'pong' | 'pang'>(
         timeoutMs,
@@ -462,68 +915,147 @@ export function start(
       monitors.add(fn);
       return () => monitors.delete(fn);
     },
+    monitorNodes(fn, options) {
+      const listener: NodeListener = { fn, nodeType: options?.nodeType ?? 'visible' };
+      nodeListeners.add(listener);
+      return () => nodeListeners.delete(listener);
+    },
     handle: (subject, handler) => void handlers.set(subject, handler),
-    call<T>(to: string, subject: string, payload?: unknown, timeoutMs = 5000) {
-      const task = awaitRef<T>(
-        timeoutMs,
-        (frame) => {
-          const value = decode(frame);
-          if (isFailure(value)) throw value; // a remote DECLARED failure stays declared here
-          return value as T;
-        },
-        () => {
-          throw new Failure(
-            'CallTimeout',
-            `call ${subject} to ${to} timed out after ${timeoutMs}ms`,
-            { to, subject },
+    call<T>(
+      to: string,
+      subject: string,
+      payload?: unknown,
+      opts?: number | { timeoutMs?: number; priority?: Priority },
+    ) {
+      // Backward-compatible: the 4th arg is still a bare timeout number, or an options object.
+      const timeoutMs = typeof opts === 'number' ? opts : (opts?.timeoutMs ?? 5000);
+      const priority = typeof opts === 'object' ? opts.priority : undefined;
+      const trace = childTrace();
+      const started = performance.now();
+      // gRPC-style budget: a nested call never outlives the ROOT caller. The effective timeout
+      // is capped at the ambient remaining budget; an already-spent budget fails fast, before
+      // the wire — no doomed downstream work.
+      const deadline =
+        ambient?.deadline !== undefined
+          ? Math.min(Date.now() + timeoutMs, ambient.deadline)
+          : Date.now() + timeoutMs;
+      // The recipe does the WHOLE round-trip — re-resolve the target, allocate a fresh ref, arm
+      // the deadline timer, register the reply waiter, dispatch — and RETURNS the deferred reply.
+      // Folding the send INTO the recipe (rather than firing it once, outside) is what makes
+      // .retry()/.restart() actually re-send: each attempt re-resolves `to` (so a group retry
+      // lands on a live member) and re-checks the REMAINING budget (so retries never outlive the
+      // deadline). `perform()` below keeps the send eager — the recipe runs, and dispatches, now.
+      const task = new Task<T, AnyFailure>(() => {
+        const { promise, resolve, reject } = Task.withResolvers<T>();
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) {
+          reject(
+            new Failure('DeadlineExceeded', `call ${subject} to ${to}: budget already spent`, {
+              to,
+              subject,
+            }),
           );
-        },
-      ) as Task<T, never> & { ref: number };
-      const target = resolveTarget(to);
-      if ('empty' in target) {
-        return new Task<T, AnyFailure>(() => {
-          throw target.empty === 'group'
-            ? new Failure('NoGroupMembers', `no members in ${to}`, { group: to })
-            : new Failure('NotRegistered', `no owner for ${to}`, { via: to });
+          return promise;
+        }
+        const target = resolveTarget(to);
+        if ('empty' in target) {
+          reject(
+            target.empty === 'group'
+              ? new Failure('NoGroupMembers', `no members in ${to}`, { group: to })
+              : new Failure('NotRegistered', `no owner for ${to}`, { via: to }),
+          );
+          return promise;
+        }
+        const id = ++ref;
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          emit(
+            ['node', 'call', 'timeout'],
+            { duration: performance.now() - started },
+            { to, subject, trace },
+          );
+          reject(
+            new Failure(
+              'CallTimeout',
+              `call ${subject} to ${to} timed out after ${remainingMs}ms`,
+              { to, subject },
+            ),
+          );
+        }, remainingMs);
+        pending.set(id, (frame) => {
+          clearTimeout(timer);
+          pending.delete(id);
+          const value = decode(frame);
+          const failed = isFailure(value);
+          emit(
+            ['node', 'call', 'stop'],
+            { duration: performance.now() - started },
+            { to, subject, trace, error: failed }, // `error` drives error-rate metrics
+          );
+          if (failed)
+            reject(value); // a remote DECLARED failure stays declared here
+          else resolve(value as T);
         });
-      }
-      task.perform(); // sets up the reply resolver NOW, before the frame goes out
+        emit(['node', 'call', 'start'], {}, { to: target.node, subject, trace });
+        dispatch({
+          kind: 'call',
+          from: name,
+          to: target.node,
+          subject,
+          ref: id,
+          trace,
+          deadline,
+          priority,
+          ...encode(payload),
+        });
+        return promise;
+      });
+      task.perform(); // eager send preserved — the recipe runs (and dispatches) NOW
       // Claim the eager reply's rejection. call() is request/response — the returned Task is
       // always consumed (await or .result()) — but a FAST rejection (e.g. an Overloaded shed)
       // can settle before a lazy `.result()` attaches its handler, which would surface as a
       // spurious unhandled rejection. This passive handler marks it handled; the caller's own
       // await/.result() still sees the settlement (a Task memoises to all consumers).
       task.then(undefined, () => {});
-      dispatch({
-        kind: 'call',
-        from: name,
-        to: target.node,
-        subject,
-        ref: task.ref,
-        ...encode(payload),
-      });
-      return task as Task<T, AnyFailure>;
+      return task;
     },
+    trace: () => ambient?.trace,
+    withTrace: (context, fn) =>
+      handling(context && 'id' in context ? { trace: context } : context, fn),
     inspect(unit, report) {
       inspectors.set(unit, report);
       return () => inspectors.delete(unit);
     },
-    cast(to, subject, payload) {
+    units: () => [...inspectors.keys()],
+    unit: (name) => inspectors.get(name)?.(),
+    cast(to, subject, payload, opts) {
       // A group cast reaches EVERY member (pg-style broadcast); a via: cast reaches the key's
       // owner; a node cast reaches one node.
       let targets: string[];
-      if (to.startsWith('group:')) targets = [...(groups.get(to.slice('group:'.length)) ?? [])];
+      if (to.startsWith('group:')) targets = groupMembersOf(to.slice('group:'.length));
       else if (to.startsWith('via:')) {
         const resolved = resolveTarget(to);
         targets = 'node' in resolved ? [resolved.node] : [];
       } else targets = [to];
+      const trace = childTrace();
+      const deadline = ambient?.deadline; // fire-and-forget still tells downstream when to give up
       for (const target of targets)
-        dispatch({ kind: 'cast', from: name, to: target, subject, ...encode(payload) });
+        dispatch({
+          kind: 'cast',
+          from: name,
+          to: target,
+          subject,
+          trace,
+          deadline,
+          priority: opts?.priority,
+          ...encode(payload),
+        });
     },
     stop() {
       if (!alive) return;
       alive = false;
       clearInterval(tickTimer);
+      clearInterval(syncTimer);
       transport.send({ kind: 'bye', from: name });
       transport.close?.();
     },
@@ -540,7 +1072,7 @@ export function start(
     const missAfter = tick?.missAfter ?? 3;
     const misses = new Map<string, number>();
     tickTimer = setInterval(() => {
-      for (const peer of [...peers]) {
+      for (const peer of [...peers.keys()]) {
         void nodeHandle.ping(peer, everyMs).then((answer) => {
           if (!alive || !peers.has(peer)) return;
           if (answer === 'pong') return void misses.delete(peer);
@@ -553,6 +1085,22 @@ export function start(
     (tickTimer as { unref?: () => void }).unref?.();
   }
 
+  // Anti-entropy — the CRDT convergence backstop. Periodically ask one peer (round-robin) for
+  // anything we're missing by sending our version vector; the peer replies with full state iff
+  // it holds more. This is what heals a dropped op or a partition, on top of per-op deltas.
+  let syncTimer: ReturnType<typeof setInterval> | undefined;
+  const antiEntropyMs = options.antiEntropyMs;
+  if (antiEntropyMs !== false) {
+    let cursor = 0;
+    syncTimer = setInterval(() => {
+      const list = [...peers.keys()];
+      if (list.length === 0) return;
+      const peer = list[cursor++ % list.length];
+      dispatch({ kind: 'sync', from: name, to: peer, want: appliedFrom.get(peer) ?? 0 });
+    }, antiEntropyMs ?? 10000);
+    (syncTimer as { unref?: () => void }).unref?.();
+  }
+
   return nodeHandle;
 }
 
@@ -562,8 +1110,8 @@ export function start(
  *
  * ```ts
  * const hub = memoryHub();
- * const a = start('a@memory', hub.transport());
- * const b = start('b@memory', hub.transport());
+ * const a = Node.start('a@memory', hub.transport());
+ * const b = Node.start('b@memory', hub.transport());
  * const seen: string[] = [];
  * a.monitor((peer) => void seen.push(peer));
  * b.stop();
@@ -635,3 +1183,16 @@ export function fromPort(port: {
     close: () => void (port.close?.() ?? port.terminate?.()),
   };
 }
+
+/**
+ * The Node namespace — Elixir's `Node`, JS-shaped. `Node.start(name, transport)` boots a node.
+ * (`heartbeat`, `memoryHub`, `fromPort` remain bare exports — they aren't node-lifecycle entry
+ * points in the same way.)
+ *
+ * ```ts
+ * const hub = memoryHub();
+ * const a = Node.start('a@node', hub.transport());
+ * a.stop();
+ * ```
+ */
+export const Node = { start };

@@ -16,6 +16,7 @@
  * ```
  */
 import type { Frame, Transport } from './node.ts';
+import { authDigest } from './auth.ts';
 
 /** Encodes frames for a socket and decodes what arrives — the wire seam of {@link wsTransport}. */
 export interface Codec {
@@ -162,11 +163,11 @@ export const jsonCodec: Codec = {
  * for one-shot sockets.
  *
  * ```ts
- * import { start } from './node.ts';
+ * import { Node } from './node.ts';
  *
  * // Defined, not invoked: dials a real socket.
  * function join(name: string) {
- *   return start(name, wsTransport('ws://localhost:4369')); // frames ride binary by default
+ *   return Node.start(name, wsTransport('ws://localhost:4369')); // frames ride binary by default
  * }
  * ```
  */
@@ -175,9 +176,17 @@ export function wsTransport(
   options: {
     codec?: Codec;
     reconnect?: { minMs?: number; maxMs?: number; factor?: number } | false;
+    /**
+     * Shared cluster secret (Erlang's magic cookie). When set, the transport answers the hub's
+     * join `challenge` with HMAC-SHA-256(secret, nonce) — the secret never crosses the wire. A hub
+     * started WITHOUT a secret never challenges, so this is inert there; a hub started WITH one drops
+     * any socket that can't prove the cookie. Use a `wss://` URL to encrypt the whole channel.
+     */
+    secret?: string;
   } = {},
 ): Transport {
   const codec = options.codec ?? binaryCodec;
+  const secret = options.secret;
   const reconnect =
     options.reconnect === false
       ? null
@@ -203,7 +212,16 @@ export function wsTransport(
     socket.addEventListener('message', (event: MessageEvent) => {
       const data =
         event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : String(event.data);
-      handler?.(codec.decode(data));
+      const frame = codec.decode(data);
+      // Answer a join challenge in the transport layer — the node core never sees auth frames. The
+      // digest proves the cookie without revealing it; `from` is unused (the hub keys auth by socket).
+      if (frame.kind === 'challenge' && secret) {
+        void authDigest(secret, frame.nonce ?? '').then((digest) =>
+          socket.send(codec.encode({ kind: 'auth', from: '', nonce: frame.nonce, digest })),
+        );
+        return;
+      }
+      handler?.(frame);
     });
     socket.addEventListener('error', () => {}); // close always follows; keep it un-thrown
     socket.addEventListener('close', () => {

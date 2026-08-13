@@ -4,6 +4,7 @@ import * as Node from '../../lib/node/index.ts';
 import { Failure } from '../../lib/task/index.ts';
 
 const NotFound = Failure.define('NotFound', (d: { id: number }) => `no user ${d.id}`);
+const OriginObserved = Failure.define('OriginObserved', 'origin-observe test');
 
 module('Node | memory cluster', () => {
   test('start/hello/list/self/alive — the cluster sees itself', async (assert) => {
@@ -57,6 +58,39 @@ module('Node | memory cluster', () => {
     server.stop();
   });
 
+  test('a call Task is retryable — .retry() RE-SENDS the request, not just re-waits', async (assert) => {
+    const hub = Node.memoryHub();
+    const client = Node.start('c@memory', hub.transport());
+    const server = Node.start('s@memory', hub.transport());
+    let attempts = 0;
+    server.handle('flaky', (payload) => {
+      attempts += 1;
+      if (attempts < 3) throw new Error('transient'); // fail the first two, succeed on the third
+      return (payload as { n: number }).n * 2;
+    });
+
+    const answer = await client.call<number>('s@memory', 'flaky', { n: 21 }).retry(5);
+    assert.strictEqual(answer, 42, 'retry re-dispatched until the handler succeeded');
+    assert.strictEqual(
+      attempts,
+      3,
+      'the server saw a fresh send per attempt (not one send re-awaited)',
+    );
+
+    // A retry budget that runs out still surfaces the last failure, not a hang.
+    server.handle('always', () => {
+      throw new Error('never works');
+    });
+    const givenUp = await client.call('s@memory', 'always').retry(2).result();
+    assert.strictEqual(
+      (givenUp as Failure.Any).code,
+      'RemoteCrash',
+      'exhausted retry (3 attempts) surfaces the last reason instead of hanging',
+    );
+    client.stop();
+    server.stop();
+  });
+
   test('cast is fire-and-forget; ping answers pong or pang; monitor fires on bye', async (assert) => {
     const hub = Node.memoryHub();
     const a = Node.start('a@memory', hub.transport());
@@ -73,6 +107,54 @@ module('Node | memory cluster', () => {
     assert.deepEqual(seen, [{ level: 'info' }]);
     assert.deepEqual(downs, ['b@memory'], 'the monitor fired on bye');
     a.stop();
+  });
+
+  test('monitorNodes reports both nodeup and nodedown (net_kernel.monitor_nodes)', async (assert) => {
+    const hub = Node.memoryHub();
+    const a = Node.start('a@memory', hub.transport());
+    const events: string[] = [];
+    a.monitorNodes(({ node, status }) => void events.push(`${status}:${node}`));
+    const b = Node.start('b@memory', hub.transport()); // joins → nodeup
+    await new Promise((r) => setTimeout(r, 10));
+    b.stop(); // says bye → nodedown
+    await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(events, ['up:b@memory', 'down:b@memory'], 'up then down, in order');
+    a.stop();
+  });
+
+  test('a handler that THROWS a declared Failure is routed to Failure.onObserved at its origin', async (assert) => {
+    const hub = Node.memoryHub();
+    const svc = Node.start('svc@memory', hub.transport());
+    const cli = Node.start('cli@memory', hub.transport());
+    svc.handle('charge', () => {
+      throw OriginObserved(); // a bare throw — the handler never `.result()`s it for observability
+    });
+    const seen: string[] = [];
+    Failure.onObserved((failure) => void seen.push(failure.code));
+    try {
+      // Consume the reply WITHOUT `.result()` — a bare `await` doesn't observe — so `seen` can only
+      // reflect the ORIGIN observation the serving node did on the throw, never a caller-side one.
+      let reply: unknown;
+      try {
+        await cli.call('svc@memory', 'charge', null);
+      } catch (thrown) {
+        reply = thrown;
+      }
+      assert.strictEqual(
+        (reply as Failure.Any).code,
+        'OriginObserved',
+        'the caller still gets the thrown Failure back',
+      );
+      assert.strictEqual(
+        seen.filter((code) => code === 'OriginObserved').length,
+        1,
+        'and it hit Failure.onObserved exactly once — at origin, no `.result()` in the handler',
+      );
+    } finally {
+      Failure.onObserved(null); // detach the process-wide observer
+      svc.stop();
+      cli.stop();
+    }
   });
 });
 

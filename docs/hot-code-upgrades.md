@@ -44,10 +44,10 @@ startHub({ port: 4369 });
 
 ```ts
 // greeter.ts — deno run --allow-net greeter.ts
-import * as Node from './lib/node/index.ts';
+import { Node, wsTransport } from './lib/node/index.ts';
 
-const svc = Node.start('svc@cluster', Node.wsTransport('ws://localhost:4369'));
-Node.serve(svc, 'greeter', {
+const svc = Node.start('svc@cluster', wsTransport('ws://localhost:4369'));
+Node.genServer(svc, 'greeter', {
   version: '1.0.0',
   init: () => ({ greeted: 0 }),
   handlers: {
@@ -60,8 +60,8 @@ Node.serve(svc, 'greeter', {
 
 ```ts
 // ops.ts — node ops.ts
-import * as Node from './lib/node/index.ts';
-const ops = Node.start('ops@cluster', Node.wsTransport('ws://localhost:4369'));
+import { Node, wsTransport } from './lib/node/index.ts';
+const ops = Node.start('ops@cluster', wsTransport('ws://localhost:4369'));
 await new Promise((r) => setTimeout(r, 300));
 console.log(await ops.call('svc@cluster', 'greeter.hello', 'ada')); // Hello ada
 console.log(await ops.call('svc@cluster', 'greeter.sys.version')); // 1.0.0
@@ -103,7 +103,7 @@ time — that loop _is_ the relup script.
 `fromVersion: '2.0.0'` and reads back what it understands). Ship every version with a
 `codeChange` that accepts its neighbors', and rollback is one call.
 
-**Browser tab as a node:** identical — `Node.start('ui@cluster', Node.wsTransport('wss://…'))`
+**Browser tab as a node:** identical — `Node.start('ui@cluster', wsTransport('wss://…'))`
 in a page; `import(url)` and run-to-completion are the same standards there, so a `sys.upgrade`
 call hot-swaps code in a tab that never reloads.
 

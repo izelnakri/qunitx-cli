@@ -206,12 +206,16 @@ module('Node | net-tick', () => {
       tick: { everyMs: 20, missAfter: 2 },
     });
 
-    // A zombie: it announces itself and registers a key, then goes silent — it RECEIVES frames
-    // (incl. ping) but never answers. Its socket never drops, so only net-tick can catch it.
-    const zombie = hub.transport();
-    zombie.onFrame(() => {});
-    zombie.send({ kind: 'hello', from: 'zombie@memory' });
-    zombie.send({ kind: 'register', from: 'zombie@memory', registry: 'rooms', key: 'lobby' });
+    // A zombie: a real node that registers a key, then WEDGES — we drop its inbound ping frames
+    // so it never pongs. Its socket never closes, so only net-tick can catch it.
+    const raw = hub.transport();
+    const wedged = {
+      send: raw.send.bind(raw),
+      onFrame: (h: (f: Node.Frame) => void) => raw.onFrame((f) => f.kind !== 'ping' && h(f)),
+      close: raw.close?.bind(raw),
+    };
+    const zombie = Node.start('zombie@memory', wedged, { tick: false });
+    zombie.register('rooms', 'lobby');
     await new Promise((r) => setTimeout(r, 40));
     assert.strictEqual(watcher.whereis('rooms', 'lobby'), 'zombie@memory', 'owner known at first');
 

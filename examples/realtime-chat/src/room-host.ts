@@ -5,11 +5,18 @@
 // The pair:  DynamicSupervisor.start_child  +  Registry.register  +  a shared Store.
 // The Store is what makes a room survive its host dying: the next owner rehydrates from it.
 import * as Node from '../../../lib/node/index.ts';
+import { rendezvous } from '../../../lib/node/index.ts';
 import * as Supervisor from '../../../lib/supervisor/index.ts';
 import { makeRoomBehavior } from './room-behavior.ts';
 import type { Transport, NodeHandle, Store } from '../../../lib/node/index.ts';
 
-export type RoomHost = { node: NodeHandle; stop: () => Promise<void> };
+export type RoomHost = {
+  node: NodeHandle;
+  /** Hard stop — a crash. Rooms vanish from memory; a survivor cold-rehydrates on next access. */
+  stop: () => Promise<void>;
+  /** Graceful drain — hand each room off to its successor host BEFORE leaving (no cold miss). */
+  drain: () => Promise<void>;
+};
 
 // `store` is SHARED across all hosts (a Postgres store in prod; one memoryStore in the demo to
 // simulate shared durability) — that shared backend is how a room rehydrates on a new host.
@@ -40,9 +47,50 @@ export function startRoomHost(name: string, transport: Transport, store: Store):
     return true;
   });
 
+  // Rebalance on scale-UP — the other half of Horde.DynamicSupervisor's redistribution (drain is
+  // scale-down). When a new host joins (Erlang nodeup), any room whose rendezvous owner is now the
+  // newcomer is handed off to it, so the keyspace re-spreads as the cluster grows — HRW moves only
+  // ~1/N of each host's rooms, not the whole keyspace. Same re-home-by-key as drain: release first,
+  // then pre-warm, so the split-brain guard can't tear the fresh room down.
+  node.monitorNodes(async ({ node: peer, status }) => {
+    if (status !== 'up') return;
+    // Wait (bounded) for the newcomer's 'room-hosts' membership to converge before deciding.
+    for (let i = 0; i < 50 && !node.groupMembers('room-hosts').includes(peer); i++)
+      await new Promise((r) => setTimeout(r, 5));
+    const hosts = node.groupMembers('room-hosts');
+    if (!hosts.includes(peer)) return; // the newcomer is a gateway, not a host — nothing to hand off
+    for (const key of [...live]) {
+      if (rendezvous(key, hosts) !== peer) continue;
+      await rooms.terminateChild(`room:${key}`); // release: the room exits + unregisters
+      await node.call(peer, 'host.ensureRoom', { key }); // pre-warm the newcomer
+    }
+  });
+
   return {
     node,
     stop: async () => {
+      await rooms.stop();
+      node.stop();
+    },
+    // Horde.DynamicSupervisor's graceful hand-off: on a planned drain, redistribute every room
+    // I own to the host that rendezvous now picks among the OTHERS, so the room is already live
+    // and rehydrated when I leave — no first-access cold start for the next caller.
+    //
+    // Re-home BY KEY: release my ownership FIRST, then pre-warm the successor. Releasing first is
+    // deliberate — starting the room on the successor while I still own the key would trip the
+    // split-brain guard (smallest name wins), which could tear the fresh room right back down.
+    //
+    // Divergence from Horde, which streams a child's LIVE process state to the new node: we
+    // re-home by key and rehydrate from the SHARED store. persist-before-ack already made every
+    // committed change durable, so the store IS the handoff channel — no bespoke state transfer,
+    // and it doubles as crash recovery. The cost is a rehydrate read per room (README §5).
+    drain: async () => {
+      const others = node.groupMembers('room-hosts').filter((host) => host !== name);
+      for (const key of [...live]) {
+        await rooms.terminateChild(`room:${key}`); // release: the room exits + unregisters
+        const next = rendezvous(key, others);
+        if (next) await node.call(next, 'host.ensureRoom', { key }); // pre-warm the successor
+      }
       await rooms.stop();
       node.stop();
     },
@@ -62,7 +110,7 @@ function runRoom(
 ): Promise<void> {
   return new Promise<void>((exited) => {
     // storeKey is stable across hosts, so a room re-created on ANOTHER host loads the same state.
-    const room = Node.serve(node, `room:${key}`, makeRoomBehavior(), {
+    const room = Node.genServer(node, `room:${key}`, makeRoomBehavior(), {
       via: { registry: 'rooms', key },
       store,
       storeKey: `room:${key}`,

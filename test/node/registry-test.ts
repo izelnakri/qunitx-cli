@@ -101,10 +101,10 @@ module('Node | via registration', () => {
       init: () => 0,
       handlers: { who: (s) => ({ state: s, reply: who }) },
     });
-    const zedUnit = Node.serve(zed, 'room:lobby', behavior('zed'), {
+    const zedUnit = Node.genServer(zed, 'room:lobby', behavior('zed'), {
       via: { registry: 'rooms', key: 'lobby' },
     });
-    const abeUnit = Node.serve(abe, 'room:lobby', behavior('abe'), {
+    const abeUnit = Node.genServer(abe, 'room:lobby', behavior('abe'), {
       via: { registry: 'rooms', key: 'lobby' },
     });
     await settle();
@@ -132,7 +132,7 @@ module('Node | via registration', () => {
     const hub = Node.memoryHub();
     const host = Node.start('host@memory', hub.transport());
     const cli = Node.start('cli@memory', hub.transport());
-    const unit = Node.serve(
+    const unit = Node.genServer(
       host,
       'room:x',
       { version: '1', init: () => 0, handlers: {} },
@@ -145,5 +145,90 @@ module('Node | via registration', () => {
     assert.strictEqual(cli.whereis('rooms', 'x'), null, 'exit unregistered the key');
     host.stop();
     cli.stop();
+  });
+});
+
+// ── anti-entropy — the CRDT convergence backstop under frame loss ─────────────
+
+module('Node | anti-entropy', () => {
+  const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
+
+  test('a registration lost to frame drop still converges via anti-entropy', async (assert) => {
+    // A lossy in-process hub: DROP every one-op 'crdt' delta broadcast (simulate packet loss),
+    // but let 'sync'/full-state and everything else through. Only anti-entropy can recover.
+    const inner = Node.memoryHub();
+    const lossy = {
+      transport() {
+        const t = inner.transport();
+        return {
+          send(f: Node.Frame) {
+            // Drop one-op BROADCASTS (crdt with a single delta), but let anti-entropy through — a
+            // full-state frame OR a delta BATCH (`frame.deltas`). That's the whole point: a lost
+            // broadcast is healed by the periodic anti-entropy catch-up.
+            if (f.kind === 'crdt' && !f.full && !f.deltas) return;
+            t.send(f);
+          },
+          onFrame: (h: (f: Node.Frame) => void) => t.onFrame(h),
+          close: t.close,
+        };
+      },
+    };
+    // Fast anti-entropy so the test converges quickly.
+    const host = Node.start('host@memory', lossy.transport(), { antiEntropyMs: 25 });
+    const cli = Node.start('cli@memory', lossy.transport(), { antiEntropyMs: 25 });
+    await settle();
+    host.register('rooms', 'lobby'); // the delta broadcast is DROPPED
+    await settle(15);
+    // Right away the client hasn't heard (its delta was lost)…
+    // …but anti-entropy pulls it within a couple of sync rounds.
+    const until = async (cond: () => boolean, ms = 2000) => {
+      const deadline = Date.now() + ms;
+      while (!cond() && Date.now() < deadline) await settle(10);
+      return cond();
+    };
+    assert.true(
+      await until(() => cli.whereis('rooms', 'lobby') === 'host@memory'),
+      'converged despite the dropped delta',
+    );
+    host.stop();
+    cli.stop();
+  });
+
+  test('a healed partition reconciles to ONE owner (no split-brain)', async (assert) => {
+    // Two nodes register the SAME key while partitioned (no delivery), then heal.
+    let partitioned = true;
+    const inner = Node.memoryHub();
+    const reopens: (() => void)[] = [];
+    const gated = () => {
+      const t = inner.transport();
+      return {
+        send: (f: Node.Frame) => (partitioned ? undefined : t.send(f)),
+        onFrame: (h: (f: Node.Frame) => void) => t.onFrame(h),
+        onReopen: (cb: () => void) => reopens.push(cb),
+        close: t.close,
+      };
+    };
+    const abe = Node.start('abe@memory', gated(), { antiEntropyMs: 25, tick: false });
+    const zed = Node.start('zed@memory', gated(), { antiEntropyMs: 25, tick: false });
+    abe.register('rooms', 'lobby'); // both claim, in isolation
+    zed.register('rooms', 'lobby');
+    await settle();
+    partitioned = false; // heal — a reconnecting transport re-runs the handshake (onReopen)
+    for (const reopen of reopens) reopen();
+    const until = async (cond: () => boolean, ms = 2000) => {
+      const deadline = Date.now() + ms;
+      while (!cond() && Date.now() < deadline) await settle(10);
+      return cond();
+    };
+    assert.true(
+      await until(
+        () =>
+          abe.whereis('rooms', 'lobby') === 'abe@memory' &&
+          zed.whereis('rooms', 'lobby') === 'abe@memory',
+      ),
+      'both converge on the smaller-named owner after heal',
+    );
+    abe.stop();
+    zed.stop();
   });
 });

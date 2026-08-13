@@ -47,6 +47,7 @@
     "test:aplus": "node test/task/promises-aplus.ts",
     "test:doctest": "deno test --doc --allow-env --allow-read=/tmp --allow-sys lib/ cli.ts",
     "test:debug": "QUNITX_DEBUG=1 node test/runner.ts",
+    "test:pg": "node test/runner.ts test/pg/postgres-store.pg.ts",
     "test:deno": "deno run -A test/runner.ts",
     "dev": "node test/runner.ts --watch",
     "test:browser": "node test/runner.ts test/flags/*-test.ts test/inputs/*-test.ts",
