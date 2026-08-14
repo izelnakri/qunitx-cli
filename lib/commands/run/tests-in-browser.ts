@@ -994,8 +994,11 @@ async function runTestInsideHTMLFile(
     // before tests.js ran (a CPU-starved page load whose race timer fired first). Both mean the
     // tests never executed — a timeout, not a green run. This used to slip through as a silent
     // exit-0 when the pre-initialised {totalTests:0} looked like a genuinely empty file.
+    // Names the engine that actually ran. Hardcoding "Chrome" pointed whoever hit this on the
+    // firefox and webkit lanes at the wrong browser — and those are the lanes where a starved
+    // page load is most likely, since browser-compat runs them alongside everything else.
     const wsReason = !wsConnected
-      ? 'WebSocket connection never received — Chrome may be CPU-starved or the page failed to load'
+      ? `WebSocket connection never received — ${config.browser} may be CPU-starved or the page failed to load`
       : 'WebSocket connected but no tests ran — QUnit may have failed to start';
     Reporter.error(config, `TIMEOUT: ${wsReason}`);
     Reporter.error(config, 'BROWSER: runtime error thrown during executing tests\n', {
