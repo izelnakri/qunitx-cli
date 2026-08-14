@@ -76,7 +76,12 @@ build-deno-all:
 # matching npm/<target>/bin/ directory, and publishes that platform package.
 # Automatically detects linux-x64, linux-arm64, darwin-arm64, darwin-x64.
 build-sea:
-	@NODE_PLATFORM=$$(node -p "process.platform"); \
+# The whole recipe is one shell, so a trap covers the paths `||` cannot: Ctrl-C, SIGTERM, a killed
+# terminal. Without it an interrupted build left sea-entry.cjs, sea-config.json, sea.blob and
+# qunitx-sea in the repo root as untracked debris, which the next release then reported as
+# "uncommitted changes" — noise that looks like a real problem mid-release.
+	@trap 'rm -f sea-entry.cjs sea-config.json sea.blob qunitx-sea' INT TERM HUP; \
+	NODE_PLATFORM=$$(node -p "process.platform"); \
 	NODE_ARCH=$$(node -p "process.arch"); \
 	if [ "$$NODE_PLATFORM" = "darwin" ]; then TARGET="darwin-$$NODE_ARCH"; \
 	elif [ "$$NODE_PLATFORM" = "linux" ]; then TARGET="linux-$$NODE_ARCH"; \
@@ -271,6 +276,10 @@ release:
 # qunitx 1.2.18 beside 1.2.19 and `make vendor` bundled the older one. The lockfile was right both
 # times, so CI never reproduced either. Three seconds buys the whole class.
 	npm ci
+# A daemon left running for this cwd serves runs from a warm browser and a cached bundle, so the
+# suite exercises whatever that daemon was built from rather than the tree being released. One
+# already survived across sessions here and silently changed what an ad-hoc run tested.
+	@node cli.ts daemon stop > /dev/null 2>&1 || true
 # Cheapest first, so a release fails in seconds rather than twenty minutes. The esbuild guard now
 # also serves as an assertion that the install above produced a coherent tree.
 	$(MAKE) check-static
