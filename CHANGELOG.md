@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.34.6] - 2026-08-14
+[`v0.34.5...v0.34.6`](https://github.com/izelnakri/qunitx-cli/compare/v0.34.5...v0.34.6)
+
+### Bug Fixes
+- Stop publishing devDependencies into the staged package.json — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`834834e`](https://github.com/izelnakri/qunitx-cli/commit/834834e615431f001f73a4422a6c429d9e97d74b))
+- A closed watch session left esbuild's child running — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`329aec4`](https://github.com/izelnakri/qunitx-cli/commit/329aec45f758e47422bd0683a80844b9b2413d03))
+
+### Documentation
+- Make the package page a showcase, not a bootstrap note — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`49ac9d4`](https://github.com/izelnakri/qunitx-cli/commit/49ac9d47f67fb0fb2a4dc90eab5ea31684685125))
+- Document `qunitx upgrade` — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`1099ace`](https://github.com/izelnakri/qunitx-cli/commit/1099acea7c0d8ecc9fc7b333994139fbf1d3515f))
+
+### Features
+- Recognise which install channel is running — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`fb9c8b5`](https://github.com/izelnakri/qunitx-cli/commit/fb9c8b5926e4ada923f1f519cdb4b2fc0ad03694))
+- Resolve releases and replace a running binary safely — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`02864c1`](https://github.com/izelnakri/qunitx-cli/commit/02864c16bc70ac88616ca134a2e9ab341459e0c5))
+- Add `qunitx upgrade`, self-updating where it can — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`a87d76b`](https://github.com/izelnakri/qunitx-cli/commit/a87d76b470d4581c2dd0e663fb961559e200accd))
+
 ## [0.34.5] - 2026-08-14
 [`v0.34.4...v0.34.5`](https://github.com/izelnakri/qunitx-cli/compare/v0.34.4...v0.34.5)
 
