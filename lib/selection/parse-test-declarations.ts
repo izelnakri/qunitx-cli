@@ -536,8 +536,13 @@ function resolveQUnitDeclarators(tokens: Token[]): QUnitDeclarators {
       (declarators, { local, imported, namespace }) => {
         if (namespace) {
           declarators.namespaces.add(local);
-        } else if (imported === 'module') {
+        } else if (imported === 'module' || imported === 'describe') {
           declarators.modules.add(local);
+        } else if (imported === 'it') {
+          // qunitx 1.3.0 exports `describe`/`it` as aliases of `module`/`test`. Bound here rather
+          // than inside isTestMember, which also classifies namespace members: the aliases are
+          // named exports and `QUnit.it` is not a thing.
+          declarators.tests.set(local, 'test');
         } else if (isTestMember(imported)) {
           declarators.tests.set(local, imported);
         }
