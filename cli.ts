@@ -8,6 +8,7 @@ import './lib/utils/enable-compile-cache.ts';
 import './lib/utils/find-sidecar-esbuild.ts';
 import process from 'node:process';
 import { shutdownPrelaunch, startPrelaunch } from './lib/chrome/prelaunch.ts';
+import { reportCrash } from './lib/utils/report-crash.ts';
 import { Failure } from './lib/result/index.ts';
 import pkg from './package.json' with { type: 'json' };
 
@@ -61,6 +62,11 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   } else if (cmd === 'upgrade') {
     const Upgrade = await import('./lib/commands/upgrade/index.ts');
     process.exit(await Upgrade.run());
+  } else if (cmd === 'repl') {
+    // Never routed through the daemon: a REPL is a page kept open for one terminal, and the
+    // daemon's browser is shared. It uses the pre-launched Chrome like any other local run.
+    const Repl = await import('./lib/commands/repl.ts');
+    return exitAfterFlush(await Repl.run());
   }
 
   // Daemon-routed run: when a live daemon exists for this cwd (or QUNITX_DAEMON=1
@@ -173,10 +179,10 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   // bare `process.exit(1)`, which no caller could test or override.
   //
   // Set first, for the same reason as above: nothing awaited below may decide the exit code by
-  // draining the loop out from under us.
+  // draining the loop out from under us. `reportCrash` prints before it reaps for the same
+  // reason again — a message queued after that await never reached the Windows runner at all.
   process.exitCode = 1;
-  await shutdownPrelaunch();
-  console.error(Failure.is(error) ? Failure.format(error) : error);
+  await reportCrash(error, shutdownPrelaunch);
   exitAfterFlush(1);
 });
 
