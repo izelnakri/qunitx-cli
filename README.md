@@ -200,15 +200,15 @@ result.counts; // { total: 42, passed: 41, failed: 1, skipped: 0, todo: 0, asser
 result.failures.map((test) => test.fullName); // ['Cart > Coupons: applies code']
 ```
 
-| | |
-|---|---|
-| `run(options)` | run once; the full result as a value |
-| `runSession(options)` | one run, watched as it happens — `events()`, `result()`, `abort()` |
-| `watch(options)` | async-iterable session; `run`/`runAll`/`runFailed`/`abort`, `results()` |
-| `search(options)` | what a selection would run — no browser, milliseconds |
-| `Daemon.{start,stop,status,run}` | reuse a warm browser between runs |
-| `init` / `generate` | scaffolding, reporting what they wrote |
-| `validate(options)` | reject bad options without launching anything |
+|                                  |                                                                         |
+| -------------------------------- | ----------------------------------------------------------------------- |
+| `run(options)`                   | run once; the full result as a value                                    |
+| `runSession(options)`            | one run, watched as it happens — `events()`, `result()`, `abort()`      |
+| `watch(options)`                 | async-iterable session; `run`/`runAll`/`runFailed`/`abort`, `results()` |
+| `search(options)`                | what a selection would run — no browser, milliseconds                   |
+| `Daemon.{start,stop,status,run}` | reuse a warm browser between runs                                       |
+| `init` / `generate`              | scaffolding, reporting what they wrote                                  |
+| `validate(options)`              | reject bad options without launching anything                           |
 
 Four things to know:
 
@@ -475,7 +475,38 @@ Subcommands:
   qunitx daemon start | stop | status     Manage the optional persistent daemon
   qunitx init                             Bootstrap qunitx config + base HTML in this project
   qunitx new <testFileName>               Create a new qunitx test file
+  qunitx run <scriptFile>                 Run one file as a plain script in the browser
 ```
+
+## Running a script
+
+`qunitx run <file>` runs a single file as a plain script instead of a test suite — the browser
+equivalent of `deno run`. No TAP, no QUnit, no test declarations required; the script's own
+`console` output **is** the output.
+
+```console
+$ qunitx run scripts/seed.ts
+seeded 42 rows
+```
+
+The script is bundled with esbuild (TypeScript and JSX work unchanged) and evaluated as a module
+in a real page, so it gets a DOM, `fetch` against a real `http://localhost` origin, `import.meta`,
+and **top-level `await`**. `console.log`/`info`/`debug` go to stdout, `warn`/`error` to stderr, in
+the order the page emitted them.
+
+It finishes when the script's top level settles — set `globalThis.exitCode` to choose the exit
+code, or throw to exit 1 with a source-mapped stack trace:
+
+```ts
+const response = await fetch('/api/health');
+if (!response.ok) {
+  globalThis.exitCode = 1;
+}
+```
+
+`--browser`, `--port`, `--open`, `--timeout` and `--watch` work here too (`--watch` re-runs the
+script on every save). A script is never auto-detected: `qunitx <file>` always means "run the
+tests in this file", and the `run` keyword is how you ask for the other thing.
 
 ## JUnit reports
 
