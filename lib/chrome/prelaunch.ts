@@ -90,6 +90,7 @@ export function startPrelaunch(): void {
     'g',
     'generate',
     'init',
+    'upgrade',
   ]);
   const cmd = process.argv[2];
   // `daemon _serve` is the daemon's own process — it DOES need Chrome. Other daemon

@@ -97,6 +97,7 @@ module('Commands | help | usage text', { concurrency: true }, () => {
     assert.includes(text, '$ qunitx init');
     assert.includes(text, '$ qunitx new $testFileName');
     assert.includes(text, '$ qunitx daemon <start|stop|status>');
+    assert.includes(text, '$ qunitx upgrade [version]');
   });
 
   test('documents the environment variables', (assert) => {
