@@ -99,6 +99,20 @@ make build-deno              # same, plus copies the local @esbuild sidecar next
 make build-deno-all          # cross-compiles every supported platform
 ```
 
+### Upgrading
+
+```sh
+qunitx upgrade           # standalone binary: fetch the latest release, verify its sha256, replace itself
+qunitx upgrade --check   # report only — exits 1 when a newer version exists
+qunitx upgrade 0.34.2    # install that version instead
+```
+
+Only the standalone binary replaces itself. Every other install — npm (global or dependency), a
+Deno project, a JSR `deno install`, a `deno run npm:qunitx-cli`, a source checkout — is owned by
+npm, deno or git, so `upgrade` prints the exact command for yours instead of mutating something it
+does not own. `qunitx upgrade --write-manifest` bumps the range in whichever manifest declares it
+(`package.json` or `deno.json`) if you want that part done for you — the install stays yours to run.
+
 ## Usage
 
 ```sh
@@ -475,6 +489,7 @@ Subcommands:
   qunitx daemon start | stop | status     Manage the optional persistent daemon
   qunitx init                             Bootstrap qunitx config + base HTML in this project
   qunitx new <testFileName>               Create a new qunitx test file
+  qunitx upgrade [version]                Update the standalone binary (--check reports only)
 ```
 
 ## JUnit reports
