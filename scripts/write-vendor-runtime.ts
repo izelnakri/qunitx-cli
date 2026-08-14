@@ -21,6 +21,24 @@ if (!rootMatch) throw new Error(`Could not derive qunitx root from ${qunitxEntry
 const qunitxRoot = rootMatch[1];
 const version = JSON.parse(await readFile(join(qunitxRoot, 'package.json'), 'utf8')).version;
 
+// What node_modules resolves to must be what the lockfile pins, or this script bundles the wrong
+// runtime — silently. It happened: `deno install` left qunitx 1.2.18 in node_modules/.deno beside
+// 1.2.19, resolution picked the older copy, and the vendored runtime was rewritten BACKWARDS. The
+// release only noticed fifteen minutes later, in the freshness test, by which point the tree
+// already carried a regressed artifact.
+//
+// Compared against the lockfile rather than package.json's range, because the range is satisfied
+// by both versions — the lockfile is the only place that names exactly one.
+const lockfile = JSON.parse(await readFile(join(repoRoot, 'package-lock.json'), 'utf8'));
+const pinned = lockfile.packages?.['node_modules/qunitx']?.version;
+if (pinned && pinned !== version) {
+  throw new Error(
+    `qunitx resolves to ${version} but package-lock.json pins ${pinned}.\n` +
+      `Resolved from: ${qunitxRoot}\n` +
+      `node_modules disagrees with the lockfile — run 'npm ci' and try again.`,
+  );
+}
+
 const vendorDir = join(repoRoot, 'templates/vendor');
 await mkdir(vendorDir, { recursive: true });
 

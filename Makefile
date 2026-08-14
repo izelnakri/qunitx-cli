@@ -113,7 +113,11 @@ build-sea:
 	npm publish ./npm/$$TARGET --access public; \
 	rm -f sea-entry.cjs sea-config.json sea.blob qunitx-sea
 
-check: format lint lint-docs bench-typecheck test
+# Everything that answers in seconds. Split out so `release` can run it before the minutes-long
+# gates: a formatting slip should not cost a bench run and two full suites to discover.
+check-static: format lint lint-docs bench-typecheck
+
+check: check-static test
 
 coverage:
 	npx c8 --reporter=lcov --reporter=text --reporter=html npm test
@@ -242,9 +246,18 @@ release:
 # Regenerate the embedded qunitx runtime + qunit.css from the installed qunitx BEFORE checks / build /
 # publish, so every release ships vendored assets matching package.json's qunitx. The freshness test
 # in `check` then validates them, and they are committed with the release commit below.
+# A clean install, before anything reads node_modules. Releases are cut from a long-lived working
+# tree; CI runs on a pristine one — and every release failure so far has lived in that gap. An
+# `npm audit fix` left esbuild's host at 0.28.2 against a 0.28.1 binary; `deno install` accumulated
+# qunitx 1.2.18 beside 1.2.19 and `make vendor` bundled the older one. The lockfile was right both
+# times, so CI never reproduced either. Three seconds buys the whole class.
+	npm ci
+# Cheapest first, so a release fails in seconds rather than twenty minutes. The esbuild guard now
+# also serves as an assertion that the install above produced a coherent tree.
+	$(MAKE) check-static
 	$(MAKE) vendor
 	$(MAKE) bench-check
-	$(MAKE) check
+	$(MAKE) test
 	npm run test:release
 	npm version $(LEVEL) --no-git-tag-version
 	@for d in npm/*/; do node scripts/set-pkg-version.js "$$d/package.json" "$$(node -p 'require("./package.json").version')"; done
