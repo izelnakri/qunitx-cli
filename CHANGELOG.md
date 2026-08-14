@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.34.5] - 2026-08-14
+[`v0.34.4...v0.34.5`](https://github.com/izelnakri/qunitx-cli/compare/v0.34.4...v0.34.5)
+
+### Bug Fixes
+- Bound the crash relaunch, the last unbounded wait before output — 2026-08-13 by [@izelnakri](https://github.com/izelnakri) ([`3194b5c`](https://github.com/izelnakri/qunitx-cli/commit/3194b5cccf6cd0c306b3820bbb37c1c6e044b678))
+- Clean-install first, assert the vendor source, cheapest gate first — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`2c7700d`](https://github.com/izelnakri/qunitx-cli/commit/2c7700d740f8b34adf0f67b57938f675dc2a7620))
+- Make the shipped bundle independent of node_modules layout — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`2af7190`](https://github.com/izelnakri/qunitx-cli/commit/2af719071c0971d6dcb15e7628d97b0609fb2d68))
+- Take a lock, so nothing can mutate the tree mid-release — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`3419012`](https://github.com/izelnakri/qunitx-cli/commit/34190128c60d76cc2f12df24962c2e6e612a1fa8))
+- Clean up on interrupt, and start from a known daemon state — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`d09486e`](https://github.com/izelnakri/qunitx-cli/commit/d09486efc796139125f1992d0b84b3d012b916bf))
+
 ## [0.34.4] - 2026-08-13
 [`v0.34.3...v0.34.4`](https://github.com/izelnakri/qunitx-cli/compare/v0.34.3...v0.34.4)
 
