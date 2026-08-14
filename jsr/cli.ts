@@ -20,7 +20,7 @@
  * Plain QUnit — the same file runs under `node --test` and `deno test` too:
  *
  * ```js
- * // math_test.js
+ * // math-test.js
  * import { module, test } from 'qunitx';
  *
  * module('Math', () => {
@@ -38,7 +38,7 @@
  *
  * ```sh
  * $ qunitx                     # no arguments: every input form and flag, at a glance
- * $ qunitx math_test.js        # one file, in a real browser
+ * $ qunitx math-test.js        # one file, in a real browser
  * TAP version 13
  * # Running 1 test file across 1 group
  * # QUnitX running: http://localhost:1234/
@@ -53,7 +53,7 @@
  * ```
  *
  * Point it at whatever you have: a file, a folder (`qunitx test/`), a glob (`qunitx 'test/**'`),
- * or `qunitx test/cart_test.js#34` to run only the test declared on that line. `--filter`,
+ * or `qunitx test/cart-test.js#34` to run only the test declared on that line. `--filter`,
  * `--reporter=spec`, `--coverage`, `--junit`, `--failFast` and `--browser=firefox|webkit` are all
  * listed by the bare `qunitx` above.
  *
@@ -121,7 +121,7 @@
  *
  * // $ node search-report-tests.js
  * // 1 of 2 tests match, in 1 files
- * //   Math: deepEqual understands Sets — tests/math_test.js:8
+ * //   Math: deepEqual understands Sets — tests/math-test.js:8
  * ```
  *
  * Or hold a watch session open: the server stays reachable and the suite keeps re-running while
