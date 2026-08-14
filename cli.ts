@@ -113,6 +113,11 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   if (config.search) {
     const Search = await import('./lib/commands/search.ts');
     const exitCode = await Search.run(config);
+    // Set BEFORE the reap, exactly as the config-failure path above does and for the same reason:
+    // `Search.run` returns 1 when the filter matched nothing, and if the loop drains inside
+    // `shutdownPrelaunch()` Node exits on its own — reporting "found something" for a search that
+    // found nothing. Nothing else holds the loop open at this point.
+    process.exitCode = exitCode;
     await shutdownPrelaunch();
     return exitAfterFlush(exitCode);
   }
