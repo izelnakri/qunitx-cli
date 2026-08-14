@@ -52,6 +52,12 @@ const result = await esbuild.build({
     resolveDir: repoRoot,
   },
   bundle: true,
+  // Without this esbuild resolves node_modules/qunitx to its realpath, and `postinstall` runs
+  // `deno install`, which makes that a symlink into node_modules/.deno/qunitx@<version>/. The
+  // resolved path is embedded in the bundle's module comments, so the SHIPPED artifact changed
+  // depending on how node_modules happened to be laid out — and churned back and forth between
+  // releases. Keeping the symlink makes the output a function of the source alone.
+  preserveSymlinks: true,
   format: 'esm',
   platform: 'browser',
   legalComments: 'none',
