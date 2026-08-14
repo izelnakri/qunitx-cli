@@ -125,12 +125,16 @@ module('Commands | repl | lifecycle', { concurrency: true }, () => {
       });
 
       assert.exitCode(result, 0, 'the process ended on its own, with nothing keeping it alive');
+      // The exit code above is the proof; the census names WHAT is still open when it fails. It is
+      // matched by shape rather than emptiness because "empty" is not true on a healthy Windows
+      // exit: Chrome's user-data-dir removal is still a dozen `FSReqCallback`s and a retry timer at
+      // this point, and the process's own stdio is always there. A socket, a bound server or a
+      // child process is the shape a live browser, an unclosed port or esbuild's service takes.
       const census = /HANDLES (.*)/.exec(result.stdout)?.[1] ?? '[]';
-      const handles = (JSON.parse(census) as string[]).filter(
-        // stdio pipes are the process's own and are always there.
-        (handle) => handle !== 'PipeWrap' && handle !== 'TTYWrap' && handle !== 'FileHandle',
+      const live = (JSON.parse(census) as string[]).filter((handle) =>
+        /TCP|Socket|Server|Process/i.test(handle),
       );
-      assert.deepEqual(handles, [], `nothing left open after close(): ${census}`);
+      assert.deepEqual(live, [], `nothing live left after close(): ${census}`);
     } finally {
       permit.release();
     }
