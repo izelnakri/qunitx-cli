@@ -196,6 +196,25 @@ lint-docs:
 # Usage: make release LEVEL=patch|minor|major
 release:
 	@test -n "$(LEVEL)" || (echo "Usage: make release LEVEL=patch|minor|major" && exit 1)
+# A release rewrites the working tree — version bumps across seven files, regenerated vendor
+# assets, a commit and a tag — over roughly twenty minutes. Anything else touching the tree in
+# that window corrupts it silently: a `git checkout` of package.json mid-run reverted a bump
+# between `npm version` and `npm publish`, so the publish announced the PREVIOUS version and npm
+# rejected it, after the SEA package for the new one had already gone out.
+#
+# The lock records the pid so a crashed release does not wedge the next one: a stale lock whose
+# owner is gone is reclaimed, a live one refuses. Removed on exit, success or failure, via trap.
+	@mkdir -p tmp; \
+	if [ -f tmp/.release-lock ]; then \
+		owner=$$(cat tmp/.release-lock 2>/dev/null); \
+		if [ -n "$$owner" ] && kill -0 "$$owner" 2>/dev/null; then \
+			echo "a release is already running (pid $$owner)."; \
+			echo "wait for it, or remove tmp/.release-lock if you are sure it is dead."; \
+			exit 1; \
+		fi; \
+		echo "reclaiming a stale release lock from dead pid $$owner"; \
+	fi; \
+	echo $$PPID > tmp/.release-lock
 # The branch gate, first and non-negotiable. `npm publish` runs BEFORE the commit and tag below,
 # so a release started on a topic branch ships THAT branch's code to npm — under a version main
 # never contained — and the bare `git push` at the end pushes the topic branch, leaving the tag
@@ -292,6 +311,7 @@ release:
 # how a release can land on something other than main. The branch gate above makes that
 # unreachable, and naming main here means the two would have to disagree for it to happen again.
 	git push origin main && git push origin "v$$(node -p 'require("./package.json").version')"
+	@rm -f tmp/.release-lock
 	$(MAKE) bench
 
 # Smoke-tests the locally-built dist/qunitx Deno binary against the same fixtures
