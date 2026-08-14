@@ -50,6 +50,8 @@ export type { ScriptOptions, ScriptResult, ScriptFailure } from './run.ts';
 export { openSession, type SessionOptions, type TestSession } from './session.ts';
 export { watch, type SessionPatch, type WatchSession } from './watch.ts';
 export { search, type SearchMatch, type SearchResult, type UnlistableCounts } from './search.ts';
+export { repl, type ReplFailure } from './repl.ts';
+export type { ReplSession, ReplResult, ReplStartFailure } from '../repl/session.ts';
 // Straight off the commands rather than through a wrapper module: they already return a Task
 // and already carry these docs, so re-exporting them under their public names is the whole job.
 export { run as init, type InitOptions, type InitResult } from '../commands/init.ts';
