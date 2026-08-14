@@ -58,6 +58,23 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   } else if (cmd === 'daemon') {
     const Daemon = await import('./lib/commands/daemon/index.ts');
     process.exit(await Daemon.run());
+  } else if (cmd === 'run') {
+    // A KEYWORD, not a guess. `qunitx foo.ts` means "run the tests foo.ts declares", and the only
+    // thing that could tell a script from a test file before the browser has run it is a static
+    // scan for test declarations — which reports zero for a real test file that reaches qunitx
+    // through a barrel, a helper or a side-effect import. Guessing wrong there means reporting
+    // success for tests that never ran, so the mode is asked for rather than inferred.
+    const Script = await import('./lib/commands/script.ts');
+    const config = await Script.setup().result();
+    if (Failure.is(config)) {
+      console.error(Failure.format(config));
+      process.exitCode = 1;
+      await shutdownPrelaunch();
+      return exitAfterFlush(1);
+    }
+
+    const outcome = await Script.run(config);
+    return exitAfterFlush(outcome.exitCode);
   }
 
   // Daemon-routed run: when a live daemon exists for this cwd (or QUNITX_DAEMON=1
