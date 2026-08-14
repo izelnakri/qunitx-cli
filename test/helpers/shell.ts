@@ -28,7 +28,7 @@ const IS_CLI = /\bnode cli\.ts\b/;
 // touches a browser. Anything that skips Chrome must also skip acquireBrowser(),
 // or it spends a CHROME_CAP slot idling and throttles the rest of the suite.
 const NON_BROWSER_SUBCOMMAND =
-  /\bnode cli\.ts\b\s+(generate|g|new|n|help|h|p|print|init|version|--version|-v)\b/;
+  /\bnode cli\.ts\b\s+(generate|g|new|n|help|h|p|print|init|upgrade|version|--version|-v)\b/;
 // --search/--print/--preview/-s list what the filter matches and exit (cli.ts),
 // and chrome/prelaunch.ts skips the spawn for the same argv scan.
 const SEARCH_FLAG = /(^|\s)(-s|--search|--print|--preview)(=|\s|$)/;

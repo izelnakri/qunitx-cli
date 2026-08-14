@@ -58,6 +58,9 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   } else if (cmd === 'daemon') {
     const Daemon = await import('./lib/commands/daemon/index.ts');
     process.exit(await Daemon.run());
+  } else if (cmd === 'upgrade') {
+    const Upgrade = await import('./lib/commands/upgrade/index.ts');
+    process.exit(await Upgrade.run());
   }
 
   // Daemon-routed run: when a live daemon exists for this cwd (or QUNITX_DAEMON=1
