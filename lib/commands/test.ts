@@ -5,7 +5,7 @@ import { bindServerToPort } from '../setup/bind-server-to-port.ts';
 import * as WebServer from '../setup/web-server.ts';
 import { openOutputInBrowser } from '../utils/open-output-in-browser.ts';
 import fs from 'node:fs/promises';
-import { normalize, resolve as resolvePath } from 'node:path';
+import { normalize, relative, resolve as resolvePath } from 'node:path';
 import { availableParallelism } from 'node:os';
 // node:timers returns Timer objects with .unref()/.ref() in both Node and Deno.
 // The bare `setTimeout` global in Deno is the Web platform variant, which returns
@@ -764,9 +764,17 @@ async function runConcurrentMode(
       exitCode = 1;
     } else {
       const fileWord = allFiles.length === 1 ? 'file' : 'files';
+      // The hint is the ONLY place a script is inferred, and it only ever suggests. The fact it
+      // reads is a runtime one — QUnit really registered nothing — so unlike a pre-bundle static
+      // scan it cannot mistake a test file that reaches qunitx through a barrel or a helper for
+      // a script. Deciding the mode on that guess would report success for tests that never ran.
+      const hint =
+        allFiles.length === 1
+          ? `. To run it as a script instead: ${scriptHint(config.cwd, allFiles[0])}`
+          : '';
       Reporter.warning(
         config,
-        `Warning: 0 tests registered — no QUnit test cases found in ${allFiles.length} ${fileWord}`,
+        `Warning: 0 tests registered — no QUnit test cases found in ${allFiles.length} ${fileWord}${hint}`,
       );
     }
   }
@@ -903,4 +911,31 @@ function normalizeInternalAssetPathFromHTML(
   return assetPath.startsWith('./')
     ? normalize(`${currentDirectory}/${assetPath.slice(2)}`)
     : normalize(`${currentDirectory}/${assetPath}`);
+}
+
+/**
+ * The `qunitx run <file>` line a zero-test run suggests, with forward slashes.
+ *
+ * `path.relative` answers in the host's separator, so on Windows this echoed
+ * `test\fixtures\seed.ts` back at someone who typed `test/fixtures/seed.ts`. The whole value of
+ * the hint is that it pastes straight back into a shell, and forward slashes work in every
+ * Windows shell — so the display form wins, exactly as it does for `--search`'s listing.
+ *
+ * `relativeTo` is injected so the Windows shape is provable from a POSIX host.
+ *
+ * ```ts
+ * import path from 'node:path';
+ * import { scriptHint } from './test.ts';
+ *
+ * scriptHint('/proj', '/proj/scripts/seed.ts'); // 'qunitx run scripts/seed.ts'
+ * scriptHint('D:\\proj', 'D:\\proj\\scripts\\seed.ts', path.win32.relative);
+ * // 'qunitx run scripts/seed.ts' — never 'scripts\seed.ts'
+ * ```
+ */
+export function scriptHint(
+  cwd: string,
+  file: string,
+  relativeTo: (from: string, to: string) => string = relative,
+): string {
+  return `qunitx run ${relativeTo(cwd, file).replaceAll('\\', '/')}`;
 }
