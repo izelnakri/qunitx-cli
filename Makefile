@@ -290,6 +290,13 @@ release:
 	npm version $(LEVEL) --no-git-tag-version
 	@for d in npm/*/; do node scripts/set-pkg-version.js "$$d/package.json" "$$(node -p 'require("./package.json").version')"; done
 	@node scripts/set-pkg-version.js jsr/deno.json "$$(node -p 'require("./package.json").version')"
+# The JSR publish is CI's job (provenance needs the Actions OIDC token), but its failure modes are
+# all reachable from here — resolution, type-check, the staged tree. v0.34.5 published to npm and
+# GitHub, then the tag's publish-jsr died resolving a devDependency deno considered too young, and
+# the version existed everywhere except JSR. Dry-running before `npm publish` makes that a release
+# that never started rather than one that half-finished.
+	node scripts/stage-jsr-library.ts
+	cd jsr && deno publish --dry-run --allow-dirty
 	$(MAKE) build-sea
 	@NODE_PLATFORM=$$(node -p "process.platform"); \
 	NODE_ARCH=$$(node -p "process.arch"); \
