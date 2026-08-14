@@ -50,6 +50,7 @@ module('Commands | Daemon | Server.browserResponsive', { concurrency: true }, ()
   test('stale isConnected + wedged CDP channel → false within budget (does NOT hang)', async (assert) => {
     let lateSession: { detach: () => Promise<void> } | null = null;
     let lateDetached = false;
+    let channelAnswered = false;
     const browser = {
       isConnected: () => true, // stale: reports connected though Chrome is dead
       // Never resolves within the budget — mimics a CDP send to a doomed browser.
@@ -62,16 +63,24 @@ module('Commands | Daemon | Server.browserResponsive', { concurrency: true }, ()
             },
           };
           // Resolve well after the probe's short timeout to exercise late-session cleanup.
-          setTimeout(() => resolve(lateSession), 60);
+          setTimeout(() => {
+            channelAnswered = true;
+            resolve(lateSession);
+          }, 60);
         }),
     } as unknown as ProbeBrowser;
 
-    const start = Date.now();
     const alive = await Server.browserResponsive(browser, 'chromium', 20);
-    const elapsed = Date.now() - start;
 
     assert.strictEqual(alive, false, 'a wedged CDP channel is treated as dead');
-    assert.ok(elapsed < 500, `resolved in ${elapsed}ms — bounded, not a 180s hang`);
+    // Ordering, not wall clock. An earlier `elapsed < 500ms` ceiling measured the RUNNER: a loaded
+    // windows-latest took 530ms to get through a 20ms budget and failed, while the property held
+    // perfectly. Node fires timers in expiry order, so the 20ms budget always precedes the 60ms
+    // answer however long the loop was blocked — which is exactly the claim being made.
+    assert.false(
+      channelAnswered,
+      'gave up on its own budget instead of waiting for the channel to answer',
+    );
 
     // A session that arrives after the timeout must still be detached, not leaked.
     await new Promise((r) => setTimeout(r, 80));
