@@ -88,6 +88,42 @@ module('Selection | parseTestDeclarations | basics', { concurrency: true }, () =
     assert.true(result!.hasOnly, 'only() gates every other test, so callers must be able to warn');
   });
 
+  test("records qunitx 1.3.0's describe/it aliases", async (assert) => {
+    // 1.3.0 exports `describe = module` and `it = test`. Before they were taught here, a BDD-style
+    // file produced ZERO declarations — so `--search` listed nothing for it and `file#line` fell
+    // back to running the whole file, both silently.
+    const result = await scan(
+      `import { describe, it } from 'qunitx';\ndescribe('Cart', function () {\n  it('adds', function () {});\n  it.skip('later', function () {});\n});\n`,
+    );
+
+    assert.deepEqual(
+      result!.declarations.map((d) => `${d.kind}:${d.name}`),
+      ['module:Cart', 'test:adds', 'test:later'],
+      'describe is a module, it is a test, and it.skip is still a test',
+    );
+  });
+
+  test('the aliases survive being renamed on import', async (assert) => {
+    const result = await scan(
+      `import { it as check, describe as suite } from 'qunitx';\nsuite('S', function () {\n  check('t', function () {});\n});\n`,
+    );
+
+    assert.deepEqual(
+      result!.declarations.map((d) => `${d.kind}:${d.name}`),
+      ['module:S', 'test:t'],
+    );
+  });
+
+  test("a project's own describe/it are still not declarators", async (assert) => {
+    // The whole point of resolving through the import clause: `describe` is a common local name,
+    // and claiming every one of them would put phantom tests in --search output.
+    const result = await scan(
+      `function describe(name, fn) {}\nfunction it(name, fn) {}\ndescribe('not qunitx', function () {\n  it('nor this', function () {});\n});\n`,
+    );
+
+    assert.deepEqual(result!.declarations, [], 'not imported from qunitx, so not ours');
+  });
+
   test('hasOnly is false without only()', async (assert) => {
     const result = await scan(`import { test } from 'qunitx';\ntest('a', function () {});\n`);
     assert.false(result!.hasOnly);
