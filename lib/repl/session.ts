@@ -144,6 +144,11 @@ export interface ReplSession {
  * that ran your whole suite before appearing is not what `qunitx repl` means. Only files named on
  * this invocation are loaded.
  *
+ * `onOpen` fires once the page is up and {@link ReplSession.loaded} is known, before the preloaded
+ * files' own tests run. That ordering is the whole reason it exists: the CLI announces the session
+ * there, and without it the first thing a user saw was TAP from a session that had not introduced
+ * itself yet.
+ *
  * ```ts
  * import * as Repl from './session.ts';
  *
@@ -156,14 +161,18 @@ export interface ReplSession {
  * }
  * ```
  */
-export async function start(config: Config, preload: string[] = []): Promise<ReplSession> {
+export async function start(
+  config: Config,
+  preload: string[] = [],
+  onOpen?: (session: ReplSession) => void,
+): Promise<ReplSession> {
   if (config.browser !== 'chromium') throw UnsupportedBrowser({ browser: config.browser });
 
   const build = config.state.group.build;
-  build.allTestCode = await bundle(config, preload);
+  const outDir = path.resolve(config.projectRoot, config.output);
+  build.allTestCode = await bundle(config, preload, outDir);
   // Served as `/tests.js` below, which is the URL the frame resolver recognises — so a stack from
   // a preloaded file maps back to its own source, exactly as it does in a run.
-  const outDir = path.resolve(config.projectRoot, config.output);
   config.state.group.sourceMapDecoder = SourceMap.extractInline(build.allTestCode, outDir);
 
   // The run's own server, for its asset routes and its `/tests.js`. Only `/` is replaced, and it
@@ -176,36 +185,50 @@ export async function start(config: Config, preload: string[] = []): Promise<Rep
   });
 
   const browser = await Browser.launch(config);
-  const page = await browser.newPage();
-  await bindServerToPort(server, config);
-  const url = `http://localhost:${config.port}`;
-  await page.addInitScript({ content: initScript(config) });
-  await page.goto(url);
+  try {
+    const page = await browser.newPage();
+    await bindServerToPort(server, config);
+    const url = `http://localhost:${config.port}`;
+    await page.addInitScript({ content: initScript(config) });
+    await page.goto(url);
 
-  const cdp = await page.context().newCDPSession(page);
-  cdp.on('Runtime.consoleAPICalled', (event) => {
-    // The page's own output, on the SAME CDP session as the evaluations — so it arrives in the
-    // order it was produced rather than racing the result it belongs to.
-    Reporter.browserLog(config, {
-      type: event.type,
-      // A string argument prints as itself — `console.log('hi')` is text, not a value being
-      // shown — which is the one place this differs from rendering a result.
-      text: event.args
-        .map((arg) => (arg.type === 'string' ? String(arg.value) : describe(arg)))
-        .join(' '),
-      args: [],
+    const cdp = await page.context().newCDPSession(page);
+    cdp.on('Runtime.consoleAPICalled', (event) => {
+      // The page's own output, on the SAME CDP session as the evaluations — so it arrives in the
+      // order it was produced rather than racing the result it belongs to.
+      Reporter.browserLog(config, {
+        type: event.type,
+        // A string argument prints as itself — `console.log('hi')` is text, not a value being
+        // shown — which is the one place this differs from rendering a result.
+        text: event.args
+          .map((arg) => (arg.type === 'string' ? String(arg.value) : describe(arg)))
+          .join(' '),
+        args: [],
+      });
     });
-  });
-  cdp.on('Runtime.exceptionThrown', ({ exceptionDetails }) => {
-    const text = exceptionDetails.exception?.description ?? exceptionDetails.text;
-    Reporter.browserLog(config, { type: 'pageerror', text: resolveStack(config, text), args: [] });
-  });
-  await cdp.send('Runtime.enable');
+    cdp.on('Runtime.exceptionThrown', ({ exceptionDetails }) => {
+      const text = exceptionDetails.exception?.description ?? exceptionDetails.text;
+      Reporter.browserLog(config, {
+        type: 'pageerror',
+        text: resolveStack(config, text),
+        args: [],
+      });
+    });
+    await cdp.send('Runtime.enable');
 
-  const session = new Session(config, { cdp, page, server, browser, url });
-  await session.hydrate();
+    const session = new Session(config, { cdp, page, server, browser, url });
+    session.loaded = await session.readLoaded();
+    onOpen?.(session);
+    await session.runPending();
 
-  return session;
+    return session;
+  } catch (error) {
+    // A start that fails after the browser is up — a page that will not navigate, a bundle whose
+    // top level throws — still holds a browser and a bound port, and nothing else will release
+    // them: `close()` belongs to the session this never returned.
+    await closeWithGrace([server.close(), browser.close(), shutdownPrelaunch()]);
+    throw error;
+  }
 }
 
 /**
@@ -284,7 +307,8 @@ class Session implements ReplSession {
 
   async reload(): Promise<void> {
     await this.#page.reload();
-    await this.hydrate();
+    this.loaded = await this.readLoaded();
+    await this.runPending();
   }
 
   interrupt(): Promise<void> {
@@ -319,14 +343,13 @@ class Session implements ReplSession {
     return this.close();
   }
 
-  /** Reads what the page loaded and runs the tests those files registered. */
-  async hydrate(): Promise<void> {
-    this.loaded = await this.#harness<Array<[string, string[]]>>('loaded');
-    await this.#runPending();
+  /** What the page's bundle loaded: `[file, exported names]` per preloaded module. */
+  readLoaded(): Promise<Array<[string, string[]]>> {
+    return this.#harness<Array<[string, string[]]>>('loaded');
   }
 
   /** Runs the tests registered but not yet run, reporting each as it finishes. */
-  async #runPending(): Promise<TestDetails[]> {
+  async runPending(): Promise<TestDetails[]> {
     const payload = await this.#harness<string | null>('flush()');
     if (!payload) return [];
     const { tests } = JSON.parse(payload) as { tests: TestDetails[] };
@@ -363,7 +386,7 @@ class Session implements ReplSession {
     }
 
     const rendered = await this.#render(evaluated.result);
-    const tests = await this.#runPending();
+    const tests = await this.runPending();
     // `test('…', …)` evaluates to undefined, and printing that under the TAP it just produced adds
     // nothing. Any other value still prints — the input did something besides register tests.
     const output = tests.length > 0 && rendered === 'undefined' ? '' : rendered;
@@ -518,7 +541,7 @@ function initScript(config: Config): string {
  * namespaces to the harness, which copies their exports onto `globalThis`. That is why `test`,
  * `module` and anything a preloaded file exports can be typed at the prompt unqualified.
  */
-async function bundle(config: Config, preload: string[]): Promise<string> {
+async function bundle(config: Config, preload: string[], outDir: string): Promise<string> {
   const imports = preload.map(
     (file, i) => `import * as m${i} from '${specifier(file, config.cwd)}';`,
   );
@@ -534,6 +557,10 @@ async function bundle(config: Config, preload: string[]): Promise<string> {
         resolveDir: config.cwd,
       },
       bundle: true,
+      // Named but never written: `outfile` is what makes esbuild emit source-map paths relative to
+      // the output directory, which is the coordinate system the frame resolver reads them in. With
+      // no outfile they came out relative to the cwd, and every mapped frame gained a `tmp/` prefix.
+      outfile: path.join(outDir, 'tests.js'),
       write: false,
       format: 'iife',
       logLevel: 'silent',

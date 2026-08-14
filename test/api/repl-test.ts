@@ -158,6 +158,14 @@ module('API | repl | tests typed at the prompt', { concurrency: true }, () => {
       assert.false(result.failed, 'a failing test is a result, not an error from the input');
       assert.equal(result.tests[0].status, 'failed');
       assert.includes(output.text(), 'not ok 1 breaks');
+      // QUnit deletes `actual` and `expected` from its assertions on the line after it emits
+      // `testEnd`, so a payload captured any later reports every failure as `actual: null`.
+      assert.deepEqual(
+        result.tests[0].assertions?.map((one) => [one.actual, one.expected]),
+        [[1, 2]],
+        'the values are captured before QUnit reclaims them',
+      );
+      assert.includes(output.text(), 'actual: 1', 'and they reach the reporter');
     });
   });
 });
@@ -189,8 +197,9 @@ module('API | repl | preloaded files', { concurrency: true }, () => {
       assert.includes(result.output, 'Error: fixture boom');
       assert.includes(
         result.output,
-        'test/fixtures/repl-helpers.ts',
-        'the bundle frame is resolved through the inline source map, not left as /tests.js',
+        ' (test/fixtures/repl-helpers.ts:',
+        'the bundle frame is resolved through the inline source map, not left as /tests.js — and ' +
+          'in project coordinates, with no output-directory prefix in front of it',
       );
     });
   });
