@@ -58,7 +58,7 @@ export const DEFAULT_EXEC_TIMEOUT_MS = 180_000;
  */
 export const CHROME_RELAUNCH_TIMEOUT_MS = PER_TEST_TIMEOUT_MS / 2;
 // Default timeout for shellWatch — sized to the CLI's own startup safety net.
-// lib/commands/run/tests-in-browser.ts STARTUP_TIMEOUT_FACTOR (9) × default
+// lib/commands/test/tests-in-browser.ts STARTUP_TIMEOUT_FACTOR (9) × default
 // config.timeout (20s) = 180s of CLI-internal WS-open wait, plus 30s for
 // shellWatch's own Browser.setup + bundle + page.goto + ready-marker print.
 // Bumped 120s → 180s → 210s over two iterations as STARTUP_TIMEOUT_FACTOR

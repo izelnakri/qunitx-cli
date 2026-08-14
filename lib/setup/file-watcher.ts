@@ -3,7 +3,7 @@ import { Task } from '../task/index.ts';
 import { readdir, readFile, stat, lstat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-// See lib/commands/run.ts: node:timers preserves .unref() across Node and Deno.
+// See lib/commands/test.ts: node:timers preserves .unref() across Node and Deno.
 import { setInterval, clearInterval, setTimeout, clearTimeout } from 'node:timers';
 import { green, magenta, red, yellow } from '../utils/color.ts';
 import * as Reporter from '../reporters/index.ts';

@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { armJSCoverage } from '../../../lib/commands/run/tests-in-browser.ts';
+import { armJSCoverage } from '../../../lib/commands/test/tests-in-browser.ts';
 import '../../helpers/custom-asserts.ts';
 import type { Config } from '../../../lib/types.ts';
 import type { Page } from 'playwright-core';

@@ -10,7 +10,7 @@
  *  - **`data`**, a typed payload. The throw site already knows the path it could not read or
  *    the field that failed validation; `data` is where that goes, so the catch site never has
  *    to recover it by pattern-matching the message. (This codebase has a live example of the
- *    alternative: `deriveBuildErrorType()` in `lib/commands/run/tests-in-browser.ts` runs four
+ *    alternative: `deriveBuildErrorType()` in `lib/commands/test/tests-in-browser.ts` runs four
  *    regexes over `error.message` to re-derive a category esbuild knew all along.)
  *
  * Failure stays an `Error` subclass rather than becoming a plain tagged object because too

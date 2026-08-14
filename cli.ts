@@ -7,8 +7,10 @@ import './lib/utils/enable-compile-cache.ts';
 // env is already set or no sidecar is present (npm / source / Node SEA paths).
 import './lib/utils/find-sidecar-esbuild.ts';
 import process from 'node:process';
+import { writeSync } from 'node:fs';
 import { shutdownPrelaunch, startPrelaunch } from './lib/chrome/prelaunch.ts';
-import { Failure } from './lib/result/index.ts';
+import { Failure, tryCatch } from './lib/result/index.ts';
+import { Task } from './lib/task/index.ts';
 import pkg from './package.json' with { type: 'json' };
 
 process.title = 'qunitx';
@@ -61,6 +63,23 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   } else if (cmd === 'upgrade') {
     const Upgrade = await import('./lib/commands/upgrade/index.ts');
     process.exit(await Upgrade.run());
+  } else if (cmd === 'run') {
+    // A KEYWORD, not a guess. `qunitx foo.ts` means "run the tests foo.ts declares", and the only
+    // thing that could tell a script from a test file before the browser has run it is a static
+    // scan for test declarations — which reports zero for a real test file that reaches qunitx
+    // through a barrel, a helper or a side-effect import. Guessing wrong there means reporting
+    // success for tests that never ran, so the mode is asked for rather than inferred.
+    const RunCommand = await import('./lib/commands/run.ts');
+    const config = await RunCommand.setup().result();
+    if (Failure.is(config)) return await reportScriptFailure(config);
+
+    // Kept OFF the shared crash boundary below on purpose — see reportScriptFailure.
+    const outcome = await Task(() => RunCommand.run(config))
+      .mapErr(Failure.from)
+      .result();
+    if (Failure.is(outcome)) return await reportScriptFailure(outcome);
+
+    return exitAfterFlush(outcome.exitCode);
   }
 
   // Daemon-routed run: when a live daemon exists for this cwd (or QUNITX_DAEMON=1
@@ -91,7 +110,7 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   // playwright-core's heavy module evaluation overlap with config assembly.
   const [Config, { run, watch }] = await Promise.all([
     import('./lib/setup/config.ts'),
-    import('./lib/commands/run.ts'),
+    import('./lib/commands/test.ts'),
   ]);
   // The one place a bad flag or a broken plugin becomes a message and an exit code. Config
   // assembly used to do this itself, at eight separate `console.error` + `process.exit(1)`
@@ -184,6 +203,26 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   console.error(Failure.is(error) ? Failure.format(error) : error);
   exitAfterFlush(1);
 });
+
+/**
+ * Reports a `qunitx run` failure and exits 1 — printing BEFORE anything is torn down.
+ *
+ * The shared crash boundary above reaps Chrome first and only then calls `console.error`, which
+ * costs the message outright: on the Windows node lane a failed build exited 1 having printed
+ * nothing at all, because the loop drained inside that await and the print never ran. It guards
+ * the exit code against exactly this and not the reason for it. `writeSync` rather than
+ * `console.error` because a queued async write to a pipe can still be lost at `process.exit`, and
+ * a failure the user cannot see is the one thing this path must never produce.
+ */
+async function reportScriptFailure(failure: unknown): Promise<void> {
+  process.exitCode = 1;
+  const message = Failure.is(failure) ? Failure.format(failure) : String(failure);
+  // A closed stderr must not turn a reported failure into an unhandled crash.
+  tryCatch(() => writeSync(2, `${message}\n`));
+  await shutdownPrelaunch();
+
+  return exitAfterFlush(1);
+}
 
 // Exits with `code` after giving stdio a chance to drain.
 //

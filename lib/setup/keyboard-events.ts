@@ -1,5 +1,5 @@
 import { listenToKeyboardKey } from '../utils/listen-to-keyboard-key.ts';
-import type { WatchSession } from '../commands/run.ts';
+import type { WatchSession } from '../commands/test.ts';
 
 /**
  * Binds watch-mode keyboard shortcuts to the session's verbs: `qq` aborts, `qa` runs all, `qf`
@@ -12,7 +12,7 @@ import type { WatchSession } from '../commands/run.ts';
  *
  * ```ts
  * import * as KeyboardEvents from './keyboard-events.ts';
- * import type { WatchSession } from '../commands/run.ts';
+ * import type { WatchSession } from '../commands/test.ts';
  *
  * // Defined, not invoked: attaches stdin key listeners.
  * function enableShortcuts(session: WatchSession) {

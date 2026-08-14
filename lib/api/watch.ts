@@ -1,4 +1,4 @@
-import * as RunCommand from '../commands/run.ts';
+import * as TestCommand from '../commands/test.ts';
 import { Task } from '../task/index.ts';
 import * as Run from './run.ts';
 import { EventsChannel, findAPIReporterFrom, type RunEvent } from './reporter.ts';
@@ -135,10 +135,10 @@ export function watch(
   return Task(async () => {
     const config = await Config.setup({ ...Options.from(options), watch: true });
     const begunAt = Date.now();
-    const inner = await RunCommand.watch(config);
+    const inner = await TestCommand.watch(config);
 
     // The initial run is snapshotted here, before the session installs its rerun listener: it has
-    // already finished by the time `RunCommand.watch` resolves, so it would never fire one and
+    // already finished by the time `TestCommand.watch` resolves, so it would never fire one and
     // the one result missing from the iteration. Its duration has to be measured around that call
     // for the same reason — nothing can recover it afterwards.
     const session = new Session(inner, config, snapshot(config, Date.now() - begunAt));
@@ -162,7 +162,7 @@ export function watch(
  */
 class Session implements WatchSession {
   readonly initial: RunResult;
-  #inner: RunCommand.WatchSession;
+  #inner: TestCommand.WatchSession;
   #config: ResolvedConfig;
   #results = Stream.channel<RunResult>({ capacity: 1_000, overflow: 'dropOldest' });
   #events: EventsChannel | null = null;
@@ -170,7 +170,7 @@ class Session implements WatchSession {
   #published = 0;
   #closed = false;
 
-  constructor(inner: RunCommand.WatchSession, config: ResolvedConfig, initial: RunResult) {
+  constructor(inner: TestCommand.WatchSession, config: ResolvedConfig, initial: RunResult) {
     this.#inner = inner;
     this.#config = config;
     this.initial = initial;

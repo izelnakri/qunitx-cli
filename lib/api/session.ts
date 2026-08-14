@@ -1,4 +1,4 @@
-import * as RunCommand from '../commands/run.ts';
+import * as TestCommand from '../commands/test.ts';
 import * as RunState from '../setup/run-state.ts';
 import { Task } from '../task/index.ts';
 import * as Run from './run.ts';
@@ -217,7 +217,7 @@ class Session implements RunSession {
       return this.#started;
     }
 
-    this.#started = RunCommand.run(this.#config).then((outcome) => {
+    this.#started = TestCommand.run(this.#config).then((outcome) => {
       const result = this.#snapshot(outcome);
       this.#channel.emit({ kind: 'runEnd', result });
       this.#channel.close();
@@ -231,7 +231,7 @@ class Session implements RunSession {
     return this.#started;
   }
 
-  #snapshot(outcome: RunCommand.RunOutcome): RunResult {
+  #snapshot(outcome: TestCommand.RunOutcome): RunResult {
     return Run.buildResult(this.#config, outcome);
   }
 }
