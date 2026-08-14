@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { classifyRunOutcome } from '../../../lib/commands/run/tests-in-browser.ts';
+import { classifyRunOutcome } from '../../../lib/commands/test/tests-in-browser.ts';
 import type { QUnitResult } from '../../../lib/types.ts';
 
 // Regression coverage for the silent exit-0 flake on v0.31.0 windows-latest (--coverage). The

@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { flushConsoleHandlers } from '../../lib/commands/run/tests-in-browser.ts';
+import { flushConsoleHandlers } from '../../lib/commands/test/tests-in-browser.ts';
 
 module('Commands | run | flushConsoleHandlers', { concurrency: true }, () => {
   test('returns without error when handlers is null', async (assert) => {

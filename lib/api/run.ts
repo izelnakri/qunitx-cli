@@ -1,5 +1,5 @@
 import path from 'node:path';
-import * as RunCommand from '../commands/run.ts';
+import * as TestCommand from '../commands/test.ts';
 import * as RunState from '../setup/run-state.ts';
 import * as Options from './options.ts';
 import * as Config from '../setup/config.ts';
@@ -12,7 +12,7 @@ import type { InvalidOptionFailure, UserRunOptions } from './options.ts';
 import type { ConfigFailure } from '../setup/config.ts';
 import type { Config as ResolvedConfig } from '../types.ts';
 import type { Counter, RunGroup } from '../types.ts';
-import type { RunOutcome } from '../commands/run.ts';
+import type { RunOutcome } from '../commands/test.ts';
 
 /**
  * Every way a run can fail to happen: an option the runner will not accept, an unreadable input,
@@ -67,7 +67,7 @@ export function run(options: UserRunOptions | string | string[] = {}): Task<RunR
     const requestAbort = () => RunState.requestAbort(config.state);
     signal?.addEventListener('abort', requestAbort);
     try {
-      return buildResult(config, await RunCommand.run(config));
+      return buildResult(config, await TestCommand.run(config));
     } finally {
       // One controller is often reused across several runs — a single "stop everything" button —
       // so a listener left behind per run on a long-lived signal really does accumulate.
@@ -303,7 +303,7 @@ export interface RunResult {
  *
  * ```ts
  * import type { Config } from '../types.ts';
- * import type { RunOutcome } from '../commands/run.ts';
+ * import type { RunOutcome } from '../commands/test.ts';
  *
  * // Defined, not invoked: reads the live counters off a resolved Config.
  * function assemble(config: Config, outcome: RunOutcome) {

@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { buildTestBundle, bundleCacheKey } from '../../lib/commands/run/tests-in-browser.ts';
+import { buildTestBundle, bundleCacheKey } from '../../lib/commands/test/tests-in-browser.ts';
 import * as RunState from '../../lib/setup/run-state.ts';
 import type { BuildState, Config } from '../../lib/types.ts';
 import { ignore } from '../../lib/result/failure.ts';

@@ -41,7 +41,8 @@ const SOURCE_MAP_MARKER = '//# sourceMappingURL=data:application/json;base64,';
 // the last two `:digits` segments, so URLs containing `:port` are handled correctly.
 const FRAME_LOCATION_RE = /^(.+):(\d+):(\d+)$/;
 // http(s) bundle URLs the local server serves, optionally Chrome's `async ` prefix.
-const BUNDLE_URL_RE = /^(?:async )?https?:\/\/.*\/(?:tests|filtered-tests)\.js$/;
+// `script.js` is `qunitx run`'s bundle; the other two are the test runner's.
+const BUNDLE_URL_RE = /^(?:async )?https?:\/\/.*\/(?:tests|filtered-tests|script)\.js$/;
 
 // Recognised stack-frame layouts, tried in order.  First whose pattern matches wins —
 // even if its URL fails to resolve (caller falls back to keeping the original frame).

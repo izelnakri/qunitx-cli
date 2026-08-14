@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import * as Timings from '../../lib/commands/run/timings.ts';
+import * as Timings from '../../lib/commands/test/timings.ts';
 
 const CWD = process.cwd();
 
