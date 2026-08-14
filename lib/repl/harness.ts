@@ -69,9 +69,15 @@ export function harness(options: { timeout: number }): void {
       }
       const QUnit = target.QUnit as QUnitLike;
       QUnit.config.testTimeout = options.timeout;
-      QUnit.on('testEnd', (details) => collected.push(details));
+      // Snapshotted HERE, not at `runEnd`: QUnit calls `slimAssertions()` on the line after it
+      // emits `testEnd`, deleting `actual` and `expected` from every assertion to keep a long
+      // suite from retaining them. Holding the live object and serializing later reported every
+      // failure with `actual: null`.
+      QUnit.on('testEnd', (details) =>
+        collected.push(JSON.parse(JSON.stringify(details, circularReplacer()))),
+      );
       QUnit.on('runEnd', () => {
-        const payload = JSON.stringify({ tests: collected }, circularReplacer());
+        const payload = JSON.stringify({ tests: collected });
         collected = [];
         prepare(QUnit);
         const resolve = settle;

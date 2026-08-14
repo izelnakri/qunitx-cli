@@ -12,6 +12,7 @@ import * as Result from '../result/index.ts';
 import { blue, red } from '../utils/color.ts';
 import { findProjectRoot } from '../utils/find-project-root.ts';
 import type { ReplSession } from '../repl/session.ts';
+import type { Config as ResolvedConfig } from '../types.ts';
 
 const PROMPT = '> ';
 const HISTORY_FILE = '.qunitx_repl_history';
@@ -38,8 +39,19 @@ export async function run(): Promise<number> {
   // is not what `qunitx repl` means.
   const flags = Result.unwrap(Args.parse(projectRoot, process.argv.slice(3), cwd));
   const config = await Config.setup({ ...flags, cwd });
-  const session = await Repl.start(config, await Repl.resolvePreload(config, flags.inputs));
+  // The banner goes in `onOpen` so it lands BEFORE the preloaded files' own tests run — otherwise
+  // the first thing on screen is TAP from a session that has not said what it is yet.
+  const session = await Repl.start(
+    config,
+    await Repl.resolvePreload(config, flags.inputs),
+    (open) => banner(config, open),
+  );
 
+  return await drive(session);
+}
+
+/** What the session is, what it loaded, and how to leave — through the run's reporters, as `#` lines. */
+function banner(config: ResolvedConfig, session: ReplSession): void {
   Reporter.info(config, blue(`qunitx repl — evaluating in Chrome at ${session.url}`));
   for (const [file, names] of session.loaded) {
     const exported = names.length > 0 ? `: ${names.join(', ')}` : '';
@@ -49,8 +61,6 @@ export async function run(): Promise<number> {
     config,
     blue('type `.help` for commands, `.exit` or Ctrl-D to quit, Ctrl-C to interrupt'),
   );
-
-  return await drive(session);
 }
 
 /**
@@ -156,7 +166,11 @@ function drive(session: ReplSession): Promise<number> {
  * covers all four. Wrapping it is what makes a piped session behave exactly like a typed one,
  * rather than a burst of overlapping evaluations racing EOF.
  */
-async function pipe(source: NodeJS.ReadableStream, input: PassThrough, server: REPLServer) {
+async function pipe(
+  source: NodeJS.ReadableStream,
+  input: PassThrough,
+  server: REPLServer,
+): Promise<void> {
   // Starts resolved: the REPL displayed its first prompt inside `start()`, before this wrapper
   // existed, so line one is written straight away and every later line waits its turn.
   let ready = deferred();
