@@ -3,10 +3,16 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { withWatch } from './helpers.ts';
 import { outputDir } from '../helpers/temp-dir.ts';
+import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
+import { spawnCapture } from '../helpers/shell.ts';
 import '../helpers/custom-asserts.ts';
 
 const PASSING = 'test/fixtures/passing-tests.ts';
 const FAILING = 'test/fixtures/failing-tests.ts';
+
+// Enough for a cold start plus a browser launch on CI, and short enough that a leak fails the test
+// well before the harness kills the whole worker with nothing to show for it.
+const WATCH_EXIT_TIMEOUT_MS = 60_000;
 
 const GREEN_TEST = `import { module, test } from 'qunitx';
 module('Watched', () => {
@@ -65,6 +71,32 @@ module('API | watch | session', { concurrency: true }, () => {
 
       assert.deepEqual(seen, [3], 'the queued initial result still drains, then it ends');
     });
+  });
+
+  // The one thing `withWatch` cannot check: this suite's own process stays alive by design, so a
+  // handle surviving close() is invisible from inside it. It shipped that way — close() released
+  // the browser, the server and the watchers but not esbuild's incremental context, whose REF'd
+  // service child then kept every API consumer's script running forever after the await returned.
+  test('close() releases esbuild too, so a script that closes can exit', async (assert) => {
+    await using output = outputDir('api-watch-exit');
+    const permit = await acquireBrowser();
+    try {
+      const { stdout } = await spawnCapture(
+        `node test/fixtures/watch-close-exits.ts ${PASSING} ${output.path}`,
+        // spawnCapture does not inherit the environment, and without it the child has no PATH to
+        // find Chrome with — it falls back to playwright's own download and dies on a missing one.
+        { timeout: WATCH_EXIT_TIMEOUT_MS, env: { ...process.env, FORCE_COLOR: '0' } },
+      );
+      const handles = JSON.parse(stdout) as string[];
+
+      assert.deepEqual(
+        handles.filter((handle) => handle === 'ProcessWrap'),
+        [],
+        `no child process outlives close(), got ${stdout.trim()}`,
+      );
+    } finally {
+      permit.release();
+    }
   });
 });
 

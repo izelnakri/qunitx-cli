@@ -36,7 +36,7 @@ import { isFilteredRun, describeActiveFilters } from '../selection/filter.ts';
 import * as Timings from './run/timings.ts';
 import { applyWatchLineTargets, resolveTargetedFiles, splitIntoGroups } from './run/grouping.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
-import type { Config, Connections, HtmlAssets } from '../types.ts';
+import type { Config, Connections, EsbuildCache, HtmlAssets } from '../types.ts';
 import { Task } from '../task/index.ts';
 
 // Playwright navigation timeout for headed watch-mode reloads (not test execution).
@@ -442,7 +442,7 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
         );
       });
     },
-    close: () => closeSession(connections, killFileWatchers),
+    close: () => closeSession(connections, killFileWatchers, build),
   };
 }
 
@@ -488,20 +488,29 @@ function rebuildAndRun(config: Config, connections: Connections): Promise<void> 
 }
 
 /**
- * Stops a watch session's watchers and closes its browser and server. Bounded by
+ * Stops a watch session's watchers and closes its browser, server and esbuild context. Bounded by
  * `closeWithGrace`, and safe to call twice — every step tolerates an already-closed handle.
+ *
+ * The esbuild context is the one piece the CLI never had to release: it exits the process when
+ * watch mode ends, and an open incremental context holds a REF'd handle on esbuild's service child
+ * (a one-shot `esbuild.build()` does not, which is why non-watch runs always exited cleanly). Left
+ * behind, `await session.close()` returns and the script then hangs forever on a child nobody is
+ * talking to — the JS API's whole premise is that it never calls `process.exit` for you.
  */
 async function closeSession(
   connections: Connections,
   killFileWatchers: () => unknown,
+  build: EsbuildCache,
 ): Promise<void> {
   killFileWatchers();
   await closeWithGrace([
     Task(connections.server?.close()).ignore('watch session server.close'),
     Task(connections.page?.close()).ignore('watch session page.close'),
     Task(connections.browser?.close()).ignore('watch session browser.close'),
+    Task(build.context?.dispose()).ignore('watch session esbuild context dispose'),
     shutdownPrelaunch(),
   ]);
+  build.context = null;
 }
 
 /**
