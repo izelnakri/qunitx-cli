@@ -14,19 +14,37 @@
 //
 // Everything staged is generated, and .gitignore'd as such. Run before `deno publish`; the
 // release recipe in the Makefile does exactly that.
-import { cp, rm } from 'node:fs/promises';
+import { cp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const jsr = path.join(root, 'jsr');
-const STAGED = ['lib', 'templates', 'package.json'];
+// Target defaults to jsr/, the real staging directory. Overridable so a test can stage into a
+// temp dir and assert on the result without racing a release that is staging the real one.
+const jsr = path.resolve(root, process.argv[2] ?? 'jsr');
+const COPIED = ['lib', 'templates'];
+// Dropped from the staged package.json rather than published with it. `deno publish` resolves
+// every npm dependency it can see, and v0.34.5's release died resolving `qunitx@^1.3.1` — a
+// devDependency the published package never imports, whose only satisfying version was younger
+// than deno's 24h minimum-dependency-age. Bumping qunitx and releasing the same day therefore
+// broke the JSR publish while npm and the GitHub release had already gone out.
+// `scripts` goes for the same reason it would in any published artifact: it names files that are
+// not in the package, and includes a postinstall.
+const UNPUBLISHED_FIELDS = ['devDependencies', 'scripts'] as const;
 
 await Promise.all(
-  STAGED.map((entry) => rm(path.join(jsr, entry), { recursive: true, force: true })),
+  [...COPIED, 'package.json'].map((entry) =>
+    rm(path.join(jsr, entry), { recursive: true, force: true }),
+  ),
 );
 await Promise.all(
-  STAGED.map((entry) => cp(path.join(root, entry), path.join(jsr, entry), { recursive: true })),
+  COPIED.map((entry) => cp(path.join(root, entry), path.join(jsr, entry), { recursive: true })),
 );
 
-console.log(`Staged ${STAGED.join(', ')} into jsr/`);
+const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+for (const field of UNPUBLISHED_FIELDS) delete manifest[field];
+await writeFile(path.join(jsr, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+
+console.log(
+  `Staged ${COPIED.join(', ')}, package.json (without ${UNPUBLISHED_FIELDS.join(', ')}) into jsr/`,
+);
