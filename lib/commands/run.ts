@@ -5,7 +5,7 @@ import { bindServerToPort } from '../setup/bind-server-to-port.ts';
 import * as WebServer from '../setup/web-server.ts';
 import { openOutputInBrowser } from '../utils/open-output-in-browser.ts';
 import fs from 'node:fs/promises';
-import { normalize, resolve as resolvePath } from 'node:path';
+import { normalize, relative, resolve as resolvePath } from 'node:path';
 import { availableParallelism } from 'node:os';
 // node:timers returns Timer objects with .unref()/.ref() in both Node and Deno.
 // The bare `setTimeout` global in Deno is the Web platform variant, which returns
@@ -755,9 +755,17 @@ async function runConcurrentMode(
       exitCode = 1;
     } else {
       const fileWord = allFiles.length === 1 ? 'file' : 'files';
+      // The hint is the ONLY place a script is inferred, and it only ever suggests. The fact it
+      // reads is a runtime one — QUnit really registered nothing — so unlike a pre-bundle static
+      // scan it cannot mistake a test file that reaches qunitx through a barrel or a helper for
+      // a script. Deciding the mode on that guess would report success for tests that never ran.
+      const hint =
+        allFiles.length === 1
+          ? `. To run it as a script instead: qunitx run ${relative(config.cwd, allFiles[0])}`
+          : '';
       Reporter.warning(
         config,
-        `Warning: 0 tests registered — no QUnit test cases found in ${allFiles.length} ${fileWord}`,
+        `Warning: 0 tests registered — no QUnit test cases found in ${allFiles.length} ${fileWord}${hint}`,
       );
     }
   }
