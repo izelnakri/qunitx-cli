@@ -128,6 +128,9 @@ export function startPrelaunch(): void {
   const isDaemonClientRun =
     isRunCommand &&
     cmd !== 'daemon' &&
+    // `repl` opens a page of its own and keeps it: it never routes to the daemon, so it wants
+    // the pre-launched Chrome even when a daemon is up.
+    cmd !== 'repl' &&
     !watchFromArgv &&
     !openFromArgv &&
     !process.env.QUNITX_NO_DAEMON &&

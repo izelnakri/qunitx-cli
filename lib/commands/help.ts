@@ -64,6 +64,7 @@ ${color('$ qunitx run $scriptFile')}                 # Runs one file as a plain 
   no TAP, no QUnit; top-level await works, and the exit code is ${color('globalThis.exitCode')} (1 if it throws)
   a file that declares tests is run AS a suite, reported exactly as ${color('$ qunitx $file')} would
   accepts ${color('--browser')}, ${color('--port')}, ${color('--open')}, ${color('--timeout')} and ${color('--watch')}
+${color('$ qunitx repl [files]')}                    # A prompt that evaluates in a real Chrome page; [files] are preloaded
 
 ${highlight('Environment:')}
 ${color('QUNITX_DAEMON=1')}     : auto-spawn the daemon on the first qunitx run; reuse it on every run after (overrides the CI=1 bypass)
