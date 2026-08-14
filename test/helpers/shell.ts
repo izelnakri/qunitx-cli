@@ -200,7 +200,8 @@ export async function spawnCapture(
     timeout = DEFAULT_EXEC_TIMEOUT_MS,
     env,
     cwd,
-  }: { timeout?: number; env?: NodeJS.ProcessEnv; cwd?: string } = {},
+    stdin,
+  }: { timeout?: number; env?: NodeJS.ProcessEnv; cwd?: string; stdin?: string } = {},
 ): Promise<CapturedResult> {
   const { bin, args, env: prefixEnv } = parseCommand(command);
   return await new Promise<CapturedResult>((resolve, reject) => {
@@ -215,6 +216,9 @@ export async function spawnCapture(
     child.stdin.on('error', () => {});
     child.stdout.on('error', () => {});
     child.stderr.on('error', () => {});
+    // Written AND ended: a command that reads stdin (`qunitx repl`) needs the EOF to know the
+    // conversation is over. Left untouched when no input was given, which is every other caller.
+    if (stdin !== undefined) child.stdin.end(stdin);
     const stdoutChunks: Array<{ time: number; data: string }> = [];
     const stderrChunks: Array<{ time: number; data: string }> = [];
     let stdout = '';
@@ -406,7 +410,14 @@ export async function execute(
     testName = '',
     expectFailure = false,
     cwd,
-  }: { moduleName?: string; testName?: string; expectFailure?: boolean; cwd?: string } = {},
+    stdin,
+  }: {
+    moduleName?: string;
+    testName?: string;
+    expectFailure?: boolean;
+    cwd?: string;
+    stdin?: string;
+  } = {},
 ): Promise<CapturedResult> {
   const command = applyImplicitFlags(commandString);
   const permit = needsBrowser(commandString) ? await acquireBrowser() : { release: () => {} };
@@ -415,6 +426,7 @@ export async function execute(
       timeout: DEFAULT_EXEC_TIMEOUT_MS,
       env: { ...process.env, FORCE_COLOR: '0' },
       cwd,
+      stdin,
     });
 
     if (process.env.QUNITX_VERBOSE) {
