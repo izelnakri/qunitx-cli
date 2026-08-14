@@ -15,8 +15,18 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.action != 'closed' && github.actor == 'dependabot[bot]'
     steps:
+      # GITHUB_TOKEN is a GitHub App installation token, and GitHub refuses to let an App merge a
+      # PR that edits .github/workflows/* — there is no `workflows` permission to grant it, so no
+      # amount of `permissions:` fixes it. Every dependabot bump of an action therefore failed here
+      # with `refusing to allow a GitHub App to create or update workflow`, leaving a red check on
+      # a PR that was perfectly fine and needed one human click.
       - name: Enable auto-merge
-        run: gh pr merge --auto --squash "$PR_URL"
+        run: |
+          if gh pr diff "$PR_URL" --name-only | grep -q '^\.github/workflows/'; then
+            echo "::notice::Touches .github/workflows/ — GITHUB_TOKEN cannot auto-merge that. Merge it by hand."
+            exit 0
+          fi
+          gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
