@@ -17,6 +17,9 @@ import { findProjectRoot } from '../utils/find-project-root.ts';
 import { pathExists } from '../utils/path-exists.ts';
 import { qunitxRuntimePlugin } from '../setup/qunitx-runtime-plugin.ts';
 import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
+import { processConsole, type Console } from '../console.ts';
+import { MAX_BROWSER_LOGS } from '../api/reporter.ts';
+import type { BrowserLog } from '../reporters/types.ts';
 import type { ConsoleMessage, Page } from 'playwright-core';
 import type { ProjectRootNotFoundFailure } from '../utils/find-project-root.ts';
 import type { SourceMapDecoder } from '../utils/source-map.ts';
@@ -96,6 +99,8 @@ export type ScriptConfigFailure =
  * threading a script mode through those would make every one of them mean two things.
  *
  * ```ts
+ * import { silentConsole } from '../console.ts';
+ *
  * const config: ScriptConfig = {
  *   entry: '/proj/seed.ts',
  *   projectRoot: '/proj',
@@ -106,6 +111,7 @@ export type ScriptConfigFailure =
  *   watch: false,
  *   open: false,
  *   timeout: null,
+ *   console: silentConsole,
  * };
  * config.timeout; // null — unbounded, like `deno run`
  * ```
@@ -129,12 +135,22 @@ export interface ScriptConfig {
   open: boolean;
   /** `--timeout`: ms the script may run before it is declared hung, or null for unbounded. */
   timeout: number | null;
+  /** Where the script's own output goes. `processConsole` for the CLI. */
+  console: Console;
 }
 
 /** What one execution of the script produced. */
 export interface ScriptOutcome {
   /** `globalThis.exitCode` if the script set one, 1 if it threw, else 0. */
   exitCode: number;
+  /**
+   * The script's own console calls and uncaught errors, in emit order and capped at
+   * {@link MAX_BROWSER_LOGS} — the same shape and the same cap a test run reports, because it is
+   * the same thing: a page's console, read over CDP.
+   */
+  browserLogs: BrowserLog[];
+  /** How many were dropped to stay under the cap. `0` when nothing was. */
+  browserLogsDropped: number;
 }
 
 /**
@@ -198,6 +214,11 @@ export interface ScriptSettings {
   open?: boolean;
   /** Ms the script may run before it is declared hung; null (the default) is unbounded. */
   timeout?: number | null;
+  /**
+   * Where the script's own output goes, as `test()` and `watch()` take one. Defaults to this
+   * process's stdout and stderr; pass `silentConsole` to capture it from the result instead.
+   */
+  console?: Console;
 }
 
 /** The two ways naming an entry can fail, before any flag or option is even looked at. */
@@ -243,6 +264,7 @@ export function configFor(
       watch: settings.watch ?? false,
       open: settings.open ?? false,
       timeout: settings.timeout ?? null,
+      console: settings.console ?? processConsole,
     };
   });
 }
@@ -502,6 +524,19 @@ async function execute(
   config: ScriptConfig,
   decoderOf: () => SourceMapDecoder | null,
 ): Promise<ScriptOutcome> {
+  // Capped the way a test run caps its own: a script that logs in a loop must not grow this array
+  // until the process dies, and dropping from the FRONT keeps the lines next to whatever went
+  // wrong. `browserLogsDropped` is what stops that being a silent truncation.
+  const browserLogs: BrowserLog[] = [];
+  let browserLogsDropped = 0;
+  const record = (log: BrowserLog) => {
+    browserLogs.push(log);
+    if (browserLogs.length > MAX_BROWSER_LOGS) {
+      browserLogs.shift();
+      browserLogsDropped++;
+    }
+  };
+
   // Console arguments are fetched the moment the event fires, so the round-trips overlap, but
   // WRITTEN through a chain, so the terminal's line order is the page's emit order. Fetching
   // inside the chain would serialise every round-trip; writing outside it would let a message
@@ -509,13 +544,23 @@ async function execute(
   let writes: Promise<void> = Promise.resolve();
   const onConsole = (message: ConsoleMessage) => {
     const rendered = renderConsoleMessage(message);
-    const stream = isErrorLevel(message.type()) ? process.stderr : process.stdout;
+    const type = message.type();
+    const write = isErrorLevel(type) ? config.console.error : config.console.log;
     writes = writes.then(async () => {
-      stream.write(`${mapStack(await rendered, decoderOf(), config.projectRoot)}\n`);
+      const text = mapStack(await rendered, decoderOf(), config.projectRoot);
+      // Recorded on the same chain that writes it, so `browserLogs` ends up in the page's emit
+      // order rather than in whatever order the argument round-trips happened to resolve.
+      record({ type, text, args: [] });
+      // The newline belongs to the caller with this Console shape — `streamConsole` writes what it
+      // is given, verbatim. Without it a script's output runs into whatever is printed next.
+      write(`${text}\n`);
     });
   };
   const uncaught: string[] = [];
-  const onPageError = (error: Error) => uncaught.push(error.stack ?? String(error));
+  const onPageError = (error: Error) => {
+    uncaught.push(error.stack ?? String(error));
+    record({ type: 'pageerror', text: error.stack ?? String(error), args: [] });
+  };
   page.on('console', onConsole);
   page.on('pageerror', onPageError);
 
@@ -540,14 +585,18 @@ async function execute(
     await writes;
 
     if (!done.ok) {
-      process.stderr.write(`${red(mapStack(done.stack ?? '', decoderOf(), config.projectRoot))}\n`);
-      return { exitCode: 1 };
+      config.console.error(`${red(mapStack(done.stack ?? '', decoderOf(), config.projectRoot))}\n`);
+      return { exitCode: 1, browserLogs, browserLogsDropped };
     }
     uncaught.forEach((stack) =>
-      process.stderr.write(`${red(mapStack(stack, decoderOf(), config.projectRoot))}\n`),
+      config.console.error(`${red(mapStack(stack, decoderOf(), config.projectRoot))}\n`),
     );
 
-    return { exitCode: uncaught.length > 0 ? 1 : (done.exitCode ?? 0) };
+    return {
+      exitCode: uncaught.length > 0 ? 1 : (done.exitCode ?? 0),
+      browserLogs,
+      browserLogsDropped,
+    };
   } finally {
     page.off('console', onConsole);
     page.off('pageerror', onPageError);

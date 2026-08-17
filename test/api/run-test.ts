@@ -73,6 +73,39 @@ module('API | run | script execution', { concurrency: true }, () => {
   });
 });
 
+module('API | run | what the script printed', { concurrency: true }, () => {
+  test('the console option takes the output, with errors kept apart from logs', async (assert) => {
+    const logged: string[] = [];
+    const errored: string[] = [];
+    await apiScript(`${SCRIPTS}/streams-script.ts`, {
+      console: { log: (line) => logged.push(line), error: (line) => errored.push(line) },
+    });
+
+    assert.includes(logged.join('\n'), 'line 0', 'console.log reaches the log sink');
+    assert.includes(errored.join('\n'), 'an error', 'console.error reaches the error sink');
+    assert.includes(errored.join('\n'), 'a warning', 'and so does console.warn, as on the CLI');
+  });
+
+  test('browserLogs carries the same lines even when the console discards them', async (assert) => {
+    // The point of the pair: `console` chooses where output goes, `browserLogs` is what it was.
+    // A silent console must capture rather than lose it, or "run it quietly and inspect after"
+    // would be impossible.
+    const outcome = await apiScript(`${SCRIPTS}/streams-script.ts`, {
+      console: QUnitX.silentConsole,
+    });
+
+    const result = outcome as QUnitX.ScriptResult;
+    const texts = result.browserLogs.map((log) => log.text);
+    assert.includes(texts.join('\n'), 'line 0', 'the log survived a silent console');
+    assert.strictEqual(result.browserLogsDropped, 0, 'nothing dropped for a small script');
+    assert.deepEqual(
+      result.browserLogs.filter((log) => log.text.includes('a warning')).map((log) => log.type),
+      ['warning'],
+      'the page level is kept, so warn stays distinguishable from error',
+    );
+  });
+});
+
 module('API | run | refuses the old suite verb', { concurrency: true }, () => {
   // `run` meant "run this suite" until the script verb took the name. Every shape that could only
   // have meant the old verb has to say so, because running it as a script would be a silent

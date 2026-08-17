@@ -119,15 +119,39 @@ result.ok; // true when the script exited 0
 result.exitCode; // globalThis.exitCode if the script set one, 1 if it threw, else 0
 result.durationMs; // 412
 result.file; // '/proj/scripts/seed.ts' — absolute, whatever you passed
+result.browserLogs; // everything it printed, in emit order
+result.browserLogsDropped; // 0, unless it out-printed the cap
 ```
 
 The script is bundled with esbuild (TypeScript and JSX work unchanged) and evaluated as a module,
 so it gets a DOM, `fetch` against a real `http://localhost` origin, `import.meta` and top-level
-`await`. Its own `console` output goes to this process's stdout and stderr as it happens — the
-resolved value is the outcome, not the output.
+`await`.
 
-Options are `cwd`, `browser`, `port`, `timeout` and `open`. There is no `watch`: a watching script
-never finishes, so it cannot be a `Task` that resolves, and it needs a session type of its own.
+Options are `cwd`, `browser`, `port`, `timeout`, `open` and `console`. There is no `watch`: a
+watching script never finishes, so it cannot be a `Task` that resolves, and it needs a session type
+of its own.
+
+### What the script printed
+
+Its `console` calls stream to this process's stdout and stderr as they happen, and are **also**
+recorded on the result. `console` and `browserLogs` are a tee, not a switch — routing the output
+elsewhere never loses it:
+
+```js
+const quiet = await run('scripts/seed.ts', { console: silentConsole });
+
+quiet.browserLogs; // still every line — silence chose the destination, not the recording
+quiet.browserLogs[0]; // { type: 'log', text: 'seeding…', args: [] }
+```
+
+Same shape and same cap a test run reports, because it is the same thing — a page's console read
+over CDP. `type` is the page's own level (`log`, `warning`, `error`, `info`, `debug`, or
+`pageerror` for an uncaught throw), so stdout-versus-stderr is derivable and `warn` stays
+distinguishable from `error` — a distinction the two-stream split cannot express.
+
+Capped at the most recent 1000 entries so a script that prints in a loop cannot grow the array
+until the process dies; `browserLogsDropped` counts what fell off the front, so a truncated log is
+never silently truncated.
 
 **A non-zero exit code is a result, not a rejection** — the same contract `test()` has for a red
 suite. It rejects only when the script could not be run at all: no such file, a bundle that will

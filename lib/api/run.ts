@@ -3,6 +3,8 @@ import { stat } from 'node:fs/promises';
 import * as RunCommand from '../commands/run.ts';
 import * as Failure from '../result/failure.ts';
 import { Task } from '../task/index.ts';
+import type { Console } from '../console.ts';
+import type { BrowserLog } from '../reporters/types.ts';
 import type { ScriptEntryFailure } from '../commands/run.ts';
 
 // A path only a shell expands. Passing one to `run` means the caller thinks it selects many
@@ -56,6 +58,14 @@ export interface ScriptOptions {
   timeout?: number;
   /** Run in a visible browser window instead of headless. */
   open?: boolean;
+  /**
+   * Where the script's own output goes, exactly as {@link test} and {@link watch} take one.
+   * Defaults to this process's stdout and stderr.
+   *
+   * It is a tee, not a switch: {@link ScriptResult.browserLogs} carries the same lines either way,
+   * so `silentConsole` captures the output rather than discarding it.
+   */
+  console?: Console;
 }
 
 /** Every way {@link run} can reject. A script that merely exits non-zero is NOT one of them. */
@@ -73,8 +83,11 @@ export type ScriptFailure =
  *   exitCode: 3,
  *   durationMs: 412,
  *   file: '/proj/scripts/seed.ts',
+ *   browserLogs: [{ type: 'log', text: 'seeding…', args: [] }],
+ *   browserLogsDropped: 0,
  * };
  * result.ok; // false — the script set a non-zero globalThis.exitCode
+ * result.browserLogs[0].text; // 'seeding…' — what it printed, whatever `console` you passed
  * ```
  */
 export interface ScriptResult {
@@ -86,6 +99,13 @@ export interface ScriptResult {
   durationMs: number;
   /** Absolute path of the file that ran. */
   file: string;
+  /**
+   * Everything the script printed — its `console` calls and any uncaught error — in emit order,
+   * whatever `console` option was passed. The same shape a test run reports, capped the same way.
+   */
+  browserLogs: BrowserLog[];
+  /** How many lines were dropped to stay under the cap. `0` when nothing was. */
+  browserLogsDropped: number;
 }
 
 /**
@@ -128,6 +148,7 @@ export function run(file: string, options: ScriptOptions = {}): Task<ScriptResul
       portExplicit: options.port !== undefined,
       open: options.open,
       timeout: options.timeout,
+      console: options.console,
       // Never watch: the command's watch mode returns a promise that never resolves, so a Task
       // wrapping it could not settle. The watching form needs a session type of its own.
       watch: false,
@@ -141,6 +162,8 @@ export function run(file: string, options: ScriptOptions = {}): Task<ScriptResul
       exitCode: outcome.exitCode,
       durationMs: Date.now() - startedAt,
       file: config.entry,
+      browserLogs: outcome.browserLogs,
+      browserLogsDropped: outcome.browserLogsDropped,
     };
   });
 }
