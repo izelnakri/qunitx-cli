@@ -113,23 +113,23 @@ export function status(): Task<DaemonStatus, never> {
  * a fresh one.
  *
  * Spawns the daemon if one isn't running, so a first call is not measurably faster than
- * {@link run}; every call after it is.
+ * {@link test}; every call after it is.
  *
  * {@link DaemonRunOptions} is narrower than the local `UserRunOptions` by exactly what cannot cross
  * a process boundary: plugin objects and reporter instances. `console` still works — the daemon's
  * text is streamed back and written there.
  *
  * ```ts
- * import { run as runOnDaemon } from './daemon.ts';
+ * import { test as testOnDaemon } from './daemon.ts';
  *
  * // Defined, not invoked: dispatches a real run to the daemon.
  * async function fastCheck() {
- *   const result = await runOnDaemon({ inputs: ['test/'] });
+ *   const result = await testOnDaemon({ inputs: ['test/'] });
  *   return result.ok;
  * }
  * ```
  */
-export function run(options: DaemonRunOptions = {}): Task<RunResult, Client.DaemonRunFailure> {
+export function test(options: DaemonRunOptions = {}): Task<RunResult, Client.DaemonRunFailure> {
   return Task(async () => {
     // The boolean matters: `ensureRunning` returns false when the spawn never became reachable
     // within its budget. Proceeding anyway meant dialling a socket that certainly is not there

@@ -59,7 +59,7 @@ export {
   type GenerateResult,
 } from '../commands/generate.ts';
 /**
- * Daemon control: `start`, `stop`, `status`, and a `run` that reuses the daemon's warm browser
+ * Daemon control: `start`, `stop`, `status`, and a `test` that reuses the daemon's warm browser
  * and returns the same {@link RunResult} a local run does.
  *
  * ```ts
@@ -68,7 +68,7 @@ export {
  * // Defined, not invoked: spawns and talks to a real background process.
  * async function warmRun() {
  *   await Daemon.start();
- *   return await Daemon.run({ inputs: ['test/'] });
+ *   return await Daemon.test({ inputs: ['test/'] });
  * }
  * ```
  */

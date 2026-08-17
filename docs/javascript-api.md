@@ -289,12 +289,12 @@ up.
 import { Daemon } from 'qunitx-cli';
 
 await Daemon.start();
-const result = await Daemon.run({ inputs: ['test/'] }); // same RunResult
+const result = await Daemon.test({ inputs: ['test/'] }); // same RunResult
 await Daemon.status(); // { running: true, pid, cwd, socketPath, … }
 await Daemon.stop();
 ```
 
-`Daemon.run` takes the options that survive a socket, so plugin objects and reporter instances are
+`Daemon.test` takes the options that survive a socket, so plugin objects and reporter instances are
 a compile error rather than a silent drop. `console` still works — the daemon's text is streamed
 back and written there.
 
