@@ -2,9 +2,9 @@ import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 import { outputDir } from '../helpers/temp-dir.ts';
 import * as QUnitX from '../../lib/api/index.ts';
 import type { UserRunOptions } from '../../lib/api/options.ts';
-import type { RunResult } from '../../lib/api/run.ts';
+import type { RunResult } from '../../lib/api/test.ts';
 import type { WatchSession } from '../../lib/api/watch.ts';
-import type { RunSession } from '../../lib/api/session.ts';
+import type { TestSession } from '../../lib/api/session.ts';
 
 // The API tests are the only ones that drive a browser *in this process* rather than through
 // `node cli.ts`. Two things have to be arranged by hand as a result:
@@ -33,7 +33,7 @@ export async function apiRun(options: UserRunOptions): Promise<RunResult> {
   await using output = outputDir('api-run');
   const permit = await acquireBrowser();
   try {
-    return await QUnitX.run({ output: output.path, ...options });
+    return await QUnitX.test({ output: output.path, ...options });
   } finally {
     permit.release();
   }
@@ -71,21 +71,21 @@ export async function withWatch<T>(
  * Starts a run session with a permit held, hands it to `body`, and closes it.
  *
  * ```ts
- * import { withRunSession } from './helpers.ts';
+ * import { withTestSession } from './helpers.ts';
  *
  * // Defined, not invoked: launches a real browser.
  * async function eventCount() {
- *   return await withRunSession({}, async (session) => (await session.result()).counts.total);
+ *   return await withTestSession({}, async (session) => (await session.result()).counts.total);
  * }
  * ```
  */
-export async function withRunSession<T>(
+export async function withTestSession<T>(
   options: UserRunOptions,
-  body: (session: RunSession) => Promise<T> | T,
+  body: (session: TestSession) => Promise<T> | T,
 ): Promise<T> {
   await using output = outputDir('api-session');
   const permit = await acquireBrowser();
-  const session = await QUnitX.runSession({ output: output.path, ...options });
+  const session = await QUnitX.testSession({ output: output.path, ...options });
   try {
     return await body(session);
   } finally {

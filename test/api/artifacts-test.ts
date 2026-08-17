@@ -2,7 +2,7 @@ import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { apiRun } from './helpers.ts';
-import type { RunResult } from '../../lib/api/run.ts';
+import type { RunResult } from '../../lib/api/test.ts';
 import '../helpers/custom-asserts.ts';
 
 const PASSING = 'test/fixtures/passing-tests.ts';

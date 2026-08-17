@@ -81,27 +81,45 @@ ok 2 Math | deepEqual understands Sets # (1 ms)
 
 Everything above is also a library, under the `./api` entrypoint — results come back as values and
 nothing ever calls `process.exit` on your behalf. Node and Bun import it as `'qunitx-cli'`; from
-Deno it is `'jsr:@izelnakri/qunitx-cli/api'`. Three examples follow; the
+Deno it is `'jsr:@izelnakri/qunitx-cli/api'`. Four examples follow; the
 [full API guide](https://github.com/izelnakri/qunitx-cli/blob/main/docs/javascript-api.md)
 documents every verb.
 
 Run a suite and read the result:
 
 ```js
-// run.js
-import { run } from 'qunitx-cli';
+// run-tests.js
+import { test } from 'qunitx-cli';
 
-const result = await run('tests/');
+const result = await test('tests/');
 
 console.log(`${result.counts.passed}/${result.counts.total} passed in ${result.durationMs}ms`);
-for (const test of result.failures) {
-  console.log(`FAILED ${test.fullName} (${test.file})`);
+for (const failed of result.failures) {
+  console.log(`FAILED ${failed.fullName} (${failed.file})`);
 }
 
 process.exitCode = result.ok ? 0 : 1;
 
-// $ node run.js
+// $ node run-tests.js
 // 2/2 passed in 377ms
+```
+
+Run ONE file as a plain script in the browser — no QUnit, no TAP. This is what `run` means; the
+suite verb above is `test`:
+
+```js
+// seed.js
+import { run } from 'qunitx-cli';
+
+const result = await run('scripts/seed.ts');
+
+console.log(`exit ${result.exitCode} after ${result.durationMs}ms`);
+
+process.exitCode = result.exitCode;
+
+// $ node seed.js
+// seeded 3 rows into seeding
+// exit 0 after 1024ms
 ```
 
 Ask what a filter would match, without running anything — no browser is launched:
@@ -155,7 +173,7 @@ console.log('closed — the browser and the port are released');
 // closed — the browser and the port are released
 ```
 
-`runSession` (a run you can watch event-by-event as it happens), `init`, `generate`, the daemon
+`testSession` (a run you can watch event-by-event as it happens), `init`, `generate`, the daemon
 controls and the reporter interface are all covered in the
 [JavaScript / TypeScript API guide](https://github.com/izelnakri/qunitx-cli/blob/main/docs/javascript-api.md),
 with the generated reference on the

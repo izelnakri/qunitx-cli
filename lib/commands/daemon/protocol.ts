@@ -5,7 +5,7 @@
 // Type-only imports: erased at runtime, so this leaf module stays free of the
 // api/ dependency it names in its types.
 import type { UserRunOptions } from '../../api/options.ts';
-import type { RunResult } from '../../api/run.ts';
+import type { RunResult } from '../../api/test.ts';
 import type { ReporterName } from '../../reporters/types.ts';
 
 /**

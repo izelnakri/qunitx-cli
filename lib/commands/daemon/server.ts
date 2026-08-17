@@ -15,8 +15,8 @@ import { borrowArgv, borrowEnv } from '../../utils/borrowed-globals.ts';
 import * as Result from '../../result/index.ts';
 import { Failure } from '../../result/index.ts';
 import * as Options from '../../api/options.ts';
-import * as Run from '../../api/run.ts';
-import type { RunResult } from '../../api/run.ts';
+import * as TestRun from '../../api/test.ts';
+import type { RunResult } from '../../api/test.ts';
 import type { Request, ResponseChunk, RunRequest, DaemonInfo } from './protocol.ts';
 import type { Browser as PlaywrightBrowser } from 'playwright-core';
 import { Task } from '../../task/index.ts';
@@ -792,7 +792,7 @@ async function runOnce(
   return {
     exitCode: outcome.exitCode,
     // Only an options-driven request answers with a structured result; an argv one wants a code.
-    result: wireOptions ? Run.buildResult(config, outcome) : null,
+    result: wireOptions ? TestRun.buildResult(config, outcome) : null,
   };
 }
 

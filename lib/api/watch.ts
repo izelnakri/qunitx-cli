@@ -1,12 +1,12 @@
 import * as TestCommand from '../commands/test.ts';
 import { Task } from '../task/index.ts';
-import * as Run from './run.ts';
+import * as TestRun from './test.ts';
 import { EventsChannel, findAPIReporterFrom, type RunEvent } from './reporter.ts';
 
 import { Stream } from '../stream/index.ts';
 import * as Options from './options.ts';
 import * as Config from '../setup/config.ts';
-import type { RunFailure, RunResult } from './run.ts';
+import type { RunFailure, RunResult } from './test.ts';
 import type { UserRunOptions } from './options.ts';
 import type { Config as ResolvedConfig } from '../types.ts';
 
@@ -296,7 +296,7 @@ class Session implements WatchSession {
 function snapshot(config: ResolvedConfig, durationMs: number): RunResult {
   const failed = config.state.results.counter.failed > 0;
   const finishedAt = Date.now();
-  const result = Run.buildResult(config, {
+  const result = TestRun.buildResult(config, {
     exitCode: failed ? 1 : 0,
     durationMs,
     startedAt: finishedAt - durationMs,

@@ -11,11 +11,11 @@
 //
 // What it demonstrates, in the order the code does it:
 //   1. `search()`  — what would run, without running it (no browser, milliseconds)
-//   2. `run()`     — the suite, silent, with coverage and a JUnit document
+//   2. `test()`    — the suite, silent, with coverage and a JUnit document
 //   3. `Failure`   — a run that could not happen, told apart from a run that failed
 //   4. reporters   — a reporter of your own, alongside a built-in one
 import process from 'node:process';
-import { Failure, run, search, type Reporter, type RunResult } from '../lib/api/index.ts';
+import { Failure, search, test, type Reporter, type RunResult } from '../lib/api/index.ts';
 
 // This repo's own fixtures, so the example is runnable from a fresh clone with no setup.
 const TARGET = 'test/fixtures/coverage/calculator-test.ts';
@@ -41,7 +41,7 @@ for (const test of preview.matches) {
 console.log(`\n   ${preview.matches.length} of ${preview.total} tests, no browser involved.\n`);
 
 console.log('2. Running them.\n');
-const result = await run({
+const result = await test({
   inputs: [TARGET],
   output: 'tmp/js-api-example',
   coverage: true,
@@ -56,8 +56,8 @@ report(result);
 
 console.log('\n3. A run that cannot happen is not the same as a run that failed.\n');
 // `.result()` settles to the bare `RunResult | RunFailure` union instead of throwing, so this
-// branches rather than catching. `await run(…)` would throw the same failure.
-const rejected = await run({ inputs: [TARGET], browser: 'netscape' as 'chromium' }).result();
+// branches rather than catching. `await test(…)` would throw the same failure.
+const rejected = await test({ inputs: [TARGET], browser: 'netscape' as 'chromium' }).result();
 if (Failure.is(rejected)) {
   // `format` already leads with the code, so printing `rejected.code` too would double it.
   console.log(`   ${Failure.format(rejected)}`);

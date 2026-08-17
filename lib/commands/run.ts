@@ -166,19 +166,83 @@ export function setup(
     // is just as much "the one target" as a .ts file, so both lists count toward the arity check.
     const targets = flags.inputs.concat(flags.htmlPaths ?? []);
     if (targets.length !== 1) throw ScriptTargetRequired({ count: targets.length });
-    const entry = targets[0];
-    if (!(await pathExists(entry))) throw ScriptNotFound({ entry });
+
+    return await configFor(targets[0], {
+      cwd,
+      projectRoot,
+      browser: flags.browser,
+      port: flags.port,
+      portExplicit: flags.portExplicit,
+      watch: flags.watch,
+      open: flags.open === true,
+      timeout: flags.timeout,
+    });
+  });
+}
+
+/** Everything a caller may set on a script run: the CLI's flags and the API's options, minus argv. */
+export interface ScriptSettings {
+  /** Directory the entry, relative imports and `node_modules` lookups resolve against. */
+  cwd?: string;
+  /** Skips the `package.json` walk when the caller has already done it. */
+  projectRoot?: string;
+  /** Engine the script runs in. Defaults to chromium. */
+  browser?: 'chromium' | 'firefox' | 'webkit';
+  /** Port the local server binds. Defaults to 1234. */
+  port?: number;
+  /** True when a port was named explicitly, which makes a taken one an error rather than a search. */
+  portExplicit?: boolean;
+  /** Re-run on every save instead of exiting after one run. */
+  watch?: boolean;
+  /** Run in a visible browser window. */
+  open?: boolean;
+  /** Ms the script may run before it is declared hung; null (the default) is unbounded. */
+  timeout?: number | null;
+}
+
+/** The two ways naming an entry can fail, before any flag or option is even looked at. */
+export type ScriptEntryFailure = Failure.Of<typeof ScriptNotFound> | ProjectRootNotFoundFailure;
+
+/**
+ * Builds a {@link ScriptConfig} for one entry — the half of {@link setup} that is not about argv.
+ *
+ * Shared rather than duplicated because it is the VALIDATION: the project-root walk, the existence
+ * check, and every default. A second copy for the programmatic path is exactly the kind that
+ * drifts, and the two would then disagree about what `qunitx run x.ts` and `run('x.ts')` accept.
+ *
+ * ```ts
+ * import * as RunCommand from './run.ts';
+ * import * as Failure from '../result/failure.ts';
+ *
+ * // Defined, not invoked: walks for package.json and stats the entry.
+ * async function configure() {
+ *   const config = await RunCommand.configFor('seed.ts', { browser: 'firefox' }).result();
+ *   return Failure.is(config) ? null : config.browser; // 'firefox'
+ * }
+ * ```
+ */
+export function configFor(
+  entry: string,
+  settings: ScriptSettings = {},
+): Task<ScriptConfig, ScriptEntryFailure> {
+  return Task(async () => {
+    const cwd = settings.cwd ?? process.cwd();
+    const projectRoot = settings.projectRoot ?? (await findProjectRoot(cwd));
+    // Resolved here so a programmatic `run('seed.ts')` means the same file as the CLI's, which
+    // gets its absolute path from Args.parse. Already-absolute paths pass through untouched.
+    const absoluteEntry = path.resolve(cwd, entry);
+    if (!(await pathExists(absoluteEntry))) throw ScriptNotFound({ entry: absoluteEntry });
 
     return {
-      entry,
+      entry: absoluteEntry,
       projectRoot,
       cwd,
-      browser: flags.browser ?? 'chromium',
-      port: flags.port ?? 1234,
-      portExplicit: flags.portExplicit ?? false,
-      watch: flags.watch ?? false,
-      open: flags.open === true,
-      timeout: flags.timeout ?? null,
+      browser: settings.browser ?? 'chromium',
+      port: settings.port ?? 1234,
+      portExplicit: settings.portExplicit ?? false,
+      watch: settings.watch ?? false,
+      open: settings.open ?? false,
+      timeout: settings.timeout ?? null,
     };
   });
 }

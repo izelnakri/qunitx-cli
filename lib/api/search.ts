@@ -2,7 +2,7 @@ import * as Search from '../commands/search.ts';
 import { Task } from '../task/index.ts';
 import * as Options from './options.ts';
 import * as Config from '../setup/config.ts';
-import type { RunFailure } from './run.ts';
+import type { RunFailure } from './test.ts';
 import type { SearchReport as SearchResult } from '../commands/search.ts';
 import type { UserRunOptions } from './options.ts';
 

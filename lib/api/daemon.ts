@@ -3,7 +3,7 @@ import * as Daemon from '../commands/daemon/index.ts';
 import * as Paths from '../commands/daemon/paths.ts';
 import { Task } from '../task/index.ts';
 import type { DaemonRunOptions } from '../commands/daemon/protocol.ts';
-import type { RunResult } from './run.ts';
+import type { RunResult } from './test.ts';
 
 // Defined with the wire contract, because that is exactly why it is narrower than
 // `UserRunOptions`: it is `UserRunOptions` minus everything that cannot cross a socket.

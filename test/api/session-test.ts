@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
-import { runSession } from '../../lib/api/index.ts';
-import { withRunSession } from './helpers.ts';
+import { testSession } from '../../lib/api/index.ts';
+import { withTestSession } from './helpers.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 import { outputDir } from '../helpers/temp-dir.ts';
 import type { RunEvent } from '../../lib/api/reporter.ts';
@@ -9,9 +9,9 @@ import '../helpers/custom-asserts.ts';
 const PASSING = 'test/fixtures/passing-tests.ts';
 const FAILING = 'test/fixtures/failing-tests.ts';
 
-module('API | runSession | events', { concurrency: true }, () => {
+module('API | testSession | events', { concurrency: true }, () => {
   test('yields runStart, one test per test, then runEnd carrying the result', async (assert) => {
-    await withRunSession({ inputs: [PASSING] }, async (session) => {
+    await withTestSession({ inputs: [PASSING] }, async (session) => {
       const kinds: RunEvent['kind'][] = [];
       let final = null;
       for await (const event of session) {
@@ -32,7 +32,7 @@ module('API | runSession | events', { concurrency: true }, () => {
   });
 
   test('result() resolves with the same result the final event carried', async (assert) => {
-    await withRunSession({ inputs: [PASSING] }, async (session) => {
+    await withTestSession({ inputs: [PASSING] }, async (session) => {
       let fromEvent = null;
       for await (const event of session) {
         if (event.kind === 'runEnd') fromEvent = event.result;
@@ -43,7 +43,7 @@ module('API | runSession | events', { concurrency: true }, () => {
   });
 
   test('result() alone runs the suite without anyone iterating', async (assert) => {
-    await withRunSession({ inputs: [PASSING] }, async (session) => {
+    await withTestSession({ inputs: [PASSING] }, async (session) => {
       const result = await session.result();
 
       assert.true(result.ok);
@@ -52,7 +52,7 @@ module('API | runSession | events', { concurrency: true }, () => {
   });
 
   test('result() is idempotent — a second await does not run again', async (assert) => {
-    await withRunSession({ inputs: [PASSING] }, async (session) => {
+    await withTestSession({ inputs: [PASSING] }, async (session) => {
       const first = await session.result();
       const second = await session.result();
 
@@ -61,7 +61,7 @@ module('API | runSession | events', { concurrency: true }, () => {
   });
 
   test('a failing suite is a result, not a rejection', async (assert) => {
-    await withRunSession({ inputs: [FAILING] }, async (session) => {
+    await withTestSession({ inputs: [FAILING] }, async (session) => {
       const result = await session.result();
 
       assert.false(result.ok);
@@ -71,7 +71,7 @@ module('API | runSession | events', { concurrency: true }, () => {
   });
 
   test('the events carry the same tests the result does', async (assert) => {
-    await withRunSession({ inputs: [PASSING] }, async (session) => {
+    await withTestSession({ inputs: [PASSING] }, async (session) => {
       const streamed: string[] = [];
       for await (const event of session) {
         if (event.kind === 'test') streamed.push(event.test.fullName);
@@ -86,15 +86,15 @@ module('API | runSession | events', { concurrency: true }, () => {
   });
 });
 
-module('API | runSession | lifecycle', { concurrency: true }, () => {
+module('API | testSession | lifecycle', { concurrency: true }, () => {
   test('nothing runs until the session is consumed', async (assert) => {
     await using output = outputDir('api-session-lazy');
     const permit = await acquireBrowser();
     try {
-      const session = await runSession({ inputs: [PASSING], output: output.path });
+      const session = await testSession({ inputs: [PASSING], output: output.path });
 
       // The proof that the run has not started: closing without ever consuming it produces the
-      // empty result rather than a suite's worth of tests. If `runSession` ran eagerly this would
+      // empty result rather than a suite's worth of tests. If `testSession` ran eagerly this would
       // come back with 3.
       await session.close();
 
@@ -109,7 +109,7 @@ module('API | runSession | lifecycle', { concurrency: true }, () => {
     await using output = outputDir('api-session-closed');
     const permit = await acquireBrowser();
     try {
-      const session = await runSession({ inputs: [PASSING], output: output.path });
+      const session = await testSession({ inputs: [PASSING], output: output.path });
       await session.close();
 
       const seen: RunEvent[] = [];
@@ -126,7 +126,7 @@ module('API | runSession | lifecycle', { concurrency: true }, () => {
     await using output = outputDir('api-session-idempotent');
     const permit = await acquireBrowser();
     try {
-      const session = await runSession({ inputs: [PASSING], output: output.path });
+      const session = await testSession({ inputs: [PASSING], output: output.path });
       await session.close();
       await session.close();
 
@@ -142,7 +142,7 @@ module('API | runSession | lifecycle', { concurrency: true }, () => {
     let result = null;
     try {
       {
-        await using session = await runSession({ inputs: [PASSING], output: output.path });
+        await using session = await testSession({ inputs: [PASSING], output: output.path });
         result = await session.result();
       }
 
@@ -156,7 +156,7 @@ module('API | runSession | lifecycle', { concurrency: true }, () => {
     await using output = outputDir('api-session-signal');
     const permit = await acquireBrowser();
     try {
-      const session = await runSession({
+      const session = await testSession({
         inputs: [PASSING],
         output: output.path,
         signal: AbortSignal.abort(),
@@ -174,7 +174,7 @@ module('API | runSession | lifecycle', { concurrency: true }, () => {
     await using output = outputDir('api-session-break');
     const permit = await acquireBrowser();
     try {
-      const session = await runSession({ inputs: [PASSING], output: output.path });
+      const session = await testSession({ inputs: [PASSING], output: output.path });
       for await (const event of session) {
         if (event.kind === 'runStart') break;
       }
@@ -189,9 +189,9 @@ module('API | runSession | lifecycle', { concurrency: true }, () => {
   });
 });
 
-module('API | runSession | events() as a Stream', { concurrency: true }, () => {
+module('API | testSession | events() as a Stream', { concurrency: true }, () => {
   test('combinators are attached — no Stream.from wrapper needed', async (assert) => {
-    await withRunSession({ inputs: [PASSING] }, async (session) => {
+    await withTestSession({ inputs: [PASSING] }, async (session) => {
       const names = await session
         .events()
         .filter((e) => e.kind === 'test')
@@ -205,7 +205,7 @@ module('API | runSession | events() as a Stream', { concurrency: true }, () => {
   });
 
   test('events() starts the run, exactly like iterating does', async (assert) => {
-    await withRunSession({ inputs: [PASSING] }, async (session) => {
+    await withTestSession({ inputs: [PASSING] }, async (session) => {
       const kinds = await session
         .events()
         .map((e) => e.kind)
@@ -218,7 +218,7 @@ module('API | runSession | events() as a Stream', { concurrency: true }, () => {
   });
 
   test('droppedEvents is 0 for a run nobody stalls', async (assert) => {
-    await withRunSession({ inputs: [PASSING] }, async (session) => {
+    await withTestSession({ inputs: [PASSING] }, async (session) => {
       await session.result();
 
       assert.strictEqual(session.droppedEvents, 0, 'a real suite is nowhere near the cap');
@@ -226,7 +226,7 @@ module('API | runSession | events() as a Stream', { concurrency: true }, () => {
   });
 
   test('the session stays a handle — it is not itself a Stream', async (assert) => {
-    await withRunSession({ inputs: [PASSING] }, (session) => {
+    await withTestSession({ inputs: [PASSING] }, (session) => {
       assert.strictEqual(
         typeof (session as unknown as { filter?: unknown }).filter,
         'undefined',
