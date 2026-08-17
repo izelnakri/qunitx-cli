@@ -10,7 +10,7 @@ import type {
 } from '../reporters/types.ts';
 // Type-only, so the edge back to `run.ts` is erased: `run.ts` imports `APIReporter` at RUNTIME
 // (`buildResult` reads it off the config), and a value-level cycle between the two would be real.
-import type { RunResult, TestResult } from './run.ts';
+import type { RunResult, TestResult } from './test.ts';
 
 /**
  * How many page-log entries a result retains. Tests and notices are bounded by the suite; page

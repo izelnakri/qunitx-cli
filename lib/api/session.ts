@@ -1,13 +1,13 @@
 import * as TestCommand from '../commands/test.ts';
 import * as RunState from '../setup/run-state.ts';
 import { Task } from '../task/index.ts';
-import * as Run from './run.ts';
+import * as TestRun from './test.ts';
 import { EventsChannel, type RunEvent } from './reporter.ts';
 
 import * as Options from './options.ts';
 import * as Config from '../setup/config.ts';
 import type { Stream } from '../stream/index.ts';
-import type { RunFailure, RunResult } from './run.ts';
+import type { RunFailure, RunResult } from './test.ts';
 import type { UserRunOptions } from './options.ts';
 import type { Config as ResolvedConfig } from '../types.ts';
 
@@ -23,12 +23,12 @@ import type { Config as ResolvedConfig } from '../types.ts';
  * that makes the feed lossless. A browser cannot be told to slow down, so a run started before
  * anyone was reading would either drop events or buffer them all; starting on the first read means
  * the producer never outruns the consumer by more than one scheduling turn. Awaiting
- * {@link RunSession.result} counts as consuming, so a caller that only wants the answer still gets
+ * {@link TestSession.result} counts as consuming, so a caller that only wants the answer still gets
  * one without iterating.
  *
  * ```ts
  * // Defined, not invoked: a real session launches a browser.
- * async function progress(session: RunSession) {
+ * async function progress(session: TestSession) {
  *   for await (const event of session) {
  *     if (event.kind === 'test') process.stdout.write('.');
  *   }
@@ -36,7 +36,7 @@ import type { Config as ResolvedConfig } from '../types.ts';
  * }
  * ```
  */
-export interface RunSession extends AsyncIterable<RunEvent> {
+export interface TestSession extends AsyncIterable<RunEvent> {
   /**
    * The finished run. Starts it if nothing has yet, and resolves with the same
    * {@link RunResult} the final `runEnd` event carries — never `undefined`, which is the whole
@@ -47,7 +47,7 @@ export interface RunSession extends AsyncIterable<RunEvent> {
   result(): Promise<RunResult>;
   /**
    * Cuts the run short. The browser drops the rest of its queue and the run ends where it is,
-   * with `aborted: true` on the result — which {@link RunSession.result} still resolves with, so
+   * with `aborted: true` on the result — which {@link TestSession.result} still resolves with, so
    * an aborted run is answered rather than left hanging.
    *
    * Resolves once the run has finished unwinding. Aborting before the run starts makes it a no-op
@@ -64,7 +64,7 @@ export interface RunSession extends AsyncIterable<RunEvent> {
    *
    * ```ts
    * // Defined, not invoked: a real session launches a browser.
-   * async function firstTen(session: RunSession) {
+   * async function firstTen(session: TestSession) {
    *   return await session.events().filter((e) => e.kind === 'test').take(10).collect();
    * }
    * ```
@@ -97,20 +97,20 @@ export interface RunSession extends AsyncIterable<RunEvent> {
  * consumed (so the event feed cannot fall behind).
  *
  * ```ts
- * import { runSession } from './session.ts';
+ * import { testSession } from './session.ts';
  *
  * // Defined, not invoked: launches a browser and runs the project's tests.
  * async function countAsTheyFinish() {
- *   await using session = await runSession({ inputs: ['test/'] });
+ *   await using session = await testSession({ inputs: ['test/'] });
  *   let finished = 0;
  *   for await (const event of session) if (event.kind === 'test') finished++;
  *   return finished;
  * }
  * ```
  */
-export function runSession(
+export function testSession(
   options: UserRunOptions | string | string[] = {},
-): Task<RunSession, RunFailure> {
+): Task<TestSession, RunFailure> {
   return Task(async () => {
     const channel = EventsChannel.build();
     const configOptions = Options.from(options);
@@ -119,7 +119,7 @@ export function runSession(
     // would miss them while `result.notices` still carried them.
     configOptions.reporters.push(channel.reporter);
     // Assembly is eager: it reads package.json and resolves inputs, so a bad option is a failure
-    // from `runSession(...)` itself rather than a surprise on first iteration. Only the browser
+    // from `testSession(...)` itself rather than a surprise on first iteration. Only the browser
     // is deferred.
     const config = await Config.setup(configOptions);
 
@@ -128,7 +128,7 @@ export function runSession(
 }
 
 /** The live session; a class because it owns the run's lifecycle and has to start it exactly once. */
-class Session implements RunSession {
+class Session implements TestSession {
   #config: ResolvedConfig;
   #channel: EventsChannel;
   #started: Promise<RunResult> | null = null;
@@ -190,7 +190,7 @@ class Session implements RunSession {
   }
 
   [Symbol.asyncIterator](): AsyncIterator<RunEvent> {
-    // The first read is what starts the run — see the laziness note on `RunSession`.
+    // The first read is what starts the run — see the laziness note on `TestSession`.
     void this.#start();
     const inner = this.#channel.stream[Symbol.asyncIterator]();
 
@@ -212,7 +212,7 @@ class Session implements RunSession {
     if (this.#closed) {
       // Aborted or closed before it ever ran: answer with the empty result rather than launch a
       // browser nobody is waiting for. The counts are zeroes, `aborted` says why.
-      this.#started = Promise.resolve(Run.abort(this.#config));
+      this.#started = Promise.resolve(TestRun.abort(this.#config));
 
       return this.#started;
     }
@@ -232,6 +232,6 @@ class Session implements RunSession {
   }
 
   #snapshot(outcome: TestCommand.RunOutcome): RunResult {
-    return Run.buildResult(this.#config, outcome);
+    return TestRun.buildResult(this.#config, outcome);
   }
 }
