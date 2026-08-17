@@ -72,7 +72,7 @@ module('API | Daemon', { concurrency: false, skip: SKIP }, () => {
       // reachable is reported as such instead of surfacing as `DaemonUnreachable` mid-assertion.
       assert.true(await Daemon.start(), 'the shared daemon came up');
 
-      const result = await Daemon.run({ inputs: [PASSING], output: output.path });
+      const result = await Daemon.test({ inputs: [PASSING], output: output.path });
 
       assert.true(result.ok);
       assert.equal(result.counts.total, 3);
@@ -87,7 +87,7 @@ module('API | Daemon', { concurrency: false, skip: SKIP }, () => {
     await using output = outputDir('api-daemon-fail');
     const permit = await acquireBrowser();
     try {
-      const result = await Daemon.run({ inputs: [FAILING], output: output.path });
+      const result = await Daemon.test({ inputs: [FAILING], output: output.path });
 
       assert.false(result.ok);
       assert.true(result.failures.length > 0);
@@ -101,8 +101,8 @@ module('API | Daemon', { concurrency: false, skip: SKIP }, () => {
     await using output = outputDir('api-daemon-warm');
     const permit = await acquireBrowser();
     try {
-      const first = await Daemon.run({ inputs: [PASSING], output: output.path });
-      const second = await Daemon.run({ inputs: [PASSING], output: output.path });
+      const first = await Daemon.test({ inputs: [PASSING], output: output.path });
+      const second = await Daemon.test({ inputs: [PASSING], output: output.path });
 
       assert.equal(first.counts.total, 3);
       assert.equal(second.counts.total, 3, 'reuse does not leak state between runs');
@@ -120,7 +120,7 @@ module('API | Daemon', { concurrency: false, skip: SKIP }, () => {
     const chunks: string[] = [];
     const permit = await acquireBrowser();
     try {
-      const result = await Daemon.run({
+      const result = await Daemon.test({
         inputs: [PASSING],
         output: output.path,
         reporter: 'tap',

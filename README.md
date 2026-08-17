@@ -214,16 +214,16 @@ result.counts; // { total: 42, passed: 41, failed: 1, skipped: 0, todo: 0, asser
 result.failures.map((one) => one.fullName); // ['Cart > Coupons: applies code']
 ```
 
-|                                  |                                                                         |
-| -------------------------------- | ----------------------------------------------------------------------- |
-| `test(options)`                  | run the suite once; the full result as a value                          |
-| `run(file, options)`             | run ONE file as a plain script; its exit code as a value                |
-| `testSession(options)`           | one run, watched as it happens — `events()`, `result()`, `abort()`      |
-| `watch(options)`                 | async-iterable session; `run`/`runAll`/`runFailed`/`abort`, `results()` |
-| `search(options)`                | what a selection would run — no browser, milliseconds                   |
-| `Daemon.{start,stop,status,run}` | reuse a warm browser between runs                                       |
-| `init` / `generate`              | scaffolding, reporting what they wrote                                  |
-| `validate(options)`              | reject bad options without launching anything                           |
+|                                   |                                                                         |
+| --------------------------------- | ----------------------------------------------------------------------- |
+| `test(options)`                   | run the suite once; the full result as a value                          |
+| `run(file, options)`              | run ONE file as a plain script; its exit code as a value                |
+| `testSession(options)`            | one run, watched as it happens — `events()`, `result()`, `abort()`      |
+| `watch(options)`                  | async-iterable session; `run`/`runAll`/`runFailed`/`abort`, `results()` |
+| `search(options)`                 | what a selection would run — no browser, milliseconds                   |
+| `Daemon.{start,stop,status,test}` | reuse a warm browser between runs                                       |
+| `init` / `generate`               | scaffolding, reporting what they wrote                                  |
+| `validate(options)`               | reject bad options without launching anything                           |
 
 > **Upgrading:** the suite verb used to be `run(options)` and is now `test(options)`; `run` is the
 > script verb, mirroring `qunitx run <file>`. Passing a directory, a glob, an array or an options
