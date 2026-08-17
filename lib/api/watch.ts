@@ -9,6 +9,13 @@ import * as Config from '../setup/config.ts';
 import type { RunFailure, RunResult } from './test.ts';
 import type { UserRunOptions } from './options.ts';
 import type { Config as ResolvedConfig } from '../types.ts';
+// The unstable escape-hatch types. Imported for their shape only; re-exporting them would make
+// playwright-core and esbuild part of this package's contract, which is exactly what the
+// "outside semver" note on those properties refuses to do.
+import type { Browser, Page } from 'playwright-core';
+import type { BuildContext } from 'esbuild';
+import type { FSWatcher } from 'node:fs';
+import type { HTTPServer } from '../web/index.ts';
 
 /**
  * A running watch session.
@@ -103,6 +110,94 @@ export interface WatchSession extends AsyncIterable<RunResult> {
   readonly droppedEvents: number;
   /** Stops watching, closes the browser and server, and ends the iteration. Idempotent. */
   close(): Promise<void>;
+
+  // ── Live objects — OUTSIDE SEMVER ──────────────────────────────────────────────────────────
+  //
+  // The five below are the session's actual machinery, handed over unwrapped so a caller can do
+  // something this API has not thought of: drive the page with Playwright, add a route to the
+  // server, read esbuild's metafile. They are an escape hatch, and an honestly labelled one —
+  // three of the five are types this project does not own, and pinning their shape would make
+  // every playwright-core or esbuild upgrade a breaking change here. They may change or vanish
+  // in a MINOR release. Everything above this line is the supported surface.
+  //
+  // All five are replaced by `restart()`: re-read them after one rather than holding a reference
+  // across it, and treat them as closed once `close()` has resolved.
+
+  /**
+   * Playwright's `Browser` for this session — **unstable**, playwright-core's type.
+   *
+   * ```ts
+   * import type { WatchSession } from './watch.ts';
+   *
+   * // Defined, not invoked: needs a live session.
+   * async function contexts(session: WatchSession) {
+   *   return session.browser.contexts().length;
+   * }
+   * ```
+   */
+  readonly browser: Browser;
+  /**
+   * The page the suite runs in — **unstable**, playwright-core's type.
+   *
+   * ```ts
+   * import type { WatchSession } from './watch.ts';
+   *
+   * // Defined, not invoked: needs a live session.
+   * async function shoot(session: WatchSession) {
+   *   return await session.page.screenshot();
+   * }
+   * ```
+   */
+  readonly page: Page;
+  /**
+   * The HTTP + WebSocket server serving the bundle — **unstable**, this project's own
+   * `HTTPServer` rather than a documented interface.
+   *
+   * ```ts
+   * import type { WatchSession } from './watch.ts';
+   *
+   * // Defined, not invoked: needs a live session.
+   * function addRoute(session: WatchSession) {
+   *   session.webServer.get('/fixture.json', (_request, response) => response.json({ ok: true }));
+   * }
+   * ```
+   */
+  readonly webServer: HTTPServer;
+  /**
+   * esbuild's incremental `BuildContext` — **unstable**, esbuild's type.
+   *
+   * `null` until the first build has created one, and again after a `restart()` until that
+   * session's first build. Genuinely nullable rather than defensively typed: the context is
+   * created lazily by the first bundle, so a caller reaching for it early would find nothing.
+   *
+   * ```ts
+   * import type { WatchSession } from './watch.ts';
+   *
+   * // Defined, not invoked: needs a live session that has built at least once.
+   * async function rebuild(session: WatchSession) {
+   *   return session.esbuild ? await session.esbuild.rebuild() : null;
+   * }
+   * ```
+   */
+  readonly esbuild: BuildContext | null;
+  /**
+   * The live `fs.watch` handles keyed by watched path — **unstable**, and a PARTIAL view: the
+   * parent-directory watchers, rescan intervals and symlink pollers the session also owns are
+   * not in here. It answers "what is being watched", not "every handle the watcher holds".
+   *
+   * The record is the watcher's own object, so it reflects additions and removals as they
+   * happen. After `close()` the handles in it are closed but the keys remain.
+   *
+   * ```ts
+   * import type { WatchSession } from './watch.ts';
+   *
+   * // Defined, not invoked: needs a live session.
+   * function watchedPaths(session: WatchSession) {
+   *   return Object.keys(session.fileWatchers);
+   * }
+   * ```
+   */
+  readonly fileWatchers: Record<string, FSWatcher>;
 }
 
 /**
@@ -195,6 +290,29 @@ class Session implements WatchSession {
 
   get running(): boolean {
     return this.#inner.running;
+  }
+
+  // The unstable live objects. Getters rather than fields so they follow `#inner` and `#config`
+  // across a restart instead of freezing whatever existed when the session was constructed.
+
+  get browser(): Browser {
+    return this.#inner.connections.browser;
+  }
+
+  get page(): Page {
+    return this.#inner.connections.page;
+  }
+
+  get webServer(): HTTPServer {
+    return this.#inner.connections.server;
+  }
+
+  get esbuild(): BuildContext | null {
+    return this.#config.state.group.build.context ?? null;
+  }
+
+  get fileWatchers(): Record<string, FSWatcher> {
+    return this.#inner.fileWatchers;
   }
 
   run(files?: string[]): Promise<RunResult> {

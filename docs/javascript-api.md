@@ -264,6 +264,34 @@ Watch also runs **one bundle, serially** — it never splits into concurrent gro
 `result.groups.length` is always `1` and everything is served at `/` with no `/group-N` prefixes.
 For a large suite that makes watch's first run slower than the same selection through `test()`.
 
+### The live objects — outside semver
+
+A watch session hands over its actual machinery, so you can do things this API has not thought of:
+
+|                        | what it is                                                                |
+| ---------------------- | ------------------------------------------------------------------------- |
+| `session.browser`      | playwright-core `Browser`                                                 |
+| `session.page`         | playwright-core `Page` — the tab the suite runs in                        |
+| `session.webServer`    | this project's `HTTPServer`; `.get()` to add routes, `.publish()` to push |
+| `session.esbuild`      | esbuild `BuildContext`, or `null` before the first build                  |
+| `session.fileWatchers` | live `Record<path, FSWatcher>` of the per-path watchers                   |
+
+```js
+await session.page.screenshot({ path: 'suite.png' });
+session.webServer.get('/api/user', (_request, response) => response.json({ id: 1 }));
+Object.keys(session.fileWatchers); // what is currently being watched
+```
+
+> **These five are outside semver.** Three of them are types this project does not own —
+> playwright-core's and esbuild's — and pinning their shape would make every upgrade of those a
+> breaking change here. They may change or disappear in a **minor** release. Everything else on
+> the session is the supported surface.
+
+Two honest caveats. `esbuild` is genuinely `null` until the first build has created a context, so
+check it rather than asserting. And `fileWatchers` is a **partial** view: the parent-directory
+watchers, rescan intervals and symlink pollers the session also owns are not in it — it answers
+"what is being watched", not "every handle the session holds".
+
 ## search
 
 Lists what a selection would run, without running it — no browser, no bundle, milliseconds.
