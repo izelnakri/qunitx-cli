@@ -287,3 +287,54 @@ module('API | watch | results() as a Stream', { concurrency: true }, () => {
     });
   });
 });
+
+// The five below are documented as outside semver, which is a promise about CHANGE, not about
+// absence — while they exist they have to be the session's real machinery rather than a
+// plausible-looking stand-in. Each assertion here checks identity with something only the live
+// object could satisfy.
+module('API | watch | live objects', { concurrency: true }, () => {
+  test('browser, page and webServer are the session s real ones', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      assert.true(session.browser.isConnected(), 'a live playwright Browser');
+      assert.true(
+        session.page.url().startsWith(session.url),
+        `the page is on the session's own URL, got ${session.page.url()}`,
+      );
+      assert.strictEqual(await session.page.evaluate(() => 1 + 1), 2, 'the page really evaluates');
+      // The server is this project's HTTPServer, and routes registered on it are served.
+      session.webServer.get('/live-object-probe', (_request, response) =>
+        response.json({ ok: true }),
+      );
+      const probe = await fetch(`${session.url}/live-object-probe`);
+
+      assert.deepEqual(await probe.json(), { ok: true }, 'a route added through it is served');
+    });
+  });
+
+  test('esbuild is the incremental context, and rebuilding through it works', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      // Non-null here because the initial run has already built once — that is the whole reason
+      // the property is typed nullable rather than asserted.
+      assert.notStrictEqual(session.esbuild, null, 'a context exists after the first build');
+      const rebuilt = await session.esbuild!.rebuild();
+
+      assert.true(rebuilt.outputFiles!.length > 0, 'it is a usable BuildContext');
+    });
+  });
+
+  test('fileWatchers is the live record, keyed by watched path', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, (session) => {
+      const watched = Object.keys(session.fileWatchers);
+
+      assert.true(watched.length > 0, `something is being watched, got ${JSON.stringify(watched)}`);
+      assert.true(
+        watched.some((key) => key.includes('fixtures')),
+        `the watched paths cover the input, got ${JSON.stringify(watched)}`,
+      );
+      // Same object, not a copy — the getter must not snapshot.
+      assert.strictEqual(session.fileWatchers, session.fileWatchers);
+
+      return Promise.resolve();
+    });
+  });
+});

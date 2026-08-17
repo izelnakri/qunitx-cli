@@ -35,6 +35,7 @@ import * as Coverage from '../coverage/index.ts';
 import { isFilteredRun, describeActiveFilters } from '../selection/filter.ts';
 import * as Timings from './test/timings.ts';
 import { applyWatchLineTargets, resolveTargetedFiles, splitIntoGroups } from './test/grouping.ts';
+import type { FSWatcher } from 'node:fs';
 import type { QUnitSelector } from '../selection/line-targets.ts';
 import type { Config, Connections, EsbuildCache, HtmlAssets } from '../types.ts';
 import { Task } from '../task/index.ts';
@@ -102,6 +103,13 @@ export interface WatchSession {
   config: Config;
   /** The session's browser, page and HTTP server. */
   connections: Connections;
+  /**
+   * The live per-path `fs.watch` handles, keyed by watched path — the same object the watcher
+   * mutates, not a copy. A PARTIAL view: the parent-directory watchers, rescan intervals and
+   * symlink pollers `killFileWatchers` also owns are not in here, so it answers "what is being
+   * watched", not "every handle the watcher holds".
+   */
+  fileWatchers: Record<string, FSWatcher>;
   /** Where the QUnit view is being served, e.g. `http://localhost:1234`. */
   url: string;
   /** Whether a run is executing or queued — true from the moment one is asked for. */
@@ -346,7 +354,11 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
   // for watch, batch and `signal`, so a fix to any of them is a fix to all three.
   const abort = () => RunState.requestAbort(config.state);
 
-  const { ready: watcherReady, killFileWatchers } = FileWatcher.setup(
+  const {
+    ready: watcherReady,
+    killFileWatchers,
+    fileWatchers,
+  } = FileWatcher.setup(
     config.testFileLookupPaths,
     config,
     async (event, file) => {
@@ -396,6 +408,7 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
   return {
     config,
     connections,
+    fileWatchers,
     url: `http://localhost:${config.port}`,
     get running() {
       return inFlight > 0;
