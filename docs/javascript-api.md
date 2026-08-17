@@ -201,11 +201,80 @@ await session.run(files?); // rerun, optionally scoped     (the file watcher's o
 await session.runAll(); // whole suite, drops line targets  (`qa`)
 await session.runFailed(); // only what failed last run     (`qf`)
 await session.abort(); // stop the run in flight            (`qq`)
+await session.restart(); // rebuild the machinery, keep the session
 await session.close(); // release the browser and the port
 
 session.latest; // the most recent result, without consuming the iteration
 session.running; // is a run executing or queued
 ```
+
+### Rerunning: which verb reruns what
+
+The four rerun verbs differ in what they carry over, and the differences are the point:
+
+|                      |                                                                   |
+| -------------------- | ----------------------------------------------------------------- |
+| `run()`              | **rebuilds** the bundle, then reruns — the same path a save takes |
+| `run(['a-test.ts'])` | runs those files from the **current** bundle, no rebuild          |
+| `runFailed()`        | reruns the files that failed last time                            |
+| `runAll()`           | the whole suite, dropping line targets                            |
+| `restart()`          | rebuilds browser, page, server and watchers first, then runs once |
+
+The rebuild difference matters if you edited a file and then called `run([thatFile])`: you get the
+existing bundle, so the edit is not in it. `run()` with no arguments is the one that picks up
+changes on disk.
+
+**`runFailed()` with nothing failing repeats the last run**, and says so with an `info` notice on
+the result rather than silently doing something else:
+
+```js
+const result = await session.runFailed();
+result.notices.some((n) => n.message.includes('No tests failed in the last run')); // true
+```
+
+That is deliberate: a verb bound to a keypress should always do something, and "nothing failed, so
+I ran nothing" is indistinguishable from a broken binding.
+
+### Filtering: what survives a rerun, and what does not
+
+Two kinds of narrowing behave differently, because they mean different things:
+
+| narrowing                            | set by                        | survives `runAll()`?    |
+| ------------------------------------ | ----------------------------- | ----------------------- |
+| name filter (`-t` / `-m` on the CLI) | `watch({ filter: 'Cart' })`   | **yes**                 |
+| line target (`test/cart-test.ts#34`) | `watch({ inputs: ['…#34'] })` | no — `runAll` clears it |
+| file scope                           | `run(['test/cart-test.ts'])`  | n/a — per call only     |
+
+A **name filter is a standing instruction** about which tests should run, so every rerun keeps it,
+including `runAll()`. A **line target is a starting point** — you asked to begin at one test — and
+`runAll()` is the verb that says "now give me everything". `run(files)` narrows a single call and
+leaves the session's own selection untouched.
+
+There is no per-rerun name filter: to change `filter`, close the session and open another. It is a
+property of the selection the session was built from, not a per-call argument.
+
+### Teardown
+
+`close()` is the one teardown verb, and it is deliberately the only one — no separate closes for
+the browser, the server or the bundler:
+
+```js
+await session.close(); // browser down, port released, watchers stopped, iteration ended
+await session.close(); // idempotent — safe to call again
+```
+
+Three ways a session ends, all reaching the same place:
+
+- `await session.close()` — explicit
+- `break` out of a `for await (const result of session)` — leaving the loop closes the session,
+  because a browser nobody is reading from is never what was meant
+- the `signal` you passed to `watch()` aborting — for a watcher there is no single run to cut
+  short, so the signal ends the session
+
+Ordering is defined where it could otherwise race: a `close()` during a `restart()` waits for the
+restart to land before releasing what it built, so `close()` resolving always means everything is
+down. After it resolves, the [live objects](#the-live-objects--outside-semver) are closed handles —
+reading them is not an error, using them is.
 
 These return plain Promises rather than Tasks, deliberately: they are commands on a session that
 already exists, so `void session.runAll()` from a keypress handler must actually start the run.
@@ -222,8 +291,8 @@ already exists, so `void session.runAll()` from a keypress handler must actually
 
 ### restart
 
-Tears the machinery down — browser, page, server, esbuild context, watchers — boots it again, and
-runs the suite once:
+Tears the machinery down — browser, page, server, watchers — boots it again, and runs the suite
+once:
 
 ```js
 const result = await session.restart();
@@ -240,9 +309,11 @@ Four things to know:
 
 - **`session.url` may change.** The port is released and reacquired; if something took it in
   between, the new server binds the next one. Re-read `url` rather than caching it.
-- **The [live objects](#the-live-objects--outside-semver) are all replaced.** Re-read `browser`,
-  `page`, `webServer`, `esbuild` and `fileWatchers` after a restart instead of holding references
-  across one.
+- **The [live objects](#the-live-objects--outside-semver) are replaced — all but `esbuild`.**
+  Re-read `browser`, `page`, `webServer` and `fileWatchers` after a restart instead of holding
+  references across one. `esbuild` is deliberately kept: a restart reuses the same config, so a
+  fresh context would hold the very same plugin objects, and disposing it only respawned esbuild's
+  service child for nothing. `contextKey` still swaps the context out when build inputs change.
 - **`initial` still names the run the session started with.** It is readonly and callers hold it;
   the restart's own run arrives through `results()` and `latest` like any other, and exactly once.
 - **It takes the same queue reruns take.** A restart waits for an in-flight run, and a rerun asked

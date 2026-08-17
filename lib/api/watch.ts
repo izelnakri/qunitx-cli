@@ -125,7 +125,8 @@ export interface WatchSession extends AsyncIterable<RunResult> {
    *
    * **{@link url} may change.** The old port is released and reacquired, and if something took it
    * in between, the new server binds the next one — so re-read `url` afterwards rather than
-   * caching it. The live objects are all replaced too.
+   * caching it. The live objects are replaced too — all but {@link WatchSession.esbuild}, which a
+   * restart deliberately keeps.
    *
    * Ordering: it takes the same queue reruns take, so a restart waits for an in-flight run and a
    * rerun asked for during one waits for the restart. Calling it twice concurrently gives both
@@ -154,8 +155,10 @@ export interface WatchSession extends AsyncIterable<RunResult> {
   // every playwright-core or esbuild upgrade a breaking change here. They may change or vanish
   // in a MINOR release. Everything above this line is the supported surface.
   //
-  // All five are replaced by `restart()`: re-read them after one rather than holding a reference
-  // across it, and treat them as closed once `close()` has resolved.
+  // Four of the five are replaced by `restart()` — re-read them after one rather than holding a
+  // reference across it, and treat them as closed once `close()` has resolved. `esbuild` is the
+  // exception: a restart reuses the same config, so a fresh context would hold the very same
+  // plugin objects, and it is deliberately kept rather than disposed and respawned.
 
   /**
    * Playwright's `Browser` for this session — **unstable**, playwright-core's type.
