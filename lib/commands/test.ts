@@ -137,6 +137,18 @@ export interface WatchSession {
   settled(): Promise<void>;
   /** Stops the watchers and closes the browser and server. Idempotent. */
   close(): Promise<void>;
+  /**
+   * {@link close} minus the two teardowns a restart must not do, because it is building a
+   * replacement in the same process rather than ending.
+   *
+   * The pre-launched Chrome is PROCESS-global: reaping it would take it from every other session
+   * here and leave the restart paying for a cold `chromium.launch()`. And esbuild's incremental
+   * context is kept because disposing it re-reads NOTHING — a restart reuses the same `Config`,
+   * so the plugin objects in the new context would be the very ones in the old. All it achieves
+   * is respawning esbuild's service child. `contextKey` still swaps the context out by itself
+   * when the build inputs actually change.
+   */
+  teardown(): Promise<void>;
 }
 
 /**
@@ -456,6 +468,11 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
       });
     },
     close: () => closeSession(connections, killFileWatchers, build),
+    teardown: () =>
+      closeSession(connections, killFileWatchers, build, {
+        reapPrelaunchedChrome: false,
+        disposeEsbuild: false,
+      }),
   };
 }
 
@@ -514,16 +531,21 @@ async function closeSession(
   connections: Connections,
   killFileWatchers: () => unknown,
   build: EsbuildCache,
+  // Both default to "this session is over". `restart` turns them off because it is building a
+  // replacement in the same process, and each would cost it something it does not need to pay.
+  { reapPrelaunchedChrome = true, disposeEsbuild = true } = {},
 ): Promise<void> {
   killFileWatchers();
   await closeWithGrace([
     Task(connections.server?.close()).ignore('watch session server.close'),
     Task(connections.page?.close()).ignore('watch session page.close'),
     Task(connections.browser?.close()).ignore('watch session browser.close'),
-    Task(build.context?.dispose()).ignore('watch session esbuild context dispose'),
-    shutdownPrelaunch(),
+    disposeEsbuild
+      ? Task(build.context?.dispose()).ignore('watch session esbuild context dispose')
+      : null,
+    reapPrelaunchedChrome ? shutdownPrelaunch() : null,
   ]);
-  build.context = null;
+  if (disposeEsbuild) build.context = null;
 }
 
 /**

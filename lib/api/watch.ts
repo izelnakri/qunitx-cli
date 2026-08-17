@@ -108,6 +108,40 @@ export interface WatchSession extends AsyncIterable<RunResult> {
    * long as the session lives — the cap is what stops that, and this is how you see it happen.
    */
   readonly droppedEvents: number;
+  /**
+   * Tears the session's machinery down and boots it again — browser, page, server, esbuild
+   * context and watchers — then runs the suite once, resolving with that run's result.
+   *
+   * **The session survives.** `this` is the same object, and `events()` / `results()` keep
+   * streaming straight across: a restart is one transition in the life of a session, not a close
+   * followed by a new one. If it ended the feeds it would be `close()` plus `watch()` with extra
+   * steps, and there would be no reason for it to exist.
+   *
+   * For picking up a change no rerun can see — an edited `package.json`, a plugin whose module
+   * you replaced, a browser wedged by the page under test.
+   *
+   * `initial` still refers to the run the session STARTED with; it is readonly and callers hold
+   * it. The restart's own first run arrives through `results()` and `latest` like any other.
+   *
+   * **{@link url} may change.** The old port is released and reacquired, and if something took it
+   * in between, the new server binds the next one — so re-read `url` afterwards rather than
+   * caching it. The live objects are all replaced too.
+   *
+   * Ordering: it takes the same queue reruns take, so a restart waits for an in-flight run and a
+   * rerun asked for during one waits for the restart. Calling it twice concurrently gives both
+   * callers the SAME restart rather than tearing down twice.
+   *
+   * ```ts
+   * import type { WatchSession } from './watch.ts';
+   *
+   * // Defined, not invoked: needs a live session.
+   * async function afterConfigChange(session: WatchSession) {
+   *   const result = await session.restart();
+   *   return { total: result.counts.total, url: session.url };
+   * }
+   * ```
+   */
+  restart(): Promise<RunResult>;
   /** Stops watching, closes the browser and server, and ends the iteration. Idempotent. */
   close(): Promise<void>;
 
@@ -264,6 +298,7 @@ class Session implements WatchSession {
   #latest: RunResult;
   #published = 0;
   #closed = false;
+  #restarting: Promise<RunResult> | null = null;
 
   constructor(inner: TestCommand.WatchSession, config: ResolvedConfig, initial: RunResult) {
     this.#inner = inner;
@@ -355,12 +390,61 @@ class Session implements WatchSession {
     return (this.#events?.dropped ?? 0) + this.#results.dropped;
   }
 
+  restart(): Promise<RunResult> {
+    // One restart at a time, and a second caller joins the first rather than starting a teardown
+    // of the session the first is still building. The inner session's own queue cannot serialise
+    // this — it is the thing being destroyed — so the guard lives here, at the only level that
+    // outlives the transition.
+    this.#restarting ??= this.#restart().finally(() => (this.#restarting = null));
+
+    return this.#restarting;
+  }
+
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+    // A close during a restart waits for it: tearing down half-built machinery races the boot
+    // and leaks whichever handles it had already created. The restart checks `#closed` when it
+    // lands and closes what it built, so the wait is bounded by one boot.
+    await Task(this.#restarting).ignore('watch session restart in flight');
     await this.#inner.close();
     this.#results.close();
     this.#events?.close();
+  }
+
+  /**
+   * The transition itself. Never called directly — {@link restart} owns the de-duplication.
+   *
+   * The config object is REUSED rather than rebuilt. That is what keeps the feeds alive across
+   * the restart: both are wired by pushing reporters onto `config.state.reporters`, so a fresh
+   * `Config.setup()` would hand the new session a different array and leave `events()` and
+   * `results()` open but permanently silent.
+   */
+  async #restart(): Promise<RunResult> {
+    // Outside the teardown, as `runAll` does it: abort asks the page to drop its queue, and
+    // `settled()` is what waits for the run that was interrupted to finish unwinding.
+    this.#inner.abort();
+    await this.#inner.settled();
+    await this.#inner.teardown();
+
+    // Every aborter registered on this state closes over the server just torn down; the set is
+    // never pruned, so without this each restart leaves another closure publishing to a dead
+    // socket. Watch mode registers exactly one per boot, so clearing is precise here.
+    this.#config.state.aborters.clear();
+
+    // Through `#drive`, exactly like every other verb, and for a reason worth stating: the
+    // reporter shim that publishes runs lives on `config.state.reporters`, which this restart
+    // deliberately reuses — so the reboot's own initial run DOES reach it, and publishing here as
+    // well emitted two results for one run. `#drive` returns what that run published, and only
+    // synthesises a result when nothing was published at all (a boot that died in the bundler).
+    const result = await this.#drive(async () => {
+      this.#inner = await TestCommand.watch(this.#config);
+    });
+    // `close()` may have been called while the boot was in flight; it is waiting on this promise,
+    // so nothing else will release what was just built unless it is released here.
+    if (this.#closed) await this.#inner.close();
+
+    return result;
   }
 
   [Symbol.asyncIterator](): AsyncIterator<RunResult> {
