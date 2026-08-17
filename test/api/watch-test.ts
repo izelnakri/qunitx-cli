@@ -338,3 +338,153 @@ module('API | watch | live objects', { concurrency: true }, () => {
     });
   });
 });
+
+// A restart is ONE transition in the life of a session, not a close followed by a new one. That
+// distinction is the entire reason it exists, so most of these assert continuity rather than
+// teardown: same object, same feeds, same iteration.
+module('API | watch | restart', { concurrency: true }, () => {
+  test('the session survives and its run reaches latest', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      const before = session.initial;
+      const result = await session.restart();
+
+      assert.strictEqual(result.counts.total, before.counts.total, 'it ran the suite again');
+      assert.strictEqual(session.latest, result, 'latest follows the restart');
+      assert.strictEqual(session.initial, before, 'initial still names the run it started with');
+      assert.true(session.url.startsWith('http://localhost:'), 'it is serving again');
+    });
+  });
+
+  test('results() and events() keep streaming straight across it', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      // Opened BEFORE the restart and read after. If the restart closed the channels, or let the
+      // rebooted session get a different reporters array, neither of these would ever fill.
+      const results = session.results().take(2).collect();
+      const ends = session
+        .events()
+        .filter((event) => event.kind === 'runEnd')
+        .take(2)
+        .collect();
+
+      await session.restart();
+      await session.run();
+
+      assert.strictEqual((await results).length, 2, 'results survived the restart');
+      assert.strictEqual((await ends).length, 2, 'so did the event feed');
+    });
+  });
+
+  test('a restart emits exactly one result, not two', async (assert) => {
+    // It reboots into the SAME config, so the reporter shim that publishes runs survives and the
+    // reboot's own initial run reaches it. Publishing again on top of that emitted two results
+    // for one run — a consumer counting runs would have over-counted every restart.
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      // The feed opens with the buffered initial run, so three elements is exactly
+      // [initial, restart, rerun]. The rerun on the end is what makes this a double-publish
+      // detector: if the restart emitted twice, the third element would be its duplicate and
+      // `latest` — by then the rerun — would not be it.
+      const results = session.results().take(3).collect();
+
+      await session.restart();
+      await session.run();
+      const [first, second, third] = await results;
+
+      assert.strictEqual(first, session.initial, 'the feed opens with the initial run');
+      assert.strictEqual(second.counts.total, first.counts.total, 'then the restart run');
+      assert.strictEqual(third, session.latest, 'then the rerun — no duplicate in between');
+    });
+  });
+
+  test('the live objects are replaced, not reused', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      const before = {
+        browser: session.browser,
+        page: session.page,
+        server: session.webServer,
+        esbuild: session.esbuild,
+      };
+
+      await session.restart();
+
+      assert.notStrictEqual(session.browser, before.browser, 'a new browser');
+      assert.notStrictEqual(session.page, before.page, 'a new page');
+      assert.notStrictEqual(session.webServer, before.server, 'a new server');
+      // The one that is deliberately NOT replaced. Disposing it would re-read nothing — a restart
+      // reuses the same Config, so a fresh context would hold the very same plugin objects — and
+      // the dispose-then-recreate respawns esbuild's service child for no gain.
+      assert.strictEqual(session.esbuild, before.esbuild, 'the esbuild context is kept');
+      assert.true(session.browser.isConnected(), 'and the new browser is live');
+      assert.strictEqual(await session.page.evaluate(() => 2 + 2), 4, 'the new page evaluates');
+    });
+  });
+
+  test('reruns and abort still work through the rebooted machinery', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      await session.restart();
+
+      const rerun = await session.run();
+      assert.true(rerun.counts.total > 0, 'the rebooted session reruns');
+      assert.true(rerun.ok, 'and still passes');
+
+      // The aborters are the reason this is here: each boot registers one and the set was never
+      // pruned, so a restart that did not clear it would leave abort() publishing to the closed
+      // server as well as the live one.
+      await session.abort();
+      assert.false(session.running, 'abort settles against the new server');
+    });
+  });
+
+  test('two concurrent restarts are one restart', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      const [first, second] = await Promise.all([session.restart(), session.restart()]);
+
+      assert.strictEqual(first, second, 'both callers get the same run');
+      assert.true(session.browser.isConnected(), 'exactly one session survived');
+    });
+  });
+
+  test('close() during a restart waits for it and leaves nothing running', async (assert) => {
+    // The race the guard exists for: closing while the boot is half-built would race the teardown
+    // against the thing being built, and leak whichever handles had already been created.
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      // Ordering is the assertion, because that is the guarantee: `close()` resolving means
+      // everything is down. Without the wait it resolves as soon as the OLD session is closed,
+      // while the restart is still booting a browser behind it.
+      const order: string[] = [];
+      const restarting = session.restart().then(
+        () => order.push('restart'),
+        () => order.push('restart'),
+      );
+      const closing = session.close().then(() => order.push('close'));
+      await Promise.all([restarting, closing]);
+
+      assert.deepEqual(order, ['restart', 'close'], 'close() waits for the restart to land');
+      assert.false(session.browser.isConnected(), 'the browser the restart built is closed too');
+    });
+  });
+
+  // Restart doubles every teardown path, which is exactly where a handle gets left behind — this
+  // PR already found one where close() released everything except esbuild's incremental context,
+  // and the symptom was a script that returned from close() and then hung forever.
+  test('a restart-then-close cycle still lets the process exit', async (assert) => {
+    await using output = outputDir('api-watch-restart-exit');
+    const permit = await acquireBrowser();
+    try {
+      const { stdout } = await spawnCapture(
+        `node test/fixtures/watch-restart-exits.ts ${PASSING} ${output.path}`,
+        // spawnCapture does not inherit the environment, and without PATH the child cannot find
+        // Chrome — it falls back to playwright's own download and dies on a missing one.
+        { timeout: WATCH_EXIT_TIMEOUT_MS, env: { ...process.env, FORCE_COLOR: '0' } },
+      );
+      const handles = JSON.parse(stdout.trim().split('\n').at(-1)!) as string[];
+
+      assert.deepEqual(
+        handles.filter((handle) => handle === 'ProcessWrap'),
+        [],
+        `no child process outlives restart + close, got ${stdout.trim()}`,
+      );
+    } finally {
+      permit.release();
+    }
+  });
+});

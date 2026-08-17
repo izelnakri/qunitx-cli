@@ -215,9 +215,39 @@ already exists, so `void session.runAll()` from a keypress handler must actually
 |                                        |                                                                            |
 | -------------------------------------- | -------------------------------------------------------------------------- |
 | `session.abort()`                      | cut the run in flight short; the session stays open and watching           |
+| `session.restart()`                    | rebuild the machinery, keep the session; see below                         |
 | `session.close()`                      | end the session: browser down, port released, iteration over               |
 | `signal` on `watch()`                  | **closes** the session — for a watcher there is no single run to cut short |
 | `signal` on `test()` / `testSession()` | aborts that one run, which is the whole session there                      |
+
+### restart
+
+Tears the machinery down — browser, page, server, esbuild context, watchers — boots it again, and
+runs the suite once:
+
+```js
+const result = await session.restart();
+```
+
+For a change no rerun can see: an edited `package.json`, a plugin whose module you replaced, a
+browser wedged by the page under test.
+
+**The session survives.** It is the same object, and `events()` / `results()` stream straight
+across — a restart is one transition in the life of a session, not a close followed by a new one.
+If it ended the feeds it would be `close()` plus `watch()` with extra steps.
+
+Four things to know:
+
+- **`session.url` may change.** The port is released and reacquired; if something took it in
+  between, the new server binds the next one. Re-read `url` rather than caching it.
+- **The [live objects](#the-live-objects--outside-semver) are all replaced.** Re-read `browser`,
+  `page`, `webServer`, `esbuild` and `fileWatchers` after a restart instead of holding references
+  across one.
+- **`initial` still names the run the session started with.** It is readonly and callers hold it;
+  the restart's own run arrives through `results()` and `latest` like any other, and exactly once.
+- **It takes the same queue reruns take.** A restart waits for an in-flight run, and a rerun asked
+  for during one waits for the restart. Two concurrent `restart()` calls are one restart — both
+  callers get the same result — and a `close()` during one waits for it to land.
 
 `abort` is deliberately the platform's word: you hand in an `AbortSignal`, `signal.aborted` is
 how the platform spells it, and a run cut short comes back as `result.status === 'aborted'` — one
