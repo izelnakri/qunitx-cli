@@ -4,7 +4,7 @@ import * as Reporter from '../reporters/index.ts';
 import { Task } from '../task/index.ts';
 import { bindServerToPort } from './bind-server-to-port.ts';
 import * as Chrome from '../chrome/index.ts';
-import { prelaunchPromise, shutdownPrelaunch } from '../chrome/prelaunch.ts';
+import { claimPrelaunch, prelaunchPromise, shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { perfLog } from '../utils/perf-log.ts';
 import * as RunState from './run-state.ts';
 import type { Browser } from 'playwright-core';
@@ -89,6 +89,8 @@ export async function launch(config: LaunchTarget, skipPrelaunch = false): Promi
           timeout: 5000,
         });
         perfLog(`browser.js: connectOverCDP took ${Date.now() - connectStart}ms`);
+        // Claimed here rather than above, so the count only tracks connections that succeeded.
+        claimPrelaunch();
         return browser;
       } catch {
         perfLog(

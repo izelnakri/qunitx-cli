@@ -1,5 +1,6 @@
 import * as TestCommand from '../commands/test.ts';
 import { Task } from '../task/index.ts';
+import { claimPrelaunch, releasePrelaunch } from '../chrome/prelaunch.ts';
 import * as TestRun from './test.ts';
 import { EventsChannel, findAPIReporterFrom, type RunEvent } from './reporter.ts';
 
@@ -426,6 +427,10 @@ class Session implements WatchSession {
   async #restart(): Promise<RunResult> {
     // Outside the teardown, as `runAll` does it: abort asks the page to drop its queue, and
     // `settled()` is what waits for the run that was interrupted to finish unwinding.
+    // A claim of our own, held across the whole transition. The teardown below releases the boot's
+    // claim and the reboot takes a fresh one; without this the count would touch zero in between,
+    // reaping the pre-launched Chrome and making the reboot pay for a cold launch it does not need.
+    claimPrelaunch();
     this.#inner.abort();
     await this.#inner.settled();
     await this.#inner.teardown();
@@ -443,6 +448,8 @@ class Session implements WatchSession {
     const result = await this.#drive(async () => {
       this.#inner = await TestCommand.watch(this.#config);
     });
+    // The hand-off is over: the reboot has its own claim, so ours can go.
+    await releasePrelaunch();
     // `close()` may have been called while the boot was in flight; it is waiting on this promise,
     // so nothing else will release what was just built unless it is released here.
     if (this.#closed) await this.#inner.close();

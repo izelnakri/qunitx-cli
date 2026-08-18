@@ -24,6 +24,59 @@ import type { ChromeHandle, EarlyChrome } from '../types.ts';
 // detached process group outlives the parent).
 let earlyChrome: ChromeHandle | null = null;
 
+// How many live consumers hold the pre-launched Chrome. One process ran one browser for years, so
+// the teardowns simply killed it — correct then, and a landmine the moment two runs share a
+// process: the first to finish reaps the Chrome the others are still connected to. Counting claims
+// makes the LAST one out do the reaping, which is what the single-run case already was.
+let claims = 0;
+
+/**
+ * Registers one live consumer of the pre-launched Chrome. Paired with {@link releasePrelaunch}.
+ *
+ * Called once a connection actually succeeds rather than when one is attempted, so the count only
+ * ever tracks browsers someone is really using.
+ *
+ * ```ts
+ * import { claimPrelaunch, releasePrelaunch } from './prelaunch.ts';
+ *
+ * claimPrelaunch();
+ * await releasePrelaunch(); // the only claim, so this reaps
+ * ```
+ */
+export function claimPrelaunch(): void {
+  claims++;
+}
+
+/**
+ * Drops one claim, reaping the pre-launched Chrome once the last consumer has let go.
+ *
+ * With no claims outstanding it reaps immediately, which keeps it a drop-in for the unconditional
+ * shutdown it replaced: a Chrome that was spawned but never connected to still gets cleaned up.
+ *
+ * Answers whether THIS release was the one that reaped, which is the only externally visible
+ * difference between the two outcomes — a caller that wants to know it let go last, and the tests
+ * that pin the arithmetic, would otherwise have to infer it from a browser dying.
+ *
+ * ```ts
+ * import { claimPrelaunch, releasePrelaunch } from './prelaunch.ts';
+ *
+ * claimPrelaunch();
+ * claimPrelaunch();
+ * await releasePrelaunch(); // false — someone else still holds it
+ * await releasePrelaunch(); // true — last one out
+ * ```
+ */
+export async function releasePrelaunch(): Promise<boolean> {
+  // The `claims > 0` half is belt-and-braces rather than load-bearing: a reap resets the count,
+  // so a stray release can never leave a debt behind for the next claim to work off. It stays
+  // because it states the intent locally, without depending on that reset staying true.
+  if (claims > 0 && --claims > 0) return false;
+
+  await shutdownPrelaunch();
+
+  return true;
+}
+
 /**
  * Kills the pre-launched Chrome process and awaits its async temp-dir cleanup.
  * Must be called before process.exit() so the event loop is still alive and the
@@ -35,6 +88,7 @@ let earlyChrome: ChromeHandle | null = null;
  * ```
  */
 export async function shutdownPrelaunch(): Promise<void> {
+  claims = 0;
   if (!earlyChrome) return;
   const { shutdown } = earlyChrome;
   earlyChrome = null; // prevent double-shutdown

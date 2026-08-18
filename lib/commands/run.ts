@@ -16,7 +16,7 @@ import { closeWithGrace } from '../utils/close-with-grace.ts';
 import { findProjectRoot } from '../utils/find-project-root.ts';
 import { pathExists } from '../utils/path-exists.ts';
 import { qunitxRuntimePlugin } from '../setup/qunitx-runtime-plugin.ts';
-import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
+import { releasePrelaunch } from '../chrome/prelaunch.ts';
 import { processConsole, type Console } from '../console.ts';
 import { MAX_BROWSER_LOGS } from '../api/reporter.ts';
 import type { BrowserLog } from '../reporters/types.ts';
@@ -322,7 +322,7 @@ export async function run(config: ScriptConfig): Promise<ScriptOutcome> {
       // holds the loop open, so a close that never settles drains it and the process exits 0 with
       // the real exit code computed and never committed. closeWithGrace's timer is itself a live
       // handle, so the loop cannot drain out from under the exit code.
-      await closeWithGrace([server.close(), browser.close(), shutdownPrelaunch()]);
+      await closeWithGrace([server.close(), browser.close(), releasePrelaunch()]);
     }
   }
 

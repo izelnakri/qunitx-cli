@@ -1,5 +1,5 @@
 import * as Browser from '../setup/browser.ts';
-import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
+import { releasePrelaunch } from '../chrome/prelaunch.ts';
 import { HTTPServer } from '../web/index.ts';
 import { bindServerToPort } from '../setup/bind-server-to-port.ts';
 import * as WebServer from '../setup/web-server.ts';
@@ -468,11 +468,7 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
       });
     },
     close: () => closeSession(connections, killFileWatchers, build),
-    teardown: () =>
-      closeSession(connections, killFileWatchers, build, {
-        reapPrelaunchedChrome: false,
-        disposeEsbuild: false,
-      }),
+    teardown: () => closeSession(connections, killFileWatchers, build, { disposeEsbuild: false }),
   };
 }
 
@@ -531,9 +527,14 @@ async function closeSession(
   connections: Connections,
   killFileWatchers: () => unknown,
   build: EsbuildCache,
-  // Both default to "this session is over". `restart` turns them off because it is building a
-  // replacement in the same process, and each would cost it something it does not need to pay.
-  { reapPrelaunchedChrome = true, disposeEsbuild = true } = {},
+  // Defaults to "this session is over". `restart` turns it off because it is building a
+  // replacement in the same process, and disposing a context whose replacement would hold the
+  // very same plugin objects only respawns esbuild's service child for nothing.
+  //
+  // The pre-launched Chrome needs no such flag any more: the release below is refcounted, and
+  // `restart` holds a claim of its own across the transition, so the count never reaches zero and
+  // the reboot still finds Chrome warm.
+  { disposeEsbuild = true } = {},
 ): Promise<void> {
   killFileWatchers();
   await closeWithGrace([
@@ -543,7 +544,7 @@ async function closeSession(
     disposeEsbuild
       ? Task(build.context?.dispose()).ignore('watch session esbuild context dispose')
       : null,
-    reapPrelaunchedChrome ? shutdownPrelaunch() : null,
+    releasePrelaunch(),
   ]);
   if (disposeEsbuild) build.context = null;
 }
@@ -571,7 +572,7 @@ async function runConcurrentMode(
     Reporter.runStart(config, { fileCount: 0, groupCount: 0 });
     // The daemon owns its browser across runs and must keep it; a local run owns this one.
     if (!config.state.daemon) {
-      await closeWithGrace([(await browserPromise).close(), shutdownPrelaunch()]);
+      await closeWithGrace([(await browserPromise).close(), releasePrelaunch()]);
     }
     const now = Date.now();
     return { exitCode: 0, durationMs: 0, startedAt: now, finishedAt: now };
@@ -862,13 +863,13 @@ async function runConcurrentMode(
   //
   // keepAlive is cleared AFTER cleanup so the interval holds the event loop open throughout,
   // preventing a premature drain if every close resolves instantly (e.g. Chrome already dead)
-  // before proc.ref() takes effect inside shutdownPrelaunch. closeWithGrace bounds the other
+  // before proc.ref() takes effect inside the reap. closeWithGrace bounds the other
   // side: Playwright's browser.close() can deadlock on Firefox + Windows.
   await closeWithGrace([
     failureCacheWrite,
     Task(sharedServer?.close()).ignore('server.close'),
     Task(browser.close()).ignore('browser.close'),
-    shutdownPrelaunch(),
+    releasePrelaunch(),
   ]);
   clearInterval(keepAlive);
 
