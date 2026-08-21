@@ -1,6 +1,7 @@
 import * as TestCommand from '../commands/test.ts';
 import * as RunState from '../setup/run-state.ts';
 import { Task } from '../task/index.ts';
+import { watch, type WatchSession } from './watch.ts';
 import * as TestRun from './test.ts';
 import { EventsChannel, type RunEvent } from './reporter.ts';
 
@@ -86,6 +87,41 @@ export interface TestSession extends AsyncIterable<RunEvent> {
 }
 
 /**
+ * What {@link openSession} accepts: every run option, plus the one that chooses the shape.
+ *
+ * `watch` lives here rather than on `UserRunOptions` on purpose — {@link test} must not be able to
+ * take it. A watching run never finishes, so `test({ watch: true })` would be a `Task` that never
+ * settles, and a type that cannot express the mistake is better than a validation that catches it.
+ *
+ * ```ts
+ * const options: SessionOptions = { inputs: ['test/'], watch: true };
+ * options.watch; // true — the durable shape
+ * ```
+ */
+export type SessionOptions = UserRunOptions & { watch?: boolean };
+
+/**
+ * With `watch: true`, the DURABLE shape: one page behind a stable {@link WatchSession.url}, kept
+ * open with the rerun verbs and file watching, exactly as {@link watch} gives you.
+ *
+ * Not the same session with watchers bolted on — the other execution shape. This one bundles every
+ * file together and serves one page; the form below splits them across as many pages as there are
+ * cores and is spent after a single run. `watch()` is the shorter spelling of this overload.
+ *
+ * ```ts
+ * import { openSession } from './session.ts';
+ *
+ * // Defined, not invoked: holds a browser and a port open.
+ * async function serve() {
+ *   const session = await openSession({ inputs: ['test/'], watch: true });
+ *   return session.url; // 'http://localhost:1234'
+ * }
+ * ```
+ */
+export function openSession(
+  options: SessionOptions & { watch: true },
+): Task<WatchSession, RunFailure>;
+/**
  * Starts a single run you can watch happen, rather than one you wait out.
  *
  * Use it when the run's progress is the point — a progress bar, a live log, a UI that shows tests
@@ -97,20 +133,31 @@ export interface TestSession extends AsyncIterable<RunEvent> {
  * consumed (so the event feed cannot fall behind).
  *
  * ```ts
- * import { testSession } from './session.ts';
+ * import { openSession } from './session.ts';
  *
  * // Defined, not invoked: launches a browser and runs the project's tests.
  * async function countAsTheyFinish() {
- *   await using session = await testSession({ inputs: ['test/'] });
+ *   await using session = await openSession({ inputs: ['test/'] });
  *   let finished = 0;
  *   for await (const event of session) if (event.kind === 'test') finished++;
  *   return finished;
  * }
  * ```
  */
-export function testSession(
-  options: UserRunOptions | string | string[] = {},
-): Task<TestSession, RunFailure> {
+export function openSession(
+  options?: SessionOptions | string | string[],
+): Task<TestSession, RunFailure>;
+export function openSession(
+  options: SessionOptions | string | string[] = {},
+): Task<TestSession | WatchSession, RunFailure> {
+  // `watch` selects the other SHAPE, not merely file watchers on top of this one: a watching
+  // session is one page serving a stable URL, where this one splits the files across as many pages
+  // as there are cores and is spent after a single run. The overloads above are what keep that
+  // honest — `url` and the rerun verbs only exist on the type you get back for `watch: true`.
+  if (typeof options === 'object' && !Array.isArray(options) && options.watch) {
+    return watch(options);
+  }
+
   return Task(async () => {
     const channel = EventsChannel.build();
     const configOptions = Options.from(options);
@@ -119,7 +166,7 @@ export function testSession(
     // would miss them while `result.notices` still carried them.
     configOptions.reporters.push(channel.reporter);
     // Assembly is eager: it reads package.json and resolves inputs, so a bad option is a failure
-    // from `testSession(...)` itself rather than a surprise on first iteration. Only the browser
+    // from `openSession(...)` itself rather than a surprise on first iteration. Only the browser
     // is deferred.
     const config = await Config.setup(configOptions);
 

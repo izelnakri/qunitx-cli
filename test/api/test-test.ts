@@ -252,7 +252,7 @@ module('API | test | reporters', { concurrency: true }, () => {
     const streamed: string[] = [];
 
     // The `run()` way to observe a run in flight: a reporter. For the public event shapes
-    // (`TestResult`, `Notice`, `BrowserLog`) use `testSession().events()` instead.
+    // (`TestResult`, `Notice`, `BrowserLog`) use `openSession().events()` instead.
     const result = await apiRun({
       inputs: [PASSING],
       reporter: {

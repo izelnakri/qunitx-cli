@@ -71,21 +71,21 @@ export async function withWatch<T>(
  * Starts a run session with a permit held, hands it to `body`, and closes it.
  *
  * ```ts
- * import { withTestSession } from './helpers.ts';
+ * import { withOpenSession } from './helpers.ts';
  *
  * // Defined, not invoked: launches a real browser.
  * async function eventCount() {
- *   return await withTestSession({}, async (session) => (await session.result()).counts.total);
+ *   return await withOpenSession({}, async (session) => (await session.result()).counts.total);
  * }
  * ```
  */
-export async function withTestSession<T>(
+export async function withOpenSession<T>(
   options: UserRunOptions,
   body: (session: TestSession) => Promise<T> | T,
 ): Promise<T> {
   await using output = outputDir('api-session');
   const permit = await acquireBrowser();
-  const session = await QUnitX.testSession({ output: output.path, ...options });
+  const session = await QUnitX.openSession({ output: output.path, ...options });
   try {
     return await body(session);
   } finally {

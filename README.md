@@ -218,7 +218,7 @@ result.failures.map((one) => one.fullName); // ['Cart > Coupons: applies code']
 | --------------------------------- | ----------------------------------------------------------------------- |
 | `test(options)`                   | run the suite once; the full result as a value                          |
 | `run(file, options)`              | run ONE file as a plain script; its exit code as a value                |
-| `testSession(options)`            | one run, watched as it happens — `events()`, `result()`, `abort()`      |
+| `openSession(options)`            | one run, watched as it happens — `events()`, `result()`, `abort()`      |
 | `watch(options)`                  | async-iterable session; `run`/`runAll`/`runFailed`/`abort`, `results()` |
 | `search(options)`                 | what a selection would run — no browser, milliseconds                   |
 | `Daemon.{start,stop,status,test}` | reuse a warm browser between runs                                       |

@@ -47,7 +47,7 @@ export { test, type RunFailure } from './test.ts';
  */
 export { run, NotAScriptFile } from './run.ts';
 export type { ScriptOptions, ScriptResult, ScriptFailure } from './run.ts';
-export { testSession, type TestSession } from './session.ts';
+export { openSession, type SessionOptions, type TestSession } from './session.ts';
 export { watch, type WatchSession } from './watch.ts';
 export { search, type SearchMatch, type SearchResult, type UnlistableCounts } from './search.ts';
 // Straight off the commands rather than through a wrapper module: they already return a Task
