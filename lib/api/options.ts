@@ -232,7 +232,12 @@ export function from(
   input: UserRunOptions | string | string[] = {},
   options?: UserRunOptions,
 ): ConfigOptions & { reporters: Reporter[] } {
-  const userRunOptions = toUserOptions(input, options);
+  // The positional target wins over any `inputs` in the options object: naming it there is the
+  // more specific statement of the two.
+  const userRunOptions =
+    typeof input === 'string' || Array.isArray(input)
+      ? { ...options, inputs: [input].flat() }
+      : input;
   validate(userRunOptions);
   const coverage = userRunOptions.coverage;
   const requestedReporters = getReportersOf(userRunOptions);
@@ -279,33 +284,4 @@ export function from(
         ? processConsole
         : silentConsole),
   };
-}
-
-/**
- * Normalises the three call shapes into the object one, without translating anything else.
- *
- * `from` turns user options into the config's shape; this only collapses `'test/'` and
- * `['a.ts', 'b.ts']` into `{ inputs }`, so a caller that needs to MERGE two sets of user options —
- * a watch session applying a restart patch — can do it before that translation rather than after.
- *
- * ```ts
- * import { toUserOptions } from './options.ts';
- *
- * toUserOptions('test/'); // { inputs: ['test/'] }
- * toUserOptions('test/', { filter: 'Cart' }); // { filter: 'Cart', inputs: ['test/'] }
- * toUserOptions({ filter: 'Cart' }).filter; // 'Cart'
- * ```
- */
-export function toUserOptions(
-  input: UserRunOptions | string | string[] = {},
-  options?: UserRunOptions,
-): UserRunOptions {
-  if (typeof input === 'string' || Array.isArray(input)) {
-    // The target wins over any `inputs` in the options object: naming it positionally is the more
-    // specific statement, and silently preferring the other one would be a selection the caller
-    // did not ask for.
-    return { ...options, inputs: [input].flat() };
-  }
-
-  return input;
 }
