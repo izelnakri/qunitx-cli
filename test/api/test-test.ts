@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import path from 'node:path';
-import { apiRun, captureStream } from './helpers.ts';
+import { testRun, captureStream } from './helpers.ts';
 import * as QUnitX from '../../lib/api/index.ts';
 import { outputDir } from '../helpers/temp-dir.ts';
 import { streamConsole } from '../../lib/console.ts';
@@ -18,9 +18,9 @@ const SKIP_TODO = 'test/fixtures/skip-todo-tests.ts';
 // A test that asserts WHEN the run happened must NOT use these — the run may already have been
 // started by whichever test reached the memo first. `timings bracket the run` does its own.
 let green: Promise<QUnitX.RunResult> | null = null;
-const greenRun = (): Promise<QUnitX.RunResult> => (green ??= apiRun({ inputs: [PASSING] }));
+const greenRun = (): Promise<QUnitX.RunResult> => (green ??= testRun({ inputs: [PASSING] }));
 let red: Promise<QUnitX.RunResult> | null = null;
-const redRun = (): Promise<QUnitX.RunResult> => (red ??= apiRun({ inputs: [FAILING] }));
+const redRun = (): Promise<QUnitX.RunResult> => (red ??= testRun({ inputs: [FAILING] }));
 
 module('API | test | results', { concurrency: true }, () => {
   test('a green run resolves ok with every test recorded', async (assert) => {
@@ -69,7 +69,7 @@ module('API | test | results', { concurrency: true }, () => {
   });
 
   test('skip and todo are counted apart from passes and failures', async (assert) => {
-    const result = await apiRun({ inputs: [SKIP_TODO] });
+    const result = await testRun({ inputs: [SKIP_TODO] });
 
     assert.true(result.counts.skipped > 0, 'skipped tests are counted');
     assert.true(result.counts.todo > 0, 'todo tests are counted');
@@ -94,7 +94,7 @@ module('API | test | results', { concurrency: true }, () => {
   });
 
   test('a multi-file run reports the split it chose, partitioning every file exactly once', async (assert) => {
-    const result = await apiRun({ inputs: [PASSING, SKIP_TODO] });
+    const result = await testRun({ inputs: [PASSING, SKIP_TODO] });
 
     // How many groups is up to the machine — `availableParallelism()` bounds it, so a 1-core
     // runner legitimately produces one. What must hold everywhere is that the split is a
@@ -122,7 +122,7 @@ module('API | test | results', { concurrency: true }, () => {
     // Its own run, not the shared one: this asserts WHEN the run happened relative to this test,
     // so a run someone else already started would put `startedAt` before our `before`.
     const before = Date.now();
-    const result = await apiRun({ inputs: [PASSING] });
+    const result = await testRun({ inputs: [PASSING] });
 
     assert.true(result.startedAt >= before, 'started after we asked');
     assert.true(result.finishedAt >= result.startedAt, 'and finished after it started');
@@ -160,14 +160,14 @@ module('API | test | results', { concurrency: true }, () => {
 
 module('API | test | options', { concurrency: true }, () => {
   test('filter narrows the run the way -t does', async (assert) => {
-    const result = await apiRun({ inputs: [PASSING], filter: 'assert true works' });
+    const result = await testRun({ inputs: [PASSING], filter: 'assert true works' });
 
     assert.equal(result.counts.total, 1, 'only the matching test ran');
     assert.includes(result.tests[0].fullName, 'assert true works');
   });
 
   test('a filter that matches nothing fails the run rather than passing empty', async (assert) => {
-    const result = await apiRun({ inputs: [PASSING], filter: 'no-such-test-anywhere' });
+    const result = await testRun({ inputs: [PASSING], filter: 'no-such-test-anywhere' });
 
     assert.false(result.ok, 'a mistyped filter is a mistake, not a green run');
     assert.equal(result.counts.total, 0);
@@ -181,7 +181,7 @@ module('API | test | options', { concurrency: true }, () => {
     const declarations = await QUnitX.search({ inputs: [PASSING] });
     const target = declarations.matches[1];
 
-    const result = await apiRun({ inputs: [`${target.file}#${target.line}`] });
+    const result = await testRun({ inputs: [`${target.file}#${target.line}`] });
 
     assert.equal(result.counts.total, 1);
     assert.equal(result.tests[0].fullName, target.fullName);
@@ -193,7 +193,7 @@ module('API | test | reporters', { concurrency: true }, () => {
     const stdout = captureStream();
     // A `console` alone still routes the run's own `#` diagnostics, so the assertion below is
     // about the test document: with no reporter there is no TAP, no spec output, nothing.
-    const result = await apiRun({ inputs: [PASSING], console: streamConsole(stdout) });
+    const result = await testRun({ inputs: [PASSING], console: streamConsole(stdout) });
 
     assert.true(result.ok);
     assert.notIncludes(stdout.text(), 'TAP version 13');
@@ -203,7 +203,7 @@ module('API | test | reporters', { concurrency: true }, () => {
   test('a named reporter writes to the given stream and still returns the result', async (assert) => {
     const stdout = captureStream();
 
-    const result = await apiRun({
+    const result = await testRun({
       inputs: [PASSING],
       reporter: 'tap',
       console: streamConsole(stdout),
@@ -218,7 +218,7 @@ module('API | test | reporters', { concurrency: true }, () => {
   test('a custom reporter object receives the lifecycle', async (assert) => {
     const events: string[] = [];
 
-    const result = await apiRun({
+    const result = await testRun({
       inputs: [PASSING],
       reporter: {
         onRunStart: () => void events.push('start'),
@@ -235,7 +235,7 @@ module('API | test | reporters', { concurrency: true }, () => {
 
   test('a reporter that throws costs output, never the result', async (assert) => {
     // The collector is first in the fan-out precisely so this holds.
-    const result = await apiRun({
+    const result = await testRun({
       inputs: [PASSING],
       reporter: {
         onTestEnd: () => {
@@ -253,7 +253,7 @@ module('API | test | reporters', { concurrency: true }, () => {
 
     // The `run()` way to observe a run in flight: a reporter. For the public event shapes
     // (`TestResult`, `Notice`, `BrowserLog`) use `openSession().events()` instead.
-    const result = await apiRun({
+    const result = await testRun({
       inputs: [PASSING],
       reporter: {
         onTestEnd: (_config, details) => void streamed.push(details.fullName.join(' > ')),
@@ -324,7 +324,7 @@ module('API | test | failures', { concurrency: true }, () => {
   });
 
   test('failFast says the suite was cut off, not that it is two tests long', async (assert) => {
-    const result = await apiRun({ inputs: [FAILING], failFast: true });
+    const result = await testRun({ inputs: [FAILING], failFast: true });
 
     assert.equal(result.status, 'failFast', 'the ending names the policy that stopped it');
     assert.true(
