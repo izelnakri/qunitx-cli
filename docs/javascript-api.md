@@ -47,8 +47,18 @@ const result = await test({
 });
 ```
 
-`test('test/')` and `test(['a.ts', 'b.ts'])` are shorthand for `inputs`. Every CLI flag has an
-option — see the [CLI Reference](../README.md#cli-reference).
+Three call shapes, and `watch` and `openSession` take the same three:
+
+```js
+await test('test/'); // a file or directory
+await test(['a-test.ts', 'b-test.ts']); // several
+await test({ inputs: ['test/'], filter: 'Cart' }); // one options object
+await test('test/', { filter: 'Cart' }); // target first, options second
+```
+
+The positional target wins over any `inputs` in the options object — naming it there is the more
+specific statement. Every CLI flag has an option — see the
+[CLI Reference](../README.md#cli-reference).
 
 **Cancelling.** Pass a `signal`. An already-aborted one answers without launching a browser at
 all, and a cancelled run still resolves with the tests that finished:
