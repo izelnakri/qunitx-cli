@@ -295,7 +295,13 @@ export function watch(
   return Task(async () => {
     // Kept in the USER's shape rather than the resolved one, so `restart(patch)` merges two
     // objects of the same kind and sends the result through the single translation below.
-    const userOptions = Options.toUserOptions(input, extra);
+    // Kept in the USER's shape rather than the resolved one, because `restart(patch)` merges a
+    // patch into it and `Options.from` is a one-way door — `coverage: { formats }` has already
+    // collapsed by then. The positional target wins over any `inputs` in the options object.
+    const userOptions: UserRunOptions =
+      typeof input === 'object' && !Array.isArray(input)
+        ? input
+        : { ...extra, inputs: [input].flat() };
     const config = await Config.setup({ ...Options.from(userOptions), watch: true });
     const begunAt = Date.now();
     const inner = await TestCommand.watch(config);

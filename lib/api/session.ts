@@ -173,9 +173,7 @@ export function openSession(
   // true })`, so the flag is read from whichever argument is the options object.
   const settings = typeof input === 'object' && !Array.isArray(input) ? input : extra;
   if (settings?.watch) {
-    // Normalised to the one-argument form rather than forwarded as a pair: `watch` has the same
-    // two overloads, and picking between them here would be a second place that has to agree.
-    return watch(Options.toUserOptions(input, extra));
+    return typeof input === 'object' && !Array.isArray(input) ? watch(input) : watch(input, extra);
   }
 
   return Task(async () => {
