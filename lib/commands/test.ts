@@ -653,12 +653,12 @@ async function runConcurrentMode(
   const sharedServer =
     groupCount > 1 && build.htmlPathsToRunTests[0] === '/' && build.htmlPathsToRunTests.length === 1
       ? (() => {
-          const s = new HTTPServer();
-          config.state.aborters.add(() => s.publish('abort'));
-          WebServer.setupGroupWSHandler(s, groupConfigs);
-          groupConfigs.forEach((gc) => WebServer.registerGroupRoutes(s, gc));
-          WebServer.registerSharedStaticHandler(s, groupConfigs);
-          return s;
+          const server = new HTTPServer();
+          config.state.aborters.add(() => server.publish('abort'));
+          WebServer.setupGroupWSHandler(server, groupConfigs);
+          groupConfigs.forEach((groupConfig) => WebServer.registerGroupRoutes(server, groupConfig));
+          WebServer.registerSharedStaticHandler(server, groupConfigs);
+          return server;
         })()
       : null;
 
@@ -731,7 +731,7 @@ async function runConcurrentMode(
           ? await Promise.race([
               connectWork,
               new Promise<never>((_, reject) => {
-                const t = setTimeout(
+                const timer = setTimeout(
                   () =>
                     reject(
                       new Error(
@@ -740,7 +740,7 @@ async function runConcurrentMode(
                     ),
                   DAEMON_CONNECT_TIMEOUT_MS,
                 );
-                t.unref();
+                timer.unref();
               }),
             ])
           : await connectWork;

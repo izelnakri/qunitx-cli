@@ -1654,9 +1654,9 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
       for await (const element of open()) {
         if (isFailure(element)) yield element;
         else {
-          const k = key(element as T);
-          if (!seen.has(k)) {
-            seen.add(k);
+          const identity = key(element as T);
+          if (!seen.has(identity)) {
+            seen.add(identity);
             yield element;
           }
         }
@@ -1816,13 +1816,13 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
       for await (const element of open()) {
         if (isFailure(element)) yield element as never;
         else {
-          const k = key(element as T);
-          if (chunk.length > 0 && k !== current) {
+          const identity = key(element as T);
+          if (chunk.length > 0 && identity !== current) {
             yield chunk;
             chunk = [];
           }
           chunk.push(element as T);
-          current = k;
+          current = identity;
         }
       }
       if (chunk.length > 0) yield chunk;

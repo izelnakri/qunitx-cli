@@ -90,9 +90,9 @@ function dumpValue(value: unknown, indent: string): string {
       '\n' +
       value
         .map((item) => {
-          const v = dumpValue(item, next);
+          const dumped = dumpValue(item, next);
           // Avoid trailing space before block values: "-\n  key: val" not "- \n  key: val"
-          return v[0] === '\n' ? `${next}-${v}` : `${next}- ${v}`;
+          return dumped[0] === '\n' ? `${next}-${dumped}` : `${next}- ${dumped}`;
         })
         .join('\n')
     );
@@ -105,9 +105,11 @@ function dumpValue(value: unknown, indent: string): string {
     '\n' +
     entries
       .map(([entryKey, entryValue]) => {
-        const v = dumpValue(entryValue, next);
+        const dumped = dumpValue(entryValue, next);
         // Avoid trailing space before block values: "key:\n  val" not "key: \n  val"
-        return v[0] === '\n' ? `${next}${entryKey}:${v}` : `${next}${entryKey}: ${v}`;
+        return dumped[0] === '\n'
+          ? `${next}${entryKey}:${dumped}`
+          : `${next}${entryKey}: ${dumped}`;
       })
       .join('\n')
   );
