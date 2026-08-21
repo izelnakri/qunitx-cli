@@ -70,11 +70,11 @@ const EXIT_CODE_SIGTERM = 128 + 15;
     // through a barrel, a helper or a side-effect import. Guessing wrong there means reporting
     // success for tests that never ran, so the mode is asked for rather than inferred.
     const RunCommand = await import('./lib/commands/run.ts');
-    const config = await RunCommand.setup().result();
-    if (Failure.is(config)) return await reportScriptFailure(config);
+    const invocation = await RunCommand.setup().result();
+    if (Failure.is(invocation)) return await reportScriptFailure(invocation);
 
     // Kept OFF the shared crash boundary below on purpose — see reportScriptFailure.
-    const outcome = await Task(() => RunCommand.run(config))
+    const outcome = await Task(() => RunCommand.run(invocation.entry, invocation.settings))
       .mapErr(Failure.from)
       .result();
     if (Failure.is(outcome)) return await reportScriptFailure(outcome);
