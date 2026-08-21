@@ -278,13 +278,24 @@ export interface WatchSession extends AsyncIterable<RunResult> {
  * }
  * ```
  */
+export function watch(options?: UserRunOptions): Task<WatchSession, RunFailure>;
+/**
+ * The same session, with the target named positionally: `watch('test/', { filter: 'Cart' })`.
+ *
+ * The positional target wins over any `inputs` in the options object.
+ */
 export function watch(
-  options: UserRunOptions | string | string[] = {},
+  target: string | string[],
+  options?: UserRunOptions,
+): Task<WatchSession, RunFailure>;
+export function watch(
+  input: UserRunOptions | string | string[] = {},
+  extra?: UserRunOptions,
 ): Task<WatchSession, RunFailure> {
   return Task(async () => {
     // Kept in the USER's shape rather than the resolved one, so `restart(patch)` merges two
     // objects of the same kind and sends the result through the single translation below.
-    const userOptions = Options.toUserOptions(options);
+    const userOptions = Options.toUserOptions(input, extra);
     const config = await Config.setup({ ...Options.from(userOptions), watch: true });
     const begunAt = Date.now();
     const inner = await TestCommand.watch(config);

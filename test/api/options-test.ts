@@ -195,3 +195,32 @@ module('API | options | validation', { concurrency: true }, () => {
     assert.false(InvalidOption.is(failure), 'no false positives on a full option set');
   });
 });
+
+module('API | options | call shapes', { concurrency: true }, () => {
+  // `run(file, options)` took a target and options from the start; the suite verbs took only one
+  // argument, so the obvious `test('test/', { filter })` did not compile. Three shapes each now,
+  // and the positional target is the more specific statement of the two.
+  test('a target and options merge, with the target winning', (assert) => {
+    const merged = Options.toUserOptions('test/', { filter: 'Cart', inputs: ['ignored/'] });
+
+    assert.deepEqual(merged.inputs, ['test/'], 'the positional target beats inputs in the options');
+    assert.strictEqual(merged.filter, 'Cart', 'and everything else in the options survives');
+  });
+
+  test('an array target merges the same way', (assert) => {
+    const merged = Options.toUserOptions(['a-test.ts', 'b-test.ts'], { failFast: true });
+
+    assert.deepEqual(merged.inputs, ['a-test.ts', 'b-test.ts']);
+    assert.true(merged.failFast);
+  });
+
+  test('the single-object form is returned untouched', (assert) => {
+    const original = { inputs: ['test/'], filter: 'Cart' };
+
+    assert.strictEqual(
+      Options.toUserOptions(original),
+      original,
+      'no copy, so nothing can silently diverge from what the caller passed',
+    );
+  });
+});

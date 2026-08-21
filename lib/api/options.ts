@@ -230,9 +230,9 @@ function getReportersOf(userRunOptions: UserRunOptions): ReadonlyArray<ReporterO
  */
 export function from(
   input: UserRunOptions | string | string[] = {},
+  options?: UserRunOptions,
 ): ConfigOptions & { reporters: Reporter[] } {
-  const userRunOptions =
-    typeof input === 'string' || Array.isArray(input) ? { inputs: [input].flat() } : input;
+  const userRunOptions = toUserOptions(input, options);
   validate(userRunOptions);
   const coverage = userRunOptions.coverage;
   const requestedReporters = getReportersOf(userRunOptions);
@@ -292,12 +292,20 @@ export function from(
  * import { toUserOptions } from './options.ts';
  *
  * toUserOptions('test/'); // { inputs: ['test/'] }
+ * toUserOptions('test/', { filter: 'Cart' }); // { filter: 'Cart', inputs: ['test/'] }
  * toUserOptions({ filter: 'Cart' }).filter; // 'Cart'
  * ```
  */
-export function toUserOptions(input: UserRunOptions | string | string[] = {}): UserRunOptions {
-  if (typeof input === 'string') return { inputs: [input] };
-  if (Array.isArray(input)) return { inputs: input };
+export function toUserOptions(
+  input: UserRunOptions | string | string[] = {},
+  options?: UserRunOptions,
+): UserRunOptions {
+  if (typeof input === 'string' || Array.isArray(input)) {
+    // The target wins over any `inputs` in the options object: naming it positionally is the more
+    // specific statement, and silently preferring the other one would be a selection the caller
+    // did not ask for.
+    return { ...options, inputs: [input].flat() };
+  }
 
   return input;
 }

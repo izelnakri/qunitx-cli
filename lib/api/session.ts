@@ -122,6 +122,14 @@ export function openSession(
   options: SessionOptions & { watch: true },
 ): Task<WatchSession, RunFailure>;
 /**
+ * The durable shape with the target named positionally:
+ * `openSession('test/', { watch: true })`.
+ */
+export function openSession(
+  target: string | string[],
+  options: SessionOptions & { watch: true },
+): Task<WatchSession, RunFailure>;
+/**
  * Starts a single run you can watch happen, rather than one you wait out.
  *
  * Use it when the run's progress is the point — a progress bar, a live log, a UI that shows tests
@@ -144,23 +152,35 @@ export function openSession(
  * }
  * ```
  */
+export function openSession(options?: SessionOptions): Task<TestSession, RunFailure>;
+/**
+ * The one-shot shape with the target named positionally:
+ * `openSession('test/', { filter: 'Cart' })`.
+ */
 export function openSession(
-  options?: SessionOptions | string | string[],
+  target: string | string[],
+  options?: SessionOptions,
 ): Task<TestSession, RunFailure>;
 export function openSession(
-  options: SessionOptions | string | string[] = {},
+  input: SessionOptions | string | string[] = {},
+  extra?: SessionOptions,
 ): Task<TestSession | WatchSession, RunFailure> {
   // `watch` selects the other SHAPE, not merely file watchers on top of this one: a watching
   // session is one page serving a stable URL, where this one splits the files across as many pages
   // as there are cores and is spent after a single run. The overloads above are what keep that
   // honest — `url` and the rerun verbs only exist on the type you get back for `watch: true`.
-  if (typeof options === 'object' && !Array.isArray(options) && options.watch) {
-    return watch(options);
+  // Either spelling can carry it: `openSession({ watch: true })` or `openSession(target, { watch:
+  // true })`, so the flag is read from whichever argument is the options object.
+  const settings = typeof input === 'object' && !Array.isArray(input) ? input : extra;
+  if (settings?.watch) {
+    // Normalised to the one-argument form rather than forwarded as a pair: `watch` has the same
+    // two overloads, and picking between them here would be a second place that has to agree.
+    return watch(Options.toUserOptions(input, extra));
   }
 
   return Task(async () => {
     const channel = EventsChannel.build();
-    const configOptions = Options.from(options);
+    const configOptions = Options.from(input, extra);
     // Joins the reporters BEFORE assembly, not after: `Config.setup` emits notices of its own — a
     // superseded line target, `--only-failed` finding no cache — and a feed attached afterwards
     // would miss them while `result.notices` still carried them.

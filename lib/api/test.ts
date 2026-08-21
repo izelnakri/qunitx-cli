@@ -56,13 +56,25 @@ export type RunFailure = ConfigFailure | InvalidOptionFailure;
  * }
  * ```
  */
+export function test(options?: UserRunOptions): Task<RunResult, RunFailure>;
+/**
+ * The same run, with the target named positionally: `test('test/', { filter: 'Cart' })`.
+ *
+ * The shape `run(file, options)` has always had, offered here so the two verbs read alike. The
+ * positional target wins over any `inputs` in the options object.
+ */
 export function test(
-  options: UserRunOptions | string | string[] = {},
+  target: string | string[],
+  options?: UserRunOptions,
+): Task<RunResult, RunFailure>;
+export function test(
+  input: UserRunOptions | string | string[] = {},
+  extra?: UserRunOptions,
 ): Task<RunResult, RunFailure> {
   return Task(async () => {
     // A declared config failure rejects this Task by identity, so `RunFailure` stays a union
     // `test(...).result()` can discriminate rather than a stringified message.
-    const config = await Config.setup(Options.from(options));
+    const config = await Config.setup(Options.from(input, extra));
     const signal = config.state.signal;
     // Checked before the run starts rather than during it: the first thing a run does is reset its
     // accumulators — the aborted flag among them — so a request made earlier would be cleared by
