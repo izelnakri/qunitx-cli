@@ -369,6 +369,35 @@ await session
 session stays a _handle_ rather than being a Stream itself: combinators return new Streams, and
 one with no `close()` would leave a browser with no owner.
 
+### Reconfiguring a session — `restart(patch)`
+
+`run(files)` narrows what _executes_ within the bundle the session already has. Nothing widens what
+is _in_ it — the selection is fixed at `Config.setup`. `restart(patch)` is how a live session
+changes its mind:
+
+```js
+await session.restart({ filter: 'Cart' }); // same session, different filter
+await session.restart({ inputs: ['test/', 'e2e/'] }); // same session, wider scope
+```
+
+The session survives, exactly as a bare `restart()`: same object, `events()` and `results()`
+streaming straight across. It's the operation a TUI needs behind a filter box or a scope picker,
+and reconfiguring is the same act either way — rebuild, reboot.
+
+Three things to know:
+
+- **A patch that will not resolve leaves the session alone.** The new config is built _before_
+  anything is torn down, so an input matching nothing rejects with the session still serving and
+  still runnable, rather than half-demolished.
+- **It gives up the warm esbuild context.** A bare `restart()` keeps it, because the same config
+  would produce a context holding the very same plugin objects. A different file set has a
+  different `contextKey`, so the bundler discards and rebuilds it — inherent to asking for a
+  different bundle.
+- **`reporter` / `reporters` and `signal` are not patchable**, and the type says so. Reporters are
+  how this session's own feeds are attached, so replacing them would leave `results()` and
+  `events()` open and permanently silent; `signal` belongs to the session's whole life rather than
+  one boot of it.
+
 ### The page it serves
 
 `session.url` stays up from `await watch(…)` until `close()` — the one verb that keeps a server

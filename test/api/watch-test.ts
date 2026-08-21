@@ -488,3 +488,71 @@ module('API | watch | restart', { concurrency: true }, () => {
     }
   });
 });
+
+// Serial, unlike its neighbours: every test here restarts, and a restart is two browser lifecycles
+// rather than one. Run concurrently with the rest of this file they saturate the machine — each
+// passes alone and the file as a whole stops finishing.
+module('API | watch | restart(patch)', { concurrency: false }, () => {
+  // The bundle a session serves is fixed at `Config.setup`: `run(files)` narrows what EXECUTES
+  // within it, but nothing widens what is in it. Reconfiguring is what a filter box or a scope
+  // picker in a TUI needs, and it is the same operation either way — rebuild, reboot.
+  test('a patch narrows the selection and the session keeps running', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      assert.equal(session.initial.counts.total, 3, 'the whole file to begin with');
+
+      const narrowed = await session.restart({ filter: 'assert true works' });
+
+      assert.equal(narrowed.counts.total, 1, 'the filter reached the rebuilt config');
+      assert.includes(session.url, 'http://localhost:', 'and it is still a live session');
+    });
+  });
+
+  test('a patch widens what is bundled, which no rerun verb can do', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      const widened = await session.restart({ inputs: [PASSING, FAILING] });
+
+      assert.true(
+        widened.counts.total > session.initial.counts.total,
+        `expected more than ${session.initial.counts.total} tests, got ${widened.counts.total}`,
+      );
+    });
+  });
+
+  test('the feeds survive a patched restart', async (assert) => {
+    // The failure this guards against is silent: both feeds are wired by pushing reporters onto
+    // `config.state.reporters`, and a rebuilt config gets a fresh array. Skipping the re-attach
+    // leaves results() and events() open and permanently empty — a session that looks alive.
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      const seen: number[] = [];
+      const consume = (async () => {
+        for await (const result of session.results()) {
+          seen.push(result.counts.total);
+          if (seen.length === 2) break;
+        }
+      })();
+
+      await session.restart({ filter: 'assert true works' });
+      await consume;
+
+      assert.deepEqual(seen, [3, 1], 'the initial run, then the reconfigured one');
+    });
+  });
+
+  test('a patch that cannot resolve leaves the session alive', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      const before = session.url;
+      let rejected = false;
+      try {
+        await session.restart({ inputs: ['test/fixtures/there-is-no-such-directory/'] });
+      } catch {
+        rejected = true;
+      }
+
+      assert.true(rejected, 'an unresolvable patch is a rejection');
+      // Resolved BEFORE the teardown precisely so this holds: a bad patch must not leave a
+      // half-demolished session behind.
+      assert.strictEqual(session.url, before, 'and the session it could not change still serves');
+      assert.equal((await session.run()).counts.total, 3, 'and still runs');
+    });
+  });
+});

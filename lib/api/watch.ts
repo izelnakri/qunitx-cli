@@ -8,6 +8,7 @@ import * as Options from './options.ts';
 import * as Config from '../setup/config.ts';
 import type { RunFailure, RunResult } from './test.ts';
 import type { UserRunOptions } from './options.ts';
+
 import type { Config as ResolvedConfig } from '../types.ts';
 // The unstable escape-hatch types. Imported for their shape only; re-exporting them would make
 // playwright-core and esbuild part of this package's contract, which is exactly what the
@@ -16,6 +17,22 @@ import type { Browser, Page } from 'playwright-core';
 import type { BuildContext } from 'esbuild';
 import type { FSWatcher } from 'node:fs';
 import type { HTTPServer } from '../web/index.ts';
+
+/**
+ * The options a {@link WatchSession.restart} may change.
+ *
+ * Everything a session can be opened with, less three. `watch` because a patched restart is still
+ * a watch session. `signal` because it belongs to the session's whole life rather than one boot of
+ * it. And the reporters, because they are how this session's own `results()` and `events()` feeds
+ * are attached — a patch replacing them would leave both open and permanently silent, so the type
+ * refuses the mistake rather than a runtime check catching it.
+ *
+ * ```ts
+ * const widen: SessionPatch = { inputs: ['test/', 'e2e/'] };
+ * const narrow: SessionPatch = { filter: 'Cart' };
+ * ```
+ */
+export type SessionPatch = Omit<UserRunOptions, 'signal' | 'reporter' | 'reporters'>;
 
 /**
  * A running watch session.
@@ -142,7 +159,7 @@ export interface WatchSession extends AsyncIterable<RunResult> {
    * }
    * ```
    */
-  restart(): Promise<RunResult>;
+  restart(patch?: SessionPatch): Promise<RunResult>;
   /** Stops watching, closes the browser and server, and ends the iteration. Idempotent. */
   close(): Promise<void>;
 
@@ -265,7 +282,10 @@ export function watch(
   options: UserRunOptions | string | string[] = {},
 ): Task<WatchSession, RunFailure> {
   return Task(async () => {
-    const config = await Config.setup({ ...Options.from(options), watch: true });
+    // Kept in the USER's shape rather than the resolved one, so `restart(patch)` merges two
+    // objects of the same kind and sends the result through the single translation below.
+    const userOptions = Options.toUserOptions(options);
+    const config = await Config.setup({ ...Options.from(userOptions), watch: true });
     const begunAt = Date.now();
     const inner = await TestCommand.watch(config);
 
@@ -273,7 +293,7 @@ export function watch(
     // already finished by the time `TestCommand.watch` resolves, so it would never fire one and
     // the one result missing from the iteration. Its duration has to be measured around that call
     // for the same reason — nothing can recover it afterwards.
-    const session = new Session(inner, config, snapshot(config, Date.now() - begunAt));
+    const session = new Session(inner, config, snapshot(config, Date.now() - begunAt), userOptions);
     // For a watch session `signal` means "stop watching" — there is no single run to cut short,
     // and the session's own `abort()` covers the one in flight. An already-aborted signal still
     // pays for the initial run, because the session's contract is that `initial` is a real result.
@@ -302,10 +322,20 @@ class Session implements WatchSession {
   #published = 0;
   #closed = false;
   #restarting: Promise<RunResult> | null = null;
+  // What the session was opened with, kept so `restart(patch)` has something to merge into.
+  // `Config` is the RESOLVED form — inputs already walked into an fsTree — so it cannot be
+  // un-resolved back into the options a new selection would need.
+  #options: UserRunOptions;
 
-  constructor(inner: TestCommand.WatchSession, config: ResolvedConfig, initial: RunResult) {
+  constructor(
+    inner: TestCommand.WatchSession,
+    config: ResolvedConfig,
+    initial: RunResult,
+    options: UserRunOptions,
+  ) {
     this.#inner = inner;
     this.#config = config;
+    this.#options = options;
     this.initial = initial;
     this.#latest = initial;
     // The initial run is the iteration's first element, so a `for await` sees the whole history
@@ -393,12 +423,12 @@ class Session implements WatchSession {
     return (this.#events?.dropped ?? 0) + this.#results.dropped;
   }
 
-  restart(): Promise<RunResult> {
+  restart(patch?: SessionPatch): Promise<RunResult> {
     // One restart at a time, and a second caller joins the first rather than starting a teardown
     // of the session the first is still building. The inner session's own queue cannot serialise
     // this — it is the thing being destroyed — so the guard lives here, at the only level that
     // outlives the transition.
-    this.#restarting ??= this.#restart().finally(() => (this.#restarting = null));
+    this.#restarting ??= this.#restart(patch).finally(() => (this.#restarting = null));
 
     return this.#restarting;
   }
@@ -423,7 +453,37 @@ class Session implements WatchSession {
    * `Config.setup()` would hand the new session a different array and leave `events()` and
    * `results()` open but permanently silent.
    */
-  async #restart(): Promise<RunResult> {
+  /**
+   * Resolves a patched config and re-attaches this session's feeds to it.
+   *
+   * The re-attachment is the whole reason this is not two lines inline. Both feeds are wired by
+   * pushing reporters onto `config.state.reporters` — the `onRunEnd` shim from the constructor and,
+   * if `events()` was ever called, that channel's reporter. A fresh `Config.setup` hands back a
+   * fresh array, so a patched restart that skipped this would leave `results()` and `events()` open
+   * and permanently silent: a session that looks alive and emits nothing.
+   */
+  async #reconfigure(
+    patch: SessionPatch,
+  ): Promise<{ config: ResolvedConfig; options: UserRunOptions }> {
+    const options = { ...this.#options, ...patch };
+    // Through `Options.from`, not a raw spread: it is the one place the user-facing shape becomes
+    // the config's — `coverage: { formats }` collapsing to a boolean plus a format list, a bare
+    // string becoming `inputs`. Spreading past it would hand `Config.setup` a shape it rejects.
+    const config = await Config.setup({ ...Options.from(options), watch: true });
+
+    config.state.reporters.push({
+      onRunEnd: (_context, info) => this.#publish(info.durationMs),
+    });
+    if (this.#events) config.state.reporters.push(this.#events.reporter);
+
+    return { config, options };
+  }
+
+  async #restart(patch?: SessionPatch): Promise<RunResult> {
+    // BEFORE the teardown, deliberately: a patch that cannot be resolved — an input matching
+    // nothing, an option that will not validate — must leave the session exactly as it was rather
+    // than half-demolished. Resolving first makes a bad patch a rejection with the session live.
+    const next = patch ? await this.#reconfigure(patch) : null;
     // Outside the teardown, as `runAll` does it: abort asks the page to drop its queue, and
     // `settled()` is what waits for the run that was interrupted to finish unwinding.
     this.#inner.abort();
@@ -434,6 +494,12 @@ class Session implements WatchSession {
     // never pruned, so without this each restart leaves another closure publishing to a dead
     // socket. Watch mode registers exactly one per boot, so clearing is precise here.
     this.#config.state.aborters.clear();
+    // Swapped only once the old machinery is down, so nothing above can observe a config that no
+    // longer matches the browser and server still running against it.
+    if (next) {
+      this.#config = next.config;
+      this.#options = next.options;
+    }
 
     // Through `#drive`, exactly like every other verb, and for a reason worth stating: the
     // reporter shim that publishes runs lives on `config.state.reporters`, which this restart
