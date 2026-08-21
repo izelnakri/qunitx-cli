@@ -22,7 +22,7 @@ const scriptPath = (name: string) => path.resolve(CWD, 'test/fixtures/scripts', 
 const SCRIPT_TIMEOUT_MS = 120_000;
 
 /** Runs a script with a Chrome permit held, since nothing here goes through the shell helper. */
-async function apiScript(file: string, options: QUnitX.ScriptOptions = {}) {
+async function run(file: string, options: QUnitX.ScriptOptions = {}) {
   const permit = await acquireBrowser();
   try {
     return await QUnitX.run(file, options).result();
@@ -33,7 +33,7 @@ async function apiScript(file: string, options: QUnitX.ScriptOptions = {}) {
 
 module('API | run | script execution', { concurrency: true }, () => {
   test('a script that finishes cleanly resolves ok with its file and a duration', async (assert) => {
-    const outcome = await apiScript(`${SCRIPTS}/browser-script.ts`);
+    const outcome = await run(`${SCRIPTS}/browser-script.ts`);
 
     assert.notOk(QUnitX.Failure.is(outcome), 'a clean script is not a failure');
     const result = outcome as QUnitX.ScriptResult;
@@ -45,7 +45,7 @@ module('API | run | script execution', { concurrency: true }, () => {
 
   test('a non-zero exit code is a result, not a rejection', async (assert) => {
     // The same contract the suite verb has for a red run: the runner answered the question.
-    const outcome = await apiScript(`${SCRIPTS}/exit-code-script.ts`);
+    const outcome = await run(`${SCRIPTS}/exit-code-script.ts`);
 
     assert.notOk(QUnitX.Failure.is(outcome), 'a non-zero exit is still a result');
     const result = outcome as QUnitX.ScriptResult;
@@ -54,7 +54,7 @@ module('API | run | script execution', { concurrency: true }, () => {
   });
 
   test('a script that throws comes back as exit code 1', async (assert) => {
-    const outcome = await apiScript(`${SCRIPTS}/throwing-script.ts`);
+    const outcome = await run(`${SCRIPTS}/throwing-script.ts`);
 
     const result = outcome as QUnitX.ScriptResult;
     assert.strictEqual(result.ok, false);
@@ -62,7 +62,7 @@ module('API | run | script execution', { concurrency: true }, () => {
   });
 
   test('a relative path resolves against cwd', async (assert) => {
-    const outcome = await apiScript('test/fixtures/scripts/exit-code-script.ts', { cwd: CWD });
+    const outcome = await run('test/fixtures/scripts/exit-code-script.ts', { cwd: CWD });
 
     const result = outcome as QUnitX.ScriptResult;
     assert.strictEqual(
@@ -77,7 +77,7 @@ module('API | run | what the script printed', { concurrency: true }, () => {
   test('the console option takes the output, with errors kept apart from logs', async (assert) => {
     const logged: string[] = [];
     const errored: string[] = [];
-    await apiScript(`${SCRIPTS}/streams-script.ts`, {
+    await run(`${SCRIPTS}/streams-script.ts`, {
       console: { log: (line) => logged.push(line), error: (line) => errored.push(line) },
     });
 
@@ -90,7 +90,7 @@ module('API | run | what the script printed', { concurrency: true }, () => {
     // The point of the pair: `console` chooses where output goes, `browserLogs` is what it was.
     // A silent console must capture rather than lose it, or "run it quietly and inspect after"
     // would be impossible.
-    const outcome = await apiScript(`${SCRIPTS}/streams-script.ts`, {
+    const outcome = await run(`${SCRIPTS}/streams-script.ts`, {
       console: QUnitX.silentConsole,
     });
 

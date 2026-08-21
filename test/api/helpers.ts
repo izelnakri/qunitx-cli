@@ -20,16 +20,16 @@ import type { TestSession } from '../../lib/api/session.ts';
  * both up afterwards.
  *
  * ```ts
- * import { apiRun } from './helpers.ts';
+ * import { testRun } from './helpers.ts';
  *
  * // Defined, not invoked: launches a real browser.
  * async function green() {
- *   const result = await apiRun({ inputs: ['test/fixtures/passing-tests.ts'] });
+ *   const result = await testRun({ inputs: ['test/fixtures/passing-tests.ts'] });
  *   return result.ok;
  * }
  * ```
  */
-export async function apiRun(options: UserRunOptions): Promise<RunResult> {
+export async function testRun(options: UserRunOptions): Promise<RunResult> {
   await using output = outputDir('api-run');
   const permit = await acquireBrowser();
   try {

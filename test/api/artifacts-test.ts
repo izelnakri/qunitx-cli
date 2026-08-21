@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { apiRun } from './helpers.ts';
+import { testRun } from './helpers.ts';
 import type { RunResult } from '../../lib/api/test.ts';
 import '../helpers/custom-asserts.ts';
 
@@ -11,14 +11,14 @@ const COVERED = 'test/fixtures/coverage/calculator-test.ts';
 // Two pairs of tests each read a different facet of one finished run; the assertions are reads,
 // so a second browser per pair would buy nothing. Lazy, so a filtered run launches only its own.
 let bare: Promise<RunResult> | null = null;
-const bareRun = (): Promise<RunResult> => (bare ??= apiRun({ inputs: [PASSING] }));
+const bareRun = (): Promise<RunResult> => (bare ??= testRun({ inputs: [PASSING] }));
 let covered: Promise<RunResult> | null = null;
 const coveredRun = (): Promise<RunResult> =>
-  (covered ??= apiRun({ inputs: [COVERED], coverage: true }));
+  (covered ??= testRun({ inputs: [COVERED], coverage: true }));
 
 module('API | artifacts | junit', { concurrency: true }, () => {
   test('the XML comes back on the result, not only as a file', async (assert) => {
-    const result = await apiRun({ inputs: [PASSING], junit: true });
+    const result = await testRun({ inputs: [PASSING], junit: true });
 
     assert.ok(result.junitXml, 'the document is on the result');
     assert.includes(result.junitXml!, '<?xml');
@@ -28,7 +28,7 @@ module('API | artifacts | junit', { concurrency: true }, () => {
 
   test('and is still written to disk, byte-identical', async (assert) => {
     const output = `tmp/api-junit-${crypto.randomUUID()}`;
-    const result = await apiRun({ inputs: [PASSING], junit: true, output });
+    const result = await testRun({ inputs: [PASSING], junit: true, output });
 
     const onDisk = await fs.readFile(path.join(output, 'junit.xml'), 'utf8');
     assert.equal(onDisk, result.junitXml, 'the same document, two ways to reach it');
