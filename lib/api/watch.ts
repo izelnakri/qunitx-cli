@@ -505,7 +505,10 @@ class Session implements WatchSession {
     // `settled()` is what waits for the run that was interrupted to finish unwinding.
     this.#inner.abort();
     await this.#inner.settled();
-    await this.#inner.teardown();
+    // A patched restart builds a NEW config, so the old esbuild context belongs to one nothing
+    // will use again: keeping it strands a ref'd service child and the process can never exit.
+    // A bare restart reuses the config, where keeping it is the whole optimisation.
+    await this.#inner.teardown(Boolean(patch));
 
     // Every aborter registered on this state closes over the server just torn down; the set is
     // never pruned, so without this each restart leaves another closure publishing to a dead

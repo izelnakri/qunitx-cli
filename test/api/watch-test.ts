@@ -489,10 +489,7 @@ module('API | watch | restart', { concurrency: true }, () => {
   });
 });
 
-// Serial, unlike its neighbours: every test here restarts, and a restart is two browser lifecycles
-// rather than one. Run concurrently with the rest of this file they saturate the machine — each
-// passes alone and the file as a whole stops finishing.
-module('API | watch | restart(patch)', { concurrency: false }, () => {
+module('API | watch | restart(patch)', { concurrency: true }, () => {
   // The bundle a session serves is fixed at `Config.setup`: `run(files)` narrows what EXECUTES
   // within it, but nothing widens what is in it. Reconfiguring is what a filter box or a scope
   // picker in a TUI needs, and it is the same operation either way — rebuild, reboot.
