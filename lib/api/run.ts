@@ -141,7 +141,8 @@ export function run(file: string, options: ScriptOptions = {}): Task<ScriptResul
       throw NotAScriptFile({ target: `'${file}'`, reason: 'a directory' });
     }
 
-    const config = await RunCommand.configFor(target, {
+    const startedAt = Date.now();
+    const outcome = await RunCommand.run(target, {
       cwd: options.cwd,
       browser: options.browser,
       port: options.port,
@@ -154,14 +155,11 @@ export function run(file: string, options: ScriptOptions = {}): Task<ScriptResul
       watch: false,
     });
 
-    const startedAt = Date.now();
-    const outcome = await RunCommand.run(config);
-
     return {
       ok: outcome.exitCode === 0,
       exitCode: outcome.exitCode,
       durationMs: Date.now() - startedAt,
-      file: config.entry,
+      file: outcome.entry,
       browserLogs: outcome.browserLogs,
       browserLogsDropped: outcome.browserLogsDropped,
     };

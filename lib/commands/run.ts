@@ -141,6 +141,8 @@ export interface ScriptConfig {
 
 /** What one execution of the script produced. */
 export interface ScriptOutcome {
+  /** Absolute path of the file that ran, resolved against `cwd`. */
+  entry: string;
   /** `globalThis.exitCode` if the script set one, 1 if it threw, else 0. */
   exitCode: number;
   /**
@@ -154,7 +156,26 @@ export interface ScriptOutcome {
 }
 
 /**
- * Builds a {@link ScriptConfig} from `qunitx run`'s argv.
+ * What `qunitx run`'s argv amounts to: the one target, and the settings the flags asked for.
+ *
+ * `setup` stops here rather than building a {@link ScriptConfig}, because {@link run} builds one
+ * itself — the project-root walk, the existence check and the defaults belong to running a script,
+ * not to reading a command line, and a caller with no argv should not have to assemble them.
+ *
+ * ```ts
+ * const invocation: ScriptInvocation = { entry: 'seed.ts', settings: { browser: 'firefox' } };
+ * invocation.settings.browser; // 'firefox'
+ * ```
+ */
+export interface ScriptInvocation {
+  /** The single target, exactly as it was written on the command line. */
+  entry: string;
+  /** Everything the flags set, including the `projectRoot` the parse already resolved. */
+  settings: ScriptSettings;
+}
+
+/**
+ * Reads `qunitx run`'s argv into a target and its settings.
  *
  * ```ts
  * import * as Script from './run.ts';
@@ -162,15 +183,15 @@ export interface ScriptOutcome {
  *
  * // Defined, not invoked: reads package.json off the real filesystem.
  * async function configure() {
- *   const config = await Script.setup(['seed.ts', '--browser=firefox']).result();
- *   return Failure.is(config) ? null : config.browser; // 'firefox'
+ *   const invocation = await Script.setup(['seed.ts', '--browser=firefox']).result();
+ *   return Failure.is(invocation) ? null : invocation.settings.browser; // 'firefox'
  * }
  * ```
  */
 export function setup(
   argv: string[] = process.argv.slice(3),
   cwd: string = process.cwd(),
-): Task<ScriptConfig, ScriptConfigFailure> {
+): Task<ScriptInvocation, ScriptConfigFailure> {
   return Task(async () => {
     const projectRoot = await findProjectRoot(cwd);
     // The test runner's parser, so `--browser`, `--port`, `--watch`, `--open` and `--timeout` mean
@@ -183,16 +204,21 @@ export function setup(
     const targets = flags.inputs.concat(flags.htmlPaths ?? []);
     if (targets.length !== 1) throw ScriptTargetRequired({ count: targets.length });
 
-    return await configFor(targets[0], {
-      cwd,
-      projectRoot,
-      browser: flags.browser,
-      port: flags.port,
-      portExplicit: flags.portExplicit,
-      watch: flags.watch,
-      open: flags.open === true,
-      timeout: flags.timeout,
-    });
+    return {
+      entry: targets[0],
+      // `projectRoot` rides along because the walk already happened above — `Args.parse` needs
+      // it — and `run` skips its own when it is handed one.
+      settings: {
+        cwd,
+        projectRoot,
+        browser: flags.browser,
+        port: flags.port,
+        portExplicit: flags.portExplicit,
+        watch: flags.watch,
+        open: flags.open === true,
+        timeout: flags.timeout,
+      },
+    };
   });
 }
 
@@ -231,42 +257,29 @@ export type ScriptEntryFailure = Failure.Of<typeof ScriptNotFound> | ProjectRoot
  * check, and every default. A second copy for the programmatic path is exactly the kind that
  * drifts, and the two would then disagree about what `qunitx run x.ts` and `run('x.ts')` accept.
  *
- * ```ts
- * import * as RunCommand from './run.ts';
- * import * as Failure from '../result/failure.ts';
- *
- * // Defined, not invoked: walks for package.json and stats the entry.
- * async function configure() {
- *   const config = await RunCommand.configFor('seed.ts', { browser: 'firefox' }).result();
- *   return Failure.is(config) ? null : config.browser; // 'firefox'
- * }
- * ```
+ * Private: {@link run} is the only caller, and a caller with no argv reaches it by calling `run`
+ * rather than by assembling a config of its own.
  */
-export function configFor(
-  entry: string,
-  settings: ScriptSettings = {},
-): Task<ScriptConfig, ScriptEntryFailure> {
-  return Task(async () => {
-    const cwd = settings.cwd ?? process.cwd();
-    const projectRoot = settings.projectRoot ?? (await findProjectRoot(cwd));
-    // Resolved here so a programmatic `run('seed.ts')` means the same file as the CLI's, which
-    // gets its absolute path from Args.parse. Already-absolute paths pass through untouched.
-    const absoluteEntry = path.resolve(cwd, entry);
-    if (!(await pathExists(absoluteEntry))) throw ScriptNotFound({ entry: absoluteEntry });
+async function configFor(entry: string, settings: ScriptSettings = {}): Promise<ScriptConfig> {
+  const cwd = settings.cwd ?? process.cwd();
+  const projectRoot = settings.projectRoot ?? (await findProjectRoot(cwd));
+  // Resolved here so a programmatic `run('seed.ts')` means the same file as the CLI's, which gets
+  // its absolute path from Args.parse. Already-absolute paths pass through untouched.
+  const absoluteEntry = path.resolve(cwd, entry);
+  if (!(await pathExists(absoluteEntry))) throw ScriptNotFound({ entry: absoluteEntry });
 
-    return {
-      entry: absoluteEntry,
-      projectRoot,
-      cwd,
-      browser: settings.browser ?? 'chromium',
-      port: settings.port ?? 1234,
-      portExplicit: settings.portExplicit ?? false,
-      watch: settings.watch ?? false,
-      open: settings.open ?? false,
-      timeout: settings.timeout ?? null,
-      console: settings.console ?? processConsole,
-    };
-  });
+  return {
+    entry: absoluteEntry,
+    projectRoot,
+    cwd,
+    browser: settings.browser ?? 'chromium',
+    port: settings.port ?? 1234,
+    portExplicit: settings.portExplicit ?? false,
+    watch: settings.watch ?? false,
+    open: settings.open ?? false,
+    timeout: settings.timeout ?? null,
+    console: settings.console ?? processConsole,
+  };
 }
 
 /**
@@ -284,13 +297,14 @@ export function configFor(
  * import type { ScriptConfig } from './run.ts';
  *
  * // Defined, not invoked: launches a real browser and binds a real port.
- * async function seed(config: ScriptConfig) {
- *   const outcome = await Script.run(config);
+ * async function seed() {
+ *   const outcome = await Script.run('seed.ts', { browser: 'firefox' });
  *   return outcome.exitCode; // 0, or whatever the script assigned to globalThis.exitCode
  * }
  * ```
  */
-export async function run(config: ScriptConfig): Promise<ScriptOutcome> {
+export async function run(entry: string, settings: ScriptSettings = {}): Promise<ScriptOutcome> {
+  const config = await configFor(entry, settings);
   const server = new HTTPServer();
   let bundle = await build(config);
 
@@ -586,13 +600,14 @@ async function execute(
 
     if (!done.ok) {
       config.console.error(`${red(mapStack(done.stack ?? '', decoderOf(), config.projectRoot))}\n`);
-      return { exitCode: 1, browserLogs, browserLogsDropped };
+      return { entry: config.entry, exitCode: 1, browserLogs, browserLogsDropped };
     }
     uncaught.forEach((stack) =>
       config.console.error(`${red(mapStack(stack, decoderOf(), config.projectRoot))}\n`),
     );
 
     return {
+      entry: config.entry,
       exitCode: uncaught.length > 0 ? 1 : (done.exitCode ?? 0),
       browserLogs,
       browserLogsDropped,
