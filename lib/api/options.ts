@@ -280,3 +280,24 @@ export function from(
         : silentConsole),
   };
 }
+
+/**
+ * Normalises the three call shapes into the object one, without translating anything else.
+ *
+ * `from` turns user options into the config's shape; this only collapses `'test/'` and
+ * `['a.ts', 'b.ts']` into `{ inputs }`, so a caller that needs to MERGE two sets of user options —
+ * a watch session applying a restart patch — can do it before that translation rather than after.
+ *
+ * ```ts
+ * import { toUserOptions } from './options.ts';
+ *
+ * toUserOptions('test/'); // { inputs: ['test/'] }
+ * toUserOptions({ filter: 'Cart' }).filter; // 'Cart'
+ * ```
+ */
+export function toUserOptions(input: UserRunOptions | string | string[] = {}): UserRunOptions {
+  if (typeof input === 'string') return { inputs: [input] };
+  if (Array.isArray(input)) return { inputs: input };
+
+  return input;
+}
