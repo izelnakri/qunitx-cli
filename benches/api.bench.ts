@@ -20,7 +20,7 @@ import { APIReporter } from '../lib/api/reporter.ts';
 import { silentConsole } from '../lib/console.ts';
 import * as Options from '../lib/api/options.ts';
 import { EventsChannel } from '../lib/api/reporter.ts';
-import { testSession, search, test } from '../lib/api/index.ts';
+import { openSession, search, test } from '../lib/api/index.ts';
 import type { Config } from '../lib/types.ts';
 import type { ReporterContext, TestDetails } from '../lib/reporters/types.ts';
 
@@ -40,25 +40,29 @@ Deno.bench(
   },
 );
 
-Deno.bench('api: run() one file, tap reporter', { group: 'api-run', n: 3, warmup: 1 }, async () => {
-  await test({
-    inputs: [FIXTURE],
-    output: `tmp/bench-api-${crypto.randomUUID()}`,
-    reporter: 'tap',
-    // Into a sink rather than the process stream: the bench measures the fan-out and rendering,
-    // not the terminal's ability to absorb it.
-    console: silentConsole,
-  });
-});
+Deno.bench(
+  'api: test() one file, tap reporter',
+  { group: 'api-run', n: 3, warmup: 1 },
+  async () => {
+    await test({
+      inputs: [FIXTURE],
+      output: `tmp/bench-api-${crypto.randomUUID()}`,
+      reporter: 'tap',
+      // Into a sink rather than the process stream: the bench measures the fan-out and rendering,
+      // not the terminal's ability to absorb it.
+      console: silentConsole,
+    });
+  },
+);
 
 // What the event feed costs over the plain value: same run, same browser, one extra reporter and
 // one channel push per event. If watching a run is meaningfully slower than waiting one out, the
 // session abstraction is not worth having.
 Deno.bench(
-  'api: testSession() one file, events consumed',
+  'api: openSession() one file, events consumed',
   { group: 'api-run', n: 3, warmup: 1 },
   async () => {
-    await using session = await testSession({
+    await using session = await openSession({
       inputs: [FIXTURE],
       output: `tmp/bench-api-${crypto.randomUUID()}`,
     });
