@@ -14,7 +14,7 @@ result.failures.map((one) => one.fullName); // ['Cart > Coupons: applies code']
 ```
 
 - [Four things to know](#four-things-to-know)
-- [`test`](#test) · [`run`](#run) · [`testSession`](#testsession) · [`watch`](#watch) · [`search`](#search) ·
+- [`test`](#test) · [`run`](#run) · [`openSession`](#opensession) · [`watch`](#watch) · [`search`](#search) ·
   [`Daemon`](#daemon) · [`init` / `generate`](#init--generate) · [`validate`](#validate)
 - [The result](#the-result) · [Notices](#notices--why-ok-alone-is-not-enough)
 - [Custom reporters](#custom-reporters) · [Tutorial: a nyan cat reporter](#tutorial-a-nyan-cat-reporter)
@@ -170,15 +170,15 @@ not build, or a target that is not a single file.
 > is a legal script call. The return type differs, so TypeScript flags it; untyped callers should
 > check that one by hand.
 
-## testSession
+## openSession
 
 One run, watched as it happens. `test()` is the smaller thing when only the outcome matters; this
 is for when the _progress_ is the point.
 
 ```js
-import { testSession } from 'qunitx-cli';
+import { openSession } from 'qunitx-cli';
 
-await using session = await testSession('test/');
+await using session = await openSession('test/');
 
 for await (const event of session) {
   if (event.kind === 'test') process.stdout.write(event.test.status === 'passed' ? '.' : 'F');
@@ -311,7 +311,7 @@ already exists, so `void session.runAll()` from a keypress handler must actually
 | `session.restart()`                    | rebuild the machinery, keep the session; see below                         |
 | `session.close()`                      | end the session: browser down, port released, iteration over               |
 | `signal` on `watch()`                  | **closes** the session — for a watcher there is no single run to cut short |
-| `signal` on `test()` / `testSession()` | aborts that one run, which is the whole session there                      |
+| `signal` on `test()` / `openSession()` | aborts that one run, which is the whole session there                      |
 
 ### restart
 
@@ -372,7 +372,7 @@ one with no `close()` would leave a browser with no owner.
 ### The page it serves
 
 `session.url` stays up from `await watch(…)` until `close()` — the one verb that keeps a server
-alive, so a script can hold it open and work alongside it. `test()` and `testSession()` both close
+alive, so a script can hold it open and work alongside it. `test()` and `openSession()` both close
 theirs when the run ends.
 
 Two things to know before you open it:
@@ -594,7 +594,7 @@ context.daemon; // is this run inside the persistent daemon
 ```
 
 To watch a run with the _public_ shapes — `TestResult`, `Notice`, `BrowserLog` — use
-`testSession().events()` instead; the reporter hooks carry QUnit's own payloads.
+`openSession().events()` instead; the reporter hooks carry QUnit's own payloads.
 
 ## Tutorial: a nyan cat reporter
 
