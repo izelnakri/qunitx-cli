@@ -143,13 +143,8 @@ export function run(file: string, options: ScriptOptions = {}): Task<ScriptResul
 
     const startedAt = Date.now();
     const outcome = await RunCommand.run(target, {
-      cwd: options.cwd,
-      browser: options.browser,
-      port: options.port,
+      ...options,
       portExplicit: options.port !== undefined,
-      open: options.open,
-      timeout: options.timeout,
-      console: options.console,
       // Never watch: the command's watch mode returns a promise that never resolves, so a Task
       // wrapping it could not settle. The watching form needs a session type of its own.
       watch: false,

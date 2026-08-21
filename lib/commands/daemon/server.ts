@@ -610,8 +610,8 @@ export async function browserResponsive(
   if (!browser.isConnected()) return false;
   if (browserName !== 'chromium' || !browser.newBrowserCDPSession) return true;
   const timeout = new Promise<null>((resolve) => {
-    const t = setTimeout(() => resolve(null), timeoutMs);
-    t.unref?.();
+    const timer = setTimeout(() => resolve(null), timeoutMs);
+    timer.unref?.();
   });
   const probe = browser.newBrowserCDPSession().then(
     (session) => session,

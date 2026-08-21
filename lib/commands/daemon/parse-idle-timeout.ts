@@ -60,10 +60,10 @@ export function parseIdleTimeout(value: string | undefined): ParsedIdleTimeout {
   if (/^\s*false\s*$/i.test(value)) return { ms: Infinity, warning: null };
   const match = /^\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h)?\s*$/i.exec(value);
   if (!match) return invalid(value);
-  const n = Number(match[1]);
-  if (!(n > 0)) return invalid(value);
+  const amount = Number(match[1]);
+  if (!(amount > 0)) return invalid(value);
   const unit = (match[2] ?? 'm').toLowerCase();
-  return { ms: Math.round(n * UNIT_TO_MS[unit]), warning: null };
+  return { ms: Math.round(amount * UNIT_TO_MS[unit]), warning: null };
 }
 
 function invalid(value: string): ParsedIdleTimeout {
