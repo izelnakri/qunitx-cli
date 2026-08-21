@@ -147,8 +147,12 @@ export interface WatchSession {
    * so the plugin objects in the new context would be the very ones in the old. All it achieves
    * is respawning esbuild's service child. `contextKey` still swaps the context out by itself
    * when the build inputs actually change.
+   *
+   * That holds only while the config is REUSED. `restart(patch)` builds a new one, so the old
+   * context belongs to a config nothing will use again — pass `disposeEsbuild` there, or it is
+   * orphaned with its ref still on esbuild's service child and the process can never exit.
    */
-  teardown(): Promise<void>;
+  teardown(disposeEsbuild?: boolean): Promise<void>;
 }
 
 /**
@@ -468,10 +472,10 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
       });
     },
     close: () => closeSession(connections, killFileWatchers, build),
-    teardown: () =>
+    teardown: (disposeEsbuild = false) =>
       closeSession(connections, killFileWatchers, build, {
         reapPrelaunchedChrome: false,
-        disposeEsbuild: false,
+        disposeEsbuild,
       }),
   };
 }
