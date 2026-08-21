@@ -70,9 +70,9 @@ export interface ScriptOptions {
 
 /** Every way {@link run} can reject. A script that merely exits non-zero is NOT one of them. */
 export type ScriptFailure =
-  | Failure.Of<typeof NotAScriptFile>
-  | Failure.Of<typeof RunCommand.ScriptBuildFailed>
-  | ScriptEntryFailure;
+  // `Of` distributes over the union, so one wrapper covers both factories. `ScriptEntryFailure`
+  // stays outside it — it is already a Failure rather than a factory, and `Of` would erase it.
+  Failure.Of<typeof NotAScriptFile | typeof RunCommand.ScriptBuildFailed> | ScriptEntryFailure;
 
 /**
  * What one script run produced.
