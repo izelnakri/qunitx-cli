@@ -5,6 +5,7 @@ import type { UserRunOptions } from '../../lib/api/options.ts';
 import type { RunResult } from '../../lib/api/test.ts';
 import type { WatchSession } from '../../lib/api/watch.ts';
 import type { TestSession } from '../../lib/api/session.ts';
+import type { ReplSession } from '../../lib/repl/session.ts';
 
 // The API tests are the only ones that drive a browser *in this process* rather than through
 // `node cli.ts`. Two things have to be arranged by hand as a result:
@@ -86,6 +87,33 @@ export async function withOpenSession<T>(
   await using output = outputDir('api-session');
   const permit = await acquireBrowser();
   const session = await QUnitX.openSession({ output: output.path, ...options });
+  try {
+    return await body(session);
+  } finally {
+    await session.close();
+    permit.release();
+  }
+}
+
+/**
+ * Opens a REPL session with a permit held, hands it to `body`, and closes it.
+ *
+ * ```ts
+ * import { withRepl } from './helpers.ts';
+ *
+ * // Defined, not invoked: launches a real browser.
+ * async function title() {
+ *   return await withRepl({}, async (session) => (await session.evaluate('document.title')).output);
+ * }
+ * ```
+ */
+export async function withRepl<T>(
+  options: UserRunOptions,
+  body: (session: ReplSession) => Promise<T> | T,
+): Promise<T> {
+  await using output = outputDir('api-repl');
+  const permit = await acquireBrowser();
+  const session = await QUnitX.repl({ output: output.path, ...options });
   try {
     return await body(session);
   } finally {
