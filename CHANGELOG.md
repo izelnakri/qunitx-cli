@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.35.0] - 2026-08-22
+[`v0.34.6...v0.35.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.34.6...v0.35.0)
+
+### Bug Fixes
+- Name the browser that timed out, not always "Chrome" — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`7ebc46b`](https://github.com/izelnakri/qunitx-cli/commit/7ebc46bf43641a8ba7df669acc50ecccb659f664))
+- Commit --search's exit code before reaping Chrome — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`cc7ef2b`](https://github.com/izelnakri/qunitx-cli/commit/cc7ef2b686fabf598fc7292bb39ec541669a6f39))
+- Follow the API rename into benches/api.bench.ts — 2026-08-21 by [@izelnakri](https://github.com/izelnakri) ([`7bd3373`](https://github.com/izelnakri/qunitx-cli/commit/7bd337377e61525daa65e00cf7eb85bb56432903))
+- Dispose the orphaned esbuild context on a patched restart — 2026-08-21 by [@izelnakri](https://github.com/izelnakri) ([`cb9f99c`](https://github.com/izelnakri/qunitx-cli/commit/cb9f99c2a3b901140f2b6277ef2c6fc354977012))
+- An unusable default export is not a failed run — 2026-08-22 by [@izelnakri](https://github.com/izelnakri) ([`2d662de`](https://github.com/izelnakri/qunitx-cli/commit/2d662de1131ad64a0df099d2771d6206041cd8be))
+
+### Documentation
+- Dasherize the example test filenames — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`11e4fda`](https://github.com/izelnakri/qunitx-cli/commit/11e4fda4d51567dea8cbd96201c46abbdbae3457))
+- Document `qunitx run` in --help and the README — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`9a12117`](https://github.com/izelnakri/qunitx-cli/commit/9a1211709733907fc8efb3894c831aafd6a40acd))
+- The session's rerun verbs, filtering and teardown — 2026-08-17 by [@izelnakri](https://github.com/izelnakri) ([`1ff2503`](https://github.com/izelnakri/qunitx-cli/commit/1ff25034a1b42f711c61d4a810d47b7e3a2d6b56))
+
+### Features
+- Run a plain script in the browser with `qunitx run <file>` — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`c1e6e71`](https://github.com/izelnakri/qunitx-cli/commit/c1e6e71cd3bd779926a8269c2c2e420fe909fcb4))
+- Point a zero-test run at `qunitx run` — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`ac6d73d`](https://github.com/izelnakri/qunitx-cli/commit/ac6d73d3142456e3494d82d9d607afacab651319))
+- [**breaking**] Rename run() to test(); run() now runs one script — 2026-08-17 by [@izelnakri](https://github.com/izelnakri) ([`0af2e12`](https://github.com/izelnakri/qunitx-cli/commit/0af2e12d74ef528c574b58911f345a52b97efa4d))
+- Expose a watch session's live objects, outside semver — 2026-08-17 by [@izelnakri](https://github.com/izelnakri) ([`958861e`](https://github.com/izelnakri/qunitx-cli/commit/958861e8d7e264995a7681067de8a82707489fb2))
+- Add session.restart() to a watch session — 2026-08-17 by [@izelnakri](https://github.com/izelnakri) ([`b6c5ca8`](https://github.com/izelnakri/qunitx-cli/commit/b6c5ca85720945ee34ddcd2a7f003402b1915410))
+- Run() takes a console, and reports what the script printed — 2026-08-17 by [@izelnakri](https://github.com/izelnakri) ([`2c96000`](https://github.com/izelnakri/qunitx-cli/commit/2c96000a773a3242dd325e35ee4587eb1bacb0f7))
+- [**breaking**] TestSession becomes openSession, and takes `watch` — 2026-08-21 by [@izelnakri](https://github.com/izelnakri) ([`bef523c`](https://github.com/izelnakri/qunitx-cli/commit/bef523c54667cbbe0503636ad5a380b667256648))
+- Restart() takes a patch, so a session can be reconfigured — 2026-08-21 by [@izelnakri](https://github.com/izelnakri) ([`41e35b5`](https://github.com/izelnakri/qunitx-cli/commit/41e35b52f294c0bc4190010a3eedb35bc401a1e4))
+- Test, watch and openSession take (target, options) too — 2026-08-21 by [@izelnakri](https://github.com/izelnakri) ([`f8f7e49`](https://github.com/izelnakri/qunitx-cli/commit/f8f7e49db4eedfa81f6796fae58f995895503b4b))
+- A script hands a value back through its default export — 2026-08-22 by [@izelnakri](https://github.com/izelnakri) ([`a171140`](https://github.com/izelnakri/qunitx-cli/commit/a17114095de1caf1f7ba654f69cadf6086ed0260))
+
+### Refactoring
+- Narrow launch() to the three fields it reads — 2026-08-14 by [@izelnakri](https://github.com/izelnakri) ([`6b9c0d2`](https://github.com/izelnakri/qunitx-cli/commit/6b9c0d2ba674e1884df6779e724f819a559d106d))
+- [**breaking**] Rename Daemon.run to Daemon.test — 2026-08-17 by [@izelnakri](https://github.com/izelnakri) ([`4fa7b94`](https://github.com/izelnakri/qunitx-cli/commit/4fa7b9446be53df94b31814321a33bb688d95706))
+- Drop toUserOptions, inline the normalisation — 2026-08-21 by [@izelnakri](https://github.com/izelnakri) ([`0963350`](https://github.com/izelnakri/qunitx-cli/commit/096335058915a056adb484e759f794e9f7546efa))
+- Run() builds its own config, configFor goes private — 2026-08-21 by [@izelnakri](https://github.com/izelnakri) ([`77e1989`](https://github.com/izelnakri/qunitx-cli/commit/77e198965e9407d85a7d590f09c5f0574627e3f9))
+- One Failure.Of for ScriptFailure's two factories — 2026-08-21 by [@izelnakri](https://github.com/izelnakri) ([`948ee21`](https://github.com/izelnakri/qunitx-cli/commit/948ee21803a183ca3e4c6e84f30d62db1d910ad5))
+- Readability pass over the script API and single-letter locals — 2026-08-21 by [@izelnakri](https://github.com/izelnakri) ([`f86038b`](https://github.com/izelnakri/qunitx-cli/commit/f86038b300bf1bc9ec9285001301d2308c4fc0d4))
+- Chain the mutually exclusive branches in run.ts — 2026-08-22 by [@izelnakri](https://github.com/izelnakri) ([`df4dbc2`](https://github.com/izelnakri/qunitx-cli/commit/df4dbc21b54ba5ac81d05e46c501fd8dab0d2c74))
+
 ## [0.34.6] - 2026-08-14
 [`v0.34.5...v0.34.6`](https://github.com/izelnakri/qunitx-cli/compare/v0.34.5...v0.34.6)
 
