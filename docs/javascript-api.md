@@ -518,17 +518,19 @@ a script needs a real DOM rather than a simulated one.
 ```js
 import { repl } from 'qunitx-cli';
 
-await using session = await repl({ inputs: ['test/helpers.ts'] });
+await using session = await repl('test/helpers.ts', { reporter: 'tap' });
 
 (await session.evaluate('document.title')).output; // "'qunitx repl'"
 (await session.evaluate('(await fetch("/tests.js")).status')).output; // '200'
 (await session.evaluate('test("adds", (a) => a.equal(1 + 1, 2))')).tests; // [{ status: 'passed', … }]
 ```
 
-`inputs` are preloaded modules, not a test target: each one's exports land on the page's
-`globalThis`, and any tests it registers run as the session opens. `evaluate` resolves with the
-rendered `output`, whether it `failed`, whether the input was `incomplete` (unfinished, so the CLI
-asks for another line), and the `tests` it ran. `reload()` drops every binding, `interrupt()` stops
+The preload takes the same call shapes as every other verb — positionally, as an array, or as
+`inputs` in an options object. What it names is a preloaded module rather than a test target: each
+one's exports land on the page's `globalThis`, and any tests it registers run as the session opens.
+
+`evaluate` resolves with the rendered `output`, whether it `failed`, whether the input was
+`incomplete` (unfinished, so the CLI asks for another line), and the `tests` it ran. `reload()` drops every binding, `interrupt()` stops
 a runaway expression, and `close()` — or the `await using` above — releases the browser.
 
 Chromium only: it evaluates over the Chrome DevTools Protocol, so `browser: 'firefox'` rejects with
