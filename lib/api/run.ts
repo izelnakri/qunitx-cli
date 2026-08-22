@@ -83,6 +83,7 @@ export type ScriptFailure =
  *   exitCode: 3,
  *   durationMs: 412,
  *   file: '/proj/scripts/seed.ts',
+ *   value: { seeded: 3 },
  *   browserLogs: [{ type: 'log', text: 'seeding…', args: [] }],
  *   browserLogsDropped: 0,
  * };
@@ -99,6 +100,15 @@ export interface ScriptResult {
   durationMs: number;
   /** Absolute path of the file that ran. */
   file: string;
+  /**
+   * The script's `export default`, or `undefined` when it has none.
+   *
+   * A module cannot `return`, so this is the only way a script hands a value back. It is JSON-safe
+   * by construction: the value is checked in the page before it crosses, and one that would arrive
+   * changed — a `Map` as `{}`, a `Date` as a string, a dropped function — fails the call instead.
+   * Return plain data.
+   */
+  value: unknown;
   /**
    * Everything the script printed — its `console` calls and any uncaught error — in emit order,
    * whatever `console` option was passed. The same shape a test run reports, capped the same way.
@@ -155,6 +165,7 @@ export function run(file: string, options: ScriptOptions = {}): Task<ScriptResul
       exitCode: outcome.exitCode,
       durationMs: Date.now() - startedAt,
       file: outcome.entry,
+      value: outcome.value,
       browserLogs: outcome.browserLogs,
       browserLogsDropped: outcome.browserLogsDropped,
     };
