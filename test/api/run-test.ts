@@ -250,16 +250,14 @@ module('API | run | laziness and cleanup', { concurrency: true }, () => {
         // Chrome — it falls back to playwright's own download and dies on a missing one.
         { timeout: SCRIPT_TIMEOUT_MS, env: { ...process.env, FORCE_COLOR: '0' } },
       );
-      const { result, handles } = JSON.parse(stdout.trim().split('\n').at(-1)!) as {
-        result: QUnitX.ScriptResult;
-        handles: string[];
-      };
+      const lines = stdout.trim().split('\n');
+      const { result } = JSON.parse(lines[0]) as { result: QUnitX.ScriptResult };
 
       assert.strictEqual(result.exitCode, 3, 'the child really ran the script');
       assert.deepEqual(
-        handles.filter((handle) => handle === 'ProcessWrap'),
+        lines.slice(1),
         [],
-        `no child process outlives the Task, got ${JSON.stringify(handles)}`,
+        `the process exited on its own once the Task settled — got ${stdout.trim()}`,
       );
     } finally {
       permit.release();

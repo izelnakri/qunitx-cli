@@ -87,12 +87,10 @@ module('API | watch | session', { concurrency: true }, () => {
         // find Chrome with — it falls back to playwright's own download and dies on a missing one.
         { timeout: WATCH_EXIT_TIMEOUT_MS, env: { ...process.env, FORCE_COLOR: '0' } },
       );
-      const handles = JSON.parse(stdout) as string[];
-
-      assert.deepEqual(
-        handles.filter((handle) => handle === 'ProcessWrap'),
-        [],
-        `no child process outlives close(), got ${stdout.trim()}`,
+      assert.strictEqual(
+        stdout.trim(),
+        '',
+        `the process exited on its own after close(), printing nothing — got ${stdout.trim()}`,
       );
     } finally {
       permit.release();
@@ -476,12 +474,10 @@ module('API | watch | restart', { concurrency: true }, () => {
         // Chrome — it falls back to playwright's own download and dies on a missing one.
         { timeout: WATCH_EXIT_TIMEOUT_MS, env: { ...process.env, FORCE_COLOR: '0' } },
       );
-      const handles = JSON.parse(stdout.trim().split('\n').at(-1)!) as string[];
-
-      assert.deepEqual(
-        handles.filter((handle) => handle === 'ProcessWrap'),
-        [],
-        `no child process outlives restart + close, got ${stdout.trim()}`,
+      assert.strictEqual(
+        stdout.trim(),
+        '',
+        `the process exited on its own after restart + close — got ${stdout.trim()}`,
       );
     } finally {
       permit.release();
