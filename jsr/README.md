@@ -173,8 +173,9 @@ console.log('closed — the browser and the port are released');
 // closed — the browser and the port are released
 ```
 
-`openSession` (a run you can watch event-by-event as it happens), `init`, `generate`, the daemon
-controls and the reporter interface are all covered in the
+`openSession` (a run you can watch event-by-event as it happens), `repl` (a live page you can
+`evaluate(...)` against), `init`, `generate`, the daemon controls and the reporter interface are all
+covered in the
 [JavaScript / TypeScript API guide](https://github.com/izelnakri/qunitx-cli/blob/main/docs/javascript-api.md),
 with the generated reference on the
 [`./api`](https://jsr.io/@izelnakri/qunitx-cli/doc/api) entrypoint.
