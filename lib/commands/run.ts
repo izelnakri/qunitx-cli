@@ -533,7 +533,7 @@ const SERIALIZABLE_CHECK = `(() => {
   const value = namespace.default;
   const describe = (candidate) => {
     if (candidate === null) return 'null';
-    if (typeof candidate !== 'object') return 'a ' + typeof candidate;
+    else if (typeof candidate !== 'object') return 'a ' + typeof candidate;
     const tag = Object.prototype.toString.call(candidate).slice(8, -1);
     if (tag !== 'Object') return 'a ' + tag;
     const prototype = Object.getPrototypeOf(candidate);
@@ -543,14 +543,12 @@ const SERIALIZABLE_CHECK = `(() => {
   };
 
   const offend = (candidate, path) => {
-    if (candidate === null || typeof candidate === 'boolean' || typeof candidate === 'string') {
-      return null;
-    }
-    if (typeof candidate === 'number') {
-      return Number.isFinite(candidate) ? null : path + ' is ' + String(candidate) + ', which JSON turns into null';
-    }
-    if (typeof candidate !== 'object') return path + ' is ' + describe(candidate);
-    if (Array.isArray(candidate)) {
+    const type = typeof candidate;
+    if (candidate === null || type === 'boolean' || type === 'string') return null;
+    else if (type === 'number') {
+      return Number.isFinite(candidate) ? null : path + ' is ' + candidate + ', which JSON turns into null';
+    } else if (type !== 'object') return path + ' is ' + describe(candidate);
+    else if (Array.isArray(candidate)) {
       for (let index = 0; index < candidate.length; index++) {
         const found = offend(candidate[index], path + '[' + index + ']');
         if (found) return found;
@@ -696,30 +694,25 @@ async function execute(
     await page.evaluate(() => 0).catch(() => {});
     await writes;
 
-    const { entryIsModule } = bundleOf();
-
     if (!done.ok) {
       config.console.error(
         `${red(mapStack(done.stack ?? '', bundleOf().decoder, config.projectRoot))}\n`,
       );
-      return {
-        entry: config.entry,
-        value: undefined,
-        valueProblem: null,
-        exitCode: 1,
-        browserLogs,
-        browserLogsDropped,
-      };
+    } else {
+      uncaught.forEach((stack) =>
+        config.console.error(`${red(mapStack(stack, bundleOf().decoder, config.projectRoot))}\n`),
+      );
     }
-    uncaught.forEach((stack) =>
-      config.console.error(`${red(mapStack(stack, bundleOf().decoder, config.projectRoot))}\n`),
-    );
+
+    // A script that threw has nothing to hand back, and one whose entry is not a module never had
+    // a default export to begin with. Either way the value it ran with is no value at all.
+    const carried = done.ok && bundleOf().entryIsModule;
 
     return {
       entry: config.entry,
-      value: entryIsModule ? done.value : undefined,
-      valueProblem: (entryIsModule && done.valueProblem) || null,
-      exitCode: uncaught.length > 0 ? 1 : (done.exitCode ?? 0),
+      value: carried ? done.value : undefined,
+      valueProblem: (carried && done.valueProblem) || null,
+      exitCode: !done.ok || uncaught.length > 0 ? 1 : (done.exitCode ?? 0),
       browserLogs,
       browserLogsDropped,
     };
