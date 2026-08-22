@@ -86,6 +86,30 @@ export const ScriptNotFound: Failure.FailureFactory<'ScriptNotFound', { entry: s
 export const ScriptBuildFailed: Failure.FailureFactory<'ScriptBuildFailed', { entry: string }> =
   Failure.define('ScriptBuildFailed', (data: { entry: string }) => `could not build ${data.entry}`);
 
+/**
+ * The script's default export could not cross the boundary intact.
+ *
+ * The done signal travels as JSON, so a `Map` would arrive as `{}`, a function or an `undefined`
+ * property would be dropped, and a `Date` would become a string. Rather than hand back a value
+ * that quietly differs from the one the script produced, the run fails and says where.
+ *
+ * ```ts
+ * import { ScriptValueNotSerializable } from './run.ts';
+ *
+ * ScriptValueNotSerializable({ entry: '/proj/seed.ts', problem: 'it changed at rows.0.at' }).message;
+ * // "/proj/seed.ts exported a default value that cannot be returned: it changed at rows.0.at"
+ * ```
+ */
+export const ScriptValueNotSerializable: Failure.FailureFactory<
+  'ScriptValueNotSerializable',
+  { entry: string; problem: string }
+> = Failure.define(
+  'ScriptValueNotSerializable',
+  (data: { entry: string; problem: string }) =>
+    `${data.entry} exported a default value that cannot be returned: ${data.problem}. ` +
+    `Return JSON-safe data — plain objects, arrays, strings, numbers, booleans and null.`,
+);
+
 /** Every way {@link setup} can reject its input. */
 export type ScriptConfigFailure =
   | Failure.Of<typeof ScriptTargetRequired>
@@ -143,6 +167,13 @@ export interface ScriptConfig {
 export interface ScriptOutcome {
   /** Absolute path of the file that ran, resolved against `cwd`. */
   entry: string;
+  /**
+   * The script's `export default`, or `undefined` when it has none.
+   *
+   * JSON-safe by construction: a value that would not survive the trip fails the run instead of
+   * arriving changed — see {@link ScriptValueNotSerializable}.
+   */
+  value: unknown;
   /** `globalThis.exitCode` if the script set one, 1 if it threw, else 0. */
   exitCode: number;
   /**
@@ -330,7 +361,7 @@ export async function run(entry: string, settings: ScriptSettings = {}): Promise
 
   if (!config.watch) {
     try {
-      return await execute(page, url, config, () => bundle.decoder);
+      return await execute(page, url, config, () => bundle);
     } finally {
       // Bounded, never sequential awaits: once the server, browser and Chrome are gone no handle
       // holds the loop open, so a close that never settles drains it and the process exits 0 with
@@ -349,7 +380,7 @@ export async function run(entry: string, settings: ScriptSettings = {}): Promise
 
   return await watchLoop(watched, async () => {
     if (!first) bundle = await build(config);
-    await execute(page, url, config, () => bundle.decoder);
+    await execute(page, url, config, () => bundle);
     if (!first) return;
     first = false;
     console.log('#', blue(`Watching ${path.relative(config.projectRoot, config.entry)} on ${url}`));
@@ -362,6 +393,16 @@ interface ScriptBundle {
   decoder: SourceMapDecoder | null;
   /** Directories holding the first-party files that went into the bundle. */
   watchDirectories: string[];
+  /**
+   * Whether the entry is an ES module — the only kind of file that can have a default export.
+   *
+   * A script with no `import` or `export` anywhere is not one: esbuild compiles it as CommonJS,
+   * so the namespace's `default` is the synthesized `module.exports`, an empty object the script
+   * never wrote. That is indistinguishable from a real `export default {}` by the time it reaches
+   * the page — same keys, same value — so the question has to be settled here, where the bundler
+   * still knows the answer.
+   */
+  entryIsModule: boolean;
 }
 
 /**
@@ -401,11 +442,20 @@ async function build(config: ScriptConfig): Promise<ScriptBundle> {
     });
 
   const code = result.outputFiles[0].text;
+  const inputs = Object.entries(result.metafile.inputs);
+  // Keys are relative to `absWorkingDir` when there is a relative form and absolute when there
+  // is not, which `resolve` flattens either way. esbuild leaves `format` unset for a file with
+  // no module syntax at all rather than calling it cjs, so only `esm` counts as a yes.
+  const entry = inputs.find(([input]) => path.resolve(config.cwd, input) === config.entry);
 
   return {
     code,
     decoder: SourceMap.extractInline(code, config.projectRoot),
-    watchDirectories: watchDirectoriesFrom(Object.keys(result.metafile.inputs), config.cwd),
+    watchDirectories: watchDirectoriesFrom(
+      inputs.map(([input]) => input),
+      config.cwd,
+    ),
+    entryIsModule: entry?.[1].format === 'esm',
   };
 }
 
@@ -490,15 +540,79 @@ function entryPlugin(entry: string): esbuild.Plugin {
 }
 
 /** The entry esbuild actually compiles. `globalThis.exitCode` is the script's `process.exitCode`. */
+// Injected into the page as source, because the check has to happen BEFORE the value crosses the
+// CDP boundary — by the time it reaches Node it has been through JSON and the evidence is gone.
+//
+// An allow-list walk rather than a JSON round-trip comparison. The round trip cannot see the cases
+// that matter: `Object.keys(new Map([['a', 1]]))` is `[]`, so a Map compares equal to the `{}` it
+// would arrive as. Naming what IS allowed leaves no such hole, and the path in the message points
+// at the offending field rather than the whole value.
+const SERIALIZABLE_CHECK = `(() => {
+  const value = namespace.default;
+  const describe = (candidate) => {
+    if (candidate === null) return 'null';
+    if (typeof candidate !== 'object') return 'a ' + typeof candidate;
+    const tag = Object.prototype.toString.call(candidate).slice(8, -1);
+    if (tag !== 'Object') return 'a ' + tag;
+    const prototype = Object.getPrototypeOf(candidate);
+    return prototype === Object.prototype || prototype === null
+      ? 'an object'
+      : 'an instance of ' + (candidate.constructor && candidate.constructor.name || 'a class');
+  };
+
+  const offend = (candidate, path) => {
+    if (candidate === null || typeof candidate === 'boolean' || typeof candidate === 'string') {
+      return null;
+    }
+    if (typeof candidate === 'number') {
+      return Number.isFinite(candidate) ? null : path + ' is ' + String(candidate) + ', which JSON turns into null';
+    }
+    if (typeof candidate !== 'object') return path + ' is ' + describe(candidate);
+    if (Array.isArray(candidate)) {
+      for (let index = 0; index < candidate.length; index++) {
+        const found = offend(candidate[index], path + '[' + index + ']');
+        if (found) return found;
+      }
+      return null;
+    }
+    const prototype = Object.getPrototypeOf(candidate);
+    if (prototype !== Object.prototype && prototype !== null) return path + ' is ' + describe(candidate);
+    for (const key of Object.keys(candidate)) {
+      const found = offend(candidate[key], path ? path + '.' + key : key);
+      if (found) return found;
+    }
+    return null;
+  };
+
+  if (value === undefined) return { value: undefined };
+  const problem = offend(value, '');
+  if (problem) return { problem: problem.replace(/^ is /, 'the value is ') };
+  try {
+    return { value: JSON.parse(JSON.stringify(value)) };
+  } catch (error) {
+    return { problem: 'JSON cannot represent it: ' + String((error && error.message) || error) };
+  }
+})()`;
+
 function wrapperSource(): string {
   return `globalThis.__qunitxScript = { done: null };
 (async () => {
   try {
-    await import(${JSON.stringify(ENTRY_SPECIFIER)});
-    globalThis.__qunitxScript.done = {
-      ok: true,
-      exitCode: Number.isInteger(globalThis.exitCode) ? globalThis.exitCode : 0,
-    };
+    const namespace = await import(${JSON.stringify(ENTRY_SPECIFIER)});
+    // The default export, checked BEFORE it crosses. The done signal travels by
+    // \`jsonValue()\`, which is JSON semantics — a Map would arrive as {}, a function would
+    // vanish, a Date would silently become a string. Rejecting here is what stops a value
+    // that "worked" from lying about itself on the other side.
+    const unwrapped = ${SERIALIZABLE_CHECK};
+    if (unwrapped.problem) {
+      globalThis.__qunitxScript.done = { ok: false, valueProblem: unwrapped.problem };
+    } else {
+      globalThis.__qunitxScript.done = {
+        ok: true,
+        exitCode: Number.isInteger(globalThis.exitCode) ? globalThis.exitCode : 0,
+        value: unwrapped.value,
+      };
+    }
   } catch (error) {
     globalThis.__qunitxScript.done = { ok: false, stack: String((error && error.stack) || error) };
   }
@@ -520,6 +634,10 @@ interface DoneSignal {
   ok: boolean;
   exitCode?: number;
   stack?: string;
+  /** The default export, already checked in the page. */
+  value?: unknown;
+  /** Set instead of `stack` when the export itself is what failed. */
+  valueProblem?: string;
 }
 
 /** The one property {@link wrapperSource} adds to the page's global object. */
@@ -528,15 +646,15 @@ type ScriptGlobal = { __qunitxScript?: { done: DoneSignal | null } };
 /**
  * Navigates, streams the page's console to this terminal, and waits for the script to settle.
  *
- * `decoderOf` is a getter rather than the decoder itself because watch mode rebuilds between
- * executions: the handlers installed here must map frames through the map of whichever bundle is
- * currently loaded, not the one they closed over on the first run.
+ * `bundleOf` is a getter rather than the bundle itself because watch mode rebuilds between
+ * executions: the handlers installed here must read whichever bundle is currently loaded, not
+ * the one they closed over on the first run.
  */
 async function execute(
   page: Page,
   url: string,
   config: ScriptConfig,
-  decoderOf: () => SourceMapDecoder | null,
+  bundleOf: () => ScriptBundle,
 ): Promise<ScriptOutcome> {
   // Capped the way a test run caps its own: a script that logs in a loop must not grow this array
   // until the process dies, and dropping from the FRONT keeps the lines next to whatever went
@@ -561,7 +679,7 @@ async function execute(
     const type = message.type();
     const write = isErrorLevel(type) ? config.console.error : config.console.log;
     writes = writes.then(async () => {
-      const text = mapStack(await rendered, decoderOf(), config.projectRoot);
+      const text = mapStack(await rendered, bundleOf().decoder, config.projectRoot);
       // Recorded on the same chain that writes it, so `browserLogs` ends up in the page's emit
       // order rather than in whatever order the argument round-trips happened to resolve.
       record({ type, text, args: [] });
@@ -598,16 +716,32 @@ async function execute(
     await page.evaluate(() => 0).catch(() => {});
     await writes;
 
+    const { entryIsModule } = bundleOf();
+
+    if (entryIsModule && done.valueProblem) {
+      // A rejection rather than an exit code: the script itself ran fine, so reporting it as a
+      // failed run would be a lie — what failed is handing its value back.
+      throw ScriptValueNotSerializable({ entry: config.entry, problem: done.valueProblem });
+    }
     if (!done.ok) {
-      config.console.error(`${red(mapStack(done.stack ?? '', decoderOf(), config.projectRoot))}\n`);
-      return { entry: config.entry, exitCode: 1, browserLogs, browserLogsDropped };
+      config.console.error(
+        `${red(mapStack(done.stack ?? '', bundleOf().decoder, config.projectRoot))}\n`,
+      );
+      return {
+        entry: config.entry,
+        value: undefined,
+        exitCode: 1,
+        browserLogs,
+        browserLogsDropped,
+      };
     }
     uncaught.forEach((stack) =>
-      config.console.error(`${red(mapStack(stack, decoderOf(), config.projectRoot))}\n`),
+      config.console.error(`${red(mapStack(stack, bundleOf().decoder, config.projectRoot))}\n`),
     );
 
     return {
       entry: config.entry,
+      value: entryIsModule ? done.value : undefined,
       exitCode: uncaught.length > 0 ? 1 : (done.exitCode ?? 0),
       browserLogs,
       browserLogsDropped,
