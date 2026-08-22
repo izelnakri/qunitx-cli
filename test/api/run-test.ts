@@ -108,6 +108,43 @@ module('API | run | what the script printed', { concurrency: true }, () => {
   });
 });
 
+module('API | run | the value the script exported', { concurrency: true }, () => {
+  test('a default export comes back as result.value', async (assert) => {
+    const result = await run(`${SCRIPTS}/value-script.ts`);
+
+    assert.strictEqual(result.ok, true);
+    assert.deepEqual(
+      result.value,
+      { seeded: 2, ids: [1, 2], note: null },
+      'the whole export crosses, nested arrays and nulls included',
+    );
+  });
+
+  test('a script with no default export has no value', async (assert) => {
+    // `no-value-script.ts` has no import or export at all, which makes esbuild compile it as
+    // CommonJS — its namespace `default` is a synthesized `{}` that is indistinguishable from a
+    // real `export default {}` once it reaches the page. Getting `undefined` here is what proves
+    // the two are told apart at build time rather than guessed at afterwards.
+    const result = await run(`${SCRIPTS}/no-value-script.ts`);
+
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.value, undefined, 'not the empty object CommonJS interop invents');
+  });
+
+  test('a value JSON cannot carry fails the run instead of arriving changed', async (assert) => {
+    // A Map is the case a JSON round-trip cannot catch by comparison — `Object.keys(new Map())`
+    // is `[]`, so it looks equal to the `{}` it would silently become.
+    const outcome = await QUnitX.run(`${SCRIPTS}/unserializable-value-script.ts`).result();
+
+    assert.ok(QUnitX.Failure.is(outcome), 'an unusable value rejects rather than resolving');
+    const failure = outcome as QUnitX.AnyFailure;
+    assert.strictEqual(failure.code, 'ScriptValueNotSerializable');
+    const message = QUnitX.Failure.format(failure);
+    assert.includes(message, 'index is a Map', 'the offending field is named, not just the value');
+    assert.includes(message, 'unserializable-value-script.ts', 'and so is the script');
+  });
+});
+
 module('API | run | refuses the old suite verb', { concurrency: true }, () => {
   // `run` meant "run this suite" until the script verb took the name. Every shape that could only
   // have meant the old verb has to say so, because running it as a script would be a silent

@@ -129,6 +129,7 @@ result.ok; // true when the script exited 0
 result.exitCode; // globalThis.exitCode if the script set one, 1 if it threw, else 0
 result.durationMs; // 412
 result.file; // '/proj/scripts/seed.ts' — absolute, whatever you passed
+result.value; // whatever the script default-exported, or undefined
 result.browserLogs; // everything it printed, in emit order
 result.browserLogsDropped; // 0, unless it out-printed the cap
 ```
@@ -140,6 +141,25 @@ so it gets a DOM, `fetch` against a real `http://localhost` origin, `import.meta
 Options are `cwd`, `browser`, `port`, `timeout`, `open` and `console`. There is no `watch`: a
 watching script never finishes, so it cannot be a `Task` that resolves, and it needs a session type
 of its own.
+
+### The value it exported
+
+A module cannot `return`, so a script hands a value back by default-exporting it:
+
+```js
+// scripts/seed.ts
+const rows = await seedDatabase();
+export default { seeded: rows.length, ids: rows.map((row) => row.id) };
+```
+
+```js
+const { value } = await run('scripts/seed.ts'); // { seeded: 3, ids: [1, 2, 3] }
+```
+
+The value crosses a process boundary as JSON, so it must be JSON-safe: null, booleans, finite
+numbers, strings, arrays and plain objects. Anything else — a `Map`, a `Date`, a function, a class
+instance, `NaN` — rejects with `ScriptValueNotSerializable` naming the field, rather than arriving
+quietly changed into something it is not. A script with no default export has `value: undefined`.
 
 ### What the script printed
 
