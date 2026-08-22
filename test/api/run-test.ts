@@ -118,6 +118,7 @@ module('API | run | the value the script exported', { concurrency: true }, () =>
       { seeded: 2, ids: [1, 2], note: null },
       'the whole export crosses, nested arrays and nulls included',
     );
+    assert.strictEqual(result.valueProblem, null, 'nothing to explain about a value that arrived');
   });
 
   test('a script with no default export has no value', async (assert) => {
@@ -129,19 +130,33 @@ module('API | run | the value the script exported', { concurrency: true }, () =>
 
     assert.strictEqual(result.ok, true);
     assert.strictEqual(result.value, undefined, 'not the empty object CommonJS interop invents');
+    assert.strictEqual(result.valueProblem, null, 'exporting nothing is not a problem to report');
   });
 
-  test('a value JSON cannot carry fails the run instead of arriving changed', async (assert) => {
-    // A Map is the case a JSON round-trip cannot catch by comparison — `Object.keys(new Map())`
-    // is `[]`, so it looks equal to the `{}` it would silently become.
-    const outcome = await QUnitX.run(`${SCRIPTS}/unserializable-value-script.ts`).result();
+  test('a default export JSON cannot carry is withheld, not altered — and the run stays green', async (assert) => {
+    // A Map is the case a JSON round-trip cannot catch by comparison: `Object.keys(new Map())` is
+    // `[]`, so it looks equal to the `{}` it would silently become.
+    const result = await run(`${SCRIPTS}/unserializable-value-script.ts`);
 
-    assert.ok(QUnitX.Failure.is(outcome), 'an unusable value rejects rather than resolving');
-    const failure = outcome as QUnitX.AnyFailure;
-    assert.strictEqual(failure.code, 'ScriptValueNotSerializable');
-    const message = QUnitX.Failure.format(failure);
-    assert.includes(message, 'index is a Map', 'the offending field is named, not just the value');
-    assert.includes(message, 'unserializable-value-script.ts', 'and so is the script');
+    assert.strictEqual(result.ok, true, 'the script ran; what it exported does not judge it');
+    assert.strictEqual(result.exitCode, 0);
+    assert.strictEqual(result.value, undefined, 'withheld rather than handed back as {}');
+    assert.includes(result.valueProblem ?? '', 'index is a Map', 'and the field is named');
+  });
+
+  test('a script whose default export is a function is an ordinary script', async (assert) => {
+    // The shape that makes failing here indefensible: a file that is both runnable and importable
+    // exports its entry point. Nothing about that says the run went wrong.
+    const result = await run(`${SCRIPTS}/function-value-script.ts`);
+
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.value, undefined);
+    assert.includes(result.valueProblem ?? '', 'function', 'the reason is available if asked for');
+    assert.includes(
+      result.browserLogs.map((log) => log.text).join('\n'),
+      'ran as a script',
+      'and it really ran',
+    );
   });
 });
 

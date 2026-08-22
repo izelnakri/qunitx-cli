@@ -84,6 +84,7 @@ export type ScriptFailure =
  *   durationMs: 412,
  *   file: '/proj/scripts/seed.ts',
  *   value: { seeded: 3 },
+ *   valueProblem: null,
  *   browserLogs: [{ type: 'log', text: 'seeding…', args: [] }],
  *   browserLogsDropped: 0,
  * };
@@ -103,12 +104,22 @@ export interface ScriptResult {
   /**
    * The script's `export default`, or `undefined` when it has none.
    *
-   * A module cannot `return`, so this is the only way a script hands a value back. It is JSON-safe
-   * by construction: the value is checked in the page before it crosses, and one that would arrive
-   * changed — a `Map` as `{}`, a `Date` as a string, a dropped function — fails the call instead.
-   * Return plain data.
+   * A module cannot `return`, so this is the only way a script hands a value back. What arrives is
+   * JSON-safe by construction: the value is checked in the page before it crosses, and one that
+   * would arrive changed — a `Map` as `{}`, a `Date` as a string, a dropped function — is withheld
+   * rather than altered. Return plain data if you mean to read this.
    */
   value: unknown;
+  /**
+   * Why {@link ScriptResult.value} is `undefined` even though the script exported something, or
+   * `null` when there is nothing to explain — including when it exported nothing at all.
+   *
+   * Reads like `'index is a Map'` or `'the value is a function'` — the field named, rather than
+   * silently handed back as `{}`. Reading it is optional and ignoring it is fine: a script whose
+   * default export is a `main()` function is an ordinary script, not a broken one, so this never
+   * affects {@link ScriptResult.ok}.
+   */
+  valueProblem: string | null;
   /**
    * Everything the script printed — its `console` calls and any uncaught error — in emit order,
    * whatever `console` option was passed. The same shape a test run reports, capped the same way.
@@ -166,6 +177,7 @@ export function run(file: string, options: ScriptOptions = {}): Task<ScriptResul
       durationMs: Date.now() - startedAt,
       file: outcome.entry,
       value: outcome.value,
+      valueProblem: outcome.valueProblem,
       browserLogs: outcome.browserLogs,
       browserLogsDropped: outcome.browserLogsDropped,
     };
