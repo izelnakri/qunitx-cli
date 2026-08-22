@@ -86,30 +86,6 @@ export const ScriptNotFound: Failure.FailureFactory<'ScriptNotFound', { entry: s
 export const ScriptBuildFailed: Failure.FailureFactory<'ScriptBuildFailed', { entry: string }> =
   Failure.define('ScriptBuildFailed', (data: { entry: string }) => `could not build ${data.entry}`);
 
-/**
- * The script's default export could not cross the boundary intact.
- *
- * The done signal travels as JSON, so a `Map` would arrive as `{}`, a function or an `undefined`
- * property would be dropped, and a `Date` would become a string. Rather than hand back a value
- * that quietly differs from the one the script produced, the run fails and says where.
- *
- * ```ts
- * import { ScriptValueNotSerializable } from './run.ts';
- *
- * ScriptValueNotSerializable({ entry: '/proj/seed.ts', problem: 'it changed at rows.0.at' }).message;
- * // "/proj/seed.ts exported a default value that cannot be returned: it changed at rows.0.at"
- * ```
- */
-export const ScriptValueNotSerializable: Failure.FailureFactory<
-  'ScriptValueNotSerializable',
-  { entry: string; problem: string }
-> = Failure.define(
-  'ScriptValueNotSerializable',
-  (data: { entry: string; problem: string }) =>
-    `${data.entry} exported a default value that cannot be returned: ${data.problem}. ` +
-    `Return JSON-safe data — plain objects, arrays, strings, numbers, booleans and null.`,
-);
-
 /** Every way {@link setup} can reject its input. */
 export type ScriptConfigFailure =
   | Failure.Of<typeof ScriptTargetRequired>
@@ -168,12 +144,18 @@ export interface ScriptOutcome {
   /** Absolute path of the file that ran, resolved against `cwd`. */
   entry: string;
   /**
-   * The script's `export default`, or `undefined` when it has none.
-   *
-   * JSON-safe by construction: a value that would not survive the trip fails the run instead of
-   * arriving changed — see {@link ScriptValueNotSerializable}.
+   * The script's `export default`, or `undefined` when it has none — or when it had one that
+   * could not be handed back, in which case {@link ScriptOutcome.valueProblem} says so.
    */
   value: unknown;
+  /**
+   * Why {@link ScriptOutcome.value} is `undefined` despite the script exporting something, or
+   * `null` when there is nothing to explain.
+   *
+   * Never fatal. The script ran; only the souvenir did not fit through the door, and a script
+   * whose default export is a `main()` function is a perfectly ordinary script.
+   */
+  valueProblem: string | null;
   /** `globalThis.exitCode` if the script set one, 1 if it threw, else 0. */
   exitCode: number;
   /**
@@ -601,18 +583,16 @@ function wrapperSource(): string {
     const namespace = await import(${JSON.stringify(ENTRY_SPECIFIER)});
     // The default export, checked BEFORE it crosses. The done signal travels by
     // \`jsonValue()\`, which is JSON semantics — a Map would arrive as {}, a function would
-    // vanish, a Date would silently become a string. Rejecting here is what stops a value
-    // that "worked" from lying about itself on the other side.
+    // vanish, a Date would silently become a string. Withholding it here is what stops a value
+    // that "worked" from lying about itself on the other side. The run stands either way: the
+    // script finished, and what it exported is no business of whether it succeeded.
     const unwrapped = ${SERIALIZABLE_CHECK};
-    if (unwrapped.problem) {
-      globalThis.__qunitxScript.done = { ok: false, valueProblem: unwrapped.problem };
-    } else {
-      globalThis.__qunitxScript.done = {
-        ok: true,
-        exitCode: Number.isInteger(globalThis.exitCode) ? globalThis.exitCode : 0,
-        value: unwrapped.value,
-      };
-    }
+    globalThis.__qunitxScript.done = {
+      ok: true,
+      exitCode: Number.isInteger(globalThis.exitCode) ? globalThis.exitCode : 0,
+      value: unwrapped.value,
+      valueProblem: unwrapped.problem,
+    };
   } catch (error) {
     globalThis.__qunitxScript.done = { ok: false, stack: String((error && error.stack) || error) };
   }
@@ -634,9 +614,9 @@ interface DoneSignal {
   ok: boolean;
   exitCode?: number;
   stack?: string;
-  /** The default export, already checked in the page. */
+  /** The default export, already checked in the page. Absent when it could not be handed back. */
   value?: unknown;
-  /** Set instead of `stack` when the export itself is what failed. */
+  /** Set instead of `value` when the export could not be handed back, and says why. */
   valueProblem?: string;
 }
 
@@ -718,11 +698,6 @@ async function execute(
 
     const { entryIsModule } = bundleOf();
 
-    if (entryIsModule && done.valueProblem) {
-      // A rejection rather than an exit code: the script itself ran fine, so reporting it as a
-      // failed run would be a lie — what failed is handing its value back.
-      throw ScriptValueNotSerializable({ entry: config.entry, problem: done.valueProblem });
-    }
     if (!done.ok) {
       config.console.error(
         `${red(mapStack(done.stack ?? '', bundleOf().decoder, config.projectRoot))}\n`,
@@ -730,6 +705,7 @@ async function execute(
       return {
         entry: config.entry,
         value: undefined,
+        valueProblem: null,
         exitCode: 1,
         browserLogs,
         browserLogsDropped,
@@ -742,6 +718,7 @@ async function execute(
     return {
       entry: config.entry,
       value: entryIsModule ? done.value : undefined,
+      valueProblem: (entryIsModule && done.valueProblem) || null,
       exitCode: uncaught.length > 0 ? 1 : (done.exitCode ?? 0),
       browserLogs,
       browserLogsDropped,

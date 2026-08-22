@@ -130,6 +130,7 @@ result.exitCode; // globalThis.exitCode if the script set one, 1 if it threw, el
 result.durationMs; // 412
 result.file; // '/proj/scripts/seed.ts' — absolute, whatever you passed
 result.value; // whatever the script default-exported, or undefined
+result.valueProblem; // null, or why there is no value despite an export
 result.browserLogs; // everything it printed, in emit order
 result.browserLogsDropped; // 0, unless it out-printed the cap
 ```
@@ -156,10 +157,27 @@ export default { seeded: rows.length, ids: rows.map((row) => row.id) };
 const { value } = await run('scripts/seed.ts'); // { seeded: 3, ids: [1, 2, 3] }
 ```
 
-The value crosses a process boundary as JSON, so it must be JSON-safe: null, booleans, finite
-numbers, strings, arrays and plain objects. Anything else — a `Map`, a `Date`, a function, a class
-instance, `NaN` — rejects with `ScriptValueNotSerializable` naming the field, rather than arriving
-quietly changed into something it is not. A script with no default export has `value: undefined`.
+A script with no default export has `value: undefined`.
+
+The value crosses a process boundary as JSON, so only JSON-safe data survives: null, booleans,
+finite numbers, strings, arrays and plain objects. Anything else — a `Map`, a `Date`, a function, a
+class instance, `NaN` — is **withheld rather than altered**, and `valueProblem` says which field:
+
+```js
+// scripts/build.ts — both runnable and importable
+export default function main() {}
+```
+
+```js
+const result = await run('scripts/build.ts');
+
+result.ok; // true — this is an ordinary script
+result.value; // undefined
+result.valueProblem; // 'the value is a function'
+```
+
+This never fails the run and never affects `ok` or the exit code. The script ran; what it exported
+is a separate question, and `qunitx run` on the command line ignores it entirely.
 
 ### What the script printed
 
