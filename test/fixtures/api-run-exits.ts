@@ -6,10 +6,16 @@
 // reach its own exit, which is exactly the user-visible symptom.
 //
 // Usage: node test/fixtures/api-run-exits.ts <script-file>
-import { run } from '../../lib/api/index.ts';
+import { run, silentConsole } from '../../lib/api/index.ts';
+import { reportLeakedHandles } from '../helpers/exit-report.ts';
 
 const [file] = process.argv.slice(2);
 
-const result = await run(file);
+// Silenced so stdout is a protocol rather than a mixture: the result on the first line, and a
+// second line ONLY if this process could not then exit. The script's own output would otherwise
+// interleave with both.
+const result = await run(file, { console: silentConsole });
 
-console.log(JSON.stringify({ result, handles: process.getActiveResourcesInfo() }));
+console.log(JSON.stringify({ result }));
+// Prints a second line only if this process CANNOT end here, which is the whole assertion.
+reportLeakedHandles();
