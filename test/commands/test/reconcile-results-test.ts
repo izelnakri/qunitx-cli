@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { reconcileUndeliveredResults } from '../../../lib/commands/run/tests-in-browser.ts';
+import { reconcileUndeliveredResults } from '../../../lib/commands/test/tests-in-browser.ts';
 import type { Counter, QUnitResult } from '../../../lib/types.ts';
 
 // Regression coverage for the silent exit-0 flake on windows-latest (CI run 29776544275): a

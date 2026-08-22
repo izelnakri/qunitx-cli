@@ -1,13 +1,14 @@
-import * as RunCommand from '../commands/run.ts';
+import * as TestCommand from '../commands/test.ts';
 import * as RunState from '../setup/run-state.ts';
 import { Task } from '../task/index.ts';
-import * as Run from './run.ts';
+import { watch, type WatchSession } from './watch.ts';
+import * as TestRun from './test.ts';
 import { EventsChannel, type RunEvent } from './reporter.ts';
 
 import * as Options from './options.ts';
 import * as Config from '../setup/config.ts';
 import type { Stream } from '../stream/index.ts';
-import type { RunFailure, RunResult } from './run.ts';
+import type { RunFailure, RunResult } from './test.ts';
 import type { UserRunOptions } from './options.ts';
 import type { Config as ResolvedConfig } from '../types.ts';
 
@@ -23,12 +24,12 @@ import type { Config as ResolvedConfig } from '../types.ts';
  * that makes the feed lossless. A browser cannot be told to slow down, so a run started before
  * anyone was reading would either drop events or buffer them all; starting on the first read means
  * the producer never outruns the consumer by more than one scheduling turn. Awaiting
- * {@link RunSession.result} counts as consuming, so a caller that only wants the answer still gets
+ * {@link TestSession.result} counts as consuming, so a caller that only wants the answer still gets
  * one without iterating.
  *
  * ```ts
  * // Defined, not invoked: a real session launches a browser.
- * async function progress(session: RunSession) {
+ * async function progress(session: TestSession) {
  *   for await (const event of session) {
  *     if (event.kind === 'test') process.stdout.write('.');
  *   }
@@ -36,7 +37,7 @@ import type { Config as ResolvedConfig } from '../types.ts';
  * }
  * ```
  */
-export interface RunSession extends AsyncIterable<RunEvent> {
+export interface TestSession extends AsyncIterable<RunEvent> {
   /**
    * The finished run. Starts it if nothing has yet, and resolves with the same
    * {@link RunResult} the final `runEnd` event carries — never `undefined`, which is the whole
@@ -47,7 +48,7 @@ export interface RunSession extends AsyncIterable<RunEvent> {
   result(): Promise<RunResult>;
   /**
    * Cuts the run short. The browser drops the rest of its queue and the run ends where it is,
-   * with `aborted: true` on the result — which {@link RunSession.result} still resolves with, so
+   * with `aborted: true` on the result — which {@link TestSession.result} still resolves with, so
    * an aborted run is answered rather than left hanging.
    *
    * Resolves once the run has finished unwinding. Aborting before the run starts makes it a no-op
@@ -64,7 +65,7 @@ export interface RunSession extends AsyncIterable<RunEvent> {
    *
    * ```ts
    * // Defined, not invoked: a real session launches a browser.
-   * async function firstTen(session: RunSession) {
+   * async function firstTen(session: TestSession) {
    *   return await session.events().filter((e) => e.kind === 'test').take(10).collect();
    * }
    * ```
@@ -86,6 +87,49 @@ export interface RunSession extends AsyncIterable<RunEvent> {
 }
 
 /**
+ * What {@link openSession} accepts: every run option, plus the one that chooses the shape.
+ *
+ * `watch` lives here rather than on `UserRunOptions` on purpose — {@link test} must not be able to
+ * take it. A watching run never finishes, so `test({ watch: true })` would be a `Task` that never
+ * settles, and a type that cannot express the mistake is better than a validation that catches it.
+ *
+ * ```ts
+ * const options: SessionOptions = { inputs: ['test/'], watch: true };
+ * options.watch; // true — the durable shape
+ * ```
+ */
+export type SessionOptions = UserRunOptions & { watch?: boolean };
+
+/**
+ * With `watch: true`, the DURABLE shape: one page behind a stable {@link WatchSession.url}, kept
+ * open with the rerun verbs and file watching, exactly as {@link watch} gives you.
+ *
+ * Not the same session with watchers bolted on — the other execution shape. This one bundles every
+ * file together and serves one page; the form below splits them across as many pages as there are
+ * cores and is spent after a single run. `watch()` is the shorter spelling of this overload.
+ *
+ * ```ts
+ * import { openSession } from './session.ts';
+ *
+ * // Defined, not invoked: holds a browser and a port open.
+ * async function serve() {
+ *   const session = await openSession({ inputs: ['test/'], watch: true });
+ *   return session.url; // 'http://localhost:1234'
+ * }
+ * ```
+ */
+export function openSession(
+  options: SessionOptions & { watch: true },
+): Task<WatchSession, RunFailure>;
+/**
+ * The durable shape with the target named positionally:
+ * `openSession('test/', { watch: true })`.
+ */
+export function openSession(
+  target: string | string[],
+  options: SessionOptions & { watch: true },
+): Task<WatchSession, RunFailure>;
+/**
  * Starts a single run you can watch happen, rather than one you wait out.
  *
  * Use it when the run's progress is the point — a progress bar, a live log, a UI that shows tests
@@ -97,29 +141,50 @@ export interface RunSession extends AsyncIterable<RunEvent> {
  * consumed (so the event feed cannot fall behind).
  *
  * ```ts
- * import { runSession } from './session.ts';
+ * import { openSession } from './session.ts';
  *
  * // Defined, not invoked: launches a browser and runs the project's tests.
  * async function countAsTheyFinish() {
- *   await using session = await runSession({ inputs: ['test/'] });
+ *   await using session = await openSession({ inputs: ['test/'] });
  *   let finished = 0;
  *   for await (const event of session) if (event.kind === 'test') finished++;
  *   return finished;
  * }
  * ```
  */
-export function runSession(
-  options: UserRunOptions | string | string[] = {},
-): Task<RunSession, RunFailure> {
+export function openSession(options?: SessionOptions): Task<TestSession, RunFailure>;
+/**
+ * The one-shot shape with the target named positionally:
+ * `openSession('test/', { filter: 'Cart' })`.
+ */
+export function openSession(
+  target: string | string[],
+  options?: SessionOptions,
+): Task<TestSession, RunFailure>;
+export function openSession(
+  input: SessionOptions | string | string[] = {},
+  extra?: SessionOptions,
+): Task<TestSession | WatchSession, RunFailure> {
+  // `watch` selects the other SHAPE, not merely file watchers on top of this one: a watching
+  // session is one page serving a stable URL, where this one splits the files across as many pages
+  // as there are cores and is spent after a single run. The overloads above are what keep that
+  // honest — `url` and the rerun verbs only exist on the type you get back for `watch: true`.
+  // Either spelling can carry it: `openSession({ watch: true })` or `openSession(target, { watch:
+  // true })`, so the flag is read from whichever argument is the options object.
+  const settings = typeof input === 'object' && !Array.isArray(input) ? input : extra;
+  if (settings?.watch) {
+    return typeof input === 'object' && !Array.isArray(input) ? watch(input) : watch(input, extra);
+  }
+
   return Task(async () => {
     const channel = EventsChannel.build();
-    const configOptions = Options.from(options);
+    const configOptions = Options.from(input, extra);
     // Joins the reporters BEFORE assembly, not after: `Config.setup` emits notices of its own — a
     // superseded line target, `--only-failed` finding no cache — and a feed attached afterwards
     // would miss them while `result.notices` still carried them.
     configOptions.reporters.push(channel.reporter);
     // Assembly is eager: it reads package.json and resolves inputs, so a bad option is a failure
-    // from `runSession(...)` itself rather than a surprise on first iteration. Only the browser
+    // from `openSession(...)` itself rather than a surprise on first iteration. Only the browser
     // is deferred.
     const config = await Config.setup(configOptions);
 
@@ -128,7 +193,7 @@ export function runSession(
 }
 
 /** The live session; a class because it owns the run's lifecycle and has to start it exactly once. */
-class Session implements RunSession {
+class Session implements TestSession {
   #config: ResolvedConfig;
   #channel: EventsChannel;
   #started: Promise<RunResult> | null = null;
@@ -190,7 +255,7 @@ class Session implements RunSession {
   }
 
   [Symbol.asyncIterator](): AsyncIterator<RunEvent> {
-    // The first read is what starts the run — see the laziness note on `RunSession`.
+    // The first read is what starts the run — see the laziness note on `TestSession`.
     void this.#start();
     const inner = this.#channel.stream[Symbol.asyncIterator]();
 
@@ -212,12 +277,12 @@ class Session implements RunSession {
     if (this.#closed) {
       // Aborted or closed before it ever ran: answer with the empty result rather than launch a
       // browser nobody is waiting for. The counts are zeroes, `aborted` says why.
-      this.#started = Promise.resolve(Run.abort(this.#config));
+      this.#started = Promise.resolve(TestRun.abort(this.#config));
 
       return this.#started;
     }
 
-    this.#started = RunCommand.run(this.#config).then((outcome) => {
+    this.#started = TestCommand.run(this.#config).then((outcome) => {
       const result = this.#snapshot(outcome);
       this.#channel.emit({ kind: 'runEnd', result });
       this.#channel.close();
@@ -231,7 +296,7 @@ class Session implements RunSession {
     return this.#started;
   }
 
-  #snapshot(outcome: RunCommand.RunOutcome): RunResult {
-    return Run.buildResult(this.#config, outcome);
+  #snapshot(outcome: TestCommand.RunOutcome): RunResult {
+    return TestRun.buildResult(this.#config, outcome);
   }
 }

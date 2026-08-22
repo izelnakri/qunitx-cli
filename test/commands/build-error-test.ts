@@ -7,7 +7,7 @@ import {
   buildTestBundle,
   deriveBuildErrorType,
   formatBuildErrors,
-} from '../../lib/commands/run/tests-in-browser.ts';
+} from '../../lib/commands/test/tests-in-browser.ts';
 import * as WebServer from '../../lib/setup/web-server.ts';
 import * as RunState from '../../lib/setup/run-state.ts';
 import type { Config } from '../../lib/types.ts';

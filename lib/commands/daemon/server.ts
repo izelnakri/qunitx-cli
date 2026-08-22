@@ -2,7 +2,7 @@ import net from 'node:net';
 import fs from 'node:fs';
 import { writeFile, unlink, stat, chmod, readFile, link, mkdir, rmdir } from 'node:fs/promises';
 import path from 'node:path';
-// See lib/commands/run.ts: node:timers returns the unref-capable Timer object
+// See lib/commands/test.ts: node:timers returns the unref-capable Timer object
 // in both Node and Deno; the bare setTimeout global in Deno is the Web variant.
 import { setTimeout, clearTimeout } from 'node:timers';
 import * as Paths from './paths.ts';
@@ -10,13 +10,13 @@ import { parseIdleTimeout } from './parse-idle-timeout.ts';
 import * as Socket from './socket.ts';
 import * as Config from '../../setup/config.ts';
 import * as Browser from '../../setup/browser.ts';
-import * as RunCommand from '../run.ts';
+import * as TestCommand from '../test.ts';
 import { borrowArgv, borrowEnv } from '../../utils/borrowed-globals.ts';
 import * as Result from '../../result/index.ts';
 import { Failure } from '../../result/index.ts';
 import * as Options from '../../api/options.ts';
-import * as Run from '../../api/run.ts';
-import type { RunResult } from '../../api/run.ts';
+import * as TestRun from '../../api/test.ts';
+import type { RunResult } from '../../api/test.ts';
 import type { Request, ResponseChunk, RunRequest, DaemonInfo } from './protocol.ts';
 import type { Browser as PlaywrightBrowser } from 'playwright-core';
 import { Task } from '../../task/index.ts';
@@ -170,7 +170,7 @@ export async function serve(): Promise<void> {
   // nothing valid to serve, and refusing to start beats accepting runs it will fail.
   const baseConfig = Result.expect(configured, 'daemon could not assemble its startup config');
   // baseConfig is only ever handed to Browser.launch (initial launch + crash recovery), never
-  // to RunCommand.run() — so it needs no daemon handles. watch/open still matter: Browser.launch
+  // to TestCommand.run() — so it needs no daemon handles. watch/open still matter: Browser.launch
   // derives `headless` from them.
   baseConfig.watch = false;
   baseConfig.open = false;
@@ -610,8 +610,8 @@ export async function browserResponsive(
   if (!browser.isConnected()) return false;
   if (browserName !== 'chromium' || !browser.newBrowserCDPSession) return true;
   const timeout = new Promise<null>((resolve) => {
-    const t = setTimeout(() => resolve(null), timeoutMs);
-    t.unref?.();
+    const timer = setTimeout(() => resolve(null), timeoutMs);
+    timer.unref?.();
   });
   const probe = browser.newBrowserCDPSession().then(
     (session) => session,
@@ -731,7 +731,7 @@ async function recoverBrowser(state: DaemonState): Promise<void> {
 }
 
 /**
- * Performs one test run inside the daemon by delegating to `RunCommand.run()` — the same code
+ * Performs one test run inside the daemon by delegating to `TestCommand.run()` — the same code
  * path local invocations use, with `state.daemon` set so it reuses the daemon's browser and
  * leaves it open. Concurrent group orchestration, timing-cache persistence, and after-hook all
  * come for free from the shared run pipeline.
@@ -774,7 +774,7 @@ async function runOnce(
   const config = configured;
 
   // Lending the daemon's persistent handles to this run also marks it as a daemon run:
-  // a non-null state.daemon makes RunCommand.run() reuse the browser rather than launching one,
+  // a non-null state.daemon makes TestCommand.run() reuse the browser rather than launching one,
   // and leave it open at the end. watch/open are forced off — neither fits inside a daemon run.
   //
   // state.browser is non-null here — runOnce only fires from handleRun after awaitBrowser
@@ -787,12 +787,12 @@ async function runOnce(
   config.watch = false;
   config.open = false;
 
-  const outcome = await RunCommand.run(config);
+  const outcome = await TestCommand.run(config);
 
   return {
     exitCode: outcome.exitCode,
     // Only an options-driven request answers with a structured result; an argv one wants a code.
-    result: wireOptions ? Run.buildResult(config, outcome) : null,
+    result: wireOptions ? TestRun.buildResult(config, outcome) : null,
   };
 }
 

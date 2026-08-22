@@ -37,7 +37,7 @@ output to the terminal.
 - `--coverage` reports V8 line coverage (terminal summary, plus optional `lcov` and `html` reports)
 - `--version` / `-v` prints the installed version
 - [`qunitx repl`](#repl) — a prompt that evaluates in a real Chrome page: the DOM, `fetch`, and `test(...)` running for real as you type
-- [JavaScript API](#javascript-api) — `await run('test/')` returns the results as data; silent by default, with `watch`, `search`, custom reporters and daemon control. On npm and JSR (`jsr:@izelnakri/qunitx-cli/api`)
+- [JavaScript API](#javascript-api) — `await test('test/')` returns the results as data, `await run('seed.ts')` executes one script; silent by default, with `watch`, `search`, custom reporters and daemon control. On npm and JSR (`jsr:@izelnakri/qunitx-cli/api`)
 - Optional daemon mode (`qunitx daemon start`) keeps Chrome and the esbuild context warm across runs — roughly halves the wall-clock time of repeated invocations
 - Docker image for zero-install CI usage
 
@@ -232,31 +232,36 @@ Everything the CLI does, available as a function — for CI scripts, editor inte
 and anything else that needs the results as data rather than as text on a terminal.
 
 ```js
-import { run } from 'qunitx-cli';
+import { test } from 'qunitx-cli';
 
-const result = await run('test/');
+const result = await test('test/');
 
 result.ok; // false
 result.counts; // { total: 42, passed: 41, failed: 1, skipped: 0, todo: 0, assertionsFailed: 1 }
-result.failures.map((test) => test.fullName); // ['Cart > Coupons: applies code']
+result.failures.map((one) => one.fullName); // ['Cart > Coupons: applies code']
 ```
 
-|                                  |                                                                         |
-| -------------------------------- | ----------------------------------------------------------------------- |
-| `run(options)`                   | run once; the full result as a value                                    |
-| `runSession(options)`            | one run, watched as it happens — `events()`, `result()`, `abort()`      |
-| `watch(options)`                 | async-iterable session; `run`/`runAll`/`runFailed`/`abort`, `results()` |
-| `search(options)`                | what a selection would run — no browser, milliseconds                   |
-| `repl(options)`                  | a live page you can `evaluate(...)` against                             |
-| `Daemon.{start,stop,status,run}` | reuse a warm browser between runs                                       |
-| `init` / `generate`              | scaffolding, reporting what they wrote                                  |
-| `validate(options)`              | reject bad options without launching anything                           |
+|                                   |                                                                         |
+| --------------------------------- | ----------------------------------------------------------------------- |
+| `test(options)`                   | run the suite once; the full result as a value                          |
+| `run(file, options)`              | run ONE file as a plain script; its exit code as a value                |
+| `openSession(options)`            | one run, watched as it happens — `events()`, `result()`, `abort()`      |
+| `watch(options)`                  | async-iterable session; `run`/`runAll`/`runFailed`/`abort`, `results()` |
+| `search(options)`                 | what a selection would run — no browser, milliseconds                   |
+| `repl(options)`                   | a live page you can `evaluate(...)` against                             |
+| `Daemon.{start,stop,status,test}` | reuse a warm browser between runs                                       |
+| `init` / `generate`               | scaffolding, reporting what they wrote                                  |
+| `validate(options)`               | reject bad options without launching anything                           |
+
+> **Upgrading:** the suite verb used to be `run(options)` and is now `test(options)`; `run` is the
+> script verb, mirroring `qunitx run <file>`. Passing a directory, a glob, an array or an options
+> object to `run` is refused with a message naming `test()`, so the change cannot pass silently.
 
 Four things to know:
 
 - **Nothing is printed unless you ask.** The returned result is the whole answer. Pass
   `reporter: 'tap'` (or `'spec'`, `'dot'`, `'github'`) to get the CLI's output too.
-- **Failing tests are not an error.** `run()` resolves with `ok: false`. It rejects only when the
+- **Failing tests are not an error.** `test()` resolves with `ok: false`. It rejects only when the
   run could not happen — a bad option, an unreadable input, no `package.json`.
 - **It is lazy.** These return a `Task` (a Promise superset), so nothing starts until you `await`.
 - **It is the same engine as the CLI**, taking the same code path, so behaviour cannot drift.
@@ -519,7 +524,38 @@ Subcommands:
   qunitx init                             Bootstrap qunitx config + base HTML in this project
   qunitx new <testFileName>               Create a new qunitx test file
   qunitx upgrade [version]                Update the standalone binary (--check reports only)
+  qunitx run <scriptFile>                 Run one file as a plain script in the browser
 ```
+
+## Running a script
+
+`qunitx run <file>` runs a single file as a plain script instead of a test suite — the browser
+equivalent of `deno run`. No TAP, no QUnit, no test declarations required; the script's own
+`console` output **is** the output.
+
+```console
+$ qunitx run scripts/seed.ts
+seeded 42 rows
+```
+
+The script is bundled with esbuild (TypeScript and JSX work unchanged) and evaluated as a module
+in a real page, so it gets a DOM, `fetch` against a real `http://localhost` origin, `import.meta`,
+and **top-level `await`**. `console.log`/`info`/`debug` go to stdout, `warn`/`error` to stderr, in
+the order the page emitted them.
+
+It finishes when the script's top level settles — set `globalThis.exitCode` to choose the exit
+code, or throw to exit 1 with a source-mapped stack trace:
+
+```ts
+const response = await fetch('/api/health');
+if (!response.ok) {
+  globalThis.exitCode = 1;
+}
+```
+
+`--browser`, `--port`, `--open`, `--timeout` and `--watch` work here too (`--watch` re-runs the
+script on every save). A script is never auto-detected: `qunitx <file>` always means "run the
+tests in this file", and the `run` keyword is how you ask for the other thing.
 
 ## JUnit reports
 

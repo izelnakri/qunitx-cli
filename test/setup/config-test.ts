@@ -68,7 +68,7 @@ module('Setup | config | reporters given are live during assembly', { concurrenc
     await using dir = await project();
     const seen: string[] = [];
 
-    // What `runSession` relies on: `Options.from` hands back a pushable `reporters`, and a
+    // What `openSession` relies on: `Options.from` hands back a pushable `reporters`, and a
     // reporter added before `Config.setup` catches the diagnostics setup emits while resolving —
     // here, `--only-failed` finding no cache. A feed attached after setup returns misses them.
     const configOptions = Options.from({

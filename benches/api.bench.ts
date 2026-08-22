@@ -3,7 +3,7 @@
  *
  * Three cost layers, deliberately separated so a regression lands on the one that caused it:
  *
- *   in-process   →  `run()` against a live browser, minus Node boot and module load. The
+ *   in-process   →  `test()` against a live browser, minus Node boot and module load. The
  *                   difference from `benches/e2e.bench.ts`'s `e2e-1` is the whole reason to
  *                   drive the API rather than spawn the CLI, so it is worth a number.
  *   silent       →  the same run with a reporter attached, to price the reporting fan-out.
@@ -15,12 +15,12 @@
  * the runner, at a scale (10k) no real suite reaches, so a per-event regression shows up as a
  * number rather than as a vague sense that large suites got slower.
  */
-import { buildResult } from '../lib/api/run.ts';
+import { buildResult } from '../lib/api/test.ts';
 import { APIReporter } from '../lib/api/reporter.ts';
 import { silentConsole } from '../lib/console.ts';
 import * as Options from '../lib/api/options.ts';
 import { EventsChannel } from '../lib/api/reporter.ts';
-import { run, runSession, search } from '../lib/api/index.ts';
+import { openSession, search, test } from '../lib/api/index.ts';
 import type { Config } from '../lib/types.ts';
 import type { ReporterContext, TestDetails } from '../lib/reporters/types.ts';
 
@@ -36,29 +36,33 @@ Deno.bench(
   'api: run() one file, silent',
   { group: 'api-run', baseline: true, n: 3, warmup: 1 },
   async () => {
-    await run({ inputs: [FIXTURE], output: `tmp/bench-api-${crypto.randomUUID()}` });
+    await test({ inputs: [FIXTURE], output: `tmp/bench-api-${crypto.randomUUID()}` });
   },
 );
 
-Deno.bench('api: run() one file, tap reporter', { group: 'api-run', n: 3, warmup: 1 }, async () => {
-  await run({
-    inputs: [FIXTURE],
-    output: `tmp/bench-api-${crypto.randomUUID()}`,
-    reporter: 'tap',
-    // Into a sink rather than the process stream: the bench measures the fan-out and rendering,
-    // not the terminal's ability to absorb it.
-    console: silentConsole,
-  });
-});
+Deno.bench(
+  'api: test() one file, tap reporter',
+  { group: 'api-run', n: 3, warmup: 1 },
+  async () => {
+    await test({
+      inputs: [FIXTURE],
+      output: `tmp/bench-api-${crypto.randomUUID()}`,
+      reporter: 'tap',
+      // Into a sink rather than the process stream: the bench measures the fan-out and rendering,
+      // not the terminal's ability to absorb it.
+      console: silentConsole,
+    });
+  },
+);
 
 // What the event feed costs over the plain value: same run, same browser, one extra reporter and
 // one channel push per event. If watching a run is meaningfully slower than waiting one out, the
 // session abstraction is not worth having.
 Deno.bench(
-  'api: runSession() one file, events consumed',
+  'api: openSession() one file, events consumed',
   { group: 'api-run', n: 3, warmup: 1 },
   async () => {
-    await using session = await runSession({
+    await using session = await openSession({
       inputs: [FIXTURE],
       output: `tmp/bench-api-${crypto.randomUUID()}`,
     });

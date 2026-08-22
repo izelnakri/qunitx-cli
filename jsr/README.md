@@ -19,7 +19,7 @@ On npm it is `npm install -g qunitx-cli` instead.
 Plain QUnit — the same file runs under `node --test` and `deno test` too:
 
 ```js
-// math_test.js
+// math-test.js
 import { module, test } from 'qunitx';
 
 module('Math', () => {
@@ -37,7 +37,7 @@ module('Math', () => {
 
 ```sh
 $ qunitx                     # no arguments: every input form and flag, at a glance
-$ qunitx math_test.js        # one file, in a real browser
+$ qunitx math-test.js        # one file, in a real browser
 TAP version 13
 # Running 1 test file across 1 group
 # QUnitX running: http://localhost:1234/
@@ -52,7 +52,7 @@ ok 2 Math | deepEqual understands Sets # (1 ms)
 ```
 
 Point it at whatever you have: a file, a folder (`qunitx test/`), a glob (`qunitx 'test/**'`), or
-`qunitx test/cart_test.js#34` to run only the test declared on that line. `--filter`,
+`qunitx test/cart-test.js#34` to run only the test declared on that line. `--filter`,
 `--reporter=spec`, `--coverage`, `--junit`, `--failFast` and `--browser=firefox|webkit` are all
 listed by the bare `qunitx` above.
 
@@ -81,27 +81,45 @@ ok 2 Math | deepEqual understands Sets # (1 ms)
 
 Everything above is also a library, under the `./api` entrypoint — results come back as values and
 nothing ever calls `process.exit` on your behalf. Node and Bun import it as `'qunitx-cli'`; from
-Deno it is `'jsr:@izelnakri/qunitx-cli/api'`. Three examples follow; the
+Deno it is `'jsr:@izelnakri/qunitx-cli/api'`. Four examples follow; the
 [full API guide](https://github.com/izelnakri/qunitx-cli/blob/main/docs/javascript-api.md)
 documents every verb.
 
 Run a suite and read the result:
 
 ```js
-// run.js
-import { run } from 'qunitx-cli';
+// run-tests.js
+import { test } from 'qunitx-cli';
 
-const result = await run('tests/');
+const result = await test('tests/');
 
 console.log(`${result.counts.passed}/${result.counts.total} passed in ${result.durationMs}ms`);
-for (const test of result.failures) {
-  console.log(`FAILED ${test.fullName} (${test.file})`);
+for (const failed of result.failures) {
+  console.log(`FAILED ${failed.fullName} (${failed.file})`);
 }
 
 process.exitCode = result.ok ? 0 : 1;
 
-// $ node run.js
+// $ node run-tests.js
 // 2/2 passed in 377ms
+```
+
+Run ONE file as a plain script in the browser — no QUnit, no TAP. This is what `run` means; the
+suite verb above is `test`:
+
+```js
+// seed.js
+import { run } from 'qunitx-cli';
+
+const result = await run('scripts/seed.ts');
+
+console.log(`exit ${result.exitCode} after ${result.durationMs}ms`);
+
+process.exitCode = result.exitCode;
+
+// $ node seed.js
+// seeded 3 rows into seeding
+// exit 0 after 1024ms
 ```
 
 Ask what a filter would match, without running anything — no browser is launched:
@@ -120,7 +138,7 @@ for (const match of report.matches) {
 
 // $ node search-report-tests.js
 // 1 of 2 tests match, in 1 files
-//   Math: deepEqual understands Sets — tests/math_test.js:8
+//   Math: deepEqual understands Sets — tests/math-test.js:8
 ```
 
 Or hold a watch session open: the server stays reachable and the suite keeps re-running while your
@@ -155,7 +173,7 @@ console.log('closed — the browser and the port are released');
 // closed — the browser and the port are released
 ```
 
-`runSession` (a run you can watch event-by-event as it happens), `init`, `generate`, the daemon
+`openSession` (a run you can watch event-by-event as it happens), `init`, `generate`, the daemon
 controls and the reporter interface are all covered in the
 [JavaScript / TypeScript API guide](https://github.com/izelnakri/qunitx-cli/blob/main/docs/javascript-api.md),
 with the generated reference on the

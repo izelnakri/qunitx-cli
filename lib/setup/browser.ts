@@ -24,6 +24,25 @@ const playwrightCorePromise = import('playwright-core');
 perfLog('browser.js: playwright-core import started');
 
 /**
+ * The three fields {@link launch} actually reads. Narrower than `Config` on purpose: `qunitx run`
+ * has a config of its own with no test files in it, and asking it to fake thirty unrelated fields
+ * to borrow the CDP pre-launch fast path would be a cast pretending to be a type.
+ *
+ * ```ts
+ * const target: LaunchTarget = { browser: 'chromium', open: false, watch: false };
+ * target.browser; // 'chromium'
+ * ```
+ */
+export interface LaunchTarget {
+  /** Engine to launch. Defaults to chromium when absent. */
+  browser?: 'chromium' | 'firefox' | 'webkit';
+  /** `--open`: `true` asks for a visible window (honoured together with `watch`). */
+  open?: boolean | string;
+  /** `--watch`: keeps firefox/webkit headed when `open` is also set. */
+  watch?: boolean;
+}
+
+/**
  * Launches a browser for the given config.browser type.
  * For chromium: connects via CDP to the pre-launched Chrome (fast path) or falls
  * back to chromium.launch() if pre-launch failed.
@@ -46,7 +65,7 @@ perfLog('browser.js: playwright-core import started');
  * prelaunch is a one-shot startup optimization and recovery needs a fresh browser.
  * @returns {Promise<object>}
  */
-export async function launch(config: Config, skipPrelaunch = false): Promise<Browser> {
+export async function launch(config: LaunchTarget, skipPrelaunch = false): Promise<Browser> {
   const browserName = config.browser || 'chromium';
 
   if (browserName === 'chromium') {

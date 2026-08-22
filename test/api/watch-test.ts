@@ -287,3 +287,269 @@ module('API | watch | results() as a Stream', { concurrency: true }, () => {
     });
   });
 });
+
+// The five below are documented as outside semver, which is a promise about CHANGE, not about
+// absence — while they exist they have to be the session's real machinery rather than a
+// plausible-looking stand-in. Each assertion here checks identity with something only the live
+// object could satisfy.
+module('API | watch | live objects', { concurrency: true }, () => {
+  test('browser, page and webServer are the session s real ones', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      assert.true(session.browser.isConnected(), 'a live playwright Browser');
+      assert.true(
+        session.page.url().startsWith(session.url),
+        `the page is on the session's own URL, got ${session.page.url()}`,
+      );
+      assert.strictEqual(await session.page.evaluate(() => 1 + 1), 2, 'the page really evaluates');
+      // The server is this project's HTTPServer, and routes registered on it are served.
+      session.webServer.get('/live-object-probe', (_request, response) =>
+        response.json({ ok: true }),
+      );
+      const probe = await fetch(`${session.url}/live-object-probe`);
+
+      assert.deepEqual(await probe.json(), { ok: true }, 'a route added through it is served');
+    });
+  });
+
+  test('esbuild is the incremental context, and rebuilding through it works', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      // Non-null here because the initial run has already built once — that is the whole reason
+      // the property is typed nullable rather than asserted.
+      assert.notStrictEqual(session.esbuild, null, 'a context exists after the first build');
+      const rebuilt = await session.esbuild!.rebuild();
+
+      assert.true(rebuilt.outputFiles!.length > 0, 'it is a usable BuildContext');
+    });
+  });
+
+  test('fileWatchers is the live record, keyed by watched path', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, (session) => {
+      const watched = Object.keys(session.fileWatchers);
+
+      assert.true(watched.length > 0, `something is being watched, got ${JSON.stringify(watched)}`);
+      assert.true(
+        watched.some((key) => key.includes('fixtures')),
+        `the watched paths cover the input, got ${JSON.stringify(watched)}`,
+      );
+      // Same object, not a copy — the getter must not snapshot.
+      assert.strictEqual(session.fileWatchers, session.fileWatchers);
+
+      return Promise.resolve();
+    });
+  });
+});
+
+// A restart is ONE transition in the life of a session, not a close followed by a new one. That
+// distinction is the entire reason it exists, so most of these assert continuity rather than
+// teardown: same object, same feeds, same iteration.
+module('API | watch | restart', { concurrency: true }, () => {
+  test('the session survives and its run reaches latest', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      const before = session.initial;
+      const result = await session.restart();
+
+      assert.strictEqual(result.counts.total, before.counts.total, 'it ran the suite again');
+      assert.strictEqual(session.latest, result, 'latest follows the restart');
+      assert.strictEqual(session.initial, before, 'initial still names the run it started with');
+      assert.true(session.url.startsWith('http://localhost:'), 'it is serving again');
+    });
+  });
+
+  test('results() and events() keep streaming straight across it', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      // Opened BEFORE the restart and read after. If the restart closed the channels, or let the
+      // rebooted session get a different reporters array, neither of these would ever fill.
+      const results = session.results().take(2).collect();
+      const ends = session
+        .events()
+        .filter((event) => event.kind === 'runEnd')
+        .take(2)
+        .collect();
+
+      await session.restart();
+      await session.run();
+
+      assert.strictEqual((await results).length, 2, 'results survived the restart');
+      assert.strictEqual((await ends).length, 2, 'so did the event feed');
+    });
+  });
+
+  test('a restart emits exactly one result, not two', async (assert) => {
+    // It reboots into the SAME config, so the reporter shim that publishes runs survives and the
+    // reboot's own initial run reaches it. Publishing again on top of that emitted two results
+    // for one run — a consumer counting runs would have over-counted every restart.
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      // The feed opens with the buffered initial run, so three elements is exactly
+      // [initial, restart, rerun]. The rerun on the end is what makes this a double-publish
+      // detector: if the restart emitted twice, the third element would be its duplicate and
+      // `latest` — by then the rerun — would not be it.
+      const results = session.results().take(3).collect();
+
+      await session.restart();
+      await session.run();
+      const [first, second, third] = await results;
+
+      assert.strictEqual(first, session.initial, 'the feed opens with the initial run');
+      assert.strictEqual(second.counts.total, first.counts.total, 'then the restart run');
+      assert.strictEqual(third, session.latest, 'then the rerun — no duplicate in between');
+    });
+  });
+
+  test('the live objects are replaced, not reused', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      const before = {
+        browser: session.browser,
+        page: session.page,
+        server: session.webServer,
+        esbuild: session.esbuild,
+      };
+
+      await session.restart();
+
+      assert.notStrictEqual(session.browser, before.browser, 'a new browser');
+      assert.notStrictEqual(session.page, before.page, 'a new page');
+      assert.notStrictEqual(session.webServer, before.server, 'a new server');
+      // The one that is deliberately NOT replaced. Disposing it would re-read nothing — a restart
+      // reuses the same Config, so a fresh context would hold the very same plugin objects — and
+      // the dispose-then-recreate respawns esbuild's service child for no gain.
+      assert.strictEqual(session.esbuild, before.esbuild, 'the esbuild context is kept');
+      assert.true(session.browser.isConnected(), 'and the new browser is live');
+      assert.strictEqual(await session.page.evaluate(() => 2 + 2), 4, 'the new page evaluates');
+    });
+  });
+
+  test('reruns and abort still work through the rebooted machinery', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      await session.restart();
+
+      const rerun = await session.run();
+      assert.true(rerun.counts.total > 0, 'the rebooted session reruns');
+      assert.true(rerun.ok, 'and still passes');
+
+      // The aborters are the reason this is here: each boot registers one and the set was never
+      // pruned, so a restart that did not clear it would leave abort() publishing to the closed
+      // server as well as the live one.
+      await session.abort();
+      assert.false(session.running, 'abort settles against the new server');
+    });
+  });
+
+  test('two concurrent restarts are one restart', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      const [first, second] = await Promise.all([session.restart(), session.restart()]);
+
+      assert.strictEqual(first, second, 'both callers get the same run');
+      assert.true(session.browser.isConnected(), 'exactly one session survived');
+    });
+  });
+
+  test('close() during a restart waits for it and leaves nothing running', async (assert) => {
+    // The race the guard exists for: closing while the boot is half-built would race the teardown
+    // against the thing being built, and leak whichever handles had already been created.
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      // Ordering is the assertion, because that is the guarantee: `close()` resolving means
+      // everything is down. Without the wait it resolves as soon as the OLD session is closed,
+      // while the restart is still booting a browser behind it.
+      const order: string[] = [];
+      const restarting = session.restart().then(
+        () => order.push('restart'),
+        () => order.push('restart'),
+      );
+      const closing = session.close().then(() => order.push('close'));
+      await Promise.all([restarting, closing]);
+
+      assert.deepEqual(order, ['restart', 'close'], 'close() waits for the restart to land');
+      assert.false(session.browser.isConnected(), 'the browser the restart built is closed too');
+    });
+  });
+
+  // Restart doubles every teardown path, which is exactly where a handle gets left behind — this
+  // PR already found one where close() released everything except esbuild's incremental context,
+  // and the symptom was a script that returned from close() and then hung forever.
+  test('a restart-then-close cycle still lets the process exit', async (assert) => {
+    await using output = outputDir('api-watch-restart-exit');
+    const permit = await acquireBrowser();
+    try {
+      const { stdout } = await spawnCapture(
+        `node test/fixtures/watch-restart-exits.ts ${PASSING} ${output.path}`,
+        // spawnCapture does not inherit the environment, and without PATH the child cannot find
+        // Chrome — it falls back to playwright's own download and dies on a missing one.
+        { timeout: WATCH_EXIT_TIMEOUT_MS, env: { ...process.env, FORCE_COLOR: '0' } },
+      );
+      const handles = JSON.parse(stdout.trim().split('\n').at(-1)!) as string[];
+
+      assert.deepEqual(
+        handles.filter((handle) => handle === 'ProcessWrap'),
+        [],
+        `no child process outlives restart + close, got ${stdout.trim()}`,
+      );
+    } finally {
+      permit.release();
+    }
+  });
+});
+
+module('API | watch | restart(patch)', { concurrency: true }, () => {
+  // The bundle a session serves is fixed at `Config.setup`: `run(files)` narrows what EXECUTES
+  // within it, but nothing widens what is in it. Reconfiguring is what a filter box or a scope
+  // picker in a TUI needs, and it is the same operation either way — rebuild, reboot.
+  test('a patch narrows the selection and the session keeps running', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      assert.equal(session.initial.counts.total, 3, 'the whole file to begin with');
+
+      const narrowed = await session.restart({ filter: 'assert true works' });
+
+      assert.equal(narrowed.counts.total, 1, 'the filter reached the rebuilt config');
+      assert.includes(session.url, 'http://localhost:', 'and it is still a live session');
+    });
+  });
+
+  test('a patch widens what is bundled, which no rerun verb can do', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      const widened = await session.restart({ inputs: [PASSING, FAILING] });
+
+      assert.true(
+        widened.counts.total > session.initial.counts.total,
+        `expected more than ${session.initial.counts.total} tests, got ${widened.counts.total}`,
+      );
+    });
+  });
+
+  test('the feeds survive a patched restart', async (assert) => {
+    // The failure this guards against is silent: both feeds are wired by pushing reporters onto
+    // `config.state.reporters`, and a rebuilt config gets a fresh array. Skipping the re-attach
+    // leaves results() and events() open and permanently empty — a session that looks alive.
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      const seen: number[] = [];
+      const consume = (async () => {
+        for await (const result of session.results()) {
+          seen.push(result.counts.total);
+          if (seen.length === 2) break;
+        }
+      })();
+
+      await session.restart({ filter: 'assert true works' });
+      await consume;
+
+      assert.deepEqual(seen, [3, 1], 'the initial run, then the reconfigured one');
+    });
+  });
+
+  test('a patch that cannot resolve leaves the session alive', async (assert) => {
+    await withWatch({ inputs: [PASSING] }, async (session) => {
+      const before = session.url;
+      let rejected = false;
+      try {
+        await session.restart({ inputs: ['test/fixtures/there-is-no-such-directory/'] });
+      } catch {
+        rejected = true;
+      }
+
+      assert.true(rejected, 'an unresolvable patch is a rejection');
+      // Resolved BEFORE the teardown precisely so this holds: a bad patch must not leave a
+      // half-demolished session behind.
+      assert.strictEqual(session.url, before, 'and the session it could not change still serves');
+      assert.equal((await session.run()).counts.total, 3, 'and still runs');
+    });
+  });
+});

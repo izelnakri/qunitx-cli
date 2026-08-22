@@ -15,7 +15,7 @@
 //   4. composition        — your reporter runs alongside a built-in one, and the result is
 //                           still returned either way
 import process from 'node:process';
-import { run, type Reporter, type ReporterContext, type TestDetails } from '../lib/api/index.ts';
+import { test, type Reporter, type ReporterContext, type TestDetails } from '../lib/api/index.ts';
 
 const FIXTURES = ['test/fixtures/passing-tests.ts', 'test/fixtures/skip-todo-tests.ts'];
 
@@ -86,7 +86,7 @@ export function nyanReporter(): Reporter {
 // `reporter` takes one, `reporters` takes several — so a reporter of your own can sit next to a
 // built-in. Passing an OBJECT does not turn printing on by itself; naming a built-in does, which
 // is why `console` here is the process streams rather than silence.
-const result = await run({
+const result = await test({
   inputs: FIXTURES,
   output: 'tmp/nyan-example',
   reporter: nyanReporter(),

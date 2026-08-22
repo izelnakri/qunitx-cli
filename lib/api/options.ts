@@ -230,9 +230,14 @@ function getReportersOf(userRunOptions: UserRunOptions): ReadonlyArray<ReporterO
  */
 export function from(
   input: UserRunOptions | string | string[] = {},
+  options?: UserRunOptions,
 ): ConfigOptions & { reporters: Reporter[] } {
+  // The positional target wins over any `inputs` in the options object: naming it there is the
+  // more specific statement of the two.
   const userRunOptions =
-    typeof input === 'string' || Array.isArray(input) ? { inputs: [input].flat() } : input;
+    typeof input === 'string' || Array.isArray(input)
+      ? { ...options, inputs: [input].flat() }
+      : input;
   validate(userRunOptions);
   const coverage = userRunOptions.coverage;
   const requestedReporters = getReportersOf(userRunOptions);

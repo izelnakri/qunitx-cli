@@ -9,7 +9,7 @@ import { Task } from '../../task/index.ts';
 import { readJsonCache } from '../../utils/read-json-cache.ts';
 import { processConsole, type Console } from '../../console.ts';
 import type { DaemonRunOptions } from './protocol.ts';
-import type { RunResult } from '../../api/run.ts';
+import type { RunResult } from '../../api/test.ts';
 import type { Request, ResponseChunk } from './protocol.ts';
 
 const CONNECT_TIMEOUT_MS = 1_000;

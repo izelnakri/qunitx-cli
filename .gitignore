@@ -9,3 +9,9 @@ npm/*/bin/
 jsr/lib/
 jsr/templates/
 jsr/package.json
+
+# Agent worktrees and machine-local settings: transient, and their presence made every
+# `make release` print "WARNING: Uncommitted changes detected" for files that are not the
+# project. Scoped rather than ignoring .claude/ wholesale, so shared config can still be committed.
+.claude/worktrees/
+.claude/settings.local.json

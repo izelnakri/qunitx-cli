@@ -1,906 +1,849 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import process from 'node:process';
+import { format } from 'node:util';
+import esbuild from 'esbuild';
+import * as Args from '../args/index.ts';
 import * as Browser from '../setup/browser.ts';
-import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
+import * as Failure from '../result/failure.ts';
+import * as Result from '../result/index.ts';
+import * as SourceMap from '../utils/source-map.ts';
 import { HTTPServer } from '../web/index.ts';
-import { bindServerToPort } from '../setup/bind-server-to-port.ts';
-import * as WebServer from '../setup/web-server.ts';
-import { openOutputInBrowser } from '../utils/open-output-in-browser.ts';
-import fs from 'node:fs/promises';
-import { normalize, resolve as resolvePath } from 'node:path';
-import { availableParallelism } from 'node:os';
-// node:timers returns Timer objects with .unref()/.ref() in both Node and Deno.
-// The bare `setTimeout` global in Deno is the Web platform variant, which returns
-// a number with no unref method.
-import { setTimeout, setInterval, clearInterval } from 'node:timers';
-import { blue, yellow } from '../utils/color.ts';
-import {
-  run as runInBrowser,
-  buildTestBundle,
-  buildAllGroupBundles,
-  flushConsoleHandlers,
-} from './run/tests-in-browser.ts';
-
-import * as RunState from '../setup/run-state.ts';
-import * as FileWatcher from '../setup/file-watcher.ts';
-import { getChangedFsTree } from '../setup/get-changed-fs-tree.ts';
-import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-html.ts';
-import { runUserModule } from '../utils/run-user-module.ts';
-import { writeOutputStaticFiles } from '../setup/write-output-static-files.ts';
-import * as TimeCounter from '../utils/time-counter.ts';
-import * as Reporter from '../reporters/index.ts';
-import { readTemplate } from '../utils/read-template.ts';
-import { isCustomTemplate } from '../utils/html.ts';
-import { closeWithGrace } from '../utils/close-with-grace.ts';
-import * as FailureCache from '../utils/failure-cache.ts';
-import * as Coverage from '../coverage/index.ts';
-import { isFilteredRun, describeActiveFilters } from '../selection/filter.ts';
-import * as Timings from './run/timings.ts';
-import { applyWatchLineTargets, resolveTargetedFiles, splitIntoGroups } from './run/grouping.ts';
-import type { QUnitSelector } from '../selection/line-targets.ts';
-import type { Config, Connections, EsbuildCache, HtmlAssets } from '../types.ts';
 import { Task } from '../task/index.ts';
+import { bindServerToPort } from '../setup/bind-server-to-port.ts';
+import { blue, red } from '../utils/color.ts';
+import { closeWithGrace } from '../utils/close-with-grace.ts';
+import { findProjectRoot } from '../utils/find-project-root.ts';
+import { pathExists } from '../utils/path-exists.ts';
+import { qunitxRuntimePlugin } from '../setup/qunitx-runtime-plugin.ts';
+import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
+import { processConsole, type Console } from '../console.ts';
+import { MAX_BROWSER_LOGS } from '../api/reporter.ts';
+import type { BrowserLog } from '../reporters/types.ts';
+import type { ConsoleMessage, Page } from 'playwright-core';
+import type { ProjectRootNotFoundFailure } from '../utils/find-project-root.ts';
+import type { SourceMapDecoder } from '../utils/source-map.ts';
 
-// Playwright navigation timeout for headed watch-mode reloads (not test execution).
-const WATCH_NAV_TIMEOUT_MS = 5_000;
-// setInterval period that keeps the event loop alive while Promise.allSettled runs.
-const KEEP_ALIVE_INTERVAL_MS = 10_000;
-// Daemon-only bound on the "connecting" phase (Browser.setup → newPage on the reused
-// browser). newPage() is the one connecting step with no timeout — it only rejects once
-// Playwright observes the transport close, which under load can lag a browser that died in
-// the microsecond window after the pre-run liveness probe passed. Without a bound, that
-// wedges the run on the 180s GROUP_TIMEOUT and hangs the client (no timeout of its own).
-// 30s is orders of magnitude over a healthy connect (sub-second) yet well under the group
-// deadline, so it only ever fires on a genuine wedge; the daemon then recovers for the next
-// run. Local runs launch a fresh browser per invocation, so this race can't apply there.
-const DAEMON_CONNECT_TIMEOUT_MS = 30_000;
+/** The path the bundle is served from. `SourceMap.isBundleUrl` knows this name. */
+const BUNDLE_ROUTE = '/script.js';
+// The wrapper imports the entry by this sentinel and {@link entryPlugin} resolves it, so no
+// path arithmetic stands between the user's file and esbuild. Not a valid bare specifier, so
+// it can never collide with a real package.
+const ENTRY_SPECIFIER = 'qunitx:script-entry';
+// Bounded because it covers Chrome reaching a localhost server we just bound, not the script's
+// own work: a page that cannot commit a navigation in 30s is broken, not slow. Script EXECUTION
+// is unbounded unless --timeout says otherwise — see ScriptConfig.timeout.
+const NAVIGATION_TIMEOUT_MS = 30_000;
+// Watch-mode debounce: one editor save is several fs events, and rebuilding on each would run the
+// script against a half-written file.
+const WATCH_DEBOUNCE_MS = 75;
 
 /**
- * How a one-shot run ended. Everything a caller needs to decide what happens next, and nothing
- * about how it should be announced — {@link run} neither writes a summary nor exits.
- *
- * That is the point of the shape: it is what `cli.ts` turns into an exit code, what the daemon
- * ships back over its socket, and what the JS API builds its result from. Three consumers, one
- * return value, and no `process.exit` between them.
+ * `qunitx run` was given no script file, or more than one.
  *
  * ```ts
- * const outcome: RunOutcome =
- *   { exitCode: 1, durationMs: 1240, startedAt: 1_760_000_000_000, finishedAt: 1_760_000_001_240 };
- * outcome.exitCode === 0; // false — at least one test failed, or a group rejected
+ * import { ScriptTargetRequired } from './run.ts';
+ *
+ * ScriptTargetRequired({ count: 0 }).data.count; // 0
+ * ScriptTargetRequired({ count: 2 }).message.startsWith('qunitx run needs'); // true
  * ```
  */
-export interface RunOutcome {
-  /** `0` when every test passed, `1` for any failure, group rejection, or empty filtered run. */
+export const ScriptTargetRequired: Failure.FailureFactory<
+  'ScriptTargetRequired',
+  { count: number }
+> = Failure.define(
+  'ScriptTargetRequired',
+  (data: { count: number }) =>
+    `qunitx run needs exactly one script file (got ${data.count}). Usage: qunitx run script.ts`,
+);
+
+/**
+ * `qunitx run` was pointed at a file that is not there.
+ *
+ * Checked here rather than left to esbuild: the entry is reached through a generated
+ * `import(...)`, and esbuild treats an unresolvable DYNAMIC import as a warning, leaving it in
+ * the bundle as a runtime fetch. The browser then 404s and reports "failed to load dynamically
+ * imported module", which names the bundler's URL instead of the user's typo.
+ *
+ * ```ts
+ * import { ScriptNotFound } from './run.ts';
+ *
+ * ScriptNotFound({ entry: '/proj/seed.ts' }).message; // 'no such script: /proj/seed.ts'
+ * ```
+ */
+export const ScriptNotFound: Failure.FailureFactory<'ScriptNotFound', { entry: string }> =
+  Failure.define('ScriptNotFound', (data: { entry: string }) => `no such script: ${data.entry}`);
+
+/**
+ * The script could not be bundled — a syntax error, or an import that does not resolve.
+ *
+ * ```ts
+ * import { ScriptBuildFailed } from './run.ts';
+ *
+ * ScriptBuildFailed({ entry: '/proj/seed.ts' }).message; // 'could not build /proj/seed.ts'
+ * ```
+ */
+export const ScriptBuildFailed: Failure.FailureFactory<'ScriptBuildFailed', { entry: string }> =
+  Failure.define('ScriptBuildFailed', (data: { entry: string }) => `could not build ${data.entry}`);
+
+/** Every way {@link setup} can reject its input. */
+export type ScriptConfigFailure =
+  | Failure.Of<typeof ScriptTargetRequired>
+  | Failure.Of<typeof ScriptNotFound>
+  | ProjectRootNotFoundFailure
+  | Args.ParseFailure;
+
+/**
+ * Everything one `qunitx run` invocation needs. Its own type rather than the test runner's
+ * `Config`: a script has no test files, no filter, no reporter and no output directory, and
+ * threading a script mode through those would make every one of them mean two things.
+ *
+ * ```ts
+ * import { silentConsole } from '../console.ts';
+ *
+ * const config: ScriptConfig = {
+ *   entry: '/proj/seed.ts',
+ *   projectRoot: '/proj',
+ *   cwd: '/proj',
+ *   browser: 'chromium',
+ *   port: 1234,
+ *   portExplicit: false,
+ *   watch: false,
+ *   open: false,
+ *   timeout: null,
+ *   console: silentConsole,
+ * };
+ * config.timeout; // null — unbounded, like `deno run`
+ * ```
+ */
+export interface ScriptConfig {
+  /** Absolute path of the script to run. */
+  entry: string;
+  /** Directory holding the nearest `package.json`; mapped stack frames print relative to it. */
+  projectRoot: string;
+  /** Directory relative imports and `node_modules` lookups resolve from. */
+  cwd: string;
+  /** Engine the script runs in. */
+  browser: 'chromium' | 'firefox' | 'webkit';
+  /** Port the local server binds. Updated in place to the port actually bound. */
+  port: number;
+  /** True when `--port` was given, which makes a taken port an error instead of a search. */
+  portExplicit: boolean;
+  /** `--watch`: re-run on every save instead of exiting after one run. */
+  watch: boolean;
+  /** `--open`: run in a visible browser window. */
+  open: boolean;
+  /** `--timeout`: ms the script may run before it is declared hung, or null for unbounded. */
+  timeout: number | null;
+  /** Where the script's own output goes. `processConsole` for the CLI. */
+  console: Console;
+}
+
+/** What one execution of the script produced. */
+export interface ScriptOutcome {
+  /** Absolute path of the file that ran, resolved against `cwd`. */
+  entry: string;
+  /**
+   * The script's `export default`, or `undefined` when it has none — or when it had one that
+   * could not be handed back, in which case {@link ScriptOutcome.valueProblem} says so.
+   */
+  value: unknown;
+  /**
+   * Why {@link ScriptOutcome.value} is `undefined` despite the script exporting something, or
+   * `null` when there is nothing to explain.
+   *
+   * Never fatal. The script ran; only the souvenir did not fit through the door, and a script
+   * whose default export is a `main()` function is a perfectly ordinary script.
+   */
+  valueProblem: string | null;
+  /** `globalThis.exitCode` if the script set one, 1 if it threw, else 0. */
   exitCode: number;
-  /** Wall-clock duration of the test phase in milliseconds. */
-  durationMs: number;
-  /** Epoch ms when the test phase began — after the bundle, at the first navigation. */
-  startedAt: number;
-  /** Epoch ms when it ended. `finishedAt - startedAt` is `durationMs` modulo clock resolution. */
-  finishedAt: number;
-}
-
-/**
- * A live watch session: the run's browser, server and file watchers, kept open.
- *
- * Returned rather than "the process stays alive and you figure it out", so a caller other than
- * the CLI — the JS API, a test of the watcher itself — can drive reruns and then shut the whole
- * thing down deterministically.
- *
- * The verbs are here rather than in the CLI's keyboard bindings because there is more than one
- * caller now: `qa` and `session.runAll()` must mean the same thing, and they only do if there is
- * one implementation. Binding a keystroke to it is `keyboard-events.ts`'s whole remaining job.
- *
- * ```ts
- * // Defined, not invoked: a real session owns a browser and a bound port.
- * async function restartOnce(session: WatchSession) {
- *   await session.run(); // same rerun the file watcher performs
- *   await session.close();
- * }
- * ```
- */
-export interface WatchSession {
-  /** The resolved config this session runs with; its `state` carries the live counters. */
-  config: Config;
-  /** The session's browser, page and HTTP server. */
-  connections: Connections;
-  /** Where the QUnit view is being served, e.g. `http://localhost:1234`. */
-  url: string;
-  /** Whether a run is executing or queued — true from the moment one is asked for. */
-  readonly running: boolean;
-  /** Re-runs now, optionally scoped to `files`; resolves when that run finishes. */
-  run(files?: string[]): Promise<void>;
-  /** Runs the whole suite, dropping any line-target selectors this session was scoped to. */
-  runAll(): Promise<void>;
-  /** Re-runs the files that last failed, or repeats the last run when nothing has failed yet. */
-  runFailed(): Promise<void>;
   /**
-   * Tells the browser to drop the rest of the current run's queue.
-   *
-   * Fire-and-forget by design: it is a message to a page that may not be running anything, and
-   * the run it interrupts settles through its own normal path. Awaiting the interrupted run is
-   * what the caller already holds a promise for.
+   * The script's own console calls and uncaught errors, in emit order and capped at
+   * {@link MAX_BROWSER_LOGS} — the same shape and the same cap a test run reports, because it is
+   * the same thing: a page's console, read over CDP.
    */
-  abort(): void;
+  browserLogs: BrowserLog[];
+  /** How many were dropped to stay under the cap. `0` when nothing was. */
+  browserLogsDropped: number;
+}
+
+/**
+ * What `qunitx run`'s argv amounts to: the one target, and the settings the flags asked for.
+ *
+ * `setup` stops here rather than building a {@link ScriptConfig}, because {@link run} builds one
+ * itself — the project-root walk, the existence check and the defaults belong to running a script,
+ * not to reading a command line, and a caller with no argv should not have to assemble them.
+ *
+ * ```ts
+ * const invocation: ScriptInvocation = { entry: 'seed.ts', settings: { browser: 'firefox' } };
+ * invocation.settings.browser; // 'firefox'
+ * ```
+ */
+export interface ScriptInvocation {
+  /** The single target, exactly as it was written on the command line. */
+  entry: string;
+  /** Everything the flags set, including the `projectRoot` the parse already resolved. */
+  settings: ScriptSettings;
+}
+
+/**
+ * Reads `qunitx run`'s argv into a target and its settings.
+ *
+ * ```ts
+ * import * as Script from './run.ts';
+ * import * as Failure from '../result/failure.ts';
+ *
+ * // Defined, not invoked: reads package.json off the real filesystem.
+ * async function configure() {
+ *   const invocation = await Script.setup(['seed.ts', '--browser=firefox']).result();
+ *   return Failure.is(invocation) ? null : invocation.settings.browser; // 'firefox'
+ * }
+ * ```
+ */
+export function setup(
+  argv: string[] = process.argv.slice(3),
+  cwd: string = process.cwd(),
+): Task<ScriptInvocation, ScriptConfigFailure> {
+  return Task(async () => {
+    const projectRoot = await findProjectRoot(cwd);
+    // The test runner's parser, so `--browser`, `--port`, `--watch`, `--open` and `--timeout` mean
+    // exactly what they mean everywhere else and a bad value is rejected with the same message.
+    // Sync, so it hands back a union — `unwrap` throws the failure by identity into this Task.
+    const flags = Result.unwrap(Args.parse(projectRoot, argv, cwd));
+
+    // `.html` positionals are peeled into htmlPaths by the shared parser; for `run` an HTML file
+    // is just as much "the one target" as a .ts file, so both lists count toward the arity check.
+    const targets = flags.inputs.concat(flags.htmlPaths ?? []);
+    if (targets.length !== 1) throw ScriptTargetRequired({ count: targets.length });
+
+    return {
+      entry: targets[0],
+      // `projectRoot` rides along because the walk already happened above — `Args.parse` needs
+      // it — and `run` skips its own when it is handed one.
+      settings: {
+        cwd,
+        projectRoot,
+        browser: flags.browser,
+        port: flags.port,
+        portExplicit: flags.portExplicit,
+        watch: flags.watch,
+        open: flags.open === true,
+        timeout: flags.timeout,
+      },
+    };
+  });
+}
+
+/** Everything a caller may set on a script run: the CLI's flags and the API's options, minus argv. */
+export interface ScriptSettings {
+  /** Directory the entry, relative imports and `node_modules` lookups resolve against. */
+  cwd?: string;
+  /** Skips the `package.json` walk when the caller has already done it. */
+  projectRoot?: string;
+  /** Engine the script runs in. Defaults to chromium. */
+  browser?: 'chromium' | 'firefox' | 'webkit';
+  /** Port the local server binds. Defaults to 1234. */
+  port?: number;
+  /** True when a port was named explicitly, which makes a taken one an error rather than a search. */
+  portExplicit?: boolean;
+  /** Re-run on every save instead of exiting after one run. */
+  watch?: boolean;
+  /** Run in a visible browser window. */
+  open?: boolean;
+  /** Ms the script may run before it is declared hung; null (the default) is unbounded. */
+  timeout?: number | null;
   /**
-   * Resolves once nothing is in flight — a no-op at the back of the rerun queue.
-   *
-   * What `abort()` is awaited through: queueing a real rerun to wait for quiet would start the
-   * very thing the caller just asked to stop.
+   * Where the script's own output goes, as `test()` and `watch()` take one. Defaults to this
+   * process's stdout and stderr; pass `silentConsole` to capture it from the result instead.
    */
-  settled(): Promise<void>;
-  /** Stops the watchers and closes the browser and server. Idempotent. */
-  close(): Promise<void>;
+  console?: Console;
 }
 
+/** The two ways naming an entry can fail, before any flag or option is even looked at. */
+export type ScriptEntryFailure = Failure.Of<typeof ScriptNotFound> | ProjectRootNotFoundFailure;
+
 /**
- * Runs the whole suite once in headless Chrome and resolves with its {@link RunOutcome}.
+ * Builds a {@link ScriptConfig} for one entry — the half of {@link setup} that is not about argv.
  *
- * ```ts
- * import type { run } from './run.ts';
- * import type { Config } from '../types.ts';
- * // Defined, not invoked: launches Chrome and runs the whole suite.
- * async function runSuite(runTests: typeof run, config: Config) {
- *   const { exitCode } = await runTests(config); // returns; deciding what that means is the caller's
- *   return exitCode;
- * }
- * ```
- */
-export async function run(config: Config): Promise<RunOutcome> {
-  disableUnsupportedCoverage(config);
-
-  // Kick off all I/O that doesn't need the HTML fixtures in parallel with resolveHtmlFixtures:
-  //   Browser.launch: CDP connect to pre-launched Chrome (~30-50ms)
-  //   Timings.read: reads tmp/test-timings.json (~2ms)
-  //   resolveHtmlFixtures: reads HTML template from disk (~5-10ms)
-  // Chrome is typically fully connected by the time resolveHtmlFixtures + splitIntoGroups resolve.
-  // Daemon mode reuses its persistent browser; local runs launch their own.
-  const daemonBrowser = config.state.daemon?.browser;
-  const browserPromise = daemonBrowser ? Promise.resolve(daemonBrowser) : Browser.launch(config);
-  const [, timings] = await Promise.all([
-    resolveHtmlFixtures(config),
-    Timings.read(config.projectRoot),
-  ]);
-
-  return await runConcurrentMode(config, timings, browserPromise);
-}
-
-/**
- * Starts a watch session: one browser, one page, every test file in a single bundle, behind an
- * HTTP server that stays up. Resolves once the initial run has finished and the watchers are
- * armed — the returned {@link WatchSession} is how the caller stops it again.
+ * Shared rather than duplicated because it is the VALIDATION: the project-root walk, the existence
+ * check, and every default. A second copy for the programmatic path is exactly the kind that
+ * drifts, and the two would then disagree about what `qunitx run x.ts` and `run('x.ts')` accept.
  *
- * ```ts
- * import type { watch } from './run.ts';
- * import type { Config } from '../types.ts';
- * // Defined, not invoked: launches Chrome and leaves it watching.
- * async function watchSuite(startWatching: typeof watch, config: Config) {
- *   const session = await startWatching(config);
- *   return session.url; // 'http://localhost:1234'
- * }
- * ```
+ * Private: {@link run} is the only caller, and a caller with no argv reaches it by calling `run`
+ * rather than by assembling a config of its own.
  */
-export async function watch(config: Config): Promise<WatchSession> {
-  disableUnsupportedCoverage(config);
-  // Load-bearing for the whole function: `runInBrowser`, the file watcher and the keyboard
-  // shortcuts all branch on it, and a session started through the JS API arrives here with the
-  // flag unset because nobody typed `--watch`.
-  config.watch = true;
-  await resolveHtmlFixtures(config);
-
-  return await runWatchMode(config);
-}
-
-// Coverage is V8-precise-coverage over CDP, which only the chromium engine exposes. For
-// firefox/webkit, warn once and disable so the rest of the pipeline treats it as off.
-function disableUnsupportedCoverage(config: Config): void {
-  if (!config.coverage || config.browser === 'chromium') return;
-  Reporter.warning(
-    config,
-    `Warning: --coverage requires the chromium browser; skipping coverage for ${config.browser}.`,
-  );
-  config.coverage = false;
-}
-
-/**
- * WATCH MODE: one browser, one page, every test file in a single bundle, behind an HTTP server
- * that stays up so the QUnit view can be kept open. Reruns are driven by the file watcher; the
- * caller owns whatever else drives them (the CLI adds keyboard shortcuts) and owns shutting the
- * session down.
- */
-async function runWatchMode(config: Config): Promise<WatchSession> {
-  const build = config.state.group.build;
-  // Line targets scope the whole watch session, so they have to narrow fsTree BEFORE the
-  // bundle below is built from it — see applyWatchLineTargets. Guarded so the common path
-  // keeps starting esbuild without an extra await.
-  if (config.lineTargets && Object.keys(config.lineTargets).length > 0) {
-    await applyWatchLineTargets(config);
-  }
-  // WATCH MODE: single browser, all test files bundled together.
-  // The HTTP server stays alive so the user can browse http://localhost:PORT
-  // and see all tests running in a single QUnit view.
-  //
-  // Start esbuild immediately so it races Chrome setup: Chrome connect + newPage (~150ms)
-  // and esbuild (~300–600ms) have no mutual dependency until page.goto() fires inside
-  // runInBrowser. The promise is stored on the group's build state so runInBrowser can
-  // await it inside its own try/catch — errors surface as BundleErrors there, keeping
-  // the watcher alive exactly as they would for a normal watch-mode build failure.
-  // Suppress unhandled rejection: esbuild can fail (syntax error, missing file) before
-  // Browser.setup completes. Without an eagerly-attached handler, Node.js detects the rejection during the
-  // Promise.all window and crashes the process. runInBrowser awaits this promise inside
-  // its own try/catch, so the rejection is handled — but only after Browser.setup resolves.
-  const preBuildPromise = buildTestBundle(config);
-  Task(preBuildPromise).ignore('pre-build rejection — re-awaited by runInBrowser');
-  build.preBuildPromise = preBuildPromise;
-
-  const [connections] = await Promise.all([
-    Browser.setup(config),
-    writeOutputStaticFiles(config, config.state.htmlAssets),
-  ]);
-  config.webServer = connections.server;
-
-  // In headed watch mode (bare --open + --watch), chrome-prelaunch.ts launches Chrome
-  // without --headless=new so the Playwright-controlled window IS the visible browser.
-  // Calling openOutputInBrowser here would open a SECOND Chrome window (a third if the
-  // user already has Chrome running and Chrome sends the URL to each open instance).
-  // For --open=<browser> (a string) Playwright stays headless, so the named binary is
-  // the only visible browser and openOutputInBrowser must still be called.
-  const isHeadedWatchMode = config.open === true && config.watch;
-  if (config.open && !isHeadedWatchMode) {
-    void openOutputInBrowser(config);
-  }
-
-  if (config.before) {
-    await runUserModule(`${config.cwd}/${config.before}`, config, 'before');
-  }
-
-  // A run-narrowing flag (--only-failed / --changed / --since) scopes only the FIRST run in
-  // watch mode. The full fsTree is left intact (Config.setup skips these filters in watch), so
-  // `qa` and file-save reruns still see every file; `qf` / `ql` cover the rest interactively.
-  let initialFilter: string[] | undefined;
-  if (config.onlyFailed) {
-    const failed = await FailureCache.filesToRerun(
-      config.projectRoot,
-      config.inputs.length > 0,
-      config.fsTree,
-    );
-    if (failed && failed.length > 0) {
-      initialFilter = failed;
-      Reporter.info(
-        config,
-        blue(
-          `qunitx --only-failed: first run scoped to ${failed.length} previously-failing test file${failed.length === 1 ? '' : 's'} — press "qa" to run all`,
-        ),
-      );
-    } else {
-      Reporter.info(config, blue(`qunitx --only-failed: no cached failures — running all tests`));
-    }
-  } else if (config.changedSince) {
-    // getChangedFsTree logs its own affected/fallback counts and returns the full tree on
-    // fallback (cold metafile / git failure / blast-radius); scope only when it narrowed.
-    const changed = Object.keys(await getChangedFsTree(config.fsTree, config, config.changedSince));
-    if (changed.length < Object.keys(config.fsTree).length) {
-      initialFilter = changed;
-      if (changed.length > 0) {
-        Reporter.info(
-          config,
-          blue(`qunitx --changed/--since: first run scoped — press "qa" to run all`),
-        );
-      }
-    }
-  }
-
-  try {
-    await runInBrowser(config, connections, initialFilter);
-  } catch (error) {
-    await closeWithGrace([connections.server?.close(), connections.browser?.close()]);
-    throw error;
-  }
-
-  // In headed watch mode, navigate the Playwright page to the special-state HTML when the
-  // initial run produced a build error or a 0-tests warning.
-  // - Build error: page.goto was never called (runTestInsideHTMLFile bailed before navigation),
-  //   so the page is still at about:blank.
-  // - No-tests warning: page.goto WAS called (the page loaded normal QUnit HTML with 0 tests),
-  //   but the no-tests fallback page is set only AFTER runTestInsideHTMLFile returns, so we must
-  //   re-navigate so the route handler can now serve the warning page.
-  if (isHeadedWatchMode && build.fallbackPage) {
-    await Task(
-      connections.page.goto(`http://localhost:${config.port}/`, {
-        waitUntil: 'commit',
-        timeout: WATCH_NAV_TIMEOUT_MS,
-      }),
-    ).ignore('headed watch-mode navigation to the fallback page');
-  }
-
-  // Every rerun — the watcher's, the CLI's keyboard shortcuts', the session's — goes through one
-  // chain. Two runs sharing a page cannot overlap: the second's `page.goto` tears down the first's
-  // JS context mid-run, and both then wait out the startup timeout. The watcher has an internal
-  // guard for its OWN events, but nothing coordinated it with a rerun asked for from outside.
-  const reruns = serializer();
-  // The two rerun shapes are NOT interchangeable, and collapsing them broke the rename tests:
-  //
-  //   whole-suite  drops the cached bundle and rebuilds it, because the file set changed
-  //   scoped       serves a freshly-built FILTERED bundle and leaves the full one alone
-  //
-  // A scoped rerun already compiles the files it was handed straight from disk, so it picks up
-  // edits without the full rebuild — paying for one would just make every `add` slower.
-  let inFlight = 0;
-  // One place that counts what is in flight, because every rerun shape goes through it. Nesting
-  // these instead — `runAll` calling `rerun` inside its own `serialize` — deadlocks: the inner
-  // call queues behind the outer one that is awaiting it.
-  //
-  // Counted at the call, not inside the queued work: the serializer defers `work` to a microtask,
-  // so a caller checking `running` on the line after asking for a rerun would be told the session
-  // was idle. "Requested but not finished" is also the more useful reading — a queued rerun is
-  // work the session owes, and a UI showing a spinner wants it up from the keystroke.
-  const serialize = (work: () => Promise<void>) => {
-    inFlight++;
-
-    return reruns(work).finally(() => inFlight--);
-  };
-  const runFiles = (files?: string[]) =>
-    files
-      ? runInBrowser(config, connections, files).then(() => {})
-      : rebuildAndRun(config, connections);
-  const rerun = (files?: string[]) => serialize(() => runFiles(files));
-  // Through the shared registry rather than `connections.server` directly: one abort mechanism
-  // for watch, batch and `signal`, so a fix to any of them is a fix to all three.
-  const abort = () => RunState.requestAbort(config.state);
-
-  const { ready: watcherReady, killFileWatchers } = FileWatcher.setup(
-    config.testFileLookupPaths,
-    config,
-    async (event, file) => {
-      if (event === 'addDir') return;
-      if (['change', 'unlink', 'unlinkDir'].includes(event)) {
-        // Ignore `change` events for files not yet in fsTree: fs.watch fires `change`
-        // before `rename` (→ `add`) when a file is first created. The `add` event
-        // will follow and trigger the correct filtered re-run.
-        if (event === 'change' && !(file in config.fsTree)) return;
-        // The cached bundle is dropped inside `rebuildAndRun`, when the rebuild starts — not
-        // here, when the event arrives. Clearing on arrival nulled `allTestCode` out from under
-        // a run already in flight, which then bailed out of its own post-navigation check having
-        // registered nothing. Serialized reruns make "at the start of the work" the safe moment.
-        if (config.debug) {
-          Reporter.info(
-            config,
-            `Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
-          );
-        }
-        return await rerun();
-      }
-      if (config.debug) {
-        Reporter.info(
-          config,
-          `Rerun triggered: ${event} → ${file.replace(`${config.projectRoot}/`, '')}`,
-        );
-      }
-      await rerun([file]);
-    },
-    async (_path, _event) => {
-      connections.server.publish('refresh');
-      // In headed watch mode the Playwright page IS the visible browser (navigator.webdriver=true
-      // means it ignores the WS 'refresh' message). Navigate it directly after a build error
-      // or a 0-tests warning so it shows the correct HTML rather than stale test results.
-      if (isHeadedWatchMode && build.fallbackPage) {
-        await Task(
-          connections.page.goto(`http://localhost:${config.port}/`, {
-            waitUntil: 'commit',
-            timeout: WATCH_NAV_TIMEOUT_MS,
-          }),
-        ).ignore('headed watch-mode re-navigation after a rebuild');
-      }
-    },
-  );
-  await watcherReady;
+async function configFor(entry: string, settings: ScriptSettings = {}): Promise<ScriptConfig> {
+  const cwd = settings.cwd ?? process.cwd();
+  const projectRoot = settings.projectRoot ?? (await findProjectRoot(cwd));
+  // Resolved here so a programmatic `run('seed.ts')` means the same file as the CLI's, which gets
+  // its absolute path from Args.parse. Already-absolute paths pass through untouched.
+  const absoluteEntry = path.resolve(cwd, entry);
+  if (!(await pathExists(absoluteEntry))) throw ScriptNotFound({ entry: absoluteEntry });
 
   return {
-    config,
-    connections,
-    url: `http://localhost:${config.port}`,
-    get running() {
-      return inFlight > 0;
-    },
-    // Rebuilds first, like the watcher's own change path: a caller asking for a rerun means
-    // "run what is on disk now", and re-serving the cached bundle would answer with what was on
-    // disk when the session started.
-    run: rerun,
-    abort,
-    // Through `reruns`, not `serialize`: a no-op is not a run, and counting it as one would make
-    // `running` true for anyone who merely asked whether the session was busy.
-    settled: () => reruns(() => Promise.resolve()),
-    runAll: () => {
-      abort();
-
-      // Cleared inside the serialized work, not before it: clearing here would also unscope a
-      // rerun already queued ahead of this one, which asked for a scoped run and would silently
-      // get a whole-suite one instead.
-      return serialize(() => {
-        // "Run all" means all: drop the line-target selections that scoped this session. `-t`/`-m`
-        // stay — those are a standing instruction about which tests to run, not a starting point.
-        config.state.group.selectors = undefined;
-
-        return runFiles();
-      });
-    },
-    // Both reads happen inside the serialized work so they see the run this one just aborted:
-    // asking for "the files that failed" before that run has recorded its failures answers with
-    // the previous run's set.
-    runFailed: () => {
-      abort();
-
-      return serialize(() => {
-        // `results.failedFiles`, NOT `group.lastFailedFiles`: the latter is assigned the whole
-        // `lastRanFiles` set whenever any test fails, so "re-run what failed" re-ran everything.
-        // This one is the per-file attribution the result reports, so the rerun is actually scoped.
-        const failed = Array.from(config.state.results.failedFiles);
-        if (failed.length === 0) {
-          Reporter.info(config, 'QUnitX: No tests failed in the last run, so repeating it');
-        }
-
-        return runFiles(
-          failed.length > 0 ? failed : (config.state.group.lastRanFiles ?? undefined),
-        );
-      });
-    },
-    close: () => closeSession(connections, killFileWatchers, build),
+    entry: absoluteEntry,
+    projectRoot,
+    cwd,
+    browser: settings.browser ?? 'chromium',
+    port: settings.port ?? 1234,
+    portExplicit: settings.portExplicit ?? false,
+    watch: settings.watch ?? false,
+    open: settings.open ?? false,
+    timeout: settings.timeout ?? null,
+    console: settings.console ?? processConsole,
   };
 }
 
 /**
- * A one-at-a-time queue for work that cannot overlap.
+ * Runs a script file in a real browser: bundles it with esbuild, serves it from a localhost
+ * origin, evaluates it as a module in the page, and streams its `console` output to this
+ * terminal. Resolves once the script's top level — including any top-level `await` — settles.
  *
- * Each call waits for the previous one to settle — succeed or fail — and resolves or rejects
- * with its own outcome. A rejected run must not poison the queue for the next one, which is why
- * the stored tail swallows while the returned promise does not.
- */
-function serializer(): <T>(work: () => Promise<T>) => Promise<T> {
-  let tail: Promise<unknown> = Promise.resolve();
-
-  return <T>(work: () => Promise<T>): Promise<T> => {
-    const next = tail.then(work, work);
-    tail = next.then(
-      () => {},
-      () => {},
-    );
-
-    return next;
-  };
-}
-
-/**
- * Drops the cached bundles, starts a rebuild, and runs — the rerun every path through watch mode
- * performs.
+ * The browser is the whole point. Running the file in Node would be `node`, which qunitx adds
+ * nothing to; running it in Chrome gives it a DOM, `fetch` against a real origin, and the same
+ * TypeScript/JSX bundling the test runner uses.
  *
- * The build is kicked off rather than awaited so it races Chrome's navigation: `runInBrowser`
- * picks the promise up from `preBuildPromise` and the `/tests.js` route awaits it before serving,
- * which is what lets the two overlap. The rejection is pre-ignored because it is re-awaited
- * inside `runInBrowser`'s own try/catch, and an esbuild failure between here and there would
- * otherwise reach Node as an unhandled rejection and take the watch process down.
- */
-function rebuildAndRun(config: Config, connections: Connections): Promise<void> {
-  const build = config.state.group.build;
-  RunState.clearBundles(build);
-  const rebuild = buildTestBundle(config);
-  Task(rebuild).ignore('watch rebuild rejection — re-awaited by runInBrowser');
-  build.preBuildPromise = rebuild;
-
-  return runInBrowser(config, connections).then(() => {});
-}
-
-/**
- * Stops a watch session's watchers and closes its browser, server and esbuild context. Bounded by
- * `closeWithGrace`, and safe to call twice — every step tolerates an already-closed handle.
+ * ```ts
+ * import * as Script from './run.ts';
  *
- * The esbuild context is the one piece the CLI never had to release: it exits the process when
- * watch mode ends, and an open incremental context holds a REF'd handle on esbuild's service child
- * (a one-shot `esbuild.build()` does not, which is why non-watch runs always exited cleanly). Left
- * behind, `await session.close()` returns and the script then hangs forever on a child nobody is
- * talking to — the JS API's whole premise is that it never calls `process.exit` for you.
+ * import type { ScriptConfig } from './run.ts';
+ *
+ * // Defined, not invoked: launches a real browser and binds a real port.
+ * async function seed() {
+ *   const outcome = await Script.run('seed.ts', { browser: 'firefox' });
+ *   return outcome.exitCode; // 0, or whatever the script assigned to globalThis.exitCode
+ * }
+ * ```
  */
-async function closeSession(
-  connections: Connections,
-  killFileWatchers: () => unknown,
-  build: EsbuildCache,
-): Promise<void> {
-  killFileWatchers();
-  await closeWithGrace([
-    Task(connections.server?.close()).ignore('watch session server.close'),
-    Task(connections.page?.close()).ignore('watch session page.close'),
-    Task(connections.browser?.close()).ignore('watch session browser.close'),
-    Task(build.context?.dispose()).ignore('watch session esbuild context dispose'),
-    shutdownPrelaunch(),
-  ]);
-  build.context = null;
-}
+export async function run(entry: string, settings: ScriptSettings = {}): Promise<ScriptOutcome> {
+  const config = await configFor(entry, settings);
+  const server = new HTTPServer();
+  let bundle = await build(config);
 
-/**
- * CONCURRENT MODE: the one-shot batch run. Files are split across groups, each group getting its
- * own page inside one shared browser so esbuild time hides behind Chrome start-up. Reporting,
- * cache persistence and cleanup all happen here; the exit code is returned, not applied.
- */
-async function runConcurrentMode(
-  config: Config,
-  timings: Record<string, number> | null,
-  browserPromise: Promise<Awaited<ReturnType<typeof Browser.launch>>>,
-): Promise<RunOutcome> {
-  const build = config.state.group.build;
-  // CONCURRENT MODE: split test files across N groups = availableParallelism().
-  // All group bundles are built while Chrome is starting up, so esbuild time
-  // is hidden behind the ~1.2s Chrome launch. Each group then gets its own
-  // HTTP server and Playwright page inside one shared browser instance.
-  const allFiles = Object.keys(config.fsTree);
-  // Empty fsTree (e.g. --changed filtered out every test, or the inputs matched no files): emit
-  // a clean TAP plan and report success. The downstream group/build pipeline assumes ≥1 file and
-  // would crash on undefined groupConfigs[0].
-  if (allFiles.length === 0) {
-    Reporter.runStart(config, { fileCount: 0, groupCount: 0 });
-    // The daemon owns its browser across runs and must keep it; a local run owns this one.
-    if (!config.state.daemon) {
-      await closeWithGrace([(await browserPromise).close(), shutdownPrelaunch()]);
-    }
-    const now = Date.now();
-    return { exitCode: 0, durationMs: 0, startedAt: now, finishedAt: now };
-  }
-  // Line-targeted files run as their own single-file groups, each carrying its own selectors.
-  // A group is one page with one QUnit config, so this is what lets `a.ts#34 b.ts` mean "the
-  // one test in a.ts, all of b.ts" — a shared page could only express one filter for both.
-  const targets = await resolveTargetedFiles(config, allFiles);
-  const targetedPaths = new Set(targets.map((target) => target.file));
-  const untargetedFiles = allFiles.filter((file) => !targetedPaths.has(file));
-  // Each targeted file already occupies a page of its own, so the untargeted files spread across
-  // whatever cores are left — never more groups than files, never fewer than one.
-  const untargetedGroupCount = Math.max(
-    1,
-    Math.min(untargetedFiles.length, availableParallelism() - targets.length),
-  );
-  const { groups: untargetedGroups, weights } = untargetedFiles.length
-    ? await splitIntoGroups(untargetedFiles, untargetedGroupCount, timings ?? {})
-    : { groups: [] as string[][], weights: new Map<string, number>() };
-  // One entry per group: the files it bundles and the selectors that scope it
-  // (undefined = no line targets, run those files whole).
-  const groups: Array<{ files: string[]; selectors: QUnitSelector[] | undefined }> = [
-    ...targets.map((target) => ({ files: [target.file], selectors: target.selectors })),
-    ...untargetedGroups.map((files) => ({ files, selectors: undefined })),
-  ];
-  const groupCount = groups.length;
-  // Shared with every group config below; RunState.reusablePageSlot() reads it to decide page reuse.
-  config.state.groupCount = groupCount;
-  // Recorded before the group configs are spread off, because the split is decided here and
-  // nowhere else — the result reports it so a caller can reproduce one group's bundle exactly.
-  config.state.groups = groups.map(({ files }, i) => ({
-    index: i,
-    files,
-    output: resolvePath(
-      config.projectRoot,
-      groupCount === 1 ? config.output : `${config.output}/group-${i}`,
-    ),
-  }));
+  server.get('/', (_request, response) => {
+    response.setHeader('Content-Type', 'text/html');
+    response.end(pageHTML());
+  });
+  server.get(BUNDLE_ROUTE, (_request, response) => {
+    response.setHeader('Content-Type', 'text/javascript');
+    response.end(bundle.code);
+  });
+  // Answered rather than 404'd: a script's stderr is its output, and the browser's own
+  // "failed to load resource" complaint about a favicon qunitx never asked for is not the
+  // script's. 204 is the cheapest way to make the browser stop asking.
+  server.get('/favicon.ico', (_request, response) => {
+    response.statusCode = 204;
+    response.end();
+  });
 
-  // All run accumulators — counter, failure sets, coverage — are cleared here, on the parent,
-  // BEFORE the group configs are spread off it below. The spread copies `state` by reference, so
-  // every group then adds into these same objects: TAP numbers stay globally sequential, failures
-  // land in one set, and the coverage report covers the whole run rather than one group's slice.
-  RunState.reset(config.state.results, !!config.coverage);
-  config.state.group.lastRanFiles = allFiles;
+  const browser = await Browser.launch(config);
+  const [page] = await Promise.all([browser.newPage(), bindServerToPort(server, config)]);
+  const url = `http://localhost:${config.port}/`;
 
-  const groupConfigs = groups.map(({ files, selectors }, i) => ({
-    ...config,
-    fsTree: Object.fromEntries(files.map((filePath) => [filePath, config.fsTree[filePath]])),
-    // Single group keeps the root output dir for backward-compatible file paths.
-    output: groupCount === 1 ? config.output : `${config.output}/group-${i}`,
-    // Everything else on `state` is deliberately shared by reference (see RunState); only
-    // `group` is replaced. That gives each group its own signals, phase, selectors and testEnd
-    // dedup map — the last one matters because two groups can legitimately share a test
-    // fullName when they bundle different files registering the same module/test names, so
-    // deduping has to be intra-group or group B's first testEnd would be dropped as group A's
-    // duplicate.
-    state: {
-      ...config.state,
-      group: {
-        ...RunState.newGroup(i, selectors),
-        groupMode: true,
-        // The parent resolved these from the HTML fixtures before any group existed; each group
-        // starts from that list and the shared-server branch below rewrites it to /group-{i}/.
-        build: {
-          ...RunState.newGroup().build,
-          htmlPathsToRunTests: [...build.htmlPathsToRunTests],
-        },
-      },
-    },
-  }));
-
-  // One shared HTTPServer for all groups (routed by /group-{i}/ prefix) when using the
-  // default '/' HTML path. Falls back to per-group servers for custom HTML templates.
-  const sharedServer =
-    groupCount > 1 && build.htmlPathsToRunTests[0] === '/' && build.htmlPathsToRunTests.length === 1
-      ? (() => {
-          const s = new HTTPServer();
-          config.state.aborters.add(() => s.publish('abort'));
-          WebServer.setupGroupWSHandler(s, groupConfigs);
-          groupConfigs.forEach((gc) => WebServer.registerGroupRoutes(s, gc));
-          WebServer.registerSharedStaticHandler(s, groupConfigs);
-          return s;
-        })()
-      : null;
-
-  Reporter.runStart(config, { fileCount: allFiles.length, groupCount });
-
-  // Build all group bundles and write static files while the browser is starting up.
-  // Bind the shared server's port in the same parallel window when active.
-  const [browser] = await Promise.all([
-    browserPromise!,
-    sharedServer
-      ? bindServerToPort(sharedServer, config).then(() =>
-          groupConfigs.forEach((gc, i) => {
-            gc.port = config.port;
-            gc.state.group.build.htmlPathsToRunTests = [`/group-${i}/`];
-          }),
-        )
-      : Promise.resolve(),
-    Promise.all([
-      groupCount > 1 ? buildAllGroupBundles(groupConfigs) : buildTestBundle(groupConfigs[0]),
-      Promise.all(groupConfigs.map((gc) => writeOutputStaticFiles(gc, gc.state.htmlAssets))),
-    ]),
-  ]);
-
-  // Open immediately after static files are ready — no need to wait for tests to finish.
-  if (config.open) {
-    void openOutputInBrowser(config);
-  }
-  const timer = TimeCounter.start();
-  const startedAt = Date.now();
-  const wallTimes = new Map<number, number>();
-
-  // 3-minute per-group deadline. Firefox/WebKit can hang indefinitely in any Playwright
-  // operation (browser.newPage, page.evaluate, page.close) when overwhelmed by concurrent
-  // pages. Without this outer timeout, one stuck group freezes Promise.allSettled forever.
-  // After all groups settle, browser.close() (below) terminates the browser and unblocks
-  // any still-pending Playwright calls in background async fns.
-  const GROUP_TIMEOUT_MS = 3 * 60 * 1000;
-
-  // Keep the event loop alive during Promise.allSettled. The Chrome child process and its
-  // stderr pipe are unref'd (pre-launch-chrome.js). If Chrome crashes during group cleanup,
-  // all active handles close and the event loop would drain — exiting silently before
-  // allSettled resolves or results are printed. This interval holds the loop open so that
-  // unref'd group/page-close timers can still fire normally.
-  const keepAlive = setInterval(() => {}, KEEP_ALIVE_INTERVAL_MS);
-
-  const groupResults = await Promise.allSettled(
-    groupConfigs.map((groupConfig, i) => {
-      const groupTimeout = new Promise((_, reject) => {
-        const timeoutId = setTimeout(() => {
-          const files = Object.keys(groupConfig.fsTree).map((filePath) =>
-            filePath.replace(`${groupConfig.projectRoot}/`, ''),
-          );
-          reject(
-            new Error(
-              `Group ${i} timed out after ${GROUP_TIMEOUT_MS / 1000}s in phase '${groupConfig.state.group.phase ?? 'unknown'}'\n  Files: ${files.join(', ')}`,
-            ),
-          );
-        }, GROUP_TIMEOUT_MS);
-        timeoutId.unref();
-      });
-
-      const startMs = Date.now();
-      const work = (async () => {
-        groupConfig.state.group.phase = 'connecting';
-        const connectWork = Browser.setup(groupConfig, browser, sharedServer);
-        // Daemon runs reuse a persistent browser; bound the connect so a handle that
-        // died just after the pre-run probe fails fast here (recovered next run) instead
-        // of wedging until GROUP_TIMEOUT. See DAEMON_CONNECT_TIMEOUT_MS.
-        const connections = config.state.daemon
-          ? await Promise.race([
-              connectWork,
-              new Promise<never>((_, reject) => {
-                const t = setTimeout(
-                  () =>
-                    reject(
-                      new Error(
-                        `Group ${i} browser connect timed out after ${DAEMON_CONNECT_TIMEOUT_MS / 1000}s — the daemon's browser appears to have died mid-connect`,
-                      ),
-                    ),
-                  DAEMON_CONNECT_TIMEOUT_MS,
-                );
-                t.unref();
-              }),
-            ])
-          : await connectWork;
-        groupConfig.webServer = connections.server;
-
-        if (config.before) {
-          await runUserModule(`${config.cwd}/${config.before}`, groupConfig, 'before');
-        }
-
-        try {
-          await runInBrowser(groupConfig, connections);
-        } finally {
-          await flushConsoleHandlers(
-            groupConfig.state.group.pendingConsoleHandlers,
-            connections.page,
-          );
-          // Daemon single-group fast path: stash the page on the slot for the next run instead
-          // of closing it (saves ~70-130ms of newPage cost per warm run). Mid-page state is
-          // dropped by the next run's page.goto(testUrl), which destroys the JS context.
-          // RunState.reusablePageSlot() withholds the slot outside single-group daemon runs, and a
-          // disconnected page falls through to close.
-          const pageSlot = RunState.reusablePageSlot(groupConfig.state);
-          const reusePage = pageSlot && connections.page && !connections.page.isClosed();
-          if (reusePage) pageSlot.page = connections.page;
-          // Per-group cleanup, bounded so a deadlocked page.close (Firefox/WebKit under
-          // load) cannot wedge Promise.allSettled forever. The shared server is closed
-          // in the final cleanup pass below, not here.
-          await closeWithGrace([
-            sharedServer ? undefined : connections.server?.close(),
-            reusePage ? undefined : connections.page?.close(),
-          ]);
-        }
-      })();
-      const record = () => wallTimes.set(i, Date.now() - startMs);
-      work.then(record, record);
-      return Promise.race([work, groupTimeout]);
-    }),
-  );
-
-  let exitCode = groupResults.reduce(
-    (code, result) => {
-      // `reason` only exists on the rejected arm of the union, so narrow before reading it.
-      if (result.status !== 'rejected') return code;
-      // Raw and stderr-only: a rejected group's reason is an Error whose stack IS the diagnostic,
-      // and un-prefixed multi-line text on stdout would corrupt the TAP document.
-      Reporter.error(config, `${(result.reason as Error)?.stack ?? String(result.reason)}\n`, {
-        raw: true,
-        stream: 'error',
-      });
-      return 1;
-    },
-    config.state.results.counter.failed > 0 ? 1 : 0,
-  );
-
-  if (config.state.results.counter.total === 0 && exitCode === 0) {
-    if (isFilteredRun(config)) {
-      // A filter matching nothing is a typo, not a green run — every neighbouring runner
-      // fails here, and passing CI on a mistyped -t is the worst outcome available.
-      Reporter.warning(config, `No tests matched ${describeActiveFilters(config)}`);
-      exitCode = 1;
-    } else {
-      const fileWord = allFiles.length === 1 ? 'file' : 'files';
-      Reporter.warning(
-        config,
-        `Warning: 0 tests registered — no QUnit test cases found in ${allFiles.length} ${fileWord}`,
-      );
+  if (!config.watch) {
+    try {
+      return await execute(page, url, config, () => bundle);
+    } finally {
+      // Bounded, never sequential awaits: once the server, browser and Chrome are gone no handle
+      // holds the loop open, so a close that never settles drains it and the process exits 0 with
+      // the real exit code computed and never committed. closeWithGrace's timer is itself a live
+      // handle, so the loop cannot drain out from under the exit code.
+      await closeWithGrace([server.close(), browser.close(), shutdownPrelaunch()]);
     }
   }
 
-  const durationMs = timer.stop();
-  const finishedAt = Date.now();
-  await Reporter.runEnd(config, { durationMs });
+  // The watcher goes up BEFORE the first run, and the first run goes THROUGH it. Both halves
+  // matter: a save landing during that first run used to be dropped, and once it was not, it
+  // started a second execute() against the same page while the first was still navigating.
+  // Never resolves: watch mode ends when the process is signalled.
+  let first = true;
+  const watched = await realWatchDirectories(bundle.watchDirectories);
 
-  if (config.coverage) await Coverage.Report.write(config, allFiles);
+  return await watchLoop(watched, async () => {
+    if (!first) bundle = await build(config);
+    await execute(page, url, config, () => bundle);
+    if (!first) return;
+    first = false;
+    console.log('#', blue(`Watching ${path.relative(config.projectRoot, config.entry)} on ${url}`));
+  });
+}
 
-  // A test-level filter (-t/-m/line target) makes both caches lie: a file that ran 1 of its
-  // 30 tests records ~1/30th of its wall time, which mis-packs every future full run, and its
-  // failure set is only the matched subset. File-level narrowing (--only-failed/--changed) is
-  // fine — those still run whole files.
-  const filteredRun = isFilteredRun(config);
-  const fileTimes = Timings.compute(
-    groups.map((group) => group.files),
-    weights,
-    wallTimes,
-  );
-  if (!filteredRun) {
-    Task(Timings.persist(fileTimes, config.projectRoot)).ignore('Timings.persist');
-  }
-  // Persist this run's failures for the next `--only-failed`. An empty set (all green) is
-  // written too, so a passing re-run clears the cache. Awaited on the exit path below (unlike
-  // timings, which tolerate loss) so a slow filesystem can't lose the cache to process.exit.
-  const failureCacheWrite = filteredRun
-    ? null
-    : Task(FailureCache.write(config.projectRoot, FailureCache.build(config))).ignore(
-        'FailureCache.write',
-      );
-  if (config.debug) Timings.print(fileTimes, config.projectRoot);
-
-  if (config.after) {
-    await runUserModule(`${config.cwd}/${config.after}`, config.state.results.counter, 'after');
-  }
-
-  // Daemon mode: close the per-run shared server (if any) but never the browser — the daemon
-  // owns it across runs, and the next run reuses it.
-  if (config.state.daemon) {
-    await closeWithGrace([Task(sharedServer?.close()).ignore('server.close')]);
-    clearInterval(keepAlive);
-    return { exitCode, durationMs, startedAt, finishedAt };
-  }
-
-  // Cleanup happens here, before returning, rather than inside a `process.stdout.write` drain
-  // callback racing an unref'd exit timer. The old shape existed because this function ended the
-  // process; now that the caller does, "finish cleaning up, then hand back the outcome" is both
-  // simpler and stricter — the failure cache can no longer be lost to an exit that fires first.
-  //
-  // keepAlive is cleared AFTER cleanup so the interval holds the event loop open throughout,
-  // preventing a premature drain if every close resolves instantly (e.g. Chrome already dead)
-  // before proc.ref() takes effect inside shutdownPrelaunch. closeWithGrace bounds the other
-  // side: Playwright's browser.close() can deadlock on Firefox + Windows.
-  await closeWithGrace([
-    failureCacheWrite,
-    Task(sharedServer?.close()).ignore('server.close'),
-    Task(browser.close()).ignore('browser.close'),
-    shutdownPrelaunch(),
-  ]);
-  clearInterval(keepAlive);
-
-  return { exitCode, durationMs, startedAt, finishedAt };
+/** One build of the script: the bundle text, its source map, and what watch mode should watch. */
+interface ScriptBundle {
+  code: string;
+  decoder: SourceMapDecoder | null;
+  /** Directories holding the first-party files that went into the bundle. */
+  watchDirectories: string[];
+  /**
+   * Whether the entry is an ES module — the only kind of file that can have a default export.
+   *
+   * A script with no `import` or `export` anywhere is not one: esbuild compiles it as CommonJS,
+   * so the namespace's `default` is the synthesized `module.exports`, an empty object the script
+   * never wrote. That is indistinguishable from a real `export default {}` by the time it reaches
+   * the page — same keys, same value — so the question has to be settled here, where the bundler
+   * still knows the answer.
+   */
+  entryIsModule: boolean;
 }
 
 /**
- * Reads each HTML fixture file referenced by the config, classifies them as dynamic (have qunitx
- * tokens, get bundle-injection at request time) or static, collects internal asset paths, and
- * resolves the main HTML the test runtime is injected into. Populates `state.htmlAssets` and the
- * run's `htmlPathsToRunTests`; both are read by `run()` and the daemon's `runOnce()`.
+ * Bundles the entry behind a `try` / `await import(...)` wrapper.
+ *
+ * The wrapper is what makes the mode work at all. esbuild lowers a dynamically imported
+ * top-level-await module into an async initialiser, so `await` at the script's top level is legal
+ * — a bare `iife` bundle rejects it outright — AND a rejection there is caught rather than
+ * escaping as an unhandled rejection with no stack the page can hand back.
  */
-async function resolveHtmlFixtures(config: Config): Promise<void> {
-  const htmlBuffers = await Promise.all(
-    config.htmlPaths.map((htmlPath) => fs.readFile(htmlPath).catch(() => null)),
-  );
-  const htmlAssets = config.state.htmlAssets;
-  const build = config.state.group.build;
-  config.htmlPaths.reduce((result, _htmlPath, index) => {
-    const buffer = htmlBuffers[index];
-    if (buffer === null) return result;
-    const filePath = config.htmlPaths[index];
-    const html = buffer.toString();
-
-    if (isCustomTemplate(html)) {
-      htmlAssets.dynamicContentHTMLs[filePath] = html;
-      result.htmlPathsToRunTests.push(filePath.replace(config.projectRoot, ''));
-    } else {
-      Reporter.warning(
-        config,
-        yellow(
-          `WARNING: Static html file with no {{qunitxScript}} or handlebars-style tokens detected. Therefore ignoring ${filePath}`,
-        ),
-      );
-      htmlAssets.staticHTMLs[filePath] = html;
-    }
-
-    findInternalAssetsFromHTML(html).forEach((key) => {
-      htmlAssets.assets.add(normalizeInternalAssetPathFromHTML(config.projectRoot, key, filePath));
+async function build(config: ScriptConfig): Promise<ScriptBundle> {
+  const result = await esbuild
+    .build({
+      stdin: { contents: wrapperSource(), resolveDir: config.cwd },
+      nodePaths: ancestorNodeModules(config.cwd),
+      // Pinned, not defaulted: metafile input paths are relative to it, and leaving it implicit
+      // made them relative to process.cwd() while they were being resolved against projectRoot —
+      // the same directory only until someone runs a script from outside their project.
+      absWorkingDir: config.cwd,
+      bundle: true,
+      write: false,
+      metafile: true,
+      logLevel: 'silent',
+      // esm, not iife: `<script type="module">` is what gives the script a real `import.meta.url`
+      // and lets esbuild keep the awaits rather than rejecting the build.
+      format: 'esm',
+      outdir: config.projectRoot,
+      keepNames: true,
+      legalComments: 'none',
+      target: esbuildTarget(config.browser),
+      sourcemap: 'inline',
+      jsx: 'automatic',
+      plugins: [entryPlugin(config.entry), qunitxRuntimePlugin(config.cwd)],
+    })
+    .catch((cause: unknown) => {
+      throw ScriptBuildFailed({ entry: config.entry }, { cause });
     });
 
-    return result;
-  }, build);
+  const code = result.outputFiles[0].text;
+  const inputs = Object.entries(result.metafile.inputs);
+  // Keys are relative to `absWorkingDir` when there is a relative form and absolute when there
+  // is not, which `resolve` flattens either way. esbuild leaves `format` unset for a file with
+  // no module syntax at all rather than calling it cjs, so only `esm` counts as a yes.
+  const entry = inputs.find(([input]) => path.resolve(config.cwd, input) === config.entry);
 
-  if (build.htmlPathsToRunTests.length === 0) {
-    build.htmlPathsToRunTests = ['/'];
-  }
-
-  await resolveMainHTML(config.projectRoot, htmlAssets);
+  return {
+    code,
+    decoder: SourceMap.extractInline(code, config.projectRoot),
+    watchDirectories: watchDirectoriesFrom(
+      inputs.map(([input]) => input),
+      config.cwd,
+    ),
+    entryIsModule: entry?.[1].format === 'esm',
+  };
 }
 
-/** Picks the page the test runtime is injected into, falling back to the bundled template. */
-async function resolveMainHTML(projectRoot: string, htmlAssets: HtmlAssets): Promise<void> {
-  const mainHTMLPath = Object.keys(htmlAssets.dynamicContentHTMLs)[0];
-  if (mainHTMLPath) {
-    htmlAssets.mainHTML = {
-      filePath: mainHTMLPath,
-      html: htmlAssets.dynamicContentHTMLs[mainHTMLPath],
+/**
+ * The directories watch mode should watch, from esbuild's metafile input keys.
+ *
+ * esbuild reports inputs relative to `absWorkingDir` when it can and ABSOLUTELY when it cannot —
+ * a script on another Windows drive than the project has no relative form. `resolve` handles both
+ * because an absolute second argument wins outright; the earlier code only ever saw the relative
+ * case. `node_modules` is dropped (a dependency edit is not a script edit) along with esbuild's
+ * synthetic `<stdin>` entry, which is not a file at all.
+ *
+ * `pathApi` is injected so the Windows shape is provable from a POSIX host.
+ *
+ * ```ts
+ * import path from 'node:path';
+ * import { watchDirectoriesFrom } from './run.ts';
+ *
+ * watchDirectoriesFrom(['<stdin>', 'scripts/seed.ts'], '/proj', path.posix); // ['/proj/scripts']
+ * ```
+ */
+export function watchDirectoriesFrom(
+  inputs: string[],
+  cwd: string,
+  pathApi: Pick<typeof path, 'resolve' | 'dirname'> = path,
+): string[] {
+  const directories = inputs
+    .filter((input) => !input.includes('node_modules') && !input.startsWith('<'))
+    .map((input) => pathApi.dirname(pathApi.resolve(cwd, input)));
+
+  return [...new Set(directories)];
+}
+
+/**
+ * Expands each directory to its real path before anything watches it.
+ *
+ * Windows 8.3 short names are why. A script under `C:\Users\RUNNER~1\…` registers the watch on
+ * the short spelling, while ReadDirectoryChangesW reports its events under the expanded long one.
+ * libuv prefix-compares the two and, when they disagree, ABORTS the process outright
+ * (`uv_fs_event`, src/win/fs-event.c) — so the CLI dies mid-watch having printed nothing, which
+ * is indistinguishable from a hang. Nothing else in the chain normalises the path: esbuild's
+ * metafile echoes back whatever {@link entryPlugin} was handed, which is the spelling the user
+ * typed. Same reason the test runner's own watcher realpaths what it walks.
+ *
+ * A directory that will not resolve is kept as given — watching the path as typed beats not
+ * watching it at all.
+ *
+ * ```ts
+ * import { realWatchDirectories } from './run.ts';
+ *
+ * await realWatchDirectories(['/a', '/b'], (directory) => Promise.resolve(`${directory}-real`));
+ * // ['/a-real', '/b-real']
+ * ```
+ */
+export async function realWatchDirectories(
+  directories: string[],
+  realpath: (directory: string) => Promise<string> = (directory) => fs.promises.realpath(directory),
+): Promise<string[]> {
+  const resolved = await Promise.all(
+    directories.map((directory) => realpath(directory).catch(() => directory)),
+  );
+
+  return [...new Set(resolved)];
+}
+
+/**
+ * Hands esbuild the entry's absolute path for {@link ENTRY_SPECIFIER}.
+ *
+ * The wrapper used to import the entry by a relative specifier computed with `path.relative`,
+ * which has no answer across Windows drive letters: with the project on `D:` and the script under
+ * `C:\…\Temp`, it returns the absolute target, and prefixing `./` to that produced `./C:/…`.
+ * esbuild cannot resolve that, and an unresolvable DYNAMIC import is only a warning — so the
+ * build "succeeded" and the page 404'd instead of the syntax error being reported.
+ */
+function entryPlugin(entry: string): esbuild.Plugin {
+  return {
+    name: 'qunitx-script-entry',
+    setup(build) {
+      build.onResolve({ filter: new RegExp(`^${ENTRY_SPECIFIER}$`) }, () => ({ path: entry }));
+    },
+  };
+}
+
+/** The entry esbuild actually compiles. `globalThis.exitCode` is the script's `process.exitCode`. */
+// Injected into the page as source, because the check has to happen BEFORE the value crosses the
+// CDP boundary — by the time it reaches Node it has been through JSON and the evidence is gone.
+//
+// An allow-list walk rather than a JSON round-trip comparison. The round trip cannot see the cases
+// that matter: `Object.keys(new Map([['a', 1]]))` is `[]`, so a Map compares equal to the `{}` it
+// would arrive as. Naming what IS allowed leaves no such hole, and the path in the message points
+// at the offending field rather than the whole value.
+const SERIALIZABLE_CHECK = `(() => {
+  const value = namespace.default;
+  const describe = (candidate) => {
+    if (candidate === null) return 'null';
+    else if (typeof candidate !== 'object') return 'a ' + typeof candidate;
+    const tag = Object.prototype.toString.call(candidate).slice(8, -1);
+    if (tag !== 'Object') return 'a ' + tag;
+    const prototype = Object.getPrototypeOf(candidate);
+    return prototype === Object.prototype || prototype === null
+      ? 'an object'
+      : 'an instance of ' + (candidate.constructor && candidate.constructor.name || 'a class');
+  };
+
+  const offend = (candidate, path) => {
+    const type = typeof candidate;
+    if (candidate === null || type === 'boolean' || type === 'string') return null;
+    else if (type === 'number') {
+      return Number.isFinite(candidate) ? null : path + ' is ' + candidate + ', which JSON turns into null';
+    } else if (type !== 'object') return path + ' is ' + describe(candidate);
+    else if (Array.isArray(candidate)) {
+      for (let index = 0; index < candidate.length; index++) {
+        const found = offend(candidate[index], path + '[' + index + ']');
+        if (found) return found;
+      }
+      return null;
+    }
+    const prototype = Object.getPrototypeOf(candidate);
+    if (prototype !== Object.prototype && prototype !== null) return path + ' is ' + describe(candidate);
+    for (const key of Object.keys(candidate)) {
+      const found = offend(candidate[key], path ? path + '.' + key : key);
+      if (found) return found;
+    }
+    return null;
+  };
+
+  if (value === undefined) return { value: undefined };
+  const problem = offend(value, '');
+  if (problem) return { problem: problem.replace(/^ is /, 'the value is ') };
+  try {
+    return { value: JSON.parse(JSON.stringify(value)) };
+  } catch (error) {
+    return { problem: 'JSON cannot represent it: ' + String((error && error.message) || error) };
+  }
+})()`;
+
+function wrapperSource(): string {
+  return `globalThis.__qunitxScript = { done: null };
+(async () => {
+  try {
+    const namespace = await import(${JSON.stringify(ENTRY_SPECIFIER)});
+    // The default export, checked BEFORE it crosses. The done signal travels by
+    // \`jsonValue()\`, which is JSON semantics — a Map would arrive as {}, a function would
+    // vanish, a Date would silently become a string. Withholding it here is what stops a value
+    // that "worked" from lying about itself on the other side. The run stands either way: the
+    // script finished, and what it exported is no business of whether it succeeded.
+    const unwrapped = ${SERIALIZABLE_CHECK};
+    globalThis.__qunitxScript.done = {
+      ok: true,
+      exitCode: Number.isInteger(globalThis.exitCode) ? globalThis.exitCode : 0,
+      value: unwrapped.value,
+      valueProblem: unwrapped.problem,
     };
-  } else {
-    const html = await readTemplate('setup/tests.hbs');
-    htmlAssets.mainHTML = { filePath: `${projectRoot}/test/tests.html`, html };
-    // qunit.css (linked by the template) is served by the web server from the CLI's own embedded
-    // copy — see the /node_modules/qunitx/vendor/qunit.css route in web-server.ts. It is no longer
-    // copied out of the consumer's node_modules, so projects need not install `qunitx`.
+  } catch (error) {
+    globalThis.__qunitxScript.done = { ok: false, stack: String((error && error.stack) || error) };
+  }
+})();
+`;
+}
+
+function pageHTML(): string {
+  return `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>qunitx run</title></head>
+<body><script type="module" src="${BUNDLE_ROUTE}"></script></body>
+</html>
+`;
+}
+
+/** What the page reports back once the script's top level has settled. */
+interface DoneSignal {
+  ok: boolean;
+  exitCode?: number;
+  stack?: string;
+  /** The default export, already checked in the page. Absent when it could not be handed back. */
+  value?: unknown;
+  /** Set instead of `value` when the export could not be handed back, and says why. */
+  valueProblem?: string;
+}
+
+/** The one property {@link wrapperSource} adds to the page's global object. */
+type ScriptGlobal = { __qunitxScript?: { done: DoneSignal | null } };
+
+/**
+ * Navigates, streams the page's console to this terminal, and waits for the script to settle.
+ *
+ * `bundleOf` is a getter rather than the bundle itself because watch mode rebuilds between
+ * executions: the handlers installed here must read whichever bundle is currently loaded, not
+ * the one they closed over on the first run.
+ */
+async function execute(
+  page: Page,
+  url: string,
+  config: ScriptConfig,
+  bundleOf: () => ScriptBundle,
+): Promise<ScriptOutcome> {
+  // Capped the way a test run caps its own: a script that logs in a loop must not grow this array
+  // until the process dies, and dropping from the FRONT keeps the lines next to whatever went
+  // wrong. `browserLogsDropped` is what stops that being a silent truncation.
+  const browserLogs: BrowserLog[] = [];
+  let browserLogsDropped = 0;
+  const record = (log: BrowserLog) => {
+    browserLogs.push(log);
+    if (browserLogs.length > MAX_BROWSER_LOGS) {
+      browserLogs.shift();
+      browserLogsDropped++;
+    }
+  };
+
+  // Console arguments are fetched the moment the event fires, so the round-trips overlap, but
+  // WRITTEN through a chain, so the terminal's line order is the page's emit order. Fetching
+  // inside the chain would serialise every round-trip; writing outside it would let a message
+  // carrying a big object land after one emitted later.
+  let writes: Promise<void> = Promise.resolve();
+  const onConsole = (message: ConsoleMessage) => {
+    const rendered = renderConsoleMessage(message);
+    const type = message.type();
+    const write = isErrorLevel(type) ? config.console.error : config.console.log;
+    writes = writes.then(async () => {
+      const text = mapStack(await rendered, bundleOf().decoder, config.projectRoot);
+      // Recorded on the same chain that writes it, so `browserLogs` ends up in the page's emit
+      // order rather than in whatever order the argument round-trips happened to resolve.
+      record({ type, text, args: [] });
+      // The newline belongs to the caller with this Console shape — `streamConsole` writes what it
+      // is given, verbatim. Without it a script's output runs into whatever is printed next.
+      write(`${text}\n`);
+    });
+  };
+  const uncaught: string[] = [];
+  const onPageError = (error: Error) => {
+    uncaught.push(error.stack ?? String(error));
+    record({ type: 'pageerror', text: error.stack ?? String(error), args: [] });
+  };
+  page.on('console', onConsole);
+  page.on('pageerror', onPageError);
+
+  try {
+    // reload rather than goto when the URL already matches: watch mode re-runs the same page, and
+    // Playwright treats a goto to the current URL as a no-op navigation.
+    const navigation = { timeout: NAVIGATION_TIMEOUT_MS, waitUntil: 'commit' as const };
+    await (page.url() === url ? page.reload(navigation) : page.goto(url, navigation));
+
+    const handle = await page.waitForFunction(
+      () => (globalThis as ScriptGlobal).__qunitxScript?.done ?? null,
+      null,
+      // Playwright reads 0 as "no timeout", which is what an absent --timeout means here.
+      { timeout: config.timeout ?? 0 },
+    );
+    const done = (await handle.jsonValue()) as DoneSignal;
+
+    // Drain before deciding anything. A `console.log` on the script's last line and the done
+    // signal travel the same CDP channel, so the log event is already queued — but its argument
+    // round-trip is not, and returning here would cut it off mid-flight.
+    await page.evaluate(() => 0).catch(() => {});
+    await writes;
+
+    if (!done.ok) {
+      config.console.error(
+        `${red(mapStack(done.stack ?? '', bundleOf().decoder, config.projectRoot))}\n`,
+      );
+    } else {
+      uncaught.forEach((stack) =>
+        config.console.error(`${red(mapStack(stack, bundleOf().decoder, config.projectRoot))}\n`),
+      );
+    }
+
+    // A script that threw has nothing to hand back, and one whose entry is not a module never had
+    // a default export to begin with. Either way the value it ran with is no value at all.
+    const carried = done.ok && bundleOf().entryIsModule;
+
+    return {
+      entry: config.entry,
+      value: carried ? done.value : undefined,
+      valueProblem: (carried && done.valueProblem) || null,
+      exitCode: !done.ok || uncaught.length > 0 ? 1 : (done.exitCode ?? 0),
+      browserLogs,
+      browserLogsDropped,
+    };
+  } finally {
+    page.off('console', onConsole);
+    page.off('pageerror', onPageError);
   }
 }
 
-function normalizeInternalAssetPathFromHTML(
-  projectRoot: string,
-  assetPath: string,
-  htmlPath: string,
-): string {
-  const currentDirectory = htmlPath ? htmlPath.split('/').slice(0, -1).join('/') : projectRoot;
-  return assetPath.startsWith('./')
-    ? normalize(`${currentDirectory}/${assetPath.slice(2)}`)
-    : normalize(`${currentDirectory}/${assetPath}`);
+/**
+ * `console.log`'s own renderer, so the terminal line is byte-identical to what the page printed.
+ *
+ * A message with NO args is not an empty message: browser-generated entries (a failed resource
+ * load, a CSP violation) carry their text and nothing else, and rendering their empty arg list
+ * printed a blank line where the reason should have been.
+ */
+async function renderConsoleMessage(message: ConsoleMessage): Promise<string> {
+  const args = await Promise.all(message.args().map((arg) => arg.jsonValue())).catch(() => null);
+
+  return args?.length ? format(...args) : message.text();
+}
+
+function isErrorLevel(type: string): boolean {
+  return type === 'error' || type === 'warning' || type === 'assert';
+}
+
+/**
+ * Rewrites `script.js:LINE:COL` frames back to source and drops qunitx's own. Applied to every
+ * line the script prints, not just thrown stacks: `console.error(error)` renders a stack too, and
+ * a trace pointing into a generated bundle is the one thing that makes a browser runner feel
+ * unlike a local one. Lines that are not stack frames are returned untouched.
+ */
+function mapStack(text: string, decoder: SourceMapDecoder | null, projectRoot: string): string {
+  const mapped = decoder ? SourceMap.resolveStack(text, decoder, projectRoot).resolvedStack : text;
+
+  return mapped
+    .split('\n')
+    .filter((line) => !isInternalFrame(line))
+    .join('\n');
+}
+
+/**
+ * True for a frame inside {@link wrapperSource} or esbuild's module scaffolding. These sit below
+ * every frame the user wrote, on every trace, and say nothing about their code — the same reason
+ * Node hides its own `node:internal/` frames. A frame that resolved back to source is always
+ * kept, so a user file named `stdin.ts` cannot be swallowed by this.
+ */
+function isInternalFrame(line: string): boolean {
+  return /^\s+at\s.*(?:<stdin>|\/script\.js):\d+:\d+\)?\s*$/.test(line);
+}
+
+/**
+ * Runs `run` once, then again on every change to a first-party file in the bundle. Never resolves
+ * — watch mode ends when the process is signalled — except to REJECT if the very first run
+ * throws, which is a script that never started rather than a bad edit to recover from.
+ *
+ * Runs are serialised, and the FIRST run is serialised with them. It is the slowest of the
+ * session (bundle, browser launch, navigate), so it is the likeliest one to receive a save; left
+ * outside the guard, that save began a second run against the same page while the first was still
+ * navigating, and the two wedged each other until the watch timed out. A change arriving mid-run
+ * is remembered rather than dropped — the run in flight is already executing stale code.
+ *
+ * Watches DIRECTORIES rather than the files themselves: editors save by writing a temp file and
+ * renaming it over the original, which severs a per-file watch on the very first save.
+ *
+ * `watch` is injected so the serialisation is testable without a filesystem.
+ *
+ * ```ts
+ * import { watchLoop } from './run.ts';
+ *
+ * // Defined, not invoked: the returned promise settles only on a first-run failure.
+ * function example() {
+ *   return watchLoop([], () => Promise.resolve(), () => {});
+ * }
+ * ```
+ */
+export function watchLoop(
+  directories: string[],
+  run: () => Promise<void>,
+  watch: (directory: string, listener: () => void) => void = (directory, listener) =>
+    void fs.watch(directory, listener),
+  debounceMs: number = WATCH_DEBOUNCE_MS,
+): Promise<never> {
+  return new Promise<never>((_resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let running = false;
+    let pending = false;
+    let first = true;
+
+    const trigger = async (): Promise<void> => {
+      if (running) return void (pending = true);
+      running = true;
+      const failure = await run().then(
+        () => null,
+        (error: unknown) => error,
+      );
+      running = false;
+      if (failure && first) return reject(failure);
+      if (failure) process.stderr.write(`${red(String(failure))}\n`);
+      first = false;
+      if (pending) {
+        pending = false;
+        await trigger();
+      }
+    };
+    const rerun = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void trigger(), debounceMs);
+    };
+
+    directories.forEach((directory) => watch(directory, rerun));
+    void trigger();
+  });
+}
+
+/**
+ * All `node_modules` directories on `dir`'s ancestor chain, nearest first — esbuild's `nodePaths`,
+ * so a script outside the project root can still import packages installed above it.
+ */
+function ancestorNodeModules(dir: string): string[] {
+  return dir
+    .split(path.sep)
+    .map((_, index, parts) =>
+      path.join(parts.slice(0, parts.length - index).join(path.sep) || path.sep, 'node_modules'),
+    );
+}
+
+/** Matches the test runner's targets: only output syntax, never what the script may be written in. */
+function esbuildTarget(browser: string): string[] {
+  if (browser === 'firefox') return ['firefox115'];
+  else if (browser === 'webkit') return ['safari16'];
+
+  return ['chrome120'];
 }

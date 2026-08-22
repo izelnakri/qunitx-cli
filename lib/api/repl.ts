@@ -4,7 +4,7 @@ import * as Config from '../setup/config.ts';
 import { Task } from '../task/index.ts';
 import type { ReplSession, ReplStartFailure } from '../repl/session.ts';
 import type { UserRunOptions } from './options.ts';
-import type { RunFailure } from './run.ts';
+import type { RunFailure } from './test.ts';
 
 /**
  * Every way a REPL can fail to open: the same config failures a run has, plus the two of its own —

@@ -1,14 +1,38 @@
-import * as RunCommand from '../commands/run.ts';
+import * as TestCommand from '../commands/test.ts';
 import { Task } from '../task/index.ts';
-import * as Run from './run.ts';
+import * as TestRun from './test.ts';
 import { EventsChannel, findAPIReporterFrom, type RunEvent } from './reporter.ts';
 
 import { Stream } from '../stream/index.ts';
 import * as Options from './options.ts';
 import * as Config from '../setup/config.ts';
-import type { RunFailure, RunResult } from './run.ts';
+import type { RunFailure, RunResult } from './test.ts';
 import type { UserRunOptions } from './options.ts';
+
 import type { Config as ResolvedConfig } from '../types.ts';
+// The unstable escape-hatch types. Imported for their shape only; re-exporting them would make
+// playwright-core and esbuild part of this package's contract, which is exactly what the
+// "outside semver" note on those properties refuses to do.
+import type { Browser, Page } from 'playwright-core';
+import type { BuildContext } from 'esbuild';
+import type { FSWatcher } from 'node:fs';
+import type { HTTPServer } from '../web/index.ts';
+
+/**
+ * The options a {@link WatchSession.restart} may change.
+ *
+ * Everything a session can be opened with, less three. `watch` because a patched restart is still
+ * a watch session. `signal` because it belongs to the session's whole life rather than one boot of
+ * it. And the reporters, because they are how this session's own `results()` and `events()` feeds
+ * are attached — a patch replacing them would leave both open and permanently silent, so the type
+ * refuses the mistake rather than a runtime check catching it.
+ *
+ * ```ts
+ * const widen: SessionPatch = { inputs: ['test/', 'e2e/'] };
+ * const narrow: SessionPatch = { filter: 'Cart' };
+ * ```
+ */
+export type SessionPatch = Omit<UserRunOptions, 'signal' | 'reporter' | 'reporters'>;
 
 /**
  * A running watch session.
@@ -101,8 +125,133 @@ export interface WatchSession extends AsyncIterable<RunResult> {
    * long as the session lives — the cap is what stops that, and this is how you see it happen.
    */
   readonly droppedEvents: number;
+  /**
+   * Tears the session's machinery down and boots it again — browser, page, server, esbuild
+   * context and watchers — then runs the suite once, resolving with that run's result.
+   *
+   * **The session survives.** `this` is the same object, and `events()` / `results()` keep
+   * streaming straight across: a restart is one transition in the life of a session, not a close
+   * followed by a new one. If it ended the feeds it would be `close()` plus `watch()` with extra
+   * steps, and there would be no reason for it to exist.
+   *
+   * For picking up a change no rerun can see — an edited `package.json`, a plugin whose module
+   * you replaced, a browser wedged by the page under test.
+   *
+   * `initial` still refers to the run the session STARTED with; it is readonly and callers hold
+   * it. The restart's own first run arrives through `results()` and `latest` like any other.
+   *
+   * **{@link url} may change.** The old port is released and reacquired, and if something took it
+   * in between, the new server binds the next one — so re-read `url` afterwards rather than
+   * caching it. The live objects are replaced too — all but {@link WatchSession.esbuild}, which a
+   * restart deliberately keeps.
+   *
+   * Ordering: it takes the same queue reruns take, so a restart waits for an in-flight run and a
+   * rerun asked for during one waits for the restart. Calling it twice concurrently gives both
+   * callers the SAME restart rather than tearing down twice.
+   *
+   * ```ts
+   * import type { WatchSession } from './watch.ts';
+   *
+   * // Defined, not invoked: needs a live session.
+   * async function afterConfigChange(session: WatchSession) {
+   *   const result = await session.restart();
+   *   return { total: result.counts.total, url: session.url };
+   * }
+   * ```
+   */
+  restart(patch?: SessionPatch): Promise<RunResult>;
   /** Stops watching, closes the browser and server, and ends the iteration. Idempotent. */
   close(): Promise<void>;
+
+  // ── Live objects — OUTSIDE SEMVER ──────────────────────────────────────────────────────────
+  //
+  // The five below are the session's actual machinery, handed over unwrapped so a caller can do
+  // something this API has not thought of: drive the page with Playwright, add a route to the
+  // server, read esbuild's metafile. They are an escape hatch, and an honestly labelled one —
+  // three of the five are types this project does not own, and pinning their shape would make
+  // every playwright-core or esbuild upgrade a breaking change here. They may change or vanish
+  // in a MINOR release. Everything above this line is the supported surface.
+  //
+  // Four of the five are replaced by `restart()` — re-read them after one rather than holding a
+  // reference across it, and treat them as closed once `close()` has resolved. `esbuild` is the
+  // exception: a restart reuses the same config, so a fresh context would hold the very same
+  // plugin objects, and it is deliberately kept rather than disposed and respawned.
+
+  /**
+   * Playwright's `Browser` for this session — **unstable**, playwright-core's type.
+   *
+   * ```ts
+   * import type { WatchSession } from './watch.ts';
+   *
+   * // Defined, not invoked: needs a live session.
+   * async function contexts(session: WatchSession) {
+   *   return session.browser.contexts().length;
+   * }
+   * ```
+   */
+  readonly browser: Browser;
+  /**
+   * The page the suite runs in — **unstable**, playwright-core's type.
+   *
+   * ```ts
+   * import type { WatchSession } from './watch.ts';
+   *
+   * // Defined, not invoked: needs a live session.
+   * async function shoot(session: WatchSession) {
+   *   return await session.page.screenshot();
+   * }
+   * ```
+   */
+  readonly page: Page;
+  /**
+   * The HTTP + WebSocket server serving the bundle — **unstable**, this project's own
+   * `HTTPServer` rather than a documented interface.
+   *
+   * ```ts
+   * import type { WatchSession } from './watch.ts';
+   *
+   * // Defined, not invoked: needs a live session.
+   * function addRoute(session: WatchSession) {
+   *   session.webServer.get('/fixture.json', (_request, response) => response.json({ ok: true }));
+   * }
+   * ```
+   */
+  readonly webServer: HTTPServer;
+  /**
+   * esbuild's incremental `BuildContext` — **unstable**, esbuild's type.
+   *
+   * `null` until the first build has created one, and again after a `restart()` until that
+   * session's first build. Genuinely nullable rather than defensively typed: the context is
+   * created lazily by the first bundle, so a caller reaching for it early would find nothing.
+   *
+   * ```ts
+   * import type { WatchSession } from './watch.ts';
+   *
+   * // Defined, not invoked: needs a live session that has built at least once.
+   * async function rebuild(session: WatchSession) {
+   *   return session.esbuild ? await session.esbuild.rebuild() : null;
+   * }
+   * ```
+   */
+  readonly esbuild: BuildContext | null;
+  /**
+   * The live `fs.watch` handles keyed by watched path — **unstable**, and a PARTIAL view: the
+   * parent-directory watchers, rescan intervals and symlink pollers the session also owns are
+   * not in here. It answers "what is being watched", not "every handle the watcher holds".
+   *
+   * The record is the watcher's own object, so it reflects additions and removals as they
+   * happen. After `close()` the handles in it are closed but the keys remain.
+   *
+   * ```ts
+   * import type { WatchSession } from './watch.ts';
+   *
+   * // Defined, not invoked: needs a live session.
+   * function watchedPaths(session: WatchSession) {
+   *   return Object.keys(session.fileWatchers);
+   * }
+   * ```
+   */
+  readonly fileWatchers: Record<string, FSWatcher>;
 }
 
 /**
@@ -129,19 +278,39 @@ export interface WatchSession extends AsyncIterable<RunResult> {
  * }
  * ```
  */
+export function watch(options?: UserRunOptions): Task<WatchSession, RunFailure>;
+/**
+ * The same session, with the target named positionally: `watch('test/', { filter: 'Cart' })`.
+ *
+ * The positional target wins over any `inputs` in the options object.
+ */
 export function watch(
-  options: UserRunOptions | string | string[] = {},
+  target: string | string[],
+  options?: UserRunOptions,
+): Task<WatchSession, RunFailure>;
+export function watch(
+  input: UserRunOptions | string | string[] = {},
+  extra?: UserRunOptions,
 ): Task<WatchSession, RunFailure> {
   return Task(async () => {
-    const config = await Config.setup({ ...Options.from(options), watch: true });
+    // Kept in the USER's shape rather than the resolved one, so `restart(patch)` merges two
+    // objects of the same kind and sends the result through the single translation below.
+    // Kept in the USER's shape rather than the resolved one, because `restart(patch)` merges a
+    // patch into it and `Options.from` is a one-way door — `coverage: { formats }` has already
+    // collapsed by then. The positional target wins over any `inputs` in the options object.
+    const userOptions: UserRunOptions =
+      typeof input === 'object' && !Array.isArray(input)
+        ? input
+        : { ...extra, inputs: [input].flat() };
+    const config = await Config.setup({ ...Options.from(userOptions), watch: true });
     const begunAt = Date.now();
-    const inner = await RunCommand.watch(config);
+    const inner = await TestCommand.watch(config);
 
     // The initial run is snapshotted here, before the session installs its rerun listener: it has
-    // already finished by the time `RunCommand.watch` resolves, so it would never fire one and
+    // already finished by the time `TestCommand.watch` resolves, so it would never fire one and
     // the one result missing from the iteration. Its duration has to be measured around that call
     // for the same reason — nothing can recover it afterwards.
-    const session = new Session(inner, config, snapshot(config, Date.now() - begunAt));
+    const session = new Session(inner, config, snapshot(config, Date.now() - begunAt), userOptions);
     // For a watch session `signal` means "stop watching" — there is no single run to cut short,
     // and the session's own `abort()` covers the one in flight. An already-aborted signal still
     // pays for the initial run, because the session's contract is that `initial` is a real result.
@@ -162,17 +331,28 @@ export function watch(
  */
 class Session implements WatchSession {
   readonly initial: RunResult;
-  #inner: RunCommand.WatchSession;
+  #inner: TestCommand.WatchSession;
   #config: ResolvedConfig;
   #results = Stream.channel<RunResult>({ capacity: 1_000, overflow: 'dropOldest' });
   #events: EventsChannel | null = null;
   #latest: RunResult;
   #published = 0;
   #closed = false;
+  #restarting: Promise<RunResult> | null = null;
+  // What the session was opened with, kept so `restart(patch)` has something to merge into.
+  // `Config` is the RESOLVED form — inputs already walked into an fsTree — so it cannot be
+  // un-resolved back into the options a new selection would need.
+  #options: UserRunOptions;
 
-  constructor(inner: RunCommand.WatchSession, config: ResolvedConfig, initial: RunResult) {
+  constructor(
+    inner: TestCommand.WatchSession,
+    config: ResolvedConfig,
+    initial: RunResult,
+    options: UserRunOptions,
+  ) {
     this.#inner = inner;
     this.#config = config;
+    this.#options = options;
     this.initial = initial;
     this.#latest = initial;
     // The initial run is the iteration's first element, so a `for await` sees the whole history
@@ -195,6 +375,29 @@ class Session implements WatchSession {
 
   get running(): boolean {
     return this.#inner.running;
+  }
+
+  // The unstable live objects. Getters rather than fields so they follow `#inner` and `#config`
+  // across a restart instead of freezing whatever existed when the session was constructed.
+
+  get browser(): Browser {
+    return this.#inner.connections.browser;
+  }
+
+  get page(): Page {
+    return this.#inner.connections.page;
+  }
+
+  get webServer(): HTTPServer {
+    return this.#inner.connections.server;
+  }
+
+  get esbuild(): BuildContext | null {
+    return this.#config.state.group.build.context ?? null;
+  }
+
+  get fileWatchers(): Record<string, FSWatcher> {
+    return this.#inner.fileWatchers;
   }
 
   run(files?: string[]): Promise<RunResult> {
@@ -237,12 +440,100 @@ class Session implements WatchSession {
     return (this.#events?.dropped ?? 0) + this.#results.dropped;
   }
 
+  restart(patch?: SessionPatch): Promise<RunResult> {
+    // One restart at a time, and a second caller joins the first rather than starting a teardown
+    // of the session the first is still building. The inner session's own queue cannot serialise
+    // this — it is the thing being destroyed — so the guard lives here, at the only level that
+    // outlives the transition.
+    this.#restarting ??= this.#restart(patch).finally(() => (this.#restarting = null));
+
+    return this.#restarting;
+  }
+
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+    // A close during a restart waits for it: tearing down half-built machinery races the boot
+    // and leaks whichever handles it had already created. The restart checks `#closed` when it
+    // lands and closes what it built, so the wait is bounded by one boot.
+    await Task(this.#restarting).ignore('watch session restart in flight');
     await this.#inner.close();
     this.#results.close();
     this.#events?.close();
+  }
+
+  /**
+   * The transition itself. Never called directly — {@link restart} owns the de-duplication.
+   *
+   * The config object is REUSED rather than rebuilt. That is what keeps the feeds alive across
+   * the restart: both are wired by pushing reporters onto `config.state.reporters`, so a fresh
+   * `Config.setup()` would hand the new session a different array and leave `events()` and
+   * `results()` open but permanently silent.
+   */
+  /**
+   * Resolves a patched config and re-attaches this session's feeds to it.
+   *
+   * The re-attachment is the whole reason this is not two lines inline. Both feeds are wired by
+   * pushing reporters onto `config.state.reporters` — the `onRunEnd` shim from the constructor and,
+   * if `events()` was ever called, that channel's reporter. A fresh `Config.setup` hands back a
+   * fresh array, so a patched restart that skipped this would leave `results()` and `events()` open
+   * and permanently silent: a session that looks alive and emits nothing.
+   */
+  async #reconfigure(
+    patch: SessionPatch,
+  ): Promise<{ config: ResolvedConfig; options: UserRunOptions }> {
+    const options = { ...this.#options, ...patch };
+    // Through `Options.from`, not a raw spread: it is the one place the user-facing shape becomes
+    // the config's — `coverage: { formats }` collapsing to a boolean plus a format list, a bare
+    // string becoming `inputs`. Spreading past it would hand `Config.setup` a shape it rejects.
+    const config = await Config.setup({ ...Options.from(options), watch: true });
+
+    config.state.reporters.push({
+      onRunEnd: (_context, info) => this.#publish(info.durationMs),
+    });
+    if (this.#events) config.state.reporters.push(this.#events.reporter);
+
+    return { config, options };
+  }
+
+  async #restart(patch?: SessionPatch): Promise<RunResult> {
+    // BEFORE the teardown, deliberately: a patch that cannot be resolved — an input matching
+    // nothing, an option that will not validate — must leave the session exactly as it was rather
+    // than half-demolished. Resolving first makes a bad patch a rejection with the session live.
+    const next = patch ? await this.#reconfigure(patch) : null;
+    // Outside the teardown, as `runAll` does it: abort asks the page to drop its queue, and
+    // `settled()` is what waits for the run that was interrupted to finish unwinding.
+    this.#inner.abort();
+    await this.#inner.settled();
+    // A patched restart builds a NEW config, so the old esbuild context belongs to one nothing
+    // will use again: keeping it strands a ref'd service child and the process can never exit.
+    // A bare restart reuses the config, where keeping it is the whole optimisation.
+    await this.#inner.teardown(Boolean(patch));
+
+    // Every aborter registered on this state closes over the server just torn down; the set is
+    // never pruned, so without this each restart leaves another closure publishing to a dead
+    // socket. Watch mode registers exactly one per boot, so clearing is precise here.
+    this.#config.state.aborters.clear();
+    // Swapped only once the old machinery is down, so nothing above can observe a config that no
+    // longer matches the browser and server still running against it.
+    if (next) {
+      this.#config = next.config;
+      this.#options = next.options;
+    }
+
+    // Through `#drive`, exactly like every other verb, and for a reason worth stating: the
+    // reporter shim that publishes runs lives on `config.state.reporters`, which this restart
+    // deliberately reuses — so the reboot's own initial run DOES reach it, and publishing here as
+    // well emitted two results for one run. `#drive` returns what that run published, and only
+    // synthesises a result when nothing was published at all (a boot that died in the bundler).
+    const result = await this.#drive(async () => {
+      this.#inner = await TestCommand.watch(this.#config);
+    });
+    // `close()` may have been called while the boot was in flight; it is waiting on this promise,
+    // so nothing else will release what was just built unless it is released here.
+    if (this.#closed) await this.#inner.close();
+
+    return result;
   }
 
   [Symbol.asyncIterator](): AsyncIterator<RunResult> {
@@ -296,7 +587,7 @@ class Session implements WatchSession {
 function snapshot(config: ResolvedConfig, durationMs: number): RunResult {
   const failed = config.state.results.counter.failed > 0;
   const finishedAt = Date.now();
-  const result = Run.buildResult(config, {
+  const result = TestRun.buildResult(config, {
     exitCode: failed ? 1 : 0,
     durationMs,
     startedAt: finishedAt - durationMs,

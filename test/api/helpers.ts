@@ -2,9 +2,9 @@ import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 import { outputDir } from '../helpers/temp-dir.ts';
 import * as QUnitX from '../../lib/api/index.ts';
 import type { UserRunOptions } from '../../lib/api/options.ts';
-import type { RunResult } from '../../lib/api/run.ts';
+import type { RunResult } from '../../lib/api/test.ts';
 import type { WatchSession } from '../../lib/api/watch.ts';
-import type { RunSession } from '../../lib/api/session.ts';
+import type { TestSession } from '../../lib/api/session.ts';
 import type { ReplSession } from '../../lib/repl/session.ts';
 
 // The API tests are the only ones that drive a browser *in this process* rather than through
@@ -21,20 +21,20 @@ import type { ReplSession } from '../../lib/repl/session.ts';
  * both up afterwards.
  *
  * ```ts
- * import { apiRun } from './helpers.ts';
+ * import { testRun } from './helpers.ts';
  *
  * // Defined, not invoked: launches a real browser.
  * async function green() {
- *   const result = await apiRun({ inputs: ['test/fixtures/passing-tests.ts'] });
+ *   const result = await testRun({ inputs: ['test/fixtures/passing-tests.ts'] });
  *   return result.ok;
  * }
  * ```
  */
-export async function apiRun(options: UserRunOptions): Promise<RunResult> {
+export async function testRun(options: UserRunOptions): Promise<RunResult> {
   await using output = outputDir('api-run');
   const permit = await acquireBrowser();
   try {
-    return await QUnitX.run({ output: output.path, ...options });
+    return await QUnitX.test({ output: output.path, ...options });
   } finally {
     permit.release();
   }
@@ -72,21 +72,21 @@ export async function withWatch<T>(
  * Starts a run session with a permit held, hands it to `body`, and closes it.
  *
  * ```ts
- * import { withRunSession } from './helpers.ts';
+ * import { withOpenSession } from './helpers.ts';
  *
  * // Defined, not invoked: launches a real browser.
  * async function eventCount() {
- *   return await withRunSession({}, async (session) => (await session.result()).counts.total);
+ *   return await withOpenSession({}, async (session) => (await session.result()).counts.total);
  * }
  * ```
  */
-export async function withRunSession<T>(
+export async function withOpenSession<T>(
   options: UserRunOptions,
-  body: (session: RunSession) => Promise<T> | T,
+  body: (session: TestSession) => Promise<T> | T,
 ): Promise<T> {
   await using output = outputDir('api-session');
   const permit = await acquireBrowser();
-  const session = await QUnitX.runSession({ output: output.path, ...options });
+  const session = await QUnitX.openSession({ output: output.path, ...options });
   try {
     return await body(session);
   } finally {

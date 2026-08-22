@@ -3,24 +3,28 @@
  * results back as a value.
  *
  * ```ts
- * import { run } from './run.ts';
+ * import { test } from './test.ts';
  *
  * // Defined, not invoked: launches a browser and runs the project's tests.
  * async function check() {
- *   const result = await run('test/');
+ *   const result = await test('test/');
  *   return result.ok ? 0 : result.failures.length;
  * }
  * ```
+ *
+ * Two verbs, mirroring the CLI: {@link test} runs a suite (`qunitx test/`), {@link run} executes
+ * ONE file as a plain script (`qunitx run seed.ts`). **`run` was the suite verb until the script
+ * verb needed the name** — if you are upgrading, rename those calls to `test`.
  *
  * Four things worth knowing before reading further:
  *
  * - **Nothing is printed unless you ask.** No `reporter`, no output — the returned
  *   {@link RunResult} is the whole answer. `reporter: 'tap'` gets the CLI's text as well.
- * - **Failing tests are not an error.** `run()` resolves with `ok: false`; it rejects only when
+ * - **Failing tests are not an error.** `test()` resolves with `ok: false`; it rejects only when
  *   the run could not happen at all (a bad option, an unreadable input, no `package.json`).
  * - **Everything is lazy.** These return a {@link Task} — a Promise superset — so nothing starts
  *   until you await it, and `.result()` hands back a `Result` union instead of throwing.
- * - **It is the same engine as the CLI.** `run(options)` and `qunitx <flags>` assemble the same
+ * - **It is the same engine as the CLI.** `test(options)` and `qunitx <flags>` assemble the same
  *   config and take the same code path; there is no second implementation to drift.
  *
  * @module
@@ -28,9 +32,23 @@
 
 import { is, format, hasCode, type Any } from '../result/failure.ts';
 
-export { run, type RunFailure } from './run.ts';
-export { runSession, type RunSession } from './session.ts';
-export { watch, type WatchSession } from './watch.ts';
+export { test, type RunFailure } from './test.ts';
+/**
+ * Runs ONE file as a plain script in the browser, the API twin of `qunitx run <file>`.
+ *
+ * The counterpart to {@link test}: that verb runs a suite and reports tests, this one executes a
+ * file and reports its exit code.
+ *
+ * **Migrating:** `run` used to be the suite verb — today's {@link test}. `run({ inputs })`,
+ * `run('tests/')` and `run(['a.ts'])` are now refused with a message naming `test()`, because
+ * running them as scripts silently instead would be worse than an error. The one call this cannot
+ * catch is `run('single-file.ts')`, which was legal for a suite and is legal for a script: the
+ * return type differs, so TypeScript flags it, but untyped callers must check that one by hand.
+ */
+export { run, NotAScriptFile } from './run.ts';
+export type { ScriptOptions, ScriptResult, ScriptFailure } from './run.ts';
+export { openSession, type SessionOptions, type TestSession } from './session.ts';
+export { watch, type SessionPatch, type WatchSession } from './watch.ts';
 export { search, type SearchMatch, type SearchResult, type UnlistableCounts } from './search.ts';
 export { repl, type ReplFailure } from './repl.ts';
 export type { ReplSession, ReplResult, ReplStartFailure } from '../repl/session.ts';
@@ -43,7 +61,7 @@ export {
   type GenerateResult,
 } from '../commands/generate.ts';
 /**
- * Daemon control: `start`, `stop`, `status`, and a `run` that reuses the daemon's warm browser
+ * Daemon control: `start`, `stop`, `status`, and a `test` that reuses the daemon's warm browser
  * and returns the same {@link RunResult} a local run does.
  *
  * ```ts
@@ -52,7 +70,7 @@ export {
  * // Defined, not invoked: spawns and talks to a real background process.
  * async function warmRun() {
  *   await Daemon.start();
- *   return await Daemon.run({ inputs: ['test/'] });
+ *   return await Daemon.test({ inputs: ['test/'] });
  * }
  * ```
  */
@@ -61,7 +79,7 @@ export type { DaemonRunOptions, DaemonRunFailure, DaemonStatus } from './daemon.
 
 /**
  * Rejects options the runner will not accept — a browser that does not exist, a port out of
- * range — without launching anything. `run()` does this itself; call it directly to check a set
+ * range — without launching anything. `test()` does this itself; call it directly to check a set
  * of options before committing to a run.
  */
 export { validate, InvalidOption, type InvalidOptionFailure } from './options.ts';
@@ -74,7 +92,7 @@ export type {
   ResolvedRun,
   CoverageSummary,
   FileCoverageSummary,
-} from './run.ts';
+} from './test.ts';
 
 /**
  * The live view of a run: what a session yields, in the order it happened.
@@ -116,12 +134,12 @@ export { type Console, processConsole, silentConsole, streamConsole } from '../c
  * `task.result()` settles to, for callers who would rather branch than catch.
  *
  * ```ts
- * import { run } from './run.ts';
+ * import { test } from './test.ts';
  * import { Failure } from './index.ts';
  *
  * // Defined, not invoked: launches a browser.
  * async function branchOnFailure() {
- *   const outcome = await run().result();
+ *   const outcome = await test().result();
  *   return Failure.is(outcome) ? Failure.format(outcome) : outcome.counts;
  * }
  * ```
