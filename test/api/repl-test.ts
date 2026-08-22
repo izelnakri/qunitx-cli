@@ -1,5 +1,7 @@
 import { module, test } from 'qunitx';
 import { withRepl, captureStream } from './helpers.ts';
+import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
+import { outputDir } from '../helpers/temp-dir.ts';
 import * as QUnitX from '../../lib/api/index.ts';
 import { streamConsole } from '../../lib/console.ts';
 import '../helpers/custom-asserts.ts';
@@ -202,6 +204,36 @@ module('API | repl | preloaded files', { concurrency: true }, () => {
           'in project coordinates, with no output-directory prefix in front of it',
       );
     });
+  });
+
+  test('the preload can be named positionally, alongside options', async (assert) => {
+    // The shape every other verb takes — `test('test/', opts)`, `run('seed.ts', opts)`. Called
+    // directly rather than through `withRepl`, because the helper only speaks the options form
+    // and it is the two-argument call itself that is under test.
+    await using directory = outputDir('api-repl-positional');
+    const reported = captureStream();
+    const permit = await acquireBrowser();
+    const session = await QUnitX.repl(PRELOAD, {
+      output: directory.path,
+      reporter: 'tap',
+      console: streamConsole(reported),
+    });
+    try {
+      assert.deepEqual(
+        session.loaded.map(([file]) => file),
+        [PRELOAD],
+        'the positional argument is the preload, not a test target',
+      );
+      assert.equal((await session.evaluate('double(21)')).output, '42');
+      assert.includes(
+        reported.text(),
+        'ok 1 preloaded test',
+        'the SECOND argument took effect too — a dropped one leaves this stream empty',
+      );
+    } finally {
+      await session.close();
+      permit.release();
+    }
   });
 
   test('nothing is preloaded when no inputs are named', async (assert) => {

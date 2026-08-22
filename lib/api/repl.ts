@@ -47,11 +47,23 @@ export type ReplFailure = RunFailure | ReplStartFailure;
  * }
  * ```
  */
+export function repl(options?: UserRunOptions): Task<ReplSession, ReplFailure>;
+/**
+ * The same session, with the preload named positionally: `repl('test/helpers.ts', { port: 4000 })`.
+ *
+ * The shape every other verb takes, offered here so they read alike. The positional preload wins
+ * over any `inputs` in the options object.
+ */
 export function repl(
-  options: UserRunOptions | string | string[] = {},
+  preload: string | string[],
+  options?: UserRunOptions,
+): Task<ReplSession, ReplFailure>;
+export function repl(
+  input: UserRunOptions | string | string[] = {},
+  extra?: UserRunOptions,
 ): Task<ReplSession, ReplFailure> {
   return Task(async () => {
-    const configOptions = Options.from(options);
+    const configOptions = Options.from(input, extra);
     const config = await Config.setup(configOptions);
 
     return await Repl.start(config, await Repl.resolvePreload(config, configOptions.inputs ?? []));
