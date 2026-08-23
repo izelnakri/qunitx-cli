@@ -950,9 +950,52 @@ function qunitSelectorPreconfig(config: Config): string {
     })() } };`;
 }
 
-function testRuntimeToInject(config: Config, groupId?: number): string {
+/**
+ * The `<script>` that turns a page into a reporting test page: the QUnit preconfig, the WebSocket
+ * client, and the QUnit hooks that forward every event to this process.
+ *
+ * Exported because `qunitx run` injects the very same runtime. Its page is not built here — it
+ * serves an ESM bundle so a script can use top-level await, which the iife suite bundle cannot —
+ * but the REPORTING half must be identical, or TAP from `qunitx run` would drift from TAP from
+ * the bare verb, which is the one thing it promises not to do.
+ *
+ * ```ts
+ * import * as WebServer from './web-server.ts';
+ *
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: reads the run's filters and timeout off a resolved config.
+ * function pageScript(config: Config) {
+ *   return WebServer.testRuntimeToInject(config, 0).startsWith('<script>'); // true
+ * }
+ * ```
+ */
+export function testRuntimeToInject(config: Config, groupId?: number): string {
+  return `<script>${testRuntimeSource(config, groupId)}</script>`;
+}
+
+/**
+ * The same runtime as bare JavaScript, for a page that injects it rather than serving it.
+ *
+ * `qunitx run` cannot put this in its HTML: it does not know whether the file is a suite until the
+ * file has evaluated, and paying for a WebSocket on every plain script would be a cost for nothing.
+ * It adds this after the fact instead, which also puts the START of the run under this process's
+ * control — the reporters have to print their header before the first `testEnd` crosses.
+ *
+ * ```ts
+ * import * as WebServer from './web-server.ts';
+ *
+ * import type { Config } from '../types.ts';
+ *
+ * // Defined, not invoked: the same runtime, without the surrounding tag.
+ * function injectable(config: Config) {
+ *   return WebServer.testRuntimeSource(config, 0).includes('<script>'); // false
+ * }
+ * ```
+ */
+export function testRuntimeSource(config: Config, groupId?: number): string {
   const groupIdPart = groupId !== undefined ? `, groupId: ${groupId}` : '';
-  return `<script>
+  return `
     ${qunitSelectorPreconfig(config)}
     // Idempotency guard: if this runtime script ran in this Window already, do not
     // re-arm Promise.all + QUnit listeners. CI run 26046813154 (job 76573047617)
@@ -1102,7 +1145,7 @@ function testRuntimeToInject(config: Config, groupId?: number): string {
       window.QUnit.config.failOnZeroTests = ${!isFilteredRun(config)};
       window.QUnit.start();
     }
-  </script>`;
+  `;
 }
 
 function escapeAndInjectTestsToHTML(
