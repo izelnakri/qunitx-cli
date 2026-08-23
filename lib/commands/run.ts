@@ -23,6 +23,8 @@ import type { BrowserLog } from '../reporters/types.ts';
 import type { ConsoleMessage, Page } from 'playwright-core';
 import type { ProjectRootNotFoundFailure } from '../utils/find-project-root.ts';
 import type { SourceMapDecoder } from '../utils/source-map.ts';
+import type { RunResult } from '../api/test.ts';
+import type { Config as ResolvedSuiteConfig } from '../types.ts';
 
 /** The path the bundle is served from. `SourceMap.isBundleUrl` knows this name. */
 const BUNDLE_ROUTE = '/script.js';
@@ -137,6 +139,19 @@ export interface ScriptConfig {
   timeout: number | null;
   /** Where the script's own output goes. `processConsole` for the CLI. */
   console: Console;
+  /**
+   * Reporting settings that only matter if the entry turns out to declare tests.
+   *
+   * Kept as the user typed them rather than resolved: a plain script never builds a suite config
+   * at all, so there is nothing to resolve them against until there is something to report.
+   */
+  reporter?: Args.ParsedFlags['reporter'];
+  /** `--junit`: writes a JUnit XML report for a declared suite. */
+  junit?: Args.ParsedFlags['junit'];
+  /** `--debug`: prints the server URL and the page's console, as the bare verb's does. */
+  debug?: Args.ParsedFlags['debug'];
+  /** `--filter`: narrows a declared suite to matching tests. */
+  filter?: Args.ParsedFlags['filter'];
 }
 
 /** What one execution of the script produced. */
@@ -158,6 +173,14 @@ export interface ScriptOutcome {
   valueProblem: string | null;
   /** `globalThis.exitCode` if the script set one, 1 if it threw, else 0. */
   exitCode: number;
+  /**
+   * The suite the entry declared, or `null` when it was a plain script.
+   *
+   * A file that registers QUnit tests is a suite, whichever verb pointed at it, and reporting it
+   * as an empty script run would be reporting success for tests that never ran. Non-null here
+   * means TAP was produced and {@link ScriptOutcome.exitCode} is the suite's.
+   */
+  tests: RunResult | null;
   /**
    * The script's own console calls and uncaught errors, in emit order and capped at
    * {@link MAX_BROWSER_LOGS} — the same shape and the same cap a test run reports, because it is
@@ -230,6 +253,12 @@ export function setup(
         watch: flags.watch,
         open: flags.open === true,
         timeout: flags.timeout,
+        // Carried for the case where the entry turns out to declare tests: reporting it is then
+        // the bare verb's job in every respect, and a `--reporter` the user typed has to reach it.
+        reporter: flags.reporter,
+        junit: flags.junit,
+        debug: flags.debug,
+        filter: flags.filter,
       },
     };
   });
@@ -253,6 +282,17 @@ export interface ScriptSettings {
   open?: boolean;
   /** Ms the script may run before it is declared hung; null (the default) is unbounded. */
   timeout?: number | null;
+  /**
+   * Stdout format when the entry turns out to be a suite. Ignored by a plain script, which has no
+   * report to format — its own output IS the output.
+   */
+  reporter?: Args.ParsedFlags['reporter'];
+  /** Writes a JUnit XML report for a declared suite. Ignored by a plain script. */
+  junit?: Args.ParsedFlags['junit'];
+  /** Prints the server URL and the page's console, as the bare verb's `--debug` does. */
+  debug?: Args.ParsedFlags['debug'];
+  /** Narrows a declared suite to matching tests. Ignored by a plain script. */
+  filter?: Args.ParsedFlags['filter'];
   /**
    * Where the script's own output goes, as `test()` and `watch()` take one. Defaults to this
    * process's stdout and stderr; pass `silentConsole` to capture it from the result instead.
@@ -292,6 +332,10 @@ async function configFor(entry: string, settings: ScriptSettings = {}): Promise<
     open: settings.open ?? false,
     timeout: settings.timeout ?? null,
     console: settings.console ?? processConsole,
+    reporter: settings.reporter,
+    junit: settings.junit,
+    debug: settings.debug,
+    filter: settings.filter,
   };
 }
 
@@ -343,7 +387,7 @@ export async function run(entry: string, settings: ScriptSettings = {}): Promise
 
   if (!config.watch) {
     try {
-      return await execute(page, url, config, () => bundle);
+      return await execute(page, url, config, () => bundle, server);
     } finally {
       // Bounded, never sequential awaits: once the server, browser and Chrome are gone no handle
       // holds the loop open, so a close that never settles drains it and the process exits 0 with
@@ -366,7 +410,7 @@ export async function run(entry: string, settings: ScriptSettings = {}): Promise
 
   return await watchLoop(watched, async () => {
     if (!first) bundle = await build(config);
-    await execute(page, url, config, () => bundle);
+    await execute(page, url, config, () => bundle, server);
     if (!first) return;
     first = false;
     console.log('#', blue(`Watching ${path.relative(config.projectRoot, config.entry)} on ${url}`));
@@ -533,6 +577,21 @@ function entryPlugin(entry: string): esbuild.Plugin {
 // that matter: `Object.keys(new Map([['a', 1]]))` is `[]`, so a Map compares equal to the `{}` it
 // would arrive as. Naming what IS allowed leaves no such hole, and the path in the message points
 // at the offending field rather than the whole value.
+// Injected as source next to the value check, and read AFTER the entry has finished evaluating.
+// A registration count is a runtime fact: unlike a pre-bundle scan of the source it cannot miss a
+// test file that reaches qunitx through a barrel, a helper or a side-effect import, which is the
+// blind spot that made `qunitx run` a keyword rather than a guess in the first place.
+const DECLARED_TESTS = `(() => {
+  const qunit = globalThis.QUnit;
+  // \`version\` is what tells the real QUnit from the preconfig stub the runtime installs: a script
+  // that never imports qunitx finds the stub, which has no modules and no version.
+  if (!qunit || !qunit.version || !Array.isArray(qunit.config && qunit.config.modules)) return 0;
+  return qunit.config.modules.reduce(
+    (total, mod) => total + (Array.isArray(mod.tests) ? mod.tests.length : 0),
+    0,
+  );
+})()`;
+
 const SERIALIZABLE_CHECK = `(() => {
   const value = namespace.default;
   const describe = (candidate) => {
@@ -594,6 +653,10 @@ function wrapperSource(): string {
       exitCode: Number.isInteger(globalThis.exitCode) ? globalThis.exitCode : 0,
       value: unwrapped.value,
       valueProblem: unwrapped.problem,
+      // Reported, never acted on here. Node decides what this file is and, if it is a suite,
+      // starts QUnit itself — the reporters must print their header before the first testEnd
+      // arrives, and only Node knows when they have.
+      declaredTests: ${DECLARED_TESTS},
     };
   } catch (error) {
     globalThis.__qunitxScript.done = { ok: false, stack: String((error && error.stack) || error) };
@@ -620,6 +683,8 @@ interface DoneSignal {
   value?: unknown;
   /** Set instead of `value` when the export could not be handed back, and says why. */
   valueProblem?: string;
+  /** How many QUnit tests the entry registered while evaluating. 0 for a plain script. */
+  declaredTests?: number;
 }
 
 /** The one property {@link wrapperSource} adds to the page's global object. */
@@ -637,6 +702,7 @@ async function execute(
   url: string,
   config: ScriptConfig,
   bundleOf: () => ScriptBundle,
+  server: HTTPServer,
 ): Promise<ScriptOutcome> {
   // Capped the way a test run caps its own: a script that logs in a loop must not grow this array
   // until the process dies, and dropping from the FRONT keeps the lines next to whatever went
@@ -656,10 +722,16 @@ async function execute(
   // inside the chain would serialise every round-trip; writing outside it would let a message
   // carrying a big object land after one emitted later.
   let writes: Promise<void> = Promise.resolve();
+  // Flipped off before a declared suite starts. The bare verb keeps a test's own `console.log` out
+  // of its TAP stream — `browserLogs` and `--debug` are where it goes — and a `run` that streamed
+  // it anyway would interleave raw lines with `ok 1 …`, which is not TAP any more. Recording
+  // continues either way, so nothing is lost, only rerouted.
+  let streaming = true;
   const onConsole = (message: ConsoleMessage) => {
     const rendered = renderConsoleMessage(message);
     const type = message.type();
     const write = isErrorLevel(type) ? config.console.error : config.console.log;
+    const streamThis = streaming;
     writes = writes.then(async () => {
       const text = mapStack(await rendered, bundleOf().decoder, config.projectRoot);
       // Recorded on the same chain that writes it, so `browserLogs` ends up in the page's emit
@@ -667,7 +739,7 @@ async function execute(
       record({ type, text, args: [] });
       // The newline belongs to the caller with this Console shape — `streamConsole` writes what it
       // is given, verbatim. Without it a script's output runs into whatever is printed next.
-      write(`${text}\n`);
+      if (streamThis) write(`${text}\n`);
     });
   };
   const uncaught: string[] = [];
@@ -711,12 +783,22 @@ async function execute(
     // A script that threw has nothing to hand back, and one whose entry is not a module never had
     // a default export to begin with. Either way the value it ran with is no value at all.
     const carried = done.ok && bundleOf().entryIsModule;
+    // It registered QUnit tests while it evaluated, so it is a suite and this is the verb that was
+    // asked to run it. Same page, same evaluation — nothing is bundled or run twice; only the
+    // reporting half of a test page is added, now that there is something to report. Gated on
+    // `done.ok` because a file that threw on its way to registering has declared nothing to run.
+    if (done.ok && done.declaredTests) streaming = false;
+    const tests =
+      done.ok && done.declaredTests
+        ? await runDeclaredSuite(page, server, config, bundleOf().decoder)
+        : null;
 
     return {
       entry: config.entry,
       value: carried ? done.value : undefined,
       valueProblem: (carried && done.valueProblem) || null,
-      exitCode: !done.ok || uncaught.length > 0 ? 1 : (done.exitCode ?? 0),
+      exitCode: tests ? tests.exitCode : !done.ok || uncaught.length > 0 ? 1 : (done.exitCode ?? 0),
+      tests: tests?.result ?? null,
       browserLogs,
       browserLogsDropped,
     };
@@ -737,6 +819,98 @@ async function renderConsoleMessage(message: ConsoleMessage): Promise<string> {
   const args = await Promise.all(message.args().map((arg) => arg.jsonValue())).catch(() => null);
 
   return args?.length ? format(...args) : message.text();
+}
+
+/**
+ * Runs the suite the entry declared and reports it exactly as the bare verb would.
+ *
+ * The page is already open and the module has already evaluated, with QUnit holding the tests in
+ * its queue: the qunitx runtime turns `autostart` off, so registering a test does not run it. What
+ * is missing is only the reporting half of a test page, which is added here.
+ *
+ * The order is the point. The runtime is injected and QUnit is started from THIS side, after
+ * `runStart` has printed the reporters' header — the page cannot be trusted to hold its first
+ * `testEnd` until Node is listening, and a `testEnd` that arrives before the header is a TAP
+ * stream with no plan line.
+ */
+async function runDeclaredSuite(
+  page: Page,
+  server: HTTPServer,
+  config: ScriptConfig,
+  decoder: SourceMapDecoder | null,
+): Promise<{ exitCode: number; result: RunResult }> {
+  // Imported here rather than at the top of the file: the suite half is the whole reporting stack,
+  // and a plain script — which is what this verb is mostly pointed at — must not pay to load it.
+  const [WebServer, Reporter, { buildResult }] = await Promise.all([
+    import('../setup/web-server.ts'),
+    import('../reporters/index.ts'),
+    import('../api/test.ts'),
+  ]);
+  const suite = await suiteFor(config);
+  // The reporters resolve a failing assertion's stack through this, and the bundle it belongs to
+  // is the one this verb built. Without it a failure reports `script.js:6325:17` where the bare
+  // verb reports `test/fixtures/failing-tests.js:33:12` — the same run, told two different ways.
+  suite.state.group.sourceMapDecoder = decoder;
+  WebServer.setupGroupWSHandler(server, [suite]);
+
+  const finished = new Promise<void>((resolve) => {
+    suite.state.group.signals.testRunDone = resolve;
+  });
+  const startedAt = Date.now();
+
+  Reporter.runStart(suite, { fileCount: 1, groupCount: 1 });
+  // The same `#` comment the bare verb prints, under the same condition: a TAP comment belongs in
+  // a TAP stream and nowhere else, and `--debug` wants the URL whatever the reporter, because
+  // opening the page in a real browser is the point of debug mode.
+  if (suite.reporter === 'tap' || suite.debug) {
+    Reporter.info(suite, blue(`QUnitX running: http://localhost:${suite.port}/`));
+  }
+  await page.addScriptTag({ content: WebServer.testRuntimeSource(suite, 0) });
+  await page.evaluate(() => globalThis.dispatchEvent(new CustomEvent('qunitx:tests-ready')));
+  await finished;
+
+  const durationMs = Date.now() - startedAt;
+  await Reporter.runEnd(suite, { durationMs });
+
+  const exitCode = suite.state.results.counter.failed > 0 ? 1 : 0;
+  const finishedAt = Date.now();
+
+  return { exitCode, result: buildResult(suite, { exitCode, durationMs, startedAt, finishedAt }) };
+}
+
+/**
+ * The suite config a declared suite is reported through — the same assembly the bare verb uses,
+ * so `--reporter`, `--junit` and the rest mean here what they mean there.
+ *
+ * Built only once tests have actually been found. A plain script must not pay for a project walk
+ * it has no use for, which is the whole reason `qunitx run` has a config of its own.
+ */
+async function suiteFor(config: ScriptConfig): Promise<ResolvedSuiteConfig> {
+  const [SuiteConfig, { APIReporter }] = await Promise.all([
+    import('../setup/config.ts'),
+    import('../api/reporter.ts'),
+  ]);
+  const suite = await SuiteConfig.setup({
+    inputs: [config.entry],
+    cwd: config.cwd,
+    browser: config.browser,
+    port: config.port,
+    console: config.console,
+    // Spread rather than assigned: `Config.setup` fills its own defaults for anything absent, and
+    // writing `undefined` into these would override those defaults with nothing.
+    ...(config.timeout === null ? {} : { timeout: config.timeout }),
+    ...(config.reporter === undefined ? {} : { reporter: config.reporter }),
+    ...(config.junit === undefined ? {} : { junit: config.junit }),
+    ...(config.debug === undefined ? {} : { debug: config.debug }),
+    ...(config.filter === undefined ? {} : { filter: config.filter }),
+  });
+
+  // The accumulating reporter is what turns a run into a value. The CLI's own reporter list does
+  // not carry one, and `buildResult` falls back to an EMPTY one rather than failing — so without
+  // this, `result.tests` would hand back a run with no tests in it.
+  suite.state.reporters.push(new APIReporter());
+
+  return suite;
 }
 
 function isErrorLevel(type: string): boolean {

@@ -160,6 +160,40 @@ module('API | run | the value the script exported', { concurrency: true }, () =>
   });
 });
 
+module('API | run | a file that declares tests', { concurrency: true }, () => {
+  // `run` is the script verb, but a file that REGISTERS QUnit tests is a suite whichever verb
+  // points at it. Running one as a plain script evaluated it, registered its tests, ran none of
+  // them and resolved ok — success reported for tests that never ran.
+  const PASSING = `${CWD}/test/fixtures/passing-tests.js`;
+
+  test('the suite runs, and comes back on result.tests', async (assert) => {
+    const result = await run(PASSING, { console: QUnitX.silentConsole });
+
+    assert.ok(result.tests, 'a declared suite is reported, not skipped');
+    assert.strictEqual(result.tests!.counts.total, 3);
+    assert.strictEqual(result.tests!.counts.passed, 3);
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.exitCode, 0);
+  });
+
+  test('a red suite is a red run, and the verdict is the suite’s', async (assert) => {
+    const result = await run(`${CWD}/test/fixtures/failing-tests.js`, {
+      console: QUnitX.silentConsole,
+    });
+
+    assert.strictEqual(result.ok, false, 'not globalThis.exitCode — the suite decides');
+    assert.strictEqual(result.exitCode, 1);
+    assert.ok(result.tests!.counts.failed > 0, 'and the failures are on the result');
+  });
+
+  test('a plain script reports no suite at all', async (assert) => {
+    const result = await run(`${SCRIPTS}/value-script.ts`, { console: QUnitX.silentConsole });
+
+    assert.strictEqual(result.tests, null, 'null is what says "this was not a suite"');
+    assert.deepEqual(result.value, { seeded: 2, ids: [1, 2], note: null }, 'still a script');
+  });
+});
+
 module('API | run | refuses the old suite verb', { concurrency: true }, () => {
   // `run` meant "run this suite" until the script verb took the name. Every shape that could only
   // have meant the old verb has to say so, because running it as a script would be a silent

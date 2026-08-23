@@ -538,8 +538,28 @@ if (!response.ok) {
 ```
 
 `--browser`, `--port`, `--open`, `--timeout` and `--watch` work here too (`--watch` re-runs the
-script on every save). A script is never auto-detected: `qunitx <file>` always means "run the
-tests in this file", and the `run` keyword is how you ask for the other thing.
+script on every save).
+
+### Point it at a test file and it runs the tests
+
+A file that registers QUnit tests is a suite, whichever verb you used to reach it — so `run` runs
+it as one, reporting exactly what the bare form reports:
+
+```console
+$ qunitx run test/cart-test.ts
+TAP version 13
+# Running 1 test file across 1 group
+ok 1 Cart | sums line items # (2 ms)
+1..1
+```
+
+`--reporter`, `--junit`, `--filter` and `--debug` all apply. Nothing is bundled or evaluated twice:
+the file is evaluated once, and whether it declared any tests is read from QUnit afterwards — so a
+test file that reaches qunitx through a barrel or a helper is recognised just the same.
+
+The alternative was to run it as a script, which registers the tests, runs none of them, and exits
+0 in silence. Reporting success for tests that never ran is the one thing a test runner must not
+do.
 
 ## JUnit reports
 

@@ -6,6 +6,7 @@ import { Task } from '../task/index.ts';
 import type { Console } from '../console.ts';
 import type { BrowserLog } from '../reporters/types.ts';
 import type { ScriptEntryFailure } from '../commands/run.ts';
+import type { RunResult } from './test.ts';
 
 // A path only a shell expands. Passing one to `run` means the caller thinks it selects many
 // files, which is the test verb's grammar rather than this one's.
@@ -85,6 +86,7 @@ export type ScriptFailure =
  *   file: '/proj/scripts/seed.ts',
  *   value: { seeded: 3 },
  *   valueProblem: null,
+ *   tests: null,
  *   browserLogs: [{ type: 'log', text: 'seeding…', args: [] }],
  *   browserLogsDropped: 0,
  * };
@@ -120,6 +122,17 @@ export interface ScriptResult {
    * affects {@link ScriptResult.ok}.
    */
   valueProblem: string | null;
+  /**
+   * The suite the file declared, or `null` when it was a plain script.
+   *
+   * A file that registers QUnit tests is a suite whichever verb points at it, so `run` runs it as
+   * one — same page, same evaluation, same reporters as {@link test}. Reporting it as an empty
+   * script run would be reporting success for tests that never ran.
+   *
+   * When this is non-null, {@link ScriptResult.ok} and {@link ScriptResult.exitCode} are the
+   * suite's verdict rather than `globalThis.exitCode`.
+   */
+  tests: RunResult | null;
   /**
    * Everything the script printed — its `console` calls and any uncaught error — in emit order,
    * whatever `console` option was passed. The same shape a test run reports, capped the same way.
@@ -178,6 +191,7 @@ export function run(file: string, options: ScriptOptions = {}): Task<ScriptResul
       file: outcome.entry,
       value: outcome.value,
       valueProblem: outcome.valueProblem,
+      tests: outcome.tests,
       browserLogs: outcome.browserLogs,
       browserLogsDropped: outcome.browserLogsDropped,
     };
