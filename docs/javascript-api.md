@@ -130,6 +130,7 @@ result.exitCode; // globalThis.exitCode if the script set one, 1 if it threw, el
 result.durationMs; // 412
 result.file; // '/proj/scripts/seed.ts' — absolute, whatever you passed
 result.value; // whatever the script default-exported, or undefined
+result.tests; // null for a script; the RunResult when the file declared tests
 result.valueProblem; // null, or why there is no value despite an export
 result.browserLogs; // everything it printed, in emit order
 result.browserLogsDropped; // 0, unless it out-printed the cap
@@ -142,6 +143,23 @@ so it gets a DOM, `fetch` against a real `http://localhost` origin, `import.meta
 Options are `cwd`, `browser`, `port`, `timeout`, `open` and `console`. There is no `watch`: a
 watching script never finishes, so it cannot be a `Task` that resolves, and it needs a session type
 of its own.
+
+### When the file turns out to be a suite
+
+A file that registers QUnit tests is a suite whichever verb points at it, so `run` runs it as one —
+same page, same evaluation, same reporters as `test()`:
+
+```js
+const result = await run('test/cart-test.ts');
+
+result.tests; // a RunResult — counts, failures, everything test() returns
+result.ok; // the SUITE's verdict, not globalThis.exitCode
+result.tests.counts.failed; // 0
+```
+
+`tests` is `null` for a plain script, which is what distinguishes the two. Whether the file declared
+anything is read from QUnit after it has evaluated, so a test file that reaches qunitx through a
+barrel or a side-effect import is recognised exactly like a direct one.
 
 ### The value it exported
 

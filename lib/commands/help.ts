@@ -62,6 +62,7 @@ ${color('$ qunitx daemon <start|stop|status>')}      # Optional persistent daemo
 ${color('$ qunitx upgrade [version]')}                # Update to the latest release (${color('--check')} reports without installing)
 ${color('$ qunitx run $scriptFile')}                 # Runs one file as a plain script in the browser — its console is the output
   no TAP, no QUnit; top-level await works, and the exit code is ${color('globalThis.exitCode')} (1 if it throws)
+  a file that declares tests is run AS a suite, reported exactly as ${color('$ qunitx $file')} would
   accepts ${color('--browser')}, ${color('--port')}, ${color('--open')}, ${color('--timeout')} and ${color('--watch')}
 
 ${highlight('Environment:')}

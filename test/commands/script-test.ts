@@ -9,6 +9,77 @@ const CLI = `node cli.ts`;
 const CWD = process.cwd();
 const SCRIPTS = `${CWD}/test/fixtures/scripts`;
 
+// `run` is the script verb, but a file that REGISTERS QUnit tests is a suite whichever verb points
+// at it. Running it as a plain script would evaluate it, register three tests, run none of them and
+// exit 0 in silence — success reported for tests that never ran, which is the one outcome a test
+// runner must never produce.
+module('Commands | qunitx run <test file>', { concurrency: true }, () => {
+  const PASSING = `${CWD}/test/fixtures/passing-tests.js`;
+
+  test('runs the tests it declared and reports them as TAP', async (assert) => {
+    const result = await execute(`${CLI} run ${PASSING}`);
+
+    assert.includes(result.stdout, 'TAP version 13');
+    assert.includes(result.stdout, 'ok 1 {{moduleName}} Passing Tests | assert true works');
+    assert.includes(result.stdout, '1..3');
+    assert.includes(result.stdout, '# pass 3');
+    assert.includes(result.stdout, '# fail 0');
+    assert.strictEqual(result.code, 0);
+  });
+
+  test('the report matches the one the bare verb produces for the same file', async (assert) => {
+    // The promise this verb makes: pointing `run` at a suite is not a lesser way to run it. Both
+    // are normalised for the numbers that legitimately differ between two runs — durations.
+    const [viaRun, viaBare] = await Promise.all([
+      execute(`${CLI} run ${PASSING}`),
+      execute(`${CLI} ${PASSING}`),
+    ]);
+    // Durations and per-test timings legitimately differ between two runs. Blank lines are
+    // collapsed too: the bare verb emits one more of them around its summary block than this path
+    // does, which no TAP consumer can see — every parser is line-oriented and skips blanks — and
+    // which is not worth reproducing by hand. Every line that carries meaning is compared exactly.
+    const normalise = (text: string) =>
+      text
+        .split('\n')
+        .filter((line) => line.trim() !== '' && !line.startsWith('# duration'))
+        .map((line) =>
+          line.replace(/# \(\d+ ms\)/, '# (N ms)').replace(/localhost:\d+/, 'localhost:PORT'),
+        )
+        .join('\n');
+
+    assert.strictEqual(normalise(viaRun.stdout), normalise(viaBare.stdout));
+  });
+
+  test('a failing suite exits 1, exactly as the bare verb does', async (assert) => {
+    const viaRun = await shellFails(`${CLI} run ${CWD}/test/fixtures/failing-tests.js`);
+
+    assert.strictEqual(viaRun.code, 1, 'a red suite is a red run, whichever verb ran it');
+    assert.includes(viaRun.stdout, 'not ok 2', 'the first test in that fixture passes');
+    assert.includes(
+      viaRun.stdout,
+      'test/fixtures/failing-tests.js:',
+      'and the failure resolves to source, not to a frame inside the served bundle',
+    );
+  });
+
+  test('--reporter reaches the suite the file declared', async (assert) => {
+    const result = await execute(`${CLI} run ${PASSING} --reporter=spec`);
+
+    assert.includes(result.stdout, '✔ assert true works');
+    assert.includes(result.stdout, '3 passing');
+    assert.notIncludes(result.stdout, 'TAP version', 'spec replaces TAP rather than joining it');
+  });
+
+  test("a test's own console output stays out of the TAP stream", async (assert) => {
+    // passing-tests.js logs from inside a test. Streaming it — which is what the script verb does
+    // with a script's output — would interleave raw lines with `ok 1 …`, and the result would not
+    // parse as TAP any more.
+    const result = await execute(`${CLI} run ${PASSING}`);
+
+    assert.notIncludes(result.stdout, 'calling assert true test case');
+  });
+});
+
 module('Commands | qunitx run <script>', { concurrency: true }, () => {
   test('runs the file in the browser and prints only what the script printed', async (assert) => {
     const result = await execute(`${CLI} run ${SCRIPTS}/browser-script.ts`);
