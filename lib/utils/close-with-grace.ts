@@ -23,28 +23,46 @@ export const CLEANUP_GRACE_MS = 10_000;
  * may have left orphans. Goes to stderr so it never lands in the TAP stream.
  *
  * `null` / `undefined` entries are accepted as-is so optional-chained closes such as
- * `connections.server?.close()` flow in without per-call filtering.
+ * `connections.server?.close()` flow in without per-call filtering. Keyed rather than positional
+ * so the timeout can name what it gave up on: resolves with the names still pending, empty when
+ * everything settled in time.
  *
  * ```ts
  * const browserClose = Promise.resolve();
  * const serverClose: Promise<void> | undefined = undefined; // e.g. connections.server?.close()
  *
- * await closeWithGrace([browserClose, serverClose]); // resolves once every close settles
- * await closeWithGrace([Promise.reject(new Error('wedged'))], 50); // a failing close cannot wedge it
+ * await closeWithGrace({ browser: browserClose, server: serverClose }); // [] — everything settled
+ * await closeWithGrace({ wedged: Promise.reject(new Error('boom')) }, 50); // [] — a rejection is settled
  * ```
  */
 export function closeWithGrace(
-  closes: ReadonlyArray<Promise<unknown> | null | undefined>,
+  closes: Readonly<Record<string, Promise<unknown> | null | undefined>>,
   graceMs: number = CLEANUP_GRACE_MS,
-): Promise<void> {
-  return new Promise<void>((resolve) => {
+): Promise<string[]> {
+  const entries = Object.entries(closes);
+  const pending = new Set(entries.filter(([, close]) => close).map(([name]) => name));
+
+  return new Promise<string[]>((resolve) => {
     const timer = setTimeout(() => {
-      process.stderr.write(`# qunitx: cleanup timed out after ${graceMs} ms — exiting anyway\n`);
-      resolve();
+      const abandoned = [...pending];
+      // NAMING what did not settle, because "cleanup timed out" is a symptom and the handle still
+      // held is the bug. This line is the only evidence a CI runner leaves behind, and one that
+      // says which close hung turns a week of guessing into a stack trace.
+      process.stderr.write(
+        `# qunitx: cleanup timed out after ${graceMs} ms — still pending: ${abandoned.join(', ')} — exiting anyway\n`,
+      );
+      resolve(abandoned);
     }, graceMs);
-    Promise.allSettled(closes).then(() => {
+
+    Promise.allSettled(
+      entries.map(([name, close]) =>
+        Promise.resolve(close).finally(() => {
+          pending.delete(name);
+        }),
+      ),
+    ).then(() => {
       clearTimeout(timer);
-      resolve();
+      resolve([]);
     });
   });
 }

@@ -112,33 +112,15 @@ export function detect(probe: ChannelProbe = {}): InstallChannel {
 }
 
 /**
- * The `npm install …@<version>` (or `deno add`, or `git pull`) line to print when the detected
- * channel cannot replace itself. One string, so every refusal stays comparable.
+ * The command that upgrades this channel: `deno install`, `npm install -g`, `deno add`, `git pull`.
+ *
+ * Argv rather than a string because this is the definition, not the display — argv is what can be
+ * spawned, and a string would have to be parsed back by something that guesses at quoting it never
+ * needs. {@link updateCommand} renders it for a human. Deriving the printed line from the runnable
+ * one is what stops a refusal from advertising a command the upgrade does not actually run.
  *
  * `registry` only reaches the deno-project case, where the same dependency may be pinned through
  * either registry and the wrong `deno add` would add a second copy of it.
- *
- * ```ts
- * import * as Channel from './channel.ts';
- *
- * Channel.updateCommand({ kind: 'npm-global', prefix: '/usr/lib' }, '1.0.0'); // 'npm install -g qunitx-cli@1.0.0'
- * Channel.updateCommand({ kind: 'deno-cache', entry: '/c/deno/npm/x' }, '1.0.0'); // 'deno run -A npm:qunitx-cli@1.0.0'
- * ```
- */
-export function updateCommand(
-  channel: InstallChannel,
-  version: string,
-  registry: 'npm' | 'jsr' = 'npm',
-): string {
-  return updateArgv(channel, version, registry).join(' ');
-}
-
-/**
- * The same line as {@link updateCommand}, as argv — the form you can spawn.
- *
- * One source of truth for both, because the command a refusal PRINTS and the command an upgrade
- * RUNS drifting apart is the bug that turns a helpful hint into a wrong one. Split here rather
- * than parsed back out of the string, which would have to guess at quoting it never needs.
  *
  * ```ts
  * import * as Channel from './channel.ts';
@@ -166,6 +148,29 @@ export function updateArgv(
   } else if (channel.kind === 'source') return ['git', 'pull'];
 
   return ['qunitx', 'upgrade', version];
+}
+
+/**
+ * {@link updateArgv} rendered as one line, for printing.
+ *
+ * The half a person reads: it goes in a refusal, and in the header an upgrade prints before it
+ * runs the thing. It exists so no caller formats that line itself — one rendering, so every
+ * message shows the same command, and the day one of these needs quoting there is one place to
+ * add it.
+ *
+ * ```ts
+ * import * as Channel from './channel.ts';
+ *
+ * Channel.updateCommand({ kind: 'npm-global', prefix: '/usr/lib' }, '1.0.0'); // 'npm install -g qunitx-cli@1.0.0'
+ * Channel.updateCommand({ kind: 'deno-cache', entry: '/c/deno/npm/x' }, '1.0.0'); // 'deno run -A npm:qunitx-cli@1.0.0'
+ * ```
+ */
+export function updateCommand(
+  channel: InstallChannel,
+  version: string,
+  registry: 'npm' | 'jsr' = 'npm',
+): string {
+  return updateArgv(channel, version, registry).join(' ');
 }
 
 /**

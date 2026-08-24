@@ -164,7 +164,7 @@ const EXIT_CODE_SIGTERM = 128 + 15;
     // Nothing needs closing here anyway — the process is about to exit, and the prelaunch exit
     // hook SIGKILLs Chrome's whole process group on the way out.
     process.once('SIGTERM', () => {
-      void closeWithGrace([session.connections.server.close()]).finally(() =>
+      void closeWithGrace({ server: session.connections.server.close() }).finally(() =>
         process.exit(EXIT_CODE_SIGTERM),
       );
     });
