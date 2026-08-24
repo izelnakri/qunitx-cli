@@ -29,7 +29,7 @@ import * as TimeCounter from '../utils/time-counter.ts';
 import * as Reporter from '../reporters/index.ts';
 import { readTemplate } from '../utils/read-template.ts';
 import { isCustomTemplate } from '../utils/html.ts';
-import { closeWithGrace } from '../utils/close-with-grace.ts';
+import { closeWithGrace, type Abandoned } from '../utils/close-with-grace.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
 import * as Coverage from '../coverage/index.ts';
 import { isFilteredRun, describeActiveFilters } from '../selection/filter.ts';
@@ -135,8 +135,13 @@ export interface WatchSession {
    * very thing the caller just asked to stop.
    */
   settled(): Promise<void>;
-  /** Stops the watchers and closes the browser and server. Idempotent. */
-  close(): Promise<void>;
+  /**
+   * Stops the watchers and closes the browser and server. Idempotent.
+   *
+   * Resolves with whatever the cleanup grace gave up on, so a caller that intends to exit can
+   * wait for it rather than discover it as a process that will not end.
+   */
+  close(): Promise<Abandoned>;
   /**
    * {@link close} minus the two teardowns a restart must not do, because it is building a
    * replacement in the same process rather than ending.
@@ -152,7 +157,7 @@ export interface WatchSession {
    * context belongs to a config nothing will use again — pass `disposeEsbuild` there, or it is
    * orphaned with its ref still on esbuild's service child and the process can never exit.
    */
-  teardown(disposeEsbuild?: boolean): Promise<void>;
+  teardown(disposeEsbuild?: boolean): Promise<Abandoned>;
 }
 
 /**
@@ -541,9 +546,9 @@ async function closeSession(
   // Both default to "this session is over". `restart` turns them off because it is building a
   // replacement in the same process, and each would cost it something it does not need to pay.
   { reapPrelaunchedChrome = true, disposeEsbuild = true } = {},
-): Promise<void> {
+): Promise<Abandoned> {
   killFileWatchers();
-  await closeWithGrace({
+  const abandoned = await closeWithGrace({
     server: Task(connections.server?.close()).ignore('watch session server.close'),
     page: Task(connections.page?.close()).ignore('watch session page.close'),
     browser: Task(connections.browser?.close()).ignore('watch session browser.close'),
@@ -553,6 +558,8 @@ async function closeSession(
     prelaunch: reapPrelaunchedChrome ? shutdownPrelaunch() : null,
   });
   if (disposeEsbuild) build.context = null;
+
+  return abandoned;
 }
 
 /**
