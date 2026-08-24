@@ -157,7 +157,9 @@ result.ok; // the SUITE's verdict, not globalThis.exitCode
 result.tests.counts.failed; // 0
 ```
 
-`tests` is `null` for a plain script, which is what distinguishes the two. Whether the file declared
+`tests` is `null` for a plain script, which is what distinguishes the two. The suite's verdict is
+the run's: a failing test makes `ok` false and the exit code 1 even if the file set
+`globalThis.exitCode = 0`, and a green suite is `ok` whatever it set. Whether the file declared
 anything is read from QUnit after it has evaluated, so a test file that reaches qunitx through a
 barrel or a side-effect import is recognised exactly like a direct one.
 

@@ -30,10 +30,11 @@ module('Commands | qunitx run <test file>', { concurrency: true }, () => {
   test('the report matches the one the bare verb produces for the same file', async (assert) => {
     // The promise this verb makes: pointing `run` at a suite is not a lesser way to run it. Both
     // are normalised for the numbers that legitimately differ between two runs — durations.
-    const [viaRun, viaBare] = await Promise.all([
-      execute(`${CLI} run ${PASSING}`),
-      execute(`${CLI} ${PASSING}`),
-    ]);
+    // Sequential on purpose: this needs two browsers and nothing about it needs them at once. Run
+    // concurrently they doubled this file's peak draw on the shared Chrome semaphore, which every
+    // other test file is queueing behind.
+    const viaRun = await execute(`${CLI} run ${PASSING}`);
+    const viaBare = await execute(`${CLI} ${PASSING}`);
     // Durations and per-test timings legitimately differ between two runs. Blank lines are
     // collapsed too: the bare verb emits one more of them around its summary block than this path
     // does, which no TAP consumer can see — every parser is line-oriented and skips blanks — and
@@ -46,7 +47,7 @@ module('Commands | qunitx run <test file>', { concurrency: true }, () => {
             line.trim() !== '' &&
             !line.startsWith('# duration') &&
             // The one line `run` adds and the bare verb has no reason to: see the test below.
-            !line.includes('is the script verb'),
+            !line.includes('ran as a suite'),
         )
         .map((line) =>
           line.replace(/# \(\d+ ms\)/, '# (N ms)').replace(/localhost:\d+/, 'localhost:PORT'),
@@ -73,14 +74,40 @@ module('Commands | qunitx run <test file>', { concurrency: true }, () => {
     // failure — and it names the exact command to use instead, project-relative and pasteable.
     const result = await execute(`${CLI} run ${PASSING}`);
 
-    assert.includes(result.stdout, 'is the script verb');
+    assert.includes(result.stdout, 'ran as a suite (declares tests)');
+    assert.includes(result.stdout, 'globalThis.exitCode is ignored');
     assert.includes(result.stdout, 'Prefer: qunitx test/fixtures/passing-tests.js');
     assert.strictEqual(result.code, 0, 'discouraged, not refused');
     const lines = result.stdout.split('\n');
     assert.strictEqual(lines[0], 'TAP version 13', 'and it never displaces the TAP version line');
     assert.ok(
-      lines.find((line) => line.includes('is the script verb'))!.startsWith('# '),
+      lines.find((line) => line.includes('ran as a suite'))!.startsWith('# '),
       'a TAP stream carries it as a comment, not as a stray line',
+    );
+  });
+
+  test('the tests set the exit code, and globalThis.exitCode does not', async (assert) => {
+    // What the warning promises, pinned. A suite's verdict is the whole point of running one, so a
+    // file that declares tests cannot talk its way to green — nor accidentally to red.
+    await using directory = await tempDir('run-suite-exit-code');
+    const declare = (name: string, body: string) =>
+      `import { module, test } from 'qunitx';\n${body}\n` +
+      `module('${name}', function () {\n` +
+      `  test('t', function (assert) { assert.equal(1, ${name === 'Red' ? 2 : 1}); });\n` +
+      `});\n`;
+    const redSilenced = path.join(directory.path, 'red-silenced.ts');
+    const greenLoud = path.join(directory.path, 'green-loud.ts');
+    await fs.writeFile(redSilenced, declare('Red', 'globalThis.exitCode = 0;'));
+    await fs.writeFile(greenLoud, declare('Green', 'globalThis.exitCode = 7;'));
+
+    const red = await shellFails(`${CLI} run ${redSilenced}`);
+    const green = await execute(`${CLI} run ${greenLoud}`);
+
+    assert.strictEqual(red.code, 1, 'a failing test cannot be silenced by globalThis.exitCode = 0');
+    assert.strictEqual(
+      green.code,
+      0,
+      'nor can a passing suite be failed by globalThis.exitCode = 7',
     );
   });
 

@@ -540,7 +540,15 @@ ok 1 Cart | sums line items # (2 ms)
 1..1
 ```
 
-`--reporter`, `--junit`, `--filter` and `--debug` all apply. Nothing is bundled or evaluated twice:
+It says so, and names the shorter way to have asked:
+
+```
+# Warning: ran as a suite (declares tests); globalThis.exitCode is ignored. Prefer: qunitx test/cart-test.ts
+```
+
+The tests decide the exit code: a failing one exits 1 even if the file set `globalThis.exitCode = 0`,
+and a passing suite exits 0 whatever the file set. `--reporter`, `--junit`, `--filter` and `--debug`
+all apply. Nothing is bundled or evaluated twice:
 the file is evaluated once, and whether it declared any tests is read from QUnit afterwards — so a
 test file that reaches qunitx through a barrel or a helper is recognised just the same.
 
