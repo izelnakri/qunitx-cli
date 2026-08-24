@@ -1,5 +1,6 @@
 import * as TestCommand from '../commands/test.ts';
 import { Task } from '../task/index.ts';
+import { closeWithGrace } from '../utils/close-with-grace.ts';
 import * as TestRun from './test.ts';
 import { EventsChannel, findAPIReporterFrom, type RunEvent } from './reporter.ts';
 
@@ -339,6 +340,9 @@ class Session implements WatchSession {
   #published = 0;
   #closed = false;
   #restarting: Promise<RunResult> | null = null;
+  // Closes a restart's teardown gave up on, kept so `close()` can wait for them. One entry per
+  // restart that hit the grace, which on a healthy machine is none.
+  #abandoned: Promise<void>[] = [];
   // What the session was opened with, kept so `restart(patch)` has something to merge into.
   // `Config` is the RESOLVED form — inputs already walked into an fsTree — so it cannot be
   // un-resolved back into the options a new selection would need.
@@ -457,7 +461,20 @@ class Session implements WatchSession {
     // and leaks whichever handles it had already created. The restart checks `#closed` when it
     // lands and closes what it built, so the wait is bounded by one boot.
     await Task(this.#restarting).ignore('watch session restart in flight');
-    await this.#inner.close();
+    const abandoned = await this.#inner.close();
+    // Every restart tore down a session of its own, and a teardown that hit the cleanup grace
+    // walked away from closes still in flight. Nothing else will ever look at those again: the
+    // session that owned them has been replaced, and this close only knows about the current
+    // one. So they are waited for HERE, where "the session is closed" is finally being claimed —
+    // an abandoned browser close holds its transport open, and a script that called close() and
+    // then ended would hang on handles belonging to a session it no longer has a reference to.
+    await Task(
+      closeWithGrace({
+        current: abandoned.settled,
+        ...Object.fromEntries(this.#abandoned.map((one, index) => [`restart-${index}`, one])),
+      }),
+    ).ignore('watch session abandoned closes');
+    this.#abandoned = [];
     this.#results.close();
     this.#events?.close();
   }
@@ -508,7 +525,8 @@ class Session implements WatchSession {
     // A patched restart builds a NEW config, so the old esbuild context belongs to one nothing
     // will use again: keeping it strands a ref'd service child and the process can never exit.
     // A bare restart reuses the config, where keeping it is the whole optimisation.
-    await this.#inner.teardown(Boolean(patch));
+    const abandoned = await this.#inner.teardown(Boolean(patch));
+    if (abandoned.names.length) this.#abandoned.push(abandoned.settled);
 
     // Every aborter registered on this state closes over the server just torn down; the set is
     // never pruned, so without this each restart leaves another closure publishing to a dead

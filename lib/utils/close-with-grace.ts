@@ -24,45 +24,63 @@ export const CLEANUP_GRACE_MS = 10_000;
  *
  * `null` / `undefined` entries are accepted as-is so optional-chained closes such as
  * `connections.server?.close()` flow in without per-call filtering. Keyed rather than positional
- * so the timeout can name what it gave up on: resolves with the names still pending, empty when
- * everything settled in time.
+ * so the timeout can name what it gave up on.
+ *
+ * Resolves with what it abandoned: the names, and `settled` — a promise for the moment those
+ * finally finish. Giving up on a close is not the same as being done with it, and a caller that
+ * outlives this one (a watch session restarting) has to be able to come back for it. Without
+ * that, an abandoned browser close holds its transport open for the life of the process, and
+ * nothing ever looks at it again.
  *
  * ```ts
  * const browserClose = Promise.resolve();
  * const serverClose: Promise<void> | undefined = undefined; // e.g. connections.server?.close()
  *
- * await closeWithGrace({ browser: browserClose, server: serverClose }); // [] — everything settled
- * await closeWithGrace({ wedged: Promise.reject(new Error('boom')) }, 50); // [] — a rejection is settled
+ * (await closeWithGrace({ browser: browserClose, server: serverClose })).names; // [] — all settled
+ * (await closeWithGrace({ wedged: Promise.reject(new Error('x')) }, 50)).names; // [] — a rejection settles
  * ```
  */
 export function closeWithGrace(
   closes: Readonly<Record<string, Promise<unknown> | null | undefined>>,
   graceMs: number = CLEANUP_GRACE_MS,
-): Promise<string[]> {
+): Promise<Abandoned> {
   const entries = Object.entries(closes);
   const pending = new Set(entries.filter(([, close]) => close).map(([name]) => name));
+  const all = Promise.allSettled(
+    entries.map(([name, close]) =>
+      Promise.resolve(close).finally(() => {
+        pending.delete(name);
+      }),
+    ),
+  );
 
-  return new Promise<string[]>((resolve) => {
+  return new Promise<Abandoned>((resolve) => {
     const timer = setTimeout(() => {
-      const abandoned = [...pending];
+      const names = [...pending];
       // NAMING what did not settle, because "cleanup timed out" is a symptom and the handle still
       // held is the bug. This line is the only evidence a CI runner leaves behind, and one that
       // says which close hung turns a week of guessing into a stack trace.
       process.stderr.write(
-        `# qunitx: cleanup timed out after ${graceMs} ms — still pending: ${abandoned.join(', ')} — exiting anyway\n`,
+        `# qunitx: cleanup timed out after ${graceMs} ms — still pending: ${names.join(', ')} — exiting anyway\n`,
       );
-      resolve(abandoned);
+      // `all` is handed back rather than dropped: these closes are still running, and whoever
+      // outlives this call may need to wait for them before claiming everything is released.
+      resolve({ names, settled: all.then(() => {}) });
     }, graceMs);
 
-    Promise.allSettled(
-      entries.map(([name, close]) =>
-        Promise.resolve(close).finally(() => {
-          pending.delete(name);
-        }),
-      ),
-    ).then(() => {
+    all.then(() => {
       clearTimeout(timer);
-      resolve([]);
+      resolve(NOTHING_ABANDONED);
     });
   });
 }
+
+/** What {@link closeWithGrace} gave up on, and a promise for those closes finally finishing. */
+export interface Abandoned {
+  /** The keys still pending when the grace expired. Empty when everything settled in time. */
+  names: string[];
+  /** Settles when the abandoned closes do. Already settled when nothing was abandoned. */
+  settled: Promise<void>;
+}
+
+const NOTHING_ABANDONED: Abandoned = { names: [], settled: Promise.resolve() };
