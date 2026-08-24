@@ -315,7 +315,10 @@ async function runWatchMode(config: Config): Promise<WatchSession> {
   try {
     await runInBrowser(config, connections, initialFilter);
   } catch (error) {
-    await closeWithGrace([connections.server?.close(), connections.browser?.close()]);
+    await closeWithGrace({
+      server: connections.server?.close(),
+      browser: connections.browser?.close(),
+    });
     throw error;
   }
 
@@ -540,15 +543,15 @@ async function closeSession(
   { reapPrelaunchedChrome = true, disposeEsbuild = true } = {},
 ): Promise<void> {
   killFileWatchers();
-  await closeWithGrace([
-    Task(connections.server?.close()).ignore('watch session server.close'),
-    Task(connections.page?.close()).ignore('watch session page.close'),
-    Task(connections.browser?.close()).ignore('watch session browser.close'),
-    disposeEsbuild
+  await closeWithGrace({
+    server: Task(connections.server?.close()).ignore('watch session server.close'),
+    page: Task(connections.page?.close()).ignore('watch session page.close'),
+    browser: Task(connections.browser?.close()).ignore('watch session browser.close'),
+    esbuild: disposeEsbuild
       ? Task(build.context?.dispose()).ignore('watch session esbuild context dispose')
       : null,
-    reapPrelaunchedChrome ? shutdownPrelaunch() : null,
-  ]);
+    prelaunch: reapPrelaunchedChrome ? shutdownPrelaunch() : null,
+  });
   if (disposeEsbuild) build.context = null;
 }
 
@@ -575,7 +578,10 @@ async function runConcurrentMode(
     Reporter.runStart(config, { fileCount: 0, groupCount: 0 });
     // The daemon owns its browser across runs and must keep it; a local run owns this one.
     if (!config.state.daemon) {
-      await closeWithGrace([(await browserPromise).close(), shutdownPrelaunch()]);
+      await closeWithGrace({
+        browser: (await browserPromise).close(),
+        prelaunch: shutdownPrelaunch(),
+      });
     }
     const now = Date.now();
     return { exitCode: 0, durationMs: 0, startedAt: now, finishedAt: now };
@@ -768,10 +774,10 @@ async function runConcurrentMode(
           // Per-group cleanup, bounded so a deadlocked page.close (Firefox/WebKit under
           // load) cannot wedge Promise.allSettled forever. The shared server is closed
           // in the final cleanup pass below, not here.
-          await closeWithGrace([
-            sharedServer ? undefined : connections.server?.close(),
-            reusePage ? undefined : connections.page?.close(),
-          ]);
+          await closeWithGrace({
+            server: sharedServer ? undefined : connections.server?.close(),
+            page: reusePage ? undefined : connections.page?.close(),
+          });
         }
       })();
       const record = () => wallTimes.set(i, Date.now() - startMs);
@@ -854,7 +860,7 @@ async function runConcurrentMode(
   // Daemon mode: close the per-run shared server (if any) but never the browser — the daemon
   // owns it across runs, and the next run reuses it.
   if (config.state.daemon) {
-    await closeWithGrace([Task(sharedServer?.close()).ignore('server.close')]);
+    await closeWithGrace({ server: Task(sharedServer?.close()).ignore('server.close') });
     clearInterval(keepAlive);
     return { exitCode, durationMs, startedAt, finishedAt };
   }
@@ -868,12 +874,12 @@ async function runConcurrentMode(
   // preventing a premature drain if every close resolves instantly (e.g. Chrome already dead)
   // before proc.ref() takes effect inside shutdownPrelaunch. closeWithGrace bounds the other
   // side: Playwright's browser.close() can deadlock on Firefox + Windows.
-  await closeWithGrace([
-    failureCacheWrite,
-    Task(sharedServer?.close()).ignore('server.close'),
-    Task(browser.close()).ignore('browser.close'),
-    shutdownPrelaunch(),
-  ]);
+  await closeWithGrace({
+    failureCache: failureCacheWrite,
+    server: Task(sharedServer?.close()).ignore('server.close'),
+    browser: Task(browser.close()).ignore('browser.close'),
+    prelaunch: shutdownPrelaunch(),
+  });
   clearInterval(keepAlive);
 
   return { exitCode, durationMs, startedAt, finishedAt };

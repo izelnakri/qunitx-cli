@@ -5,6 +5,7 @@ import * as Upgrade from '../../../lib/commands/upgrade/index.ts';
 import { Failure } from '../../../lib/result/index.ts';
 import { streamConsole } from '../../../lib/console.ts';
 import { tempDir } from '../../helpers/temp-dir.ts';
+import type * as Process from '../../../lib/commands/upgrade/process.ts';
 import type { InstallChannel } from '../../../lib/commands/upgrade/channel.ts';
 import type { InstallPlan } from '../../../lib/commands/upgrade/install.ts';
 import '../../helpers/custom-asserts.ts';
@@ -34,6 +35,131 @@ const CHANNELS: Record<string, InstallChannel> = {
   },
   source: { kind: 'source', entry: '/repo/cli.ts' },
 };
+
+// The channels qunitx does not own but CAN ask: it knows the command, so making the user paste it
+// back is a worse version of running it. `deno install` rewrites the launcher shim and caches the
+// new version beside the running one, so nothing here overwrites the binary doing the asking.
+module('Commands | Upgrade | run | delegating to the owner', { concurrency: true }, () => {
+  const OK = { exitCode: 0, signalCode: null, isMissingInstallerBinary: false };
+  const spawning = (result: Process.SpawnResult = OK) => {
+    const calls: string[][] = [];
+    return {
+      calls,
+      spawn: (argv: string[]) => {
+        calls.push(argv);
+        return Promise.resolve(result);
+      },
+    };
+  };
+
+  test('a JSR launcher install runs deno install rather than printing it', async (assert) => {
+    const { lines, console } = capture();
+    const { calls, spawn } = spawning();
+
+    const code = await Upgrade.run(['0.35.0'], {
+      console,
+      spawn,
+      channel: CHANNELS.jsrLauncher,
+      currentVersion: '0.34.5',
+      find: () => Promise.resolve(LATEST),
+    });
+
+    assert.deepEqual(calls, [['deno', 'install', '-Agf', 'jsr:@izelnakri/qunitx-cli@0.35.0']]);
+    assert.strictEqual(code, 0, 'an upgrade that happened is not an exit 1');
+    assert.includes(lines.join(''), '0.34.5 → 0.35.0');
+  });
+
+  test('a global npm install runs npm install -g', async (assert) => {
+    const { lines, console } = capture();
+    const { calls, spawn } = spawning();
+
+    const code = await Upgrade.run([], {
+      console,
+      spawn,
+      channel: CHANNELS.npmGlobal,
+      currentVersion: '0.34.5',
+      find: () => Promise.resolve(LATEST),
+    });
+
+    assert.deepEqual(calls, [['npm', 'install', '-g', 'qunitx-cli@0.35.0']]);
+    assert.strictEqual(code, 0);
+    assert.includes(lines.join(''), '0.34.5 → 0.35.0');
+  });
+
+  test('an updater that is not installed says so, and does not claim success', async (assert) => {
+    const { lines, console } = capture();
+    const { spawn } = spawning({
+      exitCode: null,
+      signalCode: null,
+      isMissingInstallerBinary: true,
+    });
+
+    const code = await Upgrade.run([], {
+      console,
+      spawn,
+      channel: CHANNELS.jsrLauncher,
+      currentVersion: '0.34.5',
+      find: () => Promise.resolve(LATEST),
+    });
+
+    assert.strictEqual(code, 2);
+    assert.includes(lines.join(''), 'deno is not installed');
+    assert.notIncludes(lines.join(''), '0.34.5 → 0.35.0\n', 'no upgrade was reported');
+  });
+
+  test('an updater that fails carries its exit code out, and says nothing changed', async (assert) => {
+    const { lines, console } = capture();
+    const { spawn } = spawning({ exitCode: 7, signalCode: null, isMissingInstallerBinary: false });
+
+    const code = await Upgrade.run([], {
+      console,
+      spawn,
+      channel: CHANNELS.npmGlobal,
+      currentVersion: '0.34.5',
+      find: () => Promise.resolve(LATEST),
+    });
+
+    assert.strictEqual(code, 7, "the installer's own code, not a flattened 1");
+    assert.includes(lines.join(''), 'npm exited 7');
+    assert.includes(lines.join(''), 'unchanged');
+  });
+
+  test('a project dependency is still the project owner’s to bump', async (assert) => {
+    // Deliberately NOT delegated: running `npm install --save-dev` here would edit someone's
+    // package.json and node_modules because they asked to upgrade a tool.
+    const { lines, console } = capture();
+    const { calls, spawn } = spawning();
+
+    const code = await Upgrade.run([], {
+      console,
+      spawn,
+      channel: CHANNELS.npmLocal,
+      currentVersion: '0.34.5',
+      find: () => Promise.resolve(LATEST),
+    });
+
+    assert.deepEqual(calls, [], 'nothing was run');
+    assert.strictEqual(code, 1);
+    assert.includes(lines.join(''), 'will not make it for you');
+    assert.includes(lines.join(''), '--write-manifest');
+  });
+
+  test('a source checkout is never upgraded by spawning git', async (assert) => {
+    const { calls, spawn } = spawning();
+    const { console } = capture();
+
+    const code = await Upgrade.run([], {
+      console,
+      spawn,
+      channel: CHANNELS.source,
+      currentVersion: '0.34.5',
+      find: () => Promise.resolve(LATEST),
+    });
+
+    assert.deepEqual(calls, [], "a working tree is not qunitx's to pull");
+    assert.strictEqual(code, 1);
+  });
+});
 
 module('Commands | Upgrade | run | reporting', { concurrency: true }, () => {
   test('--help prints usage and asks for nothing', async (assert) => {
@@ -234,23 +360,30 @@ module('Commands | Upgrade | run | refusals', { concurrency: true }, () => {
     assert.notIncludes(output, 'git pull', 'a cached module is not a checkout');
   });
 
-  test('a global npm install points at npm, which owns those files', async (assert) => {
+  test('a global npm install is handed to npm, which owns those files', async (assert) => {
     const { lines, console } = capture();
+    const argvs: string[][] = [];
 
     const code = await Upgrade.run([], {
       console,
       channel: CHANNELS.npmGlobal,
       currentVersion: '0.34.5',
       find: () => Promise.resolve(LATEST),
+      spawn: (argv: string[]) => {
+        argvs.push(argv);
+        return Promise.resolve({ exitCode: 0, signalCode: null, isMissingInstallerBinary: false });
+      },
     });
 
-    assert.strictEqual(code, 1);
-    assert.includes(lines.join(''), 'npm install -g qunitx-cli@0.35.0');
+    assert.strictEqual(code, 0);
+    assert.deepEqual(argvs, [['npm', 'install', '-g', 'qunitx-cli@0.35.0']]);
+    assert.includes(lines.join(''), '0.34.5 → 0.35.0');
   });
 
   test("the JSR launcher's cache is version-keyed, so it is reinstalled rather than overwritten", async (assert) => {
     const { lines, console } = capture();
     let installed = false;
+    const argvs: string[][] = [];
 
     const code = await Upgrade.run([], {
       console,
@@ -261,11 +394,40 @@ module('Commands | Upgrade | run | refusals', { concurrency: true }, () => {
         installed = true;
         return Promise.resolve([]);
       },
+      spawn: (argv: string[]) => {
+        argvs.push(argv);
+        return Promise.resolve({ exitCode: 0, signalCode: null, isMissingInstallerBinary: false });
+      },
+    });
+
+    assert.strictEqual(code, 0);
+    assert.deepEqual(argvs, [['deno', 'install', '-Agf', 'jsr:@izelnakri/qunitx-cli@0.35.0']]);
+    assert.notOk(
+      installed,
+      'still never overwritten in place — a launcher pinned to 0.34.5 keeps getting 0.34.5',
+    );
+    assert.includes(lines.join(''), '0.34.5 → 0.35.0');
+  });
+
+  test('QUNITX_NO_SELF_UPGRADE hands the command back instead of running it', async (assert) => {
+    const { lines, console } = capture();
+    const argvs: string[][] = [];
+
+    const code = await Upgrade.run([], {
+      console,
+      channel: CHANNELS.jsrLauncher,
+      currentVersion: '0.34.5',
+      find: () => Promise.resolve(LATEST),
+      allowSelfUpgrade: false,
+      spawn: (argv: string[]) => {
+        argvs.push(argv);
+        return Promise.resolve({ exitCode: 0, signalCode: null, isMissingInstallerBinary: false });
+      },
     });
 
     assert.strictEqual(code, 1);
+    assert.deepEqual(argvs, [], 'nothing was installed');
     assert.includes(lines.join(''), 'deno install -Agf jsr:@izelnakri/qunitx-cli@0.35.0');
-    assert.notOk(installed, 'a launcher pinned to 0.34.5 keeps getting 0.34.5');
   });
 });
 

@@ -112,11 +112,51 @@ export function detect(probe: ChannelProbe = {}): InstallChannel {
 }
 
 /**
- * The `npm install …@<version>` (or `deno add`, or `git pull`) line to print when the detected
- * channel cannot replace itself. One string, so every refusal stays comparable.
+ * The command that upgrades this channel: `deno install`, `npm install -g`, `deno add`, `git pull`.
+ *
+ * Argv rather than a string because this is the definition, not the display — argv is what can be
+ * spawned, and a string would have to be parsed back by something that guesses at quoting it never
+ * needs. {@link updateCommand} renders it for a human. Deriving the printed line from the runnable
+ * one is what stops a refusal from advertising a command the upgrade does not actually run.
  *
  * `registry` only reaches the deno-project case, where the same dependency may be pinned through
  * either registry and the wrong `deno add` would add a second copy of it.
+ *
+ * ```ts
+ * import * as Channel from './channel.ts';
+ *
+ * Channel.updateArgv({ kind: 'npm-global', prefix: '/usr/lib' }, '1.0.0');
+ * // ['npm', 'install', '-g', 'qunitx-cli@1.0.0']
+ * ```
+ */
+export function updateArgv(
+  channel: InstallChannel,
+  version: string,
+  registry: 'npm' | 'jsr' = 'npm',
+): string[] {
+  if (channel.kind === 'npm-global') return ['npm', 'install', '-g', `qunitx-cli@${version}`];
+  else if (channel.kind === 'npm-local') {
+    return ['npm', 'install', '--save-dev', `qunitx-cli@${version}`];
+  } else if (channel.kind === 'deno-project') {
+    const specifier =
+      registry === 'jsr' ? `jsr:@izelnakri/qunitx-cli@${version}` : `npm:qunitx-cli@${version}`;
+    return ['deno', 'add', specifier];
+  } else if (channel.kind === 'deno-cache') {
+    return ['deno', 'run', '-A', `npm:qunitx-cli@${version}`];
+  } else if (channel.kind === 'jsr-launcher') {
+    return ['deno', 'install', '-Agf', `jsr:@izelnakri/qunitx-cli@${version}`];
+  } else if (channel.kind === 'source') return ['git', 'pull'];
+
+  return ['qunitx', 'upgrade', version];
+}
+
+/**
+ * {@link updateArgv} rendered as one line, for printing.
+ *
+ * The half a person reads: it goes in a refusal, and in the header an upgrade prints before it
+ * runs the thing. It exists so no caller formats that line itself — one rendering, so every
+ * message shows the same command, and the day one of these needs quoting there is one place to
+ * add it.
  *
  * ```ts
  * import * as Channel from './channel.ts';
@@ -130,18 +170,31 @@ export function updateCommand(
   version: string,
   registry: 'npm' | 'jsr' = 'npm',
 ): string {
-  if (channel.kind === 'npm-global') return `npm install -g qunitx-cli@${version}`;
-  else if (channel.kind === 'npm-local') return `npm install --save-dev qunitx-cli@${version}`;
-  else if (channel.kind === 'deno-project') {
-    return registry === 'jsr'
-      ? `deno add jsr:@izelnakri/qunitx-cli@${version}`
-      : `deno add npm:qunitx-cli@${version}`;
-  } else if (channel.kind === 'deno-cache') return `deno run -A npm:qunitx-cli@${version}`;
-  else if (channel.kind === 'jsr-launcher') {
-    return `deno install -Agf jsr:@izelnakri/qunitx-cli@${version}`;
-  } else if (channel.kind === 'source') return 'git pull';
+  return updateArgv(channel, version, registry).join(' ');
+}
 
-  return `qunitx upgrade ${version}`;
+/**
+ * Whether this channel's updater is qunitx's to run.
+ *
+ * True for the two that install a user-level qunitx someone asked to upgrade and nothing else
+ * depends on: the JSR launcher's shim, and a global npm install. Running their updater is exactly
+ * what `upgrade` was asked to do, and neither touches a file this process is reading — `deno
+ * install` rewrites the shim and caches a NEW version beside the running one.
+ *
+ * False for the rest, and for different reasons. A project dependency is a change to someone's
+ * repository, which is theirs to make (`--write-manifest` bumps the range for them). A deno-cache
+ * run installed nothing, so there is nothing to replace. A source checkout is a git working tree,
+ * where `git pull` can conflict, rebase, or land on the wrong branch.
+ *
+ * ```ts
+ * import * as Channel from './channel.ts';
+ *
+ * Channel.isSelfUpdatable({ kind: 'npm-global', prefix: '/usr/lib' }); // true
+ * Channel.isSelfUpdatable({ kind: 'source', entry: '/repo/cli.ts' }); // false
+ * ```
+ */
+export function isSelfUpdatable(channel: InstallChannel): boolean {
+  return channel.kind === 'jsr-launcher' || channel.kind === 'npm-global';
 }
 
 // Which project a node_modules install belongs to, read from the OUTERMOST node_modules on the

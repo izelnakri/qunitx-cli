@@ -393,7 +393,11 @@ export async function run(entry: string, settings: ScriptSettings = {}): Promise
       // holds the loop open, so a close that never settles drains it and the process exits 0 with
       // the real exit code computed and never committed. closeWithGrace's timer is itself a live
       // handle, so the loop cannot drain out from under the exit code.
-      await closeWithGrace([server.close(), browser.close(), shutdownPrelaunch()]);
+      await closeWithGrace({
+        server: server.close(),
+        browser: browser.close(),
+        prelaunch: shutdownPrelaunch(),
+      });
     }
   }
 

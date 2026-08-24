@@ -107,11 +107,24 @@ qunitx upgrade --check   # report only — exits 1 when a newer version exists
 qunitx upgrade 0.34.2    # install that version instead
 ```
 
-Only the standalone binary replaces itself. Every other install — npm (global or dependency), a
-Deno project, a JSR `deno install`, a `deno run npm:qunitx-cli`, a source checkout — is owned by
-npm, deno or git, so `upgrade` prints the exact command for yours instead of mutating something it
-does not own. `qunitx upgrade --write-manifest` bumps the range in whichever manifest declares it
-(`package.json` or `deno.json`) if you want that part done for you — the install stays yours to run.
+The standalone binary replaces itself. A **global** install — `deno install` from JSR, or
+`npm install -g` — is owned by another installer, so `upgrade` runs that installer for you:
+
+```sh
+$ qunitx upgrade 0.35.0
+Upgrading via the JSR launcher's cached binary:
+  deno install -Agf jsr:@izelnakri/qunitx-cli@0.35.0
+qunitx 0.34.6 → 0.35.0
+```
+
+A **project** dependency is different: bumping it edits your `package.json` or `deno.json`, which is
+a change to your repository rather than to a tool you installed. Those print the command instead,
+and `qunitx upgrade --write-manifest` bumps the range for you if you want that part done — the
+install stays yours to run. A source checkout prints `git pull`, and a `deno run npm:qunitx-cli`
+installed nothing to upgrade.
+
+Set `QUNITX_NO_SELF_UPGRADE=1` to make `upgrade` never run another installer, printing the command
+it would have run instead.
 
 ## Usage
 
