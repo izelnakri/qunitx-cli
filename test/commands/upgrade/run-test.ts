@@ -5,6 +5,7 @@ import * as Upgrade from '../../../lib/commands/upgrade/index.ts';
 import { Failure } from '../../../lib/result/index.ts';
 import { streamConsole } from '../../../lib/console.ts';
 import { tempDir } from '../../helpers/temp-dir.ts';
+import type * as Process from '../../../lib/commands/upgrade/process.ts';
 import type { InstallChannel } from '../../../lib/commands/upgrade/channel.ts';
 import type { InstallPlan } from '../../../lib/commands/upgrade/install.ts';
 import '../../helpers/custom-asserts.ts';
@@ -39,11 +40,12 @@ const CHANNELS: Record<string, InstallChannel> = {
 // back is a worse version of running it. `deno install` rewrites the launcher shim and caches the
 // new version beside the running one, so nothing here overwrites the binary doing the asking.
 module('Commands | Upgrade | run | delegating to the owner', { concurrency: true }, () => {
-  const delegating = (result = { code: 0, missing: false }) => {
+  const OK = { exitCode: 0, signalCode: null, isMissingInstallerBinary: false };
+  const spawning = (result: Process.SpawnResult = OK) => {
     const calls: string[][] = [];
     return {
       calls,
-      delegate: (argv: string[]) => {
+      spawn: (argv: string[]) => {
         calls.push(argv);
         return Promise.resolve(result);
       },
@@ -52,11 +54,11 @@ module('Commands | Upgrade | run | delegating to the owner', { concurrency: true
 
   test('a JSR launcher install runs deno install rather than printing it', async (assert) => {
     const { lines, console } = capture();
-    const { calls, delegate } = delegating();
+    const { calls, spawn } = spawning();
 
     const code = await Upgrade.run(['0.35.0'], {
       console,
-      delegate,
+      spawn,
       channel: CHANNELS.jsrLauncher,
       currentVersion: '0.34.5',
       find: () => Promise.resolve(LATEST),
@@ -69,11 +71,11 @@ module('Commands | Upgrade | run | delegating to the owner', { concurrency: true
 
   test('a global npm install runs npm install -g', async (assert) => {
     const { lines, console } = capture();
-    const { calls, delegate } = delegating();
+    const { calls, spawn } = spawning();
 
     const code = await Upgrade.run([], {
       console,
-      delegate,
+      spawn,
       channel: CHANNELS.npmGlobal,
       currentVersion: '0.34.5',
       find: () => Promise.resolve(LATEST),
@@ -86,11 +88,15 @@ module('Commands | Upgrade | run | delegating to the owner', { concurrency: true
 
   test('an updater that is not installed says so, and does not claim success', async (assert) => {
     const { lines, console } = capture();
-    const { delegate } = delegating({ code: null, missing: true });
+    const { spawn } = spawning({
+      exitCode: null,
+      signalCode: null,
+      isMissingInstallerBinary: true,
+    });
 
     const code = await Upgrade.run([], {
       console,
-      delegate,
+      spawn,
       channel: CHANNELS.jsrLauncher,
       currentVersion: '0.34.5',
       find: () => Promise.resolve(LATEST),
@@ -103,11 +109,11 @@ module('Commands | Upgrade | run | delegating to the owner', { concurrency: true
 
   test('an updater that fails carries its exit code out, and says nothing changed', async (assert) => {
     const { lines, console } = capture();
-    const { delegate } = delegating({ code: 7, missing: false });
+    const { spawn } = spawning({ exitCode: 7, signalCode: null, isMissingInstallerBinary: false });
 
     const code = await Upgrade.run([], {
       console,
-      delegate,
+      spawn,
       channel: CHANNELS.npmGlobal,
       currentVersion: '0.34.5',
       find: () => Promise.resolve(LATEST),
@@ -122,11 +128,11 @@ module('Commands | Upgrade | run | delegating to the owner', { concurrency: true
     // Deliberately NOT delegated: running `npm install --save-dev` here would edit someone's
     // package.json and node_modules because they asked to upgrade a tool.
     const { lines, console } = capture();
-    const { calls, delegate } = delegating();
+    const { calls, spawn } = spawning();
 
     const code = await Upgrade.run([], {
       console,
-      delegate,
+      spawn,
       channel: CHANNELS.npmLocal,
       currentVersion: '0.34.5',
       find: () => Promise.resolve(LATEST),
@@ -139,12 +145,12 @@ module('Commands | Upgrade | run | delegating to the owner', { concurrency: true
   });
 
   test('a source checkout is never upgraded by spawning git', async (assert) => {
-    const { calls, delegate } = delegating();
+    const { calls, spawn } = spawning();
     const { console } = capture();
 
     const code = await Upgrade.run([], {
       console,
-      delegate,
+      spawn,
       channel: CHANNELS.source,
       currentVersion: '0.34.5',
       find: () => Promise.resolve(LATEST),
@@ -363,9 +369,9 @@ module('Commands | Upgrade | run | refusals', { concurrency: true }, () => {
       channel: CHANNELS.npmGlobal,
       currentVersion: '0.34.5',
       find: () => Promise.resolve(LATEST),
-      delegate: (argv: string[]) => {
+      spawn: (argv: string[]) => {
         argvs.push(argv);
-        return Promise.resolve({ code: 0, missing: false });
+        return Promise.resolve({ exitCode: 0, signalCode: null, isMissingInstallerBinary: false });
       },
     });
 
@@ -388,9 +394,9 @@ module('Commands | Upgrade | run | refusals', { concurrency: true }, () => {
         installed = true;
         return Promise.resolve([]);
       },
-      delegate: (argv: string[]) => {
+      spawn: (argv: string[]) => {
         argvs.push(argv);
-        return Promise.resolve({ code: 0, missing: false });
+        return Promise.resolve({ exitCode: 0, signalCode: null, isMissingInstallerBinary: false });
       },
     });
 
@@ -413,9 +419,9 @@ module('Commands | Upgrade | run | refusals', { concurrency: true }, () => {
       currentVersion: '0.34.5',
       find: () => Promise.resolve(LATEST),
       allowSelfUpgrade: false,
-      delegate: (argv: string[]) => {
+      spawn: (argv: string[]) => {
         argvs.push(argv);
-        return Promise.resolve({ code: 0, missing: false });
+        return Promise.resolve({ exitCode: 0, signalCode: null, isMissingInstallerBinary: false });
       },
     });
 
