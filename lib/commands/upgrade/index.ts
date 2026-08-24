@@ -3,7 +3,7 @@ import { blue, magenta } from '../../utils/color.ts';
 import { processConsole, type Console } from '../../console.ts';
 import { Failure, type Result } from '../../result/index.ts';
 import * as Channel from './channel.ts';
-import * as Delegate from './delegate.ts';
+import * as Process from './process.ts';
 import * as Install from './install.ts';
 import * as Manifest from './manifest.ts';
 import * as Release from './release.ts';
@@ -111,8 +111,8 @@ export interface UpgradeDeps {
   platform?: NodeJS.Platform;
   /** Architecture used for asset selection. Defaults to the host's. */
   arch?: string;
-  /** Runs another tool's updater. Defaults to {@link Delegate.delegate}. */
-  delegate?: (argv: string[]) => Promise<Delegate.DelegateResult>;
+  /** Runs another tool's installer. Defaults to {@link Process.spawn}. */
+  spawn?: (argv: string[]) => Promise<Process.SpawnResult>;
   /**
    * Whether qunitx may run another tool's installer on the user's behalf. Defaults to true unless
    * `QUNITX_NO_SELF_UPGRADE` is set — for a locked-down image, a CI box, or anywhere the answer to
@@ -215,11 +215,11 @@ export async function run(
     );
     return 0;
   } else if (Channel.isSelfUpdatable(channel)) {
-    // An injected delegate is a statement that spawning is already the caller's to control, so the
-    // environment guard does not apply to it — that guard exists to stop the DEFAULT spawner from
-    // touching a machine, which is exactly what it does in this project's own test suite.
+    // An injected spawn is a statement that starting processes is already the caller's to control,
+    // so the environment guard does not apply to it — that guard exists to stop the DEFAULT spawner
+    // from touching a machine, which is exactly what it does in this project's own test suite.
     const mayDelegate =
-      deps.allowSelfUpgrade ?? (Boolean(deps.delegate) || !process.env.QUNITX_NO_SELF_UPGRADE);
+      deps.allowSelfUpgrade ?? (Boolean(deps.spawn) || !process.env.QUNITX_NO_SELF_UPGRADE);
     if (!mayDelegate) {
       out.log(`QUNITX_NO_SELF_UPGRADE is set, so this one is yours to run:\n  ${command}\n`);
       return 1;
@@ -234,16 +234,21 @@ export async function run(
       target,
       channel.kind === 'deno-project' ? await Manifest.registry(channel.manifest) : 'npm',
     );
-    const { code, missing } = await (deps.delegate ?? Delegate.delegate)(argv);
+    const { exitCode, signalCode, isMissingInstallerBinary } = await (deps.spawn ?? Process.spawn)(
+      argv,
+    );
 
-    if (missing) {
+    if (isMissingInstallerBinary) {
       // The one case where printing the line really is the best answer: the tool that owns this
       // install is not on PATH, so nothing can be run on the user's behalf.
       out.error(`${argv[0]} is not installed, so qunitx cannot run that for you.\n`);
       return 2;
-    } else if (code !== 0) {
-      out.error(`${argv[0]} exited ${code} — qunitx ${current} is unchanged.\n`);
-      return code ?? 2;
+    } else if (exitCode !== 0) {
+      // A signal is reported as the signal. `npm exited null` is what the code alone would say,
+      // which describes nothing that happened.
+      const ending = signalCode ? `was killed by ${signalCode}` : `exited ${exitCode}`;
+      out.error(`${argv[0]} ${ending} — qunitx ${current} is unchanged.\n`);
+      return exitCode ?? 2;
     }
 
     out.log(`qunitx ${current} → ${target}\n`);
