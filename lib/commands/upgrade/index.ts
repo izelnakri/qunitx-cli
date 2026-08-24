@@ -3,6 +3,7 @@ import { blue, magenta } from '../../utils/color.ts';
 import { processConsole, type Console } from '../../console.ts';
 import { Failure, type Result } from '../../result/index.ts';
 import * as Channel from './channel.ts';
+import * as Delegate from './delegate.ts';
 import * as Install from './install.ts';
 import * as Manifest from './manifest.ts';
 import * as Release from './release.ts';
@@ -32,11 +33,14 @@ ${color('--write-manifest')}      : project dependency only — bump the range i
 
 ${highlight('What it does per install:')}
 - standalone binary (${color('install.sh')}) : downloads the release, verifies its sha256, replaces itself
-- ${color('npm')} (global or devDependency)  : refuses, and prints the ${color('npm install')} line to run
-- ${color('deno')} project dependency        : refuses, and prints the ${color('deno add')} line for how it is pinned
-- ${color('deno install')} from JSR          : refuses (the cache is version-keyed), prints the ${color('deno install')} line
+- ${color('deno install')} from JSR          : runs ${color('deno install -Agf jsr:@izelnakri/qunitx-cli@<version>')} for you
+- ${color('npm install -g')}                 : runs ${color('npm install -g qunitx-cli@<version>')} for you
+- ${color('npm')} / ${color('deno')} project dependency  : refuses — bumping it changes that project (see ${color('--write-manifest')})
 - ${color('deno run npm:qunitx-cli')}        : nothing is installed to upgrade — pin the version in the command
 - source checkout                : refuses — ${color('git')} is the updater there
+
+${highlight('Environment:')}
+${color('QUNITX_NO_SELF_UPGRADE=1')} : never run another installer; print the command instead
 
 ${highlight('Exit codes:')} ${color('0')} up to date or upgraded, ${color('1')} not upgraded (newer version available, or this install updates another way), ${color('2')} could not check or install.
 `;
@@ -107,6 +111,15 @@ export interface UpgradeDeps {
   platform?: NodeJS.Platform;
   /** Architecture used for asset selection. Defaults to the host's. */
   arch?: string;
+  /** Runs another tool's updater. Defaults to {@link Delegate.delegate}. */
+  delegate?: (argv: string[]) => Promise<Delegate.DelegateResult>;
+  /**
+   * Whether qunitx may run another tool's installer on the user's behalf. Defaults to true unless
+   * `QUNITX_NO_SELF_UPGRADE` is set — for a locked-down image, a CI box, or anywhere the answer to
+   * "may this process install things" is no. Blocked, `upgrade` prints the command it would have
+   * run and exits 1, which is what it did before it could run anything.
+   */
+  allowSelfUpgrade?: boolean;
 }
 
 /**
@@ -200,6 +213,40 @@ export async function run(
     out.log(
       `Run ${color(channel.kind === 'npm-local' ? 'npm install' : 'deno install')} to fetch it.\n`,
     );
+    return 0;
+  } else if (Channel.isSelfUpdatable(channel)) {
+    // An injected delegate is a statement that spawning is already the caller's to control, so the
+    // environment guard does not apply to it — that guard exists to stop the DEFAULT spawner from
+    // touching a machine, which is exactly what it does in this project's own test suite.
+    const mayDelegate =
+      deps.allowSelfUpgrade ?? (Boolean(deps.delegate) || !process.env.QUNITX_NO_SELF_UPGRADE);
+    if (!mayDelegate) {
+      out.log(`QUNITX_NO_SELF_UPGRADE is set, so this one is yours to run:\n  ${command}\n`);
+      return 1;
+    }
+    // Owned by another installer, so ask that installer rather than printing its command and
+    // making the user paste it back. Nothing here writes over the running binary: `deno install`
+    // rewrites the launcher shim and caches the new version beside this one, and npm replaces
+    // files under its own prefix.
+    out.log(`Upgrading via ${describe(channel)}:\n  ${command}\n`);
+    const argv = Channel.updateArgv(
+      channel,
+      target,
+      channel.kind === 'deno-project' ? await Manifest.registry(channel.manifest) : 'npm',
+    );
+    const { code, missing } = await (deps.delegate ?? Delegate.delegate)(argv);
+
+    if (missing) {
+      // The one case where printing the line really is the best answer: the tool that owns this
+      // install is not on PATH, so nothing can be run on the user's behalf.
+      out.error(`${argv[0]} is not installed, so qunitx cannot run that for you.\n`);
+      return 2;
+    } else if (code !== 0) {
+      out.error(`${argv[0]} exited ${code} — qunitx ${current} is unchanged.\n`);
+      return code ?? 2;
+    }
+
+    out.log(`qunitx ${current} → ${target}\n`);
     return 0;
   } else if (channel.kind !== 'standalone') {
     out.log(`${refusal(channel, current)}\n  ${command}\n`);
