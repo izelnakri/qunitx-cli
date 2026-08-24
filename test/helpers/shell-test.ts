@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { module, test } from 'qunitx';
+import fs from 'node:fs/promises';
 import { spawnCapture } from './shell.ts';
+import { tempDir } from './temp-dir.ts';
 
 // Use a fixture script rather than `node -e` so the test command line has no whitespace
 // inside any arg — shell.ts's parseCommand splits on whitespace, which is correct for the
@@ -84,6 +86,36 @@ module('Helpers | spawnCapture | failure paths', { concurrency: true }, () => {
         assert.ok(err.duration < 4_000, `terminated quickly (${err.duration} ms)`);
         return true;
       },
+    );
+  });
+});
+
+// A timed-out command is not the only thing that has to stop. The BROWSER it launched is a child
+// of that child, and `child.kill()` never touched it — so every timeout left a browser running,
+// competing for a machine that was already too slow to finish in time. On the Firefox-on-Windows
+// lane that compounded until every test took four times its usual duration and the ones that fell
+// off the end reported `page.goto: Timeout 60000ms exceeded`.
+module('Test Helpers | spawnCapture | timing out', { concurrency: true }, () => {
+  test('stops the whole tree, not just the command', async (assert) => {
+    await using directory = await tempDir('spawn-capture-tree');
+    const marker = path.join(directory.path, 'alive.txt');
+
+    // Rejects: the fixture is killed, so it never exits 0. The rejection is the timeout working.
+    await spawnCapture(`node test/fixtures/spawns-a-grandchild.ts ${marker}`, {
+      timeout: 1_000,
+    }).catch(() => null);
+    // Past the SIGTERM → SIGKILL escalation, so a grandchild that ignored the first is gone too.
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+
+    const before = await fs.readFile(marker, 'utf8').catch(() => '');
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const after = await fs.readFile(marker, 'utf8').catch(() => '');
+
+    assert.ok(before.length > 0, 'the grandchild really was running');
+    assert.strictEqual(
+      after.length,
+      before.length,
+      'and it stopped when its parent was timed out, rather than outliving the test',
     );
   });
 });

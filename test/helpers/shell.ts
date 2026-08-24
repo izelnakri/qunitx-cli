@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { randomUUID } from 'node:crypto';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 // Use node:timers' setTimeout (returns a Timeout object with .unref()) rather than
 // the global setTimeout. Under Deno, global setTimeout follows the web spec and
 // returns a plain number — `.unref()` doesn't exist on a number, so the kill-timer
@@ -9,6 +9,11 @@ import { setTimeout, clearTimeout } from 'node:timers';
 import { acquireBrowser } from './browser-semaphore-queue.ts';
 import * as Result from '../../lib/result/index.ts';
 import { PER_TEST_TIMEOUT_MS } from './per-test-timeout.ts';
+
+// How long a timed-out command's process group gets to honour SIGTERM before the group is SIGKILLed.
+// Long enough for a CLI to run its exit hooks (which is what kills its browser), short enough that
+// a wedged one does not outlive the test that gave up on it.
+const TREE_KILL_GRACE_MS = 2_000;
 
 // When QUNITX_BROWSER is set, all browser test runs use that engine (firefox, webkit, chromium).
 const QUNITX_BROWSER = process.env.QUNITX_BROWSER;
@@ -205,7 +210,14 @@ export async function spawnCapture(
   const { bin, args, env: prefixEnv } = parseCommand(command);
   return await new Promise<CapturedResult>((resolve, reject) => {
     const startTime = performance.now();
-    const child = spawn(bin, args, { env: { ...env, ...prefixEnv }, cwd });
+    // `detached` puts the child at the head of its own process group, which is what makes the
+    // whole tree addressable as `-pid` when a timeout has to take it down. Nothing else changes:
+    // stdio stays piped, and the group is never left running because `killTree` names it.
+    const child = spawn(bin, args, {
+      env: { ...env, ...prefixEnv },
+      cwd,
+      detached: process.platform !== 'win32',
+    });
     // EventEmitter throws unhandled 'error' events synchronously, and Node 24's default
     // for uncaughtException terminates the worker — which on Windows manifests as a
     // "test failed" at file:1:1 with no sub-test reported, because the worker died
@@ -231,7 +243,7 @@ export async function spawnCapture(
       stderr += data;
     });
 
-    const timer = setTimeout(() => child.kill('SIGTERM'), timeout);
+    const timer = setTimeout(() => killTree(child), timeout);
     timer.unref();
 
     child.once('error', (err) => {
@@ -565,6 +577,46 @@ function taskkillTree(pid: number | undefined): Promise<void> {
 // 'close' (not 'exit') is the lifecycle event that releases the OS-level stdio
 // handles Deno tracks for leak detection. Awaiting 'exit' returned before stdio
 // streams had drained, leaving Deno's child-process resource still flagged.
+/**
+ * Stops a timed-out command and everything it started.
+ *
+ * `child.kill()` stops the command. It does not stop the BROWSER the command launched, and a
+ * browser nobody stopped goes on competing for the machine that is already too slow — which is how
+ * a Firefox-on-Windows lane got four times slower with every timeout until runs began failing with
+ * `page.goto: Timeout 60000ms exceeded`.
+ *
+ * Two platforms, two mechanisms, same intent. On Windows `taskkill /T` walks the tree, because
+ * `child.kill()` there is `TerminateProcess` and no handler inside the child can run — the killer
+ * has to do it. On POSIX the child leads its own process group (see `detached` at the spawn), so
+ * the group is the tree, and a negative pid is how you name it.
+ *
+ * By PID, never by name: this kills a process this file started and nothing else.
+ */
+function killTree(child: ChildProcessWithoutNullStreams): void {
+  if (!child.pid || child.exitCode !== null) return;
+
+  if (process.platform === 'win32') {
+    // Synchronous so it cannot be cut short by the runner exiting underneath it.
+    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+    return;
+  }
+
+  // SIGTERM first so the CLI's own handler can run its exit hooks — that is what kills a
+  // playwright browser cleanly. SIGKILL to the group after, for whatever ignored it.
+  try {
+    process.kill(-child.pid, 'SIGTERM');
+  } catch {
+    child.kill('SIGTERM');
+  }
+  setTimeout(() => {
+    try {
+      process.kill(-child.pid!, 'SIGKILL');
+    } catch {
+      // Already gone, which is the outcome this wanted.
+    }
+  }, TREE_KILL_GRACE_MS).unref();
+}
+
 function waitForClose(child: ChildProcessWithoutNullStreams, ms: number): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     const timer = setTimeout(() => resolve(false), ms);

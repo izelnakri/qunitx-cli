@@ -9,6 +9,7 @@ import './lib/utils/find-sidecar-esbuild.ts';
 import process from 'node:process';
 import { writeSync } from 'node:fs';
 import { shutdownPrelaunch, startPrelaunch } from './lib/chrome/prelaunch.ts';
+import { exitOnSignal } from './lib/utils/exit-on-signal.ts';
 import { Failure, tryCatch } from './lib/result/index.ts';
 import { Task } from './lib/task/index.ts';
 import pkg from './package.json' with { type: 'json' };
@@ -176,6 +177,12 @@ const EXIT_CODE_SIGTERM = 128 + 15;
       ),
     );
   }
+
+  // Installed for the batch run only — watch mode wires its own below, and this one exits too
+  // fast for the port-reclaim it needs. A supervisor that stops this run (a CI step timing out, a
+  // Ctrl-C) would otherwise take the process down without running any exit handler, and the
+  // browser playwright kills from one of those would be left behind.
+  exitOnSignal();
 
   const outcome = await run(config);
   // The trailing newline the batch run has always ended on. Daemon-routed runs skip it — the
