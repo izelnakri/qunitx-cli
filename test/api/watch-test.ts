@@ -81,7 +81,7 @@ module('API | watch | session', { concurrency: true }, () => {
     await using output = outputDir('api-watch-exit');
     const permit = await acquireBrowser();
     try {
-      const { stdout } = await spawnCapture(
+      const { stdout, stderr } = await spawnCapture(
         `node test/fixtures/watch-close-exits.ts ${PASSING} ${output.path}`,
         // spawnCapture does not inherit the environment, and without it the child has no PATH to
         // find Chrome with — it falls back to playwright's own download and dies on a missing one.
@@ -90,7 +90,9 @@ module('API | watch | session', { concurrency: true }, () => {
       assert.strictEqual(
         stdout.trim(),
         '',
-        `the process exited on its own after close(), printing nothing — got ${stdout.trim()}`,
+        // stderr comes along because `closeWithGrace` reports an abandoned close THERE, and which
+        // close hung is the first thing anyone reading this failure needs.
+        `the process exited on its own after close(), printing nothing — got ${stdout.trim()}\n${stderr.trim()}`,
       );
     } finally {
       permit.release();
@@ -468,7 +470,7 @@ module('API | watch | restart', { concurrency: true }, () => {
     await using output = outputDir('api-watch-restart-exit');
     const permit = await acquireBrowser();
     try {
-      const { stdout } = await spawnCapture(
+      const { stdout, stderr } = await spawnCapture(
         `node test/fixtures/watch-restart-exits.ts ${PASSING} ${output.path}`,
         // spawnCapture does not inherit the environment, and without PATH the child cannot find
         // Chrome — it falls back to playwright's own download and dies on a missing one.
@@ -477,7 +479,7 @@ module('API | watch | restart', { concurrency: true }, () => {
       assert.strictEqual(
         stdout.trim(),
         '',
-        `the process exited on its own after restart + close — got ${stdout.trim()}`,
+        `the process exited on its own after restart + close — got ${stdout.trim()}\n${stderr.trim()}`,
       );
     } finally {
       permit.release();

@@ -37,9 +37,50 @@ export function reportLeakedHandles(deadlineMs: number = 5_000): void {
   // never reaches it at all — so the only thing a longer wait costs is how fast a REAL leak is
   // reported, and the only thing a shorter one risks is calling a slow teardown a leak.
   const timer = setTimeout(() => {
-    console.log(`${LEAKED_MARKER} ${JSON.stringify(process.getActiveResourcesInfo())}`);
+    console.log(
+      `${LEAKED_MARKER} ${JSON.stringify(process.getActiveResourcesInfo())} ${describeHandles()}`,
+    );
     process.exit(0);
   }, deadlineMs);
 
   timer.unref();
+}
+
+/**
+ * What each loop-holding handle actually is, beyond its class name.
+ *
+ * `getActiveResourcesInfo()` answers "a Timeout" — which of the dozen timers a run arms, it does
+ * not say, and a leak you cannot name is a leak you cannot fix. `process.report` knows: it carries
+ * every libuv handle with whether it is REFERENCED (only those keep the loop alive) and, for a
+ * timer, how long until it would have fired. A 75 ms debounce, a 10 s keepalive and a 20 s test
+ * deadline are three different bugs, and `firesInMsFromNow` is what tells them apart.
+ *
+ * Best-effort by construction: this runs while diagnosing a process that is already misbehaving,
+ * so it must not be the reason the diagnosis is lost.
+ *
+ * ```ts
+ * import { reportLeakedHandles } from './exit-report.ts';
+ *
+ * reportLeakedHandles(0); // armed but unref'd — this process still exits immediately
+ * ```
+ */
+function describeHandles(): string {
+  try {
+    const report = process.report?.getReport() as { libuv?: Array<Record<string, unknown>> };
+    const held = (report.libuv ?? []).filter((handle) => handle.is_referenced);
+
+    return JSON.stringify(
+      held.map((handle) => ({
+        type: handle.type,
+        // Timers: which one. Sockets and pipes: which end, and whether anything is queued on it.
+        firesInMsFromNow: handle.firesInMsFromNow,
+        fd: handle.fd,
+        writeQueueSize: handle.writeQueueSize,
+        localEndpoint: handle.localEndpoint,
+        remoteEndpoint: handle.remoteEndpoint,
+      })),
+    );
+  } catch (error) {
+    return `(report unavailable: ${String(error)})`;
+  }
 }
