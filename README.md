@@ -356,6 +356,28 @@ qunitx some-test.js --debug
 qunitx some-test.ts
 ```
 
+### The same file, other runners
+
+A qunitx test file is not qunitx-only. The `qunitx` runtime picks the host it is imported under, so
+the same file runs unchanged in four places:
+
+```sh
+qunitx some-test.ts          # headless Chromium — a real DOM, fetch, TAP
+node --test some-test.js     # Node's runner
+node some-test.js            # plain Node, no runner: node:test runs it and prints
+deno test -A some-test.js    # Deno's runner
+```
+
+**Vitest is not one of them yet.** Under Node the runtime registers with `node:test`, which is a
+registry vitest does not read — so vitest reports `No test suite found in file` and fails, _even
+when every test passed_, while `node:test` separately prints its own results into the same output.
+Two runners, two answers. Nothing to configure around it; it needs a change in the `qunitx`
+runtime package, which is tracked there rather than here.
+
+(If you point vitest at these files anyway, note its default `include` is `**/*.{test,spec}.*` and
+qunitx's convention is `-test.ts`, so it will not collect them at all without
+`test: { include: ['**/*-test.ts'] }`.)
+
 ## Configuration
 
 All CLI flags can also be set in `package.json` under the `qunitx` key, so you don't have to repeat them on every invocation:
