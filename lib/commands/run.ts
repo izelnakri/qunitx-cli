@@ -867,7 +867,7 @@ async function runDeclaredSuite(
   // would not be TAP.
   Reporter.warning(
     suite,
-    `Warning: \`run\` is the script verb and this file declares tests — it ran as a suite. ` +
+    `Warning: ran as a suite (declares tests); globalThis.exitCode is ignored. ` +
       `Prefer: ${suiteHint(config.cwd, config.entry)}`,
   );
   // The same `#` comment the bare verb prints, under the same condition: a TAP comment belongs in
