@@ -369,6 +369,11 @@ function spawnTests(files: string[], slug?: string): Promise<number> {
       // silently change behavior (TAP "(daemon)" suffix, single warm browser shared
       // across tests). The daemon test file deletes this var for its own client invocations.
       QUNITX_NO_DAEMON: '1',
+      // No test may install anything onto the machine running it. `upgrade` delegates to `deno
+      // install` / `npm install -g` for the channels it does not own, and a test that forgets to
+      // inject that seam would otherwise really run one — which is how a suite run once replaced
+      // this developer's own global qunitx.
+      QUNITX_NO_SELF_UPGRADE: '1',
     };
 
     if (IS_DENO) {
