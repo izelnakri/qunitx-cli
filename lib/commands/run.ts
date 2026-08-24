@@ -859,6 +859,17 @@ async function runDeclaredSuite(
   const startedAt = Date.now();
 
   Reporter.runStart(suite, { fileCount: 1, groupCount: 1 });
+  // Allowed, and discouraged in the same breath. Running a suite through the script verb works and
+  // reports identically, but it is the long way round, and someone who reached for `run` probably
+  // expected a script. AFTER runStart, because `TAP version 13` has to be the first line of a TAP
+  // stream — and through the reporter rather than written directly, so it is a `# ` comment in TAP
+  // and a notice everywhere else. A raw line would not survive `--reporter=spec`, and in TAP it
+  // would not be TAP.
+  Reporter.warning(
+    suite,
+    `Warning: \`run\` is the script verb and this file declares tests — it ran as a suite. ` +
+      `Prefer: ${suiteHint(config.cwd, config.entry)}`,
+  );
   // The same `#` comment the bare verb prints, under the same condition: a TAP comment belongs in
   // a TAP stream and nowhere else, and `--debug` wants the URL whatever the reporter, because
   // opening the page in a real browser is the point of debug mode.
@@ -896,13 +907,16 @@ async function suiteFor(config: ScriptConfig): Promise<ResolvedSuiteConfig> {
     browser: config.browser,
     port: config.port,
     console: config.console,
-    // Spread rather than assigned: `Config.setup` fills its own defaults for anything absent, and
-    // writing `undefined` into these would override those defaults with nothing.
-    ...(config.timeout === null ? {} : { timeout: config.timeout }),
-    ...(config.reporter === undefined ? {} : { reporter: config.reporter }),
-    ...(config.junit === undefined ? {} : { junit: config.junit }),
-    ...(config.debug === undefined ? {} : { debug: config.debug }),
-    ...(config.filter === undefined ? {} : { filter: config.filter }),
+    // Passed straight through, undefined and all: `Config.setup` strips those itself so they
+    // cannot un-set `package.json#qunitx`, and it says it does so there rather than in every
+    // caller that assembles options. `timeout` is the one that needs converting — null is THIS
+    // verb's spelling for unbounded, while a suite's timeout is a number the injected runtime
+    // divides by, and `null / 250` is not a retry count.
+    timeout: config.timeout ?? undefined,
+    reporter: config.reporter,
+    junit: config.junit,
+    debug: config.debug,
+    filter: config.filter,
   });
 
   // The accumulating reporter is what turns a run into a value. The CLI's own reporter list does
@@ -911,6 +925,32 @@ async function suiteFor(config: ScriptConfig): Promise<ResolvedSuiteConfig> {
   suite.state.reporters.push(new APIReporter());
 
   return suite;
+}
+
+/**
+ * The `qunitx <file>` line the suite warning suggests, with forward slashes.
+ *
+ * The mirror of `scriptHint` in the suite command, and forward-slashed for the same reason: the
+ * hint's whole value is that it pastes back into a shell, and `path.relative` answers in the host's
+ * separator — which on Windows echoes `test\\cart-test.ts` at someone who typed `test/cart-test.ts`.
+ *
+ * `relativeTo` is injected so the Windows shape is provable from a POSIX host.
+ *
+ * ```ts
+ * import path from 'node:path';
+ * import { suiteHint } from './run.ts';
+ *
+ * suiteHint('/proj', '/proj/test/cart-test.ts'); // 'qunitx test/cart-test.ts'
+ * suiteHint('D:\\proj', 'D:\\proj\\test\\cart-test.ts', path.win32.relative);
+ * // 'qunitx test/cart-test.ts'
+ * ```
+ */
+export function suiteHint(
+  cwd: string,
+  entry: string,
+  relativeTo: (from: string, to: string) => string = path.relative,
+): string {
+  return `qunitx ${relativeTo(cwd, entry).replaceAll('\\', '/')}`;
 }
 
 function isErrorLevel(type: string): boolean {
