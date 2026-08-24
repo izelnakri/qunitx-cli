@@ -41,7 +41,13 @@ module('Commands | qunitx run <test file>', { concurrency: true }, () => {
     const normalise = (text: string) =>
       text
         .split('\n')
-        .filter((line) => line.trim() !== '' && !line.startsWith('# duration'))
+        .filter(
+          (line) =>
+            line.trim() !== '' &&
+            !line.startsWith('# duration') &&
+            // The one line `run` adds and the bare verb has no reason to: see the test below.
+            !line.includes('is the script verb'),
+        )
         .map((line) =>
           line.replace(/# \(\d+ ms\)/, '# (N ms)').replace(/localhost:\d+/, 'localhost:PORT'),
         )
@@ -60,6 +66,44 @@ module('Commands | qunitx run <test file>', { concurrency: true }, () => {
       'test/fixtures/failing-tests.js:',
       'and the failure resolves to source, not to a frame inside the served bundle',
     );
+  });
+
+  test('it says the plain form is the better way to have asked', async (assert) => {
+    // Allowed but discouraged: it works and reports identically, so this is a notice rather than a
+    // failure — and it names the exact command to use instead, project-relative and pasteable.
+    const result = await execute(`${CLI} run ${PASSING}`);
+
+    assert.includes(result.stdout, 'is the script verb');
+    assert.includes(result.stdout, 'Prefer: qunitx test/fixtures/passing-tests.js');
+    assert.strictEqual(result.code, 0, 'discouraged, not refused');
+    const lines = result.stdout.split('\n');
+    assert.strictEqual(lines[0], 'TAP version 13', 'and it never displaces the TAP version line');
+    assert.ok(
+      lines.find((line) => line.includes('is the script verb'))!.startsWith('# '),
+      'a TAP stream carries it as a comment, not as a stray line',
+    );
+  });
+
+  test('tests declared by an IMPORTED module run too', async (assert) => {
+    // The reason the count is read from QUnit after evaluation rather than scanned from the source:
+    // this entry declares nothing itself, and a scan would call it a script.
+    await using directory = await tempDir('run-imported-tests');
+    const inner = path.join(directory.path, 'inner-test.ts');
+    const entry = path.join(directory.path, 'entry.ts');
+    await fs.writeFile(
+      inner,
+      `import { module, test } from 'qunitx';\n` +
+        `module('Imported', function () {\n` +
+        `  test('declared elsewhere', function (assert) { assert.ok(true); });\n` +
+        `});\n`,
+    );
+    await fs.writeFile(entry, `import './inner-test.ts';\n`);
+
+    const result = await execute(`${CLI} run ${entry}`);
+
+    assert.includes(result.stdout, 'ok 1 Imported | declared elsewhere');
+    assert.includes(result.stdout, '# pass 1');
+    assert.strictEqual(result.code, 0);
   });
 
   test('--reporter reaches the suite the file declared', async (assert) => {
