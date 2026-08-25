@@ -146,6 +146,16 @@ export interface ScopeEntry {
 /** One step, named the way gdb names it: `step`, `next`, `finish`. */
 export type StepKind = 'into' | 'over' | 'out';
 
+/** One frame of a stopped call stack. */
+export interface Frame {
+  /** Its place on the stack: 0 is where the page stopped, and each one after it is the caller. */
+  index: number;
+  /** Where it is, the same way a pause names itself. */
+  where: string;
+  /** Whether the rest of the session is currently reading this one. */
+  selected: boolean;
+}
+
 /**
  * A live REPL: one browser page, kept open, that evaluates what you type.
  *
@@ -244,6 +254,21 @@ export interface ReplSession {
    * duration of a debugger evaluation — nothing this REPL can turn on.
    */
   step(kind: StepKind): Promise<string | null>;
+  /**
+   * The call stack where the page is stopped, innermost first — empty when nothing is.
+   *
+   * gdb's `backtrace`, and the same numbering: frame 0 is where it stopped, and each one after it
+   * is who called the one before.
+   */
+  backtrace(): Frame[];
+  /**
+   * Reads the rest of the session in another frame of that stack, and says where it now is.
+   *
+   * Everything follows: what you type evaluates there, {@link ReplSession.locals} is that frame's,
+   * and {@link ReplSession.frameSource} shows the line it is stopped on. `null` for a frame that
+   * is not on the stack.
+   */
+  selectFrame(index: number): string | null;
   /** Lets a paused page carry on. A no-op when it is not paused. */
   resume(): Promise<void>;
   /** Closes the page, the browser and the server. Idempotent. */
@@ -403,6 +428,11 @@ class Session implements ReplSession {
   // The stopped frame's scope chain, kept from the pause event: `Runtime.getProperties` on these
   // reads a stopped isolate without running anything in it.
   #scopes: PausedScope[] = [];
+  // The whole stopped stack, and which of it the session is reading. Kept because a breakpoint is
+  // rarely only about the line it stopped on — the answer is as often in who called it.
+  #frames: DebuggerPaused['callFrames'] = [];
+  #selected = 0;
+  #scripts: Map<string, string> = new Map();
   // What has been declared at this breakpoint, and whether each belongs to the block it was
   // written in. The values live in a holder on the page and reach the next input as function
   // ARGUMENTS, which is the only thing that shadows an outer binding of the same name — a global
@@ -646,6 +676,45 @@ class Session implements ReplSession {
       : { text: fetched.scriptSource, line: at.line };
   }
 
+  backtrace(): Frame[] {
+    return this.#frames.map((frame, index) => ({
+      index,
+      where: describeFrame(this.#config, frame, this.#scripts),
+      selected: index === this.#selected,
+    }));
+  }
+
+  selectFrame(index: number): string | null {
+    if (!this.#pausedAt || index < 0 || index >= this.#frames.length) return null;
+    this.#read(index);
+
+    return this.#pausedAt;
+  }
+
+  /**
+   * Points everything a pause answers at one frame of the stack.
+   *
+   * One place, so they cannot disagree: what you type evaluates in this frame, `.locals` reads its
+   * scopes, and the source shown is the line IT is stopped on.
+   */
+  #read(index: number): void {
+    const frame = this.#frames[index];
+    this.#selected = index;
+    this.#frameId = frame?.callFrameId ?? null;
+    this.#pausedAt = describeFrame(this.#config, frame, this.#scripts);
+    const located = frame && mappedLocation(this.#config, frame, this.#scripts);
+    this.#pausedIn = frame
+      ? {
+          file: located?.file ?? null,
+          scriptId: frame.location.scriptId,
+          line: located?.line ?? frame.location.lineNumber + 1,
+        }
+      : null;
+    // Only the frame being read. The scopes of the others belong to it no more than the globals
+    // do, and listing them would answer a question nobody asked.
+    this.#scopes = frame?.scopeChain ?? [];
+  }
+
   async step(kind: StepKind): Promise<string | null> {
     if (!this.#pausedAt) return null;
 
@@ -696,6 +765,8 @@ class Session implements ReplSession {
     this.#pausedAt = null;
     this.#pausedIn = null;
     this.#scopes = [];
+    this.#frames = [];
+    this.#selected = 0;
     // After the page is running again, because until it is there is nothing to run this in. What
     // JavaScript hoists out of a block becomes a real global; what belongs to the block goes with
     // it, which leaves the name free for the session to declare its own.
@@ -717,20 +788,10 @@ class Session implements ReplSession {
    * while the page is stopped, so the prompt would otherwise never come back to say so.
    */
   onPaused(event: DebuggerPaused, scripts: Map<string, string>): void {
-    const frame = event.callFrames[0];
-    this.#frameId = frame?.callFrameId ?? null;
-    this.#pausedAt = describeFrame(this.#config, frame, scripts);
-    const located = frame && mappedLocation(this.#config, frame, scripts);
-    this.#pausedIn = frame
-      ? {
-          file: located?.file ?? null,
-          scriptId: frame.location.scriptId,
-          line: located?.line ?? frame.location.lineNumber + 1,
-        }
-      : null;
-    // Only the frame the prompt evaluates in. The scopes further up the stack belong to callers
-    // nothing typed here can see, and listing them would answer a question nobody asked.
-    this.#scopes = frame?.scopeChain ?? [];
+    this.#frames = event.callFrames;
+    this.#scripts = scripts;
+    // Innermost, which is where a pause means you are until you say otherwise.
+    this.#read(0);
     const stepped = this.#announceStep;
     this.#announceStep = null;
     stepped?.();
@@ -741,7 +802,7 @@ class Session implements ReplSession {
       failed: false,
       incomplete: false,
       tests: [],
-      pausedAt: this.#pausedAt,
+      pausedAt: this.#pausedAt ?? undefined,
     });
   }
 

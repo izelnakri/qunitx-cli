@@ -394,6 +394,53 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
         },
       });
     }
+    // The stack, and where on it to stand. A breakpoint is rarely only about the line it stopped
+    // on — the answer is as often in who called it — and gdb's names for looking are the ones
+    // anybody who has used a debugger already has in their hands.
+    for (const name of ['backtrace', 'bt', 'where']) {
+      server.defineCommand(name, {
+        help: 'Show the call stack the page is stopped in',
+        action() {
+          this.clearBufferedCommand();
+          const frames = session.backtrace();
+          this.output.write(frames.length === 0 ? 'Not paused\n' : `${stack(frames, palette)}\n`);
+          this.displayPrompt();
+        },
+      });
+    }
+    // `up` toward whoever called this, `down` back toward where it stopped — gdb's directions,
+    // which are about the stack growing downwards rather than about the list on screen.
+    const move = (to: number) => {
+      const where = session.selectFrame(to);
+      if (where === null) server.output.write(red('No such frame\n'));
+
+      return where;
+    };
+    for (const [name, step, help] of FRAMES) {
+      server.defineCommand(name, {
+        help,
+        action(argument: string) {
+          this.clearBufferedCommand();
+          if (!session.pausedAt) {
+            this.output.write('Not paused\n');
+
+            return void this.displayPrompt();
+          }
+          const here = session.backtrace().find((frame) => frame.selected)?.index ?? 0;
+          const asked = step === null ? Number(argument.trim()) : here + step;
+          if (!Number.isInteger(asked)) {
+            this.output.write(`Usage: .${name} <number>\n`);
+
+            return void this.displayPrompt();
+          }
+          const where = move(asked);
+          if (where === null) return void this.displayPrompt();
+
+          this.output.write(blue(`${where}\n`));
+          void showFrame(server, session, palette).then(() => this.displayPrompt());
+        },
+      });
+    }
     // Two commands rather than one because a REPL is in one of two states and the answer differs:
     // running, where the interesting names are the ones this session added to the page, and
     // stopped at a breakpoint, where they are the ones the frame can see. Same format either way.
@@ -819,6 +866,34 @@ function pathProblem(found: Exclude<Files.Resolution, { kind: 'file' }>, target:
   }
 
   return `cannot read ${target}: ${found.detail}`;
+}
+
+/** Moving about the stack: a number to go to, or a direction to go in. */
+const FRAMES: ReadonlyArray<[string, number | null, string]> = [
+  ['frame', null, 'Read the session in another frame of the stack — `.frame 1`'],
+  ['up', 1, 'Read the session in the frame that called this one'],
+  ['down', -1, 'Read the session in the frame this one called'],
+];
+
+/** The stack as gdb prints one: newest first, numbered from where it stopped. */
+function stack(frames: readonly Repl.Frame[], palette: Theme): string {
+  const dim = palette.style('LineNr');
+  const mark = palette.style('@keyword');
+
+  return frames
+    .map(({ index, where, selected }) => {
+      const number = `#${index}`;
+      const edge = selected
+        ? `${paint('>', mark)} ${paint(number, mark)}`
+        : `  ${paint(number, dim)}`;
+
+      return `${edge}  ${where}`;
+    })
+    .join('\n');
+}
+
+function paint(text: string, style: string): string {
+  return style === '' ? text : `${style}${text}${ESCAPE}[0m`;
 }
 
 /** The three ways out of a line, under the names gdb gave them. */

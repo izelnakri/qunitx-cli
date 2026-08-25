@@ -654,6 +654,87 @@ module('API | repl | stepping', { concurrency: true }, () => {
   });
 });
 
+// A breakpoint is rarely only about the line it stopped on — the answer is as often in who called
+// it. gdb's `backtrace`, `frame`, `up` and `down`, under gdb's names.
+module('API | repl | the stack', { concurrency: true }, () => {
+  const STEPPING = 'test/fixtures/repl-stepping.ts';
+
+  /** Stopped two calls deep, which is the shallowest stack worth walking. */
+  const inside = async (session: ReplSession) => {
+    await session.evaluate('outer()');
+    await session.step('into');
+    await session.step('into');
+  };
+
+  test('the stack is innermost first, and says where it is being read', async (assert) => {
+    await withRepl({ inputs: [STEPPING] }, async (session) => {
+      await inside(session);
+      const frames = session.backtrace();
+
+      assert.includes(frames[0]?.where ?? '', 'helper', 'frame 0 is where it stopped');
+      assert.includes(frames[1]?.where ?? '', 'outer', 'and frame 1 is who called it');
+      assert.true(frames[0]?.selected, 'a pause is read innermost until it is told otherwise');
+      assert.deepEqual(
+        frames.map((frame) => frame.index),
+        frames.map((_, index) => index),
+        'numbered the way gdb numbers them',
+      );
+      await session.resume();
+    });
+  });
+
+  test('choosing a frame moves everything the pause answers', async (assert) => {
+    await withRepl({ inputs: [STEPPING] }, async (session) => {
+      await inside(session);
+
+      assert.true(
+        (await session.locals()).some((entry) => entry.name === 'value'),
+        "the called frame's argument, while that frame is the one being read",
+      );
+
+      const where = session.selectFrame(1);
+
+      assert.includes(where ?? '', 'outer');
+      assert.false(
+        (await session.locals()).some((entry) => entry.name === 'value'),
+        'and now the caller, which has no `value` in it',
+      );
+      assert.strictEqual((await session.frameSource())?.line, 12, 'the line THAT frame is on');
+      assert.true(session.backtrace()[1]?.selected, 'and the stack says which one is being read');
+      await session.resume();
+    });
+  });
+
+  test('a frame that is not on the stack is not chosen', async (assert) => {
+    await withRepl({ inputs: [STEPPING] }, async (session) => {
+      await inside(session);
+
+      assert.strictEqual(session.selectFrame(99), null);
+      assert.strictEqual(session.selectFrame(-1), null, 'nor one before the first');
+      assert.true(session.backtrace()[0]?.selected, 'and nothing moved');
+      await session.resume();
+    });
+  });
+
+  test('a page that is not stopped has no stack', async (assert) => {
+    await withRepl({}, (session) => {
+      assert.deepEqual(session.backtrace(), []);
+      assert.strictEqual(session.selectFrame(0), null);
+    });
+  });
+
+  test('resuming forgets the stack it was reading', async (assert) => {
+    await withRepl({ inputs: [STEPPING] }, async (session) => {
+      await inside(session);
+      session.selectFrame(1);
+
+      await session.resume();
+
+      assert.deepEqual(session.backtrace(), [], 'there is no frame to be in');
+    });
+  });
+});
+
 // Two readers for the two states a session is in. Running, the interesting names are the ones this
 // session put on the page — not the several hundred a browser starts with, which is a list nobody
 // reads. Stopped at a breakpoint, they are the ones the frame can see.
