@@ -212,6 +212,34 @@ module('Commands | qunitx repl | : runs a shell command', { concurrency: true },
   });
 });
 
+// An unfinished input is held here rather than handed to `node:repl`, which is what lets the
+// prompt say how deep it is. The piped path proves the buffering; how it is drawn is a terminal
+// concern, and `Repl | highlight | depth` is what counts the levels.
+module('Commands | repl | unfinished input', { concurrency: true }, () => {
+  test('a block spread over lines is one input', async (assert) => {
+    const result = await repl('const shape = {\n  a: 1,\n  b: [2,\n  3],\n}\nshape.b[1]\n');
+
+    assert.exitCode(result, 0);
+    assert.includes(result, '3', 'the whole block ran as one thing');
+    assert.notIncludes(result, 'SyntaxError', 'no line was evaluated on its own');
+  });
+
+  test('a brace inside a string does not open a level', async (assert) => {
+    const result = await repl(`const a = { b: '}' }\na.b\n`);
+
+    assert.includes(result, "'}'", 'the string closed the object, the brace in it did not');
+  });
+
+  test('.break abandons what was half-typed', async (assert) => {
+    // Without it the next line continues a block nobody wants any more, and every line after it
+    // is a syntax error in something invisible.
+    const result = await repl('const a = {\n.break\n1 + 1\n');
+
+    assert.includes(result, '2', 'the next line is a line again');
+    assert.notIncludes(result, 'SyntaxError');
+  });
+});
+
 // `.scope` and `.locals` answer the same question in the two states a session can be in, and
 // `.continue` is what every other debugger calls resuming.
 module('Commands | repl | scope and breakpoints', { concurrency: true }, () => {
