@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import nodeRepl, { type REPLServer } from 'node:repl';
 import os from 'node:os';
 import path from 'node:path';
@@ -135,6 +136,34 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
         session.reload().then(() => this.displayPrompt());
       },
     });
+    // One buffer behind all three names, kept for the life of the session. Reopening picks up
+    // where the last one left off whichever name you used, because they are one scratchpad and a
+    // REPL where the editor forgets is an editor you stop reaching for.
+    let scratch = '';
+    for (const editor of ['vi', 'vim', 'nvim']) {
+      server.defineCommand(editor, {
+        help: `Edit a scratch buffer in ${editor}; on exit it runs in the page`,
+        action() {
+          this.clearBufferedCommand();
+          if (!interactive) {
+            this.output.write(red(`.${editor} needs a terminal\n`));
+
+            return void this.displayPrompt();
+          }
+
+          void edit(editor, scratch, server).then(async (edited) => {
+            scratch = edited;
+            if (edited.trim() !== '') {
+              const result = await session.evaluate(edited);
+              const text = result.failed ? red(`Uncaught ${result.output}`) : result.output;
+              if (text !== '') this.output.write(`${text}\n`);
+            }
+            this.displayPrompt();
+          });
+        },
+      });
+    }
+
     // `.cat` and `.view` are the same command under both names — `cat` for the muscle memory,
     // `view` for anyone who does not have it. A REPL is where you check what a file actually says
     // before typing against it, and leaving the session to do that loses every binding you built.
@@ -394,5 +423,58 @@ function tryWriteFile(file: string, contents: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Hands the terminal to an editor, and takes back whatever was saved.
+ *
+ * The REPL is holding the TTY in raw mode with a readline attached, and an editor needs both back —
+ * so the prompt is paused, raw mode is lifted, and the child inherits the terminal whole. Getting
+ * that wrong does not look like a bug, it looks like a dead terminal.
+ *
+ * The buffer travels through a file because that is the only thing an editor talks. It comes back
+ * as a string, and the CALLER keeps it: the session's scratchpad lives for as long as the session,
+ * so reopening continues the same thought rather than starting a blank one.
+ *
+ * A `.js` extension, because whatever an editor does with syntax and indentation should be what it
+ * would do for the file this text is going to behave like.
+ *
+ * ```ts
+ * import type { REPLServer } from 'node:repl';
+ * import { edit } from './repl.ts';
+ *
+ * // Defined, not invoked: it takes over the terminal.
+ * function example(server: REPLServer) {
+ *   return edit('vi', 'const x = 1;', server); // resolves with whatever was saved
+ * }
+ * ```
+ */
+export async function edit(editor: string, contents: string, server: REPLServer): Promise<string> {
+  // Unique per call, not per process: two edits in flight at once would otherwise open the same
+  // path and each would save over the other's buffer.
+  const file = path.join(os.tmpdir(), `qunitx-repl-${process.pid}-${randomUUID()}.js`);
+  fs.writeFileSync(file, contents);
+  server.pause();
+  const stdin = process.stdin;
+  const wasRaw = Boolean(stdin.isRaw);
+  if (wasRaw) stdin.setRawMode(false);
+
+  try {
+    await new Promise<void>((resolve) => {
+      const child = spawn(editor, [file], { stdio: 'inherit' });
+      child.on('error', () => resolve());
+      child.on('close', () => resolve());
+    });
+
+    return tryReadFile(file) ?? contents;
+  } finally {
+    if (wasRaw) stdin.setRawMode(true);
+    server.resume();
+    try {
+      fs.unlinkSync(file);
+    } catch {
+      // Already gone, which is where it was headed.
+    }
   }
 }

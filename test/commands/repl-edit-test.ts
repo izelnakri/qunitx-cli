@@ -1,0 +1,83 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { module, test } from 'qunitx';
+import { edit } from '../../lib/commands/repl.ts';
+import { tempDir } from '../helpers/temp-dir.ts';
+import '../helpers/custom-asserts.ts';
+import type { REPLServer } from 'node:repl';
+
+// The scratchpad is the one piece of REPL state an editor round-trip has to preserve: reopening
+// continues the same thought rather than starting a blank one, whichever of `.vi`/`.vim`/`.nvim`
+// was used. Driven through a stand-in editor rather than a pty, because what is under test is the
+// buffer's journey to a file and back, not the terminal handover.
+module('Commands | repl | the editor scratchpad', { concurrency: true }, () => {
+  const server = {
+    paused: 0,
+    resumed: 0,
+    pause() {
+      server.paused += 1;
+    },
+    resume() {
+      server.resumed += 1;
+    },
+  };
+
+  /** A stand-in for a human: records what it was handed, appends a line, exits. */
+  async function fakeEditor(directory: string, appends: string): Promise<string> {
+    const editor = path.join(directory, 'fake-editor');
+    await fs.writeFile(
+      editor,
+      `#!/bin/sh\ncat "$1" > "${path.join(directory, 'handed.txt')}"\nprintf '%s\\n' '${appends}' >> "$1"\n`,
+    );
+    await fs.chmod(editor, 0o755);
+
+    return editor;
+  }
+
+  test('what the editor saves is what comes back', async (assert) => {
+    await using directory = await tempDir('repl-edit');
+    const editor = await fakeEditor(directory.path, 'const a = 1;');
+
+    const saved = await edit(editor, '', server as unknown as REPLServer);
+
+    assert.strictEqual(saved, 'const a = 1;\n');
+  });
+
+  test('reopening hands the editor the buffer it left behind', async (assert) => {
+    // The whole point of keeping it in memory. Without this the second open is a blank file and
+    // everything typed into the first is gone.
+    await using directory = await tempDir('repl-edit-again');
+    const editor = await fakeEditor(directory.path, 'const b = 2;');
+
+    const first = await edit(editor, 'const a = 1;\n', server as unknown as REPLServer);
+    const handed = await fs.readFile(path.join(directory.path, 'handed.txt'), 'utf8');
+
+    assert.strictEqual(handed, 'const a = 1;\n', 'it opened on what was already there');
+    assert.strictEqual(first, 'const a = 1;\nconst b = 2;\n', 'and kept both');
+  });
+
+  test('an editor that will not start leaves the buffer as it was', async (assert) => {
+    const kept = await edit(
+      'definitely-not-an-editor-anywhere',
+      'const a = 1;\n',
+      server as unknown as REPLServer,
+    );
+
+    assert.strictEqual(kept, 'const a = 1;\n', 'nothing typed is lost to a missing editor');
+  });
+
+  test('the prompt is paused for the editor and resumed after, every time', async (assert) => {
+    // Getting this wrong does not look like a bug, it looks like a dead terminal: readline and the
+    // editor both want the TTY, and only one of them can have it. Its own counter, because these
+    // tests run concurrently and a shared one counts everybody's turns.
+    const counted = { paused: 0, resumed: 0 };
+    const own = {
+      pause: () => void (counted.paused += 1),
+      resume: () => void (counted.resumed += 1),
+    };
+
+    await edit('definitely-not-an-editor-anywhere', '', own as unknown as REPLServer);
+
+    assert.deepEqual(counted, { paused: 1, resumed: 1 }, 'resumed even when the editor failed');
+  });
+});
