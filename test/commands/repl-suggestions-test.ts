@@ -87,6 +87,70 @@ module('Commands | repl | suggestions', { concurrency: true }, () => {
   });
 });
 
+// A suggestion is what you are about to type. One that does not fit on the row cannot be that: it
+// wraps, takes the prompt apart, and is far too long to have been about to be typed.
+module('Commands | repl | suggestions that fit', { concurrency: true }, () => {
+  // What a history entry looks like after two writes got glued together — a real one, from a real
+  // history file, and three hundred characters long.
+  const GLUED = `.locals${'string()nan() { console.log("cool") };'.repeat(8)}`;
+
+  test('nothing is offered that would not sit on the line', async (assert) => {
+    const { drawn, press } = fakeServer([GLUED], undefined, 80);
+
+    await press('.', '.locals');
+
+    assert.deepEqual(
+      drawn.filter((chunk) => chunk !== CLEAR),
+      [],
+      'the row is erased and nothing is drawn on it',
+    );
+  });
+
+  test('and a terminal wide enough is offered it', async (assert) => {
+    const { drawn, press } = fakeServer([GLUED], undefined, GLUED.length + 20);
+
+    await press('.', '.locals');
+
+    assert.true(
+      drawn.some((chunk) => chunk.includes('string()')),
+      'the rule is about the room, not about the entry',
+    );
+  });
+
+  test('what is measured is the whole entry, not what is left of it', async (assert) => {
+    // Typed plus offered is exactly the entry, however far through it you are — so there is no
+    // point at which a line too long to show becomes one that fits.
+    const entry = `abc${'x'.repeat(60)}`;
+    const early = fakeServer([entry], undefined, 40);
+    const late = fakeServer([entry], undefined, 40);
+
+    await early.press('a', 'abc');
+    await late.press('x', entry.slice(0, entry.length - 5));
+
+    assert.deepEqual(
+      early.drawn.filter((chunk) => chunk !== CLEAR),
+      [],
+      'too long at the start',
+    );
+    assert.deepEqual(
+      late.drawn.filter((chunk) => chunk !== CLEAR),
+      [],
+      'and still too long later',
+    );
+  });
+
+  test('Ctrl-F takes nothing that was not offered', async (assert) => {
+    // Drawing and accepting read the same answer, so the key can never insert what the eye was
+    // never shown.
+    const { server, press } = fakeServer([GLUED], undefined, 80);
+
+    await press('.', '.locals');
+    await press(CTRL_F);
+
+    assert.strictEqual(server.line, '.locals');
+  });
+});
+
 // One source of names behind both TAB and the ghost. TAB waits for the page's answer, where a
 // moment is affordable; the ghost draws what is known and redraws when a late answer lands.
 module('Commands | repl | completion', { concurrency: true }, () => {
@@ -132,7 +196,7 @@ module('Commands | repl | completion', { concurrency: true }, () => {
 });
 
 /** A REPLServer with only the parts a suggestion touches, and a record of what it drew. */
-function fakeServer(history: string[], names?: unknown) {
+function fakeServer(history: string[], names?: unknown, columns?: number) {
   const input = new EventEmitter();
   const drawn: string[] = [];
   const server = {
@@ -140,7 +204,8 @@ function fakeServer(history: string[], names?: unknown) {
     cursor: 0,
     history,
     input,
-    output: { write: (text: string) => void drawn.push(text) },
+    getPrompt: () => '> ',
+    output: { columns, write: (text: string) => void drawn.push(text) },
     _writeToOutput: (text: string) => void drawn.push(text),
     // What readline's own `write` does to the line, which is all this needs to observe.
     write(text: string) {

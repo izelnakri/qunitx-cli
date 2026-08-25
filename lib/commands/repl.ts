@@ -1205,6 +1205,11 @@ export function setupSuggestions(
     // Only at the end of the line. A suggestion continues what is being typed, and there is no
     // such thing as continuing the middle of a line — nor anywhere safe to draw it.
     if (server.cursor !== line.length) return '';
+
+    return fits(line, offered(line));
+  };
+
+  const offered = (line: string): string => {
     // `history` is readline's own record, newest first, and absent from `@types/node`'s REPLServer
     // — reached through a narrow cast rather than by widening the whole server.
     const history = (server as unknown as { history?: string[] }).history ?? [];
@@ -1219,6 +1224,25 @@ export function setupSuggestions(
       names: position && names ? names.lookup(position.base) : [],
       history,
     });
+  };
+
+  /**
+   * The suggestion, or nothing at all where the line and it together would not sit on the row.
+   *
+   * A suggestion is what you are about to type. Something that cannot be shown on the line cannot
+   * be that — it wraps across rows and takes the prompt apart, which is the whole reason a REPL
+   * has a prompt on one row. What it measures is the WHOLE entry, since what is typed plus what is
+   * left of it is exactly that, however much of it has been typed.
+   *
+   * Which is also what makes a history entry that two writes glued together harmless: three
+   * hundred characters have never fitted on a row, so they are never offered. Recalling something
+   * that long is what the up arrow is for.
+   */
+  const fits = (line: string, ghost: string): string => {
+    const columns = (server.output as NodeJS.WriteStream).columns ?? 0;
+    const used = plainLength(server.getPrompt()) + line.length + ghost.length;
+
+    return columns > 0 && used >= columns ? '' : ghost;
   };
 
   const draw = () => {
