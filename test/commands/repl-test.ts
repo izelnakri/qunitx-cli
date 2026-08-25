@@ -287,6 +287,18 @@ module('Commands | repl | .clear', { concurrency: true }, () => {
   });
 });
 
+// `readline` records history only on a terminal, so what a pipe can check is that the command
+// answers at all — `Commands | repl | history` is where the listing itself is tested.
+module('Commands | repl | .history', { concurrency: true }, () => {
+  test('a count that is not one says how to use it', async (assert) => {
+    assert.includes(await repl('.history zz\n'), 'Usage: .history [count]');
+  });
+
+  test('and the session carries on either way', async (assert) => {
+    assert.includes(await repl('.history\n1 + 1\n'), '2');
+  });
+});
+
 // An unfinished input is held here rather than handed to `node:repl`, which is what lets the
 // prompt say how deep it is. The piped path proves the buffering; how it is drawn is a terminal
 // concern, and `Repl | highlight | depth` is what counts the levels.

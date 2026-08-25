@@ -112,6 +112,11 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
       // Nothing to print for an input that only registered tests: `ReplResult.output` is empty
       // there, and this is what turns "empty" into no line at all.
       ignoreUndefined: true,
+      // `node:repl` keeps thirty lines, which is fewer than `.history` is asked for and fewer than
+      // a session gets through before lunch. A shell keeps thousands; so does this. Passed through
+      // a cast because `@types/node` does not carry the option, which `node:repl` does honour —
+      // it hands it to the readline interface underneath.
+      ...({ historySize: HISTORY_KEPT } as object),
       // The session already rendered the value, in the page, with the page's own view of it.
       writer: (value: unknown) => String(value),
       // Replaces `node:repl`'s own, which completes against THIS process's globals — a Node scope
@@ -206,6 +211,22 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
         this.displayPrompt();
       },
     });
+    server.defineCommand('history', {
+      help: 'Show the last lines entered — `.history 40` for more of them',
+      action(count: string) {
+        this.clearBufferedCommand();
+        const asked = count.trim() === '' ? HISTORY_SHOWN : Number(count.trim());
+        if (!Number.isInteger(asked) || asked < 1) {
+          this.output.write(`Usage: .history [count]\n`);
+
+          return void this.displayPrompt();
+        }
+        const entries = (server as unknown as { history?: string[] }).history ?? [];
+        this.output.write(recent(entries, asked, palette));
+        this.displayPrompt();
+      },
+    });
+
     setupHistory(server, interactive);
     // Before the suggestion, and that order matters: both redraw on a keypress, and the ghost has
     // to be written after the line it hangs off has been painted.
@@ -919,6 +940,11 @@ export function setupHighlighting(server: REPLServer, palette: Theme): void {
 
 /** Ctrl-F, the key that takes the suggestion. */
 const CTRL_F = '\u0006';
+/** How many lines `.history` shows when it is not told — the number zsh settled on. */
+const HISTORY_SHOWN = 16;
+/** And how many the session keeps at all, which has to be the larger number of the two. */
+const HISTORY_KEPT = 1_000;
+
 /**
  * Clears the visible screen and leaves the scrollback alone.
  *
@@ -929,6 +955,40 @@ const CTRL_F = '\u0006';
  */
 function clearScreen(): string {
   return `${ESCAPE}[H${ESCAPE}[2J`;
+}
+
+/**
+ * The last `count` lines entered, numbered, the way `history` prints them.
+ *
+ * Oldest first, so the newest is nearest the prompt — reading up from where you are is how anybody
+ * uses this. Numbered from one across what the session has, which is what it can honestly count:
+ * history older than the file it was loaded from is not here to be numbered.
+ *
+ * ```ts
+ * import { recent } from './repl.ts';
+ *
+ * recent(['b', 'a'], 2, { style: () => '' }); // '1  a\n2  b\n' — newest last
+ * recent([], 16, { style: () => '' }); // '' — nothing entered yet
+ * ```
+ */
+export function recent(newestFirst: readonly string[], count: number, palette: Theme): string {
+  const oldestFirst = [...newestFirst].reverse();
+  const from = Math.max(0, oldestFirst.length - count);
+  const gutter = String(oldestFirst.length).length;
+  const style = palette.style('LineNr');
+
+  return oldestFirst
+    .slice(from)
+    .map((line, index) => {
+      const number = String(from + index + 1).padStart(gutter);
+
+      // A dot command and a `:` shell line are not JavaScript, and painting them as if they were
+      // colours `-L` as a type and `git` as a call.
+      const code = /^\s*[.:]/.test(line) ? line : highlight(line, palette);
+
+      return `${style === '' ? number : `${style}${number}${ESCAPE}[0m`}  ${code}\n`;
+    })
+    .join('');
 }
 
 /** What `node:repl` hands a completer to answer through: the matches, and the word they finish. */
