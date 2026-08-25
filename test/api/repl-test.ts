@@ -355,3 +355,56 @@ module('API | repl | debugger', { concurrency: true }, () => {
     });
   });
 });
+
+// What both TAB and the greyed-out suggestion are drawn from. Asking the page beats ranking your
+// history: `window` is completable in a session that has never mentioned it, and a name declared
+// at the prompt is completable the moment it exists.
+module('API | repl | names', { concurrency: true }, () => {
+  test('the page’s own globals, which no history could have known', async (assert) => {
+    await withRepl({}, async (session) => {
+      const names = await session.names('');
+
+      assert.true(names.includes('window'), 'a global nobody typed');
+      assert.true(names.includes('document'));
+      assert.false(names.includes('inspectMe'), 'and nothing that was never loaded');
+    });
+  });
+
+  test('what you declare becomes completable, `const` included', async (assert) => {
+    // `let` and `const` at top level are NOT on `globalThis` — they live in the global lexical
+    // scope, and a completer that only reads `globalThis` never sees half of what you declared.
+    await withRepl({}, async (session) => {
+      await session.evaluate('const label = "one"');
+      await session.evaluate('globalThis.total = 42');
+
+      const names = await session.names('');
+
+      assert.true(names.includes('label'), 'the lexical scope, which globalThis does not carry');
+      assert.true(names.includes('total'));
+    });
+  });
+
+  test('properties come off the whole prototype chain', async (assert) => {
+    await withRepl({}, async (session) => {
+      const names = await session.names('document');
+
+      assert.true(names.includes('title'), 'its own');
+      assert.true(names.includes('querySelector'), "and Document.prototype's");
+      assert.true(names.includes('addEventListener'), 'as far up as EventTarget');
+    });
+  });
+
+  test('nothing that would have to be run to answer', async (assert) => {
+    await withRepl({}, async (session) => {
+      await session.evaluate('globalThis.calls = 0');
+      await session.evaluate('globalThis.sideEffect = () => { calls += 1; return document }');
+
+      assert.deepEqual(await session.names('sideEffect()'), [], 'not a path, so not evaluated');
+      assert.strictEqual(
+        (await session.evaluate('calls')).output,
+        '0',
+        'and the page is untouched — a keystroke is not consent to call your function',
+      );
+    });
+  });
+});

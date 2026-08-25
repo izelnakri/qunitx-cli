@@ -24,6 +24,8 @@ import type { TestDetails } from '../reporters/types.ts';
 // Every object the page hands back is retained until it is released, and a REPL is a long
 // conversation — so each evaluation frees the previous one's handles by group before making more.
 const OBJECT_GROUP = 'qunitx-repl';
+// A dotted path of plain identifiers, and nothing else. What completion is allowed to evaluate.
+const PATH = /^[\p{ID_Start}_$][\p{ID_Continue}$]*(\.[\p{ID_Start}_$][\p{ID_Continue}$]*)*$/u;
 // Bounds the harness calls only, never a user's own expression: a slow test is QUnit's
 // `testTimeout` to enforce, and this is the backstop for a page that stops answering entirely.
 // Typed input is deliberately unbounded — `interrupt()` is how you stop it.
@@ -133,6 +135,16 @@ export interface ReplSession {
    * evaluations above it have answered.
    */
   settled(): Promise<void>;
+  /**
+   * The identifiers the page can complete with: everything on `base`, or what is in scope at top
+   * level when `base` is `''`.
+   *
+   * What both the suggestion and TAB are drawn from, so the two agree by construction rather than
+   * by two lists kept in step. Resolves empty for anything it cannot answer — a base that is not a
+   * plain dotted path, a closed session — because a completion is a convenience and never a reason
+   * for a prompt to report an error.
+   */
+  names(base: string): Promise<string[]>;
   /** Reloads the page: every binding and all page state goes, the session stays. */
   reload(): Promise<void>;
   /** Stops whatever is executing in the page — the Ctrl-C of a runaway expression. */
@@ -345,6 +357,44 @@ class Session implements ReplSession {
     );
   }
 
+  async names(base: string): Promise<string[]> {
+    // Re-checked here and not only in the caller: this interpolates `base` into source that the
+    // page then runs, and it runs on a KEYSTROKE. A path of plain identifiers can trip a getter,
+    // which is inherent to answering the question at all; anything else could be a function call
+    // nobody asked to make.
+    if (this.#closed || (base !== '' && !PATH.test(base))) return [];
+
+    const target = base === '' ? 'globalThis' : base;
+    // The whole prototype chain, because `document.qu` is finished by `Node.prototype`'s methods
+    // as surely as by the element's own. Own-property names rather than `for…in`, so what is there
+    // but not enumerable — which is most of the DOM — still completes.
+    const expression = `(() => {
+      try {
+        const found = new Set();
+        for (let o = ${target}; o != null; o = Object.getPrototypeOf(o)) {
+          for (const key of Object.getOwnPropertyNames(o)) found.add(key);
+        }
+        return [...found];
+      } catch {
+        return [];
+      }
+    })()`;
+    const found = await this.#byValue<string[]>(expression);
+    if (base !== '') return found;
+
+    // `let`, `const` and `class` at top level live in the global LEXICAL scope, which is not on
+    // `globalThis` and is therefore invisible to everything above — and in a REPL it is where half
+    // of what you declared ends up. Skipped while paused: the frame's own scope is the answer
+    // there, and a Runtime command against a stopped isolate is a promise that never settles.
+    if (this.#frameId) return found;
+    const lexical = await this.#cdp
+      .send('Runtime.globalLexicalScopeNames', {})
+      .then((result) => (result as { names?: string[] }).names ?? [])
+      .catch(() => []);
+
+    return [...new Set([...found, ...lexical])];
+  }
+
   async reload(): Promise<void> {
     await this.#page.reload();
     this.loaded = await this.readLoaded();
@@ -511,6 +561,28 @@ class Session implements ReplSession {
       // would be answering a different question than the one that was typed. `await` works.
       awaitPromise: false,
     });
+  }
+
+  /**
+   * Runs an expression for its VALUE rather than for the prompt — no REPL mode, no object group,
+   * nothing rendered and nothing to release.
+   *
+   * Inside the paused frame when there is one. Not for what the frame can see, but because a
+   * `Runtime.evaluate` against a stopped isolate never answers, and this is called from places
+   * that must not be able to wedge — a keystroke among them.
+   */
+  async #byValue<T>(expression: string): Promise<T | []> {
+    const evaluated = await (
+      this.#frameId
+        ? this.#cdp.send('Debugger.evaluateOnCallFrame', {
+            callFrameId: this.#frameId,
+            expression,
+            returnByValue: true,
+          })
+        : this.#cdp.send('Runtime.evaluate', { expression, returnByValue: true })
+    ).catch(() => null);
+
+    return (evaluated?.result?.value as T) ?? [];
   }
 
   /** Renders a result: by-value primitives here, everything else by the same renderer, in the page. */

@@ -14,7 +14,7 @@ import * as Repl from '../repl/session.ts';
 import * as Result from '../result/index.ts';
 import { blue, red } from '../utils/color.ts';
 import { findProjectRoot } from '../utils/find-project-root.ts';
-import { suggest } from '../repl/suggest.ts';
+import { split, suggest } from '../repl/suggest.ts';
 import type { ReplSession } from '../repl/session.ts';
 import type { Config as ResolvedConfig } from '../types.ts';
 
@@ -85,6 +85,9 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
     // and history need a TTY, and a human cannot type faster than the page can answer.
     const input = interactive ? vimKeys(process.stdin) : new PassThrough();
     let evaluating = false;
+    // One source of names behind both TAB and the ghost, so the two can never disagree about what
+    // the page has.
+    const completions = completionCache(session);
     const server = nodeRepl.start({
       input,
       output: process.stdout,
@@ -97,6 +100,12 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
       ignoreUndefined: true,
       // The session already rendered the value, in the page, with the page's own view of it.
       writer: (value: unknown) => String(value),
+      // Replaces `node:repl`'s own, which completes against THIS process's globals — a Node scope
+      // with no `document`, no `window` and nothing anybody typed here. Worse, it works out what
+      // to list by evaluating the base through `eval`, which for us means running it in the page:
+      // pressing TAB after `save()` would have saved.
+      completer: (line: string, callback: CompleterCallback) =>
+        complete(server, completions, line, callback),
       eval: (source, _context, _file, callback) => {
         // `:` is the shell, the way `:` is the command line in vim. A prompt you cannot run `git
         // status` from is a prompt you keep leaving, and leaving costs every binding in the page.
@@ -113,6 +122,10 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
         session.evaluate(source).then(
           (result) => {
             evaluating = false;
+            // Whatever just ran may have declared something. Marked stale rather than dropped: the
+            // previous answer stays on offer while the new one is on its way, so a suggestion does
+            // not blink out after every line.
+            completions.stale();
             // What `node:repl` reads as "keep the line open and ask for the next one".
             if (result.incomplete) {
               return callback(new nodeRepl.Recoverable(new Error('unfinished input')), undefined);
@@ -140,11 +153,12 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
     });
 
     setupHistory(server, interactive);
-    if (interactive) setupSuggestions(server);
+    if (interactive) setupSuggestions(server, completions);
     server.defineCommand('reload', {
       help: 'Reload the page — drops every binding and all page state',
       action() {
         this.clearBufferedCommand();
+        completions.stale();
         session.reload().then(() => this.displayPrompt());
       },
     });
@@ -568,6 +582,134 @@ export async function edit(editor: string, contents: string, server: REPLServer)
 /** Ctrl-F, the key that takes the suggestion. */
 const CTRL_F = '\u0006';
 
+/** What `node:repl` hands a completer to answer through: the matches, and the word they finish. */
+type CompleterCallback = (error: null, result: [string[], string]) => void;
+
+/**
+ * The page's identifiers, as something a keystroke can read.
+ *
+ * Completion has to be instant and the answer lives in another process, so this keeps the last one
+ * and asks for the next in the background. A miss is not a stall: {@link NameSource.lookup} says
+ * what it knows now, the request lands a moment later, and subscribers redraw with the answer.
+ *
+ * Going stale is deliberately not the same as being emptied. An evaluation may have declared a
+ * name, but everything already known is still true, so the old list stays on offer until the new
+ * one arrives rather than suggestions blinking out after every line.
+ */
+interface NameSource {
+  /** Names on `base` as of the last answer — empty while the first one is in flight. */
+  lookup(base: string): readonly string[];
+  /** The page's answer for `base`, waited for. What TAB uses, where a moment is affordable. */
+  ask(base: string): Promise<readonly string[]>;
+  /** Marks every answer worth asking for again. */
+  stale(): void;
+  /** Called whenever a late answer arrives, so what is on screen can be drawn again. */
+  subscribe(listener: () => void): void;
+}
+
+function completionCache(session: ReplSession): NameSource {
+  const known = new Map<string, readonly string[]>();
+  // Which answers describe the page as it is NOW. Separate from having an answer at all, because
+  // the two differ for exactly as long as a refresh takes — which is when the old one is useful.
+  const current = new Set<string>();
+  const inFlight = new Map<string, Promise<readonly string[]>>();
+  const listeners: Array<() => void> = [];
+  let generation = 0;
+
+  const fetch = (base: string): Promise<readonly string[]> => {
+    const pending = inFlight.get(base);
+    if (pending) return pending;
+    const asked = generation;
+    const request = session
+      .names(base)
+      .catch((): string[] => [])
+      .then((names) => {
+        inFlight.delete(base);
+        known.set(base, names);
+        // A `.reload` while this was in flight makes the answer describe a page that is gone. It
+        // is still the best thing available, so it is kept — just not called current, which is
+        // what sends the next keystroke to ask again.
+        if (asked === generation) current.add(base);
+        for (const listener of listeners) listener();
+
+        return names;
+      });
+    inFlight.set(base, request);
+
+    return request;
+  };
+
+  return {
+    lookup(base) {
+      if (!current.has(base)) void fetch(base);
+
+      return known.get(base) ?? [];
+    },
+    ask(base) {
+      const answer = known.get(base);
+
+      return current.has(base) && answer ? Promise.resolve(answer) : fetch(base);
+    },
+    stale() {
+      current.clear();
+      generation++;
+    },
+    subscribe(listener) {
+      listeners.push(listener);
+    },
+  };
+}
+
+/**
+ * What TAB offers: dot commands on a line that starts with one, page identifiers everywhere else.
+ *
+ * Nothing is offered where {@link split} finds no base it is willing to evaluate — `foo().b` needs
+ * `foo()` called to know what is on it, and TAB is not consent to run somebody's function.
+ *
+ * ```ts
+ * import { complete } from './repl.ts';
+ *
+ * import type { REPLServer } from 'node:repl';
+ *
+ * // Defined, not invoked: the names come from a live page.
+ * function example(server: REPLServer) {
+ *   const names = {
+ *     lookup: () => ['title'],
+ *     ask: () => Promise.resolve(['title']),
+ *     stale: () => {},
+ *     subscribe: () => {},
+ *   };
+ *   complete(server, names, 'document.ti', (_error, [hits]) => hits); // ['title']
+ * }
+ * ```
+ */
+export function complete(
+  server: REPLServer,
+  names: NameSource,
+  line: string,
+  callback: CompleterCallback,
+): void {
+  const typed = line.trimStart();
+  if (typed.startsWith('.')) {
+    const partial = typed.slice(1);
+    const commands = Object.keys(server.commands ?? {})
+      .filter((name) => name.startsWith(partial))
+      .sort()
+      .map((name) => `.${name}`);
+
+    return callback(null, [commands, typed]);
+  }
+
+  const position = split(line);
+  if (!position) return callback(null, [[], line]);
+
+  void names.ask(position.base).then((found) => {
+    const hits = found.filter((name) => name.startsWith(position.token)).sort();
+
+    return callback(null, [hits, position.token]);
+  });
+}
+
 /**
  * zsh-style typeahead: the rest of the last matching line, greyed out after the cursor, Ctrl-F to
  * take it.
@@ -589,7 +731,7 @@ const CTRL_F = '\u0006';
  * }
  * ```
  */
-export function setupSuggestions(server: REPLServer): void {
+export function setupSuggestions(server: REPLServer, names?: NameSource): void {
   const style = suggestionStyle();
   const internals = server as unknown as { _writeToOutput(text: string): void };
   const write = internals._writeToOutput.bind(server);
@@ -614,8 +756,12 @@ export function setupSuggestions(server: REPLServer): void {
     // `history` is readline's own record, newest first, and absent from `@types/node`'s REPLServer
     // — reached through a narrow cast rather than by widening the whole server.
     const history = (server as unknown as { history?: string[] }).history ?? [];
+    const position = split(line);
 
-    return suggest(line, history);
+    return suggest(line, {
+      names: position && names ? names.lookup(position.base) : [],
+      history,
+    });
   };
 
   const draw = () => {
@@ -635,6 +781,9 @@ export function setupSuggestions(server: REPLServer): void {
     server.output.write(`${cleared}${style}${ghost}${ESCAPE}[0m${ESCAPE}[${ghost.length}D`);
   };
 
+  // A name that arrives after the keystroke that needed it still gets drawn, on the line it was
+  // asked for — `draw` reads the line as it stands, so one that has moved on simply draws itself.
+  names?.subscribe(draw);
   server.input.on('keypress', (sequence: string) => {
     // Through `write`, so readline inserts it the way it inserts typing — its own line state, its
     // own redraw, and the suggestion becomes ordinary text that can be edited.
