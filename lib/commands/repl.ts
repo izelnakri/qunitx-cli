@@ -562,14 +562,11 @@ const CTRL_F = '\u0006';
  * zsh-style typeahead: the rest of the last matching line, greyed out after the cursor, Ctrl-F to
  * take it.
  *
- * Drawn AFTER readline has drawn, on the tick following each keypress. readline redraws the whole
- * line on every keystroke and would paint over anything written before it; the ghost is appended
- * to its output and the cursor walked back over it, so the line readline believes it has is the
- * line it has. Nothing here touches `server.line`, which is why an unaccepted suggestion cannot
- * end up in what gets evaluated.
- *
- * Only when the cursor is at the end. A suggestion continues what you are typing, and there is no
- * such thing as continuing the middle of a line.
+ * Drawn AFTER readline has drawn, on the tick following each keypress. readline draws on that same
+ * keypress and would paint over anything written first; the ghost is appended to its output and
+ * the cursor walked back over it, so the line readline believes it has is the line it has. Nothing
+ * here touches `server.line`, which is why an unaccepted suggestion cannot end up in what gets
+ * evaluated.
  *
  * ```ts
  * import { setupSuggestions } from './repl.ts';
@@ -584,27 +581,56 @@ const CTRL_F = '\u0006';
  */
 export function setupSuggestions(server: REPLServer): void {
   const style = suggestionStyle();
-  let ghost = '';
+  const internals = server as unknown as { _writeToOutput(text: string): void };
+  const write = internals._writeToOutput.bind(server);
 
-  const draw = () => {
+  internals._writeToOutput = (text: string) => {
+    // Submitting the line. readline has just moved the cursor to the end of it and is about to
+    // leave that row behind for good — and the suggestion is drawn exactly there, so without this
+    // it stays on screen as part of what was typed: `me` submitted under a suggestion of
+    // `menubar` is echoed back as `menubar`. Nothing else erases it, because everything else that
+    // does erases by redrawing the line, and this row is never drawn again.
+    return write(text === '\r\n' ? `${ESCAPE}[0J\r\n` : text);
+  };
+  // What would be taken right now, derived from the line as it stands. Nothing is remembered
+  // between keystrokes: a ghost held in a variable outlives the line it was computed for — across
+  // `.nvim`, which reads no keys for as long as the editor is open — and Ctrl-F would then insert
+  // the tail of a line nobody is typing. Twice through the history is not a cost worth a bug.
+  const suggestion = (): string => {
     const line = server.line ?? '';
+    // Only at the end of the line. A suggestion continues what is being typed, and there is no
+    // such thing as continuing the middle of a line — nor anywhere safe to draw it.
+    if (server.cursor !== line.length) return '';
     // `history` is readline's own record, newest first, and absent from `@types/node`'s REPLServer
     // — reached through a narrow cast rather than by widening the whole server.
     const history = (server as unknown as { history?: string[] }).history ?? [];
-    ghost = server.cursor === line.length ? suggest(line, history) : '';
-    if (ghost === '') return;
+
+    return suggest(line, history);
+  };
+
+  const draw = () => {
+    // Mid-line there is real text after the cursor, so there is nothing to draw and — the part
+    // that matters — nothing may be erased.
+    if (server.cursor !== (server.line ?? '').length) return;
+    const ghost = suggestion();
+    // ERASED, not painted over. readline appends a typed character in place rather than redrawing
+    // the line, so the previous suggestion is still on screen with only its first character
+    // covered: type `d` then `o` and the tail of what `d` suggested trails the line. `[0J` clears
+    // from the cursor to the end of the screen, which is the same thing readline's own redraw
+    // uses, and is what handles a suggestion long enough to have wrapped.
+    const cleared = `${ESCAPE}[0J`;
+    if (ghost === '') return void server.output.write(cleared);
     // Written and then stepped back over: the cursor must end where readline left it, or the next
     // keystroke lands in the wrong column.
-    server.output.write(`${style}${ghost}${ESCAPE}[0m${ESCAPE}[${ghost.length}D`);
+    server.output.write(`${cleared}${style}${ghost}${ESCAPE}[0m${ESCAPE}[${ghost.length}D`);
   };
 
   server.input.on('keypress', (sequence: string) => {
-    if (sequence === CTRL_F && ghost !== '') {
-      const taken = ghost;
-      ghost = '';
-      // Through `write`, so readline inserts it the way it inserts typing — its own line state,
-      // its own redraw, and the suggestion becomes ordinary text that can be edited.
-      return void server.write(taken);
+    // Through `write`, so readline inserts it the way it inserts typing — its own line state, its
+    // own redraw, and the suggestion becomes ordinary text that can be edited.
+    if (sequence === CTRL_F) {
+      const taken = suggestion();
+      if (taken !== '') server.write(taken);
     }
     // After readline: it redraws on this same keypress, and drawing first would be drawing under
     // paint that has not dried.
