@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import nodeRepl, { type REPLServer } from 'node:repl';
 import os from 'node:os';
 import path from 'node:path';
@@ -47,7 +48,7 @@ export async function run(): Promise<number> {
     (open) => banner(config, open),
   );
 
-  return await drive(session);
+  return await drive(session, config.cwd);
 }
 
 /** What the session is, what it loaded, and how to leave — through the run's reporters, as `#` lines. */
@@ -71,7 +72,7 @@ function banner(config: ResolvedConfig, session: ReplSession): void {
  * supports the same subset, so the compiled binary gets the same prompt. What it does NOT do is
  * wait for an asynchronous `eval` before reading the next line — see {@link pipe}.
  */
-function drive(session: ReplSession): Promise<number> {
+function drive(session: ReplSession, cwd: string): Promise<number> {
   return new Promise((resolve) => {
     const interactive = Boolean(process.stdin.isTTY);
     // Piped input goes through a stream this process fills one line at a time. Feeding the REPL
@@ -122,6 +123,31 @@ function drive(session: ReplSession): Promise<number> {
         session.reload().then(() => this.displayPrompt());
       },
     });
+    // `.cat` and `.view` are the same command under both names — `cat` for the muscle memory,
+    // `view` for anyone who does not have it. A REPL is where you check what a file actually says
+    // before typing against it, and leaving the session to do that loses every binding you built.
+    for (const name of ['cat', 'view']) {
+      server.defineCommand(name, {
+        help: 'Print a file, resolved against the working directory',
+        action(file: string) {
+          this.clearBufferedCommand();
+          const target = file.trim();
+          if (target === '') this.output.write(`Usage: .${name} <file>\n`);
+          else {
+            const resolved = path.resolve(cwd, target);
+            const contents = tryReadFile(resolved);
+            this.output.write(
+              contents === null
+                ? red(`${path.relative(cwd, resolved) || target}: no such file\n`)
+                : contents.endsWith('\n')
+                  ? contents
+                  : `${contents}\n`,
+            );
+          }
+          this.displayPrompt();
+        },
+      });
+    }
     server.defineCommand('url', {
       help: 'Print the URL this session is served on (open it to watch the page)',
       action() {
@@ -219,4 +245,13 @@ function setupHistory(server: REPLServer, interactive: boolean): void {
   server.setupHistory(file, (error) => {
     if (error) server.output.write(`# qunitx repl: history disabled (${error.message})\n`);
   });
+}
+
+/** A file's contents, or null when it cannot be read — a missing path is an answer, not a crash. */
+function tryReadFile(file: string): string | null {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
 }

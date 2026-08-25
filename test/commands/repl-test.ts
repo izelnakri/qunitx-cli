@@ -140,3 +140,33 @@ module('Commands | repl | lifecycle', { concurrency: true }, () => {
     }
   });
 });
+
+// A REPL is where you check what a file says before typing against it, and leaving the session to
+// look costs every binding you built.
+module('Commands | qunitx repl | .cat', { concurrency: true }, () => {
+  test('prints a file, resolved against the working directory', async (assert) => {
+    const result = await repl('.cat test/fixtures/repl-helpers.ts');
+
+    assert.includes(result.stdout, "export const GREETING = 'hello from the preload'");
+    assert.includes(result.stdout, 'fixture boom', 'the whole file, not the first line');
+  });
+
+  test('.view is the same command for anyone without the muscle memory', async (assert) => {
+    const [viaCat, viaView] = await Promise.all([
+      repl('.cat test/fixtures/repl-helpers.ts'),
+      repl('.view test/fixtures/repl-helpers.ts'),
+    ]);
+
+    // Ports differ between two concurrent sessions and say nothing about the command.
+    const normalise = (text: string) => text.replace(/localhost:\d+/g, 'localhost:PORT');
+
+    assert.strictEqual(normalise(viaView.stdout), normalise(viaCat.stdout));
+  });
+
+  test('a missing file is an answer, not a crash', async (assert) => {
+    const result = await repl('.cat nope.ts\n1 + 1');
+
+    assert.includes(result.stdout, 'nope.ts: no such file');
+    assert.includes(result.stdout, '2', 'and the session carries on');
+  });
+});
