@@ -334,6 +334,103 @@ module('API | repl | debugger', { concurrency: true }, () => {
     });
   });
 
+  test('what you declare while stopped lasts as long as the breakpoint', async (assert) => {
+    // `Debugger.evaluateOnCallFrame` runs each input in a scope of its own and throws it away, so
+    // a `let` there used to answer `undefined` and then not exist — which looks like it worked.
+    await withRepl({ inputs: [DEBUGGED] }, async (session) => {
+      await session.evaluate('inspectMe()');
+
+      assert.strictEqual((await session.evaluate('let me = { age: 32 }')).output, 'undefined');
+      assert.strictEqual((await session.evaluate('me.age')).output, '32', 'it is still there');
+
+      const doubled = await session.evaluate('const doubled = answer * 2');
+      assert.strictEqual(doubled.output, 'undefined');
+      assert.strictEqual(
+        (await session.evaluate('doubled')).output,
+        '84',
+        'and its initializer saw the frame, which is the whole point of declaring it here',
+      );
+      await session.resume();
+    });
+  });
+
+  test('what the block owns goes when the breakpoint does', async (assert) => {
+    await withRepl({ inputs: [DEBUGGED] }, async (session) => {
+      await session.evaluate('inspectMe()');
+      await session.evaluate('let me = { age: 32 }');
+
+      await session.resume();
+
+      assert.true((await session.evaluate('me')).failed, 'the session that carries on has no `me`');
+      assert.strictEqual(
+        (await session.evaluate('let me = "mine"')).output,
+        'undefined',
+        'and the name is free for it to declare its own',
+      );
+      assert.strictEqual((await session.evaluate('me')).output, "'mine'");
+    });
+  });
+
+  test('what JavaScript hoists out of a block is still there afterwards', async (assert) => {
+    // `var` and `function` are not block-scoped anywhere else, and a prompt where they vanished
+    // would be a prompt with its own rules.
+    await withRepl({ inputs: [DEBUGGED] }, async (session) => {
+      await session.evaluate('inspectMe()');
+      await session.evaluate('var kept = "sticky"');
+      await session.evaluate('function greet() { return "hi" }');
+      await session.evaluate('const gone = 1');
+
+      await session.resume();
+
+      assert.strictEqual((await session.evaluate('kept')).output, "'sticky'", 'var stays');
+      assert.strictEqual(
+        (await session.evaluate('greet()')).output,
+        "'hi'",
+        'and so does function',
+      );
+      assert.true((await session.evaluate('gone')).failed, 'where const went with its block');
+    });
+  });
+
+  test('a declaration at a breakpoint shadows one of the same name outside it', async (assert) => {
+    // The reason a binding cannot simply be written to `globalThis`: a top-level `let` is a global
+    // LEXICAL binding, and one of those wins over a property of the same name. The inner one has
+    // to arrive as something that shadows it.
+    await withRepl({ inputs: [DEBUGGED] }, async (session) => {
+      await session.evaluate('let me = { age: 32 }');
+      await session.evaluate('inspectMe()');
+
+      assert.strictEqual(
+        (await session.evaluate('me')).output,
+        '{ age: 32 }',
+        'the outer one, until something says otherwise',
+      );
+
+      await session.evaluate('let me = { age: 33 }');
+
+      assert.strictEqual((await session.evaluate('me')).output, '{ age: 33 }', 'and now the inner');
+
+      await session.resume();
+
+      assert.strictEqual(
+        (await session.evaluate('me')).output,
+        '{ age: 32 }',
+        'and the outer one is untouched by any of it',
+      );
+    });
+  });
+
+  test('what was declared at the breakpoint can be assigned to there', async (assert) => {
+    await withRepl({ inputs: [DEBUGGED] }, async (session) => {
+      await session.evaluate('inspectMe()');
+      await session.evaluate('let count = 1');
+      await session.evaluate('count = count + 1');
+
+      assert.strictEqual((await session.evaluate('count')).output, '2', 'the assignment stuck');
+      await session.resume();
+    });
+  });
+
   test('resuming lets it carry on, and the session is a session again', async (assert) => {
     await withRepl({ inputs: [DEBUGGED] }, async (session) => {
       await session.evaluate('inspectMe()');

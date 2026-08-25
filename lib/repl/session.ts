@@ -24,6 +24,10 @@ import type { TestDetails } from '../reporters/types.ts';
 // Every object the page hands back is retained until it is released, and a REPL is a long
 // conversation — so each evaluation frees the previous one's handles by group before making more.
 const OBJECT_GROUP = 'qunitx-repl';
+// Where a breakpoint's own declarations are kept for as long as it lasts. On the page rather than
+// in this process, because their values are the page's — a DOM node declared at a breakpoint has
+// to still be that node on the next line.
+const HOLDER = 'globalThis.__qunitxPaused';
 // Kept apart from the group an evaluation uses: a preview is discarded on the next keystroke, and
 // releasing it must never take a handle the prompt is still rendering with.
 const PREVIEW_GROUP = 'qunitx-repl-preview';
@@ -368,6 +372,11 @@ class Session implements ReplSession {
   // The stopped frame's scope chain, kept from the pause event: `Runtime.getProperties` on these
   // reads a stopped isolate without running anything in it.
   #scopes: PausedScope[] = [];
+  // What has been declared at this breakpoint, and whether each belongs to the block it was
+  // written in. The values live in a holder on the page and reach the next input as function
+  // ARGUMENTS, which is the only thing that shadows an outer binding of the same name — a global
+  // property cannot, because a top-level `let` is a global LEXICAL binding and wins over one.
+  #pausedBindings = new Map<string, boolean>();
   // What the page had in scope before anybody typed, so `.scope` can show what this session added
   // rather than everything a browser ships with.
   #baseline = new Set<string>();
@@ -554,6 +563,8 @@ class Session implements ReplSession {
   }
 
   async reload(): Promise<void> {
+    // A new page has none of it, declared at a breakpoint or otherwise.
+    this.#pausedBindings.clear();
     await this.#page.reload();
     this.loaded = await this.readLoaded();
     // A reload is a new page: nothing this session declared survives it, so what counts as "what
@@ -574,10 +585,26 @@ class Session implements ReplSession {
    */
   async resume(): Promise<void> {
     if (!this.#pausedAt) return;
+    const kept = [...this.#pausedBindings]
+      .filter(([, blockScoped]) => !blockScoped)
+      .map(([name]) => name);
+    const had = this.#pausedBindings.size > 0;
+    this.#pausedBindings.clear();
     this.#frameId = null;
     this.#pausedAt = null;
     this.#scopes = [];
     await this.#cdp.send('Debugger.resume').catch(() => {});
+    // After the page is running again, because until it is there is nothing to run this in. What
+    // JavaScript hoists out of a block becomes a real global; what belongs to the block goes with
+    // it, which leaves the name free for the session to declare its own.
+    if (had) {
+      await this.#byValue(`(() => {
+        const held = ${HOLDER} ?? {};
+        for (const name of ${JSON.stringify(kept)}) globalThis[name] = held[name];
+        delete ${HOLDER};
+        return [];
+      })()`);
+    }
   }
 
   /**
@@ -667,7 +694,19 @@ class Session implements ReplSession {
         .send('Runtime.releaseObjectGroup', { objectGroup: OBJECT_GROUP })
         .catch(() => {});
     }
-    const sources = Source.candidates(input);
+    // A declaration at a breakpoint would be thrown away with the evaluation that made it, so its
+    // value is kept where the pause can reach it. The VALUE is still evaluated right here, which
+    // is the point: `let doubled = answer * 2` has to see the frame's `answer`.
+    const declared = this.#frameId ? Source.declaration(input) : null;
+    if (declared) {
+      this.#pausedBindings.set(declared.name, declared.blockScoped);
+      // One that outlives the pause is a name this session added, and `.scope` should say when.
+      // Worked out here because the usual pass is skipped while stopped.
+      if (!declared.blockScoped) this.#origins.set(declared.name, `line ${this.#inputs}`);
+    }
+    const sources = declared
+      ? [this.#inFrame(`${held(declared.name)} = ${declared.value}, undefined`, declared.name)]
+      : Source.candidates(input).map((source) => this.#inFrame(source, null));
     // Raced against a pause, because the two are mutually exclusive: a `debugger` statement stops
     // the page, and `Runtime.evaluate` does not answer a stopped page. Whichever happens first is
     // the answer, and the loser is left running — the evaluation settles later, when resumed.
@@ -711,6 +750,36 @@ class Session implements ReplSession {
     }
 
     return { output, failed: false, incomplete: false, tests };
+  }
+
+  /**
+   * An input with the breakpoint's own declarations put back in scope around it.
+   *
+   * They arrive as ARGUMENTS, and that is the whole trick: a parameter shadows everything outside
+   * the function, including a global lexical binding, which is what a top-level `let` of the same
+   * name is. Writing to `globalThis` cannot shadow one of those — declare `let me` at the prompt
+   * and again at a breakpoint, and the outer one keeps winning.
+   *
+   * `eval` rather than a `return`, because an input is not always an expression: `if (x) { … }`
+   * has no value to return, and `eval` gives a statement its completion value the same way the
+   * prompt does. Being a DIRECT eval is what lets it see the frame's own locals through the
+   * closure, as well as the parameters.
+   *
+   * Written back on the way out, so an assignment to one of them sticks. `excluding` is the name
+   * being declared right now, which has no previous value to carry in or restore.
+   */
+  #inFrame(source: string, excluding: string | null): string {
+    const names = [...this.#pausedBindings.keys()].filter((name) => name !== excluding);
+    if (names.length === 0) return source;
+    const restore = names.map((name) => `${held(name)} = ${name};`).join(' ');
+
+    return `(function (${names.join(', ')}) {
+      try {
+        return eval(${JSON.stringify(source)});
+      } finally {
+        ${restore}
+      }
+    })(${names.map(held).join(', ')})`;
   }
 
   /** One `Runtime.evaluate` in REPL mode — where `let` redeclaration and top-level await work. */
@@ -825,6 +894,11 @@ function pageHTML(config: Config): string {
 }
 
 /** The CDP shapes this file reads back — narrower than the protocol's, and only where used. */
+/** One binding's slot in the holder, created on first use. */
+function held(name: string): string {
+  return `(${HOLDER} ??= {})[${JSON.stringify(name)}]`;
+}
+
 /**
  * Sort key for a scope listing: the order the session put things there.
  *
