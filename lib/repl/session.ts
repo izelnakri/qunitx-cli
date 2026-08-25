@@ -34,6 +34,14 @@ const HOLDER = 'globalThis.__qunitxPaused';
 const PREVIEW_GROUP = 'qunitx-repl-preview';
 // A preview is worth milliseconds and no more — it is an aside, and the typing continues either way.
 const PREVIEW_TIMEOUT_MS = 100;
+// How long a step waits for the page to stop again. V8 stops at the next statement, so this is a
+// backstop for the step that never arrives rather than a budget anything normally spends.
+const STEP_TIMEOUT_MS = 2_000;
+const STEPS: Record<StepKind, 'Debugger.stepInto' | 'Debugger.stepOver' | 'Debugger.stepOut'> = {
+  into: 'Debugger.stepInto',
+  over: 'Debugger.stepOver',
+  out: 'Debugger.stepOut',
+};
 // A dotted path of plain identifiers, and nothing else. What completion is allowed to evaluate.
 const PATH = /^[\p{ID_Start}_$][\p{ID_Continue}$]*(\.[\p{ID_Start}_$][\p{ID_Continue}$]*)*$/u;
 // The scopes a breakpoint is about: the frame being executed and the blocks inside it.
@@ -135,6 +143,9 @@ export interface ScopeEntry {
   where: string;
 }
 
+/** One step, named the way gdb names it: `step`, `next`, `finish`. */
+export type StepKind = 'into' | 'over' | 'out';
+
 /**
  * A live REPL: one browser page, kept open, that evaluates what you type.
  *
@@ -222,6 +233,17 @@ export interface ReplSession {
    * source comes back from the page, which is the only place it exists.
    */
   frameSource(): Promise<{ text: string; line: number } | null>;
+  /**
+   * Runs one step and stops again, reporting where — or `null` if the page did not stop.
+   *
+   * `into` enters the next call, `over` runs it without entering, `out` runs until the current
+   * frame returns: `step`, `next` and `finish` as every debugger since gdb has named them.
+   *
+   * Stepping is also the only way INTO another frame from here. A `debugger` statement inside
+   * something you call at a breakpoint does nothing, because V8 disables breakpoints for the
+   * duration of a debugger evaluation — nothing this REPL can turn on.
+   */
+  step(kind: StepKind): Promise<string | null>;
   /** Lets a paused page carry on. A no-op when it is not paused. */
   resume(): Promise<void>;
   /** Closes the page, the browser and the server. Idempotent. */
@@ -399,6 +421,9 @@ class Session implements ReplSession {
   // Resolves the evaluation that was in flight when the pause happened. `Runtime.evaluate` does not
   // return while the page is stopped, so without this the prompt never comes back.
   #announcePause: ((result: ReplResult) => void) | null = null;
+  // Resolves the step that is waiting for the page to stop again. Separate from the one above
+  // because a step has no evaluation in flight to answer — it is waiting on the pause itself.
+  #announceStep: (() => void) | null = null;
   #page: Page;
   #server: HTTPServer;
   #browser: PlaywrightBrowser;
@@ -621,8 +646,47 @@ class Session implements ReplSession {
       : { text: fetched.scriptSource, line: at.line };
   }
 
+  async step(kind: StepKind): Promise<string | null> {
+    if (!this.#pausedAt) return null;
+
+    const stopped = new Promise<void>((resolve) => {
+      this.#announceStep = resolve;
+    });
+    await this.#cdp.send(STEPS[kind]).catch(() => {});
+    // Bounded, because a step is not guaranteed to reach another one: stepping out of the last
+    // frame runs the page to the end of what it was doing, and a prompt that waited for a pause
+    // that is never coming would simply stop answering.
+    const again = await Promise.race([
+      stopped.then(() => true),
+      new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), STEP_TIMEOUT_MS);
+        timer.unref();
+      }),
+    ]);
+    this.#announceStep = null;
+    if (again) return this.#pausedAt;
+
+    // It carried on — but the step did not go away with it. A step request that finds nothing to
+    // stop in outlives the run it was made for, and V8 spends it on whatever runs NEXT: type
+    // `1 + 1` after stepping off the end of the stack and the prompt stops on it. So it is spent
+    // here instead, on a statement that does not matter, with pauses suppressed for exactly as
+    // long as that takes.
+    await this.#cdp.send('Debugger.setSkipAllPauses', { skip: true }).catch(() => {});
+    await this.#cdp.send('Runtime.evaluate', { expression: '0' }).catch(() => {});
+    await this.#cdp.send('Debugger.setSkipAllPauses', { skip: false }).catch(() => {});
+    await this.#released();
+
+    return null;
+  }
+
   async resume(): Promise<void> {
     if (!this.#pausedAt) return;
+    await this.#cdp.send('Debugger.resume').catch(() => {});
+    await this.#released();
+  }
+
+  /** Everything a pause leaves behind, put away — however the page came to be running again. */
+  async #released(): Promise<void> {
     const kept = [...this.#pausedBindings]
       .filter(([, blockScoped]) => !blockScoped)
       .map(([name]) => name);
@@ -632,7 +696,6 @@ class Session implements ReplSession {
     this.#pausedAt = null;
     this.#pausedIn = null;
     this.#scopes = [];
-    await this.#cdp.send('Debugger.resume').catch(() => {});
     // After the page is running again, because until it is there is nothing to run this in. What
     // JavaScript hoists out of a block becomes a real global; what belongs to the block goes with
     // it, which leaves the name free for the session to declare its own.
@@ -668,6 +731,9 @@ class Session implements ReplSession {
     // Only the frame the prompt evaluates in. The scopes further up the stack belong to callers
     // nothing typed here can see, and listing them would answer a question nobody asked.
     this.#scopes = frame?.scopeChain ?? [];
+    const stepped = this.#announceStep;
+    this.#announceStep = null;
+    stepped?.();
     const announce = this.#announcePause;
     this.#announcePause = null;
     announce?.({

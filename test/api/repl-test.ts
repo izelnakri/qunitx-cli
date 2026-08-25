@@ -541,6 +541,119 @@ module('API | repl | names', { concurrency: true }, () => {
   });
 });
 
+// `step`, `next` and `finish`, as every debugger since gdb has named them. Also the only way INTO
+// another frame from a breakpoint: V8 turns breakpoints off for the length of a debugger
+// evaluation, so a `debugger` inside something you call while stopped does nothing at all.
+module('API | repl | stepping', { concurrency: true }, () => {
+  const STEPPING = 'test/fixtures/repl-stepping.ts';
+  const DEBUGGED = 'test/fixtures/repl-debugger.ts';
+  const at = (where: string | null) => (where ?? '').replace(/^.*\((.*)\)$/, '$1');
+
+  test('`next` runs the line without entering what it calls', async (assert) => {
+    await withRepl({ inputs: [STEPPING] }, async (session) => {
+      await session.evaluate('outer()');
+
+      const where = await session.step('over');
+
+      assert.includes(where ?? '', 'outer', 'still in the frame it started in');
+      assert.includes(at(where), 'repl-stepping.ts:12', 'and on the line after the breakpoint');
+      await session.resume();
+    });
+  });
+
+  test('`step` goes into it', async (assert) => {
+    await withRepl({ inputs: [STEPPING] }, async (session) => {
+      await session.evaluate('outer()');
+      await session.step('into');
+
+      const inside = await session.step('into');
+
+      assert.includes(inside ?? '', 'helper', 'the frame it called');
+      assert.includes(at(inside), 'repl-stepping.ts:4');
+    });
+  });
+
+  test('the locals are the ones where it stopped', async (assert) => {
+    // Stepping moves the frame, and everything a breakpoint answers has to move with it.
+    await withRepl({ inputs: [STEPPING] }, async (session) => {
+      await session.evaluate('outer()');
+      await session.step('into');
+      await session.step('into');
+
+      const locals = (await session.locals()).map((entry) => entry.name);
+
+      assert.true(locals.includes('value'), "the called frame's argument");
+      assert.false(locals.includes('start'), 'and not the caller’s');
+      assert.strictEqual((await session.evaluate('value')).output, '21', 'and it evaluates there');
+    });
+  });
+
+  test('`finish` runs until the frame returns', async (assert) => {
+    await withRepl({ inputs: [STEPPING] }, async (session) => {
+      await session.evaluate('outer()');
+      await session.step('into');
+      await session.step('into');
+
+      const out = await session.step('out');
+
+      assert.includes(out ?? '', 'outer', 'back in the caller');
+      await session.resume();
+    });
+  });
+
+  test('the source moves with the step', async (assert) => {
+    await withRepl({ inputs: [STEPPING] }, async (session) => {
+      await session.evaluate('outer()');
+      await session.step('into');
+      await session.step('into');
+
+      const frame = await session.frameSource();
+
+      assert.strictEqual(frame?.line, 4, 'the line it is on now');
+      await session.resume();
+    });
+  });
+
+  test('a step off the end does not stop the next thing you type', async (assert) => {
+    // A step request that finds nothing to stop in outlives the run it was made for, and V8
+    // spends it on whatever runs next — which is whatever gets typed at the prompt after it.
+    await withRepl({ inputs: [STEPPING] }, async (session) => {
+      await session.evaluate('outer()');
+      await session.step('out');
+
+      assert.strictEqual(await session.step('out'), null, 'nothing left to stop in');
+      assert.strictEqual(session.pausedAt, null, 'so the page is running');
+
+      const after = await session.evaluate('1 + 1');
+
+      assert.strictEqual(after.output, '2', 'and the next line is answered');
+      assert.strictEqual(session.pausedAt, null, 'rather than stopped on');
+    });
+  });
+
+  test('stepping a page that is not paused does nothing', async (assert) => {
+    await withRepl({}, async (session) => {
+      assert.strictEqual(await session.step('into'), null);
+      assert.strictEqual((await session.evaluate('1 + 1')).output, '2', 'and it stays usable');
+    });
+  });
+
+  test('a `debugger` in what you call while stopped is not a second pause', async (assert) => {
+    // V8's own rule, not this REPL's: breakpoints are off for the length of a debugger evaluation.
+    // Worth a test because it looks like a bug and is not one, and because stepping is the answer.
+    await withRepl({ inputs: [DEBUGGED] }, async (session) => {
+      await session.evaluate('inspectMe()');
+      const where = session.pausedAt;
+
+      const again = await session.evaluate('inspectMe()');
+
+      assert.strictEqual(again.output, '42', 'it ran straight through and answered');
+      assert.strictEqual(session.pausedAt, where, 'and the session is where it already was');
+      await session.resume();
+    });
+  });
+});
+
 // Two readers for the two states a session is in. Running, the interesting names are the ones this
 // session put on the page — not the several hundred a browser starts with, which is a list nobody
 // reads. Stopped at a breakpoint, they are the ones the frame can see.

@@ -167,12 +167,7 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
               // The lines around it, so which `debugger` this is can be seen rather than worked
               // out from a file and a number. Asked for after the notice, not before: the notice
               // is what the pause IS, and it should not wait on reading a file to say so.
-              return void session.frameSource().then((frame) => {
-                const shown = frame ? excerpt(frame.text, frame.line, palette, limits()) : '';
-                if (shown !== '') server.output.write(`${shown}\n`);
-
-                return callback(null, undefined);
-              });
+              return void showFrame(server, session, palette).then(() => callback(null, undefined));
             }
             const text = result.failed ? red(`Uncaught ${result.output}`) : result.output;
 
@@ -371,6 +366,31 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
           this.clearBufferedCommand();
           if (!session.pausedAt) this.output.write('Not paused\n');
           void session.resume().then(() => this.displayPrompt());
+        },
+      });
+    }
+    // `step`, `next` and `finish`, as every debugger since gdb has named them. Stepping is also
+    // the only way into another frame from a breakpoint: a `debugger` statement inside something
+    // you CALL while stopped does nothing, because V8 turns breakpoints off for the length of a
+    // debugger evaluation.
+    for (const [name, kind, help] of STEPS) {
+      server.defineCommand(name, {
+        help,
+        action() {
+          this.clearBufferedCommand();
+          if (!session.pausedAt) {
+            this.output.write('Not paused\n');
+
+            return void this.displayPrompt();
+          }
+          void session.step(kind).then(async (where) => {
+            if (where === null) this.output.write(blue('the page carried on\n'));
+            else {
+              this.output.write(blue(`${where}\n`));
+              await showFrame(server, session, palette);
+            }
+            this.displayPrompt();
+          });
         },
       });
     }
@@ -799,6 +819,20 @@ function pathProblem(found: Exclude<Files.Resolution, { kind: 'file' }>, target:
   }
 
   return `cannot read ${target}: ${found.detail}`;
+}
+
+/** The three ways out of a line, under the names gdb gave them. */
+const STEPS: ReadonlyArray<[string, Repl.StepKind, string]> = [
+  ['step', 'into', 'Run one step, entering the next call'],
+  ['next', 'over', 'Run one step, over the next call rather than into it'],
+  ['finish', 'out', 'Run until the current frame returns'],
+];
+
+/** The source around wherever the page is stopped, drawn under whatever announced the stop. */
+async function showFrame(server: REPLServer, session: ReplSession, palette: Theme): Promise<void> {
+  const frame = await session.frameSource();
+  const shown = frame ? excerpt(frame.text, frame.line, palette, limits()) : '';
+  if (shown !== '') server.output.write(`${shown}\n`);
 }
 
 /** How wide a line may be. 80 where nothing says — a pipe has no width, and neither does a file. */
