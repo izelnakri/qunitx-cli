@@ -283,17 +283,26 @@ module('Commands | repl | traversal', { concurrency: true }, () => {
     assert.notIncludes(result, '#2', 'the innermost two, and no more');
   });
 
-  test('`.back` is `.backtrace`, which is what it is in gdb', async (assert) => {
-    // Not a direction to move in. gdb's way back is `reverse-step`, and reversing needs a
-    // recorded execution that V8 does not keep.
-    const [named, abbreviated] = await Promise.all([
-      stepping('outer()\n.backtrace\n'),
-      stepping('outer()\n.back\n'),
+  test('`.back` goes back in execution order, which is toward the caller', async (assert) => {
+    // The caller ran BEFORE the frame it called, so back is outward on the stack. gdb spells
+    // `back` as an abbreviation of `backtrace`, which is its prefix matching rather than its
+    // judgement, and reads wrong where somebody typing "back" means "take me back".
+    const [viaUp, viaBack] = await Promise.all([
+      stepping('outer()\n.step 2\n.up\n.backtrace\n'),
+      stepping('outer()\n.step 2\n.back\n.backtrace\n'),
     ]);
     // `#\d`, so the banner — which carries a port, and two sessions do not share one — stays out.
     const frames = (text: string) => text.split('\n').filter((line) => /#\d/.test(line));
 
-    assert.deepEqual(frames(abbreviated.stdout), frames(named.stdout));
+    assert.deepEqual(frames(viaBack.stdout), frames(viaUp.stdout));
+    assert.includes(viaBack, '> #1  outer', 'one frame out from where it stopped');
+  });
+
+  test('`.here` says which frame is being read, and takes nothing to say it', async (assert) => {
+    const result = await stepping('outer()\n.step 2\n.up\n.here\n');
+
+    assert.includes(result, 'outer (test/fixtures/repl-stepping.ts:12', 'the frame `.up` moved to');
+    assert.includes(await stepping('outer()\n.here 2\n'), 'Usage: .here', 'and nothing else');
   });
 
   test('what is not a count says how to use it', async (assert) => {

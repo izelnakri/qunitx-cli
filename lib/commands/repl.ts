@@ -405,10 +405,7 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
     // The stack, and where on it to stand. A breakpoint is rarely only about the line it stopped
     // on — the answer is as often in who called it — and gdb's names for looking are the ones
     // anybody who has used a debugger already has in their hands.
-    // `.back` among them because that is what it is in gdb: an unambiguous abbreviation of
-    // `backtrace`, not a direction to move in. gdb's way back is `reverse-step`, and reversing
-    // needs a recorded execution that V8 does not keep.
-    for (const name of ['backtrace', 'bt', 'back', 'where']) {
+    for (const name of ['backtrace', 'bt', 'where']) {
       server.defineCommand(name, {
         help: 'Show the call stack — `.backtrace 3` for the innermost three',
         action(argument: string) {
@@ -434,7 +431,7 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
 
       return where;
     };
-    for (const [name, direction, help] of FRAMES) {
+    for (const { name, direction, count: counted, help } of FRAMES) {
       server.defineCommand(name, {
         help,
         action(argument: string) {
@@ -445,6 +442,13 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
             return void this.displayPrompt();
           }
           const here = session.backtrace().find((frame) => frame.selected)?.index ?? 0;
+          // `.here` asks one question and takes nothing to answer it. Reading an argument and
+          // moving somewhere would be the command doing what its name does not say.
+          if (!counted && argument.trim() !== '') {
+            this.output.write(`Usage: .${name}\n`);
+
+            return void this.displayPrompt();
+          }
           // `.frame` with nothing after it says where you are without moving, which is what gdb's
           // does — and what stops it from meaning "go to frame 0" because `Number('')` is zero.
           const given = count(argument, direction === 0 ? here : 1);
@@ -890,11 +894,44 @@ function pathProblem(found: Exclude<Files.Resolution, { kind: 'file' }>, target:
   return `cannot read ${target}: ${found.detail}`;
 }
 
-/** Moving about the stack: `0` means the argument is a frame number, otherwise it is a direction. */
-const FRAMES: ReadonlyArray<[string, number, string]> = [
-  ['frame', 0, 'Say which frame is being read, or go to one — `.frame 1`'],
-  ['up', 1, 'Go toward the frame that called this one — `.up 2` for two of them'],
-  ['down', -1, 'Go back toward the frame this one called — `.down 2` for two'],
+/**
+ * Moving about the stack. `0` means the argument is a frame number rather than a distance.
+ *
+ * `.back` is `.up` because the caller ran BEFORE the frame it called — back in execution order is
+ * outward on the stack. gdb spells `back` as an abbreviation of `backtrace` instead, which is
+ * gdb's prefix-matching rather than gdb's judgement, and reads wrong at a prompt where a person
+ * typing "back" means "take me back".
+ *
+ * There is deliberately no `.prev`. It would be another word for the same move, and it invites a
+ * `.next` to answer it — which is already the step-over command, and would leave the pair meaning
+ * two unrelated things.
+ */
+const FRAMES: ReadonlyArray<{ name: string; direction: number; count: boolean; help: string }> = [
+  {
+    name: 'frame',
+    direction: 0,
+    count: true,
+    help: 'Say which frame is being read, or go to one — `.frame 1`',
+  },
+  { name: 'here', direction: 0, count: false, help: 'Say which frame is being read' },
+  {
+    name: 'up',
+    direction: 1,
+    count: true,
+    help: 'Go toward the frame that called this one — `.up 2` for two',
+  },
+  {
+    name: 'back',
+    direction: 1,
+    count: true,
+    help: 'Back toward the caller, which is back in execution order',
+  },
+  {
+    name: 'down',
+    direction: -1,
+    count: true,
+    help: 'Go back toward the frame this one called — `.down 2` for two',
+  },
 ];
 
 /**
