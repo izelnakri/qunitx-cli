@@ -181,7 +181,7 @@ export async function start(
   const server = WebServer.setup(config);
   server.get('/', (_request, response) => {
     response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
-    response.end(PAGE_HTML);
+    response.end(pageHTML(config));
   });
 
   const browser = await Browser.launch(config);
@@ -442,12 +442,27 @@ class Session implements ReplSession {
 // The page. Deliberately not the test-run template: `#qunit-fixture` is here because QUnit resets
 // it between tests, `#qunit` because its HTML reporter renders there when you open the URL
 // yourself — which is half the reason the server stays up.
-const PAGE_HTML = `<!DOCTYPE html>
+/**
+ * The page, with the harness inline ahead of the bundle.
+ *
+ * Inline rather than only `page.addInitScript`, because an init script reaches the page PLAYWRIGHT
+ * drives and nothing else. `.url` invites you to open the same address in your own browser, and
+ * there the bundle found no harness and died on its first line:
+ *
+ *     Uncaught TypeError: Cannot read properties of undefined (reading 'load')
+ *
+ * A page you cannot look at is half a REPL, so the harness ships with the document. The init
+ * script stays as well — it is what survives a reload on the driven page — and the harness is
+ * idempotent so the two cannot collide.
+ */
+function pageHTML(config: Config): string {
+  return `<!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8">
     <title>qunitx repl</title>
     <link href="/node_modules/qunitx/vendor/qunit.css" rel="stylesheet">
+    <script>${initScript(config)}</script>
   </head>
   <body>
     <div id="qunit"></div>
@@ -455,6 +470,7 @@ const PAGE_HTML = `<!DOCTYPE html>
     <script src="/tests.js"></script>
   </body>
 </html>`;
+}
 
 /** The CDP shapes this file reads back — narrower than the protocol's, and only where used. */
 interface RemoteObject {

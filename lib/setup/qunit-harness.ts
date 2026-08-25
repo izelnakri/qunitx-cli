@@ -61,6 +61,12 @@ interface ReplHarness {
  */
 export function harness(options: { timeout: number }): void {
   const target = globalThis as unknown as Record<string, unknown>;
+  // Installed once per page, whichever route got here first. The REPL serves this inline in its
+  // HTML — so a human who opens the URL gets a working page — AND as an init script, so it is in
+  // place before the bundle on every reload of the driven one. Running twice would replace a
+  // harness the bundle had already called `load` on, losing its hooks and its `loaded` list.
+  if (target.__qunitxHarness) return;
+
   const existing = target.QUnit as QUnitLike | undefined;
   // QUnit merges a pre-existing `window.QUnit.config` when it loads (that is how `--filter` is
   // pinned for a normal run) and its load handler only fills in what is undefined — so `false`

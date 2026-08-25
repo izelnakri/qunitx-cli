@@ -278,3 +278,39 @@ module('API | repl | lifecycle', { concurrency: true }, () => {
     assert.includes(QUnitX.Failure.format(outcome), 'chromium');
   });
 });
+
+// `.url` invites you to open the session in your own browser, and an init script reaches only the
+// page playwright drives. The bundle's first line asks the harness to load the preloads, so
+// without it the tab died on arrival with `Cannot read properties of undefined (reading 'load')`.
+module('API | repl | opening the page yourself', { concurrency: true }, () => {
+  test('a browser that qunitx is not driving still gets a working page', async (assert) => {
+    await withRepl({ inputs: [PRELOAD] }, async (session) => {
+      const permit = await acquireBrowser();
+      const playwrightCore = (await import('playwright-core')).default;
+      const Chrome = await import('../../lib/chrome/index.ts');
+      const browser = await playwrightCore.chromium.launch({
+        headless: true,
+        ...((await Chrome.find()) ? { executablePath: (await Chrome.find())! } : {}),
+      });
+      try {
+        const page = await browser.newPage();
+        const errors: string[] = [];
+        page.on('pageerror', (error) => errors.push(String(error)));
+
+        await page.goto(session.url, { waitUntil: 'networkidle' });
+
+        assert.deepEqual(errors, [], 'the page loads clean for a plain visitor');
+        assert.strictEqual(
+          await page.evaluate(
+            () => typeof (globalThis as { __qunitxHarness?: unknown }).__qunitxHarness,
+          ),
+          'object',
+          'because the harness ships with the document, not only with the init script',
+        );
+      } finally {
+        await browser.close();
+        permit.release();
+      }
+    });
+  });
+});
