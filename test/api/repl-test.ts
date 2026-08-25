@@ -476,3 +476,57 @@ module('API | repl | scope', { concurrency: true }, () => {
     });
   });
 });
+
+// An answer offered before Enter has to be FREE. V8 refuses to run anything with a side effect for
+// this, which is what makes evaluating on a keystroke safe rather than merely fast.
+module('API | repl | preview', { concurrency: true }, () => {
+  test('a pure expression answers before it is run for real', async (assert) => {
+    await withRepl({}, async (session) => {
+      assert.strictEqual(await session.preview('1 + 1'), '2');
+      assert.strictEqual(await session.preview('[1, 2].map((n) => n * 2)'), '[ 2, 4 ]');
+      assert.includes(await session.preview('document.title'), 'qunitx repl');
+    });
+  });
+
+  test('anything that would CHANGE something answers nothing at all', async (assert) => {
+    // The property the whole feature rests on: `deleteEverything()` typed at a prompt must not
+    // delete everything because it was typed.
+    await withRepl({}, async (session) => {
+      assert.strictEqual(await session.preview('globalThis.zap = 1'), '', 'an assignment');
+      assert.strictEqual(await session.preview('const declared = 1'), '', 'a declaration');
+      assert.strictEqual(
+        await session.preview('document.body.appendChild(document.createElement("p"))'),
+        '',
+        'and a call that mutates the page',
+      );
+
+      assert.strictEqual(
+        (await session.evaluate('typeof globalThis.zap')).output,
+        "'undefined'",
+        'none of it happened',
+      );
+      assert.strictEqual(
+        (await session.evaluate('document.querySelectorAll("p").length')).output,
+        '0',
+        'and the page is as it was',
+      );
+    });
+  });
+
+  test('what cannot be answered quickly is not answered', async (assert) => {
+    await withRepl({}, async (session) => {
+      assert.strictEqual(await session.preview('for (;;) {}'), '', 'a loop that never ends');
+      assert.strictEqual(await session.preview('nope.nope'), '', 'and one that throws');
+      assert.strictEqual((await session.evaluate('1 + 1')).output, '2', 'the session carries on');
+    });
+  });
+
+  test('a stopped page is not asked, because a stopped page does not answer', async (assert) => {
+    await withRepl({ inputs: ['test/fixtures/repl-debugger.ts'] }, async (session) => {
+      await session.evaluate('inspectMe()');
+
+      assert.strictEqual(await session.preview('1 + 1'), '', 'and the prompt keeps taking keys');
+      await session.resume();
+    });
+  });
+});

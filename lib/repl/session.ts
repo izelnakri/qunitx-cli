@@ -24,6 +24,11 @@ import type { TestDetails } from '../reporters/types.ts';
 // Every object the page hands back is retained until it is released, and a REPL is a long
 // conversation — so each evaluation frees the previous one's handles by group before making more.
 const OBJECT_GROUP = 'qunitx-repl';
+// Kept apart from the group an evaluation uses: a preview is discarded on the next keystroke, and
+// releasing it must never take a handle the prompt is still rendering with.
+const PREVIEW_GROUP = 'qunitx-repl-preview';
+// A preview is worth milliseconds and no more — it is an aside, and the typing continues either way.
+const PREVIEW_TIMEOUT_MS = 100;
 // A dotted path of plain identifiers, and nothing else. What completion is allowed to evaluate.
 const PATH = /^[\p{ID_Start}_$][\p{ID_Continue}$]*(\.[\p{ID_Start}_$][\p{ID_Continue}$]*)*$/u;
 // The scopes a breakpoint is about: the frame being executed and the blocks inside it.
@@ -171,6 +176,14 @@ export interface ReplSession {
    * for a prompt to report an error.
    */
   names(base: string): Promise<string[]>;
+  /**
+   * What the input WOULD evaluate to, or `''` where it cannot be known without doing something.
+   *
+   * V8 refuses to run anything with a side effect for this: an assignment, a declaration, a call
+   * that mutates. That refusal is the feature — an answer offered before Enter has to be free, and
+   * `deleteEverything()` typed at a prompt must not delete everything because it was typed.
+   */
+  preview(input: string): Promise<string>;
   /**
    * What this session has added to the page's globals — not the several hundred a browser starts
    * with, which is a list nobody reads.
@@ -513,6 +526,31 @@ class Session implements ReplSession {
     }
 
     return entries;
+  }
+
+  async preview(input: string): Promise<string> {
+    // Not while stopped: a paused isolate answers no evaluation, and the one thing a breakpoint
+    // must not do is stop answering keystrokes.
+    if (this.#closed || this.#frameId || input.trim() === '') return '';
+
+    // `throwOnSideEffect` is V8's own answer to this question — it aborts the moment the
+    // expression would change anything, which is what makes evaluating on a keystroke safe rather
+    // than merely fast. The timeout covers what is pure but slow; a preview is worth milliseconds.
+    await this.#cdp
+      .send('Runtime.releaseObjectGroup', { objectGroup: PREVIEW_GROUP })
+      .catch(() => {});
+    const evaluated = (await this.#cdp
+      .send('Runtime.evaluate', {
+        expression: input,
+        throwOnSideEffect: true,
+        timeout: PREVIEW_TIMEOUT_MS,
+        objectGroup: PREVIEW_GROUP,
+        generatePreview: true,
+      })
+      .catch(() => null)) as EvaluateResult | null;
+    if (!evaluated || evaluated.exceptionDetails) return '';
+
+    return await this.#render(evaluated.result);
   }
 
   async reload(): Promise<void> {

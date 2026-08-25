@@ -1,3 +1,4 @@
+import { plainLength, truncate } from './columns.ts';
 import type { ScopeEntry } from './session.ts';
 
 /**
@@ -33,42 +34,3 @@ export function formatScope(entries: readonly ScopeEntry[], width: number): stri
 const ESCAPE = String.fromCharCode(27);
 const DIM = `${ESCAPE}[90m`;
 const RESET = `${ESCAPE}[0m`;
-const ELLIPSIS = '…';
-
-/**
- * Cuts a line to `width` columns, counting what the terminal counts.
- *
- * Colour is measured as zero because that is what it is worth on screen, and the reset is put back
- * on the end so a value cut mid-colour cannot leak its palette into the rest of the terminal.
- */
-function truncate(text: string, width: number): string {
-  if (width <= 0 || plainLength(text) <= width) return text;
-
-  let kept = '';
-  let columns = 0;
-  let index = 0;
-  while (index < text.length && columns < width - 1) {
-    if (text[index] !== ESCAPE) {
-      kept += text[index++];
-      columns++;
-      continue;
-    }
-    // A colour code costs no columns, so it is copied whole and does not count towards the width.
-    const end = text.indexOf('m', index);
-    if (end === -1) break;
-    kept += text.slice(index, end + 1);
-    index = end + 1;
-  }
-
-  return `${kept}${ELLIPSIS}${RESET}`;
-}
-
-/** Width as the terminal sees it — colour codes take columns nowhere but in the string. */
-function plainLength(text: string): number {
-  if (!text.includes(ESCAPE)) return text.length;
-
-  return text
-    .split(ESCAPE)
-    .map((part, index) => (index === 0 ? part.length : part.slice(part.indexOf('m') + 1).length))
-    .reduce((total, length) => total + length, 0);
-}
