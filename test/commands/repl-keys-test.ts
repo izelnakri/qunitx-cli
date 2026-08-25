@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream';
 import { module, test } from 'qunitx';
-import { vimKeys } from '../../lib/commands/repl.ts';
+import { vimKeys, withoutTerminalReports } from '../../lib/commands/repl.ts';
 import '../helpers/custom-asserts.ts';
 
 // Ctrl-K and Ctrl-J are rewritten before readline sees them, because neither can be handled after.
@@ -46,5 +46,36 @@ module('Commands | repl | vim history keys', { concurrency: true }, () => {
 
   test('ordinary keystrokes pass through unchanged', async (assert) => {
     assert.strictEqual(await translate('a', 'b', '\r'), 'ab\r');
+  });
+});
+
+// A terminal answers itself on stdin: an editor turns mouse tracking on, and every click and drag
+// comes back as `ESC [ < 32 ; 14 ; 45 M`. The ones that arrive while nobody is reading wait in the
+// TTY buffer for whoever reads next — which was the prompt, where they rendered as text and then
+// failed to parse. That is the `32;14;45M32;11;45M…` after quitting nvim.
+module('Commands | repl | terminal reports', { concurrency: true }, () => {
+  const ESC = String.fromCharCode(27);
+  const text = (chunk: Buffer) => withoutTerminalReports(chunk).toString();
+
+  test('an SGR mouse report is dropped, and the typing around it kept', (assert) => {
+    assert.strictEqual(text(Buffer.from(`a${ESC}[<32;14;45Mb`)), 'ab');
+  });
+
+  test('a burst of them leaves nothing behind', (assert) => {
+    const burst = `${ESC}[<32;14;45M${ESC}[<32;11;45M${ESC}[<0;20;37m`;
+
+    assert.strictEqual(text(Buffer.from(`7 * 6${burst}`)), '7 * 6', 'the line survives intact');
+  });
+
+  test('legacy mouse and cursor-position reports go too', (assert) => {
+    assert.strictEqual(text(Buffer.from(`x${ESC}[M abz`)), 'xz');
+    assert.strictEqual(text(Buffer.from(`${ESC}[24;80R1 + 1`)), '1 + 1');
+  });
+
+  test('ordinary input and real key escapes are untouched', (assert) => {
+    // Arrow keys are escape sequences too, and losing those would break history.
+    assert.strictEqual(text(Buffer.from('const a = 1;')), 'const a = 1;');
+    assert.strictEqual(text(Buffer.from(`${ESC}[A`)), `${ESC}[A`, 'up arrow still arrives');
+    assert.strictEqual(text(Buffer.from(`${ESC}[B`)), `${ESC}[B`, 'and down');
   });
 });

@@ -340,6 +340,15 @@ const CTRL_K = 0x0b;
 const CTRL_J = 0x0a;
 const ARROW_UP = '\u001b[A';
 const ARROW_DOWN = '\u001b[B';
+const ESCAPE = String.fromCharCode(27);
+// SGR mouse (`ESC [ < … M|m`), legacy mouse (`ESC [ M` plus three bytes), and cursor position
+// (`ESC [ … R`). Built rather than written as literals: a regex literal holding a real escape
+// character is exactly what the linter refuses, and it is right to.
+const REPORTS = [
+  new RegExp(`${ESCAPE}\\[<\\d+;\\d+;\\d+[Mm]`, 'g'),
+  new RegExp(`${ESCAPE}\\[M[\\s\\S]{3}`, 'g'),
+  new RegExp(`${ESCAPE}\\[\\d+;\\d+R`, 'g'),
+];
 
 /**
  * Walks history with Ctrl-K and Ctrl-J, by rewriting the bytes before readline sees them.
@@ -370,7 +379,7 @@ export function vimKeys(stdin: NodeJS.ReadStream): NodeJS.ReadStream {
   stdin.on('data', (chunk: Buffer) => {
     if (chunk.length === 1 && chunk[0] === CTRL_K) return void translated.write(ARROW_UP);
     if (chunk.length === 1 && chunk[0] === CTRL_J) return void translated.write(ARROW_DOWN);
-    translated.write(chunk);
+    translated.write(withoutTerminalReports(chunk));
   });
   stdin.on('end', () => translated.end());
 
@@ -378,6 +387,36 @@ export function vimKeys(stdin: NodeJS.ReadStream): NodeJS.ReadStream {
     isTTY: { value: true },
     setRawMode: { value: (mode: boolean) => stdin.setRawMode(mode) },
   });
+}
+
+/**
+ * Drops the terminal's answers to itself: mouse reports and cursor-position reports.
+ *
+ * These are input in the sense that they arrive on stdin, and never in the sense that anyone typed
+ * them. An editor turns mouse tracking on; the terminal then reports every click and drag as
+ * `ESC [ < 32 ; 14 ; 45 M`, and the ones that arrive while nobody is reading sit in the TTY buffer
+ * until somebody is. That somebody was the prompt, which rendered them as text and then failed to
+ * parse them — the `32;14;45M32;11;45M…` after quitting nvim, and the `Invalid or unexpected
+ * token` on the line after.
+ *
+ * Filtered by SHAPE rather than by timing: a report is recognisable, and dropping it is right
+ * whenever it turns up. A settle window would only be a guess about how long the mess lasts.
+ *
+ * ```ts
+ * import { withoutTerminalReports } from './repl.ts';
+ *
+ * const ESC = String.fromCharCode(27);
+ * withoutTerminalReports(Buffer.from(`a${ESC}[<32;14;45Mb`)).toString(); // 'ab'
+ * withoutTerminalReports(Buffer.from('1 + 1')).toString(); // '1 + 1' — ordinary typing is untouched
+ * ```
+ */
+export function withoutTerminalReports(chunk: Buffer): Buffer {
+  const text = chunk.toString('binary');
+  if (!text.includes(ESCAPE)) return chunk;
+
+  const stripped = REPORTS.reduce((rest, report) => rest.replace(report, ''), text);
+
+  return stripped === text ? chunk : Buffer.from(stripped, 'binary');
 }
 
 /**
@@ -447,9 +486,19 @@ function tryWriteFile(file: string, contents: string): boolean {
 /**
  * Hands the terminal to an editor, and takes back whatever was saved.
  *
- * The REPL is holding the TTY in raw mode with a readline attached, and an editor needs both back —
- * so the prompt is paused, raw mode is lifted, and the child inherits the terminal whole. Getting
- * that wrong does not look like a bug, it looks like a dead terminal.
+ * The REPL is holding the TTY in raw mode with a readline attached, and an editor needs both back.
+ * Three things have to happen, and the middle one is the one that bites.
+ *
+ * `server.pause()` stops readline. `stdin.pause()` stops NODE reading fd 0 — without it both this
+ * process and the editor read the same descriptor and race for every byte. nvim loses keystrokes,
+ * and its terminal reports arrive at the prompt instead of at nvim: `32;14;45M` and friends, which
+ * are SGR mouse events, spilling into the line after a session that looked fine until you quit.
+ * Raw mode is lifted last, because the editor sets whatever modes it wants and restores them on
+ * exit; anything still owned by Node at that point is what survives to corrupt the next line.
+ *
+ * NOT `detached`. A detached child leads its own process group, which is not the terminal's
+ * foreground group — the first read from the TTY would stop it with SIGTTIN. Inheriting the
+ * terminal while its reader stands down is what "it owns the screen" actually means here.
  *
  * The buffer travels through a file because that is the only thing an editor talks. It comes back
  * as a string, and the CALLER keeps it: the session's scratchpad lives for as long as the session,
@@ -476,6 +525,7 @@ export async function edit(editor: string, contents: string, server: REPLServer)
   server.pause();
   const stdin = process.stdin;
   const wasRaw = Boolean(stdin.isRaw);
+  stdin.pause();
   if (wasRaw) stdin.setRawMode(false);
 
   try {
@@ -488,6 +538,12 @@ export async function edit(editor: string, contents: string, server: REPLServer)
     return tryReadFile(file) ?? contents;
   } finally {
     if (wasRaw) stdin.setRawMode(true);
+    // Whatever the editor left in the buffer is the editor's, not the next line's — a half-read
+    // escape sequence typed at a prompt is the garbage this whole handover exists to avoid.
+    while (stdin.read() !== null) {
+      // Discarding, deliberately.
+    }
+    stdin.resume();
     server.resume();
     try {
       fs.unlinkSync(file);
