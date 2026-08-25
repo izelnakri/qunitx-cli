@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { spawn } from 'node:child_process';
 import nodeRepl, { type REPLServer } from 'node:repl';
 import os from 'node:os';
 import path from 'node:path';
@@ -60,7 +61,7 @@ function banner(config: ResolvedConfig, session: ReplSession): void {
   }
   Reporter.info(
     config,
-    blue('type `.help` for commands, `.exit` or Ctrl-D to quit, Ctrl-C to interrupt'),
+    blue('type `.help` for commands, `:<cmd>` for a shell, `.exit` or Ctrl-D to quit'),
   );
 }
 
@@ -95,6 +96,17 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
       // The session already rendered the value, in the page, with the page's own view of it.
       writer: (value: unknown) => String(value),
       eval: (source, _context, _file, callback) => {
+        // `:` is the shell, the way `:` is the command line in vim. A prompt you cannot run `git
+        // status` from is a prompt you keep leaving, and leaving costs every binding in the page.
+        if (source.trimStart().startsWith(':')) {
+          evaluating = true;
+
+          return void shell(source.trimStart().slice(1), server.output, cwd).then((code) => {
+            evaluating = false;
+
+            return callback(null, code === 0 ? undefined : red(`exit ${code}`));
+          });
+        }
         evaluating = true;
         session.evaluate(source).then(
           (result) => {
@@ -148,6 +160,26 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
         },
       });
     }
+    // Replaces the built-in, which writes every line the session evaluated. That file is meant to
+    // be replayable JavaScript, and a shell line is neither JavaScript nor something anyone wants
+    // re-run by accident. Filtered HERE rather than as the line is entered, because `node:repl`
+    // records it after `eval` has already answered.
+    server.defineCommand('save', {
+      help: 'Save this session to a file, minus the shell lines',
+      action(file: string) {
+        this.clearBufferedCommand();
+        const target = file.trim();
+        if (target === '') this.output.write('Usage: .save <file>\n');
+        else {
+          const source = replayableLines(server as unknown as { lines?: string[] }).join('\n');
+          const written = tryWriteFile(path.resolve(cwd, target), `${source}\n`);
+          this.output.write(
+            written ? `Session saved to: ${target}\n` : red(`Failed to save: ${target}\n`),
+          );
+        }
+        this.displayPrompt();
+      },
+    });
     server.defineCommand('url', {
       help: 'Print the URL this session is served on (open it to watch the page)',
       action() {
@@ -299,4 +331,68 @@ export function vimKeys(stdin: NodeJS.ReadStream): NodeJS.ReadStream {
     isTTY: { value: true },
     setRawMode: { value: (mode: boolean) => stdin.setRawMode(mode) },
   });
+}
+
+/**
+ * Runs one shell command, streaming its output to the terminal as it arrives.
+ *
+ * Through a shell on purpose: `:` means "the thing I would have typed in another window", and
+ * pipes, globs and `&&` are most of what that is. The command comes from the person at the prompt,
+ * for their own machine — there is nothing here to protect them from that they could not type
+ * directly. It runs in the session's working directory, so relative paths mean what `.cat` means.
+ *
+ * Streamed rather than collected: a command worth running from here is often one worth watching,
+ * and a build that prints for a minute should print for a minute.
+ *
+ * ```ts
+ * import { shell } from './repl.ts';
+ *
+ * // Defined, not invoked: it starts a real process.
+ * function example(out: NodeJS.WritableStream) {
+ *   return shell('git status --short', out, process.cwd()); // resolves with the exit code
+ * }
+ * ```
+ */
+export function shell(command: string, out: NodeJS.WritableStream, cwd: string): Promise<number> {
+  const trimmed = command.trim();
+  if (trimmed === '') return Promise.resolve(0);
+
+  return new Promise((resolve) => {
+    const child = spawn(trimmed, { shell: true, cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    child.stdout.on('data', (chunk: Buffer) => out.write(chunk));
+    child.stderr.on('data', (chunk: Buffer) => out.write(chunk));
+    // A command that will not start is an answer about the command, not a crash of the session.
+    child.on('error', (error: Error) => {
+      out.write(red(`${error.message}\n`));
+      resolve(127);
+    });
+    child.on('close', (code) => resolve(code ?? 0));
+  });
+}
+
+/**
+ * The lines of a session worth replaying: everything typed, minus the shell escapes.
+ *
+ * `lines` is `node:repl`'s own record of what it evaluated and is absent from `@types/node`'s
+ * `REPLServer`, so it is reached through a narrow cast rather than by widening the whole server.
+ *
+ * ```ts
+ * import { replayableLines } from './repl.ts';
+ *
+ * replayableLines({ lines: ['1 + 1', ':git status', '2 + 2'] }); // ['1 + 1', '2 + 2']
+ * ```
+ */
+export function replayableLines(server: { lines?: string[] }): string[] {
+  return (server.lines ?? []).filter((line) => !line.trimStart().startsWith(':'));
+}
+
+/** True when the file was written. A save that cannot land is a message, not a crashed session. */
+function tryWriteFile(file: string, contents: string): boolean {
+  try {
+    fs.writeFileSync(file, contents);
+
+    return true;
+  } catch {
+    return false;
+  }
 }

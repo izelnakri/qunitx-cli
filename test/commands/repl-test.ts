@@ -1,7 +1,10 @@
 import { module, test } from 'qunitx';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import process from 'node:process';
 import { execute, shellFails, spawnCapture } from '../helpers/shell.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
+import { tempDir } from '../helpers/temp-dir.ts';
 import '../helpers/custom-asserts.ts';
 
 // `qunitx repl` reads stdin, so a pipe is a full session: the same code path a terminal drives,
@@ -168,5 +171,43 @@ module('Commands | qunitx repl | .cat', { concurrency: true }, () => {
 
     assert.includes(result.stdout, 'nope.ts: no such file');
     assert.includes(result.stdout, '2', 'and the session carries on');
+  });
+});
+
+// `:` is the shell, the way `:` is the command line in vim. A prompt you cannot run `git status`
+// from is a prompt you keep leaving, and leaving costs every binding in the page.
+module('Commands | qunitx repl | : runs a shell command', { concurrency: true }, () => {
+  test('its output arrives in the session, and the page is untouched', async (assert) => {
+    const result = await repl(':echo hello from the shell\n1 + 1\n');
+
+    assert.includes(result.stdout, 'hello from the shell');
+    assert.includes(result.stdout, '2', 'and the next line is still evaluated in the page');
+  });
+
+  test('a failing command reports its exit code rather than throwing', async (assert) => {
+    const result = await repl(':exit 3\n1 + 1\n');
+
+    assert.includes(result.stdout, 'exit 3');
+    assert.includes(result.stdout, '2', 'the session carries on');
+  });
+
+  test('stderr comes through too', async (assert) => {
+    const result = await repl(':echo trouble 1>&2\n');
+
+    assert.includes(result.stdout + result.stderr, 'trouble');
+  });
+
+  test('shell lines are left out of .save', async (assert) => {
+    // `.save` writes a file meant to be replayable JavaScript. A shell line is neither JavaScript
+    // nor something to re-run by accident.
+    await using directory = await tempDir('repl-save');
+    const saved = path.join(directory.path, 'session.js');
+    await repl(`1 + 1\n:echo not-javascript\n2 + 2\n.save ${saved}\n`);
+
+    const contents = await fs.readFile(saved, 'utf8');
+    assert.includes(contents, '1 + 1');
+    assert.includes(contents, '2 + 2');
+    assert.notIncludes(contents, 'not-javascript', 'the shell line is not replayable');
+    assert.notIncludes(contents, ':echo');
   });
 });
