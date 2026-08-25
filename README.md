@@ -232,17 +232,17 @@ qunitx repl test/helpers.ts      # …plus that file: its exports become globals
 ok 1 adds # (2 ms)
 ```
 
-Tests typed at the prompt run immediately and report as TAP, through the same reporters a run
-uses (`--reporter=spec` works here too). Bindings persist between lines, `await` works at the top
-level, and `.help` lists the commands (`.scope` shows what you have declared, `.cat` prints a file
-numbered and highlighted, `.reload` drops all page state, `.url` prints the server URL so you can
-open the page yourself). The line is syntax-highlighted as you type and what it comes to is shown
-on the right; TAB completes against the page, Ctrl-F takes the greyed-out suggestion, and Ctrl-C
-interrupts a runaway expression. A `debugger` statement stops the page — `.locals` shows the frame,
-`.continue` carries on. Colours follow your terminal, and `QUNITX_REPL_THEME='@string=fg=green'`
-overrides them under nvim's treesitter names. Piped input works, so `echo '1+1' | qunitx repl` is a
-scriptable browser probe. Chromium only — it evaluates over the
-Chrome DevTools Protocol.
+Tests typed at the prompt run immediately and report as TAP, through the same reporters a run uses
+(`--reporter=spec` works here too). Bindings persist between lines, `await` works at the top level,
+and `.help` lists the commands (`.scope` shows what you have declared, `.view` prints a file
+numbered or a directory as a tree, `.tree -L 2` limits the depth, `.history` shows the last lines,
+`.reload` drops all page state, `.url` prints the server URL so you can open the page yourself). The
+line is syntax-highlighted as you type and what it comes to is shown on the right; TAB completes
+against the page, Ctrl-F takes the greyed-out suggestion, and Ctrl-C interrupts a runaway
+expression. A `debugger` statement stops the page — `.locals` shows the frame, `.continue` carries
+on. Colours follow your terminal, and `QUNITX_REPL_THEME='@string=fg=green'` overrides them under
+nvim's treesitter names. Piped input works, so `echo '1+1' | qunitx repl` is a scriptable browser
+probe. Chromium only — it evaluates over the Chrome DevTools Protocol.
 
 ## JavaScript API
 
