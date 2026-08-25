@@ -29,7 +29,7 @@ import * as TimeCounter from '../utils/time-counter.ts';
 import * as Reporter from '../reporters/index.ts';
 import { readTemplate } from '../utils/read-template.ts';
 import { isCustomTemplate } from '../utils/html.ts';
-import { closeWithGrace, type Abandoned } from '../utils/close-with-grace.ts';
+import { closeCompletely, closeWithGrace, type Abandoned } from '../utils/close-with-grace.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
 import * as Coverage from '../coverage/index.ts';
 import { isFilteredRun, describeActiveFilters } from '../selection/filter.ts';
@@ -881,7 +881,10 @@ async function runConcurrentMode(
   // preventing a premature drain if every close resolves instantly (e.g. Chrome already dead)
   // before proc.ref() takes effect inside shutdownPrelaunch. closeWithGrace bounds the other
   // side: Playwright's browser.close() can deadlock on Firefox + Windows.
-  await closeWithGrace({
+  // `closeCompletely` because this is also the JS API's return: `test()` handing back a result
+  // while playwright still holds the browser leaves a caller that cannot exit. Costs nothing in
+  // the ordinary case — the second wait only happens when the first one gave up on something.
+  await closeCompletely({
     failureCache: failureCacheWrite,
     server: Task(sharedServer?.close()).ignore('server.close'),
     browser: Task(browser.close()).ignore('browser.close'),

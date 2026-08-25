@@ -12,7 +12,7 @@ import { HTTPServer } from '../web/index.ts';
 import { Task } from '../task/index.ts';
 import { bindServerToPort } from '../setup/bind-server-to-port.ts';
 import { blue, red } from '../utils/color.ts';
-import { closeWithGrace } from '../utils/close-with-grace.ts';
+import { closeCompletely } from '../utils/close-with-grace.ts';
 import { findProjectRoot } from '../utils/find-project-root.ts';
 import { pathExists } from '../utils/path-exists.ts';
 import { qunitxRuntimePlugin } from '../setup/qunitx-runtime-plugin.ts';
@@ -393,11 +393,20 @@ export async function run(entry: string, settings: ScriptSettings = {}): Promise
       // holds the loop open, so a close that never settles drains it and the process exits 0 with
       // the real exit code computed and never committed. closeWithGrace's timer is itself a live
       // handle, so the loop cannot drain out from under the exit code.
-      await closeWithGrace({
+      // `closeCompletely`, not `closeWithGrace`: this is a library return, not a process exit.
+      // `browser.close()` on a loaded Windows runner regularly outlives the first grace, and
+      // returning there hands the caller a settled Task while playwright still holds the browser's
+      // transport and process handle — so a script that awaited `run()` and ended could not.
+      const pending = await closeCompletely({
         server: server.close(),
         browser: browser.close(),
         prelaunch: shutdownPrelaunch(),
       });
+      // Said out loud rather than swallowed: nothing else is going to release these, so a caller
+      // whose process will not end deserves to know what is holding it.
+      if (pending.length) {
+        config.console.error(`# qunitx: ${pending.join(', ')} never finished closing\n`);
+      }
     }
   }
 

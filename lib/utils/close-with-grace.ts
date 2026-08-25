@@ -84,3 +84,38 @@ export interface Abandoned {
 }
 
 const NOTHING_ABANDONED: Abandoned = { names: [], settled: Promise.resolve() };
+
+/**
+ * Closes, and does not come back while anything it started is still running.
+ *
+ * {@link closeWithGrace} is for a caller that is about to exit: it bounds the wait and walks away,
+ * because the process is going to take the leftovers with it. A LIBRARY has no such luxury. When
+ * `run()` or `close()` returns, the caller is entitled to end — and a browser close still in flight
+ * holds its transport and its process handle, so the caller ends up hanging on a session it was
+ * told it had finished with.
+ *
+ * So this gives what it abandoned a second chance to finish before answering. Two bounded waits
+ * rather than one unbounded one: a close that is merely SLOW — which on a loaded Windows runner is
+ * most of them — lands in the second, and a genuinely deadlocked one still cannot wedge the caller
+ * forever. What is still pending after that is returned rather than swallowed, because at that
+ * point nothing else is going to release it and the caller deserves to know.
+ *
+ * ```ts
+ * import { closeCompletely } from './close-with-grace.ts';
+ *
+ * await closeCompletely({ server: Promise.resolve() }); // [] — nothing was left running
+ * await closeCompletely({ wedged: new Promise(() => {}) }, 10); // ['wedged'] — and it says so
+ * ```
+ */
+export async function closeCompletely(
+  closes: Readonly<Record<string, Promise<unknown> | null | undefined>>,
+  graceMs: number = CLEANUP_GRACE_MS,
+): Promise<string[]> {
+  const abandoned = await closeWithGrace(closes, graceMs);
+  if (!abandoned.names.length) return [];
+
+  // Keyed by what was actually left, so a second timeout names the same closes as the first.
+  const second = await closeWithGrace({ [abandoned.names.join(', ')]: abandoned.settled }, graceMs);
+
+  return second.names.length ? abandoned.names : [];
+}
