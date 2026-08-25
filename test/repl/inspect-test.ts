@@ -126,3 +126,52 @@ module('Repl | inspect | limits', { concurrency: true }, () => {
     assert.equal(inspect(value), '{ ok: 1, broken: [Getter threw: nope] }');
   });
 });
+
+// The palette every JavaScript prompt has trained people on. Off by default, so a piped session
+// stays plain text a script can compare — which is what every other test in this file relies on.
+module('Repl | inspect | colour', { concurrency: true }, () => {
+  const ESC = String.fromCharCode(27);
+  const plain = (text: string) =>
+    text
+      .split(ESC)
+      .map((part, index) => (index === 0 ? part : part.slice(part.indexOf('m') + 1)))
+      .join('');
+
+  test('leaves are painted by type, the way node and deno paint them', (assert) => {
+    assert.strictEqual(inspect('hi', 2, true), `${ESC}[32m'hi'${ESC}[39m`, 'strings green');
+    assert.strictEqual(inspect(42, 2, true), `${ESC}[33m42${ESC}[39m`, 'numbers yellow');
+    assert.strictEqual(inspect(true, 2, true), `${ESC}[33mtrue${ESC}[39m`, 'booleans yellow');
+    assert.strictEqual(inspect(null, 2, true), `${ESC}[90mnull${ESC}[39m`, 'nothingness dimmed');
+    assert.includes(
+      inspect(() => {}, 2, true),
+      `${ESC}[36m`,
+      'callables cyan',
+    );
+  });
+
+  test('off by default, so nothing that reads this output has to strip anything', (assert) => {
+    assert.strictEqual(inspect('hi'), "'hi'");
+    assert.strictEqual(inspect(42), '42');
+  });
+
+  test('colour never changes where a composite breaks across lines', (assert) => {
+    // The hazard worth a test: escape codes are characters too, and measuring them would make a
+    // one-line object look too wide and split for no reason.
+    const value = { alpha: 1, beta: 'two', gamma: [3, 4], delta: true };
+
+    assert.strictEqual(plain(inspect(value, 2, true)), inspect(value, 2, false));
+  });
+
+  test('and the same holds for one that genuinely does break', (assert) => {
+    const wide = {
+      alpha: 'aaaaaaaaaaaaaaaaaaaa',
+      beta: 'bbbbbbbbbbbbbbbbbbbb',
+      gamma: 'cccccccccccccccccccc',
+      delta: 'dddddddddddddddddddd',
+    };
+
+    const coloured = inspect(wide, 2, true);
+    assert.includes(coloured, '\n', 'it really is the multi-line branch');
+    assert.strictEqual(plain(coloured), inspect(wide, 2, false));
+  });
+});

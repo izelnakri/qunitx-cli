@@ -15,6 +15,7 @@ import { closeWithGrace } from '../utils/close-with-grace.ts';
 import { Failure } from '../task/index.ts';
 import { harness } from '../setup/qunit-harness.ts';
 import { inspect } from './inspect.ts';
+import { colorEnabled } from '../utils/color.ts';
 import type { Browser as PlaywrightBrowser, CDPSession, Page } from 'playwright-core';
 import type { HTTPServer } from '../web/index.ts';
 import type { Config } from '../types.ts';
@@ -507,7 +508,7 @@ function isSyntaxError(evaluated: EvaluateResult): boolean {
  */
 function describe(remote: RemoteObject): string {
   if (remote.unserializableValue) return remote.unserializableValue;
-  if (!remote.objectId) return inspect(remote.value);
+  if (!remote.objectId) return inspect(remote.value, 2, colorEnabled);
   if (remote.subtype === 'promise') {
     const property = (name: string) =>
       remote.preview?.properties.find((entry) => entry.name === name)?.value;
@@ -545,7 +546,9 @@ function resolveStack(config: Config, stack: string): string {
  */
 function initScript(config: Config): string {
   return [
-    `globalThis.__qunitxInspect = (${inspect.toString()});`,
+    // The colour decision is made HERE and baked in: the page has no TTY, no `NO_COLOR` and no
+    // idea whether anything is reading it.
+    `globalThis.__qunitxInspect = (value) => (${inspect.toString()})(value, 2, ${colorEnabled});`,
     `(${harness.toString()})({ timeout: ${config.timeout} });`,
   ].join('\n');
 }

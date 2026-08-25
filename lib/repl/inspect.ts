@@ -15,32 +15,66 @@
  * Composites that do not fit on one line are broken across several rather than truncated: a REPL
  * that hides the tail of your object is a REPL you stop trusting.
  *
+ * `color` paints the leaves the way `node` and `deno` paint theirs — strings green, numbers and
+ * booleans yellow, functions cyan — and is off by default, so a piped session stays plain text
+ * that a script can compare. The caller decides: this function has no idea whether anything is
+ * attached to the other end, and the process that renders half these values is a browser.
+ *
  * ```ts
  * import { inspect } from './inspect.ts';
  *
  * inspect('hi'); // "'hi'" — quoted, so it cannot be confused with a bare identifier
  * inspect({ a: 1, b: [2, 3] }); // '{ a: 1, b: [ 2, 3 ] }'
  * inspect(new Map([['k', 1]])); // "Map(1) { 'k' => 1 }"
+ * inspect(1, 2, true); // '\u001b[33m1\u001b[39m' — yellow, like every other JavaScript prompt
  * ```
  */
-export function inspect(value: unknown, depth: number = 2): string {
+export function inspect(value: unknown, depth: number = 2, color: boolean = false): string {
   const seen = new Set<unknown>();
   // Beyond this a one-line rendering stops being readable, so composites break across lines.
   const WIDTH = 72;
   const MAX_ENTRIES = 100;
   const MAX_MARKUP = 300;
 
+  // The palette every JavaScript prompt has trained people on, so a value's TYPE is legible before
+  // its content is: strings green, numbers and booleans yellow, nothingness dimmed, callables cyan.
+  const GREEN = 32;
+  const YELLOW = 33;
+  const MAGENTA = 35;
+  const CYAN = 36;
+  const DIM = 90;
+  const ESC = String.fromCharCode(27);
+
   return format(value, depth);
 
+  function paint(code: number, text: string): string {
+    return color ? `${ESC}[${code}m${text}${ESC}[39m` : text;
+  }
+
+  /**
+   * Width as the terminal sees it — colour codes take columns nowhere but in the string.
+   *
+   * Split rather than matched: a regex for this needs a literal escape character in it, which the
+   * linter refuses for good reason, and the shape here is fixed anyway — an escape, then up to the
+   * `m` that closes the code.
+   */
+  function plainLength(text: string): number {
+    return text
+      .split(ESC)
+      .map((part, index) => (index === 0 ? part : part.slice(part.indexOf('m') + 1)))
+      .join('').length;
+  }
+
   function format(input: unknown, left: number): string {
-    if (input === null) return 'null';
-    if (input === undefined) return 'undefined';
+    if (input === null) return paint(DIM, 'null');
+    if (input === undefined) return paint(DIM, 'undefined');
 
     const type = typeof input;
-    if (type === 'string') return quote(input as string);
-    if (type === 'number') return Object.is(input, -0) ? '-0' : String(input);
-    if (type === 'bigint') return `${input}n`;
-    if (type === 'boolean' || type === 'symbol') return String(input);
+    if (type === 'string') return paint(GREEN, quote(input as string));
+    if (type === 'number') return paint(YELLOW, Object.is(input, -0) ? '-0' : String(input));
+    if (type === 'bigint') return paint(YELLOW, `${input}n`);
+    if (type === 'boolean') return paint(YELLOW, String(input));
+    if (type === 'symbol') return paint(GREEN, String(input));
     if (type === 'function') return formatFunction(input as (...args: unknown[]) => unknown);
 
     return formatObject(input as object, left);
@@ -49,9 +83,9 @@ export function inspect(value: unknown, depth: number = 2): string {
   function formatFunction(input: (...args: unknown[]) => unknown): string {
     const isClass = /^\s*class[\s{]/.test(Function.prototype.toString.call(input));
     const name = input.name;
-    if (isClass) return name ? `[class ${name}]` : '[class (anonymous)]';
+    if (isClass) return paint(CYAN, name ? `[class ${name}]` : '[class (anonymous)]');
 
-    return name ? `[Function: ${name}]` : '[Function (anonymous)]';
+    return paint(CYAN, name ? `[Function: ${name}]` : '[Function (anonymous)]');
   }
 
   function formatObject(input: object, left: number): string {
@@ -66,8 +100,10 @@ export function inspect(value: unknown, depth: number = 2): string {
       return markup.length > MAX_MARKUP ? `${markup.slice(0, MAX_MARKUP)}…` : markup;
     }
     if (input instanceof Error) return input.stack || `${input.name}: ${input.message}`;
-    if (input instanceof Date) return isNaN(input.getTime()) ? 'Invalid Date' : input.toISOString();
-    if (input instanceof RegExp) return String(input);
+    if (input instanceof Date) {
+      return paint(MAGENTA, isNaN(input.getTime()) ? 'Invalid Date' : input.toISOString());
+    }
+    if (input instanceof RegExp) return paint(MAGENTA, String(input));
     // Settled-ness is not observable synchronously, so the terminal renders a top-level promise
     // from CDP's preview instead; this is what a promise nested inside something else looks like.
     if (input instanceof Promise) return 'Promise';
@@ -136,7 +172,7 @@ export function inspect(value: unknown, depth: number = 2): string {
     const head = prefix ? `${prefix} ` : '';
     if (entries.length === 0) return prefix ? `${head}${open}${close}` : `${open}${close}`;
     const line = `${head}${open} ${entries.join(', ')} ${close}`;
-    if (line.length <= WIDTH && !line.includes('\n')) return line;
+    if (plainLength(line) <= WIDTH && !line.includes('\n')) return line;
     // One entry per line, every nested line indented with it, so a deep object stays readable.
     const body = entries.map((entry) => `  ${entry.split('\n').join('\n  ')}`).join(',\n');
 
