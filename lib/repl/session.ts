@@ -13,7 +13,7 @@ import { qunitxRuntimePlugin } from '../setup/qunitx-runtime-plugin.ts';
 import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { closeWithGrace } from '../utils/close-with-grace.ts';
 import { Failure } from '../task/index.ts';
-import { harness } from './harness.ts';
+import { harness } from '../setup/qunit-harness.ts';
 import { inspect } from './inspect.ts';
 import type { Browser as PlaywrightBrowser, CDPSession, Page } from 'playwright-core';
 import type { HTTPServer } from '../web/index.ts';
@@ -424,7 +424,7 @@ class Session implements ReplSession {
   /** Calls into the page harness — outside REPL mode, which is what makes `awaitPromise` work. */
   async #harness<T>(expression: string): Promise<T> {
     const evaluated = await this.#cdp.send('Runtime.evaluate', {
-      expression: `globalThis.__qunitxRepl.${expression}`,
+      expression: `globalThis.__qunitxHarness.${expression}`,
       awaitPromise: true,
       returnByValue: true,
       timeout: HARNESS_TIMEOUT_MS,
@@ -552,7 +552,7 @@ async function bundle(config: Config, preload: string[], outDir: string): Promis
         contents: [
           `import * as qunitx from 'qunitx';`,
           ...imports,
-          `globalThis.__qunitxRepl.load(qunitx, [${modules.join(', ')}]);`,
+          `globalThis.__qunitxHarness.load(qunitx, [${modules.join(', ')}]);`,
         ].join('\n'),
         resolveDir: config.cwd,
       },

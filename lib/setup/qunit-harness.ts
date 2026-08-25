@@ -1,7 +1,8 @@
-// The REPL's half of the page. Injected as source text (`harness.toString()`) before any page
-// script runs, so — like `lib/setup/ws-client.js` and `./inspect.ts` — it must stay ONE
-// self-contained function: no imports, no references to anything outside itself. Types are erased
-// before it ever reaches the browser, so they are free.
+// The page-side half of running QUnit on demand, shared by the REPL and by `qunitx run` when the
+// file it was given turns out to declare tests. Injected as source text (`harness.toString()`), so
+// — like `lib/setup/ws-client.js` and `lib/repl/inspect.ts` — it must stay ONE self-contained
+// function: no imports, no references to anything outside itself. Types are erased before it ever
+// reaches the browser, so they are free.
 
 /** The slice of QUnit this file drives. Type-only, so nothing here survives into the page. */
 interface QUnitLike {
@@ -22,7 +23,11 @@ interface QUnitLike {
 
 /** What the terminal calls over CDP. Type-only; the object itself is built below. */
 interface ReplHarness {
-  /** Called by the bundle once `qunitx` and every preloaded module has evaluated. */
+  /**
+   * Called by the REPL's bundle once `qunitx` and every preloaded module has evaluated, to put
+   * their exports on `globalThis`. `qunitx run` has no such bundle and does not call it — which is
+   * why {@link ReplHarness.flush} attaches to QUnit itself rather than relying on this.
+   */
   load(qunitx: Record<string, unknown>, modules: Array<[string, Record<string, unknown>]>): void;
   /** `[file, exported names]` for each preloaded module — what the banner lists. */
   loaded: Array<[string, string[]]>;
@@ -31,17 +36,22 @@ interface ReplHarness {
 }
 
 /**
- * Installs `globalThis.__qunitxRepl` and the QUnit preconfig that keeps the page from starting a
- * run on its own.
+ * Installs `globalThis.__qunitxHarness`: run the tests this page has registered, on command, and be
+ * ready for more.
  *
- * Two things make a REPL out of a page that is otherwise a test run. First `autostart: false`,
- * merged by QUnit's own preconfig path, so tests wait for a prompt instead of a page load. Then
+ * Two things a page that is otherwise a test run does not do. First `autostart: false`, merged by
+ * QUnit's own preconfig path, so tests wait to be asked instead of running on page load. Then
  * {@link ReplHarness.flush}, which runs whatever has been registered and — the part QUnit does not
  * offer — puts the queue back in a state that accepts the NEXT batch, so a session is many runs
  * rather than one.
  *
+ * Both callers want the second; only the REPL needs the first. `qunitx run` injects this AFTER its
+ * bundle has evaluated, where the real QUnit already exists and the preconfig would overwrite it —
+ * hence the guard — and its tests are already sitting in the queue because the qunitx runtime
+ * turns `autostart` off itself.
+ *
  * ```ts
- * import { harness } from './harness.ts';
+ * import { harness } from './qunit-harness.ts';
  *
  * // Defined, not invoked: it installs page globals and only makes sense inside a browser.
  * function inject(page: { addInitScript(script: { content: string }): Promise<void> }) {
@@ -51,13 +61,19 @@ interface ReplHarness {
  */
 export function harness(options: { timeout: number }): void {
   const target = globalThis as unknown as Record<string, unknown>;
+  const existing = target.QUnit as QUnitLike | undefined;
   // QUnit merges a pre-existing `window.QUnit.config` when it loads (that is how `--filter` is
   // pinned for a normal run) and its load handler only fills in what is undefined — so `false`
   // set here survives and nothing runs until `flush()` says so.
-  target.QUnit = { config: { autostart: false } };
+  //
+  // Only when QUnit has not loaded yet. `version` is what tells the real thing from a preconfig
+  // stub, and overwriting the real one — which is what injecting this after the bundle would do —
+  // would throw away every test already registered.
+  if (!existing || !existing.version) target.QUnit = { config: { autostart: false } };
 
   let collected: unknown[] = [];
   let settle: ((payload: string) => void) | null = null;
+  let attached = false;
 
   const api: ReplHarness = {
     loaded: [],
@@ -67,29 +83,15 @@ export function harness(options: { timeout: number }): void {
         api.loaded.push([file, Object.keys(namespace).filter((name) => name !== 'default')]);
         assign(namespace);
       }
-      const QUnit = target.QUnit as QUnitLike;
-      QUnit.config.testTimeout = options.timeout;
-      // Snapshotted HERE, not at `runEnd`: QUnit calls `slimAssertions()` on the line after it
-      // emits `testEnd`, deleting `actual` and `expected` from every assertion to keep a long
-      // suite from retaining them. Holding the live object and serializing later reported every
-      // failure with `actual: null`.
-      QUnit.on('testEnd', (details) =>
-        collected.push(JSON.parse(JSON.stringify(details, circularReplacer()))),
-      );
-      QUnit.on('runEnd', () => {
-        const payload = JSON.stringify({ tests: collected });
-        collected = [];
-        prepare(QUnit);
-        const resolve = settle;
-        settle = null;
-        // Deferred a turn: QUnit is mid-emit, and resolving here would let the next evaluation
-        // register a test into a queue that is still unwinding the run this one ended.
-        if (resolve) setTimeout(() => resolve(payload), 0);
-      });
+      attach(target.QUnit as QUnitLike);
     },
     flush() {
       const QUnit = target.QUnit as QUnitLike;
       if (!QUnit || !QUnit.version || QUnit.config.queue.length === 0) return Promise.resolve(null);
+      // Attached here rather than in `load`, so a caller whose bundle never calls `load` — which is
+      // every `qunitx run` — still gets its results. Idempotent: QUnit would fire each listener
+      // once per registration, and a test reported twice is a wrong count, not a cosmetic one.
+      attach(QUnit);
 
       return new Promise((resolve) => {
         settle = resolve;
@@ -97,7 +99,32 @@ export function harness(options: { timeout: number }): void {
       });
     },
   };
-  target.__qunitxRepl = api;
+  target.__qunitxHarness = api;
+
+  // Hooks QUnit's reporting, once, for whoever gets here first — `load` for a REPL, `flush` for a
+  // run whose bundle never called it. Twice would report every test twice, which is a wrong count.
+  function attach(QUnit: QUnitLike): void {
+    if (attached) return;
+    attached = true;
+    QUnit.config.testTimeout = options.timeout;
+    // Snapshotted HERE, not at `runEnd`: QUnit calls `slimAssertions()` on the line after it
+    // emits `testEnd`, deleting `actual` and `expected` from every assertion to keep a long
+    // suite from retaining them. Holding the live object and serializing later reported every
+    // failure with `actual: null`.
+    QUnit.on('testEnd', (details) =>
+      collected.push(JSON.parse(JSON.stringify(details, circularReplacer()))),
+    );
+    QUnit.on('runEnd', () => {
+      const payload = JSON.stringify({ tests: collected });
+      collected = [];
+      prepare(QUnit);
+      const resolve = settle;
+      settle = null;
+      // Deferred a turn: QUnit is mid-emit, and resolving here would let the next evaluation
+      // register a test into a queue that is still unwinding the run this one ended.
+      if (resolve) setTimeout(() => resolve(payload), 0);
+    });
+  }
 
   function assign(namespace: Record<string, unknown>): void {
     for (const name of Object.keys(namespace)) {
