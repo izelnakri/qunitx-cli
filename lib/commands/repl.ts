@@ -183,18 +183,29 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
       };
     }
     // `node:repl` calls `clearBufferedCommand()` after every command it finishes, so that is not
-    // the hook for abandoning an unfinished one — these two are, and they are what `.break` and
-    // Ctrl-C have always meant.
-    for (const name of ['break', 'clear']) {
-      server.defineCommand(name, {
-        help: 'Abandon the unfinished input',
-        action() {
-          buffered = '';
-          this.clearBufferedCommand();
-          this.displayPrompt();
-        },
-      });
-    }
+    // the hook for abandoning an unfinished one — this is, and it is what `.break` and Ctrl-C have
+    // always meant.
+    server.defineCommand('break', {
+      help: 'Abandon the unfinished input',
+      action() {
+        buffered = '';
+        this.clearBufferedCommand();
+        this.displayPrompt();
+      },
+    });
+    // What every shell means by it, rather than `node:repl`'s "break, and drop the local context"
+    // — there is no local context here, and a prompt that has scrolled past what you were reading
+    // is the thing anybody actually wants cleared. The half-typed input survives, as it does in a
+    // shell: `.clear` is about the screen and nothing else.
+    server.defineCommand('clear', {
+      help: 'Clear the screen, keeping the scrollback and the unfinished input',
+      action() {
+        this.clearBufferedCommand();
+        // Nothing to clear on a pipe, and the escape would land in whatever is reading it.
+        if (interactive) this.output.write(clearScreen());
+        this.displayPrompt();
+      },
+    });
     setupHistory(server, interactive);
     // Before the suggestion, and that order matters: both redraw on a keypress, and the ghost has
     // to be written after the line it hangs off has been painted.
@@ -908,6 +919,18 @@ export function setupHighlighting(server: REPLServer, palette: Theme): void {
 
 /** Ctrl-F, the key that takes the suggestion. */
 const CTRL_F = '\u0006';
+/**
+ * Clears the visible screen and leaves the scrollback alone.
+ *
+ * `[2J` erases what is on screen; `[3J` would erase what has scrolled off it, which is the
+ * difference between clearing a terminal and losing the last hour of it. Only the first is sent,
+ * which is why scrolling still works afterwards — and which is what readline already does for
+ * Ctrl-L, so that key needs nothing from us.
+ */
+function clearScreen(): string {
+  return `${ESCAPE}[H${ESCAPE}[2J`;
+}
+
 /** What `node:repl` hands a completer to answer through: the matches, and the word they finish. */
 type CompleterCallback = (error: null, result: [string[], string]) => void;
 

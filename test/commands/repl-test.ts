@@ -273,6 +273,20 @@ module('Commands | repl | .tree', { concurrency: true }, () => {
   });
 });
 
+// `.clear` is about the screen. The half-typed input survives it, as it does in a shell.
+module('Commands | repl | .clear', { concurrency: true }, () => {
+  test('an unfinished input survives it', async (assert) => {
+    const result = await repl('const half = {\n.clear\na: 1 }\nhalf.a\n');
+
+    assert.includes(result, '1', 'the block finished on the other side of it');
+    assert.notIncludes(result, 'SyntaxError');
+  });
+
+  test('nothing is written into a pipe, which has no screen to clear', async (assert) => {
+    assert.notIncludes(await repl('.clear\n1 + 1\n'), String.fromCharCode(27));
+  });
+});
+
 // An unfinished input is held here rather than handed to `node:repl`, which is what lets the
 // prompt say how deep it is. The piped path proves the buffering; how it is drawn is a terminal
 // concern, and `Repl | highlight | depth` is what counts the levels.
