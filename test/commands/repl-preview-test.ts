@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { module, test } from 'qunitx';
-import { setupPreview } from '../../lib/commands/repl.ts';
+import { setupPreview } from '../../lib/commands/repl/index.ts';
 import '../helpers/custom-asserts.ts';
 
 const ESC = String.fromCharCode(27);

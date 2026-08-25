@@ -1,4 +1,14 @@
-const ESCAPE = String.fromCharCode(27);
+/**
+ * The character every terminal control sequence begins with.
+ *
+ * ```ts
+ * import { ESCAPE } from './columns.ts';
+ *
+ * ESCAPE.charCodeAt(0); // 27 — written this way because a literal one is what linters refuse
+ * ```
+ */
+export const ESCAPE = String.fromCharCode(27);
+
 const RESET = `${ESCAPE}[0m`;
 const ELLIPSIS = '…';
 

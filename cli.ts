@@ -85,7 +85,7 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   } else if (cmd === 'repl') {
     // Never routed through the daemon: a REPL is a page kept open for one terminal, and the
     // daemon's browser is shared. It uses the pre-launched Chrome like any other local run.
-    const Repl = await import('./lib/commands/repl.ts');
+    const Repl = await import('./lib/commands/repl/index.ts');
     return exitAfterFlush(await Repl.run());
   }
 

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { module, test } from 'qunitx';
-import { trimHistoryFile } from '../../lib/commands/repl.ts';
+import { trimHistoryFile } from '../../lib/commands/repl/index.ts';
 import { tempDir } from '../helpers/temp-dir.ts';
 import '../helpers/custom-asserts.ts';
 

@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import { split, suggest } from '../../lib/repl/suggest.ts';
-import { suggestionStyle } from '../../lib/commands/repl.ts';
+import { suggestionStyle } from '../../lib/commands/repl/index.ts';
 import '../helpers/custom-asserts.ts';
 
 // The zsh habit: what you were about to type, offered greyed-out, taken with Ctrl-F. Only the

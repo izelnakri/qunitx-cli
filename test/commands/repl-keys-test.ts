@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream';
 import { module, test } from 'qunitx';
-import { vimKeys, withoutTerminalReports } from '../../lib/commands/repl.ts';
+import { vimKeys, withoutTerminalReports } from '../../lib/commands/repl/index.ts';
 import '../helpers/custom-asserts.ts';
 
 // Ctrl-K and Ctrl-J are rewritten before readline sees them, because neither can be handled after.
