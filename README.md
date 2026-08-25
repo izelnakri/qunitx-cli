@@ -234,9 +234,11 @@ ok 1 adds # (2 ms)
 
 Tests typed at the prompt run immediately and report as TAP, through the same reporters a run
 uses (`--reporter=spec` works here too). Bindings persist between lines, `await` works at the top
-level, `.help` lists the commands (`.reload` drops all page state, `.url` prints the server URL so
-you can open the page yourself), and Ctrl-C interrupts a runaway expression. Piped input works,
-so `echo '1+1' | qunitx repl` is a scriptable browser probe. Chromium only — it evaluates over the
+level, and `.help` lists the commands (`.scope` shows what you have declared, `.reload` drops all
+page state, `.url` prints the server URL so you can open the page yourself). TAB completes against
+the page, Ctrl-F takes the greyed-out suggestion, and Ctrl-C interrupts a runaway expression. A
+`debugger` statement stops the page — `.locals` shows the frame, `.continue` carries on. Piped
+input works, so `echo '1+1' | qunitx repl` is a scriptable browser probe. Chromium only — it evaluates over the
 Chrome DevTools Protocol.
 
 ## JavaScript API
