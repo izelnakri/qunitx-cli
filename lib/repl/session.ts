@@ -26,6 +26,12 @@ import type { TestDetails } from '../reporters/types.ts';
 const OBJECT_GROUP = 'qunitx-repl';
 // A dotted path of plain identifiers, and nothing else. What completion is allowed to evaluate.
 const PATH = /^[\p{ID_Start}_$][\p{ID_Continue}$]*(\.[\p{ID_Start}_$][\p{ID_Continue}$]*)*$/u;
+// The scopes a breakpoint is about: the frame being executed and the blocks inside it.
+const LOCAL_SCOPES = new Set(['local', 'block', 'catch', 'with']);
+// Could this input have bound a name? A declaration keyword, or an `=` that is not a comparison.
+// Deliberately generous — a false yes costs one round trip, a false no loses where a name came
+// from, and only one of those is recoverable.
+const BINDS = /\b(?:var|let|const|function|class|import)\b|(?<![=!<>])=(?!=)/;
 // Bounds the harness calls only, never a user's own expression: a slow test is QUnit's
 // `testTimeout` to enforce, and this is the backstop for a page that stops answering entirely.
 // Typed input is deliberately unbounded — `interrupt()` is how you stop it.
@@ -100,6 +106,26 @@ export interface ReplResult {
 }
 
 /**
+ * One thing in scope: what it is called, what it holds, and where it came from.
+ *
+ * `value` is already rendered — by the same renderer the prompt prints values with, so a string in
+ * a scope listing is quoted and coloured exactly as it would be if you had typed its name.
+ *
+ * ```ts
+ * const entry: ScopeEntry = { name: 'label', value: "'one'", where: 'line 1' };
+ * entry.where; // 'line 1' — the input that declared it, or the file it was preloaded from
+ * ```
+ */
+export interface ScopeEntry {
+  /** The name it is bound to. */
+  name: string;
+  /** The rendered value, coloured when the terminal takes colour. */
+  value: string;
+  /** Where it came from, or `''` where nothing knows. */
+  where: string;
+}
+
+/**
  * A live REPL: one browser page, kept open, that evaluates what you type.
  *
  * The page is the point. Bindings, the DOM, timers, module state and QUnit's registry all persist
@@ -145,6 +171,20 @@ export interface ReplSession {
    * for a prompt to report an error.
    */
   names(base: string): Promise<string[]>;
+  /**
+   * What this session has added to the page's globals — not the several hundred a browser starts
+   * with, which is a list nobody reads.
+   *
+   * Preloaded exports are in it too, attributed to the file they came from.
+   */
+  scope(): Promise<ScopeEntry[]>;
+  /**
+   * What is in scope at the breakpoint, innermost first, or empty when the page is not paused.
+   *
+   * Read out of the stopped frame rather than evaluated, because a paused isolate runs nothing —
+   * asking it to would hang the one command a breakpoint exists for.
+   */
+  locals(): Promise<ScopeEntry[]>;
   /** Reloads the page: every binding and all page state goes, the session stays. */
   reload(): Promise<void>;
   /** Stops whatever is executing in the page — the Ctrl-C of a runaway expression. */
@@ -260,6 +300,7 @@ export async function start(
     const session = new Session(config, { cdp, page, server, browser, url });
     cdp.on('Debugger.paused', (event) => session.onPaused(event, scripts));
     session.loaded = await session.readLoaded();
+    await session.takeBaseline();
     onOpen?.(session);
     await session.runPending();
 
@@ -311,6 +352,16 @@ class Session implements ReplSession {
   // the page is running, and set together — one is the capability, the other is what to print.
   #frameId: string | null = null;
   #pausedAt: string | null = null;
+  // The stopped frame's scope chain, kept from the pause event: `Runtime.getProperties` on these
+  // reads a stopped isolate without running anything in it.
+  #scopes: PausedScope[] = [];
+  // What the page had in scope before anybody typed, so `.scope` can show what this session added
+  // rather than everything a browser ships with.
+  #baseline = new Set<string>();
+  // Name to where it came from. Filled by diffing after an input that could have bound something,
+  // which is the only moment the answer is knowable.
+  #origins = new Map<string, string>();
+  #inputs = 0;
   // Resolves the evaluation that was in flight when the pause happened. `Runtime.evaluate` does not
   // return while the page is stopped, so without this the prompt never comes back.
   #announcePause: ((result: ReplResult) => void) | null = null;
@@ -384,9 +435,8 @@ class Session implements ReplSession {
 
     // `let`, `const` and `class` at top level live in the global LEXICAL scope, which is not on
     // `globalThis` and is therefore invisible to everything above — and in a REPL it is where half
-    // of what you declared ends up. Skipped while paused: the frame's own scope is the answer
-    // there, and a Runtime command against a stopped isolate is a promise that never settles.
-    if (this.#frameId) return found;
+    // of what you declared ends up. Asked for even while paused: unlike an evaluation, this one
+    // reads the isolate rather than running in it, and a stopped isolate answers it.
     const lexical = await this.#cdp
       .send('Runtime.globalLexicalScopeNames', {})
       .then((result) => (result as { names?: string[] }).names ?? [])
@@ -395,9 +445,82 @@ class Session implements ReplSession {
     return [...new Set([...found, ...lexical])];
   }
 
+  /**
+   * Remembers what the page had in scope before anybody typed, and who owns the preloaded names.
+   *
+   * Taken AFTER the bundle has run, so the several hundred names a browser ships with are in it
+   * and `.scope` does not read like a DOM reference. The preloaded exports are pulled back out —
+   * they are the session's, and the file they came from is a better answer than a line number.
+   */
+  async takeBaseline(): Promise<void> {
+    const exported = new Set(this.loaded.flatMap(([, names]) => names));
+    const present = await this.names('');
+    this.#baseline = new Set(present.filter((name) => !exported.has(name)));
+    this.#origins = new Map(
+      this.loaded.flatMap(([file, names]) => names.map((name): [string, string] => [name, file])),
+    );
+    this.#inputs = 0;
+  }
+
+  async scope(): Promise<ScopeEntry[]> {
+    const introduced = (await this.names('')).filter((name) => !this.#baseline.has(name));
+    if (introduced.length === 0) return [];
+
+    // Rendered in the page, by the renderer the prompt itself prints with — one round trip for
+    // every value, and a DOM node in a scope listing reads the way it reads at the prompt.
+    // `eval` rather than `globalThis[name]` because `let` and `const` at top level are NOT on
+    // `globalThis`; they live in the global lexical scope, which only a reference can reach.
+    const rendered = await this.#byValue<Array<[string, string]>>(`(() => {
+      return ${JSON.stringify(introduced)}.map((name) => {
+        try {
+          return [name, globalThis.__qunitxInspect(eval(name))];
+        } catch {
+          return [name, ''];
+        }
+      });
+    })()`);
+
+    return rendered
+      .map(([name, value]) => ({ name, value, where: this.#origins.get(name) ?? '' }))
+      .sort((left, right) => introducedAt(left.where) - introducedAt(right.where));
+  }
+
+  async locals(): Promise<ScopeEntry[]> {
+    const entries: ScopeEntry[] = [];
+    // The frame and the blocks inside it, and nothing wider. `global` is what `.scope` answers,
+    // and `closure` here is the ESBUILD BUNDLE — every name QUnit and the runtime declare, which
+    // buries the handful a breakpoint is actually about under two hundred lines of module scope.
+    const readable = this.#scopes.filter((scope) => LOCAL_SCOPES.has(scope.type));
+    for (const scope of readable) {
+      const objectId = scope.object.objectId;
+      if (!objectId) continue;
+      const properties = await this.#cdp
+        .send('Runtime.getProperties', {
+          objectId,
+          ownProperties: true,
+          generatePreview: true,
+        })
+        .catch(() => null);
+      for (const property of properties?.result ?? []) {
+        if (!property.value) continue;
+        entries.push({
+          name: property.name,
+          value: describe(property.value),
+          // The block a name belongs to, where that is not the function being executed.
+          where: scope.type === 'local' ? '' : (scope.name ?? scope.type),
+        });
+      }
+    }
+
+    return entries;
+  }
+
   async reload(): Promise<void> {
     await this.#page.reload();
     this.loaded = await this.readLoaded();
+    // A reload is a new page: nothing this session declared survives it, so what counts as "what
+    // you added" starts again from what the fresh page has.
+    await this.takeBaseline();
     await this.runPending();
   }
 
@@ -415,6 +538,7 @@ class Session implements ReplSession {
     if (!this.#pausedAt) return;
     this.#frameId = null;
     this.#pausedAt = null;
+    this.#scopes = [];
     await this.#cdp.send('Debugger.resume').catch(() => {});
   }
 
@@ -429,6 +553,9 @@ class Session implements ReplSession {
     const frame = event.callFrames[0];
     this.#frameId = frame?.callFrameId ?? null;
     this.#pausedAt = describeFrame(this.#config, frame, scripts);
+    // Only the frame the prompt evaluates in. The scopes further up the stack belong to callers
+    // nothing typed here can see, and listing them would answer a question nobody asked.
+    this.#scopes = frame?.scopeChain ?? [];
     const announce = this.#announcePause;
     this.#announcePause = null;
     announce?.({
@@ -491,6 +618,7 @@ class Session implements ReplSession {
     const nothing = { output: '', failed: false, incomplete: false, tests: [] };
     if (input.trim() === '') return nothing;
     if (this.#closed) return { ...nothing, output: 'the REPL session is closed', failed: true };
+    this.#inputs++;
 
     // Frees the PREVIOUS input's handles; the one rendered below is still needed. Skipped while
     // the page is paused: the Runtime domain queues commands until the target resumes, so awaiting
@@ -534,6 +662,15 @@ class Session implements ReplSession {
     // `test('…', …)` evaluates to undefined, and printing that under the TAP it just produced adds
     // nothing. Any other value still prints — the input did something besides register tests.
     const output = tests.length > 0 && rendered === 'undefined' ? '' : rendered;
+    // Which input declared a name is knowable only right after that input ran, and nowhere else —
+    // so it is worked out here, and only for inputs that could have declared anything. Never while
+    // paused: names bound in a stopped frame belong to the frame, and `.locals` is what reads it.
+    if (!this.#frameId && BINDS.test(input)) {
+      for (const name of await this.names('')) {
+        const introduced = !this.#baseline.has(name) && !this.#origins.has(name);
+        if (introduced) this.#origins.set(name, `line ${this.#inputs}`);
+      }
+    }
 
     return { output, failed: false, incomplete: false, tests };
   }
@@ -650,6 +787,19 @@ function pageHTML(config: Config): string {
 }
 
 /** The CDP shapes this file reads back — narrower than the protocol's, and only where used. */
+/**
+ * Sort key for a scope listing: the order the session put things there.
+ *
+ * Preloaded files come first because they were there before the prompt was, then each input in the
+ * order it ran — which is how the session happened, and so how it reads back.
+ */
+function introducedAt(where: string): number {
+  const line = /^line (\d+)$/.exec(where);
+  if (line) return Number(line[1]);
+
+  return where === '' ? Number.MAX_SAFE_INTEGER : -1;
+}
+
 /** The slice of `Debugger.paused` this reads — narrower than the protocol's, and only where used. */
 interface DebuggerPaused {
   callFrames: Array<{
@@ -657,7 +807,15 @@ interface DebuggerPaused {
     functionName?: string;
     location: { lineNumber: number; columnNumber?: number; scriptId: string };
     url?: string;
+    scopeChain?: PausedScope[];
   }>;
+}
+
+/** One link of a stopped frame's scope chain, as an object whose properties can be read. */
+interface PausedScope {
+  type: string;
+  name?: string;
+  object: { objectId?: string };
 }
 
 interface RemoteObject {
@@ -679,6 +837,22 @@ interface EvaluateResult {
   exceptionDetails?: { text: string; exception?: RemoteObject & { className?: string } };
 }
 
+/**
+ * `[Function: name]`, worked out from the source V8 hands back.
+ *
+ * There is no name on the wire — a `RemoteObject` for a function carries its text and nothing
+ * else — so the declaration is read for one, and an arrow or an anonymous expression simply has
+ * none to find.
+ */
+function functionLabel(source: string | undefined): string {
+  const named =
+    /^(?:async\s+)?(?:function\s*\*?\s*|class\s+)([\p{ID_Start}_$][\p{ID_Continue}$]*)/u.exec(
+      source ?? '',
+    );
+
+  return named ? `[Function: ${named[1]}]` : '[Function (anonymous)]';
+}
+
 /** Whether an evaluation failed to parse — the one failure worth retrying with another spelling. */
 function isSyntaxError(evaluated: EvaluateResult): boolean {
   return evaluated.exceptionDetails?.exception?.className === 'SyntaxError';
@@ -695,6 +869,9 @@ function isSyntaxError(evaluated: EvaluateResult): boolean {
 function describe(remote: RemoteObject): string {
   if (remote.unserializableValue) return remote.unserializableValue;
   if (!remote.objectId) return inspect(remote.value, 2, colorEnabled);
+  // A function's `description` is its SOURCE, which is a scope listing's worth of text for every
+  // entry. Named the way the prompt names one — the only thing anybody reads it for here.
+  if (remote.type === 'function') return functionLabel(remote.description);
   if (remote.subtype === 'promise') {
     const property = (name: string) =>
       remote.preview?.properties.find((entry) => entry.name === name)?.value;
@@ -706,9 +883,13 @@ function describe(remote: RemoteObject): string {
   }
   const preview = remote.preview;
   if (!preview) return remote.description ?? remote.type;
-  const entries = preview.properties.map((entry) =>
-    remote.subtype === 'array' ? String(entry.value) : `${entry.name}: ${entry.value}`,
-  );
+  const entries = preview.properties.map((entry) => {
+    // A preview gives no `value` for a function or a nested object — only its type. Printing that
+    // is `{ raises: function }`, where printing the missing value is `{ raises: }`.
+    const value = entry.value ?? (entry.type === 'function' ? 'ƒ' : entry.type);
+
+    return remote.subtype === 'array' ? value : `${entry.name}: ${value}`;
+  });
   const body = entries.concat(preview.overflow ? ['…'] : []).join(', ');
   if (remote.subtype === 'array') return entries.length === 0 ? '[]' : `[ ${body} ]`;
   const name = preview.description && preview.description !== 'Object' ? preview.description : '';

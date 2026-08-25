@@ -14,6 +14,7 @@ import * as Repl from '../repl/session.ts';
 import * as Result from '../result/index.ts';
 import { blue, red } from '../utils/color.ts';
 import { findProjectRoot } from '../utils/find-project-root.ts';
+import { formatScope } from '../repl/scope.ts';
 import { split, suggest } from '../repl/suggest.ts';
 import type { ReplSession } from '../repl/session.ts';
 import type { Config as ResolvedConfig } from '../types.ts';
@@ -135,7 +136,9 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
             // wondering why the next line behaves strangely.
             if (result.pausedAt) {
               server.output.write(
-                blue(`paused at ${result.pausedAt} — locals are in scope; .resume to continue\n`),
+                blue(
+                  `paused at ${result.pausedAt} — \`.locals\` for scope, \`.continue\` to carry on\n`,
+                ),
               );
 
               return callback(null, undefined);
@@ -235,12 +238,47 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
         this.displayPrompt();
       },
     });
-    server.defineCommand('resume', {
-      help: 'Let a page paused at a `debugger` statement carry on',
+    // `.continue` is the name every debugger uses for this, and the one the pause itself offers.
+    // `.resume` stays because it is what this REPL shipped with, and a command that used to work
+    // should not stop working over a rename.
+    for (const name of ['continue', 'resume']) {
+      server.defineCommand(name, {
+        help: 'Let a page paused at a `debugger` statement carry on',
+        action() {
+          this.clearBufferedCommand();
+          if (!session.pausedAt) this.output.write('Not paused\n');
+          void session.resume().then(() => this.displayPrompt());
+        },
+      });
+    }
+    // Two commands rather than one because a REPL is in one of two states and the answer differs:
+    // running, where the interesting names are the ones this session added to the page, and
+    // stopped at a breakpoint, where they are the ones the frame can see. Same format either way.
+    server.defineCommand('scope', {
+      help: 'List what this session has added to the page, with values',
       action() {
         this.clearBufferedCommand();
-        if (!session.pausedAt) this.output.write('Not paused\n');
-        void session.resume().then(() => this.displayPrompt());
+        void session.scope().then((entries) => {
+          const listing = formatScope(entries, terminalWidth(this.output));
+          this.output.write(listing === '' ? 'Nothing declared yet\n' : `${listing}\n`);
+          this.displayPrompt();
+        });
+      },
+    });
+    server.defineCommand('locals', {
+      help: 'List what is in scope at a `debugger` breakpoint, with values',
+      action() {
+        this.clearBufferedCommand();
+        if (!session.pausedAt) {
+          this.output.write('Not paused — `.scope` is what this session has declared\n');
+
+          return void this.displayPrompt();
+        }
+        void session.locals().then((entries) => {
+          const listing = formatScope(entries, terminalWidth(this.output));
+          this.output.write(listing === '' ? 'Nothing in scope here\n' : `${listing}\n`);
+          this.displayPrompt();
+        });
       },
     });
     server.defineCommand('url', {
@@ -577,6 +615,11 @@ export async function edit(editor: string, contents: string, server: REPLServer)
       // Already gone, which is where it was headed.
     }
   }
+}
+
+/** How wide a line may be. 80 where nothing says — a pipe has no width, and neither does a file. */
+function terminalWidth(output: NodeJS.WritableStream): number {
+  return (output as NodeJS.WriteStream).columns || 80;
 }
 
 /** Ctrl-F, the key that takes the suggestion. */

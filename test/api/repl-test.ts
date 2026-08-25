@@ -408,3 +408,71 @@ module('API | repl | names', { concurrency: true }, () => {
     });
   });
 });
+
+// Two readers for the two states a session is in. Running, the interesting names are the ones this
+// session put on the page — not the several hundred a browser starts with, which is a list nobody
+// reads. Stopped at a breakpoint, they are the ones the frame can see.
+module('API | repl | scope', { concurrency: true }, () => {
+  const DEBUGGED = 'test/fixtures/repl-debugger.ts';
+  const named = (entries: Array<{ name: string }>) => entries.map((entry) => entry.name);
+
+  test('what this session added, and where each of it came from', async (assert) => {
+    await withRepl({}, async (session) => {
+      assert.deepEqual(await session.scope(), [], 'a fresh session has added nothing');
+
+      await session.evaluate('const label = "one"');
+      await session.evaluate('globalThis.total = 42');
+      const entries = await session.scope();
+
+      assert.deepEqual(named(entries), ['label', 'total'], 'in the order they were declared');
+      assert.deepEqual(
+        entries.map((entry) => entry.where),
+        ['line 1', 'line 2'],
+        'each attributed to the input that declared it',
+      );
+      assert.includes(entries[0]!.value, "'one'", 'rendered the way the prompt renders it');
+      assert.false(named(entries).includes('document'), 'and not the browser’s own globals');
+    });
+  });
+
+  test('a preloaded export is attributed to the file it came from', async (assert) => {
+    await withRepl({ inputs: [DEBUGGED] }, async (session) => {
+      const entries = await session.scope();
+      const loaded = entries.find((entry) => entry.name === 'inspectMe');
+
+      assert.ok(loaded, 'a preloaded export is part of what this session put there');
+      assert.strictEqual(loaded!.where, DEBUGGED, 'and a file is a better answer than a line');
+      assert.includes(loaded!.value, '[Function: inspectMe]', 'named, not printed as its source');
+    });
+  });
+
+  test('locals are the frame’s, and only the frame’s', async (assert) => {
+    await withRepl({ inputs: [DEBUGGED] }, async (session) => {
+      assert.deepEqual(await session.locals(), [], 'nothing is in scope while nothing is stopped');
+
+      await session.evaluate('inspectMe()');
+      const entries = await session.locals();
+
+      assert.deepEqual(named(entries), ['answer'], 'the one local at the breakpoint');
+      assert.includes(entries[0]!.value, '42');
+      // The closure around a bundled function is the WHOLE BUNDLE — every name QUnit and the
+      // runtime declare. Listing it buries the one name the breakpoint is about.
+      assert.false(named(entries).includes('__defProp'), 'and not the bundle it was compiled into');
+      await session.resume();
+    });
+  });
+
+  test('a scope survives being read while the page is stopped', async (assert) => {
+    // Everything that answers here has to read the isolate rather than run in it: a paused page
+    // never answers an evaluation, so a `.scope` at a breakpoint would hang the prompt instead.
+    await withRepl({ inputs: [DEBUGGED] }, async (session) => {
+      await session.evaluate('const label = "one"');
+      await session.evaluate('inspectMe()');
+
+      const entries = await session.scope();
+
+      assert.true(named(entries).includes('label'), 'still answers, and still says what it added');
+      await session.resume();
+    });
+  });
+});

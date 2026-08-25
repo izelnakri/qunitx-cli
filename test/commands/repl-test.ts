@@ -211,3 +211,44 @@ module('Commands | qunitx repl | : runs a shell command', { concurrency: true },
     assert.notIncludes(contents, ':echo');
   });
 });
+
+// `.scope` and `.locals` answer the same question in the two states a session can be in, and
+// `.continue` is what every other debugger calls resuming.
+module('Commands | repl | scope and breakpoints', { concurrency: true }, () => {
+  const DEBUGGED = 'test/fixtures/repl-debugger.ts';
+
+  test('.scope lists what the session declared, with where it came from', async (assert) => {
+    const result = await repl('const label = "one"\n.scope\n');
+
+    assert.exitCode(result, 0);
+    assert.includes(result, 'label', 'the name');
+    assert.includes(result, "'one'", 'its value, rendered as the prompt renders it');
+    assert.includes(result, 'line 1', 'and the input that declared it');
+  });
+
+  test('.scope on a session that has declared nothing says so', async (assert) => {
+    assert.includes(await repl('.scope\n'), 'Nothing declared yet');
+  });
+
+  test('.locals points at `.scope` when nothing is stopped', async (assert) => {
+    // Rather than printing an empty listing, which reads as "there are no locals" when what is
+    // true is "there is no breakpoint".
+    assert.includes(await repl('.locals\n'), 'Not paused');
+  });
+
+  test('.locals at a breakpoint is what the frame can see', async (assert) => {
+    const result = await repl(`inspectMe()\n.locals\n.continue\n`, DEBUGGED);
+
+    assert.includes(result, 'paused at', 'it stopped');
+    assert.includes(result, 'answer', 'and the local is named');
+    assert.includes(result, '42', 'with its value');
+  });
+
+  test('.continue carries on from a breakpoint, and so does .resume', async (assert) => {
+    const carried = await repl('inspectMe()\n.continue\n6 * 7\n', DEBUGGED);
+    const older = await repl('inspectMe()\n.resume\n6 * 7\n', DEBUGGED);
+
+    assert.includes(carried, '42', 'the session is a session again');
+    assert.includes(older, '42', 'the name it shipped with still works');
+  });
+});
