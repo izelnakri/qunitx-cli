@@ -80,4 +80,18 @@ module('Commands | repl | the editor scratchpad', { concurrency: true }, () => {
 
     assert.deepEqual(counted, { paused: 1, resumed: 1 }, 'resumed even when the editor failed');
   });
+
+  test('stdin is left as it was found, and a prompt that never had it does not get it', async (assert) => {
+    // A leak that costs 240 seconds and looks like a hung test suite: `resume()` on a stream
+    // nothing was reading does not restore anything, it starts something, and stdin flowing with
+    // no reader holds the event loop open for the life of the process. So does `read()`, which
+    // restarts the flow it drains. Nothing here is reading stdin, and nothing should be after.
+    await edit('definitely-not-an-editor-anywhere', '', server as unknown as REPLServer);
+
+    assert.notStrictEqual(
+      process.stdin.readableFlowing,
+      true,
+      'the editor handover did not hand the terminal to a prompt that never asked for it',
+    );
+  });
 });

@@ -527,6 +527,11 @@ export async function edit(editor: string, contents: string, server: REPLServer)
   server.pause();
   const stdin = process.stdin;
   const wasRaw = Boolean(stdin.isRaw);
+  // Both halves of how stdin was found, because both have to be put back. Resuming a stream that
+  // was not flowing does not restore anything — it STARTS something, and a flowing stdin holds the
+  // event loop open for as long as the process lives. `readableFlowing` and not `isPaused()`:
+  // a stdin nobody has read yet is neither flowing nor paused, and `isPaused()` calls that false.
+  const wasFlowing = stdin.readableFlowing === true;
   stdin.pause();
   if (wasRaw) stdin.setRawMode(false);
 
@@ -540,12 +545,17 @@ export async function edit(editor: string, contents: string, server: REPLServer)
     return tryReadFile(file) ?? contents;
   } finally {
     if (wasRaw) stdin.setRawMode(true);
-    // Whatever the editor left in the buffer is the editor's, not the next line's — a half-read
-    // escape sequence typed at a prompt is the garbage this whole handover exists to avoid.
-    while (stdin.read() !== null) {
-      // Discarding, deliberately.
+    // Handing the terminal back, and only to a prompt that had it. Whatever the editor left in the
+    // buffer is the editor's, not the next line's — a half-read escape sequence typed at a prompt
+    // is the garbage this whole handover exists to avoid. Where nothing was reading stdin, neither
+    // half applies: `read()` restarts the flow it drains, and a stdin left flowing with no reader
+    // holds the event loop open for the life of the process.
+    if (wasFlowing) {
+      while (stdin.read() !== null) {
+        // Discarding, deliberately.
+      }
+      stdin.resume();
     }
-    stdin.resume();
     server.resume();
     try {
       fs.unlinkSync(file);
