@@ -80,7 +80,7 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
     // line synchronously — so `echo $'1+1\n2+2' | qunitx repl` started both evaluations at once and
     // reached EOF before either answered. A terminal keeps the real stdin: raw mode, keypresses
     // and history need a TTY, and a human cannot type faster than the page can answer.
-    const input = interactive ? process.stdin : new PassThrough();
+    const input = interactive ? vimKeys(process.stdin) : new PassThrough();
     let evaluating = false;
     const server = nodeRepl.start({
       input,
@@ -254,4 +254,49 @@ function tryReadFile(file: string): string | null {
   } catch {
     return null;
   }
+}
+
+// Ctrl-K and Ctrl-J as their raw bytes, and the arrows readline already understands.
+const CTRL_K = 0x0b;
+const CTRL_J = 0x0a;
+const ARROW_UP = '\u001b[A';
+const ARROW_DOWN = '\u001b[B';
+
+/**
+ * Walks history with Ctrl-K and Ctrl-J, by rewriting the bytes before readline sees them.
+ *
+ * Rewritten rather than handled, for two reasons a keypress listener cannot get around. Ctrl-K
+ * already means kill-to-end-of-line, and a second listener does not replace readline's — it runs
+ * as well, so the line would be shredded on the way to the previous entry. And Ctrl-J is not a
+ * distinguishable key at all: it arrives as `\n`, which readline reads as Enter and every
+ * multi-line paste is full of. Binding it by name would stop pastes submitting.
+ *
+ * The paste is what the single-byte test is for. A keystroke arrives on its own; a paste arrives
+ * as a chunk, so a `\n` with company is left exactly as it was and still submits its line.
+ *
+ * The returned stream stands in for the TTY it wraps — readline needs `isTTY` and `setRawMode` to
+ * put the terminal in the mode this depends on, and neither belongs to a plain PassThrough.
+ *
+ * ```ts
+ * import { PassThrough } from 'node:stream';
+ * import { vimKeys } from './repl.ts';
+ *
+ * const stdin = Object.assign(new PassThrough(), { setRawMode: () => {} });
+ * vimKeys(stdin as unknown as NodeJS.ReadStream).isTTY; // true — readline needs to believe it
+ * ```
+ */
+export function vimKeys(stdin: NodeJS.ReadStream): NodeJS.ReadStream {
+  const translated = new PassThrough();
+
+  stdin.on('data', (chunk: Buffer) => {
+    if (chunk.length === 1 && chunk[0] === CTRL_K) return void translated.write(ARROW_UP);
+    if (chunk.length === 1 && chunk[0] === CTRL_J) return void translated.write(ARROW_DOWN);
+    translated.write(chunk);
+  });
+  stdin.on('end', () => translated.end());
+
+  return Object.defineProperties(translated as unknown as NodeJS.ReadStream, {
+    isTTY: { value: true },
+    setRawMode: { value: (mode: boolean) => stdin.setRawMode(mode) },
+  });
 }
