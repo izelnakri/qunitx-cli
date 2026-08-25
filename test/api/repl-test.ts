@@ -283,34 +283,18 @@ module('API | repl | lifecycle', { concurrency: true }, () => {
 // page playwright drives. The bundle's first line asks the harness to load the preloads, so
 // without it the tab died on arrival with `Cannot read properties of undefined (reading 'load')`.
 module('API | repl | opening the page yourself', { concurrency: true }, () => {
-  test('a browser that qunitx is not driving still gets a working page', async (assert) => {
+  test('the harness ships with the document, not only with the init script', async (assert) => {
+    // Fetched rather than opened in a second browser: what changed is what the SERVER sends, and
+    // asserting that needs no engine — which also keeps this off whichever browsers a given CI
+    // lane happens to have installed.
     await withRepl({ inputs: [PRELOAD] }, async (session) => {
-      const permit = await acquireBrowser();
-      const playwrightCore = (await import('playwright-core')).default;
-      const Chrome = await import('../../lib/chrome/index.ts');
-      const browser = await playwrightCore.chromium.launch({
-        headless: true,
-        ...((await Chrome.find()) ? { executablePath: (await Chrome.find())! } : {}),
-      });
-      try {
-        const page = await browser.newPage();
-        const errors: string[] = [];
-        page.on('pageerror', (error) => errors.push(String(error)));
+      const html = await fetch(session.url).then((response) => response.text());
 
-        await page.goto(session.url, { waitUntil: 'networkidle' });
-
-        assert.deepEqual(errors, [], 'the page loads clean for a plain visitor');
-        assert.strictEqual(
-          await page.evaluate(
-            () => typeof (globalThis as { __qunitxHarness?: unknown }).__qunitxHarness,
-          ),
-          'object',
-          'because the harness ships with the document, not only with the init script',
-        );
-      } finally {
-        await browser.close();
-        permit.release();
-      }
+      assert.includes(html, '__qunitxHarness', 'a plain visitor gets one too');
+      assert.ok(
+        html.indexOf('__qunitxHarness') < html.indexOf('/tests.js'),
+        'and gets it BEFORE the bundle that calls it — the order is the whole fix',
+      );
     });
   });
 });
