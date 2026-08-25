@@ -195,7 +195,6 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
         },
       });
     }
-
     setupHistory(server, interactive);
     // Before the suggestion, and that order matters: both redraw on a keypress, and the ghost has
     // to be written after the line it hangs off has been painted.
@@ -238,36 +237,69 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
       });
     }
 
-    // `.cat` and `.view` are the same command under both names — `cat` for the muscle memory,
-    // `view` for anyone who does not have it. A REPL is where you check what a file actually says
-    // before typing against it, and leaving the session to do that loses every binding you built.
+    // `.cat` for the muscle memory, `.view` for anyone without it — but they stopped being the
+    // same command once a directory became something worth looking at. `cat` on a directory is an
+    // error everywhere, so it stays one here; `.view` shows whatever is there.
     for (const name of ['cat', 'view']) {
       server.defineCommand(name, {
-        help: 'Print a file, numbered and highlighted, from the working directory',
-        action(file: string) {
+        help:
+          name === 'cat'
+            ? 'Print a file, numbered and highlighted'
+            : 'Show a file numbered, or a directory as a tree (`-L 2` to limit the depth)',
+        action(argument: string) {
           this.clearBufferedCommand();
-          const target = file.trim();
-          if (target === '') {
+          const { depth, path: typed } = Files.target(argument.trim());
+          if (argument.trim() === '') {
             this.output.write(`Usage: .${name} <file>\n`);
 
             return void this.displayPrompt();
           }
 
-          const found = Files.read(target, cwd);
+          const found = Files.read(typed, cwd);
           if (found.kind === 'file') {
-            this.output.write(`${Files.numbered(found.contents, target, palette)}\n`);
+            this.output.write(`${Files.numbered(found.contents, typed, palette)}\n`);
 
             return void this.displayPrompt();
           }
-          // Everything that is not a file leaves the prompt holding the part that WAS real, so
-          // the next attempt is a few keystrokes and not the whole path again. TAB and the
-          // suggestion take it from there.
-          this.output.write(red(`${pathProblem(found, target)}\n`));
+          if (found.kind === 'directory' && name === 'view') {
+            this.output.write(showTree(typed, cwd, palette, depth));
+
+            return void this.displayPrompt();
+          }
+          // Everything else leaves the prompt holding the part that WAS real, so the next attempt
+          // is a few keystrokes and not the whole path again. TAB and the suggestion take it from
+          // there.
+          this.output.write(red(`${pathProblem(found, typed)}\n`));
           this.displayPrompt();
           if (found.kind !== 'unreadable' && interactive) server.write(`.${name} ${found.retype}`);
         },
       });
     }
+    // Only ever a tree, so `.tree` on a file says so rather than quietly printing it. Half the
+    // value of a narrow command is that it refuses what it is not for.
+    server.defineCommand('tree', {
+      help: 'Show a directory as a tree — `-L 2` for two levels, all the way down by default',
+      action(argument: string) {
+        this.clearBufferedCommand();
+        const { depth, path: typed } = Files.target(argument.trim());
+        const found = Files.read(typed, cwd);
+        if (found.kind === 'directory') {
+          this.output.write(showTree(typed, cwd, palette, depth));
+        } else if (found.kind === 'file') {
+          this.output.write(red(`${typed} is a file, not a directory\n`));
+        } else {
+          this.output.write(red(`${pathProblem(found, typed)}\n`));
+          this.displayPrompt();
+
+          return void (
+            found.kind === 'missing' &&
+            interactive &&
+            server.write(`.tree ${found.retype}`)
+          );
+        }
+        this.displayPrompt();
+      },
+    });
     // Replaces the built-in, which writes every line the session evaluated. That file is meant to
     // be replayable JavaScript, and a shell line is neither JavaScript nor something anyone wants
     // re-run by accident. Filtered HERE rather than as the line is entered, because `node:repl`
@@ -668,6 +700,20 @@ export async function edit(editor: string, contents: string, server: REPLServer)
   }
 }
 
+/**
+ * A directory drawn, with the tally `tree` prints under one — and with whatever the cap left out.
+ *
+ * Said outright rather than trimmed in silence: a listing that stops without saying so reads as
+ * the whole answer, and the way to get the rest is the flag it names.
+ */
+function showTree(typed: string, cwd: string, palette: Theme, depth: number): string {
+  const { listing, counted, omitted } = Files.tree(typed, cwd, palette, depth);
+  const tally = `${counted.directories} directories, ${counted.files} files`;
+  const cut = omitted === 0 ? '' : ` — ${omitted} more not shown, \`-L\` to narrow`;
+
+  return `${listing}\n\n${tally}${cut}\n`;
+}
+
 /** Why a path did not open, in one line. */
 function pathProblem(found: Exclude<Files.Resolution, { kind: 'file' }>, target: string): string {
   if (found.kind === 'directory') return `${target} is a directory`;
@@ -862,7 +908,6 @@ export function setupHighlighting(server: REPLServer, palette: Theme): void {
 
 /** Ctrl-F, the key that takes the suggestion. */
 const CTRL_F = '\u0006';
-
 /** What `node:repl` hands a completer to answer through: the matches, and the word they finish. */
 type CompleterCallback = (error: null, result: [string[], string]) => void;
 

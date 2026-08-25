@@ -241,6 +241,38 @@ module('Commands | repl | .cat', { concurrency: true }, () => {
   });
 });
 
+// A tree, and the two commands that reach it. `.view` shows whatever is there; `.tree` only ever
+// shows a directory, because half the value of a narrow command is that it refuses what it is not
+// for.
+module('Commands | repl | .tree', { concurrency: true }, () => {
+  test('a directory comes back as a tree', async (assert) => {
+    const result = await repl('.tree -L 1 lib/repl\n');
+
+    assert.exitCode(result, 0);
+    assert.includes(result, 'lib/repl/', 'the root, said as a directory');
+    assert.includes(result, '── files.ts');
+    assert.includes(result, 'files', 'and the tally underneath');
+  });
+
+  test('depth is levels down, and nothing says all the way', async (assert) => {
+    const [shallow, deep] = await Promise.all([repl('.tree -L 1 lib\n'), repl('.tree lib\n')]);
+
+    assert.notIncludes(shallow, 'files.ts', 'one level stops at the directory names');
+    assert.includes(deep, 'files.ts', 'and unasked goes all the way down');
+  });
+
+  test('.tree refuses a file, by name', async (assert) => {
+    assert.includes(await repl('.tree cli.ts\n'), 'cli.ts is a file, not a directory');
+  });
+
+  test('.view shows a file or a directory, and .cat only a file', async (assert) => {
+    const [viewed, catted] = await Promise.all([repl('.view lib/repl\n'), repl('.cat lib/repl\n')]);
+
+    assert.includes(viewed, '── files.ts', '.view shows what is in there');
+    assert.includes(catted, 'lib/repl is a directory', 'and .cat says what cat has always said');
+  });
+});
+
 // An unfinished input is held here rather than handed to `node:repl`, which is what lets the
 // prompt say how deep it is. The piped path proves the buffering; how it is drawn is a terminal
 // concern, and `Repl | highlight | depth` is what counts the levels.

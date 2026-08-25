@@ -4,7 +4,9 @@ import { highlight } from './highlight.ts';
 import type { Theme } from './theme.ts';
 
 /** The commands that take a path, and so complete like a shell rather than like an expression. */
-const PATH_COMMANDS = /^\s*\.(?:cat|view)\s+(\S*)$/;
+const PATH_COMMANDS = /^\s*\.(?:cat|view|tree)\s+(?:.*\s)?(\S*)$/;
+/** `-L 2`, anywhere in the argument, the way `tree` takes it. */
+const DEPTH_FLAG = /(?:^|\s)-L\s*(\d+)(?:\s|$)/;
 
 // Highlighted only where the highlighter knows the language. A `.md` file run through a JavaScript
 // tokenizer comes out with prose coloured as keywords, which is worse than not colouring it.
@@ -37,7 +39,32 @@ const RESET = `${String.fromCharCode(27)}[0m`;
  * ```
  */
 export function fragment(line: string): string | null {
-  return PATH_COMMANDS.exec(line)?.[1] ?? null;
+  const typed = PATH_COMMANDS.exec(line)?.[1];
+  if (typed === undefined) return null;
+  // `-L` takes a number, and a number is not a path. Completing one would offer files for it.
+  if (typed.startsWith('-') || /(?:^|\s)-L\s*$/.test(line.slice(0, line.length - typed.length))) {
+    return null;
+  }
+
+  return typed;
+}
+
+/**
+ * What a path command was pointed at, and how deep it was asked to go.
+ *
+ * ```ts
+ * import { target } from './files.ts';
+ *
+ * target('-L 2 lib'); // { depth: 2, path: 'lib' }
+ * target('lib'); // { depth: Infinity, path: 'lib' } — all the way down unless told otherwise
+ * target(''); // { depth: Infinity, path: '.' } — here
+ * ```
+ */
+export function target(argument: string): { depth: number; path: string } {
+  const depth = DEPTH_FLAG.exec(argument);
+  const rest = argument.replace(DEPTH_FLAG, ' ').trim();
+
+  return { depth: depth ? Number(depth[1]) : Infinity, path: rest === '' ? '.' : rest };
 }
 
 /**
@@ -193,4 +220,89 @@ function existingPrefix(typed: string, cwd: string): string {
   }
 
   return kept;
+}
+
+/** How a tree came out, and whether it was all of it. */
+export interface Tree {
+  /** The listing, root line included. */
+  listing: string;
+  /** Directories and files reached. */
+  counted: { directories: number; files: number };
+  /** Entries left undrawn where the cap stopped it, or 0 where nothing was. */
+  omitted: number;
+}
+
+// Deep enough to be worth calling unlimited, bounded enough that `.tree` in a project root cannot
+// take the terminal with it. Whatever it leaves out, it SAYS it left out — a listing that quietly
+// stops is a listing that lies about what is there.
+const TREE_LIMIT = 5_000;
+
+/**
+ * A directory drawn the way `tree` draws one.
+ *
+ * ```
+ * lib/
+ * ├── api/
+ * │   └── index.ts
+ * └── repl/
+ *     └── files.ts
+ * ```
+ *
+ * All the way down unless `depth` says otherwise, where 1 is the directory's own contents. Hidden
+ * entries are left out, as `tree` leaves them out, which is also what keeps `.git` from being most
+ * of the answer. Symlinks are named but not followed — a link into a parent is a tree with no end.
+ *
+ * ```ts
+ * import { tree } from './files.ts';
+ *
+ * tree('lib', process.cwd(), { style: () => '' }, 1).listing.startsWith('lib/'); // true
+ * ```
+ */
+export function tree(root: string, cwd: string, palette: Theme, depth: number = Infinity): Tree {
+  const directoryStyle = palette.style('Directory');
+  const branchStyle = palette.style('LineNr');
+  const counted = { directories: 0, files: 0 };
+  const lines = [paint(`${withSlash(root)}`, directoryStyle)];
+  let omitted = 0;
+
+  const walk = (directory: string, prefix: string, level: number): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(directory, { withFileTypes: true });
+    } catch {
+      // A directory that cannot be read is a leaf, not a failure — one unreadable subdirectory is
+      // no reason to refuse the rest of the tree.
+      return;
+    }
+    const visible = entries
+      .filter((entry) => !entry.name.startsWith('.'))
+      .sort((left, right) => (left.name < right.name ? -1 : 1));
+
+    for (const [index, entry] of visible.entries()) {
+      if (lines.length > TREE_LIMIT) {
+        omitted += visible.length - index;
+
+        return;
+      }
+      const last = index === visible.length - 1;
+      const isDirectory = entry.isDirectory();
+      counted[isDirectory ? 'directories' : 'files'] += 1;
+      const name = paint(
+        `${entry.name}${isDirectory ? '/' : ''}`,
+        isDirectory ? directoryStyle : '',
+      );
+      lines.push(`${paint(`${prefix}${last ? '└── ' : '├── '}`, branchStyle)}${name}`);
+      if (isDirectory && level < depth) {
+        walk(path.join(directory, entry.name), `${prefix}${last ? '    ' : '│   '}`, level + 1);
+      }
+    }
+  };
+
+  walk(path.resolve(cwd, root), '', 1);
+
+  return { listing: lines.join('\n'), counted, omitted };
+}
+
+function paint(text: string, style: string): string {
+  return style === '' ? text : `${style}${text}${RESET}`;
 }

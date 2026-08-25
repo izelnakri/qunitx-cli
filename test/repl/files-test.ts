@@ -113,6 +113,79 @@ module('Repl | files | numbered', { concurrency: true }, () => {
   });
 });
 
+// `-L 2` the way `tree` takes it, and the path is whatever is left over.
+module('Repl | files | target', { concurrency: true }, () => {
+  test('a depth flag anywhere, and the rest is where', (assert) => {
+    assert.deepEqual(Files.target('-L 2 lib'), { depth: 2, path: 'lib' });
+    assert.deepEqual(Files.target('lib -L 2'), { depth: 2, path: 'lib' }, 'in either order');
+    assert.deepEqual(Files.target('-L2 lib'), { depth: 2, path: 'lib' }, 'and either spelling');
+  });
+
+  test('no flag is all the way down, and no path is here', (assert) => {
+    assert.deepEqual(Files.target('lib'), { depth: Infinity, path: 'lib' });
+    assert.deepEqual(Files.target(''), { depth: Infinity, path: '.' });
+    assert.deepEqual(Files.target('-L 3'), { depth: 3, path: '.' }, 'a depth on its own');
+  });
+
+  test('the number after -L is not offered file completions', (assert) => {
+    assert.strictEqual(Files.fragment('.tree -L 2'), null, 'a count is not a path');
+    assert.strictEqual(Files.fragment('.tree -L '), null, 'and neither is what follows the flag');
+    assert.strictEqual(Files.fragment('.tree -L 2 li'), 'li', 'the path after it still is');
+  });
+});
+
+// A directory drawn the way `tree` draws one.
+module('Repl | files | tree', { concurrency: true }, () => {
+  test('the root, then what is under it', async (assert) => {
+    await using directory = await sample('files-tree');
+    const { listing } = Files.tree('.', directory.path, plain);
+    const lines = listing.split('\n');
+
+    assert.strictEqual(lines[0], './', 'the root, said as a directory');
+    assert.includes(listing, '├── index.ts');
+    assert.includes(listing, '└── reports/', 'the last one closes the branch');
+  });
+
+  test('depth is levels down, and one is what is right here', async (assert) => {
+    await using directory = await sample('files-tree-depth');
+    await fs.mkdir(path.join(directory.path, 'repl', 'deeper'));
+    await fs.writeFile(path.join(directory.path, 'repl', 'inner.ts'), 'export {};\n');
+    await fs.writeFile(path.join(directory.path, 'repl', 'deeper', 'buried.ts'), 'export {};\n');
+
+    const shallow = Files.tree('.', directory.path, plain, 1);
+    const two = Files.tree('.', directory.path, plain, 2);
+    const all = Files.tree('.', directory.path, plain);
+
+    assert.notIncludes(shallow.listing, 'inner.ts', 'one level is the directory itself');
+    assert.includes(two.listing, 'inner.ts', 'and two reaches inside it');
+    assert.notIncludes(two.listing, 'buried.ts', 'but no further than it was asked');
+    assert.includes(all.listing, 'buried.ts', 'where nothing said otherwise, all the way down');
+  });
+
+  test('hidden entries are left out, as `tree` leaves them out', async (assert) => {
+    await using directory = await sample('files-tree-hidden');
+
+    assert.notIncludes(Files.tree('.', directory.path, plain).listing, '.hidden');
+  });
+
+  test('it counts what it drew', async (assert) => {
+    await using directory = await sample('files-tree-count');
+    const { counted } = Files.tree('.', directory.path, plain);
+
+    assert.deepEqual(counted, { directories: 2, files: 2 }, 'repl/ and reports/, index and notes');
+  });
+
+  test('directories are coloured apart from files', async (assert) => {
+    await using directory = await sample('files-tree-colour');
+    const blue = { style: (name: string) => (name === 'Directory' ? `${ESC}[34m` : '') };
+    const { listing } = Files.tree('.', directory.path, blue);
+
+    assert.includes(listing, `${ESC}[34mrepl/${ESC}[0m`);
+    assert.includes(listing, 'index.ts', 'and the file is left plain');
+    assert.notIncludes(listing, `${ESC}[34mindex.ts`);
+  });
+});
+
 // Everything that is not a file says what it is instead, and hands back the part that was real.
 module('Repl | files | read', { concurrency: true }, () => {
   test('a file comes back with its contents', async (assert) => {

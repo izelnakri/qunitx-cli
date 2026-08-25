@@ -39,6 +39,8 @@ const DEFAULTS: Readonly<Record<string, string>> = {
   // Not a capture: nvim's own name for the line-number column, which `.cat` draws one of. A theme
   // has one opinion about gutters and it should not have to give it twice.
   LineNr: 'fg=bright-black',
+  // Neither is this: what `ls` and every file tree colour a directory, and what `.tree` needs.
+  Directory: 'fg=blue',
   '@string': 'fg=yellow',
   '@string.escape': 'fg=magenta',
   '@number': 'fg=cyan',
