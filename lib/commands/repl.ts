@@ -14,6 +14,7 @@ import * as Repl from '../repl/session.ts';
 import * as Result from '../result/index.ts';
 import { blue, red } from '../utils/color.ts';
 import { findProjectRoot } from '../utils/find-project-root.ts';
+import { suggest } from '../repl/suggest.ts';
 import type { ReplSession } from '../repl/session.ts';
 import type { Config as ResolvedConfig } from '../types.ts';
 
@@ -139,6 +140,7 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
     });
 
     setupHistory(server, interactive);
+    if (interactive) setupSuggestions(server);
     server.defineCommand('reload', {
       help: 'Reload the page — drops every binding and all page state',
       action() {
@@ -551,4 +553,88 @@ export async function edit(editor: string, contents: string, server: REPLServer)
       // Already gone, which is where it was headed.
     }
   }
+}
+
+/** Ctrl-F, the key that takes the suggestion. */
+const CTRL_F = '\u0006';
+
+/**
+ * zsh-style typeahead: the rest of the last matching line, greyed out after the cursor, Ctrl-F to
+ * take it.
+ *
+ * Drawn AFTER readline has drawn, on the tick following each keypress. readline redraws the whole
+ * line on every keystroke and would paint over anything written before it; the ghost is appended
+ * to its output and the cursor walked back over it, so the line readline believes it has is the
+ * line it has. Nothing here touches `server.line`, which is why an unaccepted suggestion cannot
+ * end up in what gets evaluated.
+ *
+ * Only when the cursor is at the end. A suggestion continues what you are typing, and there is no
+ * such thing as continuing the middle of a line.
+ *
+ * ```ts
+ * import { setupSuggestions } from './repl.ts';
+ *
+ * import type { REPLServer } from 'node:repl';
+ *
+ * // Defined, not invoked: it listens on a live terminal.
+ * function example(server: REPLServer) {
+ *   setupSuggestions(server); // ghost text on, Ctrl-F accepts
+ * }
+ * ```
+ */
+export function setupSuggestions(server: REPLServer): void {
+  const style = suggestionStyle();
+  let ghost = '';
+
+  const draw = () => {
+    const line = server.line ?? '';
+    // `history` is readline's own record, newest first, and absent from `@types/node`'s REPLServer
+    // — reached through a narrow cast rather than by widening the whole server.
+    const history = (server as unknown as { history?: string[] }).history ?? [];
+    ghost = server.cursor === line.length ? suggest(line, history) : '';
+    if (ghost === '') return;
+    // Written and then stepped back over: the cursor must end where readline left it, or the next
+    // keystroke lands in the wrong column.
+    server.output.write(`${style}${ghost}${ESCAPE}[0m${ESCAPE}[${ghost.length}D`);
+  };
+
+  server.input.on('keypress', (sequence: string) => {
+    if (sequence === CTRL_F && ghost !== '') {
+      const taken = ghost;
+      ghost = '';
+      // Through `write`, so readline inserts it the way it inserts typing — its own line state,
+      // its own redraw, and the suggestion becomes ordinary text that can be edited.
+      return void server.write(taken);
+    }
+    // After readline: it redraws on this same keypress, and drawing first would be drawing under
+    // paint that has not dried.
+    setImmediate(draw);
+  });
+}
+
+/**
+ * The escape sequence a suggestion is drawn in, muted the way zsh mutes its own.
+ *
+ * Read from the environment rather than guessed at, because "muted" against a light terminal and
+ * against a dark one are different colours and only the developer knows which they are on.
+ * `QUNITX_SUGGEST_STYLE` is the direct spelling; `ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE` is honoured when
+ * it has been exported, since somebody running zsh has already answered this question once.
+ *
+ * ```ts
+ * import { suggestionStyle } from './repl.ts';
+ *
+ * suggestionStyle().startsWith(String.fromCharCode(27)); // true — an SGR sequence either way
+ * ```
+ */
+export function suggestionStyle(): string {
+  const configured =
+    process.env.QUNITX_SUGGEST_STYLE ?? process.env.ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE;
+  const colour = configured?.match(/fg=#?([0-9a-fA-F]{6}|\d{1,3})/)?.[1];
+  if (!colour) return `${ESCAPE}[90m`;
+
+  // `fg=8` is a palette index, `fg=#585858` is a truecolour triple — zsh writes both.
+  if (/^\d{1,3}$/.test(colour)) return `${ESCAPE}[38;5;${colour}m`;
+  const [r, g, b] = [0, 2, 4].map((at) => parseInt(colour.slice(at, at + 2), 16));
+
+  return `${ESCAPE}[38;2;${r};${g};${b}m`;
 }
