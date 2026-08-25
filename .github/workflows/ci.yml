@@ -42,20 +42,13 @@ jobs:
           # correctly on cached content (see scripts/lint-docs.js).
           cache: true
       - run: npm ci
-      - run: npm run format
-      - run: npm run lint
-      - run: npm run lint:docs
-      - run: npm run typecheck
-      # Rust-style doctests, both halves: typecheck above TYPE-CHECKS every JSDoc example
-      # (deno check --doc); this step RUNS them (346 blocks, ~60s) under a sandbox allowing
-      # only env reads, /tmp reads, and read-only system metadata (--allow-sys, which
-      # playwright-core's module eval needs) — an example that writes, connects, or spawns
-      # fails loudly.
-      - run: npm run test:doctest
-      - run: deno check 'benches/**/*.ts'
-      # Promises/A+ compliance for lib/task (872 tests, ~13s, no browser needed) — cheaper
-      # here than in the Chrome-bearing test matrix.
-      - run: npm run test:aplus
+      # One step, because `npm run verify` is the same list a contributor runs — when the two
+      # were spelled out separately here, `npm run lint` passed locally while this job failed on
+      # a check it did not include. npm prints the sub-script it is on, so a failure still names
+      # itself. `verify` covers: format, lint, lint:docs, typecheck, doctests (which RUN every
+      # JSDoc example under a sandbox allowing only env reads, /tmp reads and read-only system
+      # metadata), the benches typecheck, and Promises/A+ compliance for lib/task.
+      - run: npm run verify
 
   test:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
