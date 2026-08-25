@@ -137,16 +137,36 @@ module('Repl | inspect | colour', { concurrency: true }, () => {
       .map((part, index) => (index === 0 ? part : part.slice(part.indexOf('m') + 1)))
       .join('');
 
-  test('leaves are painted by type, the way node and deno paint them', (assert) => {
-    assert.strictEqual(inspect('hi', 2, true), `${ESC}[32m'hi'${ESC}[39m`, 'strings green');
-    assert.strictEqual(inspect(42, 2, true), `${ESC}[33m42${ESC}[39m`, 'numbers yellow');
-    assert.strictEqual(inspect(true, 2, true), `${ESC}[33mtrue${ESC}[39m`, 'booleans yellow');
+  test('leaves are painted by type, as a TypeScript editor paints them', (assert) => {
+    assert.strictEqual(inspect('hi', 2, true), `${ESC}[33m'hi'${ESC}[39m`, 'strings yellow');
+    assert.strictEqual(inspect(42, 2, true), `${ESC}[36m42${ESC}[39m`, 'numbers cyan');
+    assert.strictEqual(
+      inspect(true, 2, true),
+      `${ESC}[31mtrue${ESC}[39m`,
+      'booleans red, being keywords',
+    );
     assert.strictEqual(inspect(null, 2, true), `${ESC}[90mnull${ESC}[39m`, 'nothingness dimmed');
+    assert.includes(inspect(new Date(0), 2, true), `${ESC}[35m`, 'dates purple');
     assert.includes(
       inspect(() => {}, 2, true),
-      `${ESC}[36m`,
-      'callables cyan',
+      `${ESC}[34m`,
+      'callables blue',
     );
+  });
+
+  test('no two types share a colour', (assert) => {
+    // The point of colouring by type at all: a palette where a string and a number look the same
+    // has given up the thing it was for.
+    const painted = [
+      inspect('a', 2, true),
+      inspect(1, 2, true),
+      inspect(true, 2, true),
+      inspect(null, 2, true),
+      inspect(new Date(0), 2, true),
+    ];
+    const codes = painted.map((text) => text.slice(0, text.indexOf('m') + 1));
+
+    assert.strictEqual(new Set(codes).size, codes.length, `distinct: ${codes.join(' ')}`);
   });
 
   test('off by default, so nothing that reads this output has to strip anything', (assert) => {

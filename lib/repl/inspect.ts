@@ -36,10 +36,13 @@ export function inspect(value: unknown, depth: number = 2, color: boolean = fals
   const MAX_ENTRIES = 100;
   const MAX_MARKUP = 300;
 
-  // The palette every JavaScript prompt has trained people on, so a value's TYPE is legible before
-  // its content is: strings green, numbers and booleans yellow, nothingness dimmed, callables cyan.
-  const GREEN = 32;
+  // A TypeScript editor's palette rather than Node's, because that is where these values are read
+  // and written the rest of the day: strings yellow, `true`/`false` red like the keywords they are,
+  // dates purple, numbers cyan, nothingness dimmed. Every type keeps a colour of its own — a
+  // palette where two of them collide gives up the one thing colour buys.
+  const RED = 31;
   const YELLOW = 33;
+  const BLUE = 34;
   const MAGENTA = 35;
   const CYAN = 36;
   const DIM = 90;
@@ -70,11 +73,11 @@ export function inspect(value: unknown, depth: number = 2, color: boolean = fals
     if (input === undefined) return paint(DIM, 'undefined');
 
     const type = typeof input;
-    if (type === 'string') return paint(GREEN, quote(input as string));
-    if (type === 'number') return paint(YELLOW, Object.is(input, -0) ? '-0' : String(input));
-    if (type === 'bigint') return paint(YELLOW, `${input}n`);
-    if (type === 'boolean') return paint(YELLOW, String(input));
-    if (type === 'symbol') return paint(GREEN, String(input));
+    if (type === 'string') return paint(YELLOW, quote(input as string));
+    if (type === 'number') return paint(CYAN, Object.is(input, -0) ? '-0' : String(input));
+    if (type === 'bigint') return paint(CYAN, `${input}n`);
+    if (type === 'boolean') return paint(RED, String(input));
+    if (type === 'symbol') return paint(YELLOW, String(input));
     if (type === 'function') return formatFunction(input as (...args: unknown[]) => unknown);
 
     return formatObject(input as object, left);
@@ -83,9 +86,9 @@ export function inspect(value: unknown, depth: number = 2, color: boolean = fals
   function formatFunction(input: (...args: unknown[]) => unknown): string {
     const isClass = /^\s*class[\s{]/.test(Function.prototype.toString.call(input));
     const name = input.name;
-    if (isClass) return paint(CYAN, name ? `[class ${name}]` : '[class (anonymous)]');
+    if (isClass) return paint(BLUE, name ? `[class ${name}]` : '[class (anonymous)]');
 
-    return paint(CYAN, name ? `[Function: ${name}]` : '[Function (anonymous)]');
+    return paint(BLUE, name ? `[Function: ${name}]` : '[Function (anonymous)]');
   }
 
   function formatObject(input: object, left: number): string {
@@ -103,7 +106,7 @@ export function inspect(value: unknown, depth: number = 2, color: boolean = fals
     if (input instanceof Date) {
       return paint(MAGENTA, isNaN(input.getTime()) ? 'Invalid Date' : input.toISOString());
     }
-    if (input instanceof RegExp) return paint(MAGENTA, String(input));
+    if (input instanceof RegExp) return paint(RED, String(input));
     // Settled-ness is not observable synchronously, so the terminal renders a top-level promise
     // from CDP's preview instead; this is what a promise nested inside something else looks like.
     if (input instanceof Promise) return 'Promise';
