@@ -376,14 +376,22 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
     for (const [name, kind, help] of STEPS) {
       server.defineCommand(name, {
         help,
-        action() {
+        action(argument: string) {
           this.clearBufferedCommand();
+          const times = count(argument);
+          if (times === null) {
+            this.output.write(`Usage: .${name} [count]\n`);
+
+            return void this.displayPrompt();
+          }
           if (!session.pausedAt) {
             this.output.write('Not paused\n');
 
             return void this.displayPrompt();
           }
-          void session.step(kind).then(async (where) => {
+          // Only where it ends up is printed. A count means "do this n times", and n locations on
+          // the way is the noise you asked to skip by giving one.
+          void repeat(times, () => session.step(kind)).then(async (where) => {
             if (where === null) this.output.write(blue('the page carried on\n'));
             else {
               this.output.write(blue(`${where}\n`));
@@ -397,13 +405,23 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
     // The stack, and where on it to stand. A breakpoint is rarely only about the line it stopped
     // on — the answer is as often in who called it — and gdb's names for looking are the ones
     // anybody who has used a debugger already has in their hands.
-    for (const name of ['backtrace', 'bt', 'where']) {
+    // `.back` among them because that is what it is in gdb: an unambiguous abbreviation of
+    // `backtrace`, not a direction to move in. gdb's way back is `reverse-step`, and reversing
+    // needs a recorded execution that V8 does not keep.
+    for (const name of ['backtrace', 'bt', 'back', 'where']) {
       server.defineCommand(name, {
-        help: 'Show the call stack the page is stopped in',
-        action() {
+        help: 'Show the call stack — `.backtrace 3` for the innermost three',
+        action(argument: string) {
           this.clearBufferedCommand();
+          const wanted = count(argument, Infinity);
+          if (wanted === null) {
+            this.output.write(`Usage: .${name} [count]\n`);
+
+            return void this.displayPrompt();
+          }
           const frames = session.backtrace();
-          this.output.write(frames.length === 0 ? 'Not paused\n' : `${stack(frames, palette)}\n`);
+          const shown = frames.slice(0, wanted);
+          this.output.write(frames.length === 0 ? 'Not paused\n' : `${stack(shown, palette)}\n`);
           this.displayPrompt();
         },
       });
@@ -416,7 +434,7 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
 
       return where;
     };
-    for (const [name, step, help] of FRAMES) {
+    for (const [name, direction, help] of FRAMES) {
       server.defineCommand(name, {
         help,
         action(argument: string) {
@@ -427,12 +445,16 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
             return void this.displayPrompt();
           }
           const here = session.backtrace().find((frame) => frame.selected)?.index ?? 0;
-          const asked = step === null ? Number(argument.trim()) : here + step;
-          if (!Number.isInteger(asked)) {
-            this.output.write(`Usage: .${name} <number>\n`);
+          // `.frame` with nothing after it says where you are without moving, which is what gdb's
+          // does — and what stops it from meaning "go to frame 0" because `Number('')` is zero.
+          const given = count(argument, direction === 0 ? here : 1);
+          if (given === null) {
+            this.output.write(`Usage: .${name} ${direction === 0 ? '[number]' : '[count]'}\n`);
 
             return void this.displayPrompt();
           }
+          // A direction times a count, or the number itself. `up -1` is `down 1`, as in gdb.
+          const asked = direction === 0 ? given : here + direction * given;
           const where = move(asked);
           if (where === null) return void this.displayPrompt();
 
@@ -868,12 +890,42 @@ function pathProblem(found: Exclude<Files.Resolution, { kind: 'file' }>, target:
   return `cannot read ${target}: ${found.detail}`;
 }
 
-/** Moving about the stack: a number to go to, or a direction to go in. */
-const FRAMES: ReadonlyArray<[string, number | null, string]> = [
-  ['frame', null, 'Read the session in another frame of the stack — `.frame 1`'],
-  ['up', 1, 'Read the session in the frame that called this one'],
-  ['down', -1, 'Read the session in the frame this one called'],
+/** Moving about the stack: `0` means the argument is a frame number, otherwise it is a direction. */
+const FRAMES: ReadonlyArray<[string, number, string]> = [
+  ['frame', 0, 'Say which frame is being read, or go to one — `.frame 1`'],
+  ['up', 1, 'Go toward the frame that called this one — `.up 2` for two of them'],
+  ['down', -1, 'Go back toward the frame this one called — `.down 2` for two'],
 ];
+
+/**
+ * A count typed after a command, `fallback` where none was, or `null` where it was not a count.
+ *
+ * Every one of these took an argument and ignored it before this existed, which is the worst way
+ * to be wrong: `.up 3` moved one frame and said nothing about the other two.
+ */
+function count(argument: string, fallback: number = 1): number | null {
+  const given = argument.trim();
+  if (given === '') return fallback;
+  const asked = Number(given);
+
+  return Number.isInteger(asked) ? asked : null;
+}
+
+/**
+ * Does something `times` over, stopping early if it stops answering, and reports where it ended.
+ *
+ * A count means "do this n times", so only the last answer is worth printing — n locations on the
+ * way is exactly the noise the count was asking to skip.
+ */
+async function repeat(times: number, once: () => Promise<string | null>): Promise<string | null> {
+  let where: string | null = null;
+  for (let at = 0; at < times; at++) {
+    where = await once();
+    if (where === null) return null;
+  }
+
+  return where;
+}
 
 /** The stack as gdb prints one: newest first, numbered from where it stopped. */
 function stack(frames: readonly Repl.Frame[], palette: Theme): string {

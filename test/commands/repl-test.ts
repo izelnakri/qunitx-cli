@@ -241,6 +241,67 @@ module('Commands | repl | .cat', { concurrency: true }, () => {
   });
 });
 
+// gdb's traversal commands take counts, and taking one and ignoring it is the worst way to be
+// wrong: `.up 3` moved one frame and said nothing about the other two.
+module('Commands | repl | traversal', { concurrency: true }, () => {
+  const stepping = (stdin: string) => repl(stdin, 'test/fixtures/repl-stepping.ts');
+
+  test('a count on a step is how many steps', async (assert) => {
+    const [once, twice] = await Promise.all([
+      stepping('outer()\n.step\n'),
+      stepping('outer()\n.step 2\n'),
+    ]);
+
+    assert.includes(once, 'repl-stepping.ts:12', 'one step stays in the caller');
+    assert.includes(twice, 'helper', 'and two reach the frame it calls');
+    assert.notIncludes(twice, ':12:18\n  3 │', 'with only where it ended up shown');
+  });
+
+  test('`.frame` on its own says where you are without moving', async (assert) => {
+    // `Number('')` is zero, which is why this is worth a test: it used to mean `.frame 0`.
+    const result = await stepping('outer()\n.step 2\n.frame\n.backtrace\n');
+
+    assert.includes(result, '> #0  helper', 'still the frame two steps left it in');
+  });
+
+  test('a count on `.up` is how many frames', async (assert) => {
+    const result = await stepping('outer()\n.step 2\n.up 2\n.backtrace\n');
+
+    assert.includes(result, '> #2', 'two frames up from where it stopped');
+  });
+
+  test('a negative count goes the other way, as in gdb', async (assert) => {
+    const result = await stepping('outer()\n.step 2\n.up 2\n.up -1\n.backtrace\n');
+
+    assert.includes(result, '> #1  outer', '`up -1` is `down 1`');
+  });
+
+  test('a count on the stack is how many frames to print', async (assert) => {
+    const result = await stepping('outer()\n.step 2\n.backtrace 2\n');
+
+    assert.includes(result, '#1  outer');
+    assert.notIncludes(result, '#2', 'the innermost two, and no more');
+  });
+
+  test('`.back` is `.backtrace`, which is what it is in gdb', async (assert) => {
+    // Not a direction to move in. gdb's way back is `reverse-step`, and reversing needs a
+    // recorded execution that V8 does not keep.
+    const [named, abbreviated] = await Promise.all([
+      stepping('outer()\n.backtrace\n'),
+      stepping('outer()\n.back\n'),
+    ]);
+    // `#\d`, so the banner — which carries a port, and two sessions do not share one — stays out.
+    const frames = (text: string) => text.split('\n').filter((line) => /#\d/.test(line));
+
+    assert.deepEqual(frames(abbreviated.stdout), frames(named.stdout));
+  });
+
+  test('what is not a count says how to use it', async (assert) => {
+    assert.includes(await stepping('outer()\n.up zz\n'), 'Usage: .up [count]');
+    assert.includes(await stepping('outer()\n.step zz\n'), 'Usage: .step [count]');
+  });
+});
+
 // A tree, and the two commands that reach it. `.view` shows whatever is there; `.tree` only ever
 // shows a directory, because half the value of a narrow command is that it refuses what it is not
 // for.
