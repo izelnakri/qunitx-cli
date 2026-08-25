@@ -301,6 +301,64 @@ export function lookupPosition(
 }
 
 /**
+ * The other direction: where in the BUNDLE a place in an original file ended up.
+ *
+ * Every other lookup here goes generated → original, because that is what a stack trace needs. A
+ * breakpoint needs the reverse — somebody names a line in a file they wrote, and the page only
+ * knows the bundle it is running. There is no index for that direction, so this scans; it happens
+ * once when a breakpoint is set, not once per frame of every stack.
+ *
+ * Lands on the nearest line at or after the one asked for, because plenty of lines have no code
+ * on them — a blank line, a comment, a closing brace — and refusing those would mean answering
+ * "there is nothing there" to a perfectly reasonable request. The line it settled on comes back
+ * with it, so a caller can say where the breakpoint actually went.
+ *
+ * ```ts
+ * import * as SourceMap from './source-map.ts';
+ *
+ * const decoder = SourceMap.parse('{"sources":["../a.ts"],"mappings":"AAAA"}', '/proj/tmp');
+ * SourceMap.findGenerated(decoder, '/proj/a.ts', 1); // { line: 0, column: 0, sourceLine: 1 }
+ * SourceMap.findGenerated(decoder, '/proj/nowhere.ts', 1); // null — not a file in this bundle
+ * ```
+ */
+export function findGenerated(
+  decoder: SourceMapDecoder,
+  absoluteSource: string,
+  sourceLine: number, // 1-based
+): { line: number; column: number; sourceLine: number } | null {
+  const wanted = decoder.sources
+    .map((_, index) => index)
+    .filter((index) => sourceAbsolutePath(decoder, index) === absoluteSource);
+  if (wanted.length === 0) return null;
+
+  const target = sourceLine - 1;
+  let best: { line: number; column: number; sourceLine: number; sourceCol: number } | null = null;
+  decoder.segmentsByLine.forEach((segments, generatedLine) => {
+    for (const segment of segments) {
+      if (!wanted.includes(segment.sourceIndex) || segment.sourceLine < target) continue;
+      // Nearest source line wins; on the same line, the leftmost position; and where a line was
+      // emitted more than once, the first copy of it in the bundle.
+      const better =
+        best === null ||
+        segment.sourceLine < best.sourceLine ||
+        (segment.sourceLine === best.sourceLine && segment.sourceCol < best.sourceCol);
+      if (better) {
+        best = {
+          line: generatedLine,
+          column: segment.generatedCol,
+          sourceLine: segment.sourceLine,
+          sourceCol: segment.sourceCol,
+        };
+      }
+    }
+  });
+  if (best === null) return null;
+  const found = best as { line: number; column: number; sourceLine: number };
+
+  return { line: found.line, column: found.column, sourceLine: found.sourceLine + 1 };
+}
+
+/**
  * Parses the trailing `URL:LINE:COL` suffix of a stack frame.  The greedy `(.+)` group
  * captures URLs that contain colons (e.g. `http://host:PORT/path`); the regex anchors
  * mean the last two `:digits` sequences are always the line/col.

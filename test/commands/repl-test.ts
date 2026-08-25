@@ -241,6 +241,51 @@ module('Commands | repl | .cat', { concurrency: true }, () => {
   });
 });
 
+// `.break` does two jobs, told apart by whether anything follows it: `node:repl` has always used
+// it for abandoning a half-typed block and every debugger has always used it for setting a
+// breakpoint, and both are what somebody typing that FORM means.
+module('Commands | repl | breakpoints', { concurrency: true }, () => {
+  const stepping = (stdin: string) => repl(stdin, 'test/fixtures/repl-stepping.ts');
+
+  test('a place after it sets a breakpoint, and the page stops there', async (assert) => {
+    const result = await stepping(
+      '.break test/fixtures/repl-stepping.ts:4\nhelper(10)\n.locals\n.continue\n',
+    );
+
+    assert.includes(result, 'breakpoint 1 at test/fixtures/repl-stepping.ts:4');
+    assert.includes(result, 'paused at helper', 'and stopped there without a `debugger` in it');
+    assert.includes(result, 'value', 'with the frame to read');
+  });
+
+  test('nothing after it still abandons the unfinished input', async (assert) => {
+    const result = await stepping('const a = {\n.break\n1 + 1\n');
+
+    assert.includes(result, '2', 'the next line is a line again');
+    assert.notIncludes(result, 'SyntaxError');
+  });
+
+  test('they can be listed and removed by number', async (assert) => {
+    const result = await stepping(
+      '.break test/fixtures/repl-stepping.ts:4\n' +
+        '.break test/fixtures/repl-stepping.ts:12\n' +
+        '.delete 1\n.breakpoints\n',
+    );
+
+    assert.includes(result, '2  test/fixtures/repl-stepping.ts:12', 'two is still two');
+    assert.notIncludes(result, '1  test/fixtures/repl-stepping.ts:4', 'and one is gone');
+  });
+
+  test('a session with none says so', async (assert) => {
+    assert.includes(await stepping('.breakpoints\n'), 'No breakpoints');
+  });
+
+  test('what cannot be done says why', async (assert) => {
+    assert.includes(await stepping('.break oops\n'), 'not a place');
+    assert.includes(await stepping('.delete\n'), 'Usage: .delete <number>');
+    assert.includes(await stepping('.delete 9\n'), 'No breakpoint 9');
+  });
+});
+
 // gdb's traversal commands take counts, and taking one and ignoring it is the worst way to be
 // wrong: `.up 3` moved one frame and said nothing about the other two.
 module('Commands | repl | traversal', { concurrency: true }, () => {

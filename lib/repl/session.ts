@@ -146,6 +146,14 @@ export interface ScopeEntry {
 /** One step, named the way gdb names it: `step`, `next`, `finish`. */
 export type StepKind = 'into' | 'over' | 'out';
 
+/** A breakpoint the session set, numbered the way gdb numbers them. */
+export interface Breakpoint {
+  /** Its number, from 1, which is what removes it again. */
+  index: number;
+  /** Where it is, as `file:line` in the source you wrote. */
+  where: string;
+}
+
 /** One frame of a stopped call stack. */
 export interface Frame {
   /** Its place on the stack: 0 is where the page stopped, and each one after it is the caller. */
@@ -261,6 +269,26 @@ export interface ReplSession {
    * is who called the one before.
    */
   backtrace(): Frame[];
+  /**
+   * Stops the page at `file:line` without a `debugger` statement in the source.
+   *
+   * The line is yours, not the bundle's — it is mapped through the same source map that turns a
+   * stack frame back into a file you wrote. Lands on the nearest line at or after the one asked
+   * for, since a blank line or a comment has no code to stop on, and says which one it settled on.
+   */
+  addBreakpoint(location: string): Promise<Breakpoint | string>;
+  /** The breakpoints this session has set, in the order they were set. */
+  breakpoints(): Breakpoint[];
+  /** Removes one by its number. `false` where there is no such breakpoint. */
+  removeBreakpoint(index: number): Promise<boolean>;
+  /**
+   * Called when the page stops with nothing waiting on it — a breakpoint reached by a timer, or
+   * by anything else the prompt did not start.
+   *
+   * Without it such a pause is silent: the prompt keeps taking input, and every line of it
+   * evaluates in a frame nobody was told about.
+   */
+  whenPaused(listener: (where: string) => void): void;
   /**
    * Reads the rest of the session in another frame of that stack, and says where it now is.
    *
@@ -433,6 +461,11 @@ class Session implements ReplSession {
   #frames: DebuggerPaused['callFrames'] = [];
   #selected = 0;
   #scripts: Map<string, string> = new Map();
+  // Breakpoints set from the prompt. Numbered once and never renumbered: somebody who has just
+  // read a list and typed `.delete 1` should not find that 2 has quietly become 1.
+  #breakpoints: Array<{ index: number; id: string; where: string }> = [];
+  #breakpointsSet = 0;
+  #onPaused: ((where: string) => void) | null = null;
   // What has been declared at this breakpoint, and whether each belongs to the block it was
   // written in. The values live in a holder on the page and reach the next input as function
   // ARGUMENTS, which is the only thing that shadows an outer binding of the same name — a global
@@ -676,6 +709,53 @@ class Session implements ReplSession {
       : { text: fetched.scriptSource, line: at.line };
   }
 
+  async addBreakpoint(location: string): Promise<Breakpoint | string> {
+    const asked = /^(.*):(\d+)$/.exec(location.trim());
+    if (!asked) return `not a place: ${location.trim() || '(nothing)'} — try file.ts:12`;
+
+    const [, file = '', line = ''] = asked;
+    const decoder = this.#config.state.group.sourceMapDecoder;
+    if (!decoder) return 'the bundle has no source map, so a source line cannot be found in it';
+
+    const absolute = path.resolve(this.#config.cwd, file);
+    const found = SourceMap.findGenerated(decoder, absolute, Number(line));
+    if (!found) return `${file} is not a file this session bundled`;
+
+    const set = (await this.#cdp
+      .send('Debugger.setBreakpointByUrl', {
+        url: `${this.url}/tests.js`,
+        lineNumber: found.line,
+        columnNumber: found.column,
+      })
+      .catch(() => null)) as { breakpointId?: string; locations?: unknown[] } | null;
+    if (!set?.breakpointId) return `nothing to stop on at ${file}:${line}`;
+
+    const where = `${file}:${found.sourceLine}`;
+    const index = ++this.#breakpointsSet;
+    this.#breakpoints.push({ index, id: set.breakpointId, where });
+
+    return { index, where };
+  }
+
+  breakpoints(): Breakpoint[] {
+    return this.#breakpoints.map(({ index, where }) => ({ index, where }));
+  }
+
+  async removeBreakpoint(index: number): Promise<boolean> {
+    const at = this.#breakpoints.findIndex((breakpoint) => breakpoint.index === index);
+    if (at === -1) return false;
+    const [removed] = this.#breakpoints.splice(at, 1);
+    await this.#cdp
+      .send('Debugger.removeBreakpoint', { breakpointId: removed?.id })
+      .catch(() => {});
+
+    return true;
+  }
+
+  whenPaused(listener: (where: string) => void): void {
+    this.#onPaused = listener;
+  }
+
   backtrace(): Frame[] {
     return this.#frames.map((frame, index) => ({
       index,
@@ -797,6 +877,10 @@ class Session implements ReplSession {
     stepped?.();
     const announce = this.#announcePause;
     this.#announcePause = null;
+    // Nobody asked for this one — a breakpoint reached by a timer, or by anything else the prompt
+    // did not start. Said out loud, because the alternative is a prompt that quietly starts
+    // evaluating everything in a frame it never mentioned.
+    if (!stepped && !announce) return void this.#onPaused?.(this.#pausedAt ?? 'debugger');
     announce?.({
       output: '',
       failed: false,

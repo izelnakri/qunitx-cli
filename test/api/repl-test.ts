@@ -654,6 +654,81 @@ module('API | repl | stepping', { concurrency: true }, () => {
   });
 });
 
+// A breakpoint without editing the file to put a `debugger` in it. The line is yours, not the
+// bundle's — mapped through the same source map that turns a stack frame back into a file you
+// wrote, only in the other direction.
+module('API | repl | breakpoints', { concurrency: true }, () => {
+  const STEPPING = 'test/fixtures/repl-stepping.ts';
+
+  test('the page stops at a line nobody put a `debugger` on', async (assert) => {
+    await withRepl({ inputs: [STEPPING] }, async (session) => {
+      const set = await session.addBreakpoint(`${STEPPING}:4`);
+
+      assert.deepEqual(set, { index: 1, where: `${STEPPING}:4` });
+
+      const result = await session.evaluate('helper(10)');
+
+      assert.ok(result.pausedAt, 'the call stopped');
+      assert.includes(result.pausedAt!, 'helper', 'in the function the line is in');
+      assert.includes(result.pausedAt!, `${STEPPING}:4`, 'on the line that was asked for');
+      assert.strictEqual((await session.evaluate('value')).output, '10', 'with its frame to read');
+      await session.resume();
+    });
+  });
+
+  test('a line with no code on it lands on the next one that has some', async (assert) => {
+    // Line 5 of the fixture is blank. Refusing it would answer "there is nothing there" to a
+    // perfectly reasonable request, so it moves and says where it went.
+    await withRepl({ inputs: [STEPPING] }, async (session) => {
+      const set = await session.addBreakpoint(`${STEPPING}:5`);
+
+      assert.deepEqual(set, { index: 1, where: `${STEPPING}:6` }, 'the return, one line down');
+    });
+  });
+
+  test('what cannot be a breakpoint says why', async (assert) => {
+    await withRepl({ inputs: [STEPPING] }, async (session) => {
+      assert.includes(String(await session.addBreakpoint('oops')), 'not a place');
+      assert.includes(
+        String(await session.addBreakpoint('nowhere.ts:3')),
+        'not a file this session bundled',
+      );
+    });
+  });
+
+  test('they are numbered once, and keep their numbers', async (assert) => {
+    // Somebody who has just read a list and typed `.delete 1` should not find that 2 became 1.
+    await withRepl({ inputs: [STEPPING] }, async (session) => {
+      await session.addBreakpoint(`${STEPPING}:4`);
+      await session.addBreakpoint(`${STEPPING}:12`);
+
+      assert.deepEqual(
+        session.breakpoints().map((breakpoint) => breakpoint.index),
+        [1, 2],
+      );
+      assert.true(await session.removeBreakpoint(1));
+      assert.deepEqual(
+        session.breakpoints(),
+        [{ index: 2, where: `${STEPPING}:12` }],
+        'the one that is left is still number two',
+      );
+      assert.false(await session.removeBreakpoint(9), 'and there is no number nine');
+    });
+  });
+
+  test('a removed breakpoint stops stopping the page', async (assert) => {
+    await withRepl({ inputs: [STEPPING] }, async (session) => {
+      const set = await session.addBreakpoint(`${STEPPING}:4`);
+      await session.removeBreakpoint((set as { index: number }).index);
+
+      const result = await session.evaluate('helper(10)');
+
+      assert.strictEqual(result.pausedAt, undefined, 'it ran through');
+      assert.strictEqual(result.output, '20', 'and answered');
+    });
+  });
+});
+
 // A breakpoint is rarely only about the line it stopped on — the answer is as often in who called
 // it. gdb's `backtrace`, `frame`, `up` and `down`, under gdb's names.
 module('API | repl | the stack', { concurrency: true }, () => {

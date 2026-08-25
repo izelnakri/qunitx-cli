@@ -974,3 +974,45 @@ module('Utils | SourceMap | Windows path handling', { concurrency: true }, () =>
     assert.strictEqual(SourceMap.sourceAbsolutePath(decoderFor('/proj/tmp'), 99), null);
   });
 });
+
+// Every other lookup here goes generated → original, because that is what a stack trace needs. A
+// breakpoint needs the reverse: somebody names a line in a file they wrote, and the page only
+// knows the bundle it is running.
+module('Utils | source-map | findGenerated', { concurrency: true }, () => {
+  // Two source lines, mapped to two generated lines: line 1 → generated 0, line 3 → generated 1.
+  const decoder = SourceMap.parse(
+    JSON.stringify({ version: 3, sources: ['../a.ts'], mappings: 'AAAA;AAEA' }),
+    '/proj/tmp',
+  );
+
+  test('a source line comes back as a place in the bundle', (assert) => {
+    assert.deepEqual(SourceMap.findGenerated(decoder, '/proj/a.ts', 1), {
+      line: 0,
+      column: 0,
+      sourceLine: 1,
+    });
+    assert.deepEqual(SourceMap.findGenerated(decoder, '/proj/a.ts', 3), {
+      line: 1,
+      column: 0,
+      sourceLine: 3,
+    });
+  });
+
+  test('a line with no code on it lands on the next one that has some', (assert) => {
+    // A blank line, a comment, a closing brace — refusing those would answer "there is nothing
+    // there" to a perfectly reasonable request.
+    assert.deepEqual(SourceMap.findGenerated(decoder, '/proj/a.ts', 2), {
+      line: 1,
+      column: 0,
+      sourceLine: 3,
+    });
+  });
+
+  test('past the end of what was mapped, there is nothing to find', (assert) => {
+    assert.strictEqual(SourceMap.findGenerated(decoder, '/proj/a.ts', 99), null);
+  });
+
+  test('a file the bundle does not contain is not in it', (assert) => {
+    assert.strictEqual(SourceMap.findGenerated(decoder, '/proj/elsewhere.ts', 1), null);
+  });
+});

@@ -194,12 +194,55 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
     // `node:repl` calls `clearBufferedCommand()` after every command it finishes, so that is not
     // the hook for abandoning an unfinished one — this is, and it is what `.break` and Ctrl-C have
     // always meant.
+    // One name, two jobs, told apart by whether anything follows it. `node:repl` has always used
+    // `.break` for abandoning a half-typed block and every debugger has always used it for setting
+    // a breakpoint, and both are what somebody typing that FORM means: bare, it is the REPL's;
+    // with a place after it, it is the debugger's.
     server.defineCommand('break', {
-      help: 'Abandon the unfinished input',
-      action() {
-        buffered = '';
+      help: 'Abandon the unfinished input, or stop the page at a line — `.break lib/a.ts:12`',
+      action(argument: string) {
         this.clearBufferedCommand();
+        if (argument.trim() === '') {
+          buffered = '';
+
+          return void this.displayPrompt();
+        }
+        void session.addBreakpoint(argument).then((set) => {
+          if (typeof set === 'string') this.output.write(red(`${set}\n`));
+          else this.output.write(blue(`breakpoint ${set.index} at ${set.where}\n`));
+          this.displayPrompt();
+        });
+      },
+    });
+    server.defineCommand('breakpoints', {
+      help: 'List the breakpoints this session has set',
+      action() {
+        this.clearBufferedCommand();
+        const set = session.breakpoints();
+        this.output.write(
+          set.length === 0
+            ? 'No breakpoints\n'
+            : `${set.map(({ index, where }) => `${index}  ${where}`).join('\n')}\n`,
+        );
         this.displayPrompt();
+      },
+    });
+    server.defineCommand('delete', {
+      help: 'Remove a breakpoint by its number — `.delete 1`',
+      action(argument: string) {
+        this.clearBufferedCommand();
+        const index = count(argument, 0);
+        // No number is not "all of them". Deleting everything by accident is a worse mistake than
+        // typing one more character, and there is no confirmation here to catch it.
+        if (index === null || index < 1) {
+          this.output.write(`Usage: .delete <number>\n`);
+
+          return void this.displayPrompt();
+        }
+        void session.removeBreakpoint(index).then((removed) => {
+          if (!removed) this.output.write(red(`No breakpoint ${index}\n`));
+          this.displayPrompt();
+        });
       },
     });
     // What every shell means by it, rather than `node:repl`'s "break, and drop the local context"
@@ -229,6 +272,22 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
         this.output.write(recent(entries, asked, palette));
         this.displayPrompt();
       },
+    });
+
+    // A breakpoint reached by a timer, or by anything else this prompt did not start. Without
+    // this it stops silently and every line typed afterwards evaluates in a frame nobody
+    // mentioned.
+    session.whenPaused((where) => {
+      // This arrives whenever the page reaches it, which may be halfway through a line somebody
+      // is typing. The row is cleared before the notice so it does not land on top of that line,
+      // and the prompt is redrawn afterwards WITH its cursor kept — readline still has the line,
+      // and `displayPrompt()` on its own would put the caret back at the start of it.
+      server.output.write(
+        `${ESCAPE}[1G${ESCAPE}[0J${blue(
+          `paused at ${where} — \`.locals\` for scope, \`.continue\` to carry on\n`,
+        )}`,
+      );
+      void showFrame(server, session, palette).then(() => server.displayPrompt(true));
     });
 
     setupHistory(server, interactive);
