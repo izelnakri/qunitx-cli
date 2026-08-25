@@ -152,6 +152,7 @@ module('Commands | qunitx repl | .cat', { concurrency: true }, () => {
 
     assert.includes(result.stdout, "export const GREETING = 'hello from the preload'");
     assert.includes(result.stdout, 'fixture boom', 'the whole file, not the first line');
+    assert.notIncludes(result.stdout, String.fromCharCode(27), 'and plainly, into a pipe');
   });
 
   test('.view is the same command for anyone without the muscle memory', async (assert) => {
@@ -169,7 +170,7 @@ module('Commands | qunitx repl | .cat', { concurrency: true }, () => {
   test('a missing file is an answer, not a crash', async (assert) => {
     const result = await repl('.cat nope.ts\n1 + 1');
 
-    assert.includes(result.stdout, 'nope.ts: no such file');
+    assert.includes(result.stdout, 'no such file: nope.ts');
     assert.includes(result.stdout, '2', 'and the session carries on');
   });
 });
@@ -209,6 +210,34 @@ module('Commands | qunitx repl | : runs a shell command', { concurrency: true },
     assert.includes(contents, '2 + 2');
     assert.notIncludes(contents, 'not-javascript', 'the shell line is not replayable');
     assert.notIncludes(contents, ':echo');
+  });
+});
+
+// A REPL is where you check what a file says before typing against it, and leaving the session to
+// do that loses every binding you built.
+module('Commands | repl | .cat', { concurrency: true }, () => {
+  test('a file comes back numbered', async (assert) => {
+    const result = await repl('.cat test/fixtures/repl-debugger.ts\n');
+
+    assert.exitCode(result, 0);
+    assert.includes(result, '3 | export function inspectMe', 'the line, with the line number');
+    assert.includes(result, '5 |   debugger;', 'right-aligned against the longest of them');
+  });
+
+  test('a directory says what it is rather than printing nothing', async (assert) => {
+    assert.includes(await repl('.cat lib\n'), 'lib is a directory');
+  });
+
+  test('a path that goes wrong names the part that was right', async (assert) => {
+    // So the next attempt is a few keystrokes: on a terminal the prompt comes back holding it.
+    const result = await repl('.cat lib/nowhere.ts\n');
+
+    assert.includes(result, 'no such file: lib/nowhere.ts');
+    assert.includes(result, 'lib/ exists', 'which is the part worth keeping');
+  });
+
+  test('nothing at all still says how to use it', async (assert) => {
+    assert.includes(await repl('.cat\n'), 'Usage: .cat <file>');
   });
 });
 

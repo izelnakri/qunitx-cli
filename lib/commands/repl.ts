@@ -15,6 +15,7 @@ import * as Result from '../result/index.ts';
 import { blue, red } from '../utils/color.ts';
 import { findProjectRoot } from '../utils/find-project-root.ts';
 import { formatScope } from '../repl/scope.ts';
+import * as Files from '../repl/files.ts';
 import { depth, highlight } from '../repl/highlight.ts';
 import { theme } from '../repl/theme.ts';
 import { split, suggest } from '../repl/suggest.ts';
@@ -92,6 +93,7 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
     // One source of names behind both TAB and the ghost, so the two can never disagree about what
     // the page has.
     const completions = completionCache(session);
+    const palette = theme();
     // The unfinished input so far. Held HERE rather than handed to `node:repl` as a `Recoverable`,
     // because the two do different things with it: node's terminal path folds the block into one
     // editable readline line prefixed with a fixed `| ` per row, and hard-codes that prefix's two
@@ -116,7 +118,7 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
       // to list by evaluating the base through `eval`, which for us means running it in the page:
       // pressing TAB after `save()` would have saved.
       completer: (line: string, callback: CompleterCallback) =>
-        complete(server, completions, line, callback),
+        complete(server, completions, line, callback, cwd),
       eval: (source, _context, _file, callback) => {
         // `:` is the shell, the way `:` is the command line in vim. A prompt you cannot run `git
         // status` from is a prompt you keep leaving, and leaving costs every binding in the page.
@@ -196,8 +198,8 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
     setupHistory(server, interactive);
     // Before the suggestion, and that order matters: both redraw on a keypress, and the ghost has
     // to be written after the line it hangs off has been painted.
-    if (interactive) setupHighlighting(server, theme());
-    if (interactive) setupSuggestions(server, completions);
+    if (interactive) setupHighlighting(server, palette);
+    if (interactive) setupSuggestions(server, completions, cwd);
     server.defineCommand('reload', {
       help: 'Reload the page — drops every binding and all page state',
       action() {
@@ -239,23 +241,28 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
     // before typing against it, and leaving the session to do that loses every binding you built.
     for (const name of ['cat', 'view']) {
       server.defineCommand(name, {
-        help: 'Print a file, resolved against the working directory',
+        help: 'Print a file, numbered and highlighted, from the working directory',
         action(file: string) {
           this.clearBufferedCommand();
           const target = file.trim();
-          if (target === '') this.output.write(`Usage: .${name} <file>\n`);
-          else {
-            const resolved = path.resolve(cwd, target);
-            const contents = tryReadFile(resolved);
-            this.output.write(
-              contents === null
-                ? red(`${path.relative(cwd, resolved) || target}: no such file\n`)
-                : contents.endsWith('\n')
-                  ? contents
-                  : `${contents}\n`,
-            );
+          if (target === '') {
+            this.output.write(`Usage: .${name} <file>\n`);
+
+            return void this.displayPrompt();
           }
+
+          const found = Files.read(target, cwd);
+          if (found.kind === 'file') {
+            this.output.write(`${Files.numbered(found.contents, target, palette)}\n`);
+
+            return void this.displayPrompt();
+          }
+          // Everything that is not a file leaves the prompt holding the part that WAS real, so
+          // the next attempt is a few keystrokes and not the whole path again. TAB and the
+          // suggestion take it from there.
+          this.output.write(red(`${pathProblem(found, target)}\n`));
           this.displayPrompt();
+          if (found.kind !== 'unreadable' && interactive) server.write(`.${name} ${found.retype}`);
         },
       });
     }
@@ -659,6 +666,18 @@ export async function edit(editor: string, contents: string, server: REPLServer)
   }
 }
 
+/** Why a path did not open, in one line. */
+function pathProblem(found: Exclude<Files.Resolution, { kind: 'file' }>, target: string): string {
+  if (found.kind === 'directory') return `${target} is a directory`;
+  if (found.kind === 'missing') {
+    return found.retype === ''
+      ? `no such file: ${target}`
+      : `no such file: ${target} — ${found.retype} exists`;
+  }
+
+  return `cannot read ${target}: ${found.detail}`;
+}
+
 /** How wide a line may be. 80 where nothing says — a pipe has no width, and neither does a file. */
 function terminalWidth(output: NodeJS.WritableStream): number {
   return (output as NodeJS.WriteStream).columns || 80;
@@ -835,7 +854,12 @@ export function complete(
   names: NameSource,
   line: string,
   callback: CompleterCallback,
+  cwd: string = process.cwd(),
 ): void {
+  // A path line completes like a shell, because that is what is being typed on it.
+  const typedPath = Files.fragment(line);
+  if (typedPath !== null) return callback(null, [Files.complete(typedPath, cwd), typedPath]);
+
   const typed = line.trimStart();
   if (typed.startsWith('.')) {
     const partial = typed.slice(1);
@@ -878,7 +902,11 @@ export function complete(
  * }
  * ```
  */
-export function setupSuggestions(server: REPLServer, names?: NameSource): void {
+export function setupSuggestions(
+  server: REPLServer,
+  names?: NameSource,
+  cwd: string = process.cwd(),
+): void {
   const style = suggestionStyle();
   const internals = server as unknown as { _writeToOutput(text: string): void };
   const write = internals._writeToOutput.bind(server);
@@ -903,6 +931,11 @@ export function setupSuggestions(server: REPLServer, names?: NameSource): void {
     // `history` is readline's own record, newest first, and absent from `@types/node`'s REPLServer
     // — reached through a narrow cast rather than by widening the whole server.
     const history = (server as unknown as { history?: string[] }).history ?? [];
+    // A path line is answered from the filesystem — the only place that knows — and never from
+    // history, where `.cat` lines are as likely to be about a file that has since been renamed.
+    const asPath = Files.suggest(line, cwd);
+    if (asPath !== '' || Files.fragment(line) !== null) return asPath;
+
     const position = split(line);
 
     return suggest(line, {

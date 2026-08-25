@@ -116,7 +116,7 @@ module('Repl | theme', { concurrency: true }, () => {
   };
 
   test('a capture with no style of its own inherits its parent’s, as in nvim', (assert) => {
-    const palette = withEnv(undefined, theme);
+    const palette = withEnv(undefined, () => theme(true));
 
     assert.strictEqual(palette.style('@keyword.return'), palette.style('@keyword'));
     assert.strictEqual(palette.style('@punctuation.bracket'), palette.style('@punctuation'));
@@ -124,7 +124,7 @@ module('Repl | theme', { concurrency: true }, () => {
   });
 
   test('the environment overrides, in the spelling zsh and nvim share', (assert) => {
-    const palette = withEnv('@string=fg=green @keyword=fg=magenta,bold', theme);
+    const palette = withEnv('@string=fg=green @keyword=fg=magenta,bold', () => theme(true));
 
     assert.strictEqual(palette.style('@string'), `${ESC}[32m`);
     assert.strictEqual(palette.style('@keyword'), `${ESC}[1;35m`, 'modifiers come with it');
@@ -132,6 +132,14 @@ module('Repl | theme', { concurrency: true }, () => {
       palette.style('@keyword.return'),
       `${ESC}[1;35m`,
       'and an override is inherited the same way a default is',
+    );
+  });
+
+  test('a session that reads no colour is painted with none', (assert) => {
+    assert.strictEqual(
+      theme(false).style('@keyword'),
+      '',
+      'so a pipe carries the text and no more',
     );
   });
 
@@ -155,7 +163,7 @@ module('Repl | highlight | paint', { concurrency: true }, () => {
 
   test('what is painted is still the line that was typed', (assert) => {
     const source = "test('adds', (a) => a.equal(1 + 1, 2))";
-    const painted = highlight(source, theme());
+    const painted = highlight(source, theme(true));
     const stripped = painted
       .split(ESC)
       .map((part, index) => (index === 0 ? part : part.slice(part.indexOf('m') + 1)));

@@ -1,4 +1,5 @@
 import process from 'node:process';
+import { colorEnabled } from '../utils/color.ts';
 
 /**
  * A palette, keyed by the capture names nvim's treesitter highlighting uses.
@@ -35,6 +36,9 @@ export interface Theme {
  */
 const DEFAULTS: Readonly<Record<string, string>> = {
   '@comment': 'fg=bright-black',
+  // Not a capture: nvim's own name for the line-number column, which `.cat` draws one of. A theme
+  // has one opinion about gutters and it should not have to give it twice.
+  LineNr: 'fg=bright-black',
   '@string': 'fg=yellow',
   '@string.escape': 'fg=magenta',
   '@number': 'fg=cyan',
@@ -64,13 +68,20 @@ const ESCAPE = String.fromCharCode(27);
  * `QUNITX_REPL_THEME='@string=fg=green @keyword=fg=magenta,bold'` — entries separated by spaces,
  * the style spelled the way zsh and nvim both spell it, so a value copied from either works.
  *
+ * Every style is empty where the session has no colour — piped, redirected, or `NO_COLOR` — so a
+ * `.cat` into a file is the file and a scripted session is text a script can compare. `colour`
+ * says so outright, for a caller that has already made that decision by other means.
+ *
  * ```ts
  * import { theme } from './theme.ts';
  *
- * theme().style('@string').endsWith('[33m'); // true — yellow, as the terminal defines yellow
+ * theme(true).style('@string').endsWith('[33m'); // true — yellow, as the terminal defines yellow
+ * theme(false).style('@string'); // '' — nothing is painted where nothing reads colour
  * ```
  */
-export function theme(): Theme {
+export function theme(colour: boolean = colorEnabled): Theme {
+  if (!colour) return { style: () => '' };
+
   const configured = parse(process.env[THEME_VARIABLE]);
   const resolved = new Map<string, string>();
 

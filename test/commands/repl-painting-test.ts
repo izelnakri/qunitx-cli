@@ -22,7 +22,8 @@ module('Commands | repl | painting', { concurrency: true }, () => {
       _writeToOutput: (text: string) => void written.push(text),
       _refreshLine: () => void (server.refreshed += 1),
     };
-    setupHighlighting(server as unknown as Parameters<typeof setupHighlighting>[0], theme());
+    // Forced on: the test runner's stdout is a pipe, where a real session paints nothing.
+    setupHighlighting(server as unknown as Parameters<typeof setupHighlighting>[0], theme(true));
 
     return { server, written, input };
   }

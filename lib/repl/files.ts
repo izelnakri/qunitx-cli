@@ -1,0 +1,196 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { highlight } from './highlight.ts';
+import type { Theme } from './theme.ts';
+
+/** The commands that take a path, and so complete like a shell rather than like an expression. */
+const PATH_COMMANDS = /^\s*\.(?:cat|view)\s+(\S*)$/;
+
+// Highlighted only where the highlighter knows the language. A `.md` file run through a JavaScript
+// tokenizer comes out with prose coloured as keywords, which is worse than not colouring it.
+const HIGHLIGHTED = new Set([
+  '.js',
+  '.mjs',
+  '.cjs',
+  '.jsx',
+  '.ts',
+  '.mts',
+  '.cts',
+  '.tsx',
+  '.json',
+]);
+
+const RESET = `${String.fromCharCode(27)}[0m`;
+
+/**
+ * The path being typed on a `.cat` or `.view` line, or `null` on any other line.
+ *
+ * What decides whether a completion is a filename or an expression. A path with a space in it is
+ * not completable here, which is the same bargain a dot command already makes with its argument.
+ *
+ * ```ts
+ * import { fragment } from './files.ts';
+ *
+ * fragment('.cat lib/re'); // 'lib/re'
+ * fragment('.view '); // '' — everything in the working directory
+ * fragment('document.ti'); // null — an expression, not a path
+ * ```
+ */
+export function fragment(line: string): string | null {
+  return PATH_COMMANDS.exec(line)?.[1] ?? null;
+}
+
+/**
+ * The paths that continue `typed`, spelled the way it was — directories with a trailing slash.
+ *
+ * Hidden entries only once a dot has been typed, which is the rule every shell uses and the reason
+ * `.cat ` does not open with a list of dotfiles.
+ *
+ * ```ts
+ * import { complete } from './files.ts';
+ *
+ * complete('lib/re', process.cwd()); // ['lib/repl/'] — a directory, and it says so
+ * complete('nowhere/at/all', process.cwd()); // [] — an unreadable directory completes to nothing
+ * ```
+ */
+export function complete(typed: string, cwd: string): string[] {
+  const slash = typed.lastIndexOf('/');
+  // Kept verbatim rather than rebuilt, so `./lib/` and `lib/` each come back the way they went in.
+  const prefix = typed.slice(0, slash + 1);
+  const partial = typed.slice(slash + 1);
+  const directory = path.resolve(cwd, prefix || '.');
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(directory, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  return entries
+    .filter((entry) => entry.name.startsWith(partial))
+    .filter((entry) => partial.startsWith('.') || !entry.name.startsWith('.'))
+    .map((entry) => `${prefix}${entry.name}${entry.isDirectory() ? '/' : ''}`)
+    .sort();
+}
+
+/**
+ * What to draw after the cursor on a path line: the rest of the shortest path that continues it.
+ *
+ * Empty for a line that is not one, so a caller can fall through to the suggestions it makes for
+ * everything else. Shortest for the same reason a name is: `lib/` is what `li` meant far more
+ * often than the longest thing underneath it.
+ *
+ * ```ts
+ * import { suggest } from './files.ts';
+ *
+ * suggest('document.ti', process.cwd()); // '' — not a path line, so not this one's answer
+ * ```
+ */
+export function suggest(line: string, cwd: string): string {
+  const typed = fragment(line);
+  if (typed === null || typed === '') return '';
+
+  let best = '';
+  for (const candidate of complete(typed, cwd)) {
+    if (candidate.length <= typed.length) continue;
+    if (best === '' || candidate.length < best.length) best = candidate;
+  }
+
+  return best === '' ? '' : best.slice(typed.length);
+}
+
+/**
+ * A file with its lines numbered, the way anybody quoting one writes them down.
+ *
+ * ```
+ * 1 | let something = 'something';
+ * 2 | function me() {
+ * ```
+ *
+ * Numbers are right-aligned to the longest of them, so the gutter is a straight edge and the code
+ * starts in one column rather than drifting at line 100.
+ *
+ * ```ts
+ * import { numbered } from './files.ts';
+ *
+ * numbered('a\nb', 'x.txt', { style: () => '' }); // '1 | a\n2 | b' — the gutter is themed too
+ * ```
+ */
+export function numbered(contents: string, file: string, palette: Theme): string {
+  const lines = contents.replace(/\n$/, '').split('\n');
+  const gutter = String(lines.length).length;
+  const paint = HIGHLIGHTED.has(path.extname(file).toLowerCase());
+  const style = palette.style('LineNr');
+
+  return lines
+    .map((line, index) => {
+      const number = `${String(index + 1).padStart(gutter)} |`;
+      const content = paint ? highlight(line, palette) : line;
+
+      return `${style === '' ? number : `${style}${number}${RESET}`} ${content}`;
+    })
+    .join('\n');
+}
+
+/** What a path turned out to be, and what the prompt should do about it. */
+export type Resolution =
+  | { kind: 'file'; contents: string }
+  | { kind: 'directory'; retype: string }
+  | { kind: 'missing'; retype: string }
+  | { kind: 'unreadable'; detail: string };
+
+/**
+ * Reads a path, or says precisely why it could not — and how much of it was worth keeping.
+ *
+ * `retype` is the part that does exist, which is what the prompt puts back so the next attempt
+ * costs a few keystrokes rather than the whole path again. For a directory that is the path with
+ * a slash on it; for a path that goes wrong halfway, it is the last directory that was real.
+ *
+ * ```ts
+ * import { read } from './files.ts';
+ *
+ * read('lib/nowhere.ts', process.cwd()); // { kind: 'missing', retype: 'lib/' }
+ * read('lib', process.cwd()); // { kind: 'directory', retype: 'lib/' }
+ * ```
+ */
+export function read(typed: string, cwd: string): Resolution {
+  const resolved = path.resolve(cwd, typed);
+  let stats: fs.Stats;
+  try {
+    stats = fs.statSync(resolved);
+  } catch (error) {
+    const failure = error as NodeJS.ErrnoException;
+    if (failure.code !== 'ENOENT') return { kind: 'unreadable', detail: failure.message };
+
+    return { kind: 'missing', retype: existingPrefix(typed, cwd) };
+  }
+  if (stats.isDirectory()) return { kind: 'directory', retype: withSlash(typed) };
+
+  try {
+    return { kind: 'file', contents: fs.readFileSync(resolved, 'utf8') };
+  } catch (error) {
+    return { kind: 'unreadable', detail: (error as Error).message };
+  }
+}
+
+function withSlash(typed: string): string {
+  return typed.endsWith('/') ? typed : `${typed}/`;
+}
+
+/** The longest leading run of `typed` that is a real directory, ending in a slash. */
+function existingPrefix(typed: string, cwd: string): string {
+  const parts = typed.split('/');
+  let kept = '';
+  for (const part of parts.slice(0, -1)) {
+    const next = `${kept}${part}/`;
+    try {
+      if (!fs.statSync(path.resolve(cwd, next)).isDirectory()) break;
+    } catch {
+      break;
+    }
+    kept = next;
+  }
+
+  return kept;
+}
