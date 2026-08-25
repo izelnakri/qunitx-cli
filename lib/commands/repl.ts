@@ -92,6 +92,9 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
     // and history need a TTY, and a human cannot type faster than the page can answer.
     const input = interactive ? vimKeys(process.stdin) : new PassThrough();
     let evaluating = false;
+    // Set once the page has gone, so the session ends on the next thing that notices rather than
+    // once per command that fails.
+    let gone = false;
     // One source of names behind both TAB and the ghost, so the two can never disagree about what
     // the page has.
     const completions = completionCache(session);
@@ -175,11 +178,24 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
           },
           (error: Error) => {
             evaluating = false;
+            // A failed command means "that did not work"; a page that has gone means "nothing
+            // will". Told apart by asking the handles rather than by reading the error, because
+            // an ordinary throw from an evaluation must not end the session.
+            if (!session.alive()) return void end(server);
+
             callback(error, undefined);
           },
         );
       },
     });
+
+    /** Says what happened, once, and stops — there is nothing here to carry on with. */
+    const end = (target: REPLServer) => {
+      if (gone) return;
+      gone = true;
+      target.output.write(red(`\n${lost()}\n`));
+      target.close();
+    };
 
     // One bar per level left open, which is the only thing a continuation prompt has to say.
     // Through readline's own `setPrompt` rather than the REPL's, which would also rewrite the
@@ -583,7 +599,7 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
         .settled()
         .then(() => session.close())
         .then(
-          () => resolve(0),
+          () => resolve(gone ? 1 : 0),
           () => resolve(1),
         );
     });
@@ -1042,6 +1058,31 @@ function stack(frames: readonly Repl.Frame[], palette: Theme): string {
 
 function paint(text: string, style: string): string {
   return style === '' ? text : `${style}${text}${ESCAPE}[0m`;
+}
+
+/**
+ * What to say when the page has gone.
+ *
+ * There is nothing to recover and nothing to offer: a REPL's whole value is the page it is holding
+ * — the bindings, the DOM, the module state — and all of it went at once. Reopening one would not
+ * bring any of it back; it would be the session you get by running the command again, which the
+ * shell already remembers. So the message says what was lost and what to type, and the process
+ * ends rather than sitting at a prompt that cannot answer anything.
+ *
+ * ```ts
+ * import { lost } from './repl.ts';
+ *
+ * lost(['node', 'cli.ts', 'repl', 'a.ts']).includes('qunitx repl a.ts'); // true — what to type
+ * ```
+ */
+export function lost(argv: readonly string[] = process.argv): string {
+  const again = argv.slice(2).join(' ');
+
+  return [
+    'the page is gone — the browser closed, crashed, or was killed.',
+    'Everything it was holding went with it, so there is nothing here to carry on with.',
+    again === '' ? 'Run qunitx repl again to start over.' : `Start again with: qunitx ${again}`,
+  ].join('\n');
 }
 
 /** The three ways out of a line, under the names gdb gave them. */

@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { recent } from '../../lib/commands/repl.ts';
+import { lost, recent } from '../../lib/commands/repl.ts';
 import { theme } from '../../lib/repl/theme.ts';
 import '../helpers/custom-asserts.ts';
 
@@ -43,5 +43,23 @@ module('Commands | repl | history', { concurrency: true }, () => {
     assert.includes(painted, `${ESC}[31mconst${ESC}[0m`, 'code reads as code');
     assert.includes(painted, '.tree -L 1 lib', 'and a dot command is not JavaScript to paint');
     assert.notIncludes(painted, `${ESC}[35mL`, 'so `-L` is not a type and `git` is not a call');
+  });
+});
+
+// A REPL's whole value is the page it is holding. When that goes, the bindings, the DOM and the
+// module state go at once — so there is nothing to offer but what happened and what to type.
+module('Commands | repl | a page that has gone', { concurrency: true }, () => {
+  test('it says what was lost, not just what failed', (assert) => {
+    const said = lost(['node', 'cli.ts', 'repl', 'a.ts']);
+
+    assert.includes(said, 'the page is gone', 'what happened');
+    assert.includes(said, 'nothing here to carry on with', 'and why the session is ending');
+  });
+
+  test('and how to start again, in the words that were typed', (assert) => {
+    // Reopening a page would not bring any of it back — it would be the session you get by
+    // running the command again, which the shell already remembers.
+    assert.includes(lost(['node', 'cli.ts', 'repl', 'a.ts', 'b.ts']), 'qunitx repl a.ts b.ts');
+    assert.includes(lost(['node', 'cli.ts']), 'Run qunitx repl again', 'where there were no args');
   });
 });

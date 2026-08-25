@@ -654,6 +654,36 @@ module('API | repl | stepping', { concurrency: true }, () => {
   });
 });
 
+// A REPL's whole value is the page it is holding, so whether there still IS one is worth asking
+// directly rather than inferring from whatever a failed command threw.
+module('API | repl | liveness', { concurrency: true }, () => {
+  test('a session with a page is alive, and stops being once it is closed', async (assert) => {
+    await using output = outputDir('api-repl-alive');
+    const permit = await acquireBrowser();
+    const session = await QUnitX.repl({ output: output.path });
+    try {
+      assert.true(session.alive(), 'a session that just opened has a page');
+
+      await session.close();
+
+      assert.false(session.alive(), 'and none afterwards');
+    } finally {
+      permit.release();
+    }
+  });
+
+  test('being alive is about the page, not about the last command', async (assert) => {
+    // The distinction the terminal rests on: a failed command means "that did not work", and a
+    // page that has gone means "nothing will".
+    await withRepl({}, async (session) => {
+      const threw = await session.evaluate('nope.nope');
+
+      assert.true(threw.failed, 'the command failed');
+      assert.true(session.alive(), 'and the session is fine');
+    });
+  });
+});
+
 // A breakpoint without editing the file to put a `debugger` in it. The line is yours, not the
 // bundle's — mapped through the same source map that turns a stack frame back into a file you
 // wrote, only in the other direction.

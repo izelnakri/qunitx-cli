@@ -299,6 +299,14 @@ export interface ReplSession {
   selectFrame(index: number): string | null;
   /** Lets a paused page carry on. A no-op when it is not paused. */
   resume(): Promise<void>;
+  /**
+   * Whether there is still a page to evaluate in.
+   *
+   * False once the browser has gone — crashed, killed, or closed by hand. Asked of the handles
+   * rather than inferred from an error message, because a failed command means "that did not
+   * work" and this means "nothing will".
+   */
+  alive(): boolean;
   /** Closes the page, the browser and the server. Idempotent. */
   close(): Promise<void>;
   /** Closes the session at the end of an `await using` block. */
@@ -897,6 +905,10 @@ class Session implements ReplSession {
       () => {},
       () => {},
     );
+  }
+
+  alive(): boolean {
+    return !this.#closed && this.#browser.isConnected() && !this.#page.isClosed();
   }
 
   async close(): Promise<void> {
