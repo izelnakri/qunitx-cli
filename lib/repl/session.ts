@@ -88,6 +88,13 @@ export interface ReplResult {
   incomplete: boolean;
   /** Tests QUnit ran because of this input. Already reported through the session's reporters. */
   tests: TestDetails[];
+  /**
+   * Where the input stopped at a `debugger` statement, or absent when it ran to completion.
+   *
+   * The page is still stopped when this comes back. Whatever is typed next runs in that frame, and
+   * {@link ReplSession.resume} is what lets it carry on.
+   */
+  pausedAt?: string;
 }
 
 /**
@@ -130,6 +137,15 @@ export interface ReplSession {
   reload(): Promise<void>;
   /** Stops whatever is executing in the page — the Ctrl-C of a runaway expression. */
   interrupt(): Promise<void>;
+  /**
+   * Where the page is stopped at a `debugger` statement, or `null` when it is running.
+   *
+   * While this is set, {@link ReplSession.evaluate} runs in the PAUSED frame, so what you type
+   * sees the locals at the breakpoint rather than the globals around it.
+   */
+  pausedAt: string | null;
+  /** Lets a paused page carry on. A no-op when it is not paused. */
+  resume(): Promise<void>;
   /** Closes the page, the browser and the server. Idempotent. */
   close(): Promise<void>;
   /** Closes the session at the end of an `await using` block. */
@@ -215,9 +231,22 @@ export async function start(
         args: [],
       });
     });
+    // BEFORE `Debugger.enable`, which replays a `scriptParsed` for everything already loaded — the
+    // bundle among them. Registering after the enable misses that replay, and a pause inside a
+    // preloaded file could then only report a bundle line.
+    const scripts = new Map<string, string>();
+    cdp.on('Debugger.scriptParsed', (event) => {
+      if (event.url) scripts.set(event.scriptId, event.url);
+    });
     await cdp.send('Runtime.enable');
+    // What makes `debugger` mean something here. Without a debugger attached the statement is a
+    // no-op — the page runs straight past it — so a prompt that never enables this can only ever
+    // answer `undefined` to it. Enabled for the session rather than on demand, because a statement
+    // already executing is too late to start listening for.
+    await cdp.send('Debugger.enable');
 
     const session = new Session(config, { cdp, page, server, browser, url });
+    cdp.on('Debugger.paused', (event) => session.onPaused(event, scripts));
     session.loaded = await session.readLoaded();
     onOpen?.(session);
     await session.runPending();
@@ -257,12 +286,22 @@ export async function resolvePreload(config: Config, inputs: readonly string[]):
   return Object.keys(await FSTree.build(TestFilePaths.setup(absolute), config));
 }
 
+/** Returned by the race in `#evaluate` when the page stopped instead of answering. */
+const PAUSED = { paused: true } as unknown as EvaluateResult;
+
 /** The live session. A class because it owns handles and must close them exactly once. */
 class Session implements ReplSession {
   url: string;
   loaded: Array<[string, string[]]> = [];
   #config: Config;
   #cdp: CDPSession;
+  // The frame a `debugger` statement stopped in, and the notice describing where. Both null while
+  // the page is running, and set together — one is the capability, the other is what to print.
+  #frameId: string | null = null;
+  #pausedAt: string | null = null;
+  // Resolves the evaluation that was in flight when the pause happened. `Runtime.evaluate` does not
+  // return while the page is stopped, so without this the prompt never comes back.
+  #announcePause: ((result: ReplResult) => void) | null = null;
   #page: Page;
   #server: HTTPServer;
   #browser: PlaywrightBrowser;
@@ -310,6 +349,45 @@ class Session implements ReplSession {
     await this.#page.reload();
     this.loaded = await this.readLoaded();
     await this.runPending();
+  }
+
+  get pausedAt(): string | null {
+    return this.#pausedAt;
+  }
+
+  /**
+   * Lets a paused page carry on.
+   *
+   * Never automatic. If DevTools is open on the same page it is paused too, and resuming the target
+   * from here would step on someone reading their own stack. Whoever paused it says when.
+   */
+  async resume(): Promise<void> {
+    if (!this.#pausedAt) return;
+    this.#frameId = null;
+    this.#pausedAt = null;
+    await this.#cdp.send('Debugger.resume').catch(() => {});
+  }
+
+  /**
+   * The page stopped at a `debugger` statement.
+   *
+   * Two things have to happen. The frame is kept, so what gets typed next can be evaluated INSIDE
+   * it. And the evaluation that was in flight is answered — `Runtime.evaluate` does not return
+   * while the page is stopped, so the prompt would otherwise never come back to say so.
+   */
+  onPaused(event: DebuggerPaused, scripts: Map<string, string>): void {
+    const frame = event.callFrames[0];
+    this.#frameId = frame?.callFrameId ?? null;
+    this.#pausedAt = describeFrame(this.#config, frame, scripts);
+    const announce = this.#announcePause;
+    this.#announcePause = null;
+    announce?.({
+      output: '',
+      failed: false,
+      incomplete: false,
+      tests: [],
+      pausedAt: this.#pausedAt,
+    });
   }
 
   interrupt(): Promise<void> {
@@ -364,18 +442,31 @@ class Session implements ReplSession {
     if (input.trim() === '') return nothing;
     if (this.#closed) return { ...nothing, output: 'the REPL session is closed', failed: true };
 
-    // Frees the PREVIOUS input's handles; the one rendered below is still needed.
-    await this.#cdp
-      .send('Runtime.releaseObjectGroup', { objectGroup: OBJECT_GROUP })
-      .catch(() => {});
+    // Frees the PREVIOUS input's handles; the one rendered below is still needed. Skipped while
+    // the page is paused: the Runtime domain queues commands until the target resumes, so awaiting
+    // this at a breakpoint hangs the input that was going to inspect it — the one thing a pause
+    // exists for. The handles are freed by the next input after resuming, or by closing.
+    if (!this.#frameId) {
+      await this.#cdp
+        .send('Runtime.releaseObjectGroup', { objectGroup: OBJECT_GROUP })
+        .catch(() => {});
+    }
     const sources = Source.candidates(input);
-    let evaluated = await this.#send(sources[0]);
+    // Raced against a pause, because the two are mutually exclusive: a `debugger` statement stops
+    // the page, and `Runtime.evaluate` does not answer a stopped page. Whichever happens first is
+    // the answer, and the loser is left running — the evaluation settles later, when resumed.
+    const paused = new Promise<ReplResult>((resolve) => {
+      this.#announcePause = resolve;
+    });
+    let evaluated = await Promise.race([this.#send(sources[0]), paused.then(() => PAUSED)]);
+    if (evaluated === PAUSED) return await paused;
     for (let index = 1; index < sources.length; index++) {
       // Only a SYNTAX error earns a second spelling: nothing ran, so nothing can run twice.
       if (!isSyntaxError(evaluated)) break;
       evaluated = await this.#send(sources[index]);
     }
 
+    this.#announcePause = null;
     const thrown = evaluated.exceptionDetails;
     if (thrown) {
       const description = thrown.exception?.description ?? thrown.text;
@@ -387,7 +478,9 @@ class Session implements ReplSession {
     }
 
     const rendered = await this.#render(evaluated.result);
-    const tests = await this.runPending();
+    // Nothing can have run while the page is stopped, and asking anyway hangs: the flush resolves a
+    // PROMISE, and a paused isolate never reaches the microtask that would settle it.
+    const tests = this.#frameId ? [] : await this.runPending();
     // `test('…', …)` evaluates to undefined, and printing that under the TAP it just produced adds
     // nothing. Any other value still prints — the input did something besides register tests.
     const output = tests.length > 0 && rendered === 'undefined' ? '' : rendered;
@@ -397,6 +490,17 @@ class Session implements ReplSession {
 
   /** One `Runtime.evaluate` in REPL mode — where `let` redeclaration and top-level await work. */
   #send(expression: string): Promise<EvaluateResult> {
+    // Paused: run it where the page is STOPPED, so what you type sees the locals at the breakpoint.
+    // Inspecting the globals around a breakpoint would answer a question nobody asked.
+    if (this.#frameId) {
+      return this.#cdp.send('Debugger.evaluateOnCallFrame', {
+        callFrameId: this.#frameId,
+        expression,
+        objectGroup: OBJECT_GROUP,
+        generatePreview: true,
+      }) as Promise<EvaluateResult>;
+    }
+
     return this.#cdp.send('Runtime.evaluate', {
       expression,
       replMode: true,
@@ -474,6 +578,16 @@ function pageHTML(config: Config): string {
 }
 
 /** The CDP shapes this file reads back — narrower than the protocol's, and only where used. */
+/** The slice of `Debugger.paused` this reads — narrower than the protocol's, and only where used. */
+interface DebuggerPaused {
+  callFrames: Array<{
+    callFrameId: string;
+    functionName?: string;
+    location: { lineNumber: number; columnNumber?: number; scriptId: string };
+    url?: string;
+  }>;
+}
+
 interface RemoteObject {
   type: string;
   subtype?: string;
@@ -612,4 +726,29 @@ function specifier(file: string, cwd: string): string {
   if (path.isAbsolute(relativePath)) return file.replaceAll('\\', '/');
 
   return normalized.startsWith('.') ? normalized : `./${normalized}`;
+}
+
+/**
+ * Where a pause happened, in the words a person would use for it.
+ *
+ * The location arrives as a script id and a zero-based line, which names nothing anyone typed. The
+ * URL and a one-based line do, and match how every other location in this REPL is printed.
+ */
+function describeFrame(
+  config: Config,
+  frame: DebuggerPaused['callFrames'][number] | undefined,
+  scripts: Map<string, string>,
+): string {
+  if (!frame) return 'debugger';
+  const { lineNumber, columnNumber, scriptId } = frame.location;
+  const url = frame.url || scripts.get(scriptId);
+  // Typed input belongs to no file — the same `<anonymous>` this REPL already prints in stacks.
+  if (!url) return `<anonymous>:${lineNumber + 1}`;
+
+  // Through the same resolver every other location goes through, by handing it a line shaped like
+  // a stack frame — so a pause inside a preloaded file names that file rather than the bundle.
+  const at = `    at ${url}:${lineNumber + 1}:${(columnNumber ?? 0) + 1}`;
+  const where = resolveStack(config, at).trim().replace(/^at /, '');
+
+  return frame.functionName ? `${frame.functionName} (${where})` : where;
 }

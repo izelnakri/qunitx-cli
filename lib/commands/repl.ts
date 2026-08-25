@@ -116,6 +116,16 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
             if (result.incomplete) {
               return callback(new nodeRepl.Recoverable(new Error('unfinished input')), undefined);
             }
+            // A pause is not a value and not a failure — it is the page stopping and waiting.
+            // Said plainly, with the way out, because a prompt that just returns leaves someone
+            // wondering why the next line behaves strangely.
+            if (result.pausedAt) {
+              server.output.write(
+                blue(`paused at ${result.pausedAt} — locals are in scope; .resume to continue\n`),
+              );
+
+              return callback(null, undefined);
+            }
             const text = result.failed ? red(`Uncaught ${result.output}`) : result.output;
 
             return callback(null, text === '' ? undefined : text);
@@ -207,6 +217,14 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
           );
         }
         this.displayPrompt();
+      },
+    });
+    server.defineCommand('resume', {
+      help: 'Let a page paused at a `debugger` statement carry on',
+      action() {
+        this.clearBufferedCommand();
+        if (!session.pausedAt) this.output.write('Not paused\n');
+        void session.resume().then(() => this.displayPrompt());
       },
     });
     server.defineCommand('url', {

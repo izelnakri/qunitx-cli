@@ -298,3 +298,60 @@ module('API | repl | opening the page yourself', { concurrency: true }, () => {
     });
   });
 });
+
+// A `debugger` statement only stops a page that has a debugger attached. Headless, with nothing
+// attached, it is a no-op — the page runs straight past it and the prompt answers `undefined`,
+// which is the least useful thing a REPL can say about a breakpoint. So the session attaches one.
+module('API | repl | debugger', { concurrency: true }, () => {
+  const DEBUGGED = 'test/fixtures/repl-debugger.ts';
+
+  test('it stops the page, and says where in the source', async (assert) => {
+    await withRepl({ inputs: [DEBUGGED] }, async (session) => {
+      assert.strictEqual(session.pausedAt, null, 'not paused before anything runs');
+
+      const result = await session.evaluate('inspectMe()');
+
+      assert.ok(result.pausedAt, 'the call came back as a pause rather than a value');
+      assert.includes(result.pausedAt!, 'inspectMe', 'named by the function it stopped in');
+      assert.includes(
+        result.pausedAt!,
+        'test/fixtures/repl-debugger.ts:5',
+        'and by the source line, not the bundle line the page actually ran',
+      );
+      await session.resume();
+    });
+  });
+
+  test('what you type while paused sees the locals at the breakpoint', async (assert) => {
+    // The whole point of stopping. Evaluating against the globals instead would answer a question
+    // nobody asked — `answer` does not exist out there.
+    await withRepl({ inputs: [DEBUGGED] }, async (session) => {
+      await session.evaluate('inspectMe()');
+
+      assert.strictEqual((await session.evaluate('answer')).output, '42');
+      assert.strictEqual((await session.evaluate('answer * 2')).output, '84');
+      await session.resume();
+    });
+  });
+
+  test('resuming lets it carry on, and the session is a session again', async (assert) => {
+    await withRepl({ inputs: [DEBUGGED] }, async (session) => {
+      await session.evaluate('inspectMe()');
+      assert.ok(session.pausedAt, 'paused');
+
+      await session.resume();
+
+      assert.strictEqual(session.pausedAt, null, 'and running again');
+      assert.strictEqual((await session.evaluate('6 * 7')).output, '42');
+    });
+  });
+
+  test('resuming a page that is not paused does nothing', async (assert) => {
+    await withRepl({}, async (session) => {
+      await session.resume();
+
+      assert.strictEqual(session.pausedAt, null);
+      assert.strictEqual((await session.evaluate('1 + 1')).output, '2', 'still usable');
+    });
+  });
+});
