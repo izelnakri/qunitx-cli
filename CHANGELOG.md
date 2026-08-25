@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.35.1] - 2026-08-25
+[`v0.35.0...v0.35.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.35.0...v0.35.1)
+
+### Bug Fixes
+- Run the owner's installer instead of printing it — 2026-08-24 by [@izelnakri](https://github.com/izelnakri) ([`4bfffd9`](https://github.com/izelnakri/qunitx-cli/commit/4bfffd9b5fda1e403948ca180de93ada1d830ab2))
+- Name the close that hung, and carry it to the failure — 2026-08-24 by [@izelnakri](https://github.com/izelnakri) ([`0f20ddc`](https://github.com/izelnakri/qunitx-cli/commit/0f20ddc207ed379b1e03c9a3aef352caead464d8))
+- Wait for the closes a restart gave up on — 2026-08-24 by [@izelnakri](https://github.com/izelnakri) ([`c57135c`](https://github.com/izelnakri/qunitx-cli/commit/c57135c52385cde123542b87c9455c2897290484))
+- A signalled run must not leave its browser behind — 2026-08-24 by [@izelnakri](https://github.com/izelnakri) ([`f2e8311`](https://github.com/izelnakri/qunitx-cli/commit/f2e8311909ee3cbc5a887b393a0437d5a5c6005e))
+
+### Features
+- A file that declares tests is run as a suite — 2026-08-23 by [@izelnakri](https://github.com/izelnakri) ([`b22a230`](https://github.com/izelnakri/qunitx-cli/commit/b22a23035d0d35d63fa59885210b8f2e08dead97))
+- Say the plain form is the better way to have asked — 2026-08-24 by [@izelnakri](https://github.com/izelnakri) ([`04d0530`](https://github.com/izelnakri/qunitx-cli/commit/04d0530474ac2d70dc465112463c8f99fb356fec))
+- The warning names the exit-code rule — 2026-08-24 by [@izelnakri](https://github.com/izelnakri) ([`5ac9350`](https://github.com/izelnakri/qunitx-cli/commit/5ac93509b5ca09c0db68113d6917a76da992ce9f))
+
+### Refactoring
+- Process.spawn, shaped like the process it reports — 2026-08-24 by [@izelnakri](https://github.com/izelnakri) ([`f36612f`](https://github.com/izelnakri/qunitx-cli/commit/f36612f035863e316b309875bb755bab88055465))
+- Expose the test runtime as injectable source — 2026-08-23 by [@izelnakri](https://github.com/izelnakri) ([`93f93f2`](https://github.com/izelnakri/qunitx-cli/commit/93f93f27281e5fc2a690d959ea3ba77b679ede13))
+
 ## [0.35.0] - 2026-08-22
 [`v0.34.6...v0.35.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.34.6...v0.35.0)
 
