@@ -18,6 +18,7 @@ import { formatScope } from '../repl/scope.ts';
 import * as Files from '../repl/files.ts';
 import { plain, plainLength, truncate } from '../repl/columns.ts';
 import { depth, highlight } from '../repl/highlight.ts';
+import { excerpt, limits } from '../repl/excerpt.ts';
 import { theme } from '../repl/theme.ts';
 import { split, suggest } from '../repl/suggest.ts';
 import type { ReplSession } from '../repl/session.ts';
@@ -163,7 +164,15 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
                 ),
               );
 
-              return callback(null, undefined);
+              // The lines around it, so which `debugger` this is can be seen rather than worked
+              // out from a file and a number. Asked for after the notice, not before: the notice
+              // is what the pause IS, and it should not wait on reading a file to say so.
+              return void session.frameSource().then((frame) => {
+                const shown = frame ? excerpt(frame.text, frame.line, palette, limits()) : '';
+                if (shown !== '') server.output.write(`${shown}\n`);
+
+                return callback(null, undefined);
+              });
             }
             const text = result.failed ? red(`Uncaught ${result.output}`) : result.output;
 

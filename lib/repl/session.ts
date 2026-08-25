@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import esbuild from 'esbuild';
 import * as Browser from '../setup/browser.ts';
@@ -213,6 +214,14 @@ export interface ReplSession {
    * sees the locals at the breakpoint rather than the globals around it.
    */
   pausedAt: string | null;
+  /**
+   * The source the breakpoint is in and the line it stopped on, or `null` when nothing is stopped.
+   *
+   * The ORIGINAL source where there is one: a pause inside a preloaded file reports that file and
+   * its own line numbers rather than the bundle's. Typed-in functions have no file, and their
+   * source comes back from the page, which is the only place it exists.
+   */
+  frameSource(): Promise<{ text: string; line: number } | null>;
   /** Lets a paused page carry on. A no-op when it is not paused. */
   resume(): Promise<void>;
   /** Closes the page, the browser and the server. Idempotent. */
@@ -377,6 +386,9 @@ class Session implements ReplSession {
   // ARGUMENTS, which is the only thing that shadows an outer binding of the same name — a global
   // property cannot, because a top-level `let` is a global LEXICAL binding and wins over one.
   #pausedBindings = new Map<string, boolean>();
+  // Where the breakpoint is, kept from the pause event so the source can be fetched when asked
+  // for rather than on every stop.
+  #pausedIn: { file: string | null; scriptId: string; line: number } | null = null;
   // What the page had in scope before anybody typed, so `.scope` can show what this session added
   // rather than everything a browser ships with.
   #baseline = new Set<string>();
@@ -583,6 +595,32 @@ class Session implements ReplSession {
    * Never automatic. If DevTools is open on the same page it is paused too, and resuming the target
    * from here would step on someone reading their own stack. Whoever paused it says when.
    */
+  async frameSource(): Promise<{ text: string; line: number } | null> {
+    const at = this.#pausedIn;
+    if (!at) return null;
+
+    if (at.file !== null) {
+      try {
+        return {
+          text: fs.readFileSync(path.resolve(this.#config.cwd, at.file), 'utf8'),
+          line: at.line,
+        };
+      } catch {
+        // Renamed, deleted, or never on disk. The pause still stands; only the map is missing.
+        return null;
+      }
+    }
+    // No file: a function typed at this prompt exists nowhere else, and the page is the only one
+    // that can say what it says.
+    const fetched = (await this.#cdp
+      .send('Debugger.getScriptSource', { scriptId: at.scriptId })
+      .catch(() => null)) as { scriptSource?: string } | null;
+
+    return fetched?.scriptSource === undefined
+      ? null
+      : { text: fetched.scriptSource, line: at.line };
+  }
+
   async resume(): Promise<void> {
     if (!this.#pausedAt) return;
     const kept = [...this.#pausedBindings]
@@ -592,6 +630,7 @@ class Session implements ReplSession {
     this.#pausedBindings.clear();
     this.#frameId = null;
     this.#pausedAt = null;
+    this.#pausedIn = null;
     this.#scopes = [];
     await this.#cdp.send('Debugger.resume').catch(() => {});
     // After the page is running again, because until it is there is nothing to run this in. What
@@ -618,6 +657,14 @@ class Session implements ReplSession {
     const frame = event.callFrames[0];
     this.#frameId = frame?.callFrameId ?? null;
     this.#pausedAt = describeFrame(this.#config, frame, scripts);
+    const located = frame && mappedLocation(this.#config, frame, scripts);
+    this.#pausedIn = frame
+      ? {
+          file: located?.file ?? null,
+          scriptId: frame.location.scriptId,
+          line: located?.line ?? frame.location.lineNumber + 1,
+        }
+      : null;
     // Only the frame the prompt evaluates in. The scopes further up the stack belong to callers
     // nothing typed here can see, and listing them would answer a question nobody asked.
     this.#scopes = frame?.scopeChain ?? [];
@@ -1105,15 +1152,36 @@ function describeFrame(
   scripts: Map<string, string>,
 ): string {
   if (!frame) return 'debugger';
-  const { lineNumber, columnNumber, scriptId } = frame.location;
-  const url = frame.url || scripts.get(scriptId);
+  const located = mappedLocation(config, frame, scripts);
   // Typed input belongs to no file — the same `<anonymous>` this REPL already prints in stacks.
-  if (!url) return `<anonymous>:${lineNumber + 1}`;
+  if (!located) return `<anonymous>:${frame.location.lineNumber + 1}`;
 
-  // Through the same resolver every other location goes through, by handing it a line shaped like
-  // a stack frame — so a pause inside a preloaded file names that file rather than the bundle.
-  const at = `    at ${url}:${lineNumber + 1}:${(columnNumber ?? 0) + 1}`;
-  const where = resolveStack(config, at).trim().replace(/^at /, '');
+  const where = `${located.file}:${located.line}:${located.column}`;
 
   return frame.functionName ? `${frame.functionName} (${where})` : where;
+}
+
+/**
+ * Where a frame is in the SOURCE, rather than in the bundle the page actually ran.
+ *
+ * Through the same resolver every other location goes through, by handing it a line shaped like a
+ * stack frame — so a pause inside a preloaded file names that file rather than the bundle, and one
+ * answer serves both what is printed and what is read off disk.
+ */
+function mappedLocation(
+  config: Config,
+  frame: DebuggerPaused['callFrames'][number],
+  scripts: Map<string, string>,
+): { file: string; line: number; column: number } | null {
+  const { lineNumber, columnNumber, scriptId } = frame.location;
+  const url = frame.url || scripts.get(scriptId);
+  if (!url) return null;
+
+  const at = `    at ${url}:${lineNumber + 1}:${(columnNumber ?? 0) + 1}`;
+  const resolved = resolveStack(config, at).trim().replace(/^at /, '');
+  const parsed = /^(.*):(\d+):(\d+)$/.exec(resolved);
+
+  return parsed
+    ? { file: parsed[1] as string, line: Number(parsed[2]), column: Number(parsed[3]) }
+    : null;
 }

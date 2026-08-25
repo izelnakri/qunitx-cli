@@ -443,6 +443,41 @@ module('API | repl | debugger', { concurrency: true }, () => {
     });
   });
 
+  test('the frame comes with the source it stopped in', async (assert) => {
+    // The ORIGINAL source, not the bundle the page actually ran — the line number has to point at
+    // something a person can read.
+    await withRepl({ inputs: [DEBUGGED] }, async (session) => {
+      assert.strictEqual(await session.frameSource(), null, 'nothing is stopped yet');
+
+      await session.evaluate('inspectMe()');
+      const frame = await session.frameSource();
+
+      assert.ok(frame, 'a pause knows where it is');
+      assert.includes(frame!.text, 'export function inspectMe', 'the file, as it is written');
+      assert.strictEqual(frame!.line, 5, 'and the line the fixture has `debugger` on');
+      assert.strictEqual(
+        frame!.text.split('\n')[frame!.line - 1]?.trim(),
+        'debugger;',
+        'which is the line the excerpt will mark',
+      );
+      await session.resume();
+    });
+  });
+
+  test('a function typed at the prompt has its source read from the page', async (assert) => {
+    // It exists nowhere else — there is no file to read, and the page is the only one that knows.
+    await withRepl({}, async (session) => {
+      await session.evaluate('function typed() { debugger; return 1 }');
+      await session.evaluate('typed()');
+
+      const frame = await session.frameSource();
+
+      assert.ok(frame, 'a pause in typed input still knows where it is');
+      assert.includes(frame!.text, 'function typed()');
+      await session.resume();
+    });
+  });
+
   test('resuming a page that is not paused does nothing', async (assert) => {
     await withRepl({}, async (session) => {
       await session.resume();
