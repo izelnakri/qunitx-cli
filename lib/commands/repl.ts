@@ -16,7 +16,7 @@ import { blue, red } from '../utils/color.ts';
 import { findProjectRoot } from '../utils/find-project-root.ts';
 import { formatScope } from '../repl/scope.ts';
 import * as Files from '../repl/files.ts';
-import { plain, plainLength, truncate } from '../repl/columns.ts';
+import { paint, plain, plainLength, truncate } from '../repl/columns.ts';
 import { depth, highlight } from '../repl/highlight.ts';
 import { excerpt, limits } from '../repl/excerpt.ts';
 import { theme } from '../repl/theme.ts';
@@ -1056,10 +1056,6 @@ function stack(frames: readonly Repl.Frame[], palette: Theme): string {
     .join('\n');
 }
 
-function paint(text: string, style: string): string {
-  return style === '' ? text : `${style}${text}${ESCAPE}[0m`;
-}
-
 /**
  * What to say when the page has gone.
  *
@@ -1327,7 +1323,7 @@ export function recent(newestFirst: readonly string[], count: number, palette: T
       // colours `-L` as a type and `git` as a call.
       const code = /^\s*[.:]/.test(line) ? line : highlight(line, palette);
 
-      return `${style === '' ? number : `${style}${number}${ESCAPE}[0m`}  ${code}\n`;
+      return `${paint(number, style)}  ${code}\n`;
     })
     .join('');
 }

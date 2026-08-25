@@ -72,3 +72,21 @@ export function truncate(text: string, width: number): string {
 
   return `${kept}${ELLIPSIS}${RESET}`;
 }
+
+/**
+ * Text wrapped in a style, or the text alone where there is no style to wrap it in.
+ *
+ * Every caller has the same two cases and the same reason for them: an unstyled theme should cost
+ * no bytes, so a piped session stays text a script can compare rather than text with empty colour
+ * codes in it.
+ *
+ * ```ts
+ * import { paint } from './columns.ts';
+ *
+ * paint('hi', ''); // 'hi' — nothing to wrap it in
+ * paint('hi', `${String.fromCharCode(27)}[33m`).endsWith(`${String.fromCharCode(27)}[0m`); // true
+ * ```
+ */
+export function paint(text: string, style: string): string {
+  return style === '' ? text : `${style}${text}${RESET}`;
+}

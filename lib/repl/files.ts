@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { paint } from './columns.ts';
 import { highlight } from './highlight.ts';
 import type { Theme } from './theme.ts';
 
@@ -21,8 +22,6 @@ const HIGHLIGHTED = new Set([
   '.tsx',
   '.json',
 ]);
-
-const RESET = `${String.fromCharCode(27)}[0m`;
 
 /**
  * The path being typed on a `.cat` or `.view` line, or `null` on any other line.
@@ -147,15 +146,15 @@ export function suggest(line: string, cwd: string): string {
 export function numbered(contents: string, file: string, palette: Theme): string {
   const lines = contents.replace(/\n$/, '').split('\n');
   const gutter = String(lines.length).length;
-  const paint = HIGHLIGHTED.has(path.extname(file).toLowerCase());
+  const isCode = HIGHLIGHTED.has(path.extname(file).toLowerCase());
   const style = palette.style('LineNr');
 
   return lines
     .map((line, index) => {
       const number = `${String(index + 1).padStart(gutter)} |`;
-      const content = paint ? highlight(line, palette) : line;
+      const content = isCode ? highlight(line, palette) : line;
 
-      return `${style === '' ? number : `${style}${number}${RESET}`} ${content}`;
+      return `${paint(number, style)} ${content}`;
     })
     .join('\n');
 }
@@ -301,8 +300,4 @@ export function tree(root: string, cwd: string, palette: Theme, depth: number = 
   walk(path.resolve(cwd, root), '', 1);
 
   return { listing: lines.join('\n'), counted, omitted };
-}
-
-function paint(text: string, style: string): string {
-  return style === '' ? text : `${style}${text}${RESET}`;
 }

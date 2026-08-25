@@ -1,3 +1,4 @@
+import { paint } from './columns.ts';
 import type { Theme } from './theme.ts';
 
 /** A run of source, and what nvim's treesitter queries would capture it as. */
@@ -9,9 +10,6 @@ export interface Token {
   /** An nvim capture name — `@keyword.return`, `@string`, `@punctuation.bracket`. */
   capture: string;
 }
-
-const ESCAPE = String.fromCharCode(27);
-const RESET = `${ESCAPE}[0m`;
 
 // Grouped the way nvim's own queries group them, so a theme written for an editor means the same
 // thing here. `@keyword` catches everything without a more specific home.
@@ -85,7 +83,7 @@ export function highlight(source: string, palette: Theme): string {
   for (const token of tokenize(source)) {
     const style = palette.style(token.capture);
     const text = source.slice(token.start, token.end);
-    painted += source.slice(at, token.start) + (style === '' ? text : `${style}${text}${RESET}`);
+    painted += source.slice(at, token.start) + paint(text, style);
     at = token.end;
   }
 

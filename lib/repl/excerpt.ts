@@ -1,4 +1,5 @@
 import process from 'node:process';
+import { paint } from './columns.ts';
 import { highlight, tokenize } from './highlight.ts';
 import type { Theme } from './theme.ts';
 
@@ -28,8 +29,6 @@ export const LINES: Limits = { before: 6, after: 4 };
 /** What the environment calls this, in the spelling the REPL's other settings use. */
 const CONTEXT_VARIABLE = 'QUNITX_REPL_CONTEXT';
 
-const ESCAPE = String.fromCharCode(27);
-const RESET = `${ESCAPE}[0m`;
 const OPENING = '([{';
 
 /**
@@ -211,8 +210,4 @@ function lineOf(starts: readonly number[], offset: number): number {
   }
 
   return low + 1;
-}
-
-function paint(text: string, style: string): string {
-  return style === '' ? text : `${style}${text}${RESET}`;
 }
