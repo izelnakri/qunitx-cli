@@ -53,13 +53,14 @@ export function defineBrowsing(
 ): void {
   // `.cat` for the muscle memory, `.view` for anyone without it — but they stopped being the
   // same command once a directory became something worth looking at. `cat` on a directory is an
-  // error everywhere, so it stays one here; `.view` shows whatever is there.
-  for (const name of ['cat', 'view']) {
+  // error everywhere, so it stays one here; `.view` shows whatever is there, and `.v` is the
+  // name a hand reaches for when it has typed the long one twice.
+  for (const name of ['cat', 'view', 'v']) {
     server.defineCommand(name, {
       help:
         name === 'cat'
           ? 'Print a file, numbered and highlighted'
-          : 'Show a file numbered, or a directory as a tree (`-L 2` to limit the depth)',
+          : 'Show whatever it names: a file numbered, a directory as a tree, or a value whole',
       action(argument: string) {
         this.clearBufferedCommand();
         const { depth, path: typed } = Files.target(argument.trim());
@@ -84,8 +85,8 @@ export function defineBrowsing(
         // is a few keystrokes and not the whole path again. TAB and the suggestion take it from
         // there.
         // Not a path it can open — but `.view helper` is a fair thing to type, and a name that
-        // is not a file is very likely a value. Only for `.view`: `cat` has never meant that.
-        void (name === 'view' ? asValue(typed) : Promise.resolve(null)).then((said) => {
+        // is not a file is very likely a value. Not for `.cat`, which has never meant that.
+        void (name === 'cat' ? Promise.resolve(null) : asValue(typed)).then((said) => {
           if (said !== null) {
             this.output.write(`${said}\n`);
 

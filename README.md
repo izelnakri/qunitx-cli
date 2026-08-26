@@ -239,9 +239,9 @@ numbered or a directory as a tree, `.ls -L 2` limits the depth, `.history` shows
 `.import lib/a.ts` brings a file in as `A` plus its exports — JSON parsed, anything else as text,
 and a plain `import { a } from './a.ts'` works too — `.imported` names what each file brought,
 `.doc` shows a value's signature, where it is written and the comment above it, `.view <value>`
-adds its implementation, `.copy` puts it on the clipboard, `.open` opens the file at that line,
-`.search` finds tests by name, `.reload` drops all page state, `.url` prints the server URL so you
-can open the page yourself). The line is
+(or `.v`) shows the whole of it, `.copy` puts it on the clipboard, `.open` opens the file at that
+line, `.search` finds tests by name, `.reload` drops all page state, `.url` prints the server URL
+so you can open the page yourself). The line is
 syntax-highlighted as you type and what it comes to is shown on the right; TAB completes
 against the page, Ctrl-F takes the greyed-out suggestion, and Ctrl-C interrupts a runaway
 expression. A `debugger` statement stops the page — `.locals` shows the frame, `.continue` carries

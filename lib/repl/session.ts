@@ -223,11 +223,14 @@ export interface ReplSession {
   /**
    * What the input WOULD evaluate to, or `''` where it cannot be known without doing something.
    *
+   * `depth` is how far into a composite to render, for a caller that wants the whole of a value
+   * rather than the line-long summary a prompt has room for.
+   *
    * V8 refuses to run anything with a side effect for this: an assignment, a declaration, a call
    * that mutates. That refusal is the feature — an answer offered before Enter has to be free, and
    * `deleteEverything()` typed at a prompt must not delete everything because it was typed.
    */
-  preview(input: string): Promise<string>;
+  preview(input: string, depth?: number): Promise<string>;
   /**
    * What this session has added to the page's globals — not the several hundred a browser starts
    * with, which is a list nobody reads.
@@ -698,7 +701,7 @@ class Session implements ReplSession {
     return entries;
   }
 
-  async preview(input: string): Promise<string> {
+  async preview(input: string, depth?: number): Promise<string> {
     // Not while stopped: a paused isolate answers no evaluation, and the one thing a breakpoint
     // must not do is stop answering keystrokes.
     if (this.#closed || this.#frameId || input.trim() === '') return '';
@@ -720,7 +723,7 @@ class Session implements ReplSession {
       .catch(() => null)) as EvaluateResult | null;
     if (!evaluated || evaluated.exceptionDetails) return '';
 
-    return await this.#render(evaluated.result);
+    return await this.#render(evaluated.result, depth);
   }
 
   async reload(): Promise<void> {
@@ -1360,11 +1363,11 @@ class Session implements ReplSession {
   }
 
   /** Renders a result: by-value primitives here, everything else by the same renderer, in the page. */
-  async #render(result: RemoteObject): Promise<string> {
+  async #render(result: RemoteObject, depth?: number): Promise<string> {
     if (!result.objectId || result.subtype === 'promise') return describe(result);
 
     const rendered = await this.#cdp.send('Runtime.callFunctionOn', {
-      functionDeclaration: 'function () { return globalThis.__qunitxInspect(this); }',
+      functionDeclaration: `function () { return globalThis.__qunitxInspect(this, ${depth ?? 'undefined'}); }`,
       objectId: result.objectId,
       returnByValue: true,
     });
@@ -1563,7 +1566,7 @@ function initScript(config: Config): string {
   return [
     // The colour decision is made HERE and baked in: the page has no TTY, no `NO_COLOR` and no
     // idea whether anything is reading it.
-    `globalThis.__qunitxInspect = (value) => (${inspect.toString()})(value, 2, ${colorEnabled});`,
+    `globalThis.__qunitxInspect = (value, depth) => (${inspect.toString()})(value, depth ?? 2, ${colorEnabled});`,
     `(${harness.toString()})({ timeout: ${config.timeout} });`,
   ].join('\n');
 }

@@ -456,6 +456,13 @@ module('Commands | repl | values', { concurrency: true }, () => {
     );
   });
 
+  test('.v is .view, and .view shows the whole of a value where .doc summarises', async (assert) => {
+    const result = await repl('let deep = { a: { b: { c: { d: 1 } } } }\n.doc deep\n.v deep\n');
+
+    assert.includes(result, '{ a: { b: { c: [Object] } } }', 'the doc stops where a prompt would');
+    assert.includes(result, '{ a: { b: { c: { d: 1 } } } }', 'and the view carries on to the end');
+  });
+
   test('.view on a path is still a file', async (assert) => {
     const result = await repl('.view test/fixtures/repl-stepping.ts\n');
 

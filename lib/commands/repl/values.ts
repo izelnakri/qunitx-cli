@@ -10,6 +10,9 @@ import type { REPLServer } from 'node:repl';
 import type { ReplSession } from '../../repl/session.ts';
 import type { Theme } from '../../repl/theme.ts';
 
+/** How far into a value `.view` renders — deep enough that what is in it is what is printed. */
+const WHOLE_VALUE = 8;
+
 /** How much of a value to show: what it is, or what it is and how it is written. */
 interface Depth {
   /** Include the whole declaration, not only its signature and comment. */
@@ -49,7 +52,7 @@ export async function describeValue(
   const asked = argument.trim();
   const at = await session.declaredAt(asked);
   const source = at === null ? null : tryReadFile(path.resolve(cwd, at.file));
-  if (at === null || source === null) return await asWritten(session, asked, palette);
+  if (at === null || source === null) return await asWritten(session, asked, palette, depth);
 
   // Where, then what was said, then the code — reading order, and the order they were written in.
   // The body opens with the signature, so a `.view` that printed both would print it twice.
@@ -176,8 +179,11 @@ async function asWritten(
   session: ReplSession,
   asked: string,
   palette: Theme,
+  depth: Depth,
 ): Promise<string | null> {
-  const rendered = await session.preview(asked);
+  // `.view` is the whole value and `.doc` is what a prompt has room for, which is the same
+  // difference as between a function's body and its signature.
+  const rendered = await session.preview(asked, depth.body ? WHOLE_VALUE : undefined);
   if (rendered === '') return null;
   const where = session.whereFrom(asked);
 
