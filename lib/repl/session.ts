@@ -196,15 +196,18 @@ export interface ReplSession {
   /** Where the page is served, e.g. `http://localhost:1234`. */
   url: string;
   /**
-   * Chrome's own DevTools, open on the page this session is evaluating in — the same realm, the
-   * same DOM, the same paused frame. `null` where this browser has no debugging endpoint to
-   * serve it from, which is a window you can already press F12 in.
+   * Where to open Chrome's DevTools on the page this session is evaluating in — the same realm,
+   * the same DOM, the same paused frame. `null` where this browser has none to serve them from.
    *
    * The point is that it is the SAME page rather than another one at the same address: a value
-   * declared at the prompt is in the console there, and a `debugger` shows as paused in both.
-   * The frontend is served by Chrome itself over localhost — no network, no extension.
+   * declared at the prompt is in the console there, and a `debugger` shows as paused in both. The
+   * frontend is Chrome's own, served over localhost — no network, no extension.
+   *
+   * It needs an HTTP debugging endpoint, which is what the Chrome this process pre-launched has. A
+   * session that fell back to a browser Playwright launched talks over a pipe and gets `null` —
+   * today that is macOS, where nothing is pre-launched, and any headed session, which has F12.
    */
-  devtoolsUrl(): Promise<string | null>;
+  inspector: string | null;
   /** `[file, exported names]` per preloaded module — what the terminal lists on start-up. */
   loaded: Array<[string, string[]]>;
   /**
@@ -510,6 +513,9 @@ export async function start(
     live = session;
     cdp.on('Debugger.paused', (event) => session.onPaused(event));
     session.loaded = await session.readLoaded();
+    // Asked once, so the banner offers the address only where opening it would work. The bridge
+    // behind it is not made here: nothing listens until somebody actually asks for DevTools.
+    session.inspector = (await session.debuggingTarget()) === null ? null : `${url}/devtools`;
     // The page's own bundle loaded these, so nothing recorded how — and a preloaded file is the
     // one most likely to be edited while the session it opened is still up.
     session.rememberPreload(preload);
@@ -563,6 +569,7 @@ const PAUSED = { paused: true } as unknown as EvaluateResult;
 class Session implements ReplSession {
   url: string;
   loaded: Array<[string, string[]]> = [];
+  inspector: string | null = null;
   #config: Config;
   #cdp: CDPSession;
   // The frame a `debugger` statement stopped in, and the notice describing where. Both null while
@@ -948,7 +955,17 @@ class Session implements ReplSession {
     return typeof brought === 'string' ? brought : brought.names;
   }
 
-  async devtoolsUrl(): Promise<string | null> {
+  /**
+   * The debugging port and the page target on it, or `null` where this browser has neither.
+   *
+   * Confirmed against the port rather than assumed: a pre-launch that failed to connect was shut
+   * down and this session is driving a browser Playwright launched, whose targets are not there
+   * and whose transport is a pipe with no HTTP endpoint at all. An address pointing at somebody
+   * else's page would be worse than no address.
+   *
+   * Not on {@link ReplSession}: the answer callers want is {@link ReplSession.inspector}.
+   */
+  async debuggingTarget(): Promise<{ port: string; target: string } | null> {
     const endpoint = (await prelaunchPromise())?.cdpEndpoint;
     const port = endpoint === undefined ? null : new URL(endpoint).port;
     if (port === null || port === '') return null;
@@ -959,20 +976,29 @@ class Session implements ReplSession {
     const target = info?.targetInfo?.targetId;
     if (target === undefined) return null;
 
-    // Confirmed against the port rather than assumed: a pre-launch that failed to connect was
-    // shut down and this session is driving a different Chrome, whose targets are not there.
-    // A URL that points at somebody else's page would be worse than no URL at all.
     const listed = (await fetch(`http://localhost:${port}/json/list`)
       .then((answer) => answer.json())
       .catch(() => null)) as Array<{ id?: string }> | null;
-    if (!Array.isArray(listed) || !listed.some((known) => known.id === target)) return null;
 
-    // The frontend is Chrome's own, served from its port. Its socket is not: a browser sends an
-    // `Origin` header and Chrome answers 403 to any debugger connection that has one, so it goes
-    // through a bridge that connects onward from Node, where there is none to object to.
-    this.#bridge ??= await bridgeTo(`ws://127.0.0.1:${port}/devtools/page/${target}`);
+    return Array.isArray(listed) && listed.some((known) => known.id === target)
+      ? { port, target }
+      : null;
+  }
 
-    return `http://localhost:${port}/devtools/inspector.html?ws=${this.#bridge.address}`;
+  /**
+   * Chrome's own DevTools frontend, pointed at this session's page — what `/devtools` redirects to.
+   *
+   * The frontend is Chrome's own, served from its port. Its socket is not: a browser sends an
+   * `Origin` header and Chrome answers 403 to any debugger connection that has one, so it goes
+   * through a bridge that connects onward from Node, where there is none to object to. The bridge
+   * is made on first use and closed with the session.
+   */
+  async devtoolsUrl(): Promise<string | null> {
+    const found = await this.debuggingTarget();
+    if (found === null) return null;
+    this.#bridge ??= await bridgeTo(`ws://127.0.0.1:${found.port}/devtools/page/${found.target}`);
+
+    return `http://localhost:${found.port}/devtools/inspector.html?ws=${this.#bridge.address}`;
   }
 
   /** Remembers how a file the page loaded for itself got there, so it can be loaded again. */

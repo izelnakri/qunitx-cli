@@ -79,12 +79,11 @@ export async function run(): Promise<number> {
 function banner(config: ResolvedConfig, session: ReplSession): void {
   Reporter.info(config, blue(`qunitx repl — ${where(config, session.url)}`));
   // Said on the way in rather than waited for: a browser tab open on the same realm is the thing
-  // people reach for next, and nobody guesses that the address exists. A window has F12 already.
-  if (config.open !== true) {
-    Reporter.info(
-      config,
-      blue(`inspect the same page at ${session.url}/devtools — or \`.devtools\``),
-    );
+  // people reach for next, and nobody guesses that the address exists. Absent where opening it
+  // would not work — a window has F12 already, and a session that fell back to a browser
+  // Playwright launched has no debugging endpoint to serve DevTools from.
+  if (session.inspector !== null) {
+    Reporter.info(config, blue(`inspect the same page at ${session.inspector} — or \`.devtools\``));
   }
   for (const [file, names] of session.loaded) {
     const exported = names.length > 0 ? `: ${names.join(', ')}` : '';
@@ -94,6 +93,19 @@ function banner(config: ResolvedConfig, session: ReplSession): void {
     config,
     blue('type `.help` for commands, `:<cmd>` for a shell, `.exit` or Ctrl-D to quit'),
   );
+}
+
+/**
+ * Why there is no page to inspect, in the words of whichever reason it is.
+ *
+ * A window has F12 and needs no address. Everything else comes down to the same thing — this
+ * session is driving a browser Playwright launched, which talks over a pipe and serves no DevTools
+ * — and the one place that happens by default is macOS, where nothing is pre-launched.
+ */
+function nowhereToInspect(config: ResolvedConfig): string {
+  return config.open === true
+    ? 'no address needed — press F12 in the window instead'
+    : 'no debugging endpoint here, so no DevTools to open — try `--open` for a window instead';
 }
 
 /**
@@ -507,16 +519,13 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
       help: 'Open Chrome DevTools on this very page — same realm, same DOM, same paused frame',
       action() {
         this.clearBufferedCommand();
-        void session.devtoolsUrl().then(async (inspector) => {
-          if (inspector === null) {
-            this.output.write(
-              red('no debugging endpoint here — press F12 in the window instead\n'),
-            );
+        const address = session.inspector;
+        if (address === null) {
+          this.output.write(red(`${nowhereToInspect(config)}\n`));
 
-            return void this.displayPrompt();
-          }
-          const address = `${session.url}/devtools`;
-          const failed = interactive ? await openExternally(address) : null;
+          return void this.displayPrompt();
+        }
+        void (interactive ? openExternally(address) : Promise.resolve(null)).then((failed) => {
           this.output.write(failed ?? blue(`${address}\n`));
           this.displayPrompt();
         });

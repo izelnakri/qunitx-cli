@@ -43,7 +43,22 @@ async function knock(
 // Chrome serves its own DevTools frontend over the same debugging port the session drives the page
 // on. Handing that out means any Chromium browser can open the REPL's OWN page — one realm, two
 // views — which is the thing `--open` does with a window and this does without one.
+//
+// It needs the Chrome this process pre-launched, which is not spawned on macOS: there the session
+// falls back to a browser Playwright launched, which talks over a pipe and serves no frontend at
+// all. That case has its own test below — what matters there is that nothing is offered.
 module('Flags | repl | /devtools', { concurrency: true }, () => {
+  if (process.platform === 'darwin') {
+    test('a session with no debugging endpoint offers nothing, rather than an address that fails', async (assert) => {
+      const result = await execute('node cli.ts repl --browser=chromium', { stdin: '.devtools\n' });
+
+      assert.notIncludes(result, 'inspect the same page at', 'the banner does not promise it');
+      assert.includes(result, 'no debugging endpoint here', 'and the command says why');
+    });
+
+    return;
+  }
+
   test('the session offers an address on its own port, and it points at its own page', async (assert) => {
     const { status, location, served } = await knock(18287, '/devtools');
 
