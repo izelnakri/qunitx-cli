@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises';
 import { module, test } from 'qunitx';
 import { withRepl, captureStream } from './helpers.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
@@ -680,6 +681,70 @@ module('API | repl | liveness', { concurrency: true }, () => {
 
       assert.true(threw.failed, 'the command failed');
       assert.true(session.alive(), 'and the session is fine');
+    });
+  });
+});
+
+// What a value IS, without printing it: which file put it in scope, and where it was written.
+module('API | repl | values', { concurrency: true }, () => {
+  const HELPERS = 'test/fixtures/repl-helpers.ts';
+
+  test('what each preloaded file put in scope, and what kind each is', async (assert) => {
+    // The kind is a theme capture rather than a JavaScript type, because it exists to be
+    // coloured — a list of names says nothing about what they are.
+    await withRepl({ inputs: [HELPERS] }, async (session) => {
+      const [file] = await session.imported();
+
+      assert.strictEqual(file?.file, HELPERS);
+      assert.deepEqual(
+        file?.names.filter((entry) => ['double', 'GREETING'].includes(entry.name)),
+        [
+          { name: 'GREETING', capture: '@string' },
+          { name: 'double', capture: '@function' },
+        ],
+        'a string reads as a string and a function as a function',
+      );
+    });
+  });
+
+  test('nothing preloaded is nothing imported', async (assert) => {
+    await withRepl({}, async (session) => {
+      assert.deepEqual(await session.imported(), []);
+    });
+  });
+
+  test('where a value was written', async (assert) => {
+    await withRepl({ inputs: [HELPERS] }, async (session) => {
+      const at = await session.declaredAt('double');
+
+      assert.strictEqual(at?.file, HELPERS, 'the file, not the bundle it was built into');
+      // Read back rather than hardcoded: the line is only right if it points at the declaration,
+      // and a number in a test says nothing about whether it does.
+      const source = await fs.readFile(at?.file ?? '', 'utf8');
+      assert.includes(
+        source.split('\n')[(at?.line ?? 0) - 1] ?? '',
+        'export function double',
+        'the line it names is the line it is written on',
+      );
+    });
+  });
+
+  test('and the things that have nowhere to point at', async (assert) => {
+    await withRepl({ inputs: [HELPERS] }, async (session) => {
+      assert.strictEqual(await session.declaredAt('GREETING'), null, 'V8 places functions only');
+      assert.strictEqual(await session.declaredAt('nope.nope'), null, 'and nothing that throws');
+      assert.strictEqual(await session.declaredAt(''), null);
+    });
+  });
+
+  test('asking where something is does not run it', async (assert) => {
+    // `.doc save()` must not save.
+    await withRepl({}, async (session) => {
+      await session.evaluate('globalThis.ran = 0');
+      await session.evaluate('globalThis.sideEffect = () => { ran += 1; return 1 }');
+
+      assert.strictEqual(await session.declaredAt('sideEffect()'), null);
+      assert.strictEqual((await session.evaluate('ran')).output, '0', 'it was never called');
     });
   });
 });

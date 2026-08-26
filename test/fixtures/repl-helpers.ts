@@ -5,6 +5,13 @@ import { test } from 'qunitx';
 
 export const GREETING = 'hello from the preload';
 
+/**
+ * Doubles a number, and carries an example so `.doc` has a fenced block to paint as code.
+ *
+ * ```ts
+ * const answer = double(21); // 42
+ * ```
+ */
 export function double(value: number): number {
   return value * 2;
 }

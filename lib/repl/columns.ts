@@ -100,3 +100,16 @@ export function truncate(text: string, width: number): string {
 export function paint(text: string, style: string): string {
   return style === '' ? text : `${style}${text}${RESET}`;
 }
+
+/**
+ * How wide a line may be. 80 where nothing says — a pipe has no width, and neither does a file.
+ *
+ * ```ts
+ * import { terminalWidth } from './columns.ts';
+ *
+ * terminalWidth({ write: () => true } as never); // 80 — nothing there to ask
+ * ```
+ */
+export function terminalWidth(output: NodeJS.WritableStream): number {
+  return (output as NodeJS.WriteStream).columns || 80;
+}

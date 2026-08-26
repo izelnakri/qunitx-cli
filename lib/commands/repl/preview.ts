@@ -2,11 +2,6 @@ import { ESCAPE, plain, plainLength, truncate } from '../../repl/columns.ts';
 import type { REPLServer } from 'node:repl';
 import type { ReplSession } from '../../repl/session.ts';
 
-/** How wide a line may be. 80 where nothing says — a pipe has no width, and neither does a file. */
-export function terminalWidth(output: NodeJS.WritableStream): number {
-  return (output as NodeJS.WriteStream).columns || 80;
-}
-
 // How wide a terminal has to be before an answer can share the line with the question. Under this
 // the two fight for the same columns and the answer wins arguments it should not.
 const PREVIEW_MINIMUM_COLUMNS = 60;

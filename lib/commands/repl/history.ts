@@ -14,6 +14,17 @@ import type { Theme } from '../../repl/theme.ts';
  * Points history at `~/.qunitx_repl_history`, honouring `QUNITX_REPL_HISTORY` (an empty value
  * turns it off). Only in a terminal — `setupHistory` is a no-op without one, and a scripted
  * invocation has no business writing to a history file.
+ *
+ * ```ts
+ * import { setupHistory } from './history.ts';
+ *
+ * import type { REPLServer } from 'node:repl';
+ *
+ * // Defined, not invoked: it opens a file in the developer's home directory.
+ * function example(server: REPLServer) {
+ *   setupHistory(server, false); // a pipe keeps no history
+ * }
+ * ```
  */
 export function setupHistory(server: REPLServer, interactive: boolean): void {
   const configured = process.env.QUNITX_REPL_HISTORY;
@@ -60,11 +71,17 @@ export function trimHistoryFile(file: string, history: readonly string[]): void 
   }
 }
 
-/** Ctrl-F, the key that takes the suggestion. */
-const CTRL_F = '\u0006';
 /** How many lines `.history` shows when it is not told — the number zsh settled on. */
-export const HISTORY_SHOWN = 16;
-/** And how many the session keeps at all, which has to be the larger number of the two. */
+const HISTORY_SHOWN = 16;
+/**
+ * How many lines a session keeps. `node:repl` keeps thirty; a shell keeps thousands.
+ *
+ * ```ts
+ * import { HISTORY_KEPT } from './history.ts';
+ *
+ * HISTORY_KEPT > 30; // true — thirty is fewer than `.history` can be asked for
+ * ```
+ */
 export const HISTORY_KEPT = 1_000;
 
 /**
@@ -99,4 +116,37 @@ export function recent(newestFirst: readonly string[], count: number, palette: T
       return `${paint(number, style)}  ${code}\n`;
     })
     .join('');
+}
+
+/**
+ * `.history` — the last lines entered, as `history` prints them.
+ *
+ * ```ts
+ * import { defineHistory } from './history.ts';
+ *
+ * import type { REPLServer } from 'node:repl';
+ * import type { Theme } from '../../repl/theme.ts';
+ *
+ * // Defined, not invoked: it writes to a live prompt.
+ * function example(server: REPLServer, palette: Theme) {
+ *   defineHistory(server, palette);
+ * }
+ * ```
+ */
+export function defineHistory(server: REPLServer, palette: Theme): void {
+  server.defineCommand('history', {
+    help: 'Show the last lines entered — `.history 40` for more of them',
+    action(count: string) {
+      this.clearBufferedCommand();
+      const asked = count.trim() === '' ? HISTORY_SHOWN : Number(count.trim());
+      if (!Number.isInteger(asked) || asked < 1) {
+        this.output.write(`Usage: .history [count]\n`);
+
+        return void this.displayPrompt();
+      }
+      const entries = (server as unknown as { history?: string[] }).history ?? [];
+      this.output.write(recent(entries, asked, palette));
+      this.displayPrompt();
+    },
+  });
 }

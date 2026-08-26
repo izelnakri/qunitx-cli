@@ -9,20 +9,19 @@ import * as Reporter from '../../reporters/index.ts';
 import * as Repl from '../../repl/session.ts';
 import * as Result from '../../result/index.ts';
 import { blue, red } from '../../utils/color.ts';
-import { edit, replayableLines, tryWriteFile } from './editor.ts';
+import { edit, openInEditor, replayableLines, tryWriteFile } from './editor.ts';
 import { complete, completionCache, setupSuggestions } from './completion.ts';
 import type { CompleterCallback } from './completion.ts';
-import { count, lost, repeat, showFrame, stack, FRAMES, STEPS } from './debugging.ts';
-import { pathProblem, showTree } from './browsing.ts';
-import { HISTORY_KEPT, HISTORY_SHOWN, recent, setupHistory } from './history.ts';
+import { defineDebugging, lost, showFrame } from './debugging.ts';
+import { defineBrowsing } from './browsing.ts';
+import { defineValues, describeValue, nowhere } from './values.ts';
+import { HISTORY_KEPT, defineHistory, setupHistory } from './history.ts';
 import { setupHighlighting } from './painting.ts';
-import { setupPreview, terminalWidth } from './preview.ts';
+import { setupPreview } from './preview.ts';
 import { shell } from './shell.ts';
 import { vimKeys } from './keys.ts';
 import { findProjectRoot } from '../../utils/find-project-root.ts';
-import { formatScope } from '../../repl/scope.ts';
-import * as Files from '../../repl/files.ts';
-import { ESCAPE } from '../../repl/columns.ts';
+import { ESCAPE, paint } from '../../repl/columns.ts';
 import { depth } from '../../repl/highlight.ts';
 import { theme } from '../../repl/theme.ts';
 import type { ReplSession } from '../../repl/session.ts';
@@ -60,7 +59,7 @@ export async function run(): Promise<number> {
     (open) => banner(config, open),
   );
 
-  return await drive(session, config.cwd);
+  return await drive(session, config);
 }
 
 /** What the session is, what it loaded, and how to leave — through the run's reporters, as `#` lines. */
@@ -84,7 +83,8 @@ function banner(config: ResolvedConfig, session: ReplSession): void {
  * supports the same subset, so the compiled binary gets the same prompt. What it does NOT do is
  * wait for an asynchronous `eval` before reading the next line — see {@link pipe}.
  */
-function drive(session: ReplSession, cwd: string): Promise<number> {
+function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
+  const cwd = config.cwd;
   return new Promise((resolve) => {
     const interactive = Boolean(process.stdin.isTTY);
     // Piped input goes through a stream this process fills one line at a time. Feeding the REPL
@@ -232,37 +232,6 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
         });
       },
     });
-    server.defineCommand('breakpoints', {
-      help: 'List the breakpoints this session has set',
-      action() {
-        this.clearBufferedCommand();
-        const set = session.breakpoints();
-        this.output.write(
-          set.length === 0
-            ? 'No breakpoints\n'
-            : `${set.map(({ index, where }) => `${index}  ${where}`).join('\n')}\n`,
-        );
-        this.displayPrompt();
-      },
-    });
-    server.defineCommand('delete', {
-      help: 'Remove a breakpoint by its number — `.delete 1`',
-      action(argument: string) {
-        this.clearBufferedCommand();
-        const index = count(argument, 0);
-        // No number is not "all of them". Deleting everything by accident is a worse mistake than
-        // typing one more character, and there is no confirmation here to catch it.
-        if (index === null || index < 1) {
-          this.output.write(`Usage: .delete <number>\n`);
-
-          return void this.displayPrompt();
-        }
-        void session.removeBreakpoint(index).then((removed) => {
-          if (!removed) this.output.write(red(`No breakpoint ${index}\n`));
-          this.displayPrompt();
-        });
-      },
-    });
     // What every shell means by it, rather than `node:repl`'s "break, and drop the local context"
     // — there is no local context here, and a prompt that has scrolled past what you were reading
     // is the thing anybody actually wants cleared. The half-typed input survives, as it does in a
@@ -273,21 +242,6 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
         this.clearBufferedCommand();
         // Nothing to clear on a pipe, and the escape would land in whatever is reading it.
         if (interactive) this.output.write(clearScreen());
-        this.displayPrompt();
-      },
-    });
-    server.defineCommand('history', {
-      help: 'Show the last lines entered — `.history 40` for more of them',
-      action(count: string) {
-        this.clearBufferedCommand();
-        const asked = count.trim() === '' ? HISTORY_SHOWN : Number(count.trim());
-        if (!Number.isInteger(asked) || asked < 1) {
-          this.output.write(`Usage: .history [count]\n`);
-
-          return void this.displayPrompt();
-        }
-        const entries = (server as unknown as { history?: string[] }).history ?? [];
-        this.output.write(recent(entries, asked, palette));
         this.displayPrompt();
       },
     });
@@ -307,6 +261,15 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
       );
       void showFrame(server, session, palette).then(() => server.displayPrompt(true));
     });
+
+    defineDebugging(server, session, palette);
+    defineValues(server, session, palette, cwd);
+    // `.view` on something that is not a path falls through to the value of that name, with its
+    // implementation — the whole of what is known about it, which is what `view` means.
+    defineBrowsing(server, palette, cwd, interactive, (argument) =>
+      describeValue(session, argument, cwd, palette, { body: true }),
+    );
+    defineHistory(server, palette);
 
     setupHistory(server, interactive);
     // Before the suggestion, and that order matters: both redraw on a keypress, and the ghost has
@@ -350,69 +313,6 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
       });
     }
 
-    // `.cat` for the muscle memory, `.view` for anyone without it — but they stopped being the
-    // same command once a directory became something worth looking at. `cat` on a directory is an
-    // error everywhere, so it stays one here; `.view` shows whatever is there.
-    for (const name of ['cat', 'view']) {
-      server.defineCommand(name, {
-        help:
-          name === 'cat'
-            ? 'Print a file, numbered and highlighted'
-            : 'Show a file numbered, or a directory as a tree (`-L 2` to limit the depth)',
-        action(argument: string) {
-          this.clearBufferedCommand();
-          const { depth, path: typed } = Files.target(argument.trim());
-          if (argument.trim() === '') {
-            this.output.write(`Usage: .${name} <file>\n`);
-
-            return void this.displayPrompt();
-          }
-
-          const found = Files.read(typed, cwd);
-          if (found.kind === 'file') {
-            this.output.write(`${Files.numbered(found.contents, typed, palette)}\n`);
-
-            return void this.displayPrompt();
-          }
-          if (found.kind === 'directory' && name === 'view') {
-            this.output.write(showTree(typed, cwd, palette, depth));
-
-            return void this.displayPrompt();
-          }
-          // Everything else leaves the prompt holding the part that WAS real, so the next attempt
-          // is a few keystrokes and not the whole path again. TAB and the suggestion take it from
-          // there.
-          this.output.write(red(`${pathProblem(found, typed)}\n`));
-          this.displayPrompt();
-          if (found.kind !== 'unreadable' && interactive) server.write(`.${name} ${found.retype}`);
-        },
-      });
-    }
-    // Only ever a tree, so `.tree` on a file says so rather than quietly printing it. Half the
-    // value of a narrow command is that it refuses what it is not for.
-    server.defineCommand('tree', {
-      help: 'Show a directory as a tree — `-L 2` for two levels, all the way down by default',
-      action(argument: string) {
-        this.clearBufferedCommand();
-        const { depth, path: typed } = Files.target(argument.trim());
-        const found = Files.read(typed, cwd);
-        if (found.kind === 'directory') {
-          this.output.write(showTree(typed, cwd, palette, depth));
-        } else if (found.kind === 'file') {
-          this.output.write(red(`${typed} is a file, not a directory\n`));
-        } else {
-          this.output.write(red(`${pathProblem(found, typed)}\n`));
-          this.displayPrompt();
-
-          return void (
-            found.kind === 'missing' &&
-            interactive &&
-            server.write(`.tree ${found.retype}`)
-          );
-        }
-        this.displayPrompt();
-      },
-    });
     // Replaces the built-in, which writes every line the session evaluated. That file is meant to
     // be replayable JavaScript, and a shell line is neither JavaScript nor something anyone wants
     // re-run by accident. Filtered HERE rather than as the line is entered, because `node:repl`
@@ -433,145 +333,42 @@ function drive(session: ReplSession, cwd: string): Promise<number> {
         this.displayPrompt();
       },
     });
-    // `.continue` is the name every debugger uses for this, and the one the pause itself offers.
-    // `.resume` stays because it is what this REPL shipped with, and a command that used to work
-    // should not stop working over a rename.
-    for (const name of ['continue', 'resume']) {
+    // `.open` for what it does to a file, `.edit` for what you are about to do to it, `.e` for
+    // the hand that has typed it a thousand times.
+    for (const name of ['open', 'edit', 'e']) {
       server.defineCommand(name, {
-        help: 'Let a page paused at a `debugger` statement carry on',
-        action() {
-          this.clearBufferedCommand();
-          if (!session.pausedAt) this.output.write('Not paused\n');
-          void session.resume().then(() => this.displayPrompt());
-        },
-      });
-    }
-    // `step`, `next` and `finish`, as every debugger since gdb has named them. Stepping is also
-    // the only way into another frame from a breakpoint: a `debugger` statement inside something
-    // you CALL while stopped does nothing, because V8 turns breakpoints off for the length of a
-    // debugger evaluation.
-    for (const [name, kind, help] of STEPS) {
-      server.defineCommand(name, {
-        help,
+        help: 'Open the file a value is declared in, at its line',
         action(argument: string) {
           this.clearBufferedCommand();
-          const times = count(argument);
-          if (times === null) {
-            this.output.write(`Usage: .${name} [count]\n`);
+          void session.declaredAt(argument.trim()).then(async (at) => {
+            if (!at) {
+              this.output.write(red(`${nowhere(argument, 'open')}\n`));
 
-            return void this.displayPrompt();
-          }
-          if (!session.pausedAt) {
-            this.output.write('Not paused\n');
-
-            return void this.displayPrompt();
-          }
-          // Only where it ends up is printed. A count means "do this n times", and n locations on
-          // the way is the noise you asked to skip by giving one.
-          void repeat(times, () => session.step(kind)).then(async (where) => {
-            if (where === null) this.output.write(blue('the page carried on\n'));
-            else {
-              this.output.write(blue(`${where}\n`));
-              await showFrame(server, session, palette);
+              return void this.displayPrompt();
             }
+            // A pipe has no terminal to hand over, and an editor given one anyway waits for a
+            // human who is not there — the session simply stops. Where it cannot open it, the
+            // place is still worth saying.
+            const failure = interactive
+              ? await openInEditor(path.resolve(cwd, at.file), at.line, server)
+              : null;
+            this.output.write(failure ?? blue(`${at.file}:${at.line}\n`));
             this.displayPrompt();
           });
         },
       });
     }
-    // The stack, and where on it to stand. A breakpoint is rarely only about the line it stopped
-    // on — the answer is as often in who called it — and gdb's names for looking are the ones
-    // anybody who has used a debugger already has in their hands.
-    for (const name of ['backtrace', 'bt', 'where']) {
-      server.defineCommand(name, {
-        help: 'Show the call stack — `.backtrace 3` for the innermost three',
-        action(argument: string) {
-          this.clearBufferedCommand();
-          const wanted = count(argument, Infinity);
-          if (wanted === null) {
-            this.output.write(`Usage: .${name} [count]\n`);
-
-            return void this.displayPrompt();
-          }
-          const frames = session.backtrace();
-          const shown = frames.slice(0, wanted);
-          this.output.write(frames.length === 0 ? 'Not paused\n' : `${stack(shown, palette)}\n`);
-          this.displayPrompt();
-        },
-      });
-    }
-    // `up` toward whoever called this, `down` back toward where it stopped — gdb's directions,
-    // which are about the stack growing downwards rather than about the list on screen.
-    const move = (to: number) => {
-      const where = session.selectFrame(to);
-      if (where === null) server.output.write(red('No such frame\n'));
-
-      return where;
-    };
-    for (const { name, direction, count: counted, help } of FRAMES) {
-      server.defineCommand(name, {
-        help,
-        action(argument: string) {
-          this.clearBufferedCommand();
-          if (!session.pausedAt) {
-            this.output.write('Not paused\n');
-
-            return void this.displayPrompt();
-          }
-          const here = session.backtrace().find((frame) => frame.selected)?.index ?? 0;
-          // `.here` asks one question and takes nothing to answer it. Reading an argument and
-          // moving somewhere would be the command doing what its name does not say.
-          if (!counted && argument.trim() !== '') {
-            this.output.write(`Usage: .${name}\n`);
-
-            return void this.displayPrompt();
-          }
-          // `.frame` with nothing after it says where you are without moving, which is what gdb's
-          // does — and what stops it from meaning "go to frame 0" because `Number('')` is zero.
-          const given = count(argument, direction === 0 ? here : 1);
-          if (given === null) {
-            this.output.write(`Usage: .${name} ${direction === 0 ? '[number]' : '[count]'}\n`);
-
-            return void this.displayPrompt();
-          }
-          // A direction times a count, or the number itself. `up -1` is `down 1`, as in gdb.
-          const asked = direction === 0 ? given : here + direction * given;
-          const where = move(asked);
-          if (where === null) return void this.displayPrompt();
-
-          this.output.write(blue(`${where}\n`));
-          void showFrame(server, session, palette).then(() => this.displayPrompt());
-        },
-      });
-    }
-    // Two commands rather than one because a REPL is in one of two states and the answer differs:
-    // running, where the interesting names are the ones this session added to the page, and
-    // stopped at a breakpoint, where they are the ones the frame can see. Same format either way.
-    server.defineCommand('scope', {
-      help: 'List what this session has added to the page, with values',
-      action() {
+    // One key for both questions somebody asks a prompt: what can I type, and what is this.
+    server.defineCommand('h', {
+      help: 'Help with nothing after it; the documentation for whatever follows it',
+      action(argument: string) {
         this.clearBufferedCommand();
-        void session.scope().then((entries) => {
-          const listing = formatScope(entries, terminalWidth(this.output));
-          this.output.write(listing === '' ? 'Nothing declared yet\n' : `${listing}\n`);
-          this.displayPrompt();
-        });
-      },
-    });
-    server.defineCommand('locals', {
-      help: 'List what is in scope at a `debugger` breakpoint, with values',
-      action() {
-        this.clearBufferedCommand();
-        if (!session.pausedAt) {
-          this.output.write('Not paused — `.scope` is what this session has declared\n');
+        if (argument.trim() === '') {
+          server.commands.help?.action?.call(this, '');
 
-          return void this.displayPrompt();
+          return;
         }
-        void session.locals().then((entries) => {
-          const listing = formatScope(entries, terminalWidth(this.output));
-          this.output.write(listing === '' ? 'Nothing in scope here\n' : `${listing}\n`);
-          this.displayPrompt();
-        });
+        server.commands.doc?.action?.call(this, argument);
       },
     });
     server.defineCommand('url', {

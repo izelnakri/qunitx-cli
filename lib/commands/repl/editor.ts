@@ -22,7 +22,15 @@ export function replayableLines(server: { lines?: string[] }): string[] {
   return (server.lines ?? []).filter((line) => !line.trimStart().startsWith(':'));
 }
 
-/** True when the file was written. A save that cannot land is a message, not a crashed session. */
+/**
+ * True when the file was written. A save that cannot land is a message, not a crashed session.
+ *
+ * ```ts
+ * import { tryWriteFile } from './editor.ts';
+ *
+ * tryWriteFile('/definitely/not/here/a.txt', 'x'); // false
+ * ```
+ */
 export function tryWriteFile(file: string, contents: string): boolean {
   try {
     fs.writeFileSync(file, contents);
@@ -72,29 +80,66 @@ export async function edit(editor: string, contents: string, server: REPLServer)
   // path and each would save over the other's buffer.
   const file = path.join(os.tmpdir(), `qunitx-repl-${process.pid}-${randomUUID()}.js`);
   fs.writeFileSync(file, contents);
+
+  try {
+    await handOver(server, editor, [file]);
+
+    return tryReadFile(file) ?? contents;
+  } finally {
+    try {
+      fs.unlinkSync(file);
+    } catch {
+      // Already gone, which is where it was headed.
+    }
+  }
+}
+
+/**
+ * A file's contents, or null when it cannot be read — a missing path is an answer, not a crash.
+ *
+ * ```ts
+ * import { tryReadFile } from './editor.ts';
+ *
+ * tryReadFile('/definitely/not/here'); // null
+ * ```
+ */
+export function tryReadFile(file: string): string | null {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Gives the terminal to a child process, waits for it, and takes it back.
+ *
+ * Both halves of how stdin was found have to be put back. Resuming a stream that was not flowing
+ * does not restore anything — it STARTS something, and a flowing stdin holds the event loop open
+ * for as long as the process lives. `readableFlowing` and not `isPaused()`: a stdin nobody has
+ * read yet is neither flowing nor paused, and `isPaused()` calls that false.
+ *
+ * Resolves `false` where the child could not be started, which is the one failure worth telling
+ * anybody about; everything else it does is the child's business.
+ */
+async function handOver(server: REPLServer, command: string, args: string[]): Promise<boolean> {
   server.pause();
   const stdin = process.stdin;
   const wasRaw = Boolean(stdin.isRaw);
-  // Both halves of how stdin was found, because both have to be put back. Resuming a stream that
-  // was not flowing does not restore anything — it STARTS something, and a flowing stdin holds the
-  // event loop open for as long as the process lives. `readableFlowing` and not `isPaused()`:
-  // a stdin nobody has read yet is neither flowing nor paused, and `isPaused()` calls that false.
   const wasFlowing = stdin.readableFlowing === true;
   stdin.pause();
   if (wasRaw) stdin.setRawMode(false);
 
   try {
-    await new Promise<void>((resolve) => {
-      const child = spawn(editor, [file], { stdio: 'inherit' });
-      child.on('error', () => resolve());
-      child.on('close', () => resolve());
+    return await new Promise<boolean>((resolve) => {
+      const child = spawn(command, args, { stdio: 'inherit' });
+      child.on('error', () => resolve(false));
+      child.on('close', () => resolve(true));
     });
-
-    return tryReadFile(file) ?? contents;
   } finally {
     if (wasRaw) stdin.setRawMode(true);
-    // Handing the terminal back, and only to a prompt that had it. Whatever the editor left in the
-    // buffer is the editor's, not the next line's — a half-read escape sequence typed at a prompt
+    // Handing the terminal back, and only to a prompt that had it. Whatever the child left in the
+    // buffer is the child's, not the next line's — a half-read escape sequence typed at a prompt
     // is the garbage this whole handover exists to avoid. Where nothing was reading stdin, neither
     // half applies: `read()` restarts the flow it drains, and a stdin left flowing with no reader
     // holds the event loop open for the life of the process.
@@ -105,19 +150,40 @@ export async function edit(editor: string, contents: string, server: REPLServer)
       stdin.resume();
     }
     server.resume();
-    try {
-      fs.unlinkSync(file);
-    } catch {
-      // Already gone, which is where it was headed.
-    }
   }
 }
 
-/** A file's contents, or null when it cannot be read — a missing path is an answer, not a crash. */
-export function tryReadFile(file: string): string | null {
-  try {
-    return fs.readFileSync(file, 'utf8');
-  } catch {
-    return null;
-  }
+/**
+ * Opens a file at a line in the developer's editor, or says why it could not.
+ *
+ * `+LINE file` is the argument every terminal editor since vi has taken, and the ones that do not
+ * ignore it and open the file anyway — which is still the thing that was asked for.
+ *
+ * Resolves with `null` when the editor ran, or with the line to print when it could not: no
+ * `$EDITOR` set, or one that is not there.
+ *
+ * ```ts
+ * import { openInEditor } from './editor.ts';
+ *
+ * import type { REPLServer } from 'node:repl';
+ *
+ * // Defined, not invoked: it hands a real terminal to a real editor.
+ * function example(server: REPLServer) {
+ *   return openInEditor('/proj/a.ts', 12, server); // null once the editor has exited
+ * }
+ * ```
+ */
+export async function openInEditor(
+  file: string,
+  line: number,
+  server: REPLServer,
+): Promise<string | null> {
+  const editor = process.env.VISUAL || process.env.EDITOR;
+  if (!editor) return 'no $EDITOR set — nothing to open it with\n';
+
+  // The same handover `.nvim` makes: readline stands down, the editor owns the terminal, and it
+  // is given back only to a prompt that had it.
+  const started = await handOver(server, editor, [`+${line}`, file]);
+
+  return started ? null : `${editor} could not be started\n`;
 }

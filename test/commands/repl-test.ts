@@ -241,6 +241,97 @@ module('Commands | repl | .cat', { concurrency: true }, () => {
   });
 });
 
+// Three questions about a value that do not need it printed: what came from where, what it is
+// for, and where it is written.
+module('Commands | repl | values', { concurrency: true }, () => {
+  const helpers = (stdin: string) => repl(stdin, 'test/fixtures/repl-helpers.ts');
+
+  test('.imported names what each file put in scope', async (assert) => {
+    const result = await helpers('.imported\n');
+
+    assert.exitCode(result, 0);
+    assert.includes(result, 'test/fixtures/repl-helpers.ts:');
+    assert.includes(result, 'double', 'and what it brought');
+    assert.includes(await repl('.imported\n'), 'Nothing preloaded', 'with nothing, nothing');
+  });
+
+  test('.doc reads in the order the file does: where, what was said, then the code', async (assert) => {
+    const result = await helpers('.doc double\n');
+
+    assert.includes(result, 'test/fixtures/repl-helpers.ts:', 'where it is written');
+    assert.includes(result, 'Doubles a number', 'the sentence above it');
+    assert.includes(result, 'const answer = double(21)', 'with the example in it');
+    assert.includes(result, 'export function double(value: number): number', 'and the signature');
+
+    const at = (text: string) => result.stdout.indexOf(text);
+    assert.true(
+      at('repl-helpers.ts:') < at('Doubles a number') &&
+        at('Doubles a number') < at('export function double'),
+      'in that order — the signature last, where the eye lands before typing the call',
+    );
+  });
+
+  test('a value with no comment still has a signature and a place', async (assert) => {
+    // It used to answer "nothing written about boom", which is true and useless: the two things
+    // it could say were both known.
+    const result = await repl('.doc outer\n', 'test/fixtures/repl-stepping.ts');
+
+    assert.includes(result, 'export function outer(): number');
+    assert.includes(result, 'repl-stepping.ts:9');
+    assert.notIncludes(result, 'nothing known', 'because something is');
+  });
+
+  test('.view on a name that is not a path shows the value, body and all', async (assert) => {
+    const result = await repl('.view helper\n', 'test/fixtures/repl-stepping.ts');
+
+    assert.includes(result, 'export function helper(value: number): number', 'the signature');
+    assert.includes(result, 'const doubled = value * 2', 'and how it is written');
+    assert.strictEqual(
+      result.stdout.split('export function helper').length - 1,
+      1,
+      'once — the body opens with the signature, so printing both printed it twice',
+    );
+  });
+
+  test('.view on a path is still a file', async (assert) => {
+    const result = await repl('.view test/fixtures/repl-stepping.ts\n');
+
+    assert.includes(result, '1 | //', 'numbered, as it always was');
+  });
+
+  test('.explain and `.h <value>` are the same question', async (assert) => {
+    const [doc, explain, h] = await Promise.all([
+      helpers('.doc double\n'),
+      helpers('.explain double\n'),
+      helpers('.h double\n'),
+    ]);
+    const said = (text: string) => text.split('\n').filter((line) => line.includes('Doubles'));
+
+    assert.deepEqual(said(explain.stdout), said(doc.stdout));
+    assert.deepEqual(said(h.stdout), said(doc.stdout));
+  });
+
+  test('`.h` on its own is the help', async (assert) => {
+    assert.includes(await repl('.h\n'), '.imported', 'every command, one line each');
+  });
+
+  test('what has nothing to say says so', async (assert) => {
+    assert.includes(await helpers('.doc GREETING\n'), 'nothing known about GREETING');
+    assert.includes(await helpers('.doc\n'), 'Usage: .doc <value>');
+    assert.includes(await helpers('.open GREETING\n'), 'nothing known about GREETING');
+  });
+
+  test('the short names reach the same command', async (assert) => {
+    // A pipe has no terminal to hand to an editor, so all three say where it is instead — which
+    // is also what makes this testable rather than a session waiting on a human who is not there.
+    const [long, short] = await Promise.all([helpers('.open double\n'), helpers('.e double\n')]);
+    const said = (text: string) => text.split('\n').filter((line) => line.includes('repl-helpers'));
+
+    assert.includes(long, 'repl-helpers.ts:', 'the file and the line');
+    assert.deepEqual(said(short.stdout), said(long.stdout), '`.e` is `.edit` is `.open`');
+  });
+});
+
 // `.break` does two jobs, told apart by whether anything follows it: `node:repl` has always used
 // it for abandoning a half-typed block and every debugger has always used it for setting a
 // breakpoint, and both are what somebody typing that FORM means.

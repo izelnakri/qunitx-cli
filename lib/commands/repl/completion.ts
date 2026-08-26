@@ -9,6 +9,15 @@ import type { ReplSession } from '../../repl/session.ts';
 /** Ctrl-F, the key that takes the suggestion. */
 const CTRL_F = '\u0006';
 
+/**
+ * What `node:repl` hands a completer to answer through: the matches, and the word they finish.
+ *
+ * ```ts
+ * import type { CompleterCallback } from './completion.ts';
+ *
+ * const answer: CompleterCallback = (_error, [hits]) => hits.length; // ['a'] finishes 'a'
+ * ```
+ */
 export type CompleterCallback = (error: null, result: [string[], string]) => void;
 
 /**
@@ -33,6 +42,20 @@ interface NameSource {
   subscribe(listener: () => void): void;
 }
 
+/**
+ * The page's names, kept between keystrokes and refreshed behind them.
+ *
+ * ```ts
+ * import { completionCache } from './completion.ts';
+ *
+ * import type { ReplSession } from '../../repl/session.ts';
+ *
+ * // Defined, not invoked: it asks a live page.
+ * function example(session: ReplSession) {
+ *   return completionCache(session).lookup(''); // what is known right now, never a wait
+ * }
+ * ```
+ */
 export function completionCache(session: ReplSession): NameSource {
   const known = new Map<string, readonly string[]>();
   // Which answers describe the page as it is NOW. Separate from having an answer at all, because

@@ -277,6 +277,21 @@ export interface ReplSession {
    * for, since a blank line or a comment has no code to stop on, and says which one it settled on.
    */
   addBreakpoint(location: string): Promise<Breakpoint | string>;
+  /**
+   * What each preloaded file put in scope, and what kind of thing each one is.
+   *
+   * The kind is a theme capture rather than a JavaScript type, because it exists to be COLOURED:
+   * a list of names says nothing about what they are, and painting a function the colour this
+   * REPL paints functions says it without printing a value.
+   */
+  imported(): Promise<Array<{ file: string; names: Array<{ name: string; capture: string }> }>>;
+  /**
+   * Where a value was written — the file and line of its declaration, or `null` for one that has
+   * no source: a value typed at this prompt, or anything that is not a function.
+   *
+   * V8 knows this for functions and for nothing else, so that is the honest limit of it.
+   */
+  declaredAt(expression: string): Promise<{ file: string; line: number } | null>;
   /** The breakpoints this session has set, in the order they were set. */
   breakpoints(): Breakpoint[];
   /** Removes one by its number. `false` where there is no such breakpoint. */
@@ -406,8 +421,11 @@ export async function start(
     // already executing is too late to start listening for.
     await cdp.send('Debugger.enable');
 
-    const session = new Session(config, { cdp, page, server, browser, url });
-    cdp.on('Debugger.paused', (event) => session.onPaused(event, scripts));
+    // The script map is handed over at construction rather than at the first pause: `declaredAt`
+    // needs it to turn a function's script id into a file, and nobody pauses to ask where
+    // something is written.
+    const session = new Session(config, { cdp, page, server, browser, url, scripts });
+    cdp.on('Debugger.paused', (event) => session.onPaused(event));
     session.loaded = await session.readLoaded();
     await session.takeBaseline();
     onOpen?.(session);
@@ -511,6 +529,7 @@ class Session implements ReplSession {
       server: HTTPServer;
       browser: PlaywrightBrowser;
       url: string;
+      scripts: Map<string, string>;
     },
   ) {
     this.#config = config;
@@ -519,6 +538,7 @@ class Session implements ReplSession {
     this.#server = handles.server;
     this.#browser = handles.browser;
     this.url = handles.url;
+    this.#scripts = handles.scripts;
   }
 
   evaluate(input: string): Promise<ReplResult> {
@@ -745,6 +765,74 @@ class Session implements ReplSession {
     return { index, where };
   }
 
+  async imported(): Promise<
+    Array<{ file: string; names: Array<{ name: string; capture: string }> }>
+  > {
+    const every = this.loaded.flatMap(([, names]) => names);
+    if (every.length === 0) return [];
+
+    // One round trip for the lot. `kind` is the page's answer, because only the page holds the
+    // values — and it is the capture name so a caller can hand it straight to a theme.
+    const kinds = await this.#byValue<Record<string, string>>(`(() => {
+      const kinds = {};
+      for (const name of ${JSON.stringify(every)}) {
+        let value;
+        try { value = eval(name); } catch { kinds[name] = '@variable'; continue; }
+        kinds[name] =
+          typeof value === 'function' ? '@function'
+          : typeof value === 'string' || typeof value === 'symbol' ? '@string'
+          : typeof value === 'number' || typeof value === 'bigint' ? '@number'
+          : typeof value === 'boolean' ? '@boolean'
+          : value === null || value === undefined ? '@constant.builtin'
+          : '@type';
+      }
+      return kinds;
+    })()`);
+    const found = Array.isArray(kinds) ? {} : kinds;
+
+    return this.loaded.map(([file, names]) => ({
+      file,
+      names: names.map((name) => ({ name, capture: found[name] ?? '@variable' })),
+    }));
+  }
+
+  async declaredAt(expression: string): Promise<{ file: string; line: number } | null> {
+    if (this.#closed || expression.trim() === '') return null;
+
+    // Side-effect free, because asking where something is written must not run anything: `.doc
+    // save()` would otherwise save.
+    const evaluated = (await this.#cdp
+      .send('Runtime.evaluate', {
+        expression,
+        throwOnSideEffect: true,
+        timeout: HARNESS_TIMEOUT_MS,
+      })
+      .catch(() => null)) as EvaluateResult | null;
+    const objectId = evaluated?.result?.objectId;
+    if (!objectId || evaluated?.exceptionDetails) return null;
+
+    const properties = (await this.#cdp
+      .send('Runtime.getProperties', { objectId, ownProperties: false })
+      .catch(() => null)) as {
+      internalProperties?: Array<{ name: string; value?: RemoteObject }>;
+    } | null;
+    // V8 keeps this for functions and for nothing else — there is nowhere else it could come from.
+    const at = properties?.internalProperties?.find(
+      (entry) => entry.name === '[[FunctionLocation]]',
+    );
+    const location = at?.value?.value as
+      { scriptId: string; lineNumber: number; columnNumber?: number } | undefined;
+    if (!location) return null;
+
+    const mapped = mappedLocation(
+      this.#config,
+      { callFrameId: '', location, url: this.#scripts.get(location.scriptId) },
+      this.#scripts,
+    );
+
+    return mapped ? { file: mapped.file, line: mapped.line } : null;
+  }
+
   breakpoints(): Breakpoint[] {
     return this.#breakpoints.map(({ index, where }) => ({ index, where }));
   }
@@ -875,9 +963,8 @@ class Session implements ReplSession {
    * it. And the evaluation that was in flight is answered — `Runtime.evaluate` does not return
    * while the page is stopped, so the prompt would otherwise never come back to say so.
    */
-  onPaused(event: DebuggerPaused, scripts: Map<string, string>): void {
+  onPaused(event: DebuggerPaused): void {
     this.#frames = event.callFrames;
-    this.#scripts = scripts;
     // Innermost, which is where a pause means you are until you say otherwise.
     this.#read(0);
     const stepped = this.#announceStep;
