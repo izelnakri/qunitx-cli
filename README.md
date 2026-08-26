@@ -221,7 +221,7 @@ DOM, `fetch`, timers and QUnit are all the real ones.
 ```sh
 qunitx repl                      # a bare page with the qunitx runtime loaded
 qunitx repl test/helpers.ts      # …plus that file: exports become globals (and `Helpers`), tests run once
-qunitx repl --open               # …in a window you can see: DevTools and the prompt on one page
+qunitx repl --open               # …in a window you can see, instead of a headless one
 ```
 
 ```
@@ -242,9 +242,13 @@ and a plain `import { a } from './a.ts'` works too — `.imported` names what ea
 `.doc` shows a value's signature, where it is written and the comment above it, `.view <value>`
 (or `.v`) shows the whole of it, `.copy` puts it on the clipboard, `.open` with nothing after it is
 a scratch buffer that runs what you save — with a value, a path or a URL after it, it opens that,
-the way `xdg-open` would, and saving a file the session had loaded loads it again — `.search` finds tests by name, `.reload` drops all page state, `.url`
-prints the server URL so you can open the page yourself). The line is
-syntax-highlighted as you type and what it comes to is shown on the right; TAB completes
+the way `xdg-open` would, and saving a file the session had loaded loads it again — `.search` finds
+tests by name, `.reload` drops all page state, `.url` prints the server URL, and `.devtools` opens
+Chrome's own DevTools on the very page the prompt is driving). That last one is `<url>/devtools` in
+any Chromium browser: same realm, same DOM, same paused frame — a value declared at the prompt is
+in that console, and a `debugger` shows as paused in both.
+
+The line is syntax-highlighted as you type and what it comes to is shown on the right; TAB completes
 against the page, Ctrl-F takes the greyed-out suggestion, and Ctrl-C interrupts a runaway
 expression. A `debugger` statement stops the page — `.locals` shows the frame, `.continue` carries
 on. Colours follow your terminal, and `QUNITX_REPL_THEME='@string=fg=green'` overrides them under

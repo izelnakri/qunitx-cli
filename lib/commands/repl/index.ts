@@ -78,6 +78,14 @@ export async function run(): Promise<number> {
 /** What the session is, what it loaded, and how to leave — through the run's reporters, as `#` lines. */
 function banner(config: ResolvedConfig, session: ReplSession): void {
   Reporter.info(config, blue(`qunitx repl — ${where(config, session.url)}`));
+  // Said on the way in rather than waited for: a browser tab open on the same realm is the thing
+  // people reach for next, and nobody guesses that the address exists. A window has F12 already.
+  if (config.open !== true) {
+    Reporter.info(
+      config,
+      blue(`inspect the same page at ${session.url}/devtools — or \`.devtools\``),
+    );
+  }
   for (const [file, names] of session.loaded) {
     const exported = names.length > 0 ? `: ${names.join(', ')}` : '';
     Reporter.info(config, blue(`loaded ${file}${exported}`));
@@ -490,6 +498,28 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
         this.clearBufferedCommand();
         this.output.write(`${session.url}\n`);
         this.displayPrompt();
+      },
+    });
+    // The address handed out is this server's, not Chrome's: one port to remember, and it
+    // redirects to whatever port Chrome took this time. Checked before it is offered, because a
+    // session driving a browser with no debugging endpoint has an answer of its own.
+    server.defineCommand('devtools', {
+      help: 'Open Chrome DevTools on this very page — same realm, same DOM, same paused frame',
+      action() {
+        this.clearBufferedCommand();
+        void session.devtoolsUrl().then(async (inspector) => {
+          if (inspector === null) {
+            this.output.write(
+              red('no debugging endpoint here — press F12 in the window instead\n'),
+            );
+
+            return void this.displayPrompt();
+          }
+          const address = `${session.url}/devtools`;
+          const failed = interactive ? await openExternally(address) : null;
+          this.output.write(failed ?? blue(`${address}\n`));
+          this.displayPrompt();
+        });
       },
     });
 

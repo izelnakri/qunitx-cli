@@ -11,13 +11,15 @@ import * as FSTree from '../setup/fs-tree.ts';
 import * as TestFilePaths from '../setup/test-file-paths.ts';
 import { bindServerToPort } from '../setup/bind-server-to-port.ts';
 import { qunitxRuntimePlugin } from '../setup/qunitx-runtime-plugin.ts';
-import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
-import { closeWithGrace } from '../utils/close-with-grace.ts';
+import { prelaunchPromise, shutdownPrelaunch } from '../chrome/prelaunch.ts';
+import { closeCompletely } from '../utils/close-with-grace.ts';
 import { Failure } from '../task/index.ts';
 import { harness } from '../setup/qunit-harness.ts';
 import { inspect } from './inspect.ts';
 import { colorEnabled } from '../utils/color.ts';
 import { namespaceFor } from './files.ts';
+import { bridgeTo } from './devtools.ts';
+import type { Bridge } from './devtools.ts';
 import type { Plugin } from 'esbuild';
 import type { Browser as PlaywrightBrowser, CDPSession, Page } from 'playwright-core';
 import type { HTTPServer } from '../web/index.ts';
@@ -193,6 +195,16 @@ export interface Frame {
 export interface ReplSession {
   /** Where the page is served, e.g. `http://localhost:1234`. */
   url: string;
+  /**
+   * Chrome's own DevTools, open on the page this session is evaluating in — the same realm, the
+   * same DOM, the same paused frame. `null` where this browser has no debugging endpoint to
+   * serve it from, which is a window you can already press F12 in.
+   *
+   * The point is that it is the SAME page rather than another one at the same address: a value
+   * declared at the prompt is in the console there, and a `debugger` shows as paused in both.
+   * The frontend is served by Chrome itself over localhost — no network, no extension.
+   */
+  devtoolsUrl(): Promise<string | null>;
   /** `[file, exported names]` per preloaded module — what the terminal lists on start-up. */
   loaded: Array<[string, string[]]>;
   /**
@@ -423,6 +435,27 @@ export async function start(
     response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
     response.end(pageHTML(config));
   });
+  // On this server rather than Chrome's, because this is the port you already have: one address to
+  // remember, and it redirects to whatever port Chrome happened to take this time. Registered
+  // before the port is bound, and answered through a session that arrives later, so knocking while
+  // the browser is still starting is answered rather than 404'd.
+  let live: Session | null = null;
+  server.get('/devtools', (_request, response) => {
+    void (live?.devtoolsUrl() ?? Promise.resolve(null)).then((inspector) => {
+      if (inspector === null) {
+        response.writeHead(503, { 'Content-Type': 'text/plain' });
+        response.end(
+          live === null
+            ? 'this session is still starting\n'
+            : 'no debugging endpoint here — press F12 in the window instead\n',
+        );
+
+        return;
+      }
+      response.writeHead(302, { Location: inspector, 'Cache-Control': 'no-store' });
+      response.end();
+    });
+  });
 
   // `--open` means the window on your screen IS the session: same globalThis, same DOM, and
   // DevTools a keypress away on the realm the prompt is typing into.
@@ -474,6 +507,7 @@ export async function start(
     // needs it to turn a function's script id into a file, and nobody pauses to ask where
     // something is written.
     const session = new Session(config, { cdp, page, server, browser, url, scripts });
+    live = session;
     cdp.on('Debugger.paused', (event) => session.onPaused(event));
     session.loaded = await session.readLoaded();
     // The page's own bundle loaded these, so nothing recorded how — and a preloaded file is the
@@ -488,7 +522,11 @@ export async function start(
     // A start that fails after the browser is up — a page that will not navigate, a bundle whose
     // top level throws — still holds a browser and a bound port, and nothing else will release
     // them: `close()` belongs to the session this never returned.
-    await closeWithGrace([server.close(), browser.close(), shutdownPrelaunch()]);
+    await closeCompletely({
+      server: server.close(),
+      browser: browser.close(),
+      prelaunch: shutdownPrelaunch(),
+    });
     throw error;
   }
 }
@@ -565,6 +603,8 @@ class Session implements ReplSession {
   // them a function from an imported file has a location V8 knows and nothing here can read, so
   // `.doc` degrades to "here is the value" the moment a file is brought in.
   #maps = new Map<string, SourceMap.SourceMapDecoder>();
+  // Nothing listens until somebody asks for DevTools, and then one bridge serves every window.
+  #bridge: Bridge | null = null;
   #bundles = 0;
   #inputs = 0;
   // Resolves the evaluation that was in flight when the pause happened. `Runtime.evaluate` does not
@@ -908,6 +948,33 @@ class Session implements ReplSession {
     return typeof brought === 'string' ? brought : brought.names;
   }
 
+  async devtoolsUrl(): Promise<string | null> {
+    const endpoint = (await prelaunchPromise())?.cdpEndpoint;
+    const port = endpoint === undefined ? null : new URL(endpoint).port;
+    if (port === null || port === '') return null;
+
+    const info = (await this.#cdp.send('Target.getTargetInfo').catch(() => null)) as {
+      targetInfo?: { targetId?: string };
+    } | null;
+    const target = info?.targetInfo?.targetId;
+    if (target === undefined) return null;
+
+    // Confirmed against the port rather than assumed: a pre-launch that failed to connect was
+    // shut down and this session is driving a different Chrome, whose targets are not there.
+    // A URL that points at somebody else's page would be worse than no URL at all.
+    const listed = (await fetch(`http://localhost:${port}/json/list`)
+      .then((answer) => answer.json())
+      .catch(() => null)) as Array<{ id?: string }> | null;
+    if (!Array.isArray(listed) || !listed.some((known) => known.id === target)) return null;
+
+    // The frontend is Chrome's own, served from its port. Its socket is not: a browser sends an
+    // `Origin` header and Chrome answers 403 to any debugger connection that has one, so it goes
+    // through a bridge that connects onward from Node, where there is none to object to.
+    this.#bridge ??= await bridgeTo(`ws://127.0.0.1:${port}/devtools/page/${target}`);
+
+    return `http://localhost:${port}/devtools/inspector.html?ws=${this.#bridge.address}`;
+  }
+
   /** Remembers how a file the page loaded for itself got there, so it can be loaded again. */
   rememberPreload(files: readonly string[]): void {
     for (const file of files) {
@@ -1237,16 +1304,23 @@ class Session implements ReplSession {
     // settles — it cost the full cleanup grace on every exit until it was moved up here. With the
     // page still alive it answers in single-digit milliseconds.
     await this.#cdp.detach().catch(() => {});
-    await closeWithGrace([
-      this.#page.close().catch(() => {}),
-      this.#server.close(),
-      this.#browser.close(),
-      shutdownPrelaunch(),
-      // Deliberately NOT `esbuild.stop()`, though a REPL is exactly the kind of program that ends
-      // by handing the event loop back: esbuild's `--service` child does not hold it open (checked
-      // — `test/fixtures/repl-handles.ts` exits either way), and stopping the shared service would
-      // reach past this session into whatever else in the process is using esbuild.
-    ]);
+    // A listening socket outlives the process that forgot it, and this one only exists at all if
+    // somebody opened DevTools.
+    await this.#bridge?.close();
+    // `closeCompletely`, because a REPL session is closed BY a caller that then expects to end.
+    // `browser.close()` outliving the first grace is common on a loaded Windows runner, and
+    // returning there would hand back a closed session while playwright still held the browser.
+    //
+    // Deliberately NOT `esbuild.stop()`, though a REPL is exactly the kind of program that ends
+    // by handing the event loop back: esbuild's `--service` child does not hold it open (checked
+    // — `test/fixtures/repl-handles.ts` exits either way), and stopping the shared service would
+    // reach past this session into whatever else in the process is using esbuild.
+    await closeCompletely({
+      page: this.#page.close().catch(() => {}),
+      server: this.#server.close(),
+      browser: this.#browser.close(),
+      prelaunch: shutdownPrelaunch(),
+    });
   }
 
   [Symbol.asyncDispose](): Promise<void> {

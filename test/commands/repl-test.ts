@@ -13,6 +13,10 @@ import '../helpers/custom-asserts.ts';
 const repl = (stdin: string, args = '') =>
   execute(`node cli.ts repl --browser=chromium ${args}`.trim(), { stdin });
 
+// The banner's last line: the session is up, and the prompt is reading. What a test waits for
+// instead of guessing how long a browser takes to start on a loaded runner.
+const READY = /type `\.help` for commands/;
+
 module('Commands | repl | a piped session', { concurrency: true }, () => {
   test('evaluates each line in the page and prints the answers in order', async (assert) => {
     const result = await repl("1 + 1\n'hi'\ndocument.querySelector('#qunit-fixture').tagName\n");
@@ -566,7 +570,12 @@ module('Commands | repl | values', { concurrency: true }, () => {
       // than through an env option the capture helper does not take.
       const result = await execute(
         `script -qec "EDITOR=${editor} node cli.ts repl --browser=chromium --output=tmp/run-${randomUUID()}" /dev/null`,
-        { stdin: [{ text: '.open\n' }, { text: '.exit\n', delayMs: 4000 }] },
+        {
+          stdin: [
+            { text: '.open\n', after: READY },
+            { text: '.exit\n', delayMs: 4000 },
+          ],
+        },
       );
       await directory[Symbol.asyncDispose]();
 
@@ -598,8 +607,8 @@ module('Commands | repl | values', { concurrency: true }, () => {
         `script -qec "EDITOR=${editor} node cli.ts repl --browser=chromium --output=tmp/run-${randomUUID()} ${live}" /dev/null`,
         {
           stdin: [
-            { text: `.e ${live}\n` },
-            { text: 'second()\n', delayMs: 5000 },
+            { text: `.e ${live}\n`, after: READY },
+            { text: 'second()\n', delayMs: 4000 },
             { text: '.exit\n', delayMs: 2000 },
           ],
         },
