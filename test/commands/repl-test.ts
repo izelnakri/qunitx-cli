@@ -2,6 +2,7 @@ import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { randomUUID } from 'node:crypto';
 import { execute, shellFails, spawnCapture } from '../helpers/shell.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 import { tempDir } from '../helpers/temp-dir.ts';
@@ -197,6 +198,22 @@ module('Commands | qunitx repl | : runs a shell command', { concurrency: true },
 
     assert.includes(result.stdout + result.stderr, 'trouble');
   });
+
+  // Every tool decides whether to colour by asking whether it is talking to a terminal, so the
+  // question is whether the command gets THIS session's terminal or a pipe copied out of it. Only
+  // a pty can answer it, and `script` is the one every Linux has; the macOS spelling differs and
+  // Windows has none, so this asks on Linux and trusts `spawn` to be `spawn` elsewhere.
+  if (process.platform === 'linux') {
+    test('a command run from here is talking to the terminal, and can colour for it', async (assert) => {
+      const asked = 'process.stdout.write(String(process.stdout.isTTY))';
+      const result = await execute(
+        `script -qec "node cli.ts repl --browser=chromium --output=tmp/run-${randomUUID()}" /dev/null`,
+        { stdin: `:node -e "${asked}"\n.exit\n` },
+      );
+
+      assert.includes(result.stdout, 'true', 'a pipe would have answered undefined');
+    });
+  }
 
   test('shell lines are left out of .save', async (assert) => {
     // `.save` writes a file meant to be replayable JavaScript. A shell line is neither JavaScript

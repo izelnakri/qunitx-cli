@@ -9,8 +9,15 @@ import { red } from '../../utils/color.ts';
  * for their own machine — there is nothing here to protect them from that they could not type
  * directly. It runs in the session's working directory, so relative paths mean what `.cat` means.
  *
- * Streamed rather than collected: a command worth running from here is often one worth watching,
- * and a build that prints for a minute should print for a minute.
+ * The child is handed this process's own stdout and stderr rather than a pipe copied across, which
+ * is what makes `:git status` and `:ls` come out in colour: every tool decides whether to colour by
+ * asking whether it is talking to a terminal, and a pipe answers no. It is also what makes a
+ * progress bar work, and what keeps a build that prints for a minute printing for a minute rather
+ * than arriving at the end. Piped in, piped out — a scripted session still gets plain text, for the
+ * same reason and by the same rule.
+ *
+ * `out` is left for the one message that is this REPL's rather than the command's: a command that
+ * will not start at all.
  *
  * ```ts
  * import { shell } from './shell.ts';
@@ -26,9 +33,9 @@ export function shell(command: string, out: NodeJS.WritableStream, cwd: string):
   if (trimmed === '') return Promise.resolve(0);
 
   return new Promise((resolve) => {
-    const child = spawn(trimmed, { shell: true, cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-    child.stdout.on('data', (chunk: Buffer) => out.write(chunk));
-    child.stderr.on('data', (chunk: Buffer) => out.write(chunk));
+    // stdin stays closed: the terminal's is being read by the prompt, and two readers of one
+    // keyboard is a session that loses keystrokes. `.edit` is the way to hand a command the tty.
+    const child = spawn(trimmed, { shell: true, cwd, stdio: ['ignore', 'inherit', 'inherit'] });
     // A command that will not start is an answer about the command, not a crash of the session.
     child.on('error', (error: Error) => {
       out.write(red(`${error.message}\n`));
