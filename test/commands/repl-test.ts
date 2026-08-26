@@ -404,10 +404,27 @@ module('Commands | repl | values', { concurrency: true }, () => {
     assert.notIncludes(help, '\n.load ', 'and not on a line of their own');
   });
 
+  test('a value that is not a function is still worth showing', async (assert) => {
+    // V8 knows where a function was written and nothing else. This session watched every other
+    // name arrive, so "nothing known" was never true of one — only unanswerable by V8.
+    const result = await helpers('.doc GREETING\n.view GREETING\n.open GREETING\n');
+
+    assert.includes(result, 'test/fixtures/repl-helpers.ts', 'where it came in');
+    assert.includes(result, "'hello from the preload'", 'and what it is');
+    assert.includes(result, 'test/fixtures/repl-helpers.ts:1', '.open takes the top of the file');
+  });
+
+  test('an imported namespace answers the same three questions', async (assert) => {
+    const result = await repl('.import test/fixtures/repl-debugger.ts Izel\n.h Izel\n.view Izel\n');
+
+    assert.includes(result, 'test/fixtures/repl-debugger.ts');
+    assert.includes(result, 'inspectMe: [Function: inspectMe]', 'the whole of what it brought');
+  });
+
   test('what has nothing to say says so', async (assert) => {
-    assert.includes(await helpers('.doc GREETING\n'), 'nothing known about GREETING');
+    assert.includes(await helpers('.doc nosuchthing\n'), 'nothing known about nosuchthing');
     assert.includes(await helpers('.doc\n'), 'Usage: .doc <value>');
-    assert.includes(await helpers('.open GREETING\n'), 'nothing known about GREETING');
+    assert.includes(await helpers('.open nosuchthing\n'), 'nothing known about nosuchthing');
   });
 
   test('the short names reach the same command', async (assert) => {

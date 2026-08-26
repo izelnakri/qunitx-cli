@@ -23,6 +23,10 @@ interface Depth {
  * value with no comment still has the other two, which is the difference between "here it is" and
  * the "nothing written about it" this used to answer.
  *
+ * Only a function has a declaration V8 can point at. Everything else — an imported namespace, a
+ * string, an object — still came from somewhere this session watched it arrive from, and is still
+ * worth printing, so what is known about those is where they came in and what they are.
+ *
  * ```ts
  * import { describeValue } from './values.ts';
  *
@@ -42,10 +46,10 @@ export async function describeValue(
   palette: Theme,
   depth: Depth,
 ): Promise<string | null> {
-  const at = await session.declaredAt(argument.trim());
-  if (!at) return null;
-  const source = tryReadFile(path.resolve(cwd, at.file));
-  if (source === null) return null;
+  const asked = argument.trim();
+  const at = await session.declaredAt(asked);
+  const source = at === null ? null : tryReadFile(path.resolve(cwd, at.file));
+  if (at === null || source === null) return await asWritten(session, asked, palette);
 
   // Where, then what was said, then the code — reading order, and the order they were written in.
   // The body opens with the signature, so a `.view` that printed both would print it twice.
@@ -162,6 +166,25 @@ export function defineValues(
 }
 
 /**
+ * What is known about a value with no declaration to point at: where it came into this session, and
+ * what it is — rendered in the page, by the renderer the prompt prints with.
+ *
+ * `null` for a name that is not there at all, which is the one case where "nothing known" is the
+ * true answer rather than the lazy one.
+ */
+async function asWritten(
+  session: ReplSession,
+  asked: string,
+  palette: Theme,
+): Promise<string | null> {
+  const rendered = await session.preview(asked);
+  if (rendered === '') return null;
+  const where = session.whereFrom(asked);
+
+  return where === null ? rendered : `${paint(where, palette.style('LineNr'))}\n${rendered}`;
+}
+
+/**
  * Puts a value on the clipboard and says what went, or `null` where there was nothing to send.
  *
  * A function goes as the code that defines it, because that is the thing anybody copying a
@@ -252,5 +275,5 @@ export function nowhere(argument: string, command: string): string {
 
   return asked === ''
     ? `Usage: .${command} <value>`
-    : `nothing known about ${asked} — it was defined here, or it is not a function`;
+    : `nothing known about ${asked} — no such name in this session`;
 }

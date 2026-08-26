@@ -309,6 +309,14 @@ export interface ReplSession {
    * V8 knows this for functions and for nothing else, so that is the honest limit of it.
    */
   declaredAt(expression: string): Promise<{ file: string; line: number } | null>;
+  /**
+   * Where a name came into this session from — the file it was imported from, or the input that
+   * declared it. `null` for a name the page already had, and for anything that is not a bare name.
+   *
+   * What {@link ReplSession.declaredAt} cannot answer: V8 knows the source of functions and of
+   * nothing else, while this session watched every other name arrive.
+   */
+  whereFrom(name: string): string | null;
   /** The breakpoints this session has set, in the order they were set. */
   breakpoints(): Breakpoint[];
   /** Removes one by its number. `false` where there is no such breakpoint. */
@@ -858,6 +866,10 @@ class Session implements ReplSession {
     } catch (error) {
       return { detail: `${shown} would not bundle — ${(error as Error)?.message ?? error}` };
     }
+  }
+
+  whereFrom(name: string): string | null {
+    return this.#origins.get(name.trim()) ?? null;
   }
 
   async imported(): Promise<

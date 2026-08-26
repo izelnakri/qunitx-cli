@@ -343,7 +343,11 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
         help: 'Open the file a value is declared in, at its line',
         action(argument: string) {
           this.clearBufferedCommand();
-          void session.declaredAt(argument.trim()).then(async (at) => {
+          void session.declaredAt(argument.trim()).then(async (declared) => {
+            // A function knows its own line. Everything else that came into this session came
+            // from a file too — the top of it is a better answer than refusing to open anything.
+            const from = session.whereFrom(argument);
+            const at = declared ?? (from === null ? null : { file: from, line: 1 });
             if (!at) {
               this.output.write(red(`${nowhere(argument, 'open')}\n`));
 
