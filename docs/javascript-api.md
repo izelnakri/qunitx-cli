@@ -550,8 +550,16 @@ The preload takes the same call shapes as every other verb — positionally, as 
 one's exports land on the page's `globalThis`, and any tests it registers run as the session opens.
 
 `evaluate` resolves with the rendered `output`, whether it `failed`, whether the input was
-`incomplete` (unfinished, so the CLI asks for another line), and the `tests` it ran. `reload()` drops every binding, `interrupt()` stops
-a runaway expression, and `close()` — or the `await using` above — releases the browser.
+`incomplete` (unfinished, so the CLI asks for another line), and the `tests` it ran. `reload()`
+drops every binding, `interrupt()` stops a runaway expression, and `close()` — or the `await using`
+above — releases the browser.
+
+A session is also a debugger: a `debugger` statement stops the page, `locals()` reads that frame,
+`step()`/`backtrace()`/`selectFrame()` move through it, and `addBreakpoint('lib/a.ts:12')` stops it
+somewhere you did not edit. `importFile()` brings a module in after the fact and `refresh()` runs it
+again once the file has changed. `session.url` is where the page is served; `session.inspector` is
+where to open Chrome's DevTools on that very page, or `null` where this browser has no debugging
+endpoint to serve them from.
 
 Chromium only: it evaluates over the Chrome DevTools Protocol, so `browser: 'firefox'` rejects with
 `UnsupportedBrowser` rather than pretending.
