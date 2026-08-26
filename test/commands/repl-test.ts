@@ -309,6 +309,65 @@ module('Commands | repl | values', { concurrency: true }, () => {
     assert.includes(result, 'Helpers, and GREETING', 'named as asked rather than after the path');
   });
 
+  test('an import statement does what it says, since the engine will not', async (assert) => {
+    // `Cannot use import statement outside a module` is what a prompt gets for typing one, and a
+    // REPL that reads `.ts` files should read the line that reads them.
+    const result = await repl(
+      'import * as Helpers from "./test/fixtures/repl-helpers.ts"\n' +
+        'import { double, GREETING as HELLO } from "./test/fixtures/repl-helpers.ts"\n' +
+        'Helpers.GREETING\ndouble(4)\nHELLO\n',
+    );
+
+    assert.exitCode(result, 0);
+    assert.includes(result, "'hello from the preload'", 'the namespace is the module');
+    assert.includes(result, '8', 'a named import is the export it names');
+    assert.includes(result, 'double, HELLO', 'and it says what it bound, renamed as asked');
+  });
+
+  test('two import statements from one file both keep their names', async (assert) => {
+    const result = await repl(
+      'import { double } from "./test/fixtures/repl-helpers.ts"\n' +
+        'import { GREETING } from "./test/fixtures/repl-helpers.ts"\n' +
+        'double(1)\nGREETING\n.imported\n',
+    );
+
+    assert.includes(result, '2', 'the first is still there');
+    assert.includes(result, "'hello from the preload'", 'and so is the second');
+    assert.includes(result, 'double, GREETING', 'listed under the one file they came from');
+  });
+
+  test('an import spelled wrongly is corrected rather than refused', async (assert) => {
+    // The page answers every spelling of this with `Cannot use import statement outside a module`,
+    // which is true of the working ones too and so says nothing about which this is.
+    const result = await repl(
+      'import ReplDebugger as * from "./test/fixtures/repl-debugger.ts"\n1 + 1\n',
+    );
+
+    assert.includes(result, 'did you mean `import * as ReplDebugger from');
+    assert.notIncludes(result, 'outside a module', 'the page is never asked');
+    assert.includes(result, '2', 'and the session carries on');
+  });
+
+  test('an import that cannot be resolved says so, and is not called uncaught', async (assert) => {
+    // Nothing was thrown anywhere: `Uncaught` is what a browser console says about an exception,
+    // and this is the session answering.
+    const result = await repl('import { a } from "./nope.ts"\n1 + 1\n');
+
+    assert.includes(result, 'nope.ts would not bundle');
+    assert.notIncludes(result, 'Uncaught', 'because nothing threw');
+    assert.includes(result, '2', 'and the session carries on');
+  });
+
+  test('an import at a breakpoint is refused rather than left hanging', async (assert) => {
+    // The Runtime domain queues everything until the target resumes, so this would not fail — it
+    // would hang, at the prompt, with no way back.
+    const result = await repl(
+      'debugger\nimport { double } from "./test/fixtures/repl-helpers.ts"\n.continue\n',
+    );
+
+    assert.includes(result, 'an import cannot run while the page is stopped');
+  });
+
   test('an imported file registers its tests against the page’s own QUnit', async (assert) => {
     // The proof that `qunitx` is not bundled a second time: a second QUnit would collect this
     // test into a registry nothing flushes, which reads exactly like a test that never ran.

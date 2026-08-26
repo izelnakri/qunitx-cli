@@ -110,8 +110,16 @@ export type ReplStartFailure =
 export interface ReplResult {
   /** The rendered value, or the error and its source-mapped stack. Empty when there is nothing to print. */
   output: string;
-  /** The input threw; `output` is the error. */
+  /** The input did not work; `output` says why. */
   failed: boolean;
+  /**
+   * The failure was the page throwing, rather than the session refusing the input.
+   *
+   * What a terminal reads to decide whether to say `Uncaught`: an exception from the page belongs
+   * to the page and reads the way a browser console reads it, while "that file will not bundle" is
+   * this REPL answering, and was never thrown anywhere.
+   */
+  thrown?: boolean;
   /** The input was unfinished (`const a = {`), so nothing ran and the terminal should read on. */
   incomplete: boolean;
   /** Tests QUnit ran because of this input. Already reported through the session's reporters. */
@@ -817,6 +825,45 @@ class Session implements ReplSession {
   }
 
   /**
+   * Does what an `import` statement means, since a prompt cannot run one.
+   *
+   * The module is fetched and bundled here and its exports handed to the page under the names the
+   * statement asked for — `import * as A from './a.ts'` really does leave `A` behind. What the
+   * statement binds is what goes in scope and nothing else: the person wrote the names.
+   */
+  async #importStatement(statement: Source.ImportStatement): Promise<ReplResult> {
+    const nothing = { output: '', failed: false, incomplete: false, tests: [] };
+    // The Runtime domain queues everything until the target resumes, so this would not fail — it
+    // would hang, at the prompt, with no way back except Ctrl-C.
+    if (this.#frameId) {
+      return { ...nothing, output: 'an import cannot run while the page is stopped', failed: true };
+    }
+    const { specifier: from, bindings } = statement;
+    const shown = from.startsWith('.')
+      ? relative(this.#config, path.resolve(this.#config.cwd, from))
+      : from;
+    const values = bindings
+      .map(({ name, from: exported }) => {
+        const value = exported === null ? 'm' : `m[${JSON.stringify(exported)}]`;
+
+        return `${JSON.stringify(name)}: ${value}`;
+      })
+      .join(', ');
+    const source = await this.#bundle(
+      [
+        `import * as m from ${JSON.stringify(from)};`,
+        `globalThis.__qunitxHarness.bind(${JSON.stringify(shown)}, { ${values} });`,
+      ].join('\n'),
+      shown,
+    );
+    if (typeof source !== 'string') return { ...nothing, output: source.detail, failed: true };
+    const names = await this.#loadInto(source, shown);
+    if (typeof names === 'string') return { ...nothing, output: names, failed: true };
+
+    return { ...nothing, output: bindings.map(({ name }) => name).join(', ') };
+  }
+
+  /**
    * Runs a built bundle in the page and takes account of what it left there.
    *
    * The names are read back rather than guessed at from the source: a module's exports are only
@@ -1154,6 +1201,15 @@ class Session implements ReplSession {
     if (this.#closed) return { ...nothing, output: 'the REPL session is closed', failed: true };
     this.#inputs++;
 
+    // A prompt is not a module, so the engine refuses an `import` statement outright. Doing what it
+    // means instead is the only way one can work here, and a REPL that reads `.ts` files should
+    // read the line that reads them.
+    const statement = Source.importStatement(input);
+    if (statement && 'advice' in statement) {
+      return { ...nothing, output: statement.advice, failed: true };
+    }
+    if (statement) return await this.#importStatement(statement);
+
     // Frees the PREVIOUS input's handles; the one rendered below is still needed. Skipped while
     // the page is paused: the Runtime domain queues commands until the target resumes, so awaiting
     // this at a breakpoint hangs the input that was going to inspect it — the one thing a pause
@@ -1198,7 +1254,12 @@ class Session implements ReplSession {
         return { ...nothing, incomplete: true };
       }
 
-      return { ...nothing, output: resolveStack(this.#config, description), failed: true };
+      return {
+        ...nothing,
+        output: resolveStack(this.#config, description),
+        failed: true,
+        thrown: true,
+      };
     }
 
     const rendered = await this.#render(evaluated.result);

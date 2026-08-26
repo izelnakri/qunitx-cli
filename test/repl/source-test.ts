@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { candidates, declaration, isIncomplete } from '../../lib/repl/source.ts';
+import { candidates, declaration, importStatement, isIncomplete } from '../../lib/repl/source.ts';
 import '../helpers/custom-asserts.ts';
 
 module('Repl | source | candidates', { concurrency: true }, () => {
@@ -113,5 +113,99 @@ module('Repl | source | declaration', { concurrency: true }, () => {
 
   test('a destructuring pattern is left alone too', (assert) => {
     assert.strictEqual(declaration('const { a } = obj'), null, 'one name is read, or none');
+  });
+});
+
+// A prompt is not a module, so the engine refuses the statement outright. Reading the clause is
+// what lets the session do what it means instead.
+module('Repl | source | importStatement', { concurrency: true }, () => {
+  const read = (input: string) => {
+    const found = importStatement(input);
+
+    return found !== null && 'bindings' in found ? found : null;
+  };
+  const bound = (input: string) => read(input)?.bindings;
+  const advice = (input: string) => {
+    const found = importStatement(input);
+
+    return found !== null && 'advice' in found ? found.advice : null;
+  };
+
+  test('a namespace import binds the module itself', (assert) => {
+    const found = read("import * as A from './a.ts';");
+
+    assert.strictEqual(found?.specifier, './a.ts');
+    assert.deepEqual(
+      found?.bindings,
+      [{ name: 'A', from: null }],
+      'null is the module, not a name',
+    );
+  });
+
+  test('named imports bind what they name, renaming as asked', (assert) => {
+    assert.deepEqual(bound("import { a, b as c } from 'x'"), [
+      { name: 'a', from: 'a' },
+      { name: 'c', from: 'b' },
+    ]);
+    assert.deepEqual(bound("import { default as d } from 'x'"), [{ name: 'd', from: 'default' }]);
+  });
+
+  test('a default import is the export called default', (assert) => {
+    assert.deepEqual(bound("import D from 'x'"), [{ name: 'D', from: 'default' }]);
+    assert.deepEqual(
+      bound("import D, { a } from 'x'"),
+      [
+        { name: 'D', from: 'default' },
+        { name: 'a', from: 'a' },
+      ],
+      'and it can be joined by the rest',
+    );
+    assert.deepEqual(bound("import D, * as N from 'x'"), [
+      { name: 'D', from: 'default' },
+      { name: 'N', from: null },
+    ]);
+  });
+
+  test('an import for its side effects binds nothing, and is still an import', (assert) => {
+    assert.deepEqual(importStatement("import './styles.css'"), {
+      specifier: './styles.css',
+      bindings: [],
+    });
+  });
+
+  test('one plainly meant as an import comes back as advice, not as nothing', (assert) => {
+    // Left as nothing it reaches the page, and the page answers every spelling with the same
+    // `Cannot use import statement outside a module` — true of the working ones too, so it says
+    // nothing about which this is.
+    assert.strictEqual(
+      advice("import A as * from './a.ts'"),
+      "did you mean `import * as A from './a.ts'`?",
+      'the one everybody writes from memory gets the line it was reaching for',
+    );
+    assert.includes(advice("import A from './a.ts") ?? '', 'needs the module in quotes');
+    assert.includes(advice("import 3bad from './a.ts'") ?? '', 'cannot read that import');
+    assert.strictEqual(advice("import * as A from './a.ts'"), null, 'a readable one is read');
+    assert.strictEqual(advice('importantThing'), null, 'and a name that starts with it is a name');
+  });
+
+  test('a clause across several lines is one statement', (assert) => {
+    // What the prompt hands over once the continuation is finished.
+    assert.deepEqual(bound("import {\n  a,\n  b,\n} from './a.ts'"), [
+      { name: 'a', from: 'a' },
+      { name: 'b', from: 'b' },
+    ]);
+  });
+
+  test('the function that already works is left alone', (assert) => {
+    // `import()` is an expression the page evaluates itself; the space after the keyword is what
+    // tells the declaration from it.
+    assert.strictEqual(importStatement("await import('./a.ts')"), null);
+    assert.strictEqual(importStatement('import(x)'), null);
+    assert.strictEqual(
+      importStatement('importantThing'),
+      null,
+      'nor is a name that starts with it',
+    );
+    assert.strictEqual(importStatement('1 + 1'), null);
   });
 });

@@ -177,7 +177,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
               // is what the pause IS, and it should not wait on reading a file to say so.
               return void showFrame(server, session, palette).then(() => callback(null, undefined));
             }
-            const text = result.failed ? red(`Uncaught ${result.output}`) : result.output;
+            const text = result.failed ? red(failure(result)) : result.output;
 
             return callback(null, text === '' ? undefined : text);
           },
@@ -307,7 +307,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
             scratch = edited;
             if (edited.trim() !== '') {
               const result = await session.evaluate(edited);
-              const text = result.failed ? red(`Uncaught ${result.output}`) : result.output;
+              const text = result.failed ? red(failure(result)) : result.output;
               if (text !== '') this.output.write(`${text}\n`);
             }
             this.displayPrompt();
@@ -506,6 +506,17 @@ async function pipe(
 }
 
 /** A promise with its resolver, for "wake me when the REPL wants the next line". */
+/**
+ * A failure, in the words its kind earns.
+ *
+ * `Uncaught` is what a browser console says about an exception, and belongs only to one the page
+ * actually threw. "That file will not bundle" is this REPL answering, and prefixing it would claim
+ * the page had refused something it was never shown.
+ */
+function failure(result: Repl.ReplResult): string {
+  return result.thrown ? `Uncaught ${result.output}` : result.output;
+}
+
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve = () => {};
   const promise = new Promise<void>((settle) => {

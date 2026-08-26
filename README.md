@@ -236,8 +236,8 @@ Tests typed at the prompt run immediately and report as TAP, through the same re
 (`--reporter=spec` works here too). Bindings persist between lines, `await` works at the top level,
 and `.help` lists the commands (`.scope` shows what you have declared, `.view` prints a file
 numbered or a directory as a tree, `.ls -L 2` limits the depth, `.history` shows the last lines,
-`.import lib/a.ts` brings a file in as `A` plus its exports — JSON parsed, anything else as text —
-and `.imported` names what each file brought,
+`.import lib/a.ts` brings a file in as `A` plus its exports — JSON parsed, anything else as text,
+and a plain `import { a } from './a.ts'` works too — `.imported` names what each file brought,
 `.doc` shows a value's signature, where it is written and the comment above it, `.view <value>`
 adds its implementation, `.copy` puts it on the clipboard, `.open` opens the file at that line,
 `.search` finds tests by name, `.reload` drops all page state, `.url` prints the server URL so you
