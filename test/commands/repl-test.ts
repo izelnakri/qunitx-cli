@@ -418,6 +418,24 @@ module('Commands | repl | values', { concurrency: true }, () => {
     assert.includes(result, '2', 'and the session survives it');
   });
 
+  test('a re-imported file keeps everything known about what it exports', async (assert) => {
+    // A second bundle is a second source map, and without it a function it defines has a location
+    // V8 knows and nothing here can read — so `.doc` fell back to "here is the value" the moment
+    // a file was brought in again.
+    const result = await helpers('.import test/fixtures/repl-helpers.ts\n.doc double\n');
+
+    assert.includes(result, 'test/fixtures/repl-helpers.ts:15', 'the line, not just the file');
+    assert.includes(result, 'Doubles a number', 'the comment above it');
+    assert.includes(result, 'export function double(value: number): number', 'the signature');
+  });
+
+  test('a breakpoint inside an imported file names that file', async (assert) => {
+    const result = await repl('.import test/fixtures/repl-debugger.ts\ninspectMe()\n.continue\n');
+
+    assert.includes(result, 'inspectMe (test/fixtures/repl-debugger.ts:5', 'not <anonymous>');
+    assert.includes(result, '> 5 │   debugger;', 'with the source around it');
+  });
+
   test('.doc reads in the order the file does: where, what was said, then the code', async (assert) => {
     const result = await helpers('.doc double\n');
 

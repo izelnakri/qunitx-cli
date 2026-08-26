@@ -559,6 +559,11 @@ class Session implements ReplSession {
   // How each file in scope got there, so a file that changes on disk can be run again the same
   // way. Keyed by the name `loaded` knows it by, which is what any caller has to hand.
   #recipes = new Map<string, Recipe>();
+  // One source map per bundle `.import` has built, keyed by the URL its script reports. Without
+  // them a function from an imported file has a location V8 knows and nothing here can read, so
+  // `.doc` degrades to "here is the value" the moment a file is brought in.
+  #maps = new Map<string, SourceMap.SourceMapDecoder>();
+  #bundles = 0;
   #inputs = 0;
   // Resolves the evaluation that was in flight when the pause happened. `Runtime.evaluate` does not
   // return while the page is stopped, so without this the prompt never comes back.
@@ -953,20 +958,33 @@ class Session implements ReplSession {
    */
   async #bundle(contents: string, shown: string): Promise<string | { detail: string }> {
     const exports = await this.#byValue<string[]>('globalThis.__qunitxHarness.qunitx');
+    const outDir = path.resolve(this.#config.projectRoot, this.#config.output);
     try {
       const built = await esbuild.build({
         stdin: { contents, resolveDir: this.#config.cwd },
         bundle: true,
+        // Named but never written, and named `script.js` under the output directory for the same
+        // two reasons the page's own bundle is: it is the coordinate system the map's paths are
+        // relative to, and the shape of URL the frame resolver recognises as a bundle.
+        outfile: path.join(outDir, 'script.js'),
         write: false,
         format: 'iife',
         logLevel: 'silent',
         keepNames: true,
         legalComments: 'none',
+        sourcemap: 'inline',
         jsx: 'automatic',
         plugins: [pageRuntimePlugin(exports), ...(this.#config.plugins ?? [])],
       });
+      // A script evaluated rather than fetched has no URL, and a location in one is a script id
+      // nothing outside V8 can read. Naming it gives every function it defines somewhere to point
+      // at, and gives the map below something to be the map OF.
+      const url = `${this.url}/imported/${++this.#bundles}/script.js`;
+      const text = built.outputFiles[0].text;
+      const decoder = SourceMap.extractInline(text, outDir);
+      if (decoder) this.#maps.set(url, decoder);
 
-      return built.outputFiles[0].text;
+      return `${text}\n//# sourceURL=${url}\n`;
     } catch (error) {
       return { detail: `${shown} would not bundle — ${(error as Error)?.message ?? error}` };
     }
@@ -1039,6 +1057,7 @@ class Session implements ReplSession {
       this.#config,
       { callFrameId: '', location, url: this.#scripts.get(location.scriptId) },
       this.#scripts,
+      this.#maps,
     );
 
     return mapped ? { file: mapped.file, line: mapped.line } : null;
@@ -1066,7 +1085,7 @@ class Session implements ReplSession {
   backtrace(): Frame[] {
     return this.#frames.map((frame, index) => ({
       index,
-      where: describeFrame(this.#config, frame, this.#scripts),
+      where: describeFrame(this.#config, frame, this.#scripts, this.#maps),
       selected: index === this.#selected,
     }));
   }
@@ -1088,8 +1107,8 @@ class Session implements ReplSession {
     const frame = this.#frames[index];
     this.#selected = index;
     this.#frameId = frame?.callFrameId ?? null;
-    this.#pausedAt = describeFrame(this.#config, frame, this.#scripts);
-    const located = frame && mappedLocation(this.#config, frame, this.#scripts);
+    this.#pausedAt = describeFrame(this.#config, frame, this.#scripts, this.#maps);
+    const located = frame && mappedLocation(this.#config, frame, this.#scripts, this.#maps);
     this.#pausedIn = frame
       ? {
           file: located?.file ?? null,
@@ -1308,7 +1327,7 @@ class Session implements ReplSession {
 
       return {
         ...nothing,
-        output: resolveStack(this.#config, description),
+        output: resolveStack(this.#config, description, this.#maps),
         failed: true,
         thrown: true,
       };
@@ -1609,13 +1628,36 @@ const CODE = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.mts', '.cts', '.ts
 const IDENTIFIER = /^[\p{L}$_][\p{L}\p{N}$_]*$/u;
 const PAGE_RUNTIME = 'qunitx-from-the-page';
 
-/** Rewrites bundle frames in a stack back to the original sources, when there is a map to do it. */
-function resolveStack(config: Config, stack: string): string {
-  const decoder = config.state.group.sourceMapDecoder;
-  if (!decoder) return stack;
+/**
+ * Rewrites bundle frames in a stack back to the original sources, when there is a map to do it.
+ *
+ * Frame by frame, and the map chosen by the URL the frame names. A stack can cross bundles — the
+ * page's own and every file `.import` has brought in since — and one map applied to another's
+ * frame does not fail, it answers: the lines are in range, so it names a real place in the wrong
+ * file.
+ */
+function resolveStack(
+  config: Config,
+  stack: string,
+  maps: Map<string, SourceMap.SourceMapDecoder> = new Map(),
+): string {
+  const main = config.state.group.sourceMapDecoder;
+  if (!main && maps.size === 0) return stack;
 
-  return SourceMap.resolveStack(stack, decoder, config.projectRoot).resolvedStack;
+  return stack
+    .split('\n')
+    .map((frame) => {
+      const url = BUNDLE_IN_FRAME.exec(frame)?.[1];
+      const decoder = (url === undefined ? undefined : maps.get(url)) ?? main;
+      if (!decoder) return frame;
+
+      return SourceMap.resolveFrame(frame, decoder, config.projectRoot)?.resolved ?? frame;
+    })
+    .join('\n');
 }
+
+/** The URL at the end of a stack frame, in whichever of the shapes an engine writes them. */
+const BUNDLE_IN_FRAME = /(https?:\/\/[^\s)]+?):\d+:\d+\)?\s*$/;
 
 /**
  * The script every page load starts with: the value renderer, then the harness that pins QUnit's
@@ -1759,9 +1801,10 @@ function describeFrame(
   config: Config,
   frame: DebuggerPaused['callFrames'][number] | undefined,
   scripts: Map<string, string>,
+  maps?: Map<string, SourceMap.SourceMapDecoder>,
 ): string {
   if (!frame) return 'debugger';
-  const located = mappedLocation(config, frame, scripts);
+  const located = mappedLocation(config, frame, scripts, maps);
   // Typed input belongs to no file — the same `<anonymous>` this REPL already prints in stacks.
   if (!located) return `<anonymous>:${frame.location.lineNumber + 1}`;
 
@@ -1781,13 +1824,14 @@ function mappedLocation(
   config: Config,
   frame: DebuggerPaused['callFrames'][number],
   scripts: Map<string, string>,
+  maps: Map<string, SourceMap.SourceMapDecoder> = new Map(),
 ): { file: string; line: number; column: number } | null {
   const { lineNumber, columnNumber, scriptId } = frame.location;
   const url = frame.url || scripts.get(scriptId);
   if (!url) return null;
 
   const at = `    at ${url}:${lineNumber + 1}:${(columnNumber ?? 0) + 1}`;
-  const resolved = resolveStack(config, at).trim().replace(/^at /, '');
+  const resolved = resolveStack(config, at, maps).trim().replace(/^at /, '');
   const parsed = /^(.*):(\d+):(\d+)$/.exec(resolved);
 
   return parsed
