@@ -77,7 +77,7 @@ export async function run(): Promise<number> {
 
 /** What the session is, what it loaded, and how to leave — through the run's reporters, as `#` lines. */
 function banner(config: ResolvedConfig, session: ReplSession): void {
-  Reporter.info(config, blue(`qunitx repl — evaluating in Chrome at ${session.url}`));
+  Reporter.info(config, blue(`qunitx repl — ${where(config, session.url)}`));
   for (const [file, names] of session.loaded) {
     const exported = names.length > 0 ? `: ${names.join(', ')}` : '';
     Reporter.info(config, blue(`loaded ${file}${exported}`));
@@ -86,6 +86,18 @@ function banner(config: ResolvedConfig, session: ReplSession): void {
     config,
     blue('type `.help` for commands, `:<cmd>` for a shell, `.exit` or Ctrl-D to quit'),
   );
+}
+
+/**
+ * Which page is yours, in the words that tell one from the other.
+ *
+ * A headless Chrome you cannot see and a window that just opened are two different answers to
+ * "where is my session", and the banner is the only place anybody is told.
+ */
+function where(config: ResolvedConfig, url: string): string {
+  return config.open === true
+    ? `evaluating in the window that just opened (${url})`
+    : `evaluating in Chrome at ${url}`;
 }
 
 /**

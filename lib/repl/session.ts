@@ -424,7 +424,9 @@ export async function start(
     response.end(pageHTML(config));
   });
 
-  const browser = await Browser.launch(config);
+  // `--open` means the window on your screen IS the session: same globalThis, same DOM, and
+  // DevTools a keypress away on the realm the prompt is typing into.
+  const browser = await Browser.launch(config, false, config.open === true);
   try {
     const page = await browser.newPage();
     await bindServerToPort(server, config);
