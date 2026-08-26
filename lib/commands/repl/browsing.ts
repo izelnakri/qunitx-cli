@@ -99,28 +99,31 @@ export function defineBrowsing(
     });
   }
   // Only ever a tree, so `.tree` on a file says so rather than quietly printing it. Half the
-  // value of a narrow command is that it refuses what it is not for.
-  server.defineCommand('tree', {
-    help: 'Show a directory as a tree — `-L 2` for two levels, all the way down by default',
-    action(argument: string) {
-      this.clearBufferedCommand();
-      const { depth, path: typed } = Files.target(argument.trim());
-      const found = Files.read(typed, cwd);
-      if (found.kind === 'directory') {
-        this.output.write(showTree(typed, cwd, palette, depth));
-      } else if (found.kind === 'file') {
-        this.output.write(red(`${typed} is a file, not a directory\n`));
-      } else {
-        this.output.write(red(`${pathProblem(found, typed)}\n`));
-        this.displayPrompt();
+  // value of a narrow command is that it refuses what it is not for. `.ls` because that is what
+  // the hand types to see what is in a directory, and `-L 1` is the listing it means by it.
+  for (const name of ['tree', 'ls']) {
+    server.defineCommand(name, {
+      help: 'Show a directory as a tree — `-L 2` for two levels, all the way down by default',
+      action(argument: string) {
+        this.clearBufferedCommand();
+        const { depth, path: typed } = Files.target(argument.trim());
+        const found = Files.read(typed, cwd);
+        if (found.kind === 'directory') {
+          this.output.write(showTree(typed, cwd, palette, depth));
+        } else if (found.kind === 'file') {
+          this.output.write(red(`${typed} is a file, not a directory\n`));
+        } else {
+          this.output.write(red(`${pathProblem(found, typed)}\n`));
+          this.displayPrompt();
 
-        return void (
-          found.kind === 'missing' &&
-          interactive &&
-          server.write(`.tree ${found.retype}`)
-        );
-      }
-      this.displayPrompt();
-    },
-  });
+          return void (
+            found.kind === 'missing' &&
+            interactive &&
+            server.write(`.${name} ${found.retype}`)
+          );
+        }
+        this.displayPrompt();
+      },
+    });
+  }
 }

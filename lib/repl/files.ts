@@ -5,7 +5,7 @@ import { highlight } from './highlight.ts';
 import type { Theme } from './theme.ts';
 
 /** The commands that take a path, and so complete like a shell rather than like an expression. */
-const PATH_COMMANDS = /^\s*\.(?:cat|view|tree|import|load)\s+(?:.*\s)?(\S*)$/;
+const PATH_COMMANDS = /^\s*\.(?:cat|view|tree|ls|import|load)\s+(?:.*\s)?(\S*)$/;
 /** Filenames that name their directory instead of themselves. */
 const INDEX_NAMES = new Set(['index', 'mod']);
 /** `-L 2`, anywhere in the argument, the way `tree` takes it. */

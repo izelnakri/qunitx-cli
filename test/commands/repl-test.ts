@@ -557,6 +557,18 @@ module('Commands | repl | .tree', { concurrency: true }, () => {
     assert.includes(await repl('.tree cli.ts\n'), 'cli.ts is a file, not a directory');
   });
 
+  test('.ls is the same command, under the name the hand types', async (assert) => {
+    const [tree, ls] = await Promise.all([
+      repl('.tree -L 1 lib/repl\n'),
+      repl('.ls -L 1 lib/repl\n'),
+    ]);
+    // Past the banner, which names the port this session happened to get.
+    const listing = (text: string) => text.split('\n').filter((line) => !line.startsWith('# '));
+
+    assert.deepEqual(listing(ls.stdout), listing(tree.stdout));
+    assert.includes(await repl('.ls cli.ts\n'), 'cli.ts is a file, not a directory');
+  });
+
   test('.view shows a file or a directory, and .cat only a file', async (assert) => {
     const [viewed, catted] = await Promise.all([repl('.view lib/repl\n'), repl('.cat lib/repl\n')]);
 
