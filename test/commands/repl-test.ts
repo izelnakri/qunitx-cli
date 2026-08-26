@@ -81,11 +81,30 @@ module('Commands | repl | a piped session', { concurrency: true }, () => {
 
 module('Commands | repl | inputs and refusals', { concurrency: true }, () => {
   test('named files are preloaded, announced, and their tests run once', async (assert) => {
-    const result = await repl('double(21)\n', 'test/fixtures/repl-helpers.ts');
+    const result = await repl(
+      'double(21)\nReplHelpers.GREETING\n',
+      'test/fixtures/repl-helpers.ts',
+    );
 
-    assert.includes(result, '# loaded test/fixtures/repl-helpers.ts: GREETING, boom, double');
+    assert.includes(
+      result,
+      '# loaded test/fixtures/repl-helpers.ts: ReplHelpers, GREETING, boom, double',
+    );
     assert.includes(result, 'ok 1 preloaded test');
     assert.includes(result, '42', 'and the file’s exports are callable at the prompt');
+    // The same name `.import` would have given it: a file named on the command line and a file
+    // brought in later should be the same kind of thing.
+    assert.includes(result, "'hello from the preload'", 'under one name as well as their own');
+  });
+
+  test('a name the page already means is not taken by one worked out from a path', async (assert) => {
+    // `location.ts` would be `Location`, which a page already has and means something by.
+    await using directory = await tempDir('repl-namespace');
+    await fs.writeFile(path.join(directory.path, 'location.ts'), 'export const here = 1;\n');
+    const result = await repl('typeof Location\nhere\n', path.join(directory.path, 'location.ts'));
+
+    assert.includes(result, "'function'", 'the page keeps its own Location');
+    assert.includes(result, '1', 'and the file still put its exports in scope');
   });
 
   test('a preload file that is not there refuses to open, naming it', async (assert) => {

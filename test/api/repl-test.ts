@@ -184,7 +184,12 @@ module('API | repl | preloaded files', { concurrency: true }, () => {
           [PRELOAD],
           'the session reports what it loaded, so the terminal can list it',
         );
-        assert.deepEqual(session.loaded[0][1], ['GREETING', 'boom', 'double']);
+        assert.deepEqual(session.loaded[0][1], ['ReplHelpers', 'GREETING', 'boom', 'double']);
+        assert.equal(
+          (await session.evaluate('ReplHelpers.GREETING')).output,
+          "'hello from the preload'",
+          'the file itself is in scope too, under the name its path spells',
+        );
         assert.equal((await session.evaluate('double(21)')).output, '42');
         assert.equal((await session.evaluate('GREETING')).output, "'hello from the preload'");
         assert.includes(output.text(), 'ok 1 preloaded test');

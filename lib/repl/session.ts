@@ -797,14 +797,33 @@ class Session implements ReplSession {
     if (!stats) return `${shown} is not a file`;
     if (stats.isDirectory()) return `${shown} is a directory`;
 
-    const name = as && as !== '' ? as : namespaceFor(absolute);
+    const asked = as !== undefined && as !== '';
+    const name = asked ? (as as string) : namespaceFor(absolute);
     if (!IDENTIFIER.test(name)) return `${name} is not a name a value can be given`;
 
     const source = CODE.has(path.extname(absolute).toLowerCase())
-      ? await this.#bundleImport(absolute, shown, name)
+      ? await this.#bundle(
+          [
+            `import * as m from '${specifier(absolute, this.#config.cwd)}';`,
+            `globalThis.__qunitxHarness.bring(${JSON.stringify(shown)}, ${JSON.stringify(name)}, m, ${asked});`,
+          ].join('\n'),
+          shown,
+        )
       : await plainFile(absolute, shown, name);
     if (typeof source !== 'string') return source.detail;
+    const names = await this.#loadInto(source, shown);
 
+    return typeof names === 'string' ? names : { name, names };
+  }
+
+  /**
+   * Runs a built bundle in the page and takes account of what it left there.
+   *
+   * The names are read back rather than guessed at from the source: a module's exports are only
+   * known once it has evaluated, and the bundle is an IIFE that returns nothing, so the harness's
+   * own list is the answer.
+   */
+  async #loadInto(source: string, shown: string): Promise<string[] | string> {
     const evaluated = await this.#cdp.send('Runtime.evaluate', {
       expression: source,
       awaitPromise: true,
@@ -815,43 +834,29 @@ class Session implements ReplSession {
       return `${shown} threw while loading — ${thrown ?? evaluated.exceptionDetails.text}`;
     }
 
-    // Read back rather than guessed at from the source: a module's exports are only known once it
-    // has evaluated. The bundle is an IIFE and returns nothing, so the harness's own list is the
-    // answer — and it is the list a re-import replaced, not the one it added to.
     this.loaded = await this.readLoaded();
-    const names = this.loaded.find(([known]) => known === shown)?.[1] ?? [name];
+    const names = this.loaded.find(([known]) => known === shown)?.[1] ?? [];
     for (const introduced of names) this.#origins.set(introduced, shown);
     // A file that registers tests has registered them by now, and the command line runs a preload's
     // tests as it opens. Waiting for the next typed line to flush them would be a different rule
     // for the same file depending on which way it came in.
     await this.runPending();
 
-    return { name, names };
+    return names;
   }
 
   /**
-   * The one file, bundled — with `qunitx` left to the copy the page already has.
+   * One entry, bundled — with `qunitx` left to the copy the page already has.
    *
    * Bundling a second one would give the page a second QUnit, and tests registered against the one
    * nobody flushes are tests that never run. The shim exports the names the first bundle put on the
    * harness, which is the same module object the preloaded files imported.
    */
-  async #bundleImport(
-    absolute: string,
-    shown: string,
-    name: string,
-  ): Promise<string | { detail: string }> {
+  async #bundle(contents: string, shown: string): Promise<string | { detail: string }> {
     const exports = await this.#byValue<string[]>('globalThis.__qunitxHarness.qunitx');
     try {
       const built = await esbuild.build({
-        stdin: {
-          contents: [
-            `import * as m from '${specifier(absolute, this.#config.cwd)}';`,
-            `globalThis.__qunitxHarness.bring(${JSON.stringify(shown)}, ${JSON.stringify(name)}, m,`,
-            `  Object.keys(m).filter((name) => name !== 'default'));`,
-          ].join('\n'),
-          resolveDir: this.#config.cwd,
-        },
+        stdin: { contents, resolveDir: this.#config.cwd },
         bundle: true,
         write: false,
         format: 'iife',
@@ -1507,13 +1512,18 @@ function initScript(config: Config): string {
  *
  * The footer is what makes it a REPL rather than a run: instead of starting QUnit it hands the
  * namespaces to the harness, which copies their exports onto `globalThis`. That is why `test`,
- * `module` and anything a preloaded file exports can be typed at the prompt unqualified.
+ * `module` and anything a preloaded file exports can be typed at the prompt unqualified. Each file
+ * also arrives under one name worked out from its path, the same one `.import` would give it — a
+ * file named on the command line and a file brought in later should be the same kind of thing.
  */
 async function bundle(config: Config, preload: string[], outDir: string): Promise<string> {
   const imports = preload.map(
     (file, i) => `import * as m${i} from '${specifier(file, config.cwd)}';`,
   );
-  const modules = preload.map((file, i) => `[${JSON.stringify(relative(config, file))}, m${i}]`);
+  const modules = preload.map(
+    (file, i) =>
+      `[${JSON.stringify(relative(config, file))}, ${JSON.stringify(namespaceFor(file))}, m${i}]`,
+  );
   try {
     const built = await esbuild.build({
       stdin: {
@@ -1571,7 +1581,7 @@ async function plainFile(
     value = `JSON.parse(${value})`;
   }
 
-  return `globalThis.__qunitxHarness.bring(${JSON.stringify(shown)}, ${JSON.stringify(name)}, ${value}, []);`;
+  return `globalThis.__qunitxHarness.bind(${JSON.stringify(shown)}, { [${JSON.stringify(name)}]: ${value} });`;
 }
 
 /**

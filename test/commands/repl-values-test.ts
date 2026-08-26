@@ -26,8 +26,9 @@ module('Commands | repl | nothing to say', { concurrency: true }, () => {
     assert.strictEqual(nowhere('  ', 'copy'), 'Usage: .copy <value>', 'under whichever name');
   });
 
-  test('something asked that has nowhere to point at says which', (assert) => {
+  test('a name that is not there is the one thing nothing is known about', (assert) => {
+    // Every name this session watched arrive has an answer now, whether or not V8 can place it.
     assert.includes(nowhere('helper', 'doc'), 'nothing known about helper');
-    assert.includes(nowhere('helper', 'doc'), 'not a function', 'V8 places functions and no more');
+    assert.includes(nowhere('helper', 'doc'), 'no such name in this session');
   });
 });

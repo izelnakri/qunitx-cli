@@ -28,15 +28,30 @@ interface ReplHarness {
    * their exports on `globalThis`. `qunitx run` has no such bundle and does not call it — which is
    * why {@link ReplHarness.flush} attaches to QUnit itself rather than relying on this.
    */
-  load(qunitx: Record<string, unknown>, modules: Array<[string, Record<string, unknown>]>): void;
+  load(
+    qunitx: Record<string, unknown>,
+    modules: Array<[string, string, Record<string, unknown>]>,
+  ): void;
   /**
-   * Called by a `.import`'s bundle: puts a file in scope under `as`, and — for a module, whose
-   * exports are names in their own right — puts `exported` in scope beside it.
+   * Puts a module in scope: its exports under their own names, and the module itself under `as`.
+   *
+   * The namespace is what makes one line at the prompt print everything a file has. `as` is skipped
+   * where the page already has that name and this session did not put it there — a name worked out
+   * from a path should not take one that already means something — unless `force` says the person
+   * asked for it by hand, which is theirs to overwrite.
    *
    * A file brought in twice replaces what it brought the first time, so `.imported` says what is
    * in scope now rather than everything that ever was.
    */
-  bring(file: string, as: string, value: unknown, exported: string[]): string[];
+  bring(file: string, as: string, namespace: Record<string, unknown>, force: boolean): string[];
+  /**
+   * Puts exactly these names in scope, from this file — what an `import` statement typed at the
+   * prompt binds, and what a file that is not code is worth.
+   *
+   * Merged into what the file already brought rather than replacing it: two `import` statements
+   * naming the same file are two requests, and the second is not a correction of the first.
+   */
+  bind(file: string, values: Record<string, unknown>): string[];
   /** `[file, exported names]` for each module in scope — what the banner lists. */
   loaded: Array<[string, string[]]>;
   /** What `qunitx` exports in this page, so a later bundle can borrow them instead of its own. */
@@ -100,28 +115,37 @@ export function harness(options: { timeout: number }): void {
       target.__qunitxRuntime = qunitx;
       api.qunitx = Object.keys(qunitx);
       assign(qunitx);
-      for (const [file, namespace] of modules) {
-        api.loaded.push([file, Object.keys(namespace).filter((name) => name !== 'default')]);
-        assign(namespace);
-      }
+      for (const [file, as, namespace] of modules) api.bring(file, as, namespace, false);
       attach(target.QUnit as QUnitLike);
     },
-    bring(file, as, value, exported) {
-      target[as] = value;
-      for (const name of exported) {
-        target[name] = (value as Record<string, unknown>)[name];
+    bring(file, as, namespace, force) {
+      const owned = new Set(api.loaded.flatMap(([, names]) => names));
+      const values: Record<string, unknown> =
+        force || !(as in target) || owned.has(as) ? { [as]: namespace } : {};
+      for (const name of Object.keys(namespace)) {
+        if (name !== 'default') values[name] = namespace[name];
       }
-      const names = [as, ...exported];
+      // What the last import of this file left behind and this one does not bring: an export it
+      // has since lost, or the name it used to go under. Left in place, they would be a scope full
+      // of values from a version of the file that no longer exists.
+      const already = api.loaded.findIndex(([known]) => known === file);
+      if (already !== -1) {
+        for (const stale of api.loaded[already][1]) {
+          if (!(stale in values)) delete target[stale];
+        }
+        api.loaded.splice(already, 1);
+      }
+
+      return api.bind(file, values);
+    },
+    bind(file, values) {
+      const names = Object.keys(values);
+      for (const name of names) target[name] = values[name];
       const already = api.loaded.findIndex(([known]) => known === file);
       if (already === -1) api.loaded.push([file, names]);
       else {
-        // What the last import of this file left behind and this one does not bring: an export it
-        // has since lost, or the name it used to go under. Left in place, they would be a scope
-        // full of values from a version of the file that no longer exists.
-        for (const stale of api.loaded[already][1]) {
-          if (!names.includes(stale)) delete target[stale];
-        }
-        api.loaded[already] = [file, names];
+        const kept = api.loaded[already][1].filter((known) => !names.includes(known));
+        api.loaded[already] = [file, [...kept, ...names]];
       }
 
       return names;
