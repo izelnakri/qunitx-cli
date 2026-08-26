@@ -65,17 +65,25 @@ export function tryWriteFile(file: string, contents: string): boolean {
  * A `.js` extension, because whatever an editor does with syntax and indentation should be what it
  * would do for the file this text is going to behave like.
  *
+ * What comes back says whether the text CHANGED, not merely whether it was saved. Quitting without
+ * writing means "never mind", and a scratchpad that runs what you just walked away from is a
+ * scratchpad you stop using for anything you are not sure about.
+ *
  * ```ts
  * import type { REPLServer } from 'node:repl';
  * import { edit } from './editor.ts';
  *
  * // Defined, not invoked: it takes over the terminal.
  * function example(server: REPLServer) {
- *   return edit('vi', 'const x = 1;', server); // resolves with whatever was saved
+ *   return edit('vi', 'const x = 1;', server); // { text: whatever was saved, changed: boolean }
  * }
  * ```
  */
-export async function edit(editor: string, contents: string, server: REPLServer): Promise<string> {
+export async function edit(
+  editor: string,
+  contents: string,
+  server: REPLServer,
+): Promise<{ text: string; changed: boolean }> {
   // Unique per call, not per process: two edits in flight at once would otherwise open the same
   // path and each would save over the other's buffer.
   const file = path.join(os.tmpdir(), `qunitx-repl-${process.pid}-${randomUUID()}.js`);
@@ -83,8 +91,9 @@ export async function edit(editor: string, contents: string, server: REPLServer)
 
   try {
     await handOver(server, editor, [file]);
+    const text = tryReadFile(file) ?? contents;
 
-    return tryReadFile(file) ?? contents;
+    return { text, changed: text !== contents };
   } finally {
     try {
       fs.unlinkSync(file);
@@ -92,6 +101,27 @@ export async function edit(editor: string, contents: string, server: REPLServer)
       // Already gone, which is where it was headed.
     }
   }
+}
+
+/**
+ * What an edit leaves to run: the buffer where it moved, and nothing where it did not.
+ *
+ * Quitting without writing means "never mind", and a scratchpad that runs what you just walked
+ * away from is one you stop using for anything you are not sure about. A buffer emptied and saved
+ * runs nothing either, for the same reason it would at the prompt.
+ *
+ * The comparison is of CONTENT, not of whether a write happened: an editor that saves a buffer
+ * nobody touched has changed nothing, whatever it did to the mtime.
+ *
+ * ```ts
+ * import { whatToRun } from './editor.ts';
+ *
+ * whatToRun({ text: '1 + 1', changed: true }); // '1 + 1'
+ * whatToRun({ text: '1 + 1', changed: false }); // '' — quit without saving, so never mind
+ * ```
+ */
+export function whatToRun(edited: { text: string; changed: boolean }): string {
+  return edited.changed ? edited.text.trim() : '';
 }
 
 /**
@@ -160,7 +190,8 @@ async function handOver(server: REPLServer, command: string, args: string[]): Pr
  * ignore it and open the file anyway — which is still the thing that was asked for.
  *
  * Resolves with `null` when the editor ran, or with the line to print when it could not: no
- * `$EDITOR` set, or one that is not there.
+ * `$EDITOR` set, or one that is not there. `named` is for the commands named after an editor,
+ * which mean that one rather than whichever the environment prefers.
  *
  * ```ts
  * import { openInEditor } from './editor.ts';
@@ -177,8 +208,9 @@ export async function openInEditor(
   file: string,
   line: number,
   server: REPLServer,
+  named?: string,
 ): Promise<string | null> {
-  const editor = process.env.VISUAL || process.env.EDITOR;
+  const editor = named ?? process.env.VISUAL ?? process.env.EDITOR;
   if (!editor) return 'no $EDITOR set — nothing to open it with\n';
 
   // The same handover `.nvim` makes: readline stands down, the editor owns the terminal, and it
@@ -186,4 +218,62 @@ export async function openInEditor(
   const started = await handOver(server, editor, [`+${line}`, file]);
 
   return started ? null : `${editor} could not be started\n`;
+}
+
+/**
+ * Hands an address to whatever this desktop opens addresses with — the browser already running.
+ *
+ * `xdg-open`, `open` and `start` are the same idea under three names, and the point of using them
+ * rather than launching a browser is that they land in the window that is already open, logged in,
+ * and has your tabs in it.
+ *
+ * Detached and with its output thrown away: a desktop opener is a doorbell, not a program this
+ * session waits on, and some of them chatter on stderr while doing exactly what was asked.
+ *
+ * ```ts
+ * import { openExternally } from './editor.ts';
+ *
+ * // Defined, not invoked: it puts a window on somebody's screen.
+ * function example() {
+ *   return openExternally('https://localhost:1234'); // null once handed over
+ * }
+ * ```
+ */
+export function openExternally(address: string): Promise<string | null> {
+  const opener = OPENERS[process.platform] ?? OPENERS.default;
+  if (!opener) return Promise.resolve(`no way to open ${address} on ${process.platform}\n`);
+
+  return new Promise((resolve) => {
+    const [command, ...args] = opener;
+    const child = spawn(command as string, [...args, address], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.on('error', () => resolve(`${command} could not be started\n`));
+    child.unref();
+    // Answered as soon as it is running: what it does next belongs to the desktop, not to this
+    // prompt, and waiting for a browser window to close is not a thing anybody meant by `.open`.
+    setTimeout(() => resolve(null), 0);
+  });
+}
+
+/** What each desktop calls its opener. `start` is a shell builtin, so it needs one. */
+const OPENERS: Record<string, string[] | undefined> = {
+  darwin: ['open'],
+  win32: ['cmd', '/c', 'start', ''],
+  default: ['xdg-open'],
+};
+
+/**
+ * Whether this is an address rather than a path — what a browser takes and an editor does not.
+ *
+ * ```ts
+ * import { isAddress } from './editor.ts';
+ *
+ * isAddress('https://localhost:1234'); // true
+ * isAddress('lib/repl/session.ts'); // false — a path, whether or not there is a file there yet
+ * ```
+ */
+export function isAddress(target: string): boolean {
+  return /^(?:https?|file|about|chrome):/i.test(target) || /^www\./i.test(target);
 }

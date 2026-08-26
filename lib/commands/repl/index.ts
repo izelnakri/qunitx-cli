@@ -9,13 +9,21 @@ import * as Reporter from '../../reporters/index.ts';
 import * as Repl from '../../repl/session.ts';
 import * as Result from '../../result/index.ts';
 import { blue, red } from '../../utils/color.ts';
-import { edit, openInEditor, replayableLines, tryWriteFile } from './editor.ts';
+import {
+  edit,
+  isAddress,
+  openExternally,
+  openInEditor,
+  replayableLines,
+  tryWriteFile,
+  whatToRun,
+} from './editor.ts';
 import { complete, completionCache, setupSuggestions } from './completion.ts';
 import type { CompleterCallback } from './completion.ts';
 import { defineDebugging, lost, showFrame } from './debugging.ts';
 import { defineBrowsing } from './browsing.ts';
 import { helpLines } from './help.ts';
-import { defineValues, describeValue, nowhere } from './values.ts';
+import { defineValues, describeValue } from './values.ts';
 import * as Search from '../search.ts';
 import pkg from '../../../package.json' with { type: 'json' };
 import { HISTORY_KEPT, defineHistory, setupHistory } from './history.ts';
@@ -205,13 +213,19 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
     // One bar per level left open, which is the only thing a continuation prompt has to say.
     // Through readline's own `setPrompt` rather than the REPL's, which would also rewrite the
     // prompt this returns to.
-    if (interactive) {
-      server.displayPrompt = (preserveCursor?: boolean) => {
-        const bars = '|'.repeat(Math.max(1, depth(buffered)));
-        readline.Interface.prototype.setPrompt.call(server, buffered === '' ? PROMPT : `${bars} `);
-        server.prompt(preserveCursor);
-      };
-    }
+    //
+    // Guarded, because a command that answers after the session has closed would otherwise throw
+    // `ERR_USE_AFTER_CLOSE` out of a `then` and take the process with it. A pasted `.exit` on the
+    // line after a `.open` is exactly that: both lines arrive together, and the editor is still
+    // open when the second one closes the session.
+    const prompting = server.displayPrompt.bind(server);
+    server.displayPrompt = (preserveCursor?: boolean) => {
+      if ((server as unknown as { closed?: boolean }).closed) return;
+      if (!interactive) return prompting(preserveCursor);
+      const bars = '|'.repeat(Math.max(1, depth(buffered)));
+      readline.Interface.prototype.setPrompt.call(server, buffered === '' ? PROMPT : `${bars} `);
+      server.prompt(preserveCursor);
+    };
     // `node:repl` calls `clearBufferedCommand()` after every command it finishes, so that is not
     // the hook for abandoning an unfinished one — this is, and it is what `.break` and Ctrl-C have
     // always meant.
@@ -288,28 +302,65 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
         session.reload().then(() => this.displayPrompt());
       },
     });
-    // One buffer behind all three names, kept for the life of the session. Reopening picks up
-    // where the last one left off whichever name you used, because they are one scratchpad and a
-    // REPL where the editor forgets is an editor you stop reaching for.
+    // One command, under every name a hand reaches for, doing what `xdg-open` does: with nothing
+    // after it the session's own scratchpad, with an address the browser already running, and with
+    // anything else an editor — on the file a value is declared in, or on the path itself, whether
+    // or not there is a file there yet.
+    //
+    // `node:repl`'s `.editor` is dropped: a multi-line paste mode in a REPL that hands you a real
+    // editor is the worse of two spellings of the same idea.
+    delete (server.commands as Record<string, unknown>).editor;
+    // One buffer for the life of the session, whichever name opened it: reopening continues the
+    // same thought rather than starting a blank one.
     let scratch = '';
-    for (const editor of ['vi', 'vim', 'nvim']) {
-      server.defineCommand(editor, {
-        help: `Edit a scratch buffer in ${editor}; on exit it runs in the page`,
-        action() {
+    const scratchpad = (repl: REPLServer, named?: string) => {
+      void edit(named ?? process.env.VISUAL ?? process.env.EDITOR ?? 'vi', scratch, server).then(
+        async (edited) => {
+          scratch = edited.text;
+          const source = whatToRun(edited);
+          if (source !== '') {
+            const result = await session.evaluate(source);
+            const text = result.failed ? red(failure(result)) : result.output;
+            if (text !== '') repl.output.write(`${text}\n`);
+          }
+          repl.displayPrompt();
+        },
+      );
+    };
+    for (const name of ['open', 'edit', 'e', 'vi', 'vim', 'nvim']) {
+      // The editor-named ones mean that editor; the rest mean whichever the environment prefers.
+      const named = name === 'open' || name === 'edit' || name === 'e' ? undefined : name;
+      server.defineCommand(name, {
+        help: 'Open a scratch buffer, or whatever follows: a value, a file, or an address',
+        action(argument: string) {
           this.clearBufferedCommand();
-          if (!interactive) {
-            this.output.write(red(`.${editor} needs a terminal\n`));
+          const asked = argument.trim();
+          if (!interactive && asked === '') {
+            this.output.write(red(`.${name} needs a terminal\n`));
 
             return void this.displayPrompt();
           }
+          if (asked === '') return void scratchpad(this, named);
+          if (isAddress(asked)) {
+            return void openExternally(asked).then((failed) => {
+              this.output.write(failed ?? blue(`${asked}\n`));
+              this.displayPrompt();
+            });
+          }
 
-          void edit(editor, scratch, server).then(async (edited) => {
-            scratch = edited;
-            if (edited.trim() !== '') {
-              const result = await session.evaluate(edited);
-              const text = result.failed ? red(failure(result)) : result.output;
-              if (text !== '') this.output.write(`${text}\n`);
-            }
+          void session.declaredAt(asked).then(async (declared) => {
+            // A function knows its own line. Everything else that came into this session came
+            // from a file too, and anything that is neither is a path — one that need not exist
+            // yet, since opening an editor on a name is how a file starts.
+            const from = session.whereFrom(asked);
+            const at = declared ?? { file: from ?? asked, line: 1 };
+            // A pipe has no terminal to hand over, and an editor given one anyway waits for a
+            // human who is not there — the session simply stops. Where it cannot open it, the
+            // place is still worth saying.
+            const failed = interactive
+              ? await openInEditor(path.resolve(cwd, at.file), at.line, server, named)
+              : null;
+            this.output.write(failed ?? blue(`${at.file}:${at.line}\n`));
             this.displayPrompt();
           });
         },
@@ -336,35 +387,6 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
         this.displayPrompt();
       },
     });
-    // `.open` for what it does to a file, `.edit` for what you are about to do to it, `.e` for
-    // the hand that has typed it a thousand times.
-    for (const name of ['open', 'edit', 'e']) {
-      server.defineCommand(name, {
-        help: 'Open the file a value is declared in, at its line',
-        action(argument: string) {
-          this.clearBufferedCommand();
-          void session.declaredAt(argument.trim()).then(async (declared) => {
-            // A function knows its own line. Everything else that came into this session came
-            // from a file too — the top of it is a better answer than refusing to open anything.
-            const from = session.whereFrom(argument);
-            const at = declared ?? (from === null ? null : { file: from, line: 1 });
-            if (!at) {
-              this.output.write(red(`${nowhere(argument, 'open')}\n`));
-
-              return void this.displayPrompt();
-            }
-            // A pipe has no terminal to hand over, and an editor given one anyway waits for a
-            // human who is not there — the session simply stops. Where it cannot open it, the
-            // place is still worth saying.
-            const failure = interactive
-              ? await openInEditor(path.resolve(cwd, at.file), at.line, server)
-              : null;
-            this.output.write(failure ?? blue(`${at.file}:${at.line}\n`));
-            this.displayPrompt();
-          });
-        },
-      });
-    }
     server.defineCommand('pwd', {
       help: 'Print the directory paths are resolved against',
       action() {
@@ -539,7 +561,7 @@ function clearScreen(): string {
 }
 
 // Re-exported so the terminal layer has one door, whichever room a thing lives in.
-export { edit, replayableLines } from './editor.ts';
+export { edit, replayableLines, whatToRun } from './editor.ts';
 export { complete, setupSuggestions, suggestionStyle } from './completion.ts';
 export { lost } from './debugging.ts';
 export { recent, trimHistoryFile } from './history.ts';

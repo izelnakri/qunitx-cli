@@ -507,9 +507,9 @@ module('Commands | repl | values', { concurrency: true }, () => {
   });
 
   test('what has nothing to say says so', async (assert) => {
+    // `.open` is the exception: a name it does not know is a path it has not been given yet.
     assert.includes(await helpers('.doc nosuchthing\n'), 'nothing known about nosuchthing');
     assert.includes(await helpers('.doc\n'), 'Usage: .doc <value>');
-    assert.includes(await helpers('.open nosuchthing\n'), 'nothing known about nosuchthing');
   });
 
   test('the short names reach the same command', async (assert) => {
@@ -521,6 +521,54 @@ module('Commands | repl | values', { concurrency: true }, () => {
     assert.includes(long, 'repl-helpers.ts:', 'the file and the line');
     assert.deepEqual(said(short.stdout), said(long.stdout), '`.e` is `.edit` is `.open`');
   });
+
+  test('.open takes a path as a path, whether or not there is a file there', async (assert) => {
+    // `xdg-open`'s bargain: whatever you name, opened by whatever opens that. A name with no file
+    // behind it is how a file starts, so it opens an editor on it rather than refusing.
+    const result = await repl('.open lib/repl/session.ts\n.open not-written-yet.ts\n');
+
+    assert.includes(result, 'lib/repl/session.ts:1');
+    assert.includes(result, 'not-written-yet.ts:1');
+  });
+
+  test('`.editor` is gone, because `.open` is the better spelling of it', async (assert) => {
+    assert.includes(await repl('.editor\n1 + 1\n'), 'Invalid REPL keyword');
+  });
+
+  // Handing a terminal to an editor needs a terminal to hand over. `script` is the pty every
+  // Linux has; the macOS spelling differs and Windows has none, so this asks where it can.
+  if (process.platform === 'linux') {
+    /** A stand-in for a human at an editor: one that saves something, and one that walks away. */
+    const editing = async (label: string, script: string) => {
+      const directory = await tempDir(label);
+      const editor = path.join(directory.path, 'stand-in');
+      await fs.writeFile(editor, `#!/bin/sh\n${script}\n`);
+      await fs.chmod(editor, 0o755);
+      // `script -c` hands its argument to a shell, so the editor goes in as an assignment rather
+      // than through an env option the capture helper does not take.
+      const result = await execute(
+        `script -qec "EDITOR=${editor} node cli.ts repl --browser=chromium --output=tmp/run-${randomUUID()}" /dev/null`,
+        { stdin: '.open\n.exit\n' },
+      );
+      await directory[Symbol.asyncDispose]();
+
+      return result;
+    };
+
+    test('the scratchpad runs what was saved, in the page', async (assert) => {
+      const result = await editing('repl-scratch-saved', `printf '6 * 7\\n' >> "$1"`);
+
+      assert.includes(result.stdout, '42', 'and the answer comes back to the prompt');
+    });
+
+    test('a scratchpad quit without saving is a change of mind', async (assert) => {
+      // `:q` means "never mind". A scratchpad that runs what you just walked away from is one you
+      // stop using for anything you are not sure about.
+      const result = await editing('repl-scratch-quit', 'exit 0');
+
+      assert.notIncludes(result.stdout, '42');
+    });
+  }
 
   test('.pwd, .version and .search answer for the session', async (assert) => {
     const [pwd, version, search] = await Promise.all([
