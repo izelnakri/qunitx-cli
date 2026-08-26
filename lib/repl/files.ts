@@ -5,7 +5,9 @@ import { highlight } from './highlight.ts';
 import type { Theme } from './theme.ts';
 
 /** The commands that take a path, and so complete like a shell rather than like an expression. */
-const PATH_COMMANDS = /^\s*\.(?:cat|view|tree)\s+(?:.*\s)?(\S*)$/;
+const PATH_COMMANDS = /^\s*\.(?:cat|view|tree|import|load)\s+(?:.*\s)?(\S*)$/;
+/** Filenames that name their directory instead of themselves. */
+const INDEX_NAMES = new Set(['index', 'mod']);
 /** `-L 2`, anywhere in the argument, the way `tree` takes it. */
 const DEPTH_FLAG = /(?:^|\s)-L\s*(\d+)(?:\s|$)/;
 
@@ -300,4 +302,39 @@ export function tree(root: string, cwd: string, palette: Theme, depth: number = 
   walk(path.resolve(cwd, root), '', 1);
 
   return { listing: lines.join('\n'), counted, omitted };
+}
+
+/**
+ * The name a file goes into scope under when nobody says what to call it.
+ *
+ * Elixir's rule, because it is the one that turns a path into something you can type:
+ * `test/fixtures/repl-helpers.ts` becomes `ReplHelpers`, and every separator a filename uses to
+ * mean a word boundary — `-`, `_`, `.` — becomes a capital letter instead.
+ *
+ * A file called `index` or `mod` is named for the directory holding it, since a session with three
+ * `Index` objects in it has none.
+ *
+ * ```ts
+ * import { namespaceFor } from './files.ts';
+ *
+ * namespaceFor('test/fixtures/repl-helpers.ts'); // 'ReplHelpers'
+ * namespaceFor('lib/repl/index.ts'); // 'Repl' — the directory, since every folder has an index
+ * namespaceFor('package.json'); // 'Package'
+ * ```
+ */
+export function namespaceFor(file: string): string {
+  const normalized = file.replaceAll('\\', '/');
+  const parts = normalized.split('/').filter((part) => part !== '' && part !== '.');
+  const base = (parts.at(-1) ?? '').replace(/\.[^.]+$/, '');
+  const named = INDEX_NAMES.has(base.toLowerCase()) ? (parts.at(-2) ?? base) : base;
+  const camelCased = named
+    .split(/[-_. ]+/)
+    .filter((word) => word !== '')
+    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
+    .join('');
+  const identifier = camelCased.replace(/[^\p{L}\p{N}$_]/gu, '');
+
+  // A name has to be typeable to be worth generating: what a filename left unusable falls back to
+  // a shape that is, rather than to a global nobody can reference.
+  return identifier === '' || /^\d/.test(identifier) ? `Module${identifier}` : identifier;
 }

@@ -255,6 +255,74 @@ module('Commands | repl | values', { concurrency: true }, () => {
     assert.includes(await repl('.imported\n'), 'Nothing preloaded', 'with nothing, nothing');
   });
 
+  test('.import brings a file in, under a name made from its path', async (assert) => {
+    const result = await repl(
+      '.import test/fixtures/repl-helpers.ts\nReplHelpers.GREETING\ndouble(21)\n',
+    );
+
+    assert.exitCode(result, 0);
+    assert.includes(result, 'ReplHelpers, and GREETING, boom, double', 'and says what it brought');
+    assert.includes(result, "'hello from the preload'", 'the namespace is the file');
+    assert.includes(result, '42', 'and its exports are in scope on their own too');
+  });
+
+  test('.load is the same command, and the second word is the name', async (assert) => {
+    const result = await repl('.load test/fixtures/repl-helpers.ts Helpers\nHelpers.GREETING\n');
+
+    assert.includes(result, "'hello from the preload'");
+    assert.includes(result, 'Helpers, and GREETING', 'named as asked rather than after the path');
+  });
+
+  test('an imported file registers its tests against the page’s own QUnit', async (assert) => {
+    // The proof that `qunitx` is not bundled a second time: a second QUnit would collect this
+    // test into a registry nothing flushes, which reads exactly like a test that never ran.
+    const result = await repl('.import test/fixtures/repl-helpers.ts\n');
+
+    assert.includes(result, 'ok 1 preloaded test');
+  });
+
+  test('importing again replaces what the last one left in scope', async (assert) => {
+    // The reason to import twice is that the file changed. What the previous version put in scope
+    // and this one does not is a value from a file that no longer exists.
+    const result = await repl(
+      '.import test/fixtures/repl-helpers.ts\n' +
+        '.import test/fixtures/repl-helpers.ts Helpers\n' +
+        'typeof ReplHelpers\n.imported\n',
+    );
+
+    assert.includes(result, "'undefined'", 'the name it used to go under is gone');
+    assert.includes(result, 'test/fixtures/repl-helpers.ts: Helpers, GREETING', 'listed once');
+  });
+
+  test('JSON arrives parsed and anything else arrives as text', async (assert) => {
+    const result = await repl(
+      '.import package.json\nPackage.name\n.import README.md Readme\ntypeof Readme\n',
+    );
+
+    assert.includes(result, "'qunitx-cli'", 'parsed, so it can be read into');
+    assert.includes(result, "'string'", 'and a file that is not data is its own text');
+  });
+
+  test('what cannot be brought in says why, and the session carries on', async (assert) => {
+    const result = await repl('.import nope.ts\n.import lib\n.import package.json 3bad\n1 + 1\n');
+
+    assert.exitCode(result, 0);
+    assert.includes(result, 'nope.ts is not a file');
+    assert.includes(result, 'lib is a directory');
+    assert.includes(result, '3bad is not a name a value can be given');
+    assert.includes(result, '2', 'and the prompt is still there afterwards');
+  });
+
+  test('a file that will not compile is reported rather than thrown', async (assert) => {
+    await using directory = await tempDir('repl-import');
+    const broken = path.join(directory.path, 'broken.ts');
+    await fs.writeFile(broken, 'export const a = (;\n');
+    const result = await repl(`.import ${path.relative(process.cwd(), broken)}\n1 + 1\n`);
+
+    assert.includes(result, 'would not bundle');
+    assert.includes(result, '2', 'and the session survives it');
+  });
+
   test('.doc reads in the order the file does: where, what was said, then the code', async (assert) => {
     const result = await helpers('.doc double\n');
 
@@ -312,7 +380,11 @@ module('Commands | repl | values', { concurrency: true }, () => {
   });
 
   test('`.h` on its own is the help', async (assert) => {
-    assert.includes(await repl('.h\n'), '.imported', 'every command, one line each');
+    const help = await repl('.h\n');
+
+    assert.includes(help, '.imported', 'every command, one line each');
+    assert.includes(help, '[alias .load]', 'with the other names for it at the end of its line');
+    assert.notIncludes(help, '\n.load ', 'and not on a line of their own');
   });
 
   test('what has nothing to say says so', async (assert) => {

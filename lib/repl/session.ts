@@ -17,6 +17,8 @@ import { Failure } from '../task/index.ts';
 import { harness } from '../setup/qunit-harness.ts';
 import { inspect } from './inspect.ts';
 import { colorEnabled } from '../utils/color.ts';
+import { namespaceFor } from './files.ts';
+import type { Plugin } from 'esbuild';
 import type { Browser as PlaywrightBrowser, CDPSession, Page } from 'playwright-core';
 import type { HTTPServer } from '../web/index.ts';
 import type { Config } from '../types.ts';
@@ -277,6 +279,21 @@ export interface ReplSession {
    * for, since a blank line or a comment has no code to stop on, and says which one it settled on.
    */
   addBreakpoint(location: string): Promise<Breakpoint | string>;
+  /**
+   * Brings a file into the page after the fact, the way the command line brings one in before it.
+   *
+   * A module's exports go into scope under their own names AND together under one — `ReplHelpers`
+   * for `test/fixtures/repl-helpers.ts`, Elixir's rule for turning a path into something typeable —
+   * unless `as` says what to call it. The namespace is the point: `ReplHelpers` at the prompt
+   * prints everything the file has in one line, which is the question `.import` is usually asked
+   * in service of.
+   *
+   * JSON arrives parsed and anything else arrives as a string, because those are the two things a
+   * file that is not code can usefully be.
+   *
+   * Resolves to what went into scope, or to the reason nothing did.
+   */
+  importFile(file: string, as?: string): Promise<{ name: string; names: string[] } | string>;
   /**
    * What each preloaded file put in scope, and what kind of thing each one is.
    *
@@ -763,6 +780,84 @@ class Session implements ReplSession {
     this.#breakpoints.push({ index, id: set.breakpointId, where });
 
     return { index, where };
+  }
+
+  async importFile(file: string, as?: string): Promise<{ name: string; names: string[] } | string> {
+    const absolute = path.resolve(this.#config.cwd, file);
+    const shown = relative(this.#config, absolute);
+    const stats = fs.statSync(absolute, { throwIfNoEntry: false });
+    if (!stats) return `${shown} is not a file`;
+    if (stats.isDirectory()) return `${shown} is a directory`;
+
+    const name = as && as !== '' ? as : namespaceFor(absolute);
+    if (!IDENTIFIER.test(name)) return `${name} is not a name a value can be given`;
+
+    const source = CODE.has(path.extname(absolute).toLowerCase())
+      ? await this.#bundleImport(absolute, shown, name)
+      : await plainFile(absolute, shown, name);
+    if (typeof source !== 'string') return source.detail;
+
+    const evaluated = await this.#cdp.send('Runtime.evaluate', {
+      expression: source,
+      awaitPromise: true,
+    });
+    if (evaluated.exceptionDetails) {
+      const thrown = evaluated.exceptionDetails.exception?.description;
+
+      return `${shown} threw while loading — ${thrown ?? evaluated.exceptionDetails.text}`;
+    }
+
+    // Read back rather than guessed at from the source: a module's exports are only known once it
+    // has evaluated. The bundle is an IIFE and returns nothing, so the harness's own list is the
+    // answer — and it is the list a re-import replaced, not the one it added to.
+    this.loaded = await this.readLoaded();
+    const names = this.loaded.find(([known]) => known === shown)?.[1] ?? [name];
+    for (const introduced of names) this.#origins.set(introduced, shown);
+    // A file that registers tests has registered them by now, and the command line runs a preload's
+    // tests as it opens. Waiting for the next typed line to flush them would be a different rule
+    // for the same file depending on which way it came in.
+    await this.runPending();
+
+    return { name, names };
+  }
+
+  /**
+   * The one file, bundled — with `qunitx` left to the copy the page already has.
+   *
+   * Bundling a second one would give the page a second QUnit, and tests registered against the one
+   * nobody flushes are tests that never run. The shim exports the names the first bundle put on the
+   * harness, which is the same module object the preloaded files imported.
+   */
+  async #bundleImport(
+    absolute: string,
+    shown: string,
+    name: string,
+  ): Promise<string | { detail: string }> {
+    const exports = await this.#byValue<string[]>('globalThis.__qunitxHarness.qunitx');
+    try {
+      const built = await esbuild.build({
+        stdin: {
+          contents: [
+            `import * as m from '${specifier(absolute, this.#config.cwd)}';`,
+            `globalThis.__qunitxHarness.bring(${JSON.stringify(shown)}, ${JSON.stringify(name)}, m,`,
+            `  Object.keys(m).filter((name) => name !== 'default'));`,
+          ].join('\n'),
+          resolveDir: this.#config.cwd,
+        },
+        bundle: true,
+        write: false,
+        format: 'iife',
+        logLevel: 'silent',
+        keepNames: true,
+        legalComments: 'none',
+        jsx: 'automatic',
+        plugins: [pageRuntimePlugin(exports), ...(this.#config.plugins ?? [])],
+      });
+
+      return built.outputFiles[0].text;
+    } catch (error) {
+      return { detail: `${shown} would not bundle — ${(error as Error)?.message ?? error}` };
+    }
   }
 
   async imported(): Promise<
@@ -1367,6 +1462,12 @@ function describe(remote: RemoteObject): string {
   return entries.length === 0 ? `${prefix}{}` : `${prefix}{ ${body} }`;
 }
 
+/** Extensions `.import` bundles rather than reads: what a JavaScript engine can be handed. */
+const CODE = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.mts', '.cts', '.tsx']);
+/** A name a value can be given — what `globalThis.<name>` accepts without brackets. */
+const IDENTIFIER = /^[\p{L}$_][\p{L}\p{N}$_]*$/u;
+const PAGE_RUNTIME = 'qunitx-from-the-page';
+
 /** Rewrites bundle frames in a stack back to the original sources, when there is a map to do it. */
 function resolveStack(config: Config, stack: string): string {
   const decoder = config.state.group.sourceMapDecoder;
@@ -1433,6 +1534,58 @@ async function bundle(config: Config, preload: string[], outDir: string): Promis
       { cause: error },
     );
   }
+}
+
+/**
+ * What a file that is not code is worth in a page: JSON parsed, everything else its own text.
+ *
+ * Sent as a literal rather than fetched, because the file is on the terminal's disk and the page is
+ * a browser — and `JSON.stringify` of a string is a JavaScript string expression, escapes and all.
+ */
+async function plainFile(
+  absolute: string,
+  shown: string,
+  name: string,
+): Promise<string | { detail: string }> {
+  const text = await fs.promises.readFile(absolute, 'utf8').catch((error: Error) => error);
+  if (text instanceof Error) return { detail: `${shown} could not be read — ${text.message}` };
+  let value = JSON.stringify(text);
+  if (path.extname(absolute).toLowerCase() === '.json') {
+    try {
+      JSON.parse(text);
+    } catch (error) {
+      return { detail: `${shown} is not valid JSON — ${(error as Error).message}` };
+    }
+    value = `JSON.parse(${value})`;
+  }
+
+  return `globalThis.__qunitxHarness.bring(${JSON.stringify(shown)}, ${JSON.stringify(name)}, ${value}, []);`;
+}
+
+/**
+ * Resolves `qunitx` to the copy the page is already running, for a bundle built after start-up.
+ *
+ * `import { test } from 'qunitx'` in an imported file has to reach the QUnit whose results this
+ * session collects. Bundling the runtime again would give it a second one, registering tests on a
+ * registry nothing flushes — which looks exactly like a test that silently did not run.
+ */
+function pageRuntimePlugin(exports: readonly string[]): Plugin {
+  const named = exports.filter((name) => name !== 'default' && IDENTIFIER.test(name));
+
+  return {
+    name: 'qunitx-from-the-page',
+    setup(build) {
+      build.onResolve({ filter: /^qunitx$/ }, () => ({ path: 'qunitx', namespace: PAGE_RUNTIME }));
+      build.onLoad({ filter: /.*/, namespace: PAGE_RUNTIME }, () => ({
+        contents: [
+          'const runtime = globalThis.__qunitxRuntime;',
+          ...named.map((name) => `export const ${name} = runtime[${JSON.stringify(name)}];`),
+          'export default runtime.default;',
+        ].join('\n'),
+        loader: 'js',
+      }));
+    },
+  };
 }
 
 /** Path relative to the project root, for display. */

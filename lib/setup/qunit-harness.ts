@@ -29,8 +29,18 @@ interface ReplHarness {
    * why {@link ReplHarness.flush} attaches to QUnit itself rather than relying on this.
    */
   load(qunitx: Record<string, unknown>, modules: Array<[string, Record<string, unknown>]>): void;
-  /** `[file, exported names]` for each preloaded module — what the banner lists. */
+  /**
+   * Called by a `.import`'s bundle: puts a file in scope under `as`, and — for a module, whose
+   * exports are names in their own right — puts `exported` in scope beside it.
+   *
+   * A file brought in twice replaces what it brought the first time, so `.imported` says what is
+   * in scope now rather than everything that ever was.
+   */
+  bring(file: string, as: string, value: unknown, exported: string[]): string[];
+  /** `[file, exported names]` for each module in scope — what the banner lists. */
   loaded: Array<[string, string[]]>;
+  /** What `qunitx` exports in this page, so a later bundle can borrow them instead of its own. */
+  qunitx: string[];
   /** Runs the tests registered since the last flush; `null` when none are waiting. */
   flush(): Promise<string | null>;
 }
@@ -83,13 +93,38 @@ export function harness(options: { timeout: number }): void {
 
   const api: ReplHarness = {
     loaded: [],
+    qunitx: [],
     load(qunitx, modules) {
+      // Kept because a `.import` after start-up must not bundle a second `qunitx`: two copies means
+      // two QUnits, and tests registered against the one nobody flushes are tests that never run.
+      target.__qunitxRuntime = qunitx;
+      api.qunitx = Object.keys(qunitx);
       assign(qunitx);
       for (const [file, namespace] of modules) {
         api.loaded.push([file, Object.keys(namespace).filter((name) => name !== 'default')]);
         assign(namespace);
       }
       attach(target.QUnit as QUnitLike);
+    },
+    bring(file, as, value, exported) {
+      target[as] = value;
+      for (const name of exported) {
+        target[name] = (value as Record<string, unknown>)[name];
+      }
+      const names = [as, ...exported];
+      const already = api.loaded.findIndex(([known]) => known === file);
+      if (already === -1) api.loaded.push([file, names]);
+      else {
+        // What the last import of this file left behind and this one does not bring: an export it
+        // has since lost, or the name it used to go under. Left in place, they would be a scope
+        // full of values from a version of the file that no longer exists.
+        for (const stale of api.loaded[already][1]) {
+          if (!names.includes(stale)) delete target[stale];
+        }
+        api.loaded[already] = [file, names];
+      }
+
+      return names;
     },
     flush() {
       const QUnit = target.QUnit as QUnitLike;

@@ -220,3 +220,47 @@ module('Repl | files | read', { concurrency: true }, () => {
     );
   });
 });
+
+// Elixir's path-to-module rule, because it is the one that turns a filename into something a
+// person can type at a prompt without looking it up.
+module('Repl | files | namespaceFor', { concurrency: true }, () => {
+  test('a path becomes the name its words spell', (assert) => {
+    assert.strictEqual(Files.namespaceFor('test/fixtures/repl-helpers.ts'), 'ReplHelpers');
+    assert.strictEqual(Files.namespaceFor('lib/my_app/user.ts'), 'User');
+    assert.strictEqual(
+      Files.namespaceFor('./some.thing.js'),
+      'SomeThing',
+      'dots are word breaks too',
+    );
+    assert.strictEqual(Files.namespaceFor('package.json'), 'Package');
+  });
+
+  test('an index is named for what it is the index of', (assert) => {
+    // Every folder has one, and a session with three `Index` objects in it has none.
+    assert.strictEqual(Files.namespaceFor('lib/repl/index.ts'), 'Repl');
+    assert.strictEqual(Files.namespaceFor('lib/repl/mod.ts'), 'Repl');
+    assert.strictEqual(
+      Files.namespaceFor('index.js'),
+      'Index',
+      'unless there is no directory to take',
+    );
+  });
+
+  test('a windows path is a path', (assert) => {
+    assert.strictEqual(Files.namespaceFor('test\\fixtures\\repl-helpers.ts'), 'ReplHelpers');
+  });
+
+  test('what would not be typeable is made so', (assert) => {
+    assert.strictEqual(
+      Files.namespaceFor('3-blind-mice.ts'),
+      'Module3BlindMice',
+      'no leading digit',
+    );
+    assert.strictEqual(Files.namespaceFor('déjà-vu.ts'), 'DéjàVu', 'letters are letters');
+    assert.strictEqual(
+      Files.namespaceFor('!!!.ts'),
+      'Module',
+      'and a name of nothing is still a name',
+    );
+  });
+});

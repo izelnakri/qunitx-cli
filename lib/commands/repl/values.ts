@@ -106,6 +106,36 @@ export function defineValues(
       });
     },
   });
+  // `.import` reads as the language does, `.load` is the name `node:repl` already had for putting
+  // a file into a session — and this REPL's answer to it, since a browser cannot replay lines of
+  // Node. One command under both names, because a hand that has typed one expects the other.
+  // Dropped first because `node:repl` registered its own `.load` at start-up, and the help reads
+  // the order the names were defined in — leaving it there made `.import` an alias of `.load`
+  // rather than the other way round.
+  delete (server.commands as Record<string, unknown>).load;
+  for (const name of ['import', 'load']) {
+    server.defineCommand(name, {
+      help: 'Bring a file into the page — `.import lib/a.ts` puts it in scope as `A`',
+      action(argument: string) {
+        this.clearBufferedCommand();
+        const [file, as] = argument.trim().split(/\s+/);
+        if (file === undefined || file === '') {
+          this.output.write(`Usage: .${name} <file> [name]\n`);
+
+          return void this.displayPrompt();
+        }
+        void session.importFile(file, as).then((brought) => {
+          if (typeof brought === 'string') this.output.write(red(`${brought}\n`));
+          else {
+            const exported = brought.names.filter((known) => known !== brought.name);
+            const also = exported.length === 0 ? '' : `, and ${exported.join(', ')}`;
+            this.output.write(blue(`${brought.name}${also}\n`));
+          }
+          this.displayPrompt();
+        });
+      },
+    });
+  }
   // `.doc` for what it is, `.explain` for what you want from it.
   for (const name of ['doc', 'explain']) {
     server.defineCommand(name, {
