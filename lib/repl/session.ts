@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import process from 'node:process';
 import esbuild from 'esbuild';
 import * as Browser from '../setup/browser.ts';
 import * as WebServer from '../setup/web-server.ts';
@@ -462,6 +463,16 @@ export async function start(
 
   // `--open` means the window on your screen IS the session: same globalThis, same DOM, and
   // DevTools a keypress away on the realm the prompt is typing into.
+  //
+  // Not on macOS. A headed session there dies inside the launch with `Target page, context or
+  // browser has been closed` — playwright's headless shell cannot open a window, and it is what
+  // this platform falls back to. Said out loud and carried on headless rather than refused: a
+  // prompt that will not start is worse than a prompt without a window, and everything else about
+  // the session is the same either way.
+  if (config.open === true && process.platform === 'darwin') {
+    Reporter.info(config, `--open cannot open a window on macOS — evaluating headlessly instead`);
+    config.open = false;
+  }
   const browser = await Browser.launch(config, false, config.open === true);
   try {
     const page = await browser.newPage();

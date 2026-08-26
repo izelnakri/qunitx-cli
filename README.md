@@ -221,7 +221,7 @@ DOM, `fetch`, timers and QUnit are all the real ones.
 ```sh
 qunitx repl                      # a bare page with the qunitx runtime loaded
 qunitx repl test/helpers.ts      # …plus that file: exports become globals (and `Helpers`), tests run once
-qunitx repl --open               # …in a window you can see, instead of a headless one
+qunitx repl --open               # …in a window you can see (not macOS: it says so and stays headless)
 ```
 
 ```

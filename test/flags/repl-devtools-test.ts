@@ -56,6 +56,19 @@ module('Flags | repl | /devtools', { concurrency: true }, () => {
       assert.includes(result, 'no debugging endpoint here', 'and the command says why');
     });
 
+    test('`--open` says it cannot open a window here, and carries on without one', async (assert) => {
+      // A headed session on macOS dies inside the launch: playwright's headless shell is what this
+      // platform falls back to, and it cannot open one. A prompt that will not start would be
+      // worse than a prompt with no window.
+      const result = await execute('node cli.ts repl --open --browser=chromium', {
+        stdin: '1 + 1\n',
+      });
+
+      assert.exitCode(result, 0, 'the session still starts');
+      assert.includes(result, '--open cannot open a window on macOS');
+      assert.includes(result, '2', 'and still evaluates');
+    });
+
     return;
   }
 
