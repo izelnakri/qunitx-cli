@@ -330,6 +330,20 @@ module('Commands | repl | values', { concurrency: true }, () => {
     assert.includes(long, 'repl-helpers.ts:', 'the file and the line');
     assert.deepEqual(said(short.stdout), said(long.stdout), '`.e` is `.edit` is `.open`');
   });
+
+  test('.pwd, .version and .search answer for the session', async (assert) => {
+    const [pwd, version, search] = await Promise.all([
+      repl('.pwd\n'),
+      repl('.version\n'),
+      helpers('.search preload\n'),
+    ]);
+
+    assert.includes(pwd, process.cwd(), 'the directory paths resolve against');
+    assert.includes(version, '.', 'a version, whatever it is at the time');
+    assert.includes(search, 'preloaded test', 'the test the filter matches');
+    assert.includes(search, 'repl-helpers.ts:', 'and where it is declared');
+    assert.includes(await helpers('.search zzz\n'), 'No tests match');
+  });
 });
 
 // `.break` does two jobs, told apart by whether anything follows it: `node:repl` has always used

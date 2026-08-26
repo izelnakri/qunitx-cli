@@ -14,7 +14,10 @@ import { complete, completionCache, setupSuggestions } from './completion.ts';
 import type { CompleterCallback } from './completion.ts';
 import { defineDebugging, lost, showFrame } from './debugging.ts';
 import { defineBrowsing } from './browsing.ts';
+import { helpLines } from './help.ts';
 import { defineValues, describeValue, nowhere } from './values.ts';
+import * as Search from '../search.ts';
+import pkg from '../../../package.json' with { type: 'json' };
 import { HISTORY_KEPT, defineHistory, setupHistory } from './history.ts';
 import { setupHighlighting } from './painting.ts';
 import { setupPreview } from './preview.ts';
@@ -358,6 +361,59 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
         },
       });
     }
+    server.defineCommand('pwd', {
+      help: 'Print the directory paths are resolved against',
+      action() {
+        this.clearBufferedCommand();
+        this.output.write(`${cwd}\n`);
+        this.displayPrompt();
+      },
+    });
+    server.defineCommand('version', {
+      help: 'Print the qunitx version this session is running',
+      action() {
+        this.clearBufferedCommand();
+        this.output.write(`${pkg.version}\n`);
+        this.displayPrompt();
+      },
+    });
+    // The same scan `qunitx search` runs, against the suite this session was opened on — so
+    // "which test was that" is a question the prompt can answer without leaving it.
+    server.defineCommand('search', {
+      help: 'Find tests whose name matches — `.search login`',
+      action(argument: string) {
+        this.clearBufferedCommand();
+        void Search.scan({ ...config, search: argument.trim() || true }).then((found) => {
+          this.output.write(
+            found.matches.length === 0
+              ? `No tests match — ${found.total} in ${found.files} file(s)\n`
+              : `${found.matches
+                  .map(({ fullName, name, modules, file, line }) => {
+                    // `fullName` reads `": a test"` for one declared outside a module, because it
+                    // is built to be matched against rather than read.
+                    const said = modules.length === 0 ? name : fullName;
+                    const where = `${path.relative(cwd, file)}:${line}`;
+
+                    return `${paint(where, palette.style('LineNr'))}  ${said}`;
+                  })
+                  .join('\n')}\n`,
+          );
+          this.displayPrompt();
+        });
+      },
+    });
+    // `node:repl`'s own help prints a row per name, and this REPL has more names than commands —
+    // `.c`, `.s`, `.n`, `.e`, `.bt` and the rest. Gathering the aliases onto the line they are an
+    // alias of is the difference between one screenful and two of the same sentences.
+    server.defineCommand('help', {
+      help: 'Print this list of commands',
+      action() {
+        this.clearBufferedCommand();
+        this.output.write(`${helpLines(server.commands, palette)}\n`);
+        this.output.write('Press Ctrl+C to abort the current expression, Ctrl+D to exit\n');
+        this.displayPrompt();
+      },
+    });
     // One key for both questions somebody asks a prompt: what can I type, and what is this.
     server.defineCommand('h', {
       help: 'Help with nothing after it; the documentation for whatever follows it',

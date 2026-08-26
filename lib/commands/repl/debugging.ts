@@ -175,7 +175,9 @@ function stack(frames: readonly Repl.Frame[], palette: Theme): string {
 /** The three ways out of a line, under the names gdb gave them. */
 const STEPS: ReadonlyArray<[string, Repl.StepKind, string]> = [
   ['step', 'into', 'Run one step, entering the next call'],
+  ['s', 'into', 'Run one step, entering the next call'],
   ['next', 'over', 'Run one step, over the next call rather than into it'],
+  ['n', 'over', 'Run one step, over the next call rather than into it'],
   ['finish', 'out', 'Run until the current frame returns'],
 ];
 
@@ -234,7 +236,8 @@ export function defineDebugging(server: REPLServer, session: ReplSession, palett
   // `.continue` is the name every debugger uses for this, and the one the pause itself offers.
   // `.resume` stays because it is what this REPL shipped with, and a command that used to work
   // should not stop working over a rename.
-  for (const name of ['continue', 'resume']) {
+  // `.c` because that is what it is in gdb, and what the hand types after the fifth breakpoint.
+  for (const name of ['continue', 'c', 'resume']) {
     server.defineCommand(name, {
       help: 'Let a page paused at a `debugger` statement carry on',
       action() {

@@ -238,6 +238,7 @@ and `.help` lists the commands (`.scope` shows what you have declared, `.view` p
 numbered or a directory as a tree, `.tree -L 2` limits the depth, `.history` shows the last lines, `.imported` names what each preloaded file
 brought, `.doc` shows a value's signature, where it is written and the comment above it, `.view <value>`
 adds its implementation, `.copy` puts it on the clipboard, `.open` opens the file at that line,
+`.search` finds tests by name,
 `.reload` drops all page state, `.url` prints the server URL so you can open the page yourself). The
 line is syntax-highlighted as you type and what it comes to is shown on the right; TAB completes
 against the page, Ctrl-F takes the greyed-out suggestion, and Ctrl-C interrupts a runaway
