@@ -241,7 +241,7 @@ and a plain `import { a } from './a.ts'` works too — `.imported` names what ea
 `.doc` shows a value's signature, where it is written and the comment above it, `.view <value>`
 (or `.v`) shows the whole of it, `.copy` puts it on the clipboard, `.open` with nothing after it is
 a scratch buffer that runs what you save — with a value, a path or a URL after it, it opens that,
-the way `xdg-open` would — `.search` finds tests by name, `.reload` drops all page state, `.url`
+the way `xdg-open` would, and saving a file the session had loaded loads it again — `.search` finds tests by name, `.reload` drops all page state, `.url`
 prints the server URL so you can open the page yourself). The line is
 syntax-highlighted as you type and what it comes to is shown on the right; TAB completes
 against the page, Ctrl-F takes the greyed-out suggestion, and Ctrl-C interrupts a runaway

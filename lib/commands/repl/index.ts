@@ -15,6 +15,8 @@ import {
   openExternally,
   openInEditor,
   replayableLines,
+  standDown,
+  standUp,
   tryWriteFile,
   whatToRun,
 } from './editor.ts';
@@ -348,6 +350,10 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
             });
           }
 
+          // The keyboard stops being the prompt's here, not when the editor opens: asking the
+          // page where a value is written is a round trip, and a line typed during it is a line
+          // meant for after the editor, not one to run while it is up.
+          standDown(server);
           void session.declaredAt(asked).then(async (declared) => {
             // A function knows its own line. Everything else that came into this session came
             // from a file too, and anything that is neither is a path — one that need not exist
@@ -357,10 +363,23 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
             // A pipe has no terminal to hand over, and an editor given one anyway waits for a
             // human who is not there — the session simply stops. Where it cannot open it, the
             // place is still worth saying.
-            const failed = interactive
-              ? await openInEditor(path.resolve(cwd, at.file), at.line, server, named)
-              : null;
-            this.output.write(failed ?? blue(`${at.file}:${at.line}\n`));
+            if (!interactive) {
+              standUp(server);
+              this.output.write(blue(`${at.file}:${at.line}\n`));
+
+              return void this.displayPrompt();
+            }
+            const opened = await openInEditor(path.resolve(cwd, at.file), at.line, server, named);
+            standUp(server);
+            if (opened.failed !== null) this.output.write(opened.failed);
+            // A file the session has in scope and the file on disk are the same file, and this is
+            // how the second one changes. Saving it and then having to `.load` it by hand is the
+            // session going stale under you at the moment you were least expecting it to.
+            else if (opened.changed) {
+              const brought = await session.refresh(at.file);
+              if (typeof brought === 'string') this.output.write(red(`${brought}\n`));
+              else if (brought !== null) this.output.write(blue(`${brought.join(', ')}\n`));
+            }
             this.displayPrompt();
           });
         },

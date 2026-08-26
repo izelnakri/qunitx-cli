@@ -306,6 +306,17 @@ export interface ReplSession {
    */
   importFile(file: string, as?: string): Promise<{ name: string; names: string[] } | string>;
   /**
+   * Loads a file again the way it was loaded the first time, for one that has changed on disk.
+   *
+   * A file this session has in scope and a file on disk are the same file, and an editor is how
+   * the second one changes. Re-running it the way it came in — the same namespace, the same names
+   * an `import` statement asked for — is what keeps the first one from going stale under you.
+   *
+   * `null` for a file this session does not have: editing something it never loaded is editing,
+   * and running it would be a decision nobody made.
+   */
+  refresh(file: string): Promise<string[] | string | null>;
+  /**
    * What each preloaded file put in scope, and what kind of thing each one is.
    *
    * The kind is a theme capture rather than a JavaScript type, because it exists to be COLOURED:
@@ -463,6 +474,9 @@ export async function start(
     const session = new Session(config, { cdp, page, server, browser, url, scripts });
     cdp.on('Debugger.paused', (event) => session.onPaused(event));
     session.loaded = await session.readLoaded();
+    // The page's own bundle loaded these, so nothing recorded how — and a preloaded file is the
+    // one most likely to be edited while the session it opened is still up.
+    session.rememberPreload(preload);
     await session.takeBaseline();
     onOpen?.(session);
     await session.runPending();
@@ -542,6 +556,9 @@ class Session implements ReplSession {
   // Name to where it came from. Filled by diffing after an input that could have bound something,
   // which is the only moment the answer is knowable.
   #origins = new Map<string, string>();
+  // How each file in scope got there, so a file that changes on disk can be run again the same
+  // way. Keyed by the name `loaded` knows it by, which is what any caller has to hand.
+  #recipes = new Map<string, Recipe>();
   #inputs = 0;
   // Resolves the evaluation that was in flight when the pause happened. `Runtime.evaluate` does not
   // return while the page is stopped, so without this the prompt never comes back.
@@ -802,6 +819,7 @@ class Session implements ReplSession {
   }
 
   async importFile(file: string, as?: string): Promise<{ name: string; names: string[] } | string> {
+    if (this.#closed) return 'the REPL session is closed';
     const absolute = path.resolve(this.#config.cwd, file);
     const shown = relative(this.#config, absolute);
     const stats = fs.statSync(absolute, { throwIfNoEntry: false });
@@ -822,7 +840,7 @@ class Session implements ReplSession {
         )
       : await plainFile(absolute, shown, name);
     if (typeof source !== 'string') return source.detail;
-    const names = await this.#loadInto(source, shown);
+    const names = await this.#loadInto(source, shown, { kind: 'file', absolute, name, asked });
 
     return typeof names === 'string' ? names : { name, names };
   }
@@ -860,10 +878,39 @@ class Session implements ReplSession {
       shown,
     );
     if (typeof source !== 'string') return { ...nothing, output: source.detail, failed: true };
-    const names = await this.#loadInto(source, shown);
+    const names = await this.#loadInto(source, shown, { kind: 'statement', statement });
     if (typeof names === 'string') return { ...nothing, output: names, failed: true };
 
     return { ...nothing, output: bindings.map(({ name }) => name).join(', ') };
+  }
+
+  async refresh(file: string): Promise<string[] | string | null> {
+    const shown = relative(this.#config, path.resolve(this.#config.cwd, file));
+    const recipe = this.#recipes.get(shown);
+    if (!recipe) return null;
+    if (recipe.kind === 'statement') {
+      const answered = await this.#importStatement(recipe.statement);
+
+      return answered.failed ? answered.output : answered.output.split(', ').filter(Boolean);
+    }
+
+    // The name goes back in only where it was asked for by hand; a worked-out one is worked out
+    // again, so a file renamed on disk comes back under the name its new path spells.
+    const brought = await this.importFile(recipe.absolute, recipe.asked ? recipe.name : undefined);
+
+    return typeof brought === 'string' ? brought : brought.names;
+  }
+
+  /** Remembers how a file the page loaded for itself got there, so it can be loaded again. */
+  rememberPreload(files: readonly string[]): void {
+    for (const file of files) {
+      this.#recipes.set(relative(this.#config, file), {
+        kind: 'file',
+        absolute: file,
+        name: namespaceFor(file),
+        asked: false,
+      });
+    }
   }
 
   /**
@@ -873,11 +920,12 @@ class Session implements ReplSession {
    * known once it has evaluated, and the bundle is an IIFE that returns nothing, so the harness's
    * own list is the answer.
    */
-  async #loadInto(source: string, shown: string): Promise<string[] | string> {
-    const evaluated = await this.#cdp.send('Runtime.evaluate', {
-      expression: source,
-      awaitPromise: true,
-    });
+  async #loadInto(source: string, shown: string, recipe: Recipe): Promise<string[] | string> {
+    // Caught rather than thrown: a page that has gone while a file was being edited is an answer
+    // about the file, and an unhandled rejection out of here takes the process with it.
+    const evaluated = await this.#cdp
+      .send('Runtime.evaluate', { expression: source, awaitPromise: true })
+      .catch((error: Error) => ({ exceptionDetails: { text: error.message } }) as EvaluateResult);
     if (evaluated.exceptionDetails) {
       const thrown = evaluated.exceptionDetails.exception?.description;
 
@@ -885,6 +933,7 @@ class Session implements ReplSession {
     }
 
     this.loaded = await this.readLoaded();
+    this.#recipes.set(shown, recipe);
     const names = this.loaded.find(([known]) => known === shown)?.[1] ?? [];
     for (const introduced of names) this.#origins.set(introduced, shown);
     // A file that registers tests has registered them by now, and the command line runs a preload's
@@ -1542,6 +1591,17 @@ function describe(remote: RemoteObject): string {
 
   return entries.length === 0 ? `${prefix}{}` : `${prefix}{ ${body} }`;
 }
+
+/**
+ * How a file got into scope, kept so it can be put there again after it changes on disk.
+ *
+ * The recipe rather than the built source, because the point of running it again is that the file
+ * is not what it was — and the recipe is what "the same way" means: the same namespace name for a
+ * module, the same names for an `import` statement that asked for some of them.
+ */
+type Recipe =
+  | { kind: 'file'; absolute: string; name: string; asked: boolean }
+  | { kind: 'statement'; statement: Source.ImportStatement };
 
 /** Extensions `.import` bundles rather than reads: what a JavaScript engine can be handed. */
 const CODE = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.mts', '.cts', '.tsx']);

@@ -153,7 +153,7 @@ export function tryReadFile(file: string): string | null {
  * anybody about; everything else it does is the child's business.
  */
 async function handOver(server: REPLServer, command: string, args: string[]): Promise<boolean> {
-  server.pause();
+  standDown(server);
   const stdin = process.stdin;
   const wasRaw = Boolean(stdin.isRaw);
   const wasFlowing = stdin.readableFlowing === true;
@@ -179,8 +179,57 @@ async function handOver(server: REPLServer, command: string, args: string[]): Pr
       }
       stdin.resume();
     }
-    server.resume();
+    standUp(server);
   }
+}
+
+/**
+ * Stops the prompt reading, because what happens next is not the prompt's.
+ *
+ * Called before the editor rather than at the handover, so that everything between the command and
+ * the editor opening — asking the page where a value is written, most of the time — is time the
+ * keyboard belongs to nobody. Lines typed then are lines meant for AFTER the editor, and readline
+ * would otherwise run them while it was still up.
+ *
+ * ```ts
+ * import { standDown } from './editor.ts';
+ *
+ * import type { REPLServer } from 'node:repl';
+ *
+ * // Defined, not invoked: it stops a live prompt.
+ * function example(server: REPLServer) {
+ *   standDown(server); // and `standUp` when whatever it was doing is done
+ * }
+ * ```
+ */
+export function standDown(server: REPLServer): void {
+  if (!closed(server)) server.pause();
+}
+
+/**
+ * Gives the prompt back its input — unless the session has gone.
+ *
+ * A command can outlive the session that started it: `.exit` on the line after an `.open` arrives
+ * while the editor is still up, and readline throws `ERR_USE_AFTER_CLOSE` at whoever asks it for
+ * anything afterwards. Out of a `finally`, that takes the process with it.
+ *
+ * ```ts
+ * import { standUp } from './editor.ts';
+ *
+ * import type { REPLServer } from 'node:repl';
+ *
+ * // Defined, not invoked: it resumes a live prompt.
+ * function example(server: REPLServer) {
+ *   standUp(server); // a no-op where there is no longer a prompt to resume
+ * }
+ * ```
+ */
+export function standUp(server: REPLServer): void {
+  if (!closed(server)) server.resume();
+}
+
+function closed(server: REPLServer): boolean {
+  return (server as unknown as { closed?: boolean }).closed === true;
 }
 
 /**
@@ -189,9 +238,11 @@ async function handOver(server: REPLServer, command: string, args: string[]): Pr
  * `+LINE file` is the argument every terminal editor since vi has taken, and the ones that do not
  * ignore it and open the file anyway — which is still the thing that was asked for.
  *
- * Resolves with `null` when the editor ran, or with the line to print when it could not: no
- * `$EDITOR` set, or one that is not there. `named` is for the commands named after an editor,
- * which mean that one rather than whichever the environment prefers.
+ * `failed` is the line to print when it could not run: no `$EDITOR` set, or one that is not
+ * there. `changed` says whether the file is different from the one that was opened, which is how
+ * a caller knows a file the session had in scope has moved out from under it. `named` is for the
+ * commands named after an editor, which mean that one rather than whichever the environment
+ * prefers.
  *
  * ```ts
  * import { openInEditor } from './editor.ts';
@@ -200,7 +251,7 @@ async function handOver(server: REPLServer, command: string, args: string[]): Pr
  *
  * // Defined, not invoked: it hands a real terminal to a real editor.
  * function example(server: REPLServer) {
- *   return openInEditor('/proj/a.ts', 12, server); // null once the editor has exited
+ *   return openInEditor('/proj/a.ts', 12, server); // { failed: null, changed: boolean }
  * }
  * ```
  */
@@ -209,15 +260,19 @@ export async function openInEditor(
   line: number,
   server: REPLServer,
   named?: string,
-): Promise<string | null> {
+): Promise<{ failed: string | null; changed: boolean }> {
   const editor = named ?? process.env.VISUAL ?? process.env.EDITOR;
-  if (!editor) return 'no $EDITOR set — nothing to open it with\n';
+  if (!editor) return { failed: 'no $EDITOR set — nothing to open it with\n', changed: false };
 
-  // The same handover `.nvim` makes: readline stands down, the editor owns the terminal, and it
-  // is given back only to a prompt that had it.
+  const before = tryReadFile(file);
+  // The same handover the scratchpad makes: readline stands down, the editor owns the terminal,
+  // and it is given back only to a prompt that had it.
   const started = await handOver(server, editor, [`+${line}`, file]);
 
-  return started ? null : `${editor} could not be started\n`;
+  return {
+    failed: started ? null : `${editor} could not be started\n`,
+    changed: started && tryReadFile(file) !== before,
+  };
 }
 
 /**

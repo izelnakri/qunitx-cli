@@ -1,8 +1,9 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { module, test } from 'qunitx';
 import { withRepl, captureStream } from './helpers.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
-import { outputDir } from '../helpers/temp-dir.ts';
+import { outputDir, tempDir } from '../helpers/temp-dir.ts';
 import * as QUnitX from '../../lib/api/index.ts';
 import { streamConsole } from '../../lib/console.ts';
 import '../helpers/custom-asserts.ts';
@@ -1028,6 +1029,57 @@ module('API | repl | preview', { concurrency: true }, () => {
 
       assert.strictEqual(await session.preview('1 + 1'), '', 'and the prompt keeps taking keys');
       await session.resume();
+    });
+  });
+});
+
+// A file in scope and a file on disk are the same file, and the second one changes while the
+// session that loaded the first is still open.
+module('API | repl | a file that changed on disk', { concurrency: true }, () => {
+  test('refresh runs it again the way it came in', async (assert) => {
+    await using directory = await tempDir('api-repl-refresh');
+    const live = path.join(directory.path, 'live-module.ts');
+    await fs.writeFile(live, 'export const first = 1;\n');
+
+    await withRepl({}, async (session) => {
+      const brought = await session.importFile(live);
+      assert.deepEqual(
+        typeof brought === 'string' ? brought : brought.names,
+        ['LiveModule', 'first'],
+        'in scope under the name its path spells',
+      );
+
+      await fs.writeFile(live, 'export const first = 1;\nexport const second = 2;\n');
+      const again = await session.refresh(live);
+
+      assert.deepEqual(again, ['LiveModule', 'first', 'second'], 'and again, with what is new');
+      assert.equal((await session.evaluate('second')).output, '2', 'answering at the prompt');
+      assert.equal(
+        (await session.evaluate('LiveModule.second')).output,
+        '2',
+        'and through the namespace, which is the same one it had',
+      );
+    });
+  });
+
+  test('a file the session never loaded is not run by refreshing it', async (assert) => {
+    // Editing something is editing it. Running it would be a decision nobody made.
+    await withRepl({}, async (session) => {
+      assert.strictEqual(await session.refresh('lib/repl/session.ts'), null);
+    });
+  });
+
+  test('a name asked for by hand survives the refresh', async (assert) => {
+    await using directory = await tempDir('api-repl-refresh-named');
+    const live = path.join(directory.path, 'live-module.ts');
+    await fs.writeFile(live, 'export const first = 1;\n');
+
+    await withRepl({}, async (session) => {
+      await session.importFile(live, 'Mine');
+      await fs.writeFile(live, 'export const first = 2;\n');
+
+      assert.deepEqual(await session.refresh(live), ['Mine', 'first']);
+      assert.equal((await session.evaluate('Mine.first')).output, '2', 'with the new value in it');
     });
   });
 });

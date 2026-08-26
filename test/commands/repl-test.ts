@@ -548,7 +548,7 @@ module('Commands | repl | values', { concurrency: true }, () => {
       // than through an env option the capture helper does not take.
       const result = await execute(
         `script -qec "EDITOR=${editor} node cli.ts repl --browser=chromium --output=tmp/run-${randomUUID()}" /dev/null`,
-        { stdin: '.open\n.exit\n' },
+        { stdin: [{ text: '.open\n' }, { text: '.exit\n', delayMs: 4000 }] },
       );
       await directory[Symbol.asyncDispose]();
 
@@ -559,6 +559,36 @@ module('Commands | repl | values', { concurrency: true }, () => {
       const result = await editing('repl-scratch-saved', `printf '6 * 7\\n' >> "$1"`);
 
       assert.includes(result.stdout, '42', 'and the answer comes back to the prompt');
+    });
+
+    test('editing a file the session has loaded puts what you saved in scope', async (assert) => {
+      // The complaint this exists for: add an export, `:wq`, and the new name was not there until
+      // the file was loaded again by hand. A file in scope and a file on disk are the same file.
+      await using directory = await tempDir('repl-live-edit');
+      const live = path.join(directory.path, 'live-module.ts');
+      await fs.writeFile(live, 'export function first(): number {\n  return 1;\n}\n');
+      const editor = path.join(directory.path, 'adder');
+      // `+LINE file` is what an editor is handed, so the file is the second argument.
+      await fs.writeFile(
+        editor,
+        `#!/bin/sh\nprintf '\\nexport function second() { return 2; }\\n' >> "$2"\n`,
+      );
+      await fs.chmod(editor, 0o755);
+      // Typed rather than pasted: readline hands over every line it was given at once, so a line
+      // that needs `.e` to have finished has to arrive in a write of its own.
+      const result = await execute(
+        `script -qec "EDITOR=${editor} node cli.ts repl --browser=chromium --output=tmp/run-${randomUUID()} ${live}" /dev/null`,
+        {
+          stdin: [
+            { text: `.e ${live}\n` },
+            { text: 'second()\n', delayMs: 5000 },
+            { text: '.exit\n', delayMs: 2000 },
+          ],
+        },
+      );
+
+      assert.includes(result.stdout, 'LiveModule, first, second', 'it was loaded again on save');
+      assert.includes(result.stdout, '2', 'and the export that was not there answers');
     });
 
     test('a scratchpad quit without saving is a change of mind', async (assert) => {
