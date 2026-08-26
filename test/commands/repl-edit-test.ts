@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import process from 'node:process';
 import { module, test } from 'qunitx';
 import { edit, whatToRun } from '../../lib/commands/repl/index.ts';
 import { tempDir } from '../helpers/temp-dir.ts';
@@ -34,63 +35,69 @@ module('Commands | repl | the editor scratchpad', { concurrency: true }, () => {
     return editor;
   }
 
-  test('what the editor saves is what comes back', async (assert) => {
-    await using directory = await tempDir('repl-edit');
-    const editor = await fakeEditor(directory.path, 'const a = 1;');
+  // A stand-in editor is a shell script, and a shell script is not a program on Windows — Node
+  // refuses to spawn a `.cmd` without a shell, and a real editor is not a `.cmd`. What these four
+  // check is the buffer's journey to a file and back, which has nothing platform-specific in it;
+  // the handover below, which does, is asked everywhere.
+  if (process.platform !== 'win32') {
+    test('what the editor saves is what comes back', async (assert) => {
+      await using directory = await tempDir('repl-edit');
+      const editor = await fakeEditor(directory.path, 'const a = 1;');
 
-    const saved = await edit(editor, '', server as unknown as REPLServer);
+      const saved = await edit(editor, '', server as unknown as REPLServer);
 
-    assert.strictEqual(saved.text, 'const a = 1;\n');
-    assert.true(saved.changed, 'and it says the buffer moved, which is what makes it run');
-  });
+      assert.strictEqual(saved.text, 'const a = 1;\n');
+      assert.true(saved.changed, 'and it says the buffer moved, which is what makes it run');
+    });
 
-  test('what runs afterwards is what moved, and nothing else', (assert) => {
-    // The rule the scratchpad turns on: `:q` means never mind, and a buffer emptied and saved
-    // runs nothing for the same reason an empty line does.
-    assert.strictEqual(whatToRun({ text: '6 * 7', changed: true }), '6 * 7');
-    assert.strictEqual(whatToRun({ text: '6 * 7', changed: false }), '');
-    assert.strictEqual(whatToRun({ text: '  \n ', changed: true }), '');
-  });
+    test('what runs afterwards is what moved, and nothing else', (assert) => {
+      // The rule the scratchpad turns on: `:q` means never mind, and a buffer emptied and saved
+      // runs nothing for the same reason an empty line does.
+      assert.strictEqual(whatToRun({ text: '6 * 7', changed: true }), '6 * 7');
+      assert.strictEqual(whatToRun({ text: '6 * 7', changed: false }), '');
+      assert.strictEqual(whatToRun({ text: '  \n ', changed: true }), '');
+    });
 
-  test('an editor that wrote the same bytes back has changed nothing', async (assert) => {
-    // `:w` on a buffer nobody touched. Content is what is compared, not whether a write happened.
-    await using directory = await tempDir('repl-edit-rewrite');
-    const editor = path.join(directory.path, 'rewriter');
-    await fs.writeFile(editor, '#!/bin/sh\ncat "$1" > "$1.copy"\ncat "$1.copy" > "$1"\n');
-    await fs.chmod(editor, 0o755);
+    test('an editor that wrote the same bytes back has changed nothing', async (assert) => {
+      // `:w` on a buffer nobody touched. Content is what is compared, not whether a write happened.
+      await using directory = await tempDir('repl-edit-rewrite');
+      const editor = path.join(directory.path, 'rewriter');
+      await fs.writeFile(editor, '#!/bin/sh\ncat "$1" > "$1.copy"\ncat "$1.copy" > "$1"\n');
+      await fs.chmod(editor, 0o755);
 
-    const same = await edit(editor, 'const a = 1;\n', server as unknown as REPLServer);
+      const same = await edit(editor, 'const a = 1;\n', server as unknown as REPLServer);
 
-    assert.strictEqual(same.text, 'const a = 1;\n');
-    assert.false(same.changed, 'so nothing runs, whatever it did to the mtime');
-  });
+      assert.strictEqual(same.text, 'const a = 1;\n');
+      assert.false(same.changed, 'so nothing runs, whatever it did to the mtime');
+    });
 
-  test('an editor that saved nothing is a change of mind, not a buffer', async (assert) => {
-    // `:q` means "never mind", and a scratchpad that runs what you just walked away from is one
-    // you stop using for anything you are not sure about.
-    await using directory = await tempDir('repl-edit-quit');
-    const editor = path.join(directory.path, 'quitter');
-    await fs.writeFile(editor, '#!/bin/sh\nexit 0\n');
-    await fs.chmod(editor, 0o755);
+    test('an editor that saved nothing is a change of mind, not a buffer', async (assert) => {
+      // `:q` means "never mind", and a scratchpad that runs what you just walked away from is one
+      // you stop using for anything you are not sure about.
+      await using directory = await tempDir('repl-edit-quit');
+      const editor = path.join(directory.path, 'quitter');
+      await fs.writeFile(editor, '#!/bin/sh\nexit 0\n');
+      await fs.chmod(editor, 0o755);
 
-    const left = await edit(editor, 'const a = 1;\n', server as unknown as REPLServer);
+      const left = await edit(editor, 'const a = 1;\n', server as unknown as REPLServer);
 
-    assert.strictEqual(left.text, 'const a = 1;\n', 'the buffer is still there to reopen');
-    assert.false(left.changed, 'but nothing about it is new, so nothing runs');
-  });
+      assert.strictEqual(left.text, 'const a = 1;\n', 'the buffer is still there to reopen');
+      assert.false(left.changed, 'but nothing about it is new, so nothing runs');
+    });
 
-  test('reopening hands the editor the buffer it left behind', async (assert) => {
-    // The whole point of keeping it in memory. Without this the second open is a blank file and
-    // everything typed into the first is gone.
-    await using directory = await tempDir('repl-edit-again');
-    const editor = await fakeEditor(directory.path, 'const b = 2;');
+    test('reopening hands the editor the buffer it left behind', async (assert) => {
+      // The whole point of keeping it in memory. Without this the second open is a blank file and
+      // everything typed into the first is gone.
+      await using directory = await tempDir('repl-edit-again');
+      const editor = await fakeEditor(directory.path, 'const b = 2;');
 
-    const first = await edit(editor, 'const a = 1;\n', server as unknown as REPLServer);
-    const handed = await fs.readFile(path.join(directory.path, 'handed.txt'), 'utf8');
+      const first = await edit(editor, 'const a = 1;\n', server as unknown as REPLServer);
+      const handed = await fs.readFile(path.join(directory.path, 'handed.txt'), 'utf8');
 
-    assert.strictEqual(handed, 'const a = 1;\n', 'it opened on what was already there');
-    assert.strictEqual(first.text, 'const a = 1;\nconst b = 2;\n', 'and kept both');
-  });
+      assert.strictEqual(handed, 'const a = 1;\n', 'it opened on what was already there');
+      assert.strictEqual(first.text, 'const a = 1;\nconst b = 2;\n', 'and kept both');
+    });
+  }
 
   test('an editor that will not start leaves the buffer as it was', async (assert) => {
     const kept = await edit(

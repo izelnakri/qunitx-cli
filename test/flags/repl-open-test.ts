@@ -3,11 +3,16 @@ import { module, test } from 'qunitx';
 import { execute } from '../helpers/shell.ts';
 import '../helpers/custom-asserts.ts';
 
-/** Whether anything on this machine could put a window on a screen. */
+/**
+ * Whether a window can actually be put on a screen here.
+ *
+ * A display is only half of it: headed Chrome needs a real Chrome, and the macOS runners install
+ * playwright's headless shell instead — which, as its name says, cannot open one. So this asks
+ * where both are true, which is a Linux desktop, and trusts `spawn` to be `spawn` elsewhere.
+ */
 const HAS_A_SCREEN =
-  process.platform !== 'linux' ||
-  Boolean(process.env.DISPLAY) ||
-  Boolean(process.env.WAYLAND_DISPLAY);
+  process.platform === 'linux' &&
+  (Boolean(process.env.DISPLAY) || Boolean(process.env.WAYLAND_DISPLAY));
 
 // The session drives one page, and these are the two ways to look at it: a window of its own, or
 // Chrome's own DevTools opened on the headless one from whatever browser you already have.
