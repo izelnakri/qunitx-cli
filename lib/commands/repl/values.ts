@@ -143,8 +143,8 @@ export function defineValues(
       },
     });
   }
-  // `.doc` for what it is, `.explain` for what you want from it.
-  for (const name of ['doc', 'explain']) {
+  // `.doc` for what it is, `.explain` for what you want from it, `.d` for the hand.
+  for (const name of ['doc', 'explain', 'd']) {
     server.defineCommand(name, {
       help: 'Show a value’s signature, where it is written, and the comment above it',
       action(argument: string) {
