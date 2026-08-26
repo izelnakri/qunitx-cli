@@ -19,6 +19,7 @@
 // Type-only import — erased at compile time, so no runtime dependency on node:buffer
 // (preserves browser compatibility).  Provides the Buffer type even when @types/node
 // isn't in scope (matters for `deno bench`, which type-checks without Node types).
+import process from 'node:process';
 import type { Buffer as NodeBuffer } from 'node:buffer';
 import * as Result from '../result/index.ts';
 
@@ -326,9 +327,14 @@ export function findGenerated(
   absoluteSource: string,
   sourceLine: number, // 1-based
 ): { line: number; column: number; sourceLine: number } | null {
+  // Both sides normalized before they are compared: a map's sources are posix whatever wrote them,
+  // while `path.resolve` on Windows answers in backslashes — so `test/a.ts` resolved by the caller
+  // and `test/a.ts` read out of the map were never equal there, and every `.break` said the file
+  // was not one this session bundled. Case-folded too, because Windows paths are.
+  const asked = comparablePath(absoluteSource);
   const wanted = decoder.sources
     .map((_, index) => index)
-    .filter((index) => sourceAbsolutePath(decoder, index) === absoluteSource);
+    .filter((index) => comparablePath(sourceAbsolutePath(decoder, index)) === asked);
   if (wanted.length === 0) return null;
 
   const target = sourceLine - 1;
@@ -593,6 +599,13 @@ function normalizePosix(path: string): string {
  */
 function toPosix(path: string): string {
   return path.replace(/\\/g, '/');
+}
+
+/** One spelling of a path, for asking whether two of them are the same file. */
+function comparablePath(file: string | null): string {
+  const posix = toPosix(file ?? '');
+
+  return process.platform === 'win32' ? posix.toLowerCase() : posix;
 }
 
 function toAbsolutePath(rawSource: string, outDir: string, sourceRoot: string): string {

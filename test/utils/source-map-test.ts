@@ -1015,4 +1015,20 @@ module('Utils | source-map | findGenerated', { concurrency: true }, () => {
   test('a file the bundle does not contain is not in it', (assert) => {
     assert.strictEqual(SourceMap.findGenerated(decoder, '/proj/elsewhere.ts', 1), null);
   });
+
+  test('the same file spelled the way Windows spells it is the same file', (assert) => {
+    // A map's sources are posix whatever wrote them, and `path.resolve` on Windows answers in
+    // backslashes — so this comparison used to fail there, and every `.break` said the file was
+    // not one this session bundled.
+    const windows = SourceMap.parse(
+      JSON.stringify({ version: 3, sources: ['../a.ts'], mappings: 'AAAA' }),
+      'D:/proj/tmp',
+    );
+
+    assert.deepEqual(
+      SourceMap.findGenerated(windows, 'D:\\proj\\a.ts', 1),
+      { line: 0, column: 0, sourceLine: 1 },
+      'separators are not what tells two paths apart',
+    );
+  });
 });
