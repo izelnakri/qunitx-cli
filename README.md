@@ -233,6 +233,10 @@ qunitx repl --open               # …in a window you can see (not macOS: it say
 ok 1 adds # (2 ms)
 ```
 
+TypeScript works at the prompt: a line the engine cannot parse is retried with its types taken off,
+so `const port: number = 1234` binds and `interface`/`type`/`as` are erased the way a build erases
+them. Nothing is stripped until something fails, so plain JavaScript pays nothing for it.
+
 Tests typed at the prompt run immediately and report as TAP, through the same reporters a run uses
 (`--reporter=spec` works here too). Bindings persist between lines, `await` works at the top level,
 and `.help` lists the commands (`.scope` shows what you have declared, `.view` prints a file

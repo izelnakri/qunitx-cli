@@ -1379,11 +1379,11 @@ class Session implements ReplSession {
     return tests;
   }
 
-  async #evaluate(input: string): Promise<ReplResult> {
+  async #evaluate(input: string, stripped = false): Promise<ReplResult> {
     const nothing = { output: '', failed: false, incomplete: false, tests: [] };
     if (input.trim() === '') return nothing;
     if (this.#closed) return { ...nothing, output: 'the REPL session is closed', failed: true };
-    this.#inputs++;
+    if (!stripped) this.#inputs++;
 
     // A prompt is not a module, so the engine refuses an `import` statement outright. Doing what it
     // means instead is the only way one can work here, and a REPL that reads `.ts` files should
@@ -1436,6 +1436,18 @@ class Session implements ReplSession {
       const description = thrown.exception?.description ?? thrown.text;
       if (isSyntaxError(evaluated) && Source.isIncomplete(description)) {
         return { ...nothing, incomplete: true };
+      }
+      // The page runs JavaScript and this is a `.ts` project's prompt, so a line the engine could
+      // not parse gets one more chance with its types taken off. Asked last, and only of a syntax
+      // error the engine did not already call unfinished: stripping is a round trip to esbuild,
+      // and all but a fraction of what anybody types is JavaScript that never gets here.
+      if (!stripped && isSyntaxError(evaluated)) {
+        const javascript = await withoutTypes(input);
+        if (typeof javascript === 'string') return await this.#evaluate(javascript, true);
+        // Half a line of TypeScript is a syntax error the engine has no word for — `{ a: 1 as`
+        // stops it at `as`, not at the end — so what it is waiting for comes from the parser that
+        // can read the whole language.
+        if (javascript !== null) return { ...nothing, incomplete: true };
       }
 
       return {
@@ -1887,6 +1899,34 @@ function pageRuntimePlugin(exports: readonly string[]): Plugin {
       }));
     },
   };
+}
+
+/**
+ * The same line with its TypeScript taken off — or what it is about the line that stopped esbuild
+ * too: `{ unfinished: true }` for one that simply has not been finished, `null` for a real mistake.
+ *
+ * The three answers are three different things a caller does. Code runs. Unfinished asks for
+ * another line, which the engine cannot say for itself here: `{ a: 1 as` stops V8 at `as`, not at
+ * the end, so nothing in its message says "keep typing". A mistake keeps the engine's own message,
+ * which is the one written for whoever typed it rather than for a bundler.
+ *
+ *     'const a: string = \'x\''  ->  'const a = "x";'      the types came off
+ *     'const a = {'              ->  { unfinished: true }  no error yet, just no end
+ *     'const a = )'              ->  null                  wrong in any language
+ */
+async function withoutTypes(input: string): Promise<string | { unfinished: true } | null> {
+  const transformed = await esbuild
+    // `esnext` because the only job here is erasure: anything a browser cannot run is a question
+    // for that browser, and downleveling would answer it with code nobody typed.
+    .transform(input, { loader: 'ts', target: 'esnext', logLevel: 'silent' })
+    .catch((error: { errors?: Array<{ text?: string }> }) => error);
+  if (!('code' in transformed)) {
+    const said = (transformed.errors ?? []).map((error) => error.text ?? '').join(' ');
+
+    return /end of file/i.test(said) ? { unfinished: true } : null;
+  }
+
+  return transformed.code.trim() === input.trim() ? null : transformed.code;
 }
 
 /** Path relative to the project root, for display. */

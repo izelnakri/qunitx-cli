@@ -554,6 +554,8 @@ one's exports land on the page's `globalThis`, and any tests it registers run as
 drops every binding, `interrupt()` stops a runaway expression, and `close()` — or the `await using`
 above — releases the browser.
 
+`evaluate` takes TypeScript too — a line the engine refuses is retried with its types erased.
+
 A session is also a debugger: a `debugger` statement stops the page, `locals()` reads that frame,
 `step()`/`backtrace()`/`selectFrame()` move through it, and `addBreakpoint('lib/a.ts:12')` stops it
 somewhere you did not edit. `importFile()` brings a module in after the fact and `refresh()` runs it

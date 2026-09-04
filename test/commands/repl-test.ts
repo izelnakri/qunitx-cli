@@ -201,6 +201,68 @@ module('Commands | qunitx repl | .cat', { concurrency: true }, () => {
 
 // `:` is the shell, the way `:` is the command line in vim. A prompt you cannot run `git status`
 // from is a prompt you keep leaving, and leaving costs every binding in the page.
+// The page runs JavaScript and this is a `.ts` project's prompt. What cannot be parsed gets one
+// more chance with its types taken off — last, so a line that was already JavaScript pays nothing.
+module('Commands | repl | TypeScript', { concurrency: true }, () => {
+  test('a typed declaration binds, and the binding is there afterwards', async (assert) => {
+    const result = await repl('const iz: String = "coolie"\niz\nlet n: number = 41\nn + 1\n');
+
+    assert.exitCode(result, 0);
+    assert.includes(result, "'coolie'");
+    assert.includes(result, '42', 'and the next line sees it');
+  });
+
+  test('what only exists in the type language leaves nothing behind', async (assert) => {
+    const result = await repl(
+      'interface Shape { a: number }\ntype Id = string\nconst shape = { a: 1 } as Shape\nshape.a\n',
+    );
+
+    assert.includes(result, '1', 'the annotation is gone and the value ran');
+    assert.notIncludes(result, 'SyntaxError', 'none of it reached the engine as it was typed');
+  });
+
+  test('a typed function is callable, and typed parameters are not runtime ones', async (assert) => {
+    const result = await repl(
+      'function twice(value: number): number { return value * 2 }\ntwice(21)\n',
+    );
+
+    assert.includes(result, '42');
+  });
+
+  test('an unfinished line of TypeScript asks for another one', async (assert) => {
+    // `{ a: 1 as` stops the engine at `as`, not at the end, so nothing in its own message says
+    // "keep typing" — the parser that reads the whole language is what knows.
+    const result = await repl('const shape = {\n  a: 1 as number,\n}\nshape\n');
+
+    assert.includes(result, '{ a: 1 }', 'the three lines were one input');
+    assert.notIncludes(result, 'SyntaxError');
+  });
+
+  test('a mistake keeps the engine’s own message, not a bundler’s', async (assert) => {
+    const result = await repl('const broken = )\n1 + 1\n');
+
+    assert.includes(
+      result,
+      "SyntaxError: Unexpected token ')'",
+      'V8’s words, for whoever typed it',
+    );
+    assert.notIncludes(result, 'Transform failed', 'and never esbuild’s');
+    assert.includes(result, '2', 'and the session carries on');
+  });
+
+  test('a typed declaration at a breakpoint is still a declaration', async (assert) => {
+    // The retry re-reads the whole line, so the paused-scope handling is not something the type
+    // annotation can walk past.
+    const result = await repl(
+      'inspectMe()\nlet doubled: number = answer * 2\ndoubled\n.continue\ntypeof doubled\n',
+      'test/fixtures/repl-debugger.ts',
+    );
+
+    assert.includes(result, '84', 'evaluated in the frame, where `answer` is');
+    assert.includes(result, "'undefined'", 'and block-scoped, so it goes when the block does');
+  });
+});
+
 module('Commands | qunitx repl | : runs a shell command', { concurrency: true }, () => {
   test('its output arrives in the session, and the page is untouched', async (assert) => {
     const result = await repl(':echo hello from the shell\n1 + 1\n');
