@@ -243,7 +243,8 @@ and `.help` lists the commands (`.scope` shows what you have declared, `.view` p
 numbered or a directory as a tree, `.ls -L 2` limits the depth, `.history` shows the last lines,
 `.import lib/a.ts` brings a file in as `A` plus its exports — JSON parsed, anything else as text,
 and a plain `import { a } from './a.ts'` works too — `.imported` names what each file brought,
-`.doc` shows a value's signature, where it is written and the comment above it, `.view <value>`
+`.type` says what a value's type is, `.doc` shows a value's signature, where it is written and the
+comment above it, `.view <value>`
 (or `.v`) shows the whole of it, `.copy` puts it on the clipboard, `.open` with nothing after it is
 a scratch buffer that runs what you save — with a value, a path or a URL after it, it opens that,
 the way `xdg-open` would, and saving a file the session had loaded loads it again — `.search` finds

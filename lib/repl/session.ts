@@ -16,6 +16,7 @@ import { prelaunchPromise, shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { closeCompletely } from '../utils/close-with-grace.ts';
 import { Failure } from '../task/index.ts';
 import { harness } from '../setup/qunit-harness.ts';
+import { describeType } from './types.ts';
 import { inspect } from './inspect.ts';
 import { colorEnabled } from '../utils/color.ts';
 import { namespaceFor } from './files.ts';
@@ -347,6 +348,13 @@ export interface ReplSession {
    * V8 knows this for functions and for nothing else, so that is the honest limit of it.
    */
   declaredAt(expression: string): Promise<{ file: string; line: number } | null>;
+  /**
+   * What TypeScript would call the value an expression comes to — structural, from the value.
+   *
+   * `''` for anything that cannot be asked without running something, which is the same rule the
+   * right-margin preview follows: a prompt must not change the page to answer a question about it.
+   */
+  typeOf(expression: string): Promise<string>;
   /**
    * Where a name came into this session from — the file it was imported from, or the input that
    * declared it. `null` for a name the page already had, and for anything that is not a bare name.
@@ -1096,6 +1104,22 @@ class Session implements ReplSession {
     }
   }
 
+  async typeOf(expression: string): Promise<string> {
+    if (this.#closed || expression.trim() === '') return '';
+    // Side-effect free, for the reason `declaredAt` is: asking what something IS must not run it.
+    const evaluated = (await this.#cdp
+      .send('Runtime.evaluate', {
+        expression: `globalThis.__qunitxType(${expression})`,
+        throwOnSideEffect: true,
+        returnByValue: true,
+        timeout: HARNESS_TIMEOUT_MS,
+      })
+      .catch(() => null)) as EvaluateResult | null;
+    if (!evaluated || evaluated.exceptionDetails) return '';
+
+    return typeof evaluated.result.value === 'string' ? evaluated.result.value : '';
+  }
+
   whereFrom(name: string): string | null {
     return this.#origins.get(name.trim()) ?? null;
   }
@@ -1794,6 +1818,7 @@ function initScript(config: Config): string {
     // The colour decision is made HERE and baked in: the page has no TTY, no `NO_COLOR` and no
     // idea whether anything is reading it.
     `globalThis.__qunitxInspect = (value, depth) => (${inspect.toString()})(value, depth ?? 2, ${colorEnabled});`,
+    `globalThis.__qunitxType = (value) => (${describeType.toString()})(value, 2);`,
     `(${harness.toString()})({ timeout: ${config.timeout} });`,
   ].join('\n');
 }

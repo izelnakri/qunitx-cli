@@ -156,6 +156,19 @@ export function defineValues(
       },
     });
   }
+  // The written type where there is one, and the value's own shape where there is not. A function
+  // in a file you can read HAS a type, spelled out by whoever wrote it, and inventing a structural
+  // one for it would be answering a question nobody asked.
+  server.defineCommand('type', {
+    help: 'Say what type a value is — the signature where one is written, its shape otherwise',
+    action(argument: string) {
+      this.clearBufferedCommand();
+      void typeOfValue(session, argument, cwd, palette).then((said) => {
+        this.output.write(said === null ? red(`${nowhere(argument, 'type')}\n`) : `${said}\n`);
+        this.displayPrompt();
+      });
+    },
+  });
   server.defineCommand('copy', {
     help: 'Copy a value to the clipboard — a function goes as the code that defines it',
     action(argument: string) {
@@ -188,6 +201,32 @@ async function asWritten(
   const where = session.whereFrom(asked);
 
   return where === null ? rendered : `${paint(where, palette.style('LineNr'))}\n${rendered}`;
+}
+
+/**
+ * What a value's type is, painted — or `null` where there is no such value to have one.
+ *
+ * The signature from the file first, because a written type is the real answer and a structural one
+ * worked out from a function object could only ever be a worse guess at it. Everything else the
+ * page describes from the value, which for everything else is all there is.
+ */
+async function typeOfValue(
+  session: ReplSession,
+  argument: string,
+  cwd: string,
+  palette: Theme,
+): Promise<string | null> {
+  const asked = argument.trim();
+  if (asked === '') return null;
+
+  const at = await session.declaredAt(asked);
+  const source = at === null ? null : tryReadFile(path.resolve(cwd, at.file));
+  const written = source === null || at === null ? '' : signature(source, at.line);
+  if (written !== '') return highlight(written, palette);
+
+  const inferred = await session.typeOf(asked);
+
+  return inferred === '' ? null : highlight(inferred, palette);
 }
 
 /**

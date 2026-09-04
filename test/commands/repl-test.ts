@@ -502,6 +502,15 @@ module('Commands | repl | values', { concurrency: true }, () => {
     assert.includes(result, '> 5 │   debugger;', 'with the source around it');
   });
 
+  test('.type is the written signature where there is one, and the shape where there is not', async (assert) => {
+    const result = await helpers('.type double\n.type GREETING\n.type { a: 1, b: "x" }\n');
+
+    assert.includes(result, 'export function double(value: number): number', 'what was written');
+    assert.includes(result, 'string', 'and what a value simply is');
+    assert.includes(result, '{ a: number; b: string }', 'worked out from the value itself');
+    assert.includes(await helpers('.type nosuchthing\n'), 'nothing known about nosuchthing');
+  });
+
   test('.doc reads in the order the file does: where, what was said, then the code', async (assert) => {
     const result = await helpers('.doc double\n');
 
