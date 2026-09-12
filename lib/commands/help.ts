@@ -59,11 +59,14 @@ ${highlight('Commands:')}
 ${color('$ qunitx init')}                            # Bootstraps qunitx base html and add qunitx config to package.json if needed
 ${color('$ qunitx new $testFileName')}               # Creates a qunitx test file
 ${color('$ qunitx daemon <start|stop|status>')}      # Optional persistent daemon — ~2× faster repeated runs
-${color('$ qunitx upgrade [version]')}                # Update to the latest release (${color('--check')} reports without installing)
+${color('$ qunitx upgrade [version]')}               # Update to the latest release (${color('--check')} reports without installing)
 ${color('$ qunitx run $scriptFile')}                 # Runs one file as a plain script in the browser — its console is the output
   no TAP, no QUnit; top-level await works, and the exit code is ${color('globalThis.exitCode')} (1 if it throws)
   a file that declares tests is run AS a suite, reported exactly as ${color('$ qunitx $file')} would
   accepts ${color('--browser')}, ${color('--port')}, ${color('--open')}, ${color('--timeout')} and ${color('--watch')}
+${color('$ qunitx repl [files]')}                    # A prompt that evaluates in a real Chrome page; [files] are preloaded
+  open ${color('<url>/devtools')} in any Chromium browser for DevTools on the very page the prompt drives
+  ${color('--open')} evaluates in a window you can see instead of a headless one (not on macOS)
 
 ${highlight('Environment:')}
 ${color('QUNITX_DAEMON=1')}     : auto-spawn the daemon on the first qunitx run; reuse it on every run after (overrides the CI=1 bypass)

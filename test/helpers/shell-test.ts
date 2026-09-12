@@ -102,7 +102,9 @@ module('Test Helpers | spawnCapture | timing out', { concurrency: true }, () => 
 
     // Rejects: the fixture is killed, so it never exits 0. The rejection is the timeout working.
     await spawnCapture(`node test/fixtures/spawns-a-grandchild.ts ${marker}`, {
-      timeout: 1_000,
+      // Generous, because what is being timed is two node boots on a runner already doing sixteen
+      // other things — not the kill, which is what this test is actually about.
+      timeout: 5_000,
     }).catch(() => null);
     // Past the SIGTERM → SIGKILL escalation, so a grandchild that ignored the first is gone too.
     await new Promise((resolve) => setTimeout(resolve, 3_000));

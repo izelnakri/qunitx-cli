@@ -50,6 +50,18 @@ export type { ScriptOptions, ScriptResult, ScriptFailure } from './run.ts';
 export { openSession, type SessionOptions, type TestSession } from './session.ts';
 export { watch, type SessionPatch, type WatchSession } from './watch.ts';
 export { search, type SearchMatch, type SearchResult, type UnlistableCounts } from './search.ts';
+export { repl, type ReplFailure } from './repl.ts';
+// Every type a `ReplSession` method hands back. Exporting the session without them left an API
+// whose own signatures could not be written down by anybody using it.
+export type {
+  Breakpoint,
+  Frame,
+  ReplResult,
+  ReplSession,
+  ReplStartFailure,
+  ScopeEntry,
+  StepKind,
+} from '../repl/session.ts';
 // Straight off the commands rather than through a wrapper module: they already return a Task
 // and already carry these docs, so re-exporting them under their public names is the whole job.
 export { run as init, type InitOptions, type InitResult } from '../commands/init.ts';

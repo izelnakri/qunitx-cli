@@ -36,6 +36,7 @@ output to the terminal.
 - `--junit` writes a JUnit XML report for CI dashboards, alongside the normal terminal output
 - `--coverage` reports V8 line coverage (terminal summary, plus optional `lcov` and `html` reports)
 - `--version` / `-v` prints the installed version
+- [`qunitx repl`](#repl) — a prompt that evaluates in a real Chrome page: the DOM, `fetch`, and `test(...)` running for real as you type
 - [JavaScript API](#javascript-api) — `await test('test/')` returns the results as data, `await run('seed.ts')` executes one script; silent by default, with `watch`, `search`, custom reporters and daemon control. On npm and JSR (`jsr:@izelnakri/qunitx-cli/api`)
 - Optional daemon mode (`qunitx daemon start`) keeps Chrome and the esbuild context warm across runs — roughly halves the wall-clock time of repeated invocations
 - Docker image for zero-install CI usage
@@ -212,6 +213,53 @@ qunitx test/**/*.js --browser=webkit
 > npx playwright install webkit
 > ```
 
+## REPL
+
+`qunitx repl` opens a prompt whose evaluation happens **in the browser page**, not in Node. The
+DOM, `fetch`, timers and QUnit are all the real ones.
+
+```sh
+qunitx repl                      # a bare page with the qunitx runtime loaded
+qunitx repl test/helpers.ts      # …plus that file: exports become globals (and `Helpers`), tests run once
+qunitx repl --open               # …in a window you can see (not macOS: it says so and stays headless)
+```
+
+```
+> document.body.appendChild(Object.assign(document.createElement('p'), { textContent: 'hi' }))
+<p>hi</p>
+> (await fetch('/tests.js')).status
+200
+> test('adds', (a) => a.equal(1 + 1, 2))
+ok 1 adds # (2 ms)
+```
+
+TypeScript works at the prompt: a line the engine cannot parse is retried with its types taken off,
+so `const port: number = 1234` binds and `interface`/`type`/`as` are erased the way a build erases
+them. Nothing is stripped until something fails, so plain JavaScript pays nothing for it.
+
+Tests typed at the prompt run immediately and report as TAP, through the same reporters a run uses
+(`--reporter=spec` works here too). Bindings persist between lines, `await` works at the top level,
+and `.help` lists the commands (`.scope` shows what you have declared, `.view` prints a file
+numbered or a directory as a tree, `.ls -L 2` limits the depth, `.history` shows the last lines,
+`.import lib/a.ts` brings a file in as `A` plus its exports — JSON parsed, anything else as text,
+and a plain `import { a } from './a.ts'` works too — `.imported` names what each file brought,
+`.type` says what a value's type is, `.doc` shows a value's signature, where it is written and the
+comment above it, `.view <value>`
+(or `.v`) shows the whole of it, `.copy` puts it on the clipboard, `.open` with nothing after it is
+a scratch buffer that runs what you save — with a value, a path or a URL after it, it opens that,
+the way `xdg-open` would, and saving a file the session had loaded loads it again — `.search` finds
+tests by name, `.reload` drops all page state, `.url` prints the server URL, and `.devtools` opens
+Chrome's own DevTools on the very page the prompt is driving). That last one is `<url>/devtools` in
+any Chromium browser: same realm, same DOM, same paused frame — a value declared at the prompt is
+in that console, and a `debugger` shows as paused in both.
+
+The line is syntax-highlighted as you type and what it comes to is shown on the right; TAB completes
+against the page, Ctrl-F takes the greyed-out suggestion, and Ctrl-C interrupts a runaway
+expression. A `debugger` statement stops the page — `.locals` shows the frame, `.continue` carries
+on. Colours follow your terminal, and `QUNITX_REPL_THEME='@string=fg=green'` overrides them under
+nvim's treesitter names. Piped input works, so `echo '1+1' | qunitx repl` is a scriptable browser
+probe. Chromium only — it evaluates over the Chrome DevTools Protocol.
+
 ## JavaScript API
 
 Everything the CLI does, available as a function — for CI scripts, editor integrations, agents,
@@ -234,6 +282,7 @@ result.failures.map((one) => one.fullName); // ['Cart > Coupons: applies code']
 | `openSession(options)`            | one run, watched as it happens — `events()`, `result()`, `abort()`      |
 | `watch(options)`                  | async-iterable session; `run`/`runAll`/`runFailed`/`abort`, `results()` |
 | `search(options)`                 | what a selection would run — no browser, milliseconds                   |
+| `repl(options)`                   | a live page you can `eval(...)` against                                 |
 | `Daemon.{start,stop,status,test}` | reuse a warm browser between runs                                       |
 | `init` / `generate`               | scaffolding, reporting what they wrote                                  |
 | `validate(options)`               | reject bad options without launching anything                           |
@@ -504,6 +553,7 @@ Options:
   --no-daemon         Don't use the daemon for this run — skips a running daemon and prevents QUNITX_DAEMON auto-spawn
 
 Subcommands:
+  qunitx repl [files...]                  A prompt that evaluates in a real Chrome page
   qunitx daemon start | stop | status     Manage the optional persistent daemon
   qunitx init                             Bootstrap qunitx config + base HTML in this project
   qunitx new <testFileName>               Create a new qunitx test file

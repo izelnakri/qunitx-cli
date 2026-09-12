@@ -530,6 +530,43 @@ unlistable.total; // declarations the scan could not name — see `.computedName
 A non-zero `unlistable.total` means `total` is a lower bound: ``test(`case ${i}`)`` has no name
 until the browser runs it.
 
+## repl
+
+A live browser page you can ask questions of — what `qunitx repl` is built on, and useful anywhere
+a script needs a real DOM rather than a simulated one.
+
+```js
+import { repl } from 'qunitx-cli';
+
+await using session = await repl('test/helpers.ts', { reporter: 'tap' });
+
+(await session.eval('document.title')).output; // "'qunitx repl'"
+(await session.eval('(await fetch("/tests.js")).status')).output; // '200'
+(await session.eval('test("adds", (a) => a.equal(1 + 1, 2))')).tests; // [{ status: 'passed', … }]
+```
+
+The preload takes the same call shapes as every other verb — positionally, as an array, or as
+`inputs` in an options object. What it names is a preloaded module rather than a test target: each
+one's exports land on the page's `globalThis`, and any tests it registers run as the session opens.
+
+`eval` resolves with the rendered `output`, whether it `failed`, whether the input was
+`incomplete` (unfinished, so the CLI asks for another line), and the `tests` it ran. `reload()`
+drops every binding, `interrupt()` stops a runaway expression, and `close()` — or the `await using`
+above — releases the browser.
+
+`eval` takes TypeScript too — a line the engine refuses is retried with its types erased — and
+`typeOf(expression)` says what type a value is, worked out from the value.
+
+A session is also a debugger: a `debugger` statement stops the page, `locals()` reads that frame,
+`step()`/`backtrace()`/`selectFrame()` move through it, and `addBreakpoint('lib/a.ts:12')` stops it
+somewhere you did not edit. `importFile()` brings a module in after the fact and `refresh()` runs it
+again once the file has changed. `session.url` is where the page is served; `session.inspector` is
+where to open Chrome's DevTools on that very page, or `null` where this browser has no debugging
+endpoint to serve them from.
+
+Chromium only: it evaluates over the Chrome DevTools Protocol, so `browser: 'firefox'` rejects with
+`UnsupportedBrowser` rather than pretending.
+
 ## Daemon
 
 Reuses a persistent browser and warm bundle across runs — worth roughly 800 ms per run once it is
