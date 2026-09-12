@@ -1,12 +1,12 @@
 import process from 'node:process';
-import { paint, terminalWidth } from '../../repl/columns.ts';
+import { paint } from '../../repl/columns.ts';
 import { excerpt, limits } from '../../repl/excerpt.ts';
 import type { REPLServer } from 'node:repl';
+import type { ReplCommand } from './command.ts';
 import type * as Repl from '../../repl/session.ts';
 import type { ReplSession } from '../../repl/session.ts';
 import type { Theme } from '../../repl/theme.ts';
 import { blue, red } from '../../utils/color.ts';
-import { formatScope } from '../../repl/scope.ts';
 
 /**
  * The source around wherever the page is stopped, drawn under whatever announced the stop.
@@ -43,7 +43,7 @@ export async function showFrame(
  * only it uses belong in one file.
  *
  * ```ts
- * import { defineDebugging } from './debugging.ts';
+ * import { showFrame } from './debugging.ts';
  *
  * import type { REPLServer } from 'node:repl';
  * import type { ReplSession } from '../../repl/session.ts';
@@ -51,7 +51,7 @@ export async function showFrame(
  *
  * // Defined, not invoked: it needs a live prompt and a live page.
  * function example(server: REPLServer, session: ReplSession, palette: Theme) {
- *   defineDebugging(server, session, palette);
+ *   return showFrame(server, session, palette);
  * }
  * ```
  */
@@ -92,46 +92,21 @@ export function lost(argv: readonly string[] = process.argv): string {
  * `.next` to answer it — which is already the step-over command, and would leave the pair meaning
  * two unrelated things.
  */
-const FRAMES: ReadonlyArray<{
-  name: string;
-  direction: number;
-  count: boolean;
-  help: string;
-}> = [
-  {
-    name: 'frame',
-    direction: 0,
-    count: true,
-    help: 'Say which frame is being read, or go to one — `.frame 1`',
-  },
-  { name: 'here', direction: 0, count: false, help: 'Say which frame is being read' },
-  {
-    name: 'up',
-    direction: 1,
-    count: true,
-    help: 'Go toward the frame that called this one — `.up 2` for two',
-  },
-  {
-    name: 'back',
-    direction: 1,
-    count: true,
-    help: 'Back toward the caller, which is back in execution order',
-  },
-  {
-    name: 'down',
-    direction: -1,
-    count: true,
-    help: 'Go back toward the frame this one called — `.down 2` for two',
-  },
-];
-
 /**
  * A count typed after a command, `fallback` where none was, or `null` where it was not a count.
  *
  * Every one of these took an argument and ignored it before this existed, which is the worst way
  * to be wrong: `.up 3` moved one frame and said nothing about the other two.
+ *
+ * ```ts
+ * import { count } from './debugging.ts';
+ *
+ * count('3'); // 3
+ * count(''); // 1 — nothing typed is once
+ * count('lots'); // null — not a count, and not a silent 1
+ * ```
  */
-function count(argument: string, fallback: number = 1): number | null {
+export function count(argument: string, fallback: number = 1): number | null {
   const given = argument.trim();
   if (given === '') return fallback;
   const asked = Number(given);
@@ -155,8 +130,18 @@ async function repeat(times: number, once: () => Promise<string | null>): Promis
   return where;
 }
 
-/** The stack as gdb prints one: newest first, numbered from where it stopped. */
-function stack(frames: readonly Repl.Frame[], palette: Theme): string {
+/**
+ * The stack as gdb prints one: newest first, numbered from where it stopped.
+ *
+ * ```ts
+ * import { stack } from './debugging.ts';
+ *
+ * const plain = { style: () => '' };
+ * stack([{ index: 0, where: 'outer (a.ts:1:1)', selected: true }], plain);
+ * // '> #0  outer (a.ts:1:1)' — the one being read is marked
+ * ```
+ */
+export function stack(frames: readonly Repl.Frame[], palette: Theme): string {
   const dim = palette.style('LineNr');
   const mark = palette.style('@keyword');
 
@@ -172,207 +157,89 @@ function stack(frames: readonly Repl.Frame[], palette: Theme): string {
     .join('\n');
 }
 
-/** The three ways out of a line, under the names gdb gave them. */
-const STEPS: ReadonlyArray<[string, Repl.StepKind, string]> = [
-  ['step', 'into', 'Run one step, entering the next call'],
-  ['s', 'into', 'Run one step, entering the next call'],
-  ['next', 'over', 'Run one step, over the next call rather than into it'],
-  ['n', 'over', 'Run one step, over the next call rather than into it'],
-  ['finish', 'out', 'Run until the current frame returns'],
-];
-
 /**
- * Every command a stopped page answers: moving through it, moving about its stack, and the
- * breakpoints that stop it in the first place.
+ * What `.step`, `.next` and `.finish` all do, differing only in which way out of the line they
+ * take — the three gdb named, and the only way into another frame from a breakpoint.
  *
- * Defined beside the things only they use — the step names, the frame directions, the counts they
- * take — because a command and its own helpers belong in one file.
+ * A `debugger` statement inside something you CALL while stopped does nothing, because V8 disables
+ * breakpoints for the duration of a debugger evaluation; stepping is what gets you in there.
  *
  * ```ts
- * import { defineDebugging } from './debugging.ts';
+ * import { stepping } from './debugging.ts';
  *
- * import type { REPLServer } from 'node:repl';
- * import type { ReplSession } from '../../repl/session.ts';
- * import type { Theme } from '../../repl/theme.ts';
- *
- * // Defined, not invoked: it needs a live prompt and a live page.
- * function example(server: REPLServer, session: ReplSession, palette: Theme) {
- *   defineDebugging(server, session, palette);
- * }
+ * typeof stepping('step', 'into'); // 'function' — a command's `main`, waiting for a context
  * ```
  */
-export function defineDebugging(server: REPLServer, session: ReplSession, palette: Theme): void {
-  server.defineCommand('breakpoints', {
-    help: 'List the breakpoints this session has set',
-    action() {
-      this.clearBufferedCommand();
-      const set = session.breakpoints();
-      this.output.write(
-        set.length === 0
-          ? 'No breakpoints\n'
-          : `${set.map(({ index, where }) => `${index}  ${where}`).join('\n')}\n`,
-      );
-      this.displayPrompt();
-    },
-  });
-  server.defineCommand('delete', {
-    help: 'Remove a breakpoint by its number — `.delete 1`',
-    action(argument: string) {
-      this.clearBufferedCommand();
-      const index = count(argument, 0);
-      // No number is not "all of them". Deleting everything by accident is a worse mistake than
-      // typing one more character, and there is no confirmation here to catch it.
-      if (index === null || index < 1) {
-        this.output.write(`Usage: .delete <number>\n`);
+export function stepping(name: string, kind: Repl.StepKind): ReplCommand['main'] {
+  return async (repl, argument) => {
+    const times = count(argument);
+    if (times === null) {
+      repl.write(`Usage: .${name} [count]\n`);
 
-        return void this.displayPrompt();
-      }
-      void session.removeBreakpoint(index).then((removed) => {
-        if (!removed) this.output.write(red(`No breakpoint ${index}\n`));
-        this.displayPrompt();
-      });
-    },
-  });
-  // `.continue` is the name every debugger uses for this, and the one the pause itself offers.
-  // `.resume` stays because it is what this REPL shipped with, and a command that used to work
-  // should not stop working over a rename.
-  // `.c` because that is what it is in gdb, and what the hand types after the fifth breakpoint.
-  for (const name of ['continue', 'c', 'resume']) {
-    server.defineCommand(name, {
-      help: 'Let a page paused at a `debugger` statement carry on',
-      action() {
-        this.clearBufferedCommand();
-        if (!session.pausedAt) this.output.write('Not paused\n');
-        void session.resume().then(() => this.displayPrompt());
-      },
-    });
-  }
-  // `step`, `next` and `finish`, as every debugger since gdb has named them. Stepping is also
-  // the only way into another frame from a breakpoint: a `debugger` statement inside something
-  // you CALL while stopped does nothing, because V8 turns breakpoints off for the length of a
-  // debugger evaluation.
-  for (const [name, kind, help] of STEPS) {
-    server.defineCommand(name, {
-      help,
-      action(argument: string) {
-        this.clearBufferedCommand();
-        const times = count(argument);
-        if (times === null) {
-          this.output.write(`Usage: .${name} [count]\n`);
+      return repl.prompt();
+    }
+    if (!repl.session.pausedAt) {
+      repl.write('Not paused\n');
 
-          return void this.displayPrompt();
-        }
-        if (!session.pausedAt) {
-          this.output.write('Not paused\n');
-
-          return void this.displayPrompt();
-        }
-        // Only where it ends up is printed. A count means "do this n times", and n locations on
-        // the way is the noise you asked to skip by giving one.
-        void repeat(times, () => session.step(kind)).then(async (where) => {
-          if (where === null) this.output.write(blue('the page carried on\n'));
-          else {
-            this.output.write(blue(`${where}\n`));
-            await showFrame(server, session, palette);
-          }
-          this.displayPrompt();
-        });
-      },
-    });
-  }
-  // The stack, and where on it to stand. A breakpoint is rarely only about the line it stopped
-  // on — the answer is as often in who called it — and gdb's names for looking are the ones
-  // anybody who has used a debugger already has in their hands.
-  for (const name of ['backtrace', 'bt', 'where']) {
-    server.defineCommand(name, {
-      help: 'Show the call stack — `.backtrace 3` for the innermost three',
-      action(argument: string) {
-        this.clearBufferedCommand();
-        const wanted = count(argument, Infinity);
-        if (wanted === null) {
-          this.output.write(`Usage: .${name} [count]\n`);
-
-          return void this.displayPrompt();
-        }
-        const frames = session.backtrace();
-        const shown = frames.slice(0, wanted);
-        this.output.write(frames.length === 0 ? 'Not paused\n' : `${stack(shown, palette)}\n`);
-        this.displayPrompt();
-      },
-    });
-  }
-  // `up` toward whoever called this, `down` back toward where it stopped — gdb's directions,
-  // which are about the stack growing downwards rather than about the list on screen.
-  const move = (to: number) => {
-    const where = session.selectFrame(to);
-    if (where === null) server.output.write(red('No such frame\n'));
-
-    return where;
+      return repl.prompt();
+    }
+    // Only where it ends up is printed. A count means "do this n times", and n locations on the
+    // way is the noise you asked to skip by giving one.
+    const where = await repeat(times, () => repl.session.step(kind));
+    if (where === null) repl.write(blue('the page carried on\n'));
+    else {
+      repl.write(blue(`${where}\n`));
+      await showFrame(repl.server, repl.session, repl.palette);
+    }
+    repl.prompt();
   };
-  for (const { name, direction, count: counted, help } of FRAMES) {
-    server.defineCommand(name, {
-      help,
-      action(argument: string) {
-        this.clearBufferedCommand();
-        if (!session.pausedAt) {
-          this.output.write('Not paused\n');
+}
 
-          return void this.displayPrompt();
-        }
-        const here = session.backtrace().find((frame) => frame.selected)?.index ?? 0;
-        // `.here` asks one question and takes nothing to answer it. Reading an argument and
-        // moving somewhere would be the command doing what its name does not say.
-        if (!counted && argument.trim() !== '') {
-          this.output.write(`Usage: .${name}\n`);
+/**
+ * What `.up`, `.down`, `.frame`, `.here` and `.back` all do: pick a frame to read.
+ *
+ * `direction` is gdb's, about the stack growing downwards rather than about the list on screen —
+ * `1` toward whoever called this, `-1` back toward where it stopped, `0` for an absolute number.
+ * `counted` is false for `.here`, which asks one question and takes nothing to answer it.
+ *
+ * ```ts
+ * import { moving } from './debugging.ts';
+ *
+ * typeof moving('up', 1, true); // 'function' — a command's `main`, waiting for a context
+ * ```
+ */
+export function moving(name: string, direction: number, counted: boolean): ReplCommand['main'] {
+  return async (repl, argument) => {
+    if (!repl.session.pausedAt) {
+      repl.write('Not paused\n');
 
-          return void this.displayPrompt();
-        }
-        // `.frame` with nothing after it says where you are without moving, which is what gdb's
-        // does — and what stops it from meaning "go to frame 0" because `Number('')` is zero.
-        const given = count(argument, direction === 0 ? here : 1);
-        if (given === null) {
-          this.output.write(`Usage: .${name} ${direction === 0 ? '[number]' : '[count]'}\n`);
+      return repl.prompt();
+    }
+    const here = repl.session.backtrace().find((frame) => frame.selected)?.index ?? 0;
+    // `.here` asks one question and takes nothing to answer it. Reading an argument and moving
+    // somewhere would be the command doing what its name does not say.
+    if (!counted && argument.trim() !== '') {
+      repl.write(`Usage: .${name}\n`);
 
-          return void this.displayPrompt();
-        }
-        // A direction times a count, or the number itself. `up -1` is `down 1`, as in gdb.
-        const asked = direction === 0 ? given : here + direction * given;
-        const where = move(asked);
-        if (where === null) return void this.displayPrompt();
+      return repl.prompt();
+    }
+    // `.frame` with nothing after it says where you are without moving, which is what gdb's does —
+    // and what stops it meaning "go to frame 0", because `Number('')` is zero.
+    const given = count(argument, direction === 0 ? here : 1);
+    if (given === null) {
+      repl.write(`Usage: .${name} ${direction === 0 ? '[number]' : '[count]'}\n`);
 
-        this.output.write(blue(`${where}\n`));
-        void showFrame(server, session, palette).then(() => this.displayPrompt());
-      },
-    });
-  }
-  // Two commands rather than one because a REPL is in one of two states and the answer differs:
-  // running, where the interesting names are the ones this session added to the page, and
-  // stopped at a breakpoint, where they are the ones the frame can see. Same format either way.
-  server.defineCommand('scope', {
-    help: 'List what this session has added to the page, with values',
-    action() {
-      this.clearBufferedCommand();
-      void session.scope().then((entries) => {
-        const listing = formatScope(entries, terminalWidth(this.output));
-        this.output.write(listing === '' ? 'Nothing declared yet\n' : `${listing}\n`);
-        this.displayPrompt();
-      });
-    },
-  });
-  server.defineCommand('locals', {
-    help: 'List what is in scope at a `debugger` breakpoint, with values',
-    action() {
-      this.clearBufferedCommand();
-      if (!session.pausedAt) {
-        this.output.write('Not paused — `.scope` is what this session has declared\n');
+      return repl.prompt();
+    }
+    // A direction times a count, or the number itself. `up -1` is `down 1`, as in gdb.
+    const where = repl.session.selectFrame(direction === 0 ? given : here + direction * given);
+    if (where === null) {
+      repl.write(red('No such frame\n'));
 
-        return void this.displayPrompt();
-      }
-      void session.locals().then((entries) => {
-        const listing = formatScope(entries, terminalWidth(this.output));
-        this.output.write(listing === '' ? 'Nothing in scope here\n' : `${listing}\n`);
-        this.displayPrompt();
-      });
-    },
-  });
+      return repl.prompt();
+    }
+    repl.write(blue(`${where}\n`));
+    await showFrame(repl.server, repl.session, repl.palette);
+    repl.prompt();
+  };
 }

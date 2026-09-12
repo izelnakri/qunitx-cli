@@ -71,8 +71,16 @@ export function trimHistoryFile(file: string, history: readonly string[]): void 
   }
 }
 
-/** How many lines `.history` shows when it is not told — the number zsh settled on. */
-const HISTORY_SHOWN = 16;
+/**
+ * How many lines `.history` shows when it is not told — the number zsh settled on.
+ *
+ * ```ts
+ * import { HISTORY_SHOWN } from './history.ts';
+ *
+ * HISTORY_SHOWN; // 16 — about a screenful, which is what the question usually means
+ * ```
+ */
+export const HISTORY_SHOWN = 16;
 /**
  * How many lines a session keeps. `node:repl` keeps thirty; a shell keeps thousands.
  *
@@ -116,37 +124,4 @@ export function recent(newestFirst: readonly string[], count: number, palette: T
       return `${paint(number, style)}  ${code}\n`;
     })
     .join('');
-}
-
-/**
- * `.history` — the last lines entered, as `history` prints them.
- *
- * ```ts
- * import { defineHistory } from './history.ts';
- *
- * import type { REPLServer } from 'node:repl';
- * import type { Theme } from '../../repl/theme.ts';
- *
- * // Defined, not invoked: it writes to a live prompt.
- * function example(server: REPLServer, palette: Theme) {
- *   defineHistory(server, palette);
- * }
- * ```
- */
-export function defineHistory(server: REPLServer, palette: Theme): void {
-  server.defineCommand('history', {
-    help: 'Show the last lines entered — `.history 40` for more of them',
-    action(count: string) {
-      this.clearBufferedCommand();
-      const asked = count.trim() === '' ? HISTORY_SHOWN : Number(count.trim());
-      if (!Number.isInteger(asked) || asked < 1) {
-        this.output.write(`Usage: .history [count]\n`);
-
-        return void this.displayPrompt();
-      }
-      const entries = (server as unknown as { history?: string[] }).history ?? [];
-      this.output.write(recent(entries, asked, palette));
-      this.displayPrompt();
-    },
-  });
 }

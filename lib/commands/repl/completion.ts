@@ -31,7 +31,7 @@ export type CompleterCallback = (error: null, result: [string[], string]) => voi
  * name, but everything already known is still true, so the old list stays on offer until the new
  * one arrives rather than suggestions blinking out after every line.
  */
-interface NameSource {
+export interface NameSource {
   /** Names on `base` as of the last answer — empty while the first one is in flight. */
   lookup(base: string): readonly string[];
   /** The page's answer for `base`, waited for. What TAB uses, where a moment is affordable. */

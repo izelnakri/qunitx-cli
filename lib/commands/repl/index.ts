@@ -1,5 +1,4 @@
 import nodeRepl, { type REPLServer } from 'node:repl';
-import path from 'node:path';
 import process from 'node:process';
 import readline from 'node:readline';
 import { PassThrough } from 'node:stream';
@@ -9,32 +8,57 @@ import * as Reporter from '../../reporters/index.ts';
 import * as Repl from '../../repl/session.ts';
 import * as Result from '../../result/index.ts';
 import { blue, red } from '../../utils/color.ts';
-import {
-  edit,
-  isAddress,
-  openExternally,
-  openInEditor,
-  replayableLines,
-  standDown,
-  standUp,
-  tryWriteFile,
-  whatToRun,
-} from './editor.ts';
 import { complete, completionCache, setupSuggestions } from './completion.ts';
 import type { CompleterCallback } from './completion.ts';
-import { defineDebugging, lost, showFrame } from './debugging.ts';
-import { defineBrowsing } from './browsing.ts';
-import { helpLines } from './help.ts';
-import { defineValues, describeValue } from './values.ts';
-import * as Search from '../search.ts';
-import pkg from '../../../package.json' with { type: 'json' };
-import { HISTORY_KEPT, defineHistory, setupHistory } from './history.ts';
+import { lost, showFrame } from './debugging.ts';
+import { define } from './command.ts';
+import type { ReplContext } from './command.ts';
+import { command as Back } from './commands/back.ts';
+import { command as Break } from './commands/break.ts';
+import { command as Backtrace } from './commands/backtrace.ts';
+import { command as Breakpoints } from './commands/breakpoints.ts';
+import { command as Cat } from './commands/cat.ts';
+import { command as Clear } from './commands/clear.ts';
+import { command as Continue } from './commands/continue.ts';
+import { command as Copy } from './commands/copy.ts';
+import { command as Doc } from './commands/doc.ts';
+import { command as Delete } from './commands/delete.ts';
+import { command as Devtools } from './commands/devtools.ts';
+import { command as Down } from './commands/down.ts';
+import { command as Finish } from './commands/finish.ts';
+import { command as Frame } from './commands/frame.ts';
+import { command as H } from './commands/h.ts';
+import { command as Help } from './commands/help.ts';
+import { command as Here } from './commands/here.ts';
+import { command as History } from './commands/history.ts';
+import { command as Import } from './commands/import.ts';
+import { command as Imported } from './commands/imported.ts';
+import { command as Tree } from './commands/tree.ts';
+import { command as Locals } from './commands/locals.ts';
+import { command as Next } from './commands/next.ts';
+import { command as Nvim } from './commands/nvim.ts';
+import { command as Open } from './commands/open.ts';
+import { command as Pwd } from './commands/pwd.ts';
+import { command as Reload } from './commands/reload.ts';
+import { command as Save } from './commands/save.ts';
+import { command as SearchCommand } from './commands/search.ts';
+import { command as Scope } from './commands/scope.ts';
+import { command as Step } from './commands/step.ts';
+import { command as Type } from './commands/type.ts';
+import { command as Up } from './commands/up.ts';
+import { command as Url } from './commands/url.ts';
+import { command as Version } from './commands/version.ts';
+import { command as Vi } from './commands/vi.ts';
+import { command as Vim } from './commands/vim.ts';
+import { command as View } from './commands/view.ts';
+import { HISTORY_KEPT, setupHistory } from './history.ts';
 import { setupHighlighting } from './painting.ts';
 import { setupPreview } from './preview.ts';
 import { shell } from './shell.ts';
 import { vimKeys } from './keys.ts';
 import { findProjectRoot } from '../../utils/find-project-root.ts';
-import { ESCAPE, paint } from '../../repl/columns.ts';
+import { ESCAPE } from '../../repl/columns.ts';
+import { failure } from './output.ts';
 import { depth } from '../../repl/highlight.ts';
 import { theme } from '../../repl/theme.ts';
 import type { ReplSession } from '../../repl/session.ts';
@@ -96,19 +120,6 @@ function banner(config: ResolvedConfig, session: ReplSession): void {
 }
 
 /**
- * Why there is no page to inspect, in the words of whichever reason it is.
- *
- * A window has F12 and needs no address. Everything else comes down to the same thing — this
- * session is driving a browser Playwright launched, which talks over a pipe and serves no DevTools
- * — and the one place that happens by default is macOS, where nothing is pre-launched.
- */
-function nowhereToInspect(config: ResolvedConfig): string {
-  return config.open === true
-    ? 'no address needed — press F12 in the window instead'
-    : 'no debugging endpoint here, so no DevTools to open — try `--open` for a window instead';
-}
-
-/**
  * Which page is yours, in the words that tell one from the other.
  *
  * A headless Chrome you cannot see and a window that just opened are two different answers to
@@ -152,7 +163,6 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
     // columns into its cursor arithmetic — so a prompt that says how deep you are cannot be told
     // to it. Buffering here costs the in-place editing of a finished block and buys a prompt that
     // counts, a line that can be painted, and no reliance on `node:repl`'s private symbols.
-    let buffered = '';
     const server = nodeRepl.start({
       input,
       output: process.stdout,
@@ -189,7 +199,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
           });
         }
         evaluating = true;
-        const input = buffered + source;
+        const input = repl.buffered + source;
         session.eval(input).then(
           (result) => {
             evaluating = false;
@@ -199,11 +209,11 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
             completions.stale();
             // Unfinished: keep it, print nothing, and let the prompt say how deep it now is.
             if (result.incomplete) {
-              buffered = input.endsWith('\n') ? input : `${input}\n`;
+              repl.buffered = input.endsWith('\n') ? input : `${input}\n`;
 
               return callback(null, undefined);
             }
-            buffered = '';
+            repl.buffered = '';
             // A pause is not a value and not a failure — it is the page stopping and waiting.
             // Said plainly, with the way out, because a prompt that just returns leaves someone
             // wondering why the next line behaves strangely.
@@ -256,46 +266,13 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
     server.displayPrompt = (preserveCursor?: boolean) => {
       if ((server as unknown as { closed?: boolean }).closed) return;
       if (!interactive) return prompting(preserveCursor);
-      const bars = '|'.repeat(Math.max(1, depth(buffered)));
-      readline.Interface.prototype.setPrompt.call(server, buffered === '' ? PROMPT : `${bars} `);
+      const bars = '|'.repeat(Math.max(1, depth(repl.buffered)));
+      readline.Interface.prototype.setPrompt.call(
+        server,
+        repl.buffered === '' ? PROMPT : `${bars} `,
+      );
       server.prompt(preserveCursor);
     };
-    // `node:repl` calls `clearBufferedCommand()` after every command it finishes, so that is not
-    // the hook for abandoning an unfinished one — this is, and it is what `.break` and Ctrl-C have
-    // always meant.
-    // One name, two jobs, told apart by whether anything follows it. `node:repl` has always used
-    // `.break` for abandoning a half-typed block and every debugger has always used it for setting
-    // a breakpoint, and both are what somebody typing that FORM means: bare, it is the REPL's;
-    // with a place after it, it is the debugger's.
-    server.defineCommand('break', {
-      help: 'Abandon the unfinished input, or stop the page at a line — `.break lib/a.ts:12`',
-      action(argument: string) {
-        this.clearBufferedCommand();
-        if (argument.trim() === '') {
-          buffered = '';
-
-          return void this.displayPrompt();
-        }
-        void session.addBreakpoint(argument).then((set) => {
-          if (typeof set === 'string') this.output.write(red(`${set}\n`));
-          else this.output.write(blue(`breakpoint ${set.index} at ${set.where}\n`));
-          this.displayPrompt();
-        });
-      },
-    });
-    // What every shell means by it, rather than `node:repl`'s "break, and drop the local context"
-    // — there is no local context here, and a prompt that has scrolled past what you were reading
-    // is the thing anybody actually wants cleared. The half-typed input survives, as it does in a
-    // shell: `.clear` is about the screen and nothing else.
-    server.defineCommand('clear', {
-      help: 'Clear the screen, keeping the scrollback and the unfinished input',
-      action() {
-        this.clearBufferedCommand();
-        // Nothing to clear on a pipe, and the escape would land in whatever is reading it.
-        if (interactive) this.output.write(clearScreen());
-        this.displayPrompt();
-      },
-    });
 
     // A breakpoint reached by a timer, or by anything else this prompt did not start. Without
     // this it stops silently and every line typed afterwards evaluates in a frame nobody
@@ -313,14 +290,68 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
       void showFrame(server, session, palette).then(() => server.displayPrompt(true));
     });
 
-    defineDebugging(server, session, palette);
-    defineValues(server, session, palette, cwd);
-    // `.view` on something that is not a path falls through to the value of that name, with its
-    // implementation — the whole of what is known about it, which is what `view` means.
-    defineBrowsing(server, palette, cwd, interactive, (argument) =>
-      describeValue(session, argument, cwd, palette, { body: true }),
-    );
-    defineHistory(server, palette);
+    // Everything a command may need that is not its argument, built once. `buffered` and `scratch`
+    // live here rather than as closures because the commands that move them are not the only
+    // readers — `eval` and the continuation prompt read `buffered` too.
+    const repl: ReplContext = {
+      server,
+      session,
+      config,
+      cwd,
+      palette,
+      interactive,
+      completions,
+      buffered: '',
+      scratch: '',
+      write: (text) => void server.output.write(text),
+      prompt: () => server.displayPrompt(),
+    };
+    // `node:repl` registers its own `.load` at start-up, and `.help` reads the order names were
+    // defined in — left there, it made `.import` an alias of `.load` rather than the other way.
+    delete (server.commands as Record<string, unknown>).load;
+    // `node:repl`'s `.editor` is dropped: a multi-line paste mode in a REPL that hands you a real
+    // editor is the worse of two spellings of the same idea.
+    delete (server.commands as Record<string, unknown>).editor;
+    define(repl, {
+      cat: Cat,
+      view: View,
+      tree: Tree,
+      imported: Imported,
+      import: Import,
+      doc: Doc,
+      type: Type,
+      copy: Copy,
+      breakpoints: Breakpoints,
+      delete: Delete,
+      continue: Continue,
+      step: Step,
+      next: Next,
+      finish: Finish,
+      backtrace: Backtrace,
+      frame: Frame,
+      here: Here,
+      up: Up,
+      back: Back,
+      down: Down,
+      scope: Scope,
+      locals: Locals,
+      break: Break,
+      clear: Clear,
+      reload: Reload,
+      open: Open,
+      vi: Vi,
+      vim: Vim,
+      nvim: Nvim,
+      save: Save,
+      pwd: Pwd,
+      version: Version,
+      search: SearchCommand,
+      help: Help,
+      h: H,
+      url: Url,
+      devtools: Devtools,
+      history: History,
+    });
 
     setupHistory(server, interactive);
     // Before the suggestion, and that order matters: both redraw on a keypress, and the ghost has
@@ -328,216 +359,13 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
     if (interactive) setupHighlighting(server, palette);
     const ghost = interactive ? setupSuggestions(server, completions, cwd) : () => '';
     if (interactive) setupPreview(server, session, () => evaluating, ghost);
-    server.defineCommand('reload', {
-      help: 'Reload the page — drops every binding and all page state',
-      action() {
-        this.clearBufferedCommand();
-        completions.stale();
-        session.reload().then(() => this.displayPrompt());
-      },
-    });
-    // One command, under every name a hand reaches for, doing what `xdg-open` does: with nothing
-    // after it the session's own scratchpad, with an address the browser already running, and with
-    // anything else an editor — on the file a value is declared in, or on the path itself, whether
-    // or not there is a file there yet.
-    //
-    // `node:repl`'s `.editor` is dropped: a multi-line paste mode in a REPL that hands you a real
-    // editor is the worse of two spellings of the same idea.
-    delete (server.commands as Record<string, unknown>).editor;
-    // One buffer for the life of the session, whichever name opened it: reopening continues the
-    // same thought rather than starting a blank one.
-    let scratch = '';
-    const scratchpad = (repl: REPLServer, named?: string) => {
-      void edit(named ?? process.env.VISUAL ?? process.env.EDITOR ?? 'vi', scratch, server).then(
-        async (edited) => {
-          scratch = edited.text;
-          const source = whatToRun(edited);
-          if (source !== '') {
-            const result = await session.eval(source);
-            const text = result.failed ? red(failure(result)) : result.output;
-            if (text !== '') repl.output.write(`${text}\n`);
-          }
-          repl.displayPrompt();
-        },
-      );
-    };
-    for (const name of ['open', 'edit', 'e', 'vi', 'vim', 'nvim']) {
-      // The editor-named ones mean that editor; the rest mean whichever the environment prefers.
-      const named = name === 'open' || name === 'edit' || name === 'e' ? undefined : name;
-      server.defineCommand(name, {
-        help: 'Open a scratch buffer, or whatever follows: a value, a file, or an address',
-        action(argument: string) {
-          this.clearBufferedCommand();
-          const asked = argument.trim();
-          if (!interactive && asked === '') {
-            this.output.write(red(`.${name} needs a terminal\n`));
-
-            return void this.displayPrompt();
-          }
-          if (asked === '') return void scratchpad(this, named);
-          if (isAddress(asked)) {
-            return void openExternally(asked).then((failed) => {
-              this.output.write(failed ?? blue(`${asked}\n`));
-              this.displayPrompt();
-            });
-          }
-
-          // The keyboard stops being the prompt's here, not when the editor opens: asking the
-          // page where a value is written is a round trip, and a line typed during it is a line
-          // meant for after the editor, not one to run while it is up.
-          standDown(server);
-          void session.declaredAt(asked).then(async (declared) => {
-            // A function knows its own line. Everything else that came into this session came
-            // from a file too, and anything that is neither is a path — one that need not exist
-            // yet, since opening an editor on a name is how a file starts.
-            const from = session.whereFrom(asked);
-            const at = declared ?? { file: from ?? asked, line: 1 };
-            // A pipe has no terminal to hand over, and an editor given one anyway waits for a
-            // human who is not there — the session simply stops. Where it cannot open it, the
-            // place is still worth saying.
-            if (!interactive) {
-              standUp(server);
-              this.output.write(blue(`${at.file}:${at.line}\n`));
-
-              return void this.displayPrompt();
-            }
-            const opened = await openInEditor(path.resolve(cwd, at.file), at.line, server, named);
-            standUp(server);
-            if (opened.failed !== null) this.output.write(opened.failed);
-            // A file the session has in scope and the file on disk are the same file, and this is
-            // how the second one changes. Saving it and then having to `.load` it by hand is the
-            // session going stale under you at the moment you were least expecting it to.
-            else if (opened.changed) {
-              const brought = await session.refresh(at.file);
-              if (typeof brought === 'string') this.output.write(red(`${brought}\n`));
-              else if (brought !== null) this.output.write(blue(`${brought.join(', ')}\n`));
-            }
-            this.displayPrompt();
-          });
-        },
-      });
-    }
-
-    // Replaces the built-in, which writes every line the session evaluated. That file is meant to
-    // be replayable JavaScript, and a shell line is neither JavaScript nor something anyone wants
-    // re-run by accident. Filtered HERE rather than as the line is entered, because `node:repl`
-    // records it after `eval` has already answered.
-    server.defineCommand('save', {
-      help: 'Save this session to a file, minus the shell lines',
-      action(file: string) {
-        this.clearBufferedCommand();
-        const target = file.trim();
-        if (target === '') this.output.write('Usage: .save <file>\n');
-        else {
-          const source = replayableLines(server as unknown as { lines?: string[] }).join('\n');
-          const written = tryWriteFile(path.resolve(cwd, target), `${source}\n`);
-          this.output.write(
-            written ? `Session saved to: ${target}\n` : red(`Failed to save: ${target}\n`),
-          );
-        }
-        this.displayPrompt();
-      },
-    });
-    server.defineCommand('pwd', {
-      help: 'Print the directory paths are resolved against',
-      action() {
-        this.clearBufferedCommand();
-        this.output.write(`${cwd}\n`);
-        this.displayPrompt();
-      },
-    });
-    server.defineCommand('version', {
-      help: 'Print the qunitx version this session is running',
-      action() {
-        this.clearBufferedCommand();
-        this.output.write(`${pkg.version}\n`);
-        this.displayPrompt();
-      },
-    });
-    // The same scan `qunitx search` runs, against the suite this session was opened on — so
-    // "which test was that" is a question the prompt can answer without leaving it.
-    server.defineCommand('search', {
-      help: 'Find tests whose name matches — `.search login`',
-      action(argument: string) {
-        this.clearBufferedCommand();
-        void Search.scan({ ...config, search: argument.trim() || true }).then((found) => {
-          this.output.write(
-            found.matches.length === 0
-              ? `No tests match — ${found.total} in ${found.files} file(s)\n`
-              : `${found.matches
-                  .map(({ fullName, name, modules, file, line }) => {
-                    // `fullName` reads `": a test"` for one declared outside a module, because it
-                    // is built to be matched against rather than read.
-                    const said = modules.length === 0 ? name : fullName;
-                    const where = `${path.relative(cwd, file)}:${line}`;
-
-                    return `${paint(where, palette.style('LineNr'))}  ${said}`;
-                  })
-                  .join('\n')}\n`,
-          );
-          this.displayPrompt();
-        });
-      },
-    });
-    // `node:repl`'s own help prints a row per name, and this REPL has more names than commands —
-    // `.c`, `.s`, `.n`, `.e`, `.bt` and the rest. Gathering the aliases onto the line they are an
-    // alias of is the difference between one screenful and two of the same sentences.
-    server.defineCommand('help', {
-      help: 'Print this list of commands',
-      action() {
-        this.clearBufferedCommand();
-        this.output.write(`${helpLines(server.commands, palette)}\n`);
-        this.output.write('Press Ctrl+C to abort the current expression, Ctrl+D to exit\n');
-        this.displayPrompt();
-      },
-    });
-    // One key for both questions somebody asks a prompt: what can I type, and what is this.
-    server.defineCommand('h', {
-      help: 'Help with nothing after it; the documentation for whatever follows it',
-      action(argument: string) {
-        this.clearBufferedCommand();
-        if (argument.trim() === '') {
-          server.commands.help?.action?.call(this, '');
-
-          return;
-        }
-        server.commands.doc?.action?.call(this, argument);
-      },
-    });
-    server.defineCommand('url', {
-      help: 'Print the URL this session is served on (open it to watch the page)',
-      action() {
-        this.clearBufferedCommand();
-        this.output.write(`${session.url}\n`);
-        this.displayPrompt();
-      },
-    });
-    // The address handed out is this server's, not Chrome's: one port to remember, and it
-    // redirects to whatever port Chrome took this time. Checked before it is offered, because a
-    // session driving a browser with no debugging endpoint has an answer of its own.
-    server.defineCommand('devtools', {
-      help: 'Open Chrome DevTools on this very page — same realm, same DOM, same paused frame',
-      action() {
-        this.clearBufferedCommand();
-        const address = session.inspector;
-        if (address === null) {
-          this.output.write(red(`${nowhereToInspect(config)}\n`));
-
-          return void this.displayPrompt();
-        }
-        void (interactive ? openExternally(address) : Promise.resolve(null)).then((failed) => {
-          this.output.write(failed ?? blue(`${address}\n`));
-          this.displayPrompt();
-        });
-      },
-    });
 
     // Registering this listener replaces `node:repl`'s own Ctrl-C handling, so the parts worth
     // keeping are reproduced: interrupt a runaway expression when one is in flight, otherwise
     // abandon the half-typed line. Ctrl-D and `.exit` remain the ways out.
     server.on('SIGINT', () => {
       if (evaluating) return void session.interrupt();
-      buffered = '';
+      repl.buffered = '';
       server.clearBufferedCommand();
       server.output.write('\n');
       server.displayPrompt();
@@ -598,16 +426,6 @@ async function pipe(
 }
 
 /** A promise with its resolver, for "wake me when the REPL wants the next line". */
-/**
- * A failure, in the words its kind earns.
- *
- * `Uncaught` is what a browser console says about an exception, and belongs only to one the page
- * actually threw. "That file will not bundle" is this REPL answering, and prefixing it would claim
- * the page had refused something it was never shown.
- */
-function failure(result: Repl.ReplResult): string {
-  return result.thrown ? `Uncaught ${result.output}` : result.output;
-}
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve = () => {};
@@ -616,18 +434,6 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   });
 
   return { promise, resolve };
-}
-
-/**
- * Clears the visible screen and leaves the scrollback alone.
- *
- * `[2J` erases what is on screen; `[3J` would erase what has scrolled off it, which is the
- * difference between clearing a terminal and losing the last hour of it. Only the first is sent,
- * which is why scrolling still works afterwards — and which is what readline already does for
- * Ctrl-L, so that key needs nothing from us.
- */
-function clearScreen(): string {
-  return `${ESCAPE}[H${ESCAPE}[2J`;
 }
 
 // Re-exported so the terminal layer has one door, whichever room a thing lives in.

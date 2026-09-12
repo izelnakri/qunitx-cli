@@ -1,12 +1,11 @@
 import path from 'node:path';
 import process from 'node:process';
 import { spawn } from 'node:child_process';
-import { blue, red } from '../../utils/color.ts';
+
 import { blockAt, commentAbove, renderDoc, signature } from '../../repl/docs.ts';
 import { highlight } from '../../repl/highlight.ts';
 import { paint } from '../../repl/columns.ts';
 import { tryReadFile } from './editor.ts';
-import type { REPLServer } from 'node:repl';
 import type { ReplSession } from '../../repl/session.ts';
 import type { Theme } from '../../repl/theme.ts';
 
@@ -66,122 +65,6 @@ export async function describeValue(
 }
 
 /**
- * Every command about a value rather than a file: what came from where, what it is, and how to get
- * at it.
- *
- * ```ts
- * import { defineValues } from './values.ts';
- *
- * import type { REPLServer } from 'node:repl';
- * import type { ReplSession } from '../../repl/session.ts';
- * import type { Theme } from '../../repl/theme.ts';
- *
- * // Defined, not invoked: it needs a live prompt and a live page.
- * function example(server: REPLServer, session: ReplSession, palette: Theme) {
- *   defineValues(server, session, palette, process.cwd());
- * }
- * ```
- */
-export function defineValues(
-  server: REPLServer,
-  session: ReplSession,
-  palette: Theme,
-  cwd: string,
-): void {
-  // What the preloaded files put in scope. The names alone say nothing about what they are, so
-  // each is painted the colour this REPL paints that kind of value — a hint at the type without
-  // printing every value to get it.
-  server.defineCommand('imported', {
-    help: 'List what each preloaded file put in scope',
-    action() {
-      this.clearBufferedCommand();
-      void session.imported().then((files) => {
-        this.output.write(
-          files.length === 0
-            ? 'Nothing preloaded\n'
-            : `${files
-                .map(({ file, names }) => {
-                  const painted = names
-                    .map(({ name, capture }) => paint(name, palette.style(capture)))
-                    .join(', ');
-
-                  return `${paint(file, palette.style('LineNr'))}: ${painted}`;
-                })
-                .join('\n')}\n`,
-        );
-        this.displayPrompt();
-      });
-    },
-  });
-  // `.import` reads as the language does, `.load` is the name `node:repl` already had for putting
-  // a file into a session — and this REPL's answer to it, since a browser cannot replay lines of
-  // Node. One command under both names, because a hand that has typed one expects the other.
-  // Dropped first because `node:repl` registered its own `.load` at start-up, and the help reads
-  // the order the names were defined in — leaving it there made `.import` an alias of `.load`
-  // rather than the other way round.
-  delete (server.commands as Record<string, unknown>).load;
-  for (const name of ['import', 'load']) {
-    server.defineCommand(name, {
-      help: 'Bring a file into the page — `.import lib/a.ts` puts it in scope as `A`',
-      action(argument: string) {
-        this.clearBufferedCommand();
-        const [file, as] = argument.trim().split(/\s+/);
-        if (file === undefined || file === '') {
-          this.output.write(`Usage: .${name} <file> [name]\n`);
-
-          return void this.displayPrompt();
-        }
-        void session.importFile(file, as).then((brought) => {
-          if (typeof brought === 'string') this.output.write(red(`${brought}\n`));
-          else {
-            const exported = brought.names.filter((known) => known !== brought.name);
-            const also = exported.length === 0 ? '' : `, and ${exported.join(', ')}`;
-            this.output.write(blue(`${brought.name}${also}\n`));
-          }
-          this.displayPrompt();
-        });
-      },
-    });
-  }
-  // `.doc` for what it is, `.explain` for what you want from it, `.d` for the hand.
-  for (const name of ['doc', 'explain', 'd']) {
-    server.defineCommand(name, {
-      help: 'Show a value’s signature, where it is written, and the comment above it',
-      action(argument: string) {
-        this.clearBufferedCommand();
-        void describeValue(session, argument, cwd, palette, { body: false }).then((said) => {
-          this.output.write(said === null ? red(`${nowhere(argument, 'doc')}\n`) : `${said}\n`);
-          this.displayPrompt();
-        });
-      },
-    });
-  }
-  // The written type where there is one, and the value's own shape where there is not. A function
-  // in a file you can read HAS a type, spelled out by whoever wrote it, and inventing a structural
-  // one for it would be answering a question nobody asked.
-  server.defineCommand('type', {
-    help: 'Say what type a value is — the signature where one is written, its shape otherwise',
-    action(argument: string) {
-      this.clearBufferedCommand();
-      void typeOfValue(session, argument, cwd, palette).then((said) => {
-        this.output.write(said === null ? red(`${nowhere(argument, 'type')}\n`) : `${said}\n`);
-        this.displayPrompt();
-      });
-    },
-  });
-  server.defineCommand('copy', {
-    help: 'Copy a value to the clipboard — a function goes as the code that defines it',
-    action(argument: string) {
-      this.clearBufferedCommand();
-      void copyValue(session, argument, cwd).then((copied) => {
-        this.output.write(copied === null ? red(`${nowhere(argument, 'copy')}\n`) : blue(copied));
-        this.displayPrompt();
-      });
-    },
-  });
-}
-
-/**
  * What is known about a value with no declaration to point at: where it came into this session, and
  * what it is — rendered in the page, by the renderer the prompt prints with.
  *
@@ -209,8 +92,20 @@ async function asWritten(
  * The signature from the file first, because a written type is the real answer and a structural one
  * worked out from a function object could only ever be a worse guess at it. Everything else the
  * page describes from the value, which for everything else is all there is.
+ *
+ * ```ts
+ * import { typeOfValue } from './values.ts';
+ *
+ * import type { ReplSession } from '../../repl/session.ts';
+ * import type { Theme } from '../../repl/theme.ts';
+ *
+ * // Defined, not invoked: it asks a live page what something is.
+ * function example(session: ReplSession, palette: Theme) {
+ *   return typeOfValue(session, 'answer', process.cwd(), palette); // 'number', or null
+ * }
+ * ```
  */
-async function typeOfValue(
+export async function typeOfValue(
   session: ReplSession,
   argument: string,
   cwd: string,
@@ -234,8 +129,19 @@ async function typeOfValue(
  *
  * A function goes as the code that defines it, because that is the thing anybody copying a
  * function wants; everything else goes as the value the prompt would have printed.
+ *
+ * ```ts
+ * import { copyValue } from './values.ts';
+ *
+ * import type { ReplSession } from '../../repl/session.ts';
+ *
+ * // Defined, not invoked: it puts something on a real clipboard.
+ * function example(session: ReplSession) {
+ *   return copyValue(session, 'double', process.cwd()); // 'copied 3 line(s)', or null
+ * }
+ * ```
  */
-async function copyValue(
+export async function copyValue(
   session: ReplSession,
   argument: string,
   cwd: string,
