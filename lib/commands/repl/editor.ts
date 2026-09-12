@@ -4,7 +4,10 @@ import path from 'node:path';
 import process from 'node:process';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { blue, red } from '../../utils/color.ts';
+import { failure } from './output.ts';
 import type { REPLServer } from 'node:repl';
+import type { ReplCommand, ReplContext } from './command.ts';
 
 /**
  * The lines of a session worth replaying: everything typed, minus the shell escapes.
@@ -331,4 +334,86 @@ const OPENERS: Record<string, string[] | undefined> = {
  */
 export function isAddress(target: string): boolean {
   return /^(?:https?|file|about|chrome):/i.test(target) || /^www\./i.test(target);
+}
+
+/**
+ * What `.open` and every editor-named spelling of it do, differing only in which editor they mean.
+ *
+ * `named` is the editor the command is named after — `.vi` means vi — and `undefined` for the ones
+ * that mean whichever the environment prefers. Everything else is one command doing what
+ * `xdg-open` does: with nothing after it the session's own scratchpad, with an address the browser
+ * already running, and with anything else an editor, on the file a value is declared in or on the
+ * path itself, whether or not there is a file there yet.
+ *
+ * ```ts
+ * import { opening } from './editor.ts';
+ *
+ * typeof opening('vi', 'vi'); // 'function' — a command's `main`, waiting for a context
+ * ```
+ */
+export function opening(name: string, named?: string): ReplCommand['main'] {
+  return async (repl, argument) => {
+    const asked = argument.trim();
+    if (!repl.interactive && asked === '') {
+      repl.write(red(`.${name} needs a terminal\n`));
+
+      return repl.prompt();
+    }
+    if (asked === '') return scratchpad(repl, named);
+    if (isAddress(asked)) {
+      repl.write((await openExternally(asked)) ?? blue(`${asked}\n`));
+
+      return repl.prompt();
+    }
+
+    // The keyboard stops being the prompt's here, not when the editor opens: asking the page where
+    // a value is written is a round trip, and a line typed during it is a line meant for after the
+    // editor, not one to run while it is up.
+    standDown(repl.server);
+    const declared = await repl.session.declaredAt(asked);
+    // A function knows its own line. Everything else that came into this session came from a
+    // file too, and anything that is neither is a path — one that need not exist yet, since
+    // opening an editor on a name is how a file starts.
+    const from = repl.session.whereFrom(asked);
+    const at = declared ?? { file: from ?? asked, line: 1 };
+    // A pipe has no terminal to hand over, and an editor given one anyway waits for a human who
+    // is not there — the session simply stops. Where it cannot open it, the place is still worth
+    // saying.
+    if (!repl.interactive) {
+      standUp(repl.server);
+      repl.write(blue(`${at.file}:${at.line}\n`));
+
+      return repl.prompt();
+    }
+    const opened = await openInEditor(path.resolve(repl.cwd, at.file), at.line, repl.server, named);
+    standUp(repl.server);
+    if (opened.failed !== null) repl.write(opened.failed);
+    // A file the session has in scope and the file on disk are the same file, and this is how
+    // the second one changes. Saving it and then having to `.load` it by hand is the session
+    // going stale under you at the moment you were least expecting it to.
+    else if (opened.changed) {
+      const brought = await repl.session.refresh(at.file);
+      if (typeof brought === 'string') repl.write(red(`${brought}\n`));
+      else if (brought !== null) repl.write(blue(`${brought.join(', ')}\n`));
+    }
+    repl.prompt();
+  };
+}
+
+/**
+ * The session's own buffer, opened: one buffer for the life of the session, whichever name opened
+ * it, so reopening continues the same thought rather than starting a blank one.
+ */
+function scratchpad(repl: ReplContext, named?: string): void {
+  const editor = named ?? process.env.VISUAL ?? process.env.EDITOR ?? 'vi';
+  void edit(editor, repl.scratch, repl.server).then(async (edited) => {
+    repl.scratch = edited.text;
+    const source = whatToRun(edited);
+    if (source !== '') {
+      const result = await repl.session.eval(source);
+      const text = result.failed ? red(failure(result)) : result.output;
+      if (text !== '') repl.write(`${text}\n`);
+    }
+    repl.prompt();
+  });
 }
