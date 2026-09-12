@@ -42,7 +42,7 @@ export type ReplFailure = RunFailure | ReplStartFailure;
  * // Defined, not invoked: launches a browser.
  * async function measure() {
  *   await using session = await repl({ inputs: ['test/helpers.ts'] });
- *   const { output } = await session.evaluate('document.querySelector("#qunit-fixture").tagName');
+ *   const { output } = await session.eval('document.querySelector("#qunit-fixture").tagName');
  *   return output; // "'DIV'"
  * }
  * ```

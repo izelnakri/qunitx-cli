@@ -13,19 +13,16 @@ const PRELOAD = 'test/fixtures/repl-helpers.ts';
 module('API | repl | evaluating in the page', { concurrency: true }, () => {
   test('answers with the page’s own values, not Node’s', async (assert) => {
     await withRepl({}, async (session) => {
-      assert.equal((await session.evaluate('1 + 1')).output, '2');
-      assert.equal((await session.evaluate("'hi'")).output, "'hi'");
+      assert.equal((await session.eval('1 + 1')).output, '2');
+      assert.equal((await session.eval("'hi'")).output, "'hi'");
+      assert.equal((await session.eval('({ a: 1, b: [2, 3] })')).output, '{ a: 1, b: [ 2, 3 ] }');
       assert.equal(
-        (await session.evaluate('({ a: 1, b: [2, 3] })')).output,
-        '{ a: 1, b: [ 2, 3 ] }',
-      );
-      assert.equal(
-        (await session.evaluate('document.title')).output,
+        (await session.eval('document.title')).output,
         "'qunitx repl'",
         'there is a real document — this is the whole point of evaluating in the browser',
       );
       assert.equal(
-        (await session.evaluate("document.querySelector('#qunit-fixture')")).output,
+        (await session.eval("document.querySelector('#qunit-fixture')")).output,
         '<div id="qunit-fixture"></div>',
         'a DOM node renders as its markup',
       );
@@ -35,15 +32,15 @@ module('API | repl | evaluating in the page', { concurrency: true }, () => {
   test('does what only a browser can: fetch its own server, and keep the DOM it built', async (assert) => {
     await withRepl({}, async (session) => {
       assert.equal(
-        (await session.evaluate("(await fetch('/tests.js')).status")).output,
+        (await session.eval("(await fetch('/tests.js')).status")).output,
         '200',
         'top-level await against the session’s own origin',
       );
-      await session.evaluate(
+      await session.eval(
         "document.body.appendChild(Object.assign(document.createElement('p'), { id: 'note' }))",
       );
       assert.equal(
-        (await session.evaluate("document.querySelector('#note').tagName")).output,
+        (await session.eval("document.querySelector('#note').tagName")).output,
         "'P'",
         'the page persists between inputs — it is one document, not one per evaluation',
       );
@@ -52,30 +49,24 @@ module('API | repl | evaluating in the page', { concurrency: true }, () => {
 
   test('bindings persist, including one declared with await', async (assert) => {
     await withRepl({}, async (session) => {
-      await session.evaluate('let counter = 1');
-      await session.evaluate('counter += 1');
-      assert.equal((await session.evaluate('counter')).output, '2');
+      await session.eval('let counter = 1');
+      await session.eval('counter += 1');
+      assert.equal((await session.eval('counter')).output, '2');
       assert.equal(
-        (await session.evaluate('let counter = 99')).output,
+        (await session.eval('let counter = 99')).output,
         'undefined',
         'REPL mode allows redeclaration, exactly as a devtools console does',
       );
 
-      await session.evaluate("const later = await Promise.resolve('settled')");
-      assert.equal((await session.evaluate('later')).output, "'settled'");
+      await session.eval("const later = await Promise.resolve('settled')");
+      assert.equal((await session.eval('later')).output, "'settled'");
     });
   });
 
   test('a promise reports its state rather than being silently awaited', async (assert) => {
     await withRepl({}, async (session) => {
-      assert.equal(
-        (await session.evaluate('Promise.resolve(5)')).output,
-        'Promise { <fulfilled> 5 }',
-      );
-      assert.equal(
-        (await session.evaluate('new Promise(() => {})')).output,
-        'Promise { <pending> }',
-      );
+      assert.equal((await session.eval('Promise.resolve(5)')).output, 'Promise { <fulfilled> 5 }');
+      assert.equal((await session.eval('new Promise(() => {})')).output, 'Promise { <pending> }');
     });
   });
 });
@@ -83,18 +74,18 @@ module('API | repl | evaluating in the page', { concurrency: true }, () => {
 module('API | repl | inputs that are not values', { concurrency: true }, () => {
   test('an unfinished input is reported as incomplete, and completes on the next line', async (assert) => {
     await withRepl({}, async (session) => {
-      const first = await session.evaluate('const shape = {');
+      const first = await session.eval('const shape = {');
 
       assert.true(first.incomplete, 'nothing ran');
       assert.equal(first.output, '', 'and nothing was printed');
-      assert.equal((await session.evaluate('const shape = { a: 1 }\n')).output, 'undefined');
-      assert.equal((await session.evaluate('shape')).output, '{ a: 1 }');
+      assert.equal((await session.eval('const shape = { a: 1 }\n')).output, 'undefined');
+      assert.equal((await session.eval('shape')).output, '{ a: 1 }');
     });
   });
 
   test('a real syntax error is reported instead of waiting for more input', async (assert) => {
     await withRepl({}, async (session) => {
-      const result = await session.evaluate('const x = ;');
+      const result = await session.eval('const x = ;');
 
       assert.false(result.incomplete);
       assert.true(result.failed);
@@ -104,7 +95,7 @@ module('API | repl | inputs that are not values', { concurrency: true }, () => {
 
   test('a thrown error comes back with its stack', async (assert) => {
     await withRepl({}, async (session) => {
-      const result = await session.evaluate('boom()');
+      const result = await session.eval('boom()');
 
       assert.true(result.failed);
       assert.includes(result.output, 'ReferenceError: boom is not defined');
@@ -113,7 +104,7 @@ module('API | repl | inputs that are not values', { concurrency: true }, () => {
 
   test('an empty input is a no-op rather than an evaluation', async (assert) => {
     await withRepl({}, async (session) => {
-      const result = await session.evaluate('   ');
+      const result = await session.eval('   ');
 
       assert.deepEqual(
         { output: result.output, failed: result.failed, tests: result.tests.length },
@@ -127,7 +118,7 @@ module('API | repl | tests typed at the prompt', { concurrency: true }, () => {
   test('a test registered by an input runs immediately and is reported', async (assert) => {
     const output = captureStream();
     await withRepl({ reporter: 'tap', console: streamConsole(output) }, async (session) => {
-      const result = await session.evaluate("test('adds', (a) => a.equal(1 + 1, 2))");
+      const result = await session.eval("test('adds', (a) => a.equal(1 + 1, 2))");
 
       assert.equal(result.tests.length, 1);
       assert.equal(result.tests[0].status, 'passed');
@@ -141,9 +132,9 @@ module('API | repl | tests typed at the prompt', { concurrency: true }, () => {
     // QUnit is built to run once per page load. The session puts its queue back in a state that
     // accepts more, which is what makes this a REPL rather than a one-shot page.
     await withRepl({}, async (session) => {
-      await session.evaluate("test('first', (a) => a.true(true))");
-      const second = await session.evaluate("test('second', (a) => a.true(true))");
-      const third = await session.evaluate(
+      await session.eval("test('first', (a) => a.true(true))");
+      const second = await session.eval("test('second', (a) => a.true(true))");
+      const third = await session.eval(
         "module('Cart', () => { test('third', (a) => a.true(true)) })",
       );
 
@@ -157,7 +148,7 @@ module('API | repl | tests typed at the prompt', { concurrency: true }, () => {
   test('a failing test reports as one — the prompt does not throw for it', async (assert) => {
     const output = captureStream();
     await withRepl({ reporter: 'tap', console: streamConsole(output) }, async (session) => {
-      const result = await session.evaluate("test('breaks', (a) => a.equal(1, 2, 'nope'))");
+      const result = await session.eval("test('breaks', (a) => a.equal(1, 2, 'nope'))");
 
       assert.false(result.failed, 'a failing test is a result, not an error from the input');
       assert.equal(result.tests[0].status, 'failed');
@@ -187,12 +178,12 @@ module('API | repl | preloaded files', { concurrency: true }, () => {
         );
         assert.deepEqual(session.loaded[0][1], ['ReplHelpers', 'GREETING', 'boom', 'double']);
         assert.equal(
-          (await session.evaluate('ReplHelpers.GREETING')).output,
+          (await session.eval('ReplHelpers.GREETING')).output,
           "'hello from the preload'",
           'the file itself is in scope too, under the name its path spells',
         );
-        assert.equal((await session.evaluate('double(21)')).output, '42');
-        assert.equal((await session.evaluate('GREETING')).output, "'hello from the preload'");
+        assert.equal((await session.eval('double(21)')).output, '42');
+        assert.equal((await session.eval('GREETING')).output, "'hello from the preload'");
         assert.includes(output.text(), 'ok 1 preloaded test');
       },
     );
@@ -200,7 +191,7 @@ module('API | repl | preloaded files', { concurrency: true }, () => {
 
   test('a stack from preloaded code maps back to its own source', async (assert) => {
     await withRepl({ inputs: [PRELOAD] }, async (session) => {
-      const result = await session.evaluate('boom()');
+      const result = await session.eval('boom()');
 
       assert.true(result.failed);
       assert.includes(result.output, 'Error: fixture boom');
@@ -231,7 +222,7 @@ module('API | repl | preloaded files', { concurrency: true }, () => {
         [PRELOAD],
         'the positional argument is the preload, not a test target',
       );
-      assert.equal((await session.evaluate('double(21)')).output, '42');
+      assert.equal((await session.eval('double(21)')).output, '42');
       assert.includes(
         reported.text(),
         'ok 1 preloaded test',
@@ -247,11 +238,11 @@ module('API | repl | preloaded files', { concurrency: true }, () => {
     await withRepl({}, async (session) => {
       assert.deepEqual(session.loaded, []);
       assert.equal(
-        (await session.evaluate('typeof double')).output,
+        (await session.eval('typeof double')).output,
         "'undefined'",
         'a bare `qunitx repl` does not drag the project’s test files in',
       );
-      assert.equal((await session.evaluate('typeof test')).output, "'function'", 'qunitx still is');
+      assert.equal((await session.eval('typeof test')).output, "'function'", 'qunitx still is');
     });
   });
 });
@@ -259,11 +250,11 @@ module('API | repl | preloaded files', { concurrency: true }, () => {
 module('API | repl | lifecycle', { concurrency: true }, () => {
   test('reload drops every binding and keeps the session usable', async (assert) => {
     await withRepl({}, async (session) => {
-      await session.evaluate('globalThis.kept = 1');
+      await session.eval('globalThis.kept = 1');
       await session.reload();
 
-      assert.equal((await session.evaluate('typeof kept')).output, "'undefined'");
-      assert.equal((await session.evaluate('1 + 1')).output, '2', 'and the page still answers');
+      assert.equal((await session.eval('typeof kept')).output, "'undefined'");
+      assert.equal((await session.eval('1 + 1')).output, '2', 'and the page still answers');
     });
   });
 
@@ -272,7 +263,7 @@ module('API | repl | lifecycle', { concurrency: true }, () => {
     await session.close();
     await session.close(); // idempotent
 
-    const result = await session.evaluate('1 + 1');
+    const result = await session.eval('1 + 1');
     assert.true(result.failed);
     assert.includes(result.output, 'closed');
   });
@@ -316,7 +307,7 @@ module('API | repl | debugger', { concurrency: true }, () => {
     await withRepl({ inputs: [DEBUGGED] }, async (session) => {
       assert.strictEqual(session.pausedAt, null, 'not paused before anything runs');
 
-      const result = await session.evaluate('inspectMe()');
+      const result = await session.eval('inspectMe()');
 
       assert.ok(result.pausedAt, 'the call came back as a pause rather than a value');
       assert.includes(result.pausedAt!, 'inspectMe', 'named by the function it stopped in');
@@ -333,10 +324,10 @@ module('API | repl | debugger', { concurrency: true }, () => {
     // The whole point of stopping. Evaluating against the globals instead would answer a question
     // nobody asked — `answer` does not exist out there.
     await withRepl({ inputs: [DEBUGGED] }, async (session) => {
-      await session.evaluate('inspectMe()');
+      await session.eval('inspectMe()');
 
-      assert.strictEqual((await session.evaluate('answer')).output, '42');
-      assert.strictEqual((await session.evaluate('answer * 2')).output, '84');
+      assert.strictEqual((await session.eval('answer')).output, '42');
+      assert.strictEqual((await session.eval('answer * 2')).output, '84');
       await session.resume();
     });
   });
@@ -345,15 +336,15 @@ module('API | repl | debugger', { concurrency: true }, () => {
     // `Debugger.evaluateOnCallFrame` runs each input in a scope of its own and throws it away, so
     // a `let` there used to answer `undefined` and then not exist — which looks like it worked.
     await withRepl({ inputs: [DEBUGGED] }, async (session) => {
-      await session.evaluate('inspectMe()');
+      await session.eval('inspectMe()');
 
-      assert.strictEqual((await session.evaluate('let me = { age: 32 }')).output, 'undefined');
-      assert.strictEqual((await session.evaluate('me.age')).output, '32', 'it is still there');
+      assert.strictEqual((await session.eval('let me = { age: 32 }')).output, 'undefined');
+      assert.strictEqual((await session.eval('me.age')).output, '32', 'it is still there');
 
-      const doubled = await session.evaluate('const doubled = answer * 2');
+      const doubled = await session.eval('const doubled = answer * 2');
       assert.strictEqual(doubled.output, 'undefined');
       assert.strictEqual(
-        (await session.evaluate('doubled')).output,
+        (await session.eval('doubled')).output,
         '84',
         'and its initializer saw the frame, which is the whole point of declaring it here',
       );
@@ -363,18 +354,18 @@ module('API | repl | debugger', { concurrency: true }, () => {
 
   test('what the block owns goes when the breakpoint does', async (assert) => {
     await withRepl({ inputs: [DEBUGGED] }, async (session) => {
-      await session.evaluate('inspectMe()');
-      await session.evaluate('let me = { age: 32 }');
+      await session.eval('inspectMe()');
+      await session.eval('let me = { age: 32 }');
 
       await session.resume();
 
-      assert.true((await session.evaluate('me')).failed, 'the session that carries on has no `me`');
+      assert.true((await session.eval('me')).failed, 'the session that carries on has no `me`');
       assert.strictEqual(
-        (await session.evaluate('let me = "mine"')).output,
+        (await session.eval('let me = "mine"')).output,
         'undefined',
         'and the name is free for it to declare its own',
       );
-      assert.strictEqual((await session.evaluate('me')).output, "'mine'");
+      assert.strictEqual((await session.eval('me')).output, "'mine'");
     });
   });
 
@@ -382,20 +373,16 @@ module('API | repl | debugger', { concurrency: true }, () => {
     // `var` and `function` are not block-scoped anywhere else, and a prompt where they vanished
     // would be a prompt with its own rules.
     await withRepl({ inputs: [DEBUGGED] }, async (session) => {
-      await session.evaluate('inspectMe()');
-      await session.evaluate('var kept = "sticky"');
-      await session.evaluate('function greet() { return "hi" }');
-      await session.evaluate('const gone = 1');
+      await session.eval('inspectMe()');
+      await session.eval('var kept = "sticky"');
+      await session.eval('function greet() { return "hi" }');
+      await session.eval('const gone = 1');
 
       await session.resume();
 
-      assert.strictEqual((await session.evaluate('kept')).output, "'sticky'", 'var stays');
-      assert.strictEqual(
-        (await session.evaluate('greet()')).output,
-        "'hi'",
-        'and so does function',
-      );
-      assert.true((await session.evaluate('gone')).failed, 'where const went with its block');
+      assert.strictEqual((await session.eval('kept')).output, "'sticky'", 'var stays');
+      assert.strictEqual((await session.eval('greet()')).output, "'hi'", 'and so does function');
+      assert.true((await session.eval('gone')).failed, 'where const went with its block');
     });
   });
 
@@ -404,23 +391,23 @@ module('API | repl | debugger', { concurrency: true }, () => {
     // LEXICAL binding, and one of those wins over a property of the same name. The inner one has
     // to arrive as something that shadows it.
     await withRepl({ inputs: [DEBUGGED] }, async (session) => {
-      await session.evaluate('let me = { age: 32 }');
-      await session.evaluate('inspectMe()');
+      await session.eval('let me = { age: 32 }');
+      await session.eval('inspectMe()');
 
       assert.strictEqual(
-        (await session.evaluate('me')).output,
+        (await session.eval('me')).output,
         '{ age: 32 }',
         'the outer one, until something says otherwise',
       );
 
-      await session.evaluate('let me = { age: 33 }');
+      await session.eval('let me = { age: 33 }');
 
-      assert.strictEqual((await session.evaluate('me')).output, '{ age: 33 }', 'and now the inner');
+      assert.strictEqual((await session.eval('me')).output, '{ age: 33 }', 'and now the inner');
 
       await session.resume();
 
       assert.strictEqual(
-        (await session.evaluate('me')).output,
+        (await session.eval('me')).output,
         '{ age: 32 }',
         'and the outer one is untouched by any of it',
       );
@@ -429,24 +416,24 @@ module('API | repl | debugger', { concurrency: true }, () => {
 
   test('what was declared at the breakpoint can be assigned to there', async (assert) => {
     await withRepl({ inputs: [DEBUGGED] }, async (session) => {
-      await session.evaluate('inspectMe()');
-      await session.evaluate('let count = 1');
-      await session.evaluate('count = count + 1');
+      await session.eval('inspectMe()');
+      await session.eval('let count = 1');
+      await session.eval('count = count + 1');
 
-      assert.strictEqual((await session.evaluate('count')).output, '2', 'the assignment stuck');
+      assert.strictEqual((await session.eval('count')).output, '2', 'the assignment stuck');
       await session.resume();
     });
   });
 
   test('resuming lets it carry on, and the session is a session again', async (assert) => {
     await withRepl({ inputs: [DEBUGGED] }, async (session) => {
-      await session.evaluate('inspectMe()');
+      await session.eval('inspectMe()');
       assert.ok(session.pausedAt, 'paused');
 
       await session.resume();
 
       assert.strictEqual(session.pausedAt, null, 'and running again');
-      assert.strictEqual((await session.evaluate('6 * 7')).output, '42');
+      assert.strictEqual((await session.eval('6 * 7')).output, '42');
     });
   });
 
@@ -456,7 +443,7 @@ module('API | repl | debugger', { concurrency: true }, () => {
     await withRepl({ inputs: [DEBUGGED] }, async (session) => {
       assert.strictEqual(await session.frameSource(), null, 'nothing is stopped yet');
 
-      await session.evaluate('inspectMe()');
+      await session.eval('inspectMe()');
       const frame = await session.frameSource();
 
       assert.ok(frame, 'a pause knows where it is');
@@ -474,8 +461,8 @@ module('API | repl | debugger', { concurrency: true }, () => {
   test('a function typed at the prompt has its source read from the page', async (assert) => {
     // It exists nowhere else — there is no file to read, and the page is the only one that knows.
     await withRepl({}, async (session) => {
-      await session.evaluate('function typed() { debugger; return 1 }');
-      await session.evaluate('typed()');
+      await session.eval('function typed() { debugger; return 1 }');
+      await session.eval('typed()');
 
       const frame = await session.frameSource();
 
@@ -490,7 +477,7 @@ module('API | repl | debugger', { concurrency: true }, () => {
       await session.resume();
 
       assert.strictEqual(session.pausedAt, null);
-      assert.strictEqual((await session.evaluate('1 + 1')).output, '2', 'still usable');
+      assert.strictEqual((await session.eval('1 + 1')).output, '2', 'still usable');
     });
   });
 });
@@ -513,8 +500,8 @@ module('API | repl | names', { concurrency: true }, () => {
     // `let` and `const` at top level are NOT on `globalThis` — they live in the global lexical
     // scope, and a completer that only reads `globalThis` never sees half of what you declared.
     await withRepl({}, async (session) => {
-      await session.evaluate('const label = "one"');
-      await session.evaluate('globalThis.total = 42');
+      await session.eval('const label = "one"');
+      await session.eval('globalThis.total = 42');
 
       const names = await session.names('');
 
@@ -535,12 +522,12 @@ module('API | repl | names', { concurrency: true }, () => {
 
   test('nothing that would have to be run to answer', async (assert) => {
     await withRepl({}, async (session) => {
-      await session.evaluate('globalThis.calls = 0');
-      await session.evaluate('globalThis.sideEffect = () => { calls += 1; return document }');
+      await session.eval('globalThis.calls = 0');
+      await session.eval('globalThis.sideEffect = () => { calls += 1; return document }');
 
       assert.deepEqual(await session.names('sideEffect()'), [], 'not a path, so not evaluated');
       assert.strictEqual(
-        (await session.evaluate('calls')).output,
+        (await session.eval('calls')).output,
         '0',
         'and the page is untouched — a keystroke is not consent to call your function',
       );
@@ -558,7 +545,7 @@ module('API | repl | stepping', { concurrency: true }, () => {
 
   test('`next` runs the line without entering what it calls', async (assert) => {
     await withRepl({ inputs: [STEPPING] }, async (session) => {
-      await session.evaluate('outer()');
+      await session.eval('outer()');
 
       const where = await session.step('over');
 
@@ -570,7 +557,7 @@ module('API | repl | stepping', { concurrency: true }, () => {
 
   test('`step` goes into it', async (assert) => {
     await withRepl({ inputs: [STEPPING] }, async (session) => {
-      await session.evaluate('outer()');
+      await session.eval('outer()');
       await session.step('into');
 
       const inside = await session.step('into');
@@ -583,7 +570,7 @@ module('API | repl | stepping', { concurrency: true }, () => {
   test('the locals are the ones where it stopped', async (assert) => {
     // Stepping moves the frame, and everything a breakpoint answers has to move with it.
     await withRepl({ inputs: [STEPPING] }, async (session) => {
-      await session.evaluate('outer()');
+      await session.eval('outer()');
       await session.step('into');
       await session.step('into');
 
@@ -591,13 +578,13 @@ module('API | repl | stepping', { concurrency: true }, () => {
 
       assert.true(locals.includes('value'), "the called frame's argument");
       assert.false(locals.includes('start'), 'and not the caller’s');
-      assert.strictEqual((await session.evaluate('value')).output, '21', 'and it evaluates there');
+      assert.strictEqual((await session.eval('value')).output, '21', 'and it evaluates there');
     });
   });
 
   test('`finish` runs until the frame returns', async (assert) => {
     await withRepl({ inputs: [STEPPING] }, async (session) => {
-      await session.evaluate('outer()');
+      await session.eval('outer()');
       await session.step('into');
       await session.step('into');
 
@@ -610,7 +597,7 @@ module('API | repl | stepping', { concurrency: true }, () => {
 
   test('the source moves with the step', async (assert) => {
     await withRepl({ inputs: [STEPPING] }, async (session) => {
-      await session.evaluate('outer()');
+      await session.eval('outer()');
       await session.step('into');
       await session.step('into');
 
@@ -625,13 +612,13 @@ module('API | repl | stepping', { concurrency: true }, () => {
     // A step request that finds nothing to stop in outlives the run it was made for, and V8
     // spends it on whatever runs next — which is whatever gets typed at the prompt after it.
     await withRepl({ inputs: [STEPPING] }, async (session) => {
-      await session.evaluate('outer()');
+      await session.eval('outer()');
       await session.step('out');
 
       assert.strictEqual(await session.step('out'), null, 'nothing left to stop in');
       assert.strictEqual(session.pausedAt, null, 'so the page is running');
 
-      const after = await session.evaluate('1 + 1');
+      const after = await session.eval('1 + 1');
 
       assert.strictEqual(after.output, '2', 'and the next line is answered');
       assert.strictEqual(session.pausedAt, null, 'rather than stopped on');
@@ -641,7 +628,7 @@ module('API | repl | stepping', { concurrency: true }, () => {
   test('stepping a page that is not paused does nothing', async (assert) => {
     await withRepl({}, async (session) => {
       assert.strictEqual(await session.step('into'), null);
-      assert.strictEqual((await session.evaluate('1 + 1')).output, '2', 'and it stays usable');
+      assert.strictEqual((await session.eval('1 + 1')).output, '2', 'and it stays usable');
     });
   });
 
@@ -649,10 +636,10 @@ module('API | repl | stepping', { concurrency: true }, () => {
     // V8's own rule, not this REPL's: breakpoints are off for the length of a debugger evaluation.
     // Worth a test because it looks like a bug and is not one, and because stepping is the answer.
     await withRepl({ inputs: [DEBUGGED] }, async (session) => {
-      await session.evaluate('inspectMe()');
+      await session.eval('inspectMe()');
       const where = session.pausedAt;
 
-      const again = await session.evaluate('inspectMe()');
+      const again = await session.eval('inspectMe()');
 
       assert.strictEqual(again.output, '42', 'it ran straight through and answered');
       assert.strictEqual(session.pausedAt, where, 'and the session is where it already was');
@@ -683,7 +670,7 @@ module('API | repl | liveness', { concurrency: true }, () => {
     // The distinction the terminal rests on: a failed command means "that did not work", and a
     // page that has gone means "nothing will".
     await withRepl({}, async (session) => {
-      const threw = await session.evaluate('nope.nope');
+      const threw = await session.eval('nope.nope');
 
       assert.true(threw.failed, 'the command failed');
       assert.true(session.alive(), 'and the session is fine');
@@ -746,11 +733,11 @@ module('API | repl | values', { concurrency: true }, () => {
   test('asking where something is does not run it', async (assert) => {
     // `.doc save()` must not save.
     await withRepl({}, async (session) => {
-      await session.evaluate('globalThis.ran = 0');
-      await session.evaluate('globalThis.sideEffect = () => { ran += 1; return 1 }');
+      await session.eval('globalThis.ran = 0');
+      await session.eval('globalThis.sideEffect = () => { ran += 1; return 1 }');
 
       assert.strictEqual(await session.declaredAt('sideEffect()'), null);
-      assert.strictEqual((await session.evaluate('ran')).output, '0', 'it was never called');
+      assert.strictEqual((await session.eval('ran')).output, '0', 'it was never called');
     });
   });
 });
@@ -767,12 +754,12 @@ module('API | repl | breakpoints', { concurrency: true }, () => {
 
       assert.deepEqual(set, { index: 1, where: `${STEPPING}:4` });
 
-      const result = await session.evaluate('helper(10)');
+      const result = await session.eval('helper(10)');
 
       assert.ok(result.pausedAt, 'the call stopped');
       assert.includes(result.pausedAt!, 'helper', 'in the function the line is in');
       assert.includes(result.pausedAt!, `${STEPPING}:4`, 'on the line that was asked for');
-      assert.strictEqual((await session.evaluate('value')).output, '10', 'with its frame to read');
+      assert.strictEqual((await session.eval('value')).output, '10', 'with its frame to read');
       await session.resume();
     });
   });
@@ -822,7 +809,7 @@ module('API | repl | breakpoints', { concurrency: true }, () => {
       const set = await session.addBreakpoint(`${STEPPING}:4`);
       await session.removeBreakpoint((set as { index: number }).index);
 
-      const result = await session.evaluate('helper(10)');
+      const result = await session.eval('helper(10)');
 
       assert.strictEqual(result.pausedAt, undefined, 'it ran through');
       assert.strictEqual(result.output, '20', 'and answered');
@@ -837,7 +824,7 @@ module('API | repl | the stack', { concurrency: true }, () => {
 
   /** Stopped two calls deep, which is the shallowest stack worth walking. */
   const inside = async (session: ReplSession) => {
-    await session.evaluate('outer()');
+    await session.eval('outer()');
     await session.step('into');
     await session.step('into');
   };
@@ -922,8 +909,8 @@ module('API | repl | scope', { concurrency: true }, () => {
     await withRepl({}, async (session) => {
       assert.deepEqual(await session.scope(), [], 'a fresh session has added nothing');
 
-      await session.evaluate('const label = "one"');
-      await session.evaluate('globalThis.total = 42');
+      await session.eval('const label = "one"');
+      await session.eval('globalThis.total = 42');
       const entries = await session.scope();
 
       assert.deepEqual(named(entries), ['label', 'total'], 'in the order they were declared');
@@ -952,7 +939,7 @@ module('API | repl | scope', { concurrency: true }, () => {
     await withRepl({ inputs: [DEBUGGED] }, async (session) => {
       assert.deepEqual(await session.locals(), [], 'nothing is in scope while nothing is stopped');
 
-      await session.evaluate('inspectMe()');
+      await session.eval('inspectMe()');
       const entries = await session.locals();
 
       assert.deepEqual(named(entries), ['answer'], 'the one local at the breakpoint');
@@ -968,8 +955,8 @@ module('API | repl | scope', { concurrency: true }, () => {
     // Everything that answers here has to read the isolate rather than run in it: a paused page
     // never answers an evaluation, so a `.scope` at a breakpoint would hang the prompt instead.
     await withRepl({ inputs: [DEBUGGED] }, async (session) => {
-      await session.evaluate('const label = "one"');
-      await session.evaluate('inspectMe()');
+      await session.eval('const label = "one"');
+      await session.eval('inspectMe()');
 
       const entries = await session.scope();
 
@@ -1003,12 +990,12 @@ module('API | repl | preview', { concurrency: true }, () => {
       );
 
       assert.strictEqual(
-        (await session.evaluate('typeof globalThis.zap')).output,
+        (await session.eval('typeof globalThis.zap')).output,
         "'undefined'",
         'none of it happened',
       );
       assert.strictEqual(
-        (await session.evaluate('document.querySelectorAll("p").length')).output,
+        (await session.eval('document.querySelectorAll("p").length')).output,
         '0',
         'and the page is as it was',
       );
@@ -1019,13 +1006,13 @@ module('API | repl | preview', { concurrency: true }, () => {
     await withRepl({}, async (session) => {
       assert.strictEqual(await session.preview('for (;;) {}'), '', 'a loop that never ends');
       assert.strictEqual(await session.preview('nope.nope'), '', 'and one that throws');
-      assert.strictEqual((await session.evaluate('1 + 1')).output, '2', 'the session carries on');
+      assert.strictEqual((await session.eval('1 + 1')).output, '2', 'the session carries on');
     });
   });
 
   test('a stopped page is not asked, because a stopped page does not answer', async (assert) => {
     await withRepl({ inputs: ['test/fixtures/repl-debugger.ts'] }, async (session) => {
-      await session.evaluate('inspectMe()');
+      await session.eval('inspectMe()');
 
       assert.strictEqual(await session.preview('1 + 1'), '', 'and the prompt keeps taking keys');
       await session.resume();
@@ -1053,9 +1040,9 @@ module('API | repl | a file that changed on disk', { concurrency: true }, () => 
       const again = await session.refresh(live);
 
       assert.deepEqual(again, ['LiveModule', 'first', 'second'], 'and again, with what is new');
-      assert.equal((await session.evaluate('second')).output, '2', 'answering at the prompt');
+      assert.equal((await session.eval('second')).output, '2', 'answering at the prompt');
       assert.equal(
-        (await session.evaluate('LiveModule.second')).output,
+        (await session.eval('LiveModule.second')).output,
         '2',
         'and through the namespace, which is the same one it had',
       );
@@ -1079,7 +1066,7 @@ module('API | repl | a file that changed on disk', { concurrency: true }, () => 
       await fs.writeFile(live, 'export const first = 2;\n');
 
       assert.deepEqual(await session.refresh(live), ['Mine', 'first']);
-      assert.equal((await session.evaluate('Mine.first')).output, '2', 'with the new value in it');
+      assert.equal((await session.eval('Mine.first')).output, '2', 'with the new value in it');
     });
   });
 });

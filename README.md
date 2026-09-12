@@ -282,7 +282,7 @@ result.failures.map((one) => one.fullName); // ['Cart > Coupons: applies code']
 | `openSession(options)`            | one run, watched as it happens — `events()`, `result()`, `abort()`      |
 | `watch(options)`                  | async-iterable session; `run`/`runAll`/`runFailed`/`abort`, `results()` |
 | `search(options)`                 | what a selection would run — no browser, milliseconds                   |
-| `repl(options)`                   | a live page you can `evaluate(...)` against                             |
+| `repl(options)`                   | a live page you can `eval(...)` against                                 |
 | `Daemon.{start,stop,status,test}` | reuse a warm browser between runs                                       |
 | `init` / `generate`               | scaffolding, reporting what they wrote                                  |
 | `validate(options)`               | reject bad options without launching anything                           |

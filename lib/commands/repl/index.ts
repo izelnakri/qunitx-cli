@@ -190,7 +190,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
         }
         evaluating = true;
         const input = buffered + source;
-        session.evaluate(input).then(
+        session.eval(input).then(
           (result) => {
             evaluating = false;
             // Whatever just ran may have declared something. Marked stale rather than dropped: the
@@ -353,7 +353,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
           scratch = edited.text;
           const source = whatToRun(edited);
           if (source !== '') {
-            const result = await session.evaluate(source);
+            const result = await session.eval(source);
             const text = result.failed ? red(failure(result)) : result.output;
             if (text !== '') repl.output.write(`${text}\n`);
           }

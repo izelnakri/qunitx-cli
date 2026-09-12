@@ -188,7 +188,7 @@ export interface Frame {
  * ```ts
  * // Defined, not invoked: a real session owns a browser and a bound port.
  * async function askOnce(session: ReplSession) {
- *   const answer = await session.evaluate('document.title');
+ *   const answer = await session.eval('document.title');
  *   await session.close();
  *   return answer.output;
  * }
@@ -218,7 +218,7 @@ export interface ReplSession {
    * Tests the input registered are run before this resolves and reported as they finish, so the
    * TAP for a test typed at the prompt lands ahead of the value — where a reader expects it.
    */
-  evaluate(input: string): Promise<ReplResult>;
+  eval(input: string): Promise<ReplResult>;
   /**
    * Resolves once nothing is in flight — a no-op at the back of the evaluation queue.
    *
@@ -269,7 +269,7 @@ export interface ReplSession {
   /**
    * Where the page is stopped at a `debugger` statement, or `null` when it is running.
    *
-   * While this is set, {@link ReplSession.evaluate} runs in the PAUSED frame, so what you type
+   * While this is set, {@link ReplSession.eval} runs in the PAUSED frame, so what you type
    * sees the locals at the breakpoint rather than the globals around it.
    */
   pausedAt: string | null;
@@ -581,7 +581,7 @@ export async function resolvePreload(config: Config, inputs: readonly string[]):
   return Object.keys(await FSTree.build(TestFilePaths.setup(absolute), config));
 }
 
-/** Returned by the race in `#evaluate` when the page stopped instead of answering. */
+/** Returned by the race in `#eval` when the page stopped instead of answering. */
 const PAUSED = { paused: true } as unknown as EvaluateResult;
 
 /** The live session. A class because it owns handles and must close them exactly once. */
@@ -667,8 +667,8 @@ class Session implements ReplSession {
     this.#scripts = handles.scripts;
   }
 
-  evaluate(input: string): Promise<ReplResult> {
-    const next = this.#tail.then(() => this.#evaluate(input));
+  eval(input: string): Promise<ReplResult> {
+    const next = this.#tail.then(() => this.#eval(input));
     this.#tail = next.then(
       () => {},
       () => {},
@@ -1403,7 +1403,7 @@ class Session implements ReplSession {
     return tests;
   }
 
-  async #evaluate(input: string, stripped = false): Promise<ReplResult> {
+  async #eval(input: string, stripped = false): Promise<ReplResult> {
     const nothing = { output: '', failed: false, incomplete: false, tests: [] };
     if (input.trim() === '') return nothing;
     if (this.#closed) return { ...nothing, output: 'the REPL session is closed', failed: true };
@@ -1467,7 +1467,7 @@ class Session implements ReplSession {
       // and all but a fraction of what anybody types is JavaScript that never gets here.
       if (!stripped && isSyntaxError(evaluated)) {
         const javascript = await withoutTypes(input);
-        if (typeof javascript === 'string') return await this.#evaluate(javascript, true);
+        if (typeof javascript === 'string') return await this.#eval(javascript, true);
         // Half a line of TypeScript is a syntax error the engine has no word for — `{ a: 1 as`
         // stops it at `as`, not at the end — so what it is waiting for comes from the parser that
         // can read the whole language.

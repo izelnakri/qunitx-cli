@@ -540,21 +540,21 @@ import { repl } from 'qunitx-cli';
 
 await using session = await repl('test/helpers.ts', { reporter: 'tap' });
 
-(await session.evaluate('document.title')).output; // "'qunitx repl'"
-(await session.evaluate('(await fetch("/tests.js")).status')).output; // '200'
-(await session.evaluate('test("adds", (a) => a.equal(1 + 1, 2))')).tests; // [{ status: 'passed', … }]
+(await session.eval('document.title')).output; // "'qunitx repl'"
+(await session.eval('(await fetch("/tests.js")).status')).output; // '200'
+(await session.eval('test("adds", (a) => a.equal(1 + 1, 2))')).tests; // [{ status: 'passed', … }]
 ```
 
 The preload takes the same call shapes as every other verb — positionally, as an array, or as
 `inputs` in an options object. What it names is a preloaded module rather than a test target: each
 one's exports land on the page's `globalThis`, and any tests it registers run as the session opens.
 
-`evaluate` resolves with the rendered `output`, whether it `failed`, whether the input was
+`eval` resolves with the rendered `output`, whether it `failed`, whether the input was
 `incomplete` (unfinished, so the CLI asks for another line), and the `tests` it ran. `reload()`
 drops every binding, `interrupt()` stops a runaway expression, and `close()` — or the `await using`
 above — releases the browser.
 
-`evaluate` takes TypeScript too — a line the engine refuses is retried with its types erased — and
+`eval` takes TypeScript too — a line the engine refuses is retried with its types erased — and
 `typeOf(expression)` says what type a value is, worked out from the value.
 
 A session is also a debugger: a `debugger` statement stops the page, `locals()` reads that frame,

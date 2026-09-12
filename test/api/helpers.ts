@@ -103,7 +103,7 @@ export async function withOpenSession<T>(
  *
  * // Defined, not invoked: launches a real browser.
  * async function title() {
- *   return await withRepl({}, async (session) => (await session.evaluate('document.title')).output);
+ *   return await withRepl({}, async (session) => (await session.eval('document.title')).output);
  * }
  * ```
  */
