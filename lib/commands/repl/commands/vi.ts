@@ -1,4 +1,4 @@
-import { opening } from '../editor.ts';
+import { openingIn } from '../editor.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -17,5 +17,5 @@ import type { ReplCommand } from '../command.ts';
  */
 export const command: ReplCommand = {
   description: 'Open a scratch buffer, or whatever follows: a value, a file, or an address',
-  main: opening('vi', 'vi'),
+  main: openingIn('vi'),
 };

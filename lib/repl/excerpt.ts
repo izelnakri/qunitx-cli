@@ -1,5 +1,5 @@
 import process from 'node:process';
-import { paint } from './columns.ts';
+import { styled } from './columns.ts';
 import { highlight, tokenize } from './highlight.ts';
 import type { Theme } from './theme.ts';
 
@@ -109,8 +109,8 @@ export function excerpt(
       const number = String(first + index).padStart(gutter);
       const here = first + index === line;
       const edge = here
-        ? `${paint('>', mark)} ${paint(`${number} │`, mark)}`
-        : `  ${paint(`${number} │`, dim)}`;
+        ? `${styled('>', mark)} ${styled(`${number} │`, mark)}`
+        : `  ${styled(`${number} │`, dim)}`;
 
       return `${edge} ${highlight(text, palette)}`;
     })

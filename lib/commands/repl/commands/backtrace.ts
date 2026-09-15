@@ -1,4 +1,5 @@
-import { count, stack } from '../debugging.ts';
+import { asCount } from '../command.ts';
+import { frameList } from '../frames.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -22,16 +23,13 @@ export const command: ReplCommand = {
   description: 'Show the call stack — `.backtrace 3` for the innermost three',
   aliases: ['bt', 'where'],
   main(repl, argument) {
-    const wanted = count(argument, Infinity);
+    const wanted = asCount(argument, Infinity);
     if (wanted === null) {
-      repl.write('Usage: .backtrace [count]\n');
+      repl.log('Usage: .backtrace [count]');
 
-      return repl.prompt();
+      return;
     }
     const frames = repl.session.backtrace();
-    repl.write(
-      frames.length === 0 ? 'Not paused\n' : `${stack(frames.slice(0, wanted), repl.palette)}\n`,
-    );
-    repl.prompt();
+    repl.log(frames.length === 0 ? 'Not paused' : frameList(frames.slice(0, wanted), repl.palette));
   },
 };

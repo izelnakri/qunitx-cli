@@ -1,4 +1,4 @@
-import { count } from '../debugging.ts';
+import { asCount } from '../command.ts';
 import { red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 
@@ -22,13 +22,12 @@ import type { ReplCommand } from '../command.ts';
 export const command: ReplCommand = {
   description: 'Remove a breakpoint by its number — `.delete 1`',
   async main(repl, argument) {
-    const index = count(argument, 0);
+    const index = asCount(argument, 0);
     if (index === null || index < 1) {
-      repl.write('Usage: .delete <number>\n');
+      repl.log('Usage: .delete <number>');
 
-      return repl.prompt();
+      return;
     }
-    if (!(await repl.session.removeBreakpoint(index))) repl.write(red(`No breakpoint ${index}\n`));
-    repl.prompt();
+    if (!(await repl.session.removeBreakpoint(index))) repl.log(red(`No breakpoint ${index}`));
   },
 };

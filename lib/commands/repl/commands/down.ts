@@ -1,4 +1,4 @@
-import { moving } from '../debugging.ts';
+import { towardCallee } from '../frames.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -17,5 +17,5 @@ import type { ReplCommand } from '../command.ts';
  */
 export const command: ReplCommand = {
   description: 'Go back toward the frame this one called — `.down 2` for two',
-  main: moving('down', -1, true),
+  main: towardCallee('down'),
 };

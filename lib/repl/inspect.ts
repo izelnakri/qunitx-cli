@@ -50,7 +50,7 @@ export function inspect(value: unknown, depth: number = 2, color: boolean = fals
 
   return format(value, depth);
 
-  function paint(code: number, text: string): string {
+  function styled(code: number, text: string): string {
     return color ? `${ESC}[${code}m${text}${ESC}[39m` : text;
   }
 
@@ -69,15 +69,15 @@ export function inspect(value: unknown, depth: number = 2, color: boolean = fals
   }
 
   function format(input: unknown, left: number): string {
-    if (input === null) return paint(DIM, 'null');
-    if (input === undefined) return paint(DIM, 'undefined');
+    if (input === null) return styled(DIM, 'null');
+    if (input === undefined) return styled(DIM, 'undefined');
 
     const type = typeof input;
-    if (type === 'string') return paint(YELLOW, quote(input as string));
-    if (type === 'number') return paint(CYAN, Object.is(input, -0) ? '-0' : String(input));
-    if (type === 'bigint') return paint(CYAN, `${input}n`);
-    if (type === 'boolean') return paint(RED, String(input));
-    if (type === 'symbol') return paint(YELLOW, String(input));
+    if (type === 'string') return styled(YELLOW, quote(input as string));
+    if (type === 'number') return styled(CYAN, Object.is(input, -0) ? '-0' : String(input));
+    if (type === 'bigint') return styled(CYAN, `${input}n`);
+    if (type === 'boolean') return styled(RED, String(input));
+    if (type === 'symbol') return styled(YELLOW, String(input));
     if (type === 'function') return formatFunction(input as (...args: unknown[]) => unknown);
 
     return formatObject(input as object, left);
@@ -86,9 +86,9 @@ export function inspect(value: unknown, depth: number = 2, color: boolean = fals
   function formatFunction(input: (...args: unknown[]) => unknown): string {
     const isClass = /^\s*class[\s{]/.test(Function.prototype.toString.call(input));
     const name = input.name;
-    if (isClass) return paint(BLUE, name ? `[class ${name}]` : '[class (anonymous)]');
+    if (isClass) return styled(BLUE, name ? `[class ${name}]` : '[class (anonymous)]');
 
-    return paint(BLUE, name ? `[Function: ${name}]` : '[Function (anonymous)]');
+    return styled(BLUE, name ? `[Function: ${name}]` : '[Function (anonymous)]');
   }
 
   function formatObject(input: object, left: number): string {
@@ -104,9 +104,9 @@ export function inspect(value: unknown, depth: number = 2, color: boolean = fals
     }
     if (input instanceof Error) return input.stack || `${input.name}: ${input.message}`;
     if (input instanceof Date) {
-      return paint(MAGENTA, isNaN(input.getTime()) ? 'Invalid Date' : input.toISOString());
+      return styled(MAGENTA, isNaN(input.getTime()) ? 'Invalid Date' : input.toISOString());
     }
-    if (input instanceof RegExp) return paint(RED, String(input));
+    if (input instanceof RegExp) return styled(RED, String(input));
     // Settled-ness is not observable synchronously, so the terminal renders a top-level promise
     // from CDP's preview instead; this is what a promise nested inside something else looks like.
     if (input instanceof Promise) return 'Promise';

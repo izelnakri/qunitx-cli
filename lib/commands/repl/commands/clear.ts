@@ -1,4 +1,4 @@
-import { clearScreen } from '../output.ts';
+import { clearScreen } from '../../../repl/columns.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -24,6 +24,5 @@ export const command: ReplCommand = {
   main(repl) {
     // Nothing to clear on a pipe, and the escape would land in whatever is reading it.
     if (repl.interactive) repl.write(clearScreen());
-    repl.prompt();
   },
 };

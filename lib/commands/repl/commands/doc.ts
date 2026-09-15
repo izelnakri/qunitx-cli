@@ -1,4 +1,4 @@
-import { describeValue, nowhere } from '../values.ts';
+import { describeValue, noSuchValue } from '../describe.ts';
 import { red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 
@@ -26,7 +26,6 @@ export const command: ReplCommand = {
     const said = await describeValue(repl.session, argument, repl.cwd, repl.palette, {
       body: false,
     });
-    repl.write(said === null ? red(`${nowhere(argument, 'doc')}\n`) : `${said}\n`);
-    repl.prompt();
+    repl.log(said === null ? red(noSuchValue(argument, 'doc')) : said);
   },
 };

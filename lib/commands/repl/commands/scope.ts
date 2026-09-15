@@ -1,5 +1,4 @@
-import { formatScope } from '../../../repl/scope.ts';
-import { terminalWidth } from '../../../repl/columns.ts';
+import { scopeTable } from '../../../repl/scope.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -23,8 +22,7 @@ import type { ReplCommand } from '../command.ts';
 export const command: ReplCommand = {
   description: 'List what this session has added to the page, with values',
   async main(repl) {
-    const listing = formatScope(await repl.session.scope(), terminalWidth(repl.server.output));
-    repl.write(listing === '' ? 'Nothing declared yet\n' : `${listing}\n`);
-    repl.prompt();
+    const listing = scopeTable(await repl.session.scope(), repl.width);
+    repl.log(listing === '' ? 'Nothing declared yet' : listing);
   },
 };

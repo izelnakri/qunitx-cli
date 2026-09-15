@@ -17,7 +17,6 @@ import type { ReplCommand } from '../command.ts';
 export const command: ReplCommand = {
   description: 'Print the directory paths are resolved against',
   main(repl) {
-    repl.write(`${repl.cwd}\n`);
-    repl.prompt();
+    repl.log(`${repl.cwd}`);
   },
 };

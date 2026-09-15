@@ -1,4 +1,4 @@
-import { paint } from '../../repl/columns.ts';
+import { styled } from '../../repl/columns.ts';
 import type { Theme } from '../../repl/theme.ts';
 
 /** The part of what `node:repl` keeps for a command that this prints — the rest is behaviour. */
@@ -50,9 +50,9 @@ export function helpLines(
   return rows
     .map(({ name, help, aliases }) => {
       const said =
-        aliases.length === 0 ? help : `${help} ${paint(alias(aliases), palette.style('LineNr'))}`;
+        aliases.length === 0 ? help : `${help} ${styled(alias(aliases), palette.style('LineNr'))}`;
 
-      return `${paint(`.${name}`.padEnd(width), palette.style('@function'))}${said}`;
+      return `${styled(`.${name}`.padEnd(width), palette.style('@function'))}${said}`;
     })
     .join('\n');
 }

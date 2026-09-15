@@ -345,6 +345,24 @@ module('Commands | repl | .cat', { concurrency: true }, () => {
 
 // Three questions about a value that do not need it printed: what came from where, what it is
 // for, and where it is written.
+// A reload is for picking up an edit. The files come back; what you typed does not.
+module('Commands | repl | .reload', { concurrency: true }, () => {
+  test('the modules come back and the bindings do not', async (assert) => {
+    const result = await repl(
+      '.import test/fixtures/repl-helpers.ts\nlet mine = 1\n.reload\ndouble(21)\ntypeof mine\n',
+    );
+
+    assert.exitCode(result, 0);
+    assert.includes(result, 'Reloaded, with ReplHelpers', 'it says what it brought back');
+    assert.includes(result, '42', 'the imported file is in scope again');
+    assert.includes(result, "'undefined'", 'and `let mine = 1` is not — it was never on disk');
+  });
+
+  test('a session that imported nothing says so rather than listing nothing', async (assert) => {
+    assert.includes(await repl('.reload\n'), 'Reloaded');
+  });
+});
+
 module('Commands | repl | values', { concurrency: true }, () => {
   const helpers = (stdin: string) => repl(stdin, 'test/fixtures/repl-helpers.ts');
 
@@ -574,12 +592,30 @@ module('Commands | repl | values', { concurrency: true }, () => {
     assert.deepEqual(said(h.stdout), said(doc.stdout));
   });
 
-  test('`.h` on its own is the help', async (assert) => {
+  test('`.h` on its own is the help, and says it takes a value', async (assert) => {
+    // Somebody who does not know the second shape exists is exactly the person typing `.h`, and
+    // the list is the only place they will be looking.
     const help = await repl('.h\n');
 
     assert.includes(help, '.imported', 'every command, one line each');
     assert.includes(help, '[alias .load]', 'with the other names for it at the end of its line');
     assert.notIncludes(help, '\n.load ', 'and not on a line of their own');
+    assert.includes(help, 'Name anything after it', 'and how to ask about a value');
+    assert.includes(help, '`.h double`', 'with something to copy');
+  });
+
+  test('`.help <value>` is the same question as `.doc`, and so is `.h`', async (assert) => {
+    // "What can I type" and "what is this" are the same reflex. A prompt that answers only the
+    // first sends you looking for the name of the second.
+    const [help, h, doc] = await Promise.all([
+      helpers('.help double\n'),
+      helpers('.h double\n'),
+      helpers('.doc double\n'),
+    ]);
+    const said = (text: string) => text.split('\n').filter((line) => line.includes('Doubles'));
+
+    assert.deepEqual(said(help.stdout), said(doc.stdout));
+    assert.deepEqual(said(h.stdout), said(doc.stdout));
   });
 
   test('a value that is not a function is still worth showing', async (assert) => {

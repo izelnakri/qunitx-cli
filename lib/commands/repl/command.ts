@@ -1,6 +1,7 @@
 import { red } from '../../utils/color.ts';
-import type { REPLServer } from 'node:repl';
+import type * as Repl from '../../repl/session.ts';
 import type { NameSource } from './completion.ts';
+import type { REPLServer } from 'node:repl';
 import type { ReplSession } from '../../repl/session.ts';
 import type { Theme } from '../../repl/theme.ts';
 import type { Config as ResolvedConfig } from '../../types.ts';
@@ -19,8 +20,7 @@ import type { Config as ResolvedConfig } from '../../types.ts';
  * const pwd: ReplCommand = {
  *   description: 'Print the directory paths are resolved against',
  *   main(repl) {
- *     repl.write(`${repl.cwd}\n`);
- *     repl.prompt();
+ *     repl.log(repl.cwd);
  *   },
  * };
  * pwd.description.length > 0; // true
@@ -37,14 +37,20 @@ export interface ReplCommand {
    *
    * `argument` is everything after the name, untrimmed.
    *
-   * May be `async`: {@link define} floats the promise, so a command that awaits reads top to
-   * bottom rather than nesting, and one that rejects is caught there rather than by the process.
+   * May be `async`. {@link define} draws the prompt when it finishes and catches what it throws,
+   * so a command's job ends when it has said its piece.
    */
   main(repl: ReplContext, argument: string): void | Promise<void>;
 }
 
 /**
  * Everything a command may need that is not its argument.
+ *
+ * Two things here are easy to confuse and worth separating. `repl` is the TERMINAL: the prompt, its
+ * colours, the directory it resolves paths against, what it can write. `repl.session` is the PAGE:
+ * a live Chrome tab this process drives over CDP, which is where values actually live and where a
+ * `debugger` statement actually stops. A command reads the terminal from `repl` and asks the page
+ * through `repl.session`; neither reaches into the other.
  *
  * One object rather than a parameter list because commands need wildly different subsets of it,
  * and a positional list would make every one of them declare the parts it ignores. `buffered` and
@@ -54,7 +60,7 @@ export interface ReplCommand {
 export interface ReplContext {
   /** The `node:repl` server, for the few commands that need readline itself. */
   server: REPLServer;
-  /** The live page, and everything a command can ask it. */
+  /** The live page — where values are, and where a `debugger` stops. */
   session: ReplSession;
   /** The resolved run config this session was opened on. */
   config: ResolvedConfig;
@@ -64,28 +70,76 @@ export interface ReplContext {
   palette: Theme;
   /** False on a pipe — no terminal to hand to an editor, and nothing to redraw. */
   interactive: boolean;
+  /** How wide the terminal is, for anything laid out in columns. 80 where nothing says. */
+  width: number;
   /** The shared name cache behind TAB and the ghost suggestion. */
   completions: NameSource;
   /** The unfinished input so far, `''` when the line is whole. `.break` abandons it. */
   buffered: string;
   /** The scratch buffer `.open` keeps for the life of the session. */
   scratch: string;
-  /** Writes to the prompt's own output. */
+  /** Says one line to whoever typed the command, ending it for them. */
+  log(text: string): void;
+  /** Writes exactly these bytes — for a block that ends in its own newline, or an escape. */
   write(text: string): void;
-  /** Draws the prompt again — what every command ends with, including the async ones. */
-  prompt(): void;
+}
+
+/**
+ * The count typed after a command, `fallback` where none was, or `null` where it was not a count.
+ *
+ * Every command that takes one used to take it and ignore it, which is the worst way to be wrong:
+ * `.up 3` moved one frame and said nothing about the other two.
+ *
+ * ```ts
+ * import { asCount } from './command.ts';
+ *
+ * asCount('3'); // 3
+ * asCount(''); // 1 — nothing typed is once
+ * asCount('lots'); // null — not a count, and not a silent 1
+ * ```
+ */
+export function asCount(argument: string, fallback: number = 1): number | null {
+  const given = argument.trim();
+  if (given === '') return fallback;
+  const asked = Number(given);
+
+  return Number.isInteger(asked) ? asked : null;
+}
+
+/**
+ * A failed result, in the words its kind earns.
+ *
+ * `Uncaught` is what a browser console says about an exception, and belongs only to one the page
+ * actually threw. "That file will not bundle" is this REPL answering, and prefixing it would claim
+ * the page had refused something it was never shown.
+ *
+ * ```ts
+ * import { failureText } from './command.ts';
+ *
+ * failureText({ output: 'boom', failed: true, thrown: true, incomplete: false, tests: [] });
+ * // 'Uncaught boom'
+ * failureText({ output: 'will not bundle', failed: true, incomplete: false, tests: [] });
+ * // 'will not bundle' — nothing threw, so nothing is called uncaught
+ * ```
+ */
+export function failureText(result: Repl.ReplResult): string {
+  return result.thrown ? `Uncaught ${result.output}` : result.output;
 }
 
 /**
  * Registers commands on the server under their own names and every alias.
  *
- * `clearBufferedCommand()` happens here rather than in each `main`: `node:repl` needs it before any
- * command's output, every one of them wanted it, and a command that forgot it printed into a
- * half-drawn line.
+ * Three things happen here rather than in all thirty-seven commands, because all thirty-seven
+ * wanted them and any that forgot one was a bug:
  *
- * `node:repl` cannot await an action, so an async command's promise is floated — but caught. A
- * command that rejects has failed, which is a line of output; unhandled, it is Node killing a
- * session over one bad `.doc`.
+ *   - `clearBufferedCommand()` first. `node:repl` needs it before a command's output, and without
+ *     it the output landed in a half-drawn line.
+ *   - The prompt afterwards. `node:repl` redraws after a SYNCHRONOUS command and nothing else, so
+ *     every async one had to remember to draw its own — which is why they all ended in the same
+ *     line, and why forgetting it left a terminal with no prompt.
+ *   - A `catch` around the lot. `node:repl` cannot await an action, so the promise is floated —
+ *     but caught. A command that rejects has failed, which is a line of output; unhandled, it is
+ *     Node killing the session over one bad `.doc`.
  *
  * ```ts
  * import { define } from './command.ts';
@@ -94,7 +148,7 @@ export interface ReplContext {
  *
  * // Defined, not invoked: it writes to a live prompt.
  * function example(repl: ReplContext) {
- *   define(repl, { pwd: { description: 'Where you are', main: () => repl.prompt() } });
+ *   define(repl, { pwd: { description: 'Where you are', main: (it) => it.log(it.cwd) } });
  * }
  * ```
  */
@@ -109,9 +163,9 @@ export function define(repl: ReplContext, commands: Record<string, ReplCommand>)
             try {
               await command.main(repl, argument);
             } catch (error) {
-              repl.write(red(`.${spelling} failed — ${(error as Error).message}\n`));
-              repl.prompt();
+              repl.log(red(`.${spelling} failed — ${(error as Error).message}`));
             }
+            repl.server.displayPrompt();
           })();
         },
       });

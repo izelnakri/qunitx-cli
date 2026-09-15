@@ -25,17 +25,16 @@ export const command: ReplCommand = {
   async main(repl, argument) {
     const [file, as] = argument.trim().split(/\s+/);
     if (file === undefined || file === '') {
-      repl.write('Usage: .import <file> [name]\n');
+      repl.log('Usage: .import <file> [name]');
 
-      return repl.prompt();
+      return;
     }
-    const brought = await repl.session.importFile(file, as);
-    if (typeof brought === 'string') repl.write(red(`${brought}\n`));
+    const brought = await repl.session.import(file, as);
+    if (typeof brought === 'string') repl.log(red(`${brought}`));
     else {
       const exported = brought.names.filter((known) => known !== brought.name);
       const also = exported.length === 0 ? '' : `, and ${exported.join(', ')}`;
-      repl.write(blue(`${brought.name}${also}\n`));
+      repl.log(blue(`${brought.name}${also}`));
     }
-    repl.prompt();
   },
 };

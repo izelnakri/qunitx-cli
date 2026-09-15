@@ -1,6 +1,6 @@
 import * as Files from '../../../repl/files.ts';
-import { pathProblem, retype, showTree } from '../browsing.ts';
-import { describeValue } from '../values.ts';
+import { drawTree, pathError, prefillPrompt } from '../paths.ts';
+import { describeValue } from '../describe.ts';
 import { red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 
@@ -28,31 +28,30 @@ export const command: ReplCommand = {
   async main(repl, argument) {
     const { depth, path: typed } = Files.target(argument.trim());
     if (argument.trim() === '') {
-      repl.write('Usage: .view <file>\n');
+      repl.log('Usage: .view <file>');
 
-      return repl.prompt();
+      return;
     }
 
     const found = Files.read(typed, repl.cwd);
     if (found.kind === 'file') {
-      repl.write(`${Files.numbered(found.contents, typed, repl.palette)}\n`);
+      repl.log(`${Files.numbered(found.contents, typed, repl.palette)}`);
 
-      return repl.prompt();
+      return;
     }
     if (found.kind === 'directory') {
-      repl.write(showTree(typed, repl.cwd, repl.palette, depth));
+      repl.log(drawTree(typed, repl.cwd, repl.palette, depth));
 
-      return repl.prompt();
+      return;
     }
 
     const said = await describeValue(repl.session, typed, repl.cwd, repl.palette, { body: true });
     if (said !== null) {
-      repl.write(`${said}\n`);
+      repl.log(`${said}`);
 
-      return repl.prompt();
+      return;
     }
-    repl.write(red(`${pathProblem(found, typed)}\n`));
-    repl.prompt();
-    retype('view', found, repl);
+    repl.log(red(`${pathError(found, typed)}`));
+    prefillPrompt('view', found, repl);
   },
 };

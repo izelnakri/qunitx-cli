@@ -1,4 +1,4 @@
-import { stepping } from '../debugging.ts';
+import { steppingInto } from '../frames.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -18,5 +18,5 @@ import type { ReplCommand } from '../command.ts';
 export const command: ReplCommand = {
   description: 'Run one step, entering the next call',
   aliases: ['s'],
-  main: stepping('step', 'into'),
+  main: steppingInto('step'),
 };

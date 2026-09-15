@@ -1,4 +1,4 @@
-import { openExternally } from '../editor.ts';
+import { openInBrowser } from '../desktop.ts';
 import { blue, red } from '../../../utils/color.ts';
 import type { Config as ResolvedConfig } from '../../../types.ts';
 import type { ReplCommand } from '../command.ts';
@@ -25,13 +25,12 @@ export const command: ReplCommand = {
   async main(repl) {
     const address = repl.session.inspector;
     if (address === null) {
-      repl.write(red(`${nowhereToInspect(repl.config)}\n`));
+      repl.log(red(`${nowhereToInspect(repl.config)}`));
 
-      return repl.prompt();
+      return;
     }
-    const failed = repl.interactive ? await openExternally(address) : null;
-    repl.write(failed ?? blue(`${address}\n`));
-    repl.prompt();
+    const failed = repl.interactive ? await openInBrowser(address) : null;
+    repl.log(failed ?? blue(address));
   },
 };
 

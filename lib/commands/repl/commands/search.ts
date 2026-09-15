@@ -1,6 +1,6 @@
 import path from 'node:path';
 import * as Search from '../../search.ts';
-import { paint } from '../../../repl/columns.ts';
+import { styled } from '../../../repl/columns.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -24,9 +24,9 @@ export const command: ReplCommand = {
   description: 'Find tests whose name matches — `.search login`',
   async main(repl, argument) {
     const found = await Search.scan({ ...repl.config, search: argument.trim() || true });
-    repl.write(
+    repl.log(
       found.matches.length === 0
-        ? `No tests match — ${found.total} in ${found.files} file(s)\n`
+        ? `No tests match — ${found.total} in ${found.files} file(s)`
         : `${found.matches
             .map(({ fullName, name, modules, file, line }) => {
               // `fullName` reads `": a test"` for one declared outside a module, because it is
@@ -34,10 +34,9 @@ export const command: ReplCommand = {
               const said = modules.length === 0 ? name : fullName;
               const where = `${path.relative(repl.cwd, file)}:${line}`;
 
-              return `${paint(where, repl.palette.style('LineNr'))}  ${said}`;
+              return `${styled(where, repl.palette.style('LineNr'))}  ${said}`;
             })
-            .join('\n')}\n`,
+            .join('\n')}`,
     );
-    repl.prompt();
   },
 };

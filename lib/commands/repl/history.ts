@@ -5,10 +5,7 @@ import fs from 'node:fs';
 
 /** Where a session's history is kept, beside every other tool's dotfile. */
 const HISTORY_FILE = '.qunitx_repl_history';
-import { paint } from '../../repl/columns.ts';
-import { highlight } from '../../repl/highlight.ts';
 import type { REPLServer } from 'node:repl';
-import type { Theme } from '../../repl/theme.ts';
 
 /**
  * Points history at `~/.qunitx_repl_history`, honouring `QUNITX_REPL_HISTORY` (an empty value
@@ -72,16 +69,6 @@ export function trimHistoryFile(file: string, history: readonly string[]): void 
 }
 
 /**
- * How many lines `.history` shows when it is not told — the number zsh settled on.
- *
- * ```ts
- * import { HISTORY_SHOWN } from './history.ts';
- *
- * HISTORY_SHOWN; // 16 — about a screenful, which is what the question usually means
- * ```
- */
-export const HISTORY_SHOWN = 16;
-/**
  * How many lines a session keeps. `node:repl` keeps thirty; a shell keeps thousands.
  *
  * ```ts
@@ -91,37 +78,3 @@ export const HISTORY_SHOWN = 16;
  * ```
  */
 export const HISTORY_KEPT = 1_000;
-
-/**
- * The last `count` lines entered, numbered, the way `history` prints them.
- *
- * Oldest first, so the newest is nearest the prompt — reading up from where you are is how anybody
- * uses this. Numbered from one across what the session has, which is what it can honestly count:
- * history older than the file it was loaded from is not here to be numbered.
- *
- * ```ts
- * import { recent } from './history.ts';
- *
- * recent(['b', 'a'], 2, { style: () => '' }); // '1  a\n2  b\n' — newest last
- * recent([], 16, { style: () => '' }); // '' — nothing entered yet
- * ```
- */
-export function recent(newestFirst: readonly string[], count: number, palette: Theme): string {
-  const oldestFirst = [...newestFirst].reverse();
-  const from = Math.max(0, oldestFirst.length - count);
-  const gutter = String(oldestFirst.length).length;
-  const style = palette.style('LineNr');
-
-  return oldestFirst
-    .slice(from)
-    .map((line, index) => {
-      const number = String(from + index + 1).padStart(gutter);
-
-      // A dot command and a `:` shell line are not JavaScript, and painting them as if they were
-      // colours `-L` as a type and `git` as a call.
-      const code = /^\s*[.:]/.test(line) ? line : highlight(line, palette);
-
-      return `${paint(number, style)}  ${code}\n`;
-    })
-    .join('');
-}

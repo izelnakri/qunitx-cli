@@ -1,5 +1,5 @@
 import * as Files from '../../../repl/files.ts';
-import { pathProblem, retype, showTree } from '../browsing.ts';
+import { drawTree, pathError, prefillPrompt } from '../paths.ts';
 import { red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 
@@ -27,14 +27,12 @@ export const command: ReplCommand = {
   main(repl, argument) {
     const { depth, path: typed } = Files.target(argument.trim());
     const found = Files.read(typed, repl.cwd);
-    if (found.kind === 'directory') repl.write(showTree(typed, repl.cwd, repl.palette, depth));
-    else if (found.kind === 'file') repl.write(red(`${typed} is a file, not a directory\n`));
+    if (found.kind === 'directory') repl.log(drawTree(typed, repl.cwd, repl.palette, depth));
+    else if (found.kind === 'file') repl.log(red(`${typed} is a file, not a directory`));
     else {
-      repl.write(red(`${pathProblem(found, typed)}\n`));
-      repl.prompt();
+      repl.log(red(`${pathError(found, typed)}`));
 
-      return void (found.kind === 'missing' && retype('tree', found, repl));
+      return void (found.kind === 'missing' && prefillPrompt('tree', found, repl));
     }
-    repl.prompt();
   },
 };

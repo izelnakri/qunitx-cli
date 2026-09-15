@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { replayableLines, tryWriteFile } from '../editor.ts';
+import { replayableSource, writeIfPossible } from '../editor.ts';
 import { red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 
@@ -26,12 +26,11 @@ export const command: ReplCommand = {
   description: 'Save this session to a file, minus the shell lines',
   main(repl, argument) {
     const target = argument.trim();
-    if (target === '') repl.write('Usage: .save <file>\n');
+    if (target === '') repl.log('Usage: .save <file>');
     else {
-      const source = replayableLines(repl.server as unknown as { lines?: string[] }).join('\n');
-      const written = tryWriteFile(path.resolve(repl.cwd, target), `${source}\n`);
-      repl.write(written ? `Session saved to: ${target}\n` : red(`Failed to save: ${target}\n`));
+      const source = replayableSource(repl.server as unknown as { lines?: string[] });
+      const written = writeIfPossible(path.resolve(repl.cwd, target), source);
+      repl.log(written ? `Session saved to: ${target}` : red(`Failed to save: ${target}`));
     }
-    repl.prompt();
   },
 };

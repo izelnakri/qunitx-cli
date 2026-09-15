@@ -23,8 +23,7 @@ export const command: ReplCommand = {
   description: 'Let a page paused at a `debugger` statement carry on',
   aliases: ['c', 'resume'],
   async main(repl) {
-    if (!repl.session.pausedAt) repl.write('Not paused\n');
-    await repl.session.resume();
-    repl.prompt();
+    if (!repl.session.pausedAt) repl.log('Not paused');
+    await repl.session.continue();
   },
 };

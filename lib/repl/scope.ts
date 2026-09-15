@@ -5,14 +5,14 @@ import type { ScopeEntry } from './session.ts';
  * A scope as a human reads it: one name per line, its value beside it, where it came from after.
  *
  * ```ts
- * import { formatScope } from './scope.ts';
+ * import { scopeTable } from './scope.ts';
  *
- * formatScope([{ name: 'label', value: "'one'", where: 'line 1' }], 80);
+ * scopeTable([{ name: 'label', value: "'one'", where: 'line 1' }], 80);
  * // "label  'one'  line 1"
- * formatScope([], 80); // '' — the caller says what nothing means, since the two commands differ
+ * scopeTable([], 80); // '' — the caller says what nothing means, since the two commands differ
  * ```
  */
-export function formatScope(entries: readonly ScopeEntry[], width: number): string {
+export function scopeTable(entries: readonly ScopeEntry[], width: number): string {
   if (entries.length === 0) return '';
 
   const column = Math.max(...entries.map((entry) => entry.name.length));

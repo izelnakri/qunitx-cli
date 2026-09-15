@@ -5,7 +5,8 @@ import process from 'node:process';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { blue, red } from '../../utils/color.ts';
-import { failure } from './output.ts';
+import { failureText } from './command.ts';
+import { isAddress, openInBrowser } from './desktop.ts';
 import type { REPLServer } from 'node:repl';
 import type { ReplCommand, ReplContext } from './command.ts';
 
@@ -16,25 +17,28 @@ import type { ReplCommand, ReplContext } from './command.ts';
  * `REPLServer`, so it is reached through a narrow cast rather than by widening the whole server.
  *
  * ```ts
- * import { replayableLines } from './editor.ts';
+ * import { replayableSource } from './editor.ts';
  *
- * replayableLines({ lines: ['1 + 1', ':git status', '2 + 2'] }); // ['1 + 1', '2 + 2']
+ * replayableSource({ lines: ['1 + 1', ':git status', '2 + 2'] }); // '1 + 1\n2 + 2\n'
  * ```
  */
-export function replayableLines(server: { lines?: string[] }): string[] {
-  return (server.lines ?? []).filter((line) => !line.trimStart().startsWith(':'));
+export function replayableSource(server: { lines?: string[] }): string {
+  return (server.lines ?? [])
+    .filter((line) => !line.trimStart().startsWith(':'))
+    .map((line) => `${line}\n`)
+    .join('');
 }
 
 /**
  * True when the file was written. A save that cannot land is a message, not a crashed session.
  *
  * ```ts
- * import { tryWriteFile } from './editor.ts';
+ * import { writeIfPossible } from './editor.ts';
  *
- * tryWriteFile('/definitely/not/here/a.txt', 'x'); // false
+ * writeIfPossible('/definitely/not/here/a.txt', 'x'); // false
  * ```
  */
-export function tryWriteFile(file: string, contents: string): boolean {
+export function writeIfPossible(file: string, contents: string): boolean {
   try {
     fs.writeFileSync(file, contents);
 
@@ -94,7 +98,7 @@ export async function edit(
 
   try {
     await handOver(server, editor, [file]);
-    const text = tryReadFile(file) ?? contents;
+    const text = readIfThere(file) ?? contents;
 
     return { text, changed: text !== contents };
   } finally {
@@ -131,12 +135,12 @@ export function whatToRun(edited: { text: string; changed: boolean }): string {
  * A file's contents, or null when it cannot be read — a missing path is an answer, not a crash.
  *
  * ```ts
- * import { tryReadFile } from './editor.ts';
+ * import { readIfThere } from './editor.ts';
  *
- * tryReadFile('/definitely/not/here'); // null
+ * readIfThere('/definitely/not/here'); // null
  * ```
  */
-export function tryReadFile(file: string): string | null {
+export function readIfThere(file: string): string | null {
   try {
     return fs.readFileSync(file, 'utf8');
   } catch {
@@ -267,73 +271,15 @@ export async function openInEditor(
   const editor = named ?? process.env.VISUAL ?? process.env.EDITOR;
   if (!editor) return { failed: 'no $EDITOR set — nothing to open it with\n', changed: false };
 
-  const before = tryReadFile(file);
+  const before = readIfThere(file);
   // The same handover the scratchpad makes: readline stands down, the editor owns the terminal,
   // and it is given back only to a prompt that had it.
   const started = await handOver(server, editor, [`+${line}`, file]);
 
   return {
     failed: started ? null : `${editor} could not be started\n`,
-    changed: started && tryReadFile(file) !== before,
+    changed: started && readIfThere(file) !== before,
   };
-}
-
-/**
- * Hands an address to whatever this desktop opens addresses with — the browser already running.
- *
- * `xdg-open`, `open` and `start` are the same idea under three names, and the point of using them
- * rather than launching a browser is that they land in the window that is already open, logged in,
- * and has your tabs in it.
- *
- * Detached and with its output thrown away: a desktop opener is a doorbell, not a program this
- * session waits on, and some of them chatter on stderr while doing exactly what was asked.
- *
- * ```ts
- * import { openExternally } from './editor.ts';
- *
- * // Defined, not invoked: it puts a window on somebody's screen.
- * function example() {
- *   return openExternally('https://localhost:1234'); // null once handed over
- * }
- * ```
- */
-export function openExternally(address: string): Promise<string | null> {
-  const opener = OPENERS[process.platform] ?? OPENERS.default;
-  if (!opener) return Promise.resolve(`no way to open ${address} on ${process.platform}\n`);
-
-  return new Promise((resolve) => {
-    const [command, ...args] = opener;
-    const child = spawn(command as string, [...args, address], {
-      detached: true,
-      stdio: 'ignore',
-    });
-    child.on('error', () => resolve(`${command} could not be started\n`));
-    child.unref();
-    // Answered as soon as it is running: what it does next belongs to the desktop, not to this
-    // prompt, and waiting for a browser window to close is not a thing anybody meant by `.open`.
-    setTimeout(() => resolve(null), 0);
-  });
-}
-
-/** What each desktop calls its opener. `start` is a shell builtin, so it needs one. */
-const OPENERS: Record<string, string[] | undefined> = {
-  darwin: ['open'],
-  win32: ['cmd', '/c', 'start', ''],
-  default: ['xdg-open'],
-};
-
-/**
- * Whether this is an address rather than a path — what a browser takes and an editor does not.
- *
- * ```ts
- * import { isAddress } from './editor.ts';
- *
- * isAddress('https://localhost:1234'); // true
- * isAddress('lib/repl/session.ts'); // false — a path, whether or not there is a file there yet
- * ```
- */
-export function isAddress(target: string): boolean {
-  return /^(?:https?|file|about|chrome):/i.test(target) || /^www\./i.test(target);
 }
 
 /**
@@ -346,24 +292,37 @@ export function isAddress(target: string): boolean {
  * path itself, whether or not there is a file there yet.
  *
  * ```ts
+ * import { openingIn } from './editor.ts';
+ *
+ * typeof openingIn('vi'); // 'function' — a command's `main`, waiting for a context
+ * ```
+ */
+export function openingIn(editor: string): ReplCommand['main'] {
+  return opening(editor, editor);
+}
+
+/**
+ * `.open`, `.edit` and `.e` — whichever editor the environment prefers.
+ *
+ * ```ts
  * import { opening } from './editor.ts';
  *
- * typeof opening('vi', 'vi'); // 'function' — a command's `main`, waiting for a context
+ * typeof opening('open'); // 'function' — a command's `main`, waiting for a context
  * ```
  */
 export function opening(name: string, named?: string): ReplCommand['main'] {
   return async (repl, argument) => {
     const asked = argument.trim();
     if (!repl.interactive && asked === '') {
-      repl.write(red(`.${name} needs a terminal\n`));
+      repl.log(red(`.${name} needs a terminal`));
 
-      return repl.prompt();
+      return;
     }
     if (asked === '') return scratchpad(repl, named);
     if (isAddress(asked)) {
-      repl.write((await openExternally(asked)) ?? blue(`${asked}\n`));
+      repl.log((await openInBrowser(asked)) ?? blue(asked));
 
-      return repl.prompt();
+      return;
     }
 
     // The keyboard stops being the prompt's here, not when the editor opens: asking the page where
@@ -381,9 +340,9 @@ export function opening(name: string, named?: string): ReplCommand['main'] {
     // saying.
     if (!repl.interactive) {
       standUp(repl.server);
-      repl.write(blue(`${at.file}:${at.line}\n`));
+      repl.log(blue(`${at.file}:${at.line}`));
 
-      return repl.prompt();
+      return;
     }
     const opened = await openInEditor(path.resolve(repl.cwd, at.file), at.line, repl.server, named);
     standUp(repl.server);
@@ -396,7 +355,6 @@ export function opening(name: string, named?: string): ReplCommand['main'] {
       if (typeof brought === 'string') repl.write(red(`${brought}\n`));
       else if (brought !== null) repl.write(blue(`${brought.join(', ')}\n`));
     }
-    repl.prompt();
   };
 }
 
@@ -411,9 +369,8 @@ function scratchpad(repl: ReplContext, named?: string): void {
     const source = whatToRun(edited);
     if (source !== '') {
       const result = await repl.session.eval(source);
-      const text = result.failed ? red(failure(result)) : result.output;
-      if (text !== '') repl.write(`${text}\n`);
+      const text = result.failed ? red(failureText(result)) : result.output;
+      if (text !== '') repl.log(text);
     }
-    repl.prompt();
   });
 }

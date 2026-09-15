@@ -1,4 +1,4 @@
-import { stepping } from '../debugging.ts';
+import { steppingOver } from '../frames.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -18,5 +18,5 @@ import type { ReplCommand } from '../command.ts';
 export const command: ReplCommand = {
   description: 'Run one step, over the next call rather than into it',
   aliases: ['n'],
-  main: stepping('next', 'over'),
+  main: steppingOver('next'),
 };

@@ -91,13 +91,13 @@ export function truncate(text: string, width: number): string {
  * codes in it.
  *
  * ```ts
- * import { paint } from './columns.ts';
+ * import { styled } from './columns.ts';
  *
- * paint('hi', ''); // 'hi' — nothing to wrap it in
- * paint('hi', `${String.fromCharCode(27)}[33m`).endsWith(`${String.fromCharCode(27)}[0m`); // true
+ * styled('hi', ''); // 'hi' — nothing to wrap it in
+ * styled('hi', `${String.fromCharCode(27)}[33m`).endsWith(`${String.fromCharCode(27)}[0m`); // true
  * ```
  */
-export function paint(text: string, style: string): string {
+export function styled(text: string, style: string): string {
   return style === '' ? text : `${style}${text}${RESET}`;
 }
 
@@ -112,4 +112,22 @@ export function paint(text: string, style: string): string {
  */
 export function terminalWidth(output: NodeJS.WritableStream): number {
   return (output as NodeJS.WriteStream).columns || 80;
+}
+
+/**
+ * Clears the visible screen and leaves the scrollback alone.
+ *
+ * `[2J` erases what is on screen; `[3J` would erase what has scrolled off it, which is the
+ * difference between clearing a terminal and losing the last hour of it. Only the first is sent,
+ * which is why scrolling still works afterwards — and which is what readline already does for
+ * Ctrl-L, so that key needs nothing from us.
+ *
+ * ```ts
+ * import { clearScreen } from './columns.ts';
+ *
+ * clearScreen().includes('[3J'); // false — the scrollback is not ours to throw away
+ * ```
+ */
+export function clearScreen(): string {
+  return `${ESCAPE}[H${ESCAPE}[2J`;
 }

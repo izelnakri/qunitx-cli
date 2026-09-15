@@ -316,7 +316,7 @@ module('API | repl | debugger', { concurrency: true }, () => {
         'test/fixtures/repl-debugger.ts:5',
         'and by the source line, not the bundle line the page actually ran',
       );
-      await session.resume();
+      await session.continue();
     });
   });
 
@@ -328,7 +328,7 @@ module('API | repl | debugger', { concurrency: true }, () => {
 
       assert.strictEqual((await session.eval('answer')).output, '42');
       assert.strictEqual((await session.eval('answer * 2')).output, '84');
-      await session.resume();
+      await session.continue();
     });
   });
 
@@ -348,7 +348,7 @@ module('API | repl | debugger', { concurrency: true }, () => {
         '84',
         'and its initializer saw the frame, which is the whole point of declaring it here',
       );
-      await session.resume();
+      await session.continue();
     });
   });
 
@@ -357,7 +357,7 @@ module('API | repl | debugger', { concurrency: true }, () => {
       await session.eval('inspectMe()');
       await session.eval('let me = { age: 32 }');
 
-      await session.resume();
+      await session.continue();
 
       assert.true((await session.eval('me')).failed, 'the session that carries on has no `me`');
       assert.strictEqual(
@@ -378,7 +378,7 @@ module('API | repl | debugger', { concurrency: true }, () => {
       await session.eval('function greet() { return "hi" }');
       await session.eval('const gone = 1');
 
-      await session.resume();
+      await session.continue();
 
       assert.strictEqual((await session.eval('kept')).output, "'sticky'", 'var stays');
       assert.strictEqual((await session.eval('greet()')).output, "'hi'", 'and so does function');
@@ -404,7 +404,7 @@ module('API | repl | debugger', { concurrency: true }, () => {
 
       assert.strictEqual((await session.eval('me')).output, '{ age: 33 }', 'and now the inner');
 
-      await session.resume();
+      await session.continue();
 
       assert.strictEqual(
         (await session.eval('me')).output,
@@ -421,7 +421,7 @@ module('API | repl | debugger', { concurrency: true }, () => {
       await session.eval('count = count + 1');
 
       assert.strictEqual((await session.eval('count')).output, '2', 'the assignment stuck');
-      await session.resume();
+      await session.continue();
     });
   });
 
@@ -430,7 +430,7 @@ module('API | repl | debugger', { concurrency: true }, () => {
       await session.eval('inspectMe()');
       assert.ok(session.pausedAt, 'paused');
 
-      await session.resume();
+      await session.continue();
 
       assert.strictEqual(session.pausedAt, null, 'and running again');
       assert.strictEqual((await session.eval('6 * 7')).output, '42');
@@ -454,7 +454,7 @@ module('API | repl | debugger', { concurrency: true }, () => {
         'debugger;',
         'which is the line the excerpt will mark',
       );
-      await session.resume();
+      await session.continue();
     });
   });
 
@@ -468,13 +468,13 @@ module('API | repl | debugger', { concurrency: true }, () => {
 
       assert.ok(frame, 'a pause in typed input still knows where it is');
       assert.includes(frame!.text, 'function typed()');
-      await session.resume();
+      await session.continue();
     });
   });
 
   test('resuming a page that is not paused does nothing', async (assert) => {
     await withRepl({}, async (session) => {
-      await session.resume();
+      await session.continue();
 
       assert.strictEqual(session.pausedAt, null);
       assert.strictEqual((await session.eval('1 + 1')).output, '2', 'still usable');
@@ -551,7 +551,7 @@ module('API | repl | stepping', { concurrency: true }, () => {
 
       assert.includes(where ?? '', 'outer', 'still in the frame it started in');
       assert.includes(at(where), 'repl-stepping.ts:12', 'and on the line after the breakpoint');
-      await session.resume();
+      await session.continue();
     });
   });
 
@@ -591,7 +591,7 @@ module('API | repl | stepping', { concurrency: true }, () => {
       const out = await session.step('out');
 
       assert.includes(out ?? '', 'outer', 'back in the caller');
-      await session.resume();
+      await session.continue();
     });
   });
 
@@ -604,7 +604,7 @@ module('API | repl | stepping', { concurrency: true }, () => {
       const frame = await session.frameSource();
 
       assert.strictEqual(frame?.line, 4, 'the line it is on now');
-      await session.resume();
+      await session.continue();
     });
   });
 
@@ -643,7 +643,7 @@ module('API | repl | stepping', { concurrency: true }, () => {
 
       assert.strictEqual(again.output, '42', 'it ran straight through and answered');
       assert.strictEqual(session.pausedAt, where, 'and the session is where it already was');
-      await session.resume();
+      await session.continue();
     });
   });
 });
@@ -760,7 +760,7 @@ module('API | repl | breakpoints', { concurrency: true }, () => {
       assert.includes(result.pausedAt!, 'helper', 'in the function the line is in');
       assert.includes(result.pausedAt!, `${STEPPING}:4`, 'on the line that was asked for');
       assert.strictEqual((await session.eval('value')).output, '10', 'with its frame to read');
-      await session.resume();
+      await session.continue();
     });
   });
 
@@ -842,7 +842,7 @@ module('API | repl | the stack', { concurrency: true }, () => {
         frames.map((_, index) => index),
         'numbered the way gdb numbers them',
       );
-      await session.resume();
+      await session.continue();
     });
   });
 
@@ -864,7 +864,7 @@ module('API | repl | the stack', { concurrency: true }, () => {
       );
       assert.strictEqual((await session.frameSource())?.line, 12, 'the line THAT frame is on');
       assert.true(session.backtrace()[1]?.selected, 'and the stack says which one is being read');
-      await session.resume();
+      await session.continue();
     });
   });
 
@@ -875,7 +875,7 @@ module('API | repl | the stack', { concurrency: true }, () => {
       assert.strictEqual(session.selectFrame(99), null);
       assert.strictEqual(session.selectFrame(-1), null, 'nor one before the first');
       assert.true(session.backtrace()[0]?.selected, 'and nothing moved');
-      await session.resume();
+      await session.continue();
     });
   });
 
@@ -891,7 +891,7 @@ module('API | repl | the stack', { concurrency: true }, () => {
       await inside(session);
       session.selectFrame(1);
 
-      await session.resume();
+      await session.continue();
 
       assert.deepEqual(session.backtrace(), [], 'there is no frame to be in');
     });
@@ -947,7 +947,7 @@ module('API | repl | scope', { concurrency: true }, () => {
       // The closure around a bundled function is the WHOLE BUNDLE — every name QUnit and the
       // runtime declare. Listing it buries the one name the breakpoint is about.
       assert.false(named(entries).includes('__defProp'), 'and not the bundle it was compiled into');
-      await session.resume();
+      await session.continue();
     });
   });
 
@@ -961,7 +961,7 @@ module('API | repl | scope', { concurrency: true }, () => {
       const entries = await session.scope();
 
       assert.true(named(entries).includes('label'), 'still answers, and still says what it added');
-      await session.resume();
+      await session.continue();
     });
   });
 });
@@ -1015,7 +1015,7 @@ module('API | repl | preview', { concurrency: true }, () => {
       await session.eval('inspectMe()');
 
       assert.strictEqual(await session.preview('1 + 1'), '', 'and the prompt keeps taking keys');
-      await session.resume();
+      await session.continue();
     });
   });
 });
@@ -1029,7 +1029,7 @@ module('API | repl | a file that changed on disk', { concurrency: true }, () => 
     await fs.writeFile(live, 'export const first = 1;\n');
 
     await withRepl({}, async (session) => {
-      const brought = await session.importFile(live);
+      const brought = await session.import(live);
       assert.deepEqual(
         typeof brought === 'string' ? brought : brought.names,
         ['LiveModule', 'first'],
@@ -1062,7 +1062,7 @@ module('API | repl | a file that changed on disk', { concurrency: true }, () => 
     await fs.writeFile(live, 'export const first = 1;\n');
 
     await withRepl({}, async (session) => {
-      await session.importFile(live, 'Mine');
+      await session.import(live, 'Mine');
       await fs.writeFile(live, 'export const first = 2;\n');
 
       assert.deepEqual(await session.refresh(live), ['Mine', 'first']);

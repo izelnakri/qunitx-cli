@@ -1,4 +1,4 @@
-import { paint } from '../../../repl/columns.ts';
+import { styled } from '../../../repl/columns.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -22,19 +22,18 @@ export const command: ReplCommand = {
   description: 'List what each preloaded file put in scope',
   async main(repl) {
     const files = await repl.session.imported();
-    repl.write(
+    repl.log(
       files.length === 0
-        ? 'Nothing preloaded\n'
+        ? 'Nothing preloaded'
         : `${files
             .map(({ file, names }) => {
               const painted = names
-                .map(({ name, capture }) => paint(name, repl.palette.style(capture)))
+                .map(({ name, capture }) => styled(name, repl.palette.style(capture)))
                 .join(', ');
 
-              return `${paint(file, repl.palette.style('LineNr'))}: ${painted}`;
+              return `${styled(file, repl.palette.style('LineNr'))}: ${painted}`;
             })
-            .join('\n')}\n`,
+            .join('\n')}`,
     );
-    repl.prompt();
   },
 };

@@ -18,11 +18,10 @@ export const command: ReplCommand = {
   description: 'List the breakpoints this session has set',
   main(repl) {
     const set = repl.session.breakpoints();
-    repl.write(
+    repl.log(
       set.length === 0
-        ? 'No breakpoints\n'
-        : `${set.map(({ index, where }) => `${index}  ${where}`).join('\n')}\n`,
+        ? 'No breakpoints'
+        : set.map(({ index, where }) => `${index}  ${where}`).join('\n'),
     );
-    repl.prompt();
   },
 };

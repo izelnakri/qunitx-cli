@@ -239,7 +239,8 @@ them. Nothing is stripped until something fails, so plain JavaScript pays nothin
 
 Tests typed at the prompt run immediately and report as TAP, through the same reporters a run uses
 (`--reporter=spec` works here too). Bindings persist between lines, `await` works at the top level,
-and `.help` lists the commands (`.scope` shows what you have declared, `.view` prints a file
+and `.help` lists the commands — or documents the one you name, which is what `.h` does too
+(`.scope` shows what you have declared, `.view` prints a file
 numbered or a directory as a tree, `.ls -L 2` limits the depth, `.history` shows the last lines,
 `.import lib/a.ts` brings a file in as `A` plus its exports — JSON parsed, anything else as text,
 and a plain `import { a } from './a.ts'` works too — `.imported` names what each file brought,
@@ -248,7 +249,8 @@ comment above it, `.view <value>`
 (or `.v`) shows the whole of it, `.copy` puts it on the clipboard, `.open` with nothing after it is
 a scratch buffer that runs what you save — with a value, a path or a URL after it, it opens that,
 the way `xdg-open` would, and saving a file the session had loaded loads it again — `.search` finds
-tests by name, `.reload` drops all page state, `.url` prints the server URL, and `.devtools` opens
+tests by name, `.reload` evaluates every module again and drops what you typed, `.url` prints the
+server URL, and `.devtools` opens
 Chrome's own DevTools on the very page the prompt is driving). That last one is `<url>/devtools` in
 any Chromium browser: same realm, same DOM, same paused frame — a value declared at the prompt is
 in that console, and a `debugger` shows as paused in both.

@@ -10,7 +10,8 @@ import * as Result from '../../result/index.ts';
 import { blue, red } from '../../utils/color.ts';
 import { complete, completionCache, setupSuggestions } from './completion.ts';
 import type { CompleterCallback } from './completion.ts';
-import { lost, showFrame } from './debugging.ts';
+import { showFrame } from './frames.ts';
+import { lost } from './session-gone.ts';
 import { define } from './command.ts';
 import type { ReplContext } from './command.ts';
 import { command as Back } from './commands/back.ts';
@@ -27,7 +28,6 @@ import { command as Devtools } from './commands/devtools.ts';
 import { command as Down } from './commands/down.ts';
 import { command as Finish } from './commands/finish.ts';
 import { command as Frame } from './commands/frame.ts';
-import { command as H } from './commands/h.ts';
 import { command as Help } from './commands/help.ts';
 import { command as Here } from './commands/here.ts';
 import { command as History } from './commands/history.ts';
@@ -57,8 +57,8 @@ import { setupPreview } from './preview.ts';
 import { shell } from './shell.ts';
 import { vimKeys } from './keys.ts';
 import { findProjectRoot } from '../../utils/find-project-root.ts';
-import { ESCAPE } from '../../repl/columns.ts';
-import { failure } from './output.ts';
+import { ESCAPE, terminalWidth } from '../../repl/columns.ts';
+import { failureText } from './command.ts';
 import { depth } from '../../repl/highlight.ts';
 import { theme } from '../../repl/theme.ts';
 import type { ReplSession } from '../../repl/session.ts';
@@ -227,9 +227,9 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
               // The lines around it, so which `debugger` this is can be seen rather than worked
               // out from a file and a number. Asked for after the notice, not before: the notice
               // is what the pause IS, and it should not wait on reading a file to say so.
-              return void showFrame(server, session, palette).then(() => callback(null, undefined));
+              return void showFrame(repl).then(() => callback(null, undefined));
             }
-            const text = result.failed ? red(failure(result)) : result.output;
+            const text = result.failed ? red(failureText(result)) : result.output;
 
             return callback(null, text === '' ? undefined : text);
           },
@@ -287,7 +287,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
           `paused at ${where} — \`.locals\` for scope, \`.continue\` to carry on\n`,
         )}`,
       );
-      void showFrame(server, session, palette).then(() => server.displayPrompt(true));
+      void showFrame(repl).then(() => server.displayPrompt(true));
     });
 
     // Everything a command may need that is not its argument, built once. `buffered` and `scratch`
@@ -301,10 +301,11 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
       palette,
       interactive,
       completions,
+      width: terminalWidth(server.output),
       buffered: '',
       scratch: '',
+      log: (text) => void server.output.write(`${text}\n`),
       write: (text) => void server.output.write(text),
-      prompt: () => server.displayPrompt(),
     };
     // `node:repl` registers its own `.load` at start-up, and `.help` reads the order names were
     // defined in — left there, it made `.import` an alias of `.load` rather than the other way.
@@ -347,7 +348,6 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
       version: Version,
       search: SearchCommand,
       help: Help,
-      h: H,
       url: Url,
       devtools: Devtools,
       history: History,
@@ -437,10 +437,10 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 // Re-exported so the terminal layer has one door, whichever room a thing lives in.
-export { edit, replayableLines, whatToRun } from './editor.ts';
+export { edit, replayableSource, whatToRun } from './editor.ts';
 export { complete, setupSuggestions, suggestionStyle } from './completion.ts';
-export { lost } from './debugging.ts';
-export { recent, trimHistoryFile } from './history.ts';
+export { lost } from './session-gone.ts';
+export { trimHistoryFile } from './history.ts';
 export { setupHighlighting } from './painting.ts';
 export { setupPreview } from './preview.ts';
 export { shell } from './shell.ts';

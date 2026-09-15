@@ -1,5 +1,4 @@
-import { formatScope } from '../../../repl/scope.ts';
-import { terminalWidth } from '../../../repl/columns.ts';
+import { scopeTable } from '../../../repl/scope.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -20,12 +19,11 @@ export const command: ReplCommand = {
   description: 'List what is in scope at a `debugger` breakpoint, with values',
   async main(repl) {
     if (!repl.session.pausedAt) {
-      repl.write('Not paused — `.scope` is what this session has declared\n');
+      repl.log('Not paused — `.scope` is what this session has declared');
 
-      return repl.prompt();
+      return;
     }
-    const listing = formatScope(await repl.session.locals(), terminalWidth(repl.server.output));
-    repl.write(listing === '' ? 'Nothing in scope here\n' : `${listing}\n`);
-    repl.prompt();
+    const listing = scopeTable(await repl.session.locals(), repl.width);
+    repl.log(listing === '' ? 'Nothing in scope here' : listing);
   },
 };

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { paint } from './columns.ts';
+import { styled } from './columns.ts';
 import { highlight } from './highlight.ts';
 import type { Theme } from './theme.ts';
 
@@ -156,7 +156,7 @@ export function numbered(contents: string, file: string, palette: Theme): string
       const number = `${String(index + 1).padStart(gutter)} |`;
       const content = isCode ? highlight(line, palette) : line;
 
-      return `${paint(number, style)} ${content}`;
+      return `${styled(number, style)} ${content}`;
     })
     .join('\n');
 }
@@ -263,7 +263,7 @@ export function tree(root: string, cwd: string, palette: Theme, depth: number = 
   const directoryStyle = palette.style('Directory');
   const branchStyle = palette.style('LineNr');
   const counted = { directories: 0, files: 0 };
-  const lines = [paint(`${withSlash(root)}`, directoryStyle)];
+  const lines = [styled(`${withSlash(root)}`, directoryStyle)];
   let omitted = 0;
 
   const walk = (directory: string, prefix: string, level: number): void => {
@@ -288,11 +288,11 @@ export function tree(root: string, cwd: string, palette: Theme, depth: number = 
       const last = index === visible.length - 1;
       const isDirectory = entry.isDirectory();
       counted[isDirectory ? 'directories' : 'files'] += 1;
-      const name = paint(
+      const name = styled(
         `${entry.name}${isDirectory ? '/' : ''}`,
         isDirectory ? directoryStyle : '',
       );
-      lines.push(`${paint(`${prefix}${last ? '└── ' : '├── '}`, branchStyle)}${name}`);
+      lines.push(`${styled(`${prefix}${last ? '└── ' : '├── '}`, branchStyle)}${name}`);
       if (isDirectory && level < depth) {
         walk(path.join(directory, entry.name), `${prefix}${last ? '    ' : '│   '}`, level + 1);
       }

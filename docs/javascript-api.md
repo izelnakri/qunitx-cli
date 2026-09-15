@@ -551,16 +551,17 @@ one's exports land on the page's `globalThis`, and any tests it registers run as
 
 `eval` resolves with the rendered `output`, whether it `failed`, whether the input was
 `incomplete` (unfinished, so the CLI asks for another line), and the `tests` it ran. `reload()`
-drops every binding, `interrupt()` stops a runaway expression, and `close()` — or the `await using`
-above — releases the browser.
+evaluates every module again and resolves with the names that came back — bindings you typed do
+not, since they were never on disk. `interrupt()` stops a runaway expression, and `close()` — or
+the `await using` above — releases the browser.
 
 `eval` takes TypeScript too — a line the engine refuses is retried with its types erased — and
 `typeOf(expression)` says what type a value is, worked out from the value.
 
 A session is also a debugger: a `debugger` statement stops the page, `locals()` reads that frame,
-`step()`/`backtrace()`/`selectFrame()` move through it, and `addBreakpoint('lib/a.ts:12')` stops it
-somewhere you did not edit. `importFile()` brings a module in after the fact and `refresh()` runs it
-again once the file has changed. `session.url` is where the page is served; `session.inspector` is
+`step()`/`backtrace()`/`selectFrame()` move through it, `continue()` lets it carry on, and
+`addBreakpoint('lib/a.ts:12')` stops it somewhere you did not edit. `import()` brings a module in
+after the fact and `refresh()` runs it again once the file has changed. `session.url` is where the page is served; `session.inspector` is
 where to open Chrome's DevTools on that very page, or `null` where this browser has no debugging
 endpoint to serve them from.
 
@@ -740,8 +741,8 @@ It draws a rainbow that grows one segment per finished test, with the cat riding
 
 ```ts
 function segment(status: TestDetails['status']): string {
-  if (status === 'failed') return paint(31, '!');
-  else if (status === 'skipped' || status === 'todo') return paint(90, '·');
+  if (status === 'failed') return styled(31, '!');
+  else if (status === 'skipped' || status === 'todo') return styled(90, '·');
 
   return '-';
 }
@@ -754,8 +755,8 @@ same reporter be silenced, or captured into a buffer, without changing it:
 onTestEnd(context: ReporterContext, details: TestDetails): void {
   trail.push(segment(details.status));
   const rows = RAINBOW.map((colour, row) => {
-    const stripe = paint(colour, trail.slice(Math.max(0, row - 2)).join(''));
-    return `  ${stripe}${row === 3 ? paint(93, CAT[trail.length % 2]) : ''}`;
+    const stripe = styled(colour, trail.slice(Math.max(0, row - 2)).join(''));
+    return `  ${stripe}${row === 3 ? styled(93, CAT[trail.length % 2]) : ''}`;
   });
   context.console.log(`${rows.join('\n')}\n\x1b[6A`); // redraw in place
 }
@@ -767,7 +768,7 @@ final — there is nothing to tally yourself:
 ```ts
 onRunEnd(context: ReporterContext, info): void {
   const { total, passed, failed } = context.counts;
-  const verdict = failed > 0 ? paint(31, 'nyan is sad') : paint(32, 'nyan is happy');
+  const verdict = failed > 0 ? styled(31, 'nyan is sad') : styled(32, 'nyan is happy');
   context.console.log(`\x1b[6B\n  ${verdict} — ${passed}/${total} passed in ${info.durationMs}ms\n`);
 }
 ```

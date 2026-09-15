@@ -25,12 +25,9 @@ export const command: ReplCommand = {
     if (argument.trim() === '') {
       repl.buffered = '';
 
-      return repl.prompt();
+      return;
     }
     const set = await repl.session.addBreakpoint(argument);
-    repl.write(
-      typeof set === 'string' ? red(`${set}\n`) : blue(`breakpoint ${set.index} at ${set.where}\n`),
-    );
-    repl.prompt();
+    repl.log(typeof set === 'string' ? red(set) : blue(`breakpoint ${set.index} at ${set.where}`));
   },
 };

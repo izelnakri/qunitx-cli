@@ -132,7 +132,7 @@ export interface ReplResult {
    * Where the input stopped at a `debugger` statement, or absent when it ran to completion.
    *
    * The page is still stopped when this comes back. Whatever is typed next runs in that frame, and
-   * {@link ReplSession.resume} is what lets it carry on.
+   * {@link ReplSession.continue} is what lets it carry on.
    */
   pausedAt?: string;
 }
@@ -262,8 +262,16 @@ export interface ReplSession {
    * asking it to would hang the one command a breakpoint exists for.
    */
   locals(): Promise<ScopeEntry[]>;
-  /** Reloads the page: every binding and all page state goes, the session stays. */
-  reload(): Promise<void>;
+  /**
+   * Reloads the page and brings the modules back, resolving with the names that returned.
+   *
+   * The code comes back; what you typed does not. Every file this session loaded is evaluated
+   * again — the preloads because the page's own bundle re-runs them, and everything `.import` or
+   * an `import` statement brought in because this replays those. Bindings are a different thing:
+   * `let answer = 41` is not code on disk, and bringing it back would make a reload mean "reload,
+   * except keep my mistakes".
+   */
+  reload(): Promise<string[]>;
   /** Stops whatever is executing in the page — the Ctrl-C of a runaway expression. */
   interrupt(): Promise<void>;
   /**
@@ -321,7 +329,7 @@ export interface ReplSession {
    *
    * Resolves to what went into scope, or to the reason nothing did.
    */
-  importFile(file: string, as?: string): Promise<{ name: string; names: string[] } | string>;
+  import(file: string, as?: string): Promise<{ name: string; names: string[] } | string>;
   /**
    * Loads a file again the way it was loaded the first time, for one that has changed on disk.
    *
@@ -384,7 +392,7 @@ export interface ReplSession {
    */
   selectFrame(index: number): string | null;
   /** Lets a paused page carry on. A no-op when it is not paused. */
-  resume(): Promise<void>;
+  continue(): Promise<void>;
   /**
    * Whether there is still a page to evaluate in.
    *
@@ -816,7 +824,7 @@ class Session implements ReplSession {
     return await this.#render(evaluated.result, depth);
   }
 
-  async reload(): Promise<void> {
+  async reload(): Promise<string[]> {
     // A new page has none of it, declared at a breakpoint or otherwise.
     this.#pausedBindings.clear();
     await this.#page.reload();
@@ -825,6 +833,22 @@ class Session implements ReplSession {
     // you added" starts again from what the fresh page has.
     await this.takeBaseline();
     await this.runPending();
+
+    // The MODULES come back; what you typed does not. A reload is for picking up edited code, and
+    // the files you brought in by hand are code you edited just as much as the preloads are — the
+    // page's own bundle replays those, and nothing replayed the rest. Bindings are a different
+    // thing: `let answer = 41` is not code on disk, and bringing it back would make `.reload` mean
+    // "reload, except keep my mistakes".
+    const brought = [...this.#recipes].filter(
+      ([, recipe]) => !('viaBundle' in recipe && recipe.viaBundle),
+    );
+    const names: string[] = [];
+    for (const [file] of brought) {
+      const again = await this.refresh(file);
+      if (Array.isArray(again)) names.push(...again);
+    }
+
+    return names;
   }
 
   get pausedAt(): string | null {
@@ -891,7 +915,7 @@ class Session implements ReplSession {
     return { index, where };
   }
 
-  async importFile(file: string, as?: string): Promise<{ name: string; names: string[] } | string> {
+  async import(file: string, as?: string): Promise<{ name: string; names: string[] } | string> {
     if (this.#closed) return 'the REPL session is closed';
     const absolute = path.resolve(this.#config.cwd, file);
     const shown = relative(this.#config, absolute);
@@ -969,7 +993,7 @@ class Session implements ReplSession {
 
     // The name goes back in only where it was asked for by hand; a worked-out one is worked out
     // again, so a file renamed on disk comes back under the name its new path spells.
-    const brought = await this.importFile(recipe.absolute, recipe.asked ? recipe.name : undefined);
+    const brought = await this.import(recipe.absolute, recipe.asked ? recipe.name : undefined);
 
     return typeof brought === 'string' ? brought : brought.names;
   }
@@ -1028,6 +1052,7 @@ class Session implements ReplSession {
         absolute: file,
         name: namespaceFor(file),
         asked: false,
+        viaBundle: true,
       });
     }
   }
@@ -1284,7 +1309,7 @@ class Session implements ReplSession {
     return null;
   }
 
-  async resume(): Promise<void> {
+  async continue(): Promise<void> {
     if (!this.#pausedAt) return;
     await this.#cdp.send('Debugger.resume').catch(() => {});
     await this.#released();
@@ -1768,7 +1793,9 @@ function describe(remote: RemoteObject): string {
  * module, the same names for an `import` statement that asked for some of them.
  */
 type Recipe =
-  | { kind: 'file'; absolute: string; name: string; asked: boolean }
+  // `viaBundle` for a file the PAGE's own bundle loads — a preload named on the command line. A
+  // reload re-runs that bundle by itself, so replaying it here would load the file twice.
+  | { kind: 'file'; absolute: string; name: string; asked: boolean; viaBundle?: true }
   | { kind: 'statement'; statement: Source.ImportStatement };
 
 /** Extensions `.import` bundles rather than reads: what a JavaScript engine can be handed. */

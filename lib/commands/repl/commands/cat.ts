@@ -1,5 +1,5 @@
 import * as Files from '../../../repl/files.ts';
-import { pathProblem, retype } from '../browsing.ts';
+import { pathError, prefillPrompt } from '../paths.ts';
 import { red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 
@@ -26,19 +26,18 @@ export const command: ReplCommand = {
   main(repl, argument) {
     const { path: typed } = Files.target(argument.trim());
     if (argument.trim() === '') {
-      repl.write('Usage: .cat <file>\n');
+      repl.log('Usage: .cat <file>');
 
-      return repl.prompt();
+      return;
     }
 
     const found = Files.read(typed, repl.cwd);
     if (found.kind === 'file') {
-      repl.write(`${Files.numbered(found.contents, typed, repl.palette)}\n`);
+      repl.log(`${Files.numbered(found.contents, typed, repl.palette)}`);
 
-      return repl.prompt();
+      return;
     }
-    repl.write(red(`${pathProblem(found, typed)}\n`));
-    repl.prompt();
-    retype('cat', found, repl);
+    repl.log(red(`${pathError(found, typed)}`));
+    prefillPrompt('cat', found, repl);
   },
 };

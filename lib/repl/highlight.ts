@@ -1,4 +1,4 @@
-import { paint } from './columns.ts';
+import { styled } from './columns.ts';
 import type { Theme } from './theme.ts';
 
 /** A run of source, and what nvim's treesitter queries would capture it as. */
@@ -83,7 +83,7 @@ export function highlight(source: string, palette: Theme): string {
   for (const token of tokenize(source)) {
     const style = palette.style(token.capture);
     const text = source.slice(token.start, token.end);
-    painted += source.slice(at, token.start) + paint(text, style);
+    painted += source.slice(at, token.start) + styled(text, style);
     at = token.end;
   }
 

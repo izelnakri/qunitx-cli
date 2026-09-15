@@ -1,4 +1,4 @@
-import { nowhere, typeOfValue } from '../values.ts';
+import { noSuchValue, typeOf } from '../describe.ts';
 import { red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 
@@ -23,8 +23,7 @@ import type { ReplCommand } from '../command.ts';
 export const command: ReplCommand = {
   description: 'Say what type a value is — the signature where one is written, its shape otherwise',
   async main(repl, argument) {
-    const said = await typeOfValue(repl.session, argument, repl.cwd, repl.palette);
-    repl.write(said === null ? red(`${nowhere(argument, 'type')}\n`) : `${said}\n`);
-    repl.prompt();
+    const said = await typeOf(repl.session, argument, repl.cwd, repl.palette);
+    repl.log(said === null ? red(noSuchValue(argument, 'type')) : said);
   },
 };

@@ -18,7 +18,6 @@ import type { ReplCommand } from '../command.ts';
 export const command: ReplCommand = {
   description: 'Print the qunitx version this session is running',
   main(repl) {
-    repl.write(`${pkg.version}\n`);
-    repl.prompt();
+    repl.log(`${pkg.version}`);
   },
 };

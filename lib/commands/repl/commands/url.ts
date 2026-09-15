@@ -17,7 +17,6 @@ import type { ReplCommand } from '../command.ts';
 export const command: ReplCommand = {
   description: 'Print the URL this session is served on (open it to watch the page)',
   main(repl) {
-    repl.write(`${repl.session.url}\n`);
-    repl.prompt();
+    repl.log(`${repl.session.url}`);
   },
 };
