@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import { lastEntered } from '../../lib/commands/repl/commands/history.ts';
-import { lost } from '../../lib/commands/repl/index.ts';
+import { pageGone } from '../../lib/commands/repl/index.ts';
 import { theme } from '../../lib/repl/theme.ts';
 import '../helpers/custom-asserts.ts';
 
@@ -55,7 +55,7 @@ module('Commands | repl | history', { concurrency: true }, () => {
 // module state go at once — so there is nothing to offer but what happened and what to type.
 module('Commands | repl | a page that has gone', { concurrency: true }, () => {
   test('it says what was lost, not just what failed', (assert) => {
-    const said = lost(['node', 'cli.ts', 'repl', 'a.ts']);
+    const said = pageGone(['node', 'cli.ts', 'repl', 'a.ts']);
 
     assert.includes(said, 'the page is gone', 'what happened');
     assert.includes(said, 'nothing here to carry on with', 'and why the session is ending');
@@ -64,7 +64,11 @@ module('Commands | repl | a page that has gone', { concurrency: true }, () => {
   test('and how to start again, in the words that were typed', (assert) => {
     // Reopening a page would not bring any of it back — it would be the session you get by
     // running the command again, which the shell already remembers.
-    assert.includes(lost(['node', 'cli.ts', 'repl', 'a.ts', 'b.ts']), 'qunitx repl a.ts b.ts');
-    assert.includes(lost(['node', 'cli.ts']), 'Run qunitx repl again', 'where there were no args');
+    assert.includes(pageGone(['node', 'cli.ts', 'repl', 'a.ts', 'b.ts']), 'qunitx repl a.ts b.ts');
+    assert.includes(
+      pageGone(['node', 'cli.ts']),
+      'Run qunitx repl again',
+      'where there were no args',
+    );
   });
 });

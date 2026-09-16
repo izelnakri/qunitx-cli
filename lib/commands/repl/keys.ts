@@ -1,5 +1,5 @@
 import { PassThrough } from 'node:stream';
-import { ESCAPE } from '../../repl/columns.ts';
+import { ESCAPE } from '../../repl/terminal.ts';
 
 // Ctrl-K and Ctrl-J as their raw bytes, and the arrows readline already understands.
 const CTRL_K = 0x0b;

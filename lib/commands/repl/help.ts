@@ -1,4 +1,4 @@
-import { styled } from '../../repl/columns.ts';
+import { styled } from '../../repl/terminal.ts';
 import type { Theme } from '../../repl/theme.ts';
 
 /** The part of what `node:repl` keeps for a command that this prints — the rest is behaviour. */

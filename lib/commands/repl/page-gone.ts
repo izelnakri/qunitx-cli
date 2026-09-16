@@ -10,12 +10,12 @@ import process from 'node:process';
  * ends rather than sitting at a prompt that cannot answer anything.
  *
  * ```ts
- * import { lost } from './session-gone.ts';
+ * import { pageGone } from './page-gone.ts';
  *
- * lost(['node', 'cli.ts', 'repl', 'a.ts']).includes('qunitx repl a.ts'); // true — what to type
+ * pageGone(['node', 'cli.ts', 'repl', 'a.ts']).includes('qunitx repl a.ts'); // true — what to type
  * ```
  */
-export function lost(argv: readonly string[] = process.argv): string {
+export function pageGone(argv: readonly string[] = process.argv): string {
   const again = argv.slice(2).join(' ');
 
   return [

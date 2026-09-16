@@ -1,4 +1,4 @@
-import { styled } from './columns.ts';
+import { styled } from './terminal.ts';
 import { highlight, tokenize } from './highlight.ts';
 import type { Theme } from './theme.ts';
 

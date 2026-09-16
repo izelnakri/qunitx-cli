@@ -1,4 +1,4 @@
-import { plainLength, truncate } from './columns.ts';
+import { plainLength, truncate } from './terminal.ts';
 import type { ScopeEntry } from './session.ts';
 
 /**

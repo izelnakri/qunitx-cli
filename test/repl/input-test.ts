@@ -1,8 +1,8 @@
 import { module, test } from 'qunitx';
-import { candidates, declaration, importStatement, isIncomplete } from '../../lib/repl/source.ts';
+import { candidates, declaration, importStatement, isIncomplete } from '../../lib/repl/input.ts';
 import '../helpers/custom-asserts.ts';
 
-module('Repl | source | candidates', { concurrency: true }, () => {
+module('Repl | input | candidates', { concurrency: true }, () => {
   test('ordinary input is evaluated exactly as typed', (assert) => {
     assert.deepEqual(candidates('1 + 1'), ['1 + 1']);
     assert.deepEqual(candidates('  await fetch("/x")  '), ['await fetch("/x")']);
@@ -21,7 +21,7 @@ module('Repl | source | candidates', { concurrency: true }, () => {
   });
 });
 
-module('Repl | source | isIncomplete', { concurrency: true }, () => {
+module('Repl | input | isIncomplete', { concurrency: true }, () => {
   test('the parser running out of input means "keep reading"', (assert) => {
     for (const description of [
       'SyntaxError: Unexpected end of input',
@@ -49,7 +49,7 @@ module('Repl | source | isIncomplete', { concurrency: true }, () => {
 // At a breakpoint the page evaluates each input in a scope of its own and throws it away
 // afterwards, so a `let` there answers `undefined` like a declaration should and then does not
 // exist — the worst of both, because it looks like it worked.
-module('Repl | source | declaration', { concurrency: true }, () => {
+module('Repl | input | declaration', { concurrency: true }, () => {
   test('the name and the value are read apart', (assert) => {
     // Apart, because they belong in different places: the value is evaluated where it was typed,
     // so it can see the frame, and the name is bound somewhere that outlasts the evaluation.
@@ -118,7 +118,7 @@ module('Repl | source | declaration', { concurrency: true }, () => {
 
 // A prompt is not a module, so the engine refuses the statement outright. Reading the clause is
 // what lets the session do what it means instead.
-module('Repl | source | importStatement', { concurrency: true }, () => {
+module('Repl | input | importStatement', { concurrency: true }, () => {
   const read = (input: string) => {
     const found = importStatement(input);
 

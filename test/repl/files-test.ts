@@ -114,17 +114,21 @@ module('Repl | files | numbered', { concurrency: true }, () => {
 });
 
 // `-L 2` the way `tree` takes it, and the path is whatever is left over.
-module('Repl | files | target', { concurrency: true }, () => {
+module('Repl | files | pathAndDepth', { concurrency: true }, () => {
   test('a depth flag anywhere, and the rest is where', (assert) => {
-    assert.deepEqual(Files.target('-L 2 lib'), { depth: 2, path: 'lib' });
-    assert.deepEqual(Files.target('lib -L 2'), { depth: 2, path: 'lib' }, 'in either order');
-    assert.deepEqual(Files.target('-L2 lib'), { depth: 2, path: 'lib' }, 'and either spelling');
+    assert.deepEqual(Files.pathAndDepth('-L 2 lib'), { file: 'lib', depth: 2 });
+    assert.deepEqual(Files.pathAndDepth('lib -L 2'), { file: 'lib', depth: 2 }, 'in either order');
+    assert.deepEqual(
+      Files.pathAndDepth('-L2 lib'),
+      { file: 'lib', depth: 2 },
+      'and either spelling',
+    );
   });
 
   test('no flag is all the way down, and no path is here', (assert) => {
-    assert.deepEqual(Files.target('lib'), { depth: Infinity, path: 'lib' });
-    assert.deepEqual(Files.target(''), { depth: Infinity, path: '.' });
-    assert.deepEqual(Files.target('-L 3'), { depth: 3, path: '.' }, 'a depth on its own');
+    assert.deepEqual(Files.pathAndDepth('lib'), { file: 'lib', depth: Infinity });
+    assert.deepEqual(Files.pathAndDepth(''), { file: '.', depth: Infinity });
+    assert.deepEqual(Files.pathAndDepth('-L 3'), { file: '.', depth: 3 }, 'a depth on its own');
   });
 
   test('the number after -L is not offered file completions', (assert) => {
@@ -190,7 +194,7 @@ module('Repl | files | tree', { concurrency: true }, () => {
 module('Repl | files | read', { concurrency: true }, () => {
   test('a file comes back with its contents', async (assert) => {
     await using directory = await sample('files-read');
-    const found = Files.read('index.ts', directory.path);
+    const found = Files.resolve('index.ts', directory.path);
 
     assert.strictEqual(found.kind, 'file');
     assert.includes(found.kind === 'file' ? found.contents : '', "const a = 'one'");
@@ -198,23 +202,23 @@ module('Repl | files | read', { concurrency: true }, () => {
 
   test('a directory says so, and offers itself with a slash', async (assert) => {
     await using directory = await sample('files-directory');
-    const found = Files.read('repl', directory.path);
+    const found = Files.resolve('repl', directory.path);
 
     assert.strictEqual(found.kind, 'directory');
-    assert.strictEqual(found.kind === 'directory' ? found.retype : '', 'repl/', 'ready to go on');
+    assert.strictEqual(found.kind === 'directory' ? found.prefill : '', 'repl/', 'ready to go on');
   });
 
   test('a path that goes wrong keeps the part that was right', async (assert) => {
     // What makes the second attempt a few keystrokes rather than the whole path again.
     await using directory = await sample('files-missing');
 
-    const deep = Files.read('repl/nowhere.ts', directory.path);
+    const deep = Files.resolve('repl/nowhere.ts', directory.path);
     assert.strictEqual(deep.kind, 'missing');
-    assert.strictEqual(deep.kind === 'missing' ? deep.retype : '', 'repl/');
+    assert.strictEqual(deep.kind === 'missing' ? deep.prefill : '', 'repl/');
 
-    const shallow = Files.read('nowhere.ts', directory.path);
+    const shallow = Files.resolve('nowhere.ts', directory.path);
     assert.strictEqual(
-      shallow.kind === 'missing' ? shallow.retype : 'x',
+      shallow.kind === 'missing' ? shallow.prefill : 'x',
       '',
       'and offers nothing back when none of it was real',
     );

@@ -2,7 +2,7 @@
  * The character every terminal control sequence begins with.
  *
  * ```ts
- * import { ESCAPE } from './columns.ts';
+ * import { ESCAPE } from './terminal.ts';
  *
  * ESCAPE.charCodeAt(0); // 27 — written this way because a literal one is what linters refuse
  * ```
@@ -20,7 +20,7 @@ const ELLIPSIS = '…';
  * objects to, and it would be slower besides.
  *
  * ```ts
- * import { plain } from './columns.ts';
+ * import { plain } from './terminal.ts';
  *
  * plain(`${String.fromCharCode(27)}[33mhi${String.fromCharCode(27)}[0m`); // 'hi'
  * ```
@@ -38,7 +38,7 @@ export function plain(text: string): string {
  * Width as the terminal sees it — colour codes take columns nowhere but in the string.
  *
  * ```ts
- * import { plainLength } from './columns.ts';
+ * import { plainLength } from './terminal.ts';
  *
  * plainLength('hi'); // 2
  * plainLength(`${String.fromCharCode(27)}[33mhi${String.fromCharCode(27)}[0m`); // 2 — colour is free
@@ -55,7 +55,7 @@ export function plainLength(text: string): number {
  * whatever the terminal draws next.
  *
  * ```ts
- * import { truncate } from './columns.ts';
+ * import { truncate } from './terminal.ts';
  *
  * truncate('abcdef', 4); // 'abc…'
  * truncate('abc', 10); // 'abc' — what already fits is left alone
@@ -91,7 +91,7 @@ export function truncate(text: string, width: number): string {
  * codes in it.
  *
  * ```ts
- * import { styled } from './columns.ts';
+ * import { styled } from './terminal.ts';
  *
  * styled('hi', ''); // 'hi' — nothing to wrap it in
  * styled('hi', `${String.fromCharCode(27)}[33m`).endsWith(`${String.fromCharCode(27)}[0m`); // true
@@ -105,7 +105,7 @@ export function styled(text: string, style: string): string {
  * How wide a line may be. 80 where nothing says — a pipe has no width, and neither does a file.
  *
  * ```ts
- * import { terminalWidth } from './columns.ts';
+ * import { terminalWidth } from './terminal.ts';
  *
  * terminalWidth({ write: () => true } as never); // 80 — nothing there to ask
  * ```
@@ -123,7 +123,7 @@ export function terminalWidth(output: NodeJS.WritableStream): number {
  * Ctrl-L, so that key needs nothing from us.
  *
  * ```ts
- * import { clearScreen } from './columns.ts';
+ * import { clearScreen } from './terminal.ts';
  *
  * clearScreen().includes('[3J'); // false — the scrollback is not ours to throw away
  * ```

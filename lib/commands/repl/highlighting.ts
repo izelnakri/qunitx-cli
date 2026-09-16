@@ -16,7 +16,7 @@ import type { Theme } from '../../repl/theme.ts';
  * meant to.
  *
  * ```ts
- * import { setupHighlighting } from './painting.ts';
+ * import { setupHighlighting } from './highlighting.ts';
  * import { theme } from '../../repl/theme.ts';
  *
  * import type { REPLServer } from 'node:repl';

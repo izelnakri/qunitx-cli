@@ -26,32 +26,32 @@ export const command: ReplCommand = {
   description: 'Show whatever it names: a file numbered, a directory as a tree, or a value whole',
   aliases: ['v'],
   async main(repl, argument) {
-    const { depth, path: typed } = Files.target(argument.trim());
+    const { file, depth } = Files.pathAndDepth(argument.trim());
     if (argument.trim() === '') {
       repl.log('Usage: .view <file>');
 
       return;
     }
 
-    const found = Files.read(typed, repl.cwd);
+    const found = Files.resolve(file, repl.cwd);
     if (found.kind === 'file') {
-      repl.log(`${Files.numbered(found.contents, typed, repl.palette)}`);
+      repl.log(`${Files.numbered(found.contents, file, repl.palette)}`);
 
       return;
     }
     if (found.kind === 'directory') {
-      repl.log(drawTree(typed, repl.cwd, repl.palette, depth));
+      repl.log(drawTree(file, repl.cwd, repl.palette, depth));
 
       return;
     }
 
-    const said = await describeValue(repl.session, typed, repl.cwd, repl.palette, { body: true });
+    const said = await describeValue(repl.session, file, repl.cwd, repl.palette, { body: true });
     if (said !== null) {
       repl.log(`${said}`);
 
       return;
     }
-    repl.log(red(`${pathError(found, typed)}`));
+    repl.log(red(`${pathError(found, file)}`));
     prefillPrompt('view', found, repl);
   },
 };

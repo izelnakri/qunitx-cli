@@ -28,7 +28,7 @@ export const command: ReplCommand = {
     const target = argument.trim();
     if (target === '') repl.log('Usage: .save <file>');
     else {
-      const source = replayableSource(repl.server as unknown as { lines?: string[] });
+      const source = replayableSource(repl.lines);
       const written = writeIfPossible(path.resolve(repl.cwd, target), source);
       repl.log(written ? `Session saved to: ${target}` : red(`Failed to save: ${target}`));
     }

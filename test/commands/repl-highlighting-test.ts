@@ -9,7 +9,7 @@ const ESC = String.fromCharCode(27);
 // readline decides WHERE everything goes and this only decides what it looks like, which is the
 // whole reason the substitution is by value: anything that is not exactly the line readline
 // believes it is drawing passes through untouched, so no cursor arithmetic can go wrong.
-module('Commands | repl | painting', { concurrency: true }, () => {
+module('Commands | repl | highlighting', { concurrency: true }, () => {
   /** A REPLServer with the internals painting reaches for, and a record of what reached output. */
   function fakeServer(prompt = '> ') {
     const input = new EventEmitter();

@@ -1,4 +1,4 @@
-import { styled } from './columns.ts';
+import { styled } from './terminal.ts';
 import type { Theme } from './theme.ts';
 
 /** A run of source, and what nvim's treesitter queries would capture it as. */

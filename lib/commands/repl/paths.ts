@@ -29,8 +29,8 @@ export function drawTree(typed: string, cwd: string, palette: Theme, depth: numb
  * ```ts
  * import { pathError } from './paths.ts';
  *
- * pathError({ kind: 'directory', retype: 'lib/' }, 'lib'); // 'lib is a directory'
- * pathError({ kind: 'missing', retype: '' }, 'nope.ts'); // 'no such file: nope.ts'
+ * pathError({ kind: 'directory', prefill: 'lib/' }, 'lib'); // 'lib is a directory'
+ * pathError({ kind: 'missing', prefill: '' }, 'nope.ts'); // 'no such file: nope.ts'
  * ```
  */
 export function pathError(
@@ -39,9 +39,9 @@ export function pathError(
 ): string {
   if (found.kind === 'directory') return `${target} is a directory`;
   if (found.kind === 'missing') {
-    return found.retype === ''
+    return found.prefill === ''
       ? `no such file: ${target}`
-      : `no such file: ${target} — ${found.retype} exists`;
+      : `no such file: ${target} — ${found.prefill} exists`;
   }
 
   return `cannot read ${target}: ${found.detail}`;
@@ -52,7 +52,7 @@ export function pathError(
  * keystrokes rather than the whole path again — `.cat lib/rep` becomes `.cat lib/` to carry on
  * from. TAB and the ghost take it from there.
  *
- * Nothing to retype on a pipe, which has no line to put it on, and nothing for a path that exists
+ * Nothing to put back on a pipe, which has no line to put it on, and nothing for a path that exists
  * but cannot be read — that one is not a typo.
  *
  * ```ts
@@ -62,7 +62,7 @@ export function pathError(
  *
  * // Defined, not invoked: it types into a live prompt.
  * function example(repl: ReplContext) {
- *   prefillPrompt('cat', { kind: 'missing', retype: 'lib/' }, repl); // writes `.cat lib/`
+ *   prefillPrompt('cat', { kind: 'missing', prefill: 'lib/' }, repl); // writes `.cat lib/`
  * }
  * ```
  */
@@ -72,5 +72,5 @@ export function prefillPrompt(
   repl: ReplContext,
 ): void {
   if (found.kind === 'unreadable' || !repl.interactive) return;
-  repl.server.write(`.${name} ${found.retype}`);
+  repl.server.write(`.${name} ${found.prefill}`);
 }

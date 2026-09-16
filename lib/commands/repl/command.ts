@@ -74,6 +74,8 @@ export interface ReplContext {
   width: number;
   /** The shared name cache behind TAB and the ghost suggestion. */
   completions: NameSource;
+  /** Every line this session has evaluated, oldest first — what `.save` writes out. */
+  lines: readonly string[];
   /** The unfinished input so far, `''` when the line is whole. `.break` abandons it. */
   buffered: string;
   /** The scratch buffer `.open` keeps for the life of the session. */

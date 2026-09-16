@@ -1,5 +1,5 @@
 import { excerpt, limits } from '../../repl/excerpt.ts';
-import { styled } from '../../repl/columns.ts';
+import { styled } from '../../repl/terminal.ts';
 import { asCount } from './command.ts';
 import { blue, red } from '../../utils/color.ts';
 import type * as Repl from '../../repl/session.ts';
@@ -158,12 +158,12 @@ export function toFrameNumber(name: string): ReplCommand['main'] {
  * would be the command doing what its name does not say.
  *
  * ```ts
- * import { whereWeAre } from './frames.ts';
+ * import { withoutMoving } from './frames.ts';
  *
- * typeof whereWeAre('here'); // 'function' — a command's `main`, waiting for a context
+ * typeof withoutMoving('here'); // 'function' — a command's `main`, waiting for a context
  * ```
  */
-export function whereWeAre(name: string): ReplCommand['main'] {
+export function withoutMoving(name: string): ReplCommand['main'] {
   return selecting(name, { step: 0, counted: false });
 }
 

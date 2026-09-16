@@ -25,12 +25,12 @@ export const command: ReplCommand = {
   description: 'Show a directory as a tree — `-L 2` for two levels, all the way down by default',
   aliases: ['ls'],
   main(repl, argument) {
-    const { depth, path: typed } = Files.target(argument.trim());
-    const found = Files.read(typed, repl.cwd);
-    if (found.kind === 'directory') repl.log(drawTree(typed, repl.cwd, repl.palette, depth));
-    else if (found.kind === 'file') repl.log(red(`${typed} is a file, not a directory`));
+    const { file, depth } = Files.pathAndDepth(argument.trim());
+    const found = Files.resolve(file, repl.cwd);
+    if (found.kind === 'directory') repl.log(drawTree(file, repl.cwd, repl.palette, depth));
+    else if (found.kind === 'file') repl.log(red(`${file} is a file, not a directory`));
     else {
-      repl.log(red(`${pathError(found, typed)}`));
+      repl.log(red(`${pathError(found, file)}`));
 
       return void (found.kind === 'missing' && prefillPrompt('tree', found, repl));
     }

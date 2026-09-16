@@ -27,7 +27,7 @@ const INCOMPLETE_PATTERNS = [
  * left for a source transform to do.
  *
  * ```ts
- * import { candidates } from './source.ts';
+ * import { candidates } from './input.ts';
  *
  * candidates('1 + 1'); // ['1 + 1']
  * candidates('{ a: 1 }'); // ['({ a: 1 })', '{ a: 1 }'] — object first, block second
@@ -48,7 +48,7 @@ export function candidates(input: string): string[] {
  * the parser knows which shapes are still completable.
  *
  * ```ts
- * import { isIncomplete } from './source.ts';
+ * import { isIncomplete } from './input.ts';
  *
  * isIncomplete('SyntaxError: Unexpected end of input'); // true — keep reading
  * isIncomplete("SyntaxError: Unexpected token ';'"); // false — report it
@@ -88,7 +88,7 @@ export interface Declaration {
  * alone rather than half-understood, and behave as they did: for the length of one evaluation.
  *
  * ```ts
- * import { declaration } from './source.ts';
+ * import { declaration } from './input.ts';
  *
  * declaration("let me = { age: 32 }"); // { name: 'me', value: '{ age: 32 }', blockScoped: true }
  * declaration('var a = 1')?.blockScoped; // false — hoisted out of blocks, so it stays
@@ -159,7 +159,7 @@ export interface ImportStatement {
  * so says nothing about which one this is.
  *
  * ```ts
- * import { importStatement } from './source.ts';
+ * import { importStatement } from './input.ts';
  *
  * const read = importStatement("import * as A from './a.ts'");
  * read !== null && 'bindings' in read && read.bindings[0]?.name; // 'A' — and `from: null`, the module

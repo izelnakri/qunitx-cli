@@ -8,10 +8,10 @@ import * as Reporter from '../../reporters/index.ts';
 import * as Repl from '../../repl/session.ts';
 import * as Result from '../../result/index.ts';
 import { blue, red } from '../../utils/color.ts';
-import { complete, completionCache, setupSuggestions } from './completion.ts';
+import { complete, nameSource, setupSuggestions } from './completion.ts';
 import type { CompleterCallback } from './completion.ts';
 import { showFrame } from './frames.ts';
-import { lost } from './session-gone.ts';
+import { pageGone } from './page-gone.ts';
 import { define } from './command.ts';
 import type { ReplContext } from './command.ts';
 import { command as Back } from './commands/back.ts';
@@ -52,12 +52,12 @@ import { command as Vi } from './commands/vi.ts';
 import { command as Vim } from './commands/vim.ts';
 import { command as View } from './commands/view.ts';
 import { HISTORY_KEPT, setupHistory } from './history.ts';
-import { setupHighlighting } from './painting.ts';
+import { setupHighlighting } from './highlighting.ts';
 import { setupPreview } from './preview.ts';
 import { shell } from './shell.ts';
 import { vimKeys } from './keys.ts';
 import { findProjectRoot } from '../../utils/find-project-root.ts';
-import { ESCAPE, terminalWidth } from '../../repl/columns.ts';
+import { ESCAPE, terminalWidth } from '../../repl/terminal.ts';
 import { failureText } from './command.ts';
 import { depth } from '../../repl/highlight.ts';
 import { theme } from '../../repl/theme.ts';
@@ -155,7 +155,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
     let gone = false;
     // One source of names behind both TAB and the ghost, so the two can never disagree about what
     // the page has.
-    const completions = completionCache(session);
+    const completions = nameSource(session);
     const palette = theme();
     // The unfinished input so far. Held HERE rather than handed to `node:repl` as a `Recoverable`,
     // because the two do different things with it: node's terminal path folds the block into one
@@ -250,7 +250,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
     const end = (target: REPLServer) => {
       if (gone) return;
       gone = true;
-      target.output.write(red(`\n${lost()}\n`));
+      target.output.write(red(`\n${pageGone()}\n`));
       target.close();
     };
 
@@ -302,6 +302,11 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
       interactive,
       completions,
       width: terminalWidth(server.output),
+      // `node:repl` keeps this and `@types/node` does not admit it, so the cast is here rather
+      // than at the one command that reads it.
+      get lines() {
+        return (server as unknown as { lines?: string[] }).lines ?? [];
+      },
       buffered: '',
       scratch: '',
       log: (text) => void server.output.write(`${text}\n`),
@@ -439,9 +444,9 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 // Re-exported so the terminal layer has one door, whichever room a thing lives in.
 export { edit, replayableSource, whatToRun } from './editor.ts';
 export { complete, setupSuggestions, suggestionStyle } from './completion.ts';
-export { lost } from './session-gone.ts';
+export { pageGone } from './page-gone.ts';
 export { trimHistoryFile } from './history.ts';
-export { setupHighlighting } from './painting.ts';
+export { setupHighlighting } from './highlighting.ts';
 export { setupPreview } from './preview.ts';
 export { shell } from './shell.ts';
 export { vimKeys, withoutTerminalReports } from './keys.ts';

@@ -18,7 +18,7 @@
  * two hundred properties it has, and the same is true of anything with a constructor of its own.
  *
  * ```ts
- * import { describeType } from './types.ts';
+ * import { describeType } from './describe-type.ts';
  *
  * describeType('hi'); // 'string'
  * describeType([1, 2]); // 'number[]'

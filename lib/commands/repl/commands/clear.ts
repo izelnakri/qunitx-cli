@@ -1,4 +1,4 @@
-import { clearScreen } from '../../../repl/columns.ts';
+import { clearScreen } from '../../../repl/terminal.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**

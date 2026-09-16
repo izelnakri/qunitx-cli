@@ -1,5 +1,5 @@
 import process from 'node:process';
-import { ESCAPE, plainLength } from '../../repl/columns.ts';
+import { ESCAPE, plainLength } from '../../repl/terminal.ts';
 import * as Files from '../../repl/files.ts';
 import { split, suggest } from '../../repl/suggest.ts';
 import type { REPLServer } from 'node:repl';
@@ -46,17 +46,17 @@ export interface NameSource {
  * The page's names, kept between keystrokes and refreshed behind them.
  *
  * ```ts
- * import { completionCache } from './completion.ts';
+ * import { nameSource } from './completion.ts';
  *
  * import type { ReplSession } from '../../repl/session.ts';
  *
  * // Defined, not invoked: it asks a live page.
  * function example(session: ReplSession) {
- *   return completionCache(session).lookup(''); // what is known right now, never a wait
+ *   return nameSource(session).lookup(''); // what is known right now, never a wait
  * }
  * ```
  */
-export function completionCache(session: ReplSession): NameSource {
+export function nameSource(session: ReplSession): NameSource {
   const known = new Map<string, readonly string[]>();
   // Which answers describe the page as it is NOW. Separate from having an answer at all, because
   // the two differ for exactly as long as a refresh takes — which is when the old one is useful.

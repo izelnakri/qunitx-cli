@@ -1,4 +1,4 @@
-import { styled } from '../../../repl/columns.ts';
+import { styled } from '../../../repl/terminal.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**

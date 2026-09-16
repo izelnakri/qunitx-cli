@@ -13,17 +13,18 @@ import type { ReplCommand, ReplContext } from './command.ts';
 /**
  * The lines of a session worth replaying: everything typed, minus the shell escapes.
  *
- * `lines` is `node:repl`'s own record of what it evaluated and is absent from `@types/node`'s
- * `REPLServer`, so it is reached through a narrow cast rather than by widening the whole server.
+ * The lines are `node:repl`'s own record of what it evaluated, which {@link ReplContext.lines}
+ * reads off the server — absent from `@types/node`'s `REPLServer`, so the cast lives there, once,
+ * rather than at every caller.
  *
  * ```ts
  * import { replayableSource } from './editor.ts';
  *
- * replayableSource({ lines: ['1 + 1', ':git status', '2 + 2'] }); // '1 + 1\n2 + 2\n'
+ * replayableSource(['1 + 1', ':git status', '2 + 2']); // '1 + 1\n2 + 2\n'
  * ```
  */
-export function replayableSource(server: { lines?: string[] }): string {
-  return (server.lines ?? [])
+export function replayableSource(lines: readonly string[]): string {
+  return lines
     .filter((line) => !line.trimStart().startsWith(':'))
     .map((line) => `${line}\n`)
     .join('');
@@ -160,7 +161,7 @@ export function readIfThere(file: string): string | null {
  * anybody about; everything else it does is the child's business.
  */
 async function handOver(server: REPLServer, command: string, args: string[]): Promise<boolean> {
-  standDown(server);
+  pausePrompt(server);
   const stdin = process.stdin;
   const wasRaw = Boolean(stdin.isRaw);
   const wasFlowing = stdin.readableFlowing === true;
@@ -186,7 +187,7 @@ async function handOver(server: REPLServer, command: string, args: string[]): Pr
       }
       stdin.resume();
     }
-    standUp(server);
+    resumePrompt(server);
   }
 }
 
@@ -199,17 +200,17 @@ async function handOver(server: REPLServer, command: string, args: string[]): Pr
  * would otherwise run them while it was still up.
  *
  * ```ts
- * import { standDown } from './editor.ts';
+ * import { pausePrompt } from './editor.ts';
  *
  * import type { REPLServer } from 'node:repl';
  *
  * // Defined, not invoked: it stops a live prompt.
  * function example(server: REPLServer) {
- *   standDown(server); // and `standUp` when whatever it was doing is done
+ *   pausePrompt(server); // and `standUp` when whatever it was doing is done
  * }
  * ```
  */
-export function standDown(server: REPLServer): void {
+export function pausePrompt(server: REPLServer): void {
   if (!closed(server)) server.pause();
 }
 
@@ -221,17 +222,17 @@ export function standDown(server: REPLServer): void {
  * anything afterwards. Out of a `finally`, that takes the process with it.
  *
  * ```ts
- * import { standUp } from './editor.ts';
+ * import { resumePrompt } from './editor.ts';
  *
  * import type { REPLServer } from 'node:repl';
  *
  * // Defined, not invoked: it resumes a live prompt.
  * function example(server: REPLServer) {
- *   standUp(server); // a no-op where there is no longer a prompt to resume
+ *   resumePrompt(server); // a no-op where there is no longer a prompt to resume
  * }
  * ```
  */
-export function standUp(server: REPLServer): void {
+export function resumePrompt(server: REPLServer): void {
   if (!closed(server)) server.resume();
 }
 
@@ -298,7 +299,7 @@ export async function openInEditor(
  * ```
  */
 export function openingIn(editor: string): ReplCommand['main'] {
-  return opening(editor, editor);
+  return editorCommand(editor, editor);
 }
 
 /**
@@ -310,7 +311,18 @@ export function openingIn(editor: string): ReplCommand['main'] {
  * typeof opening('open'); // 'function' — a command's `main`, waiting for a context
  * ```
  */
-export function opening(name: string, named?: string): ReplCommand['main'] {
+export function opening(name: string): ReplCommand['main'] {
+  return editorCommand(name);
+}
+
+/**
+ * What `.open` and every editor-named spelling of it do, differing only in which editor they mean.
+ *
+ * `named` is the editor the command is named after — `.vi` means vi — and absent for the ones that
+ * mean whichever the environment prefers. Private, because a caller should be picking between the
+ * two public spellings rather than passing a maybe-editor.
+ */
+function editorCommand(name: string, named?: string): ReplCommand['main'] {
   return async (repl, argument) => {
     const asked = argument.trim();
     if (!repl.interactive && asked === '') {
@@ -328,7 +340,7 @@ export function opening(name: string, named?: string): ReplCommand['main'] {
     // The keyboard stops being the prompt's here, not when the editor opens: asking the page where
     // a value is written is a round trip, and a line typed during it is a line meant for after the
     // editor, not one to run while it is up.
-    standDown(repl.server);
+    pausePrompt(repl.server);
     const declared = await repl.session.declaredAt(asked);
     // A function knows its own line. Everything else that came into this session came from a
     // file too, and anything that is neither is a path — one that need not exist yet, since
@@ -339,13 +351,13 @@ export function opening(name: string, named?: string): ReplCommand['main'] {
     // is not there — the session simply stops. Where it cannot open it, the place is still worth
     // saying.
     if (!repl.interactive) {
-      standUp(repl.server);
+      resumePrompt(repl.server);
       repl.log(blue(`${at.file}:${at.line}`));
 
       return;
     }
     const opened = await openInEditor(path.resolve(repl.cwd, at.file), at.line, repl.server, named);
-    standUp(repl.server);
+    resumePrompt(repl.server);
     if (opened.failed !== null) repl.write(opened.failed);
     // A file the session has in scope and the file on disk are the same file, and this is how
     // the second one changes. Saving it and then having to `.load` it by hand is the session

@@ -2,7 +2,7 @@ import path from 'node:path';
 import { blockAt, commentAbove, renderDoc, signature } from '../../repl/docs.ts';
 import { readIfThere } from './editor.ts';
 import { highlight } from '../../repl/highlight.ts';
-import { styled } from '../../repl/columns.ts';
+import { styled } from '../../repl/terminal.ts';
 import type { ReplSession } from '../../repl/session.ts';
 import type { Theme } from '../../repl/theme.ts';
 

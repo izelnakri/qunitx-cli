@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { styled } from './columns.ts';
+import { styled } from './terminal.ts';
 import { highlight } from './highlight.ts';
 import type { Theme } from './theme.ts';
 
@@ -54,18 +54,18 @@ export function fragment(line: string): string | null {
  * What a path command was pointed at, and how deep it was asked to go.
  *
  * ```ts
- * import { target } from './files.ts';
+ * import { pathAndDepth } from './files.ts';
  *
- * target('-L 2 lib'); // { depth: 2, path: 'lib' }
- * target('lib'); // { depth: Infinity, path: 'lib' } — all the way down unless told otherwise
- * target(''); // { depth: Infinity, path: '.' } — here
+ * pathAndDepth('-L 2 lib'); // { file: 'lib', depth: 2 }
+ * pathAndDepth('lib'); // { file: 'lib', depth: Infinity } — all the way down unless told otherwise
+ * pathAndDepth(''); // { file: '.', depth: Infinity } — here
  * ```
  */
-export function target(argument: string): { depth: number; path: string } {
+export function pathAndDepth(argument: string): { file: string; depth: number } {
   const depth = DEPTH_FLAG.exec(argument);
   const rest = argument.replace(DEPTH_FLAG, ' ').trim();
 
-  return { depth: depth ? Number(depth[1]) : Infinity, path: rest === '' ? '.' : rest };
+  return { file: rest === '' ? '.' : rest, depth: depth ? Number(depth[1]) : Infinity };
 }
 
 /**
@@ -164,25 +164,25 @@ export function numbered(contents: string, file: string, palette: Theme): string
 /** What a path turned out to be, and what the prompt should do about it. */
 export type Resolution =
   | { kind: 'file'; contents: string }
-  | { kind: 'directory'; retype: string }
-  | { kind: 'missing'; retype: string }
+  | { kind: 'directory'; prefill: string }
+  | { kind: 'missing'; prefill: string }
   | { kind: 'unreadable'; detail: string };
 
 /**
  * Reads a path, or says precisely why it could not — and how much of it was worth keeping.
  *
- * `retype` is the part that does exist, which is what the prompt puts back so the next attempt
+ * `prefill` is the part that does exist, which is what the prompt puts back so the next attempt
  * costs a few keystrokes rather than the whole path again. For a directory that is the path with
  * a slash on it; for a path that goes wrong halfway, it is the last directory that was real.
  *
  * ```ts
- * import { read } from './files.ts';
+ * import { resolve } from './files.ts';
  *
- * read('lib/nowhere.ts', process.cwd()); // { kind: 'missing', retype: 'lib/' }
- * read('lib', process.cwd()); // { kind: 'directory', retype: 'lib/' }
+ * resolve('lib/nowhere.ts', process.cwd()); // { kind: 'missing', prefill: 'lib/' }
+ * resolve('lib', process.cwd()); // { kind: 'directory', prefill: 'lib/' }
  * ```
  */
-export function read(typed: string, cwd: string): Resolution {
+export function resolve(typed: string, cwd: string): Resolution {
   const resolved = path.resolve(cwd, typed);
   let stats: fs.Stats;
   try {
@@ -191,9 +191,9 @@ export function read(typed: string, cwd: string): Resolution {
     const failure = error as NodeJS.ErrnoException;
     if (failure.code !== 'ENOENT') return { kind: 'unreadable', detail: failure.message };
 
-    return { kind: 'missing', retype: existingPrefix(typed, cwd) };
+    return { kind: 'missing', prefill: existingPrefix(typed, cwd) };
   }
-  if (stats.isDirectory()) return { kind: 'directory', retype: withSlash(typed) };
+  if (stats.isDirectory()) return { kind: 'directory', prefill: withSlash(typed) };
 
   try {
     return { kind: 'file', contents: fs.readFileSync(resolved, 'utf8') };

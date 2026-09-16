@@ -1,4 +1,4 @@
-import { ESCAPE, plain, plainLength, truncate } from '../../repl/columns.ts';
+import { ESCAPE, plain, plainLength, truncate } from '../../repl/terminal.ts';
 import type { REPLServer } from 'node:repl';
 import type { ReplSession } from '../../repl/session.ts';
 

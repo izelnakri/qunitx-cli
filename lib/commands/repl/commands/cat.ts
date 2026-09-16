@@ -24,20 +24,20 @@ import type { ReplCommand } from '../command.ts';
 export const command: ReplCommand = {
   description: 'Print a file, numbered and highlighted',
   main(repl, argument) {
-    const { path: typed } = Files.target(argument.trim());
+    const { file } = Files.pathAndDepth(argument.trim());
     if (argument.trim() === '') {
       repl.log('Usage: .cat <file>');
 
       return;
     }
 
-    const found = Files.read(typed, repl.cwd);
+    const found = Files.resolve(file, repl.cwd);
     if (found.kind === 'file') {
-      repl.log(`${Files.numbered(found.contents, typed, repl.palette)}`);
+      repl.log(`${Files.numbered(found.contents, file, repl.palette)}`);
 
       return;
     }
-    repl.log(red(`${pathError(found, typed)}`));
+    repl.log(red(`${pathError(found, file)}`));
     prefillPrompt('cat', found, repl);
   },
 };

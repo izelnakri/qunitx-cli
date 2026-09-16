@@ -1,10 +1,10 @@
 import { module, test } from 'qunitx';
-import { describeType } from '../../lib/repl/types.ts';
+import { describeType } from '../../lib/repl/describe-type.ts';
 import '../helpers/custom-asserts.ts';
 
 // The page holds values, not declarations: `const a: string = 'x'` left no trace of the annotation
 // by the time it is a string. So the type is worked out from the value, which is what is knowable.
-module('Repl | types', { concurrency: true }, () => {
+module('Repl | describeType', { concurrency: true }, () => {
   test('a primitive is what `typeof` says it is', (assert) => {
     assert.strictEqual(describeType('hi'), 'string');
     assert.strictEqual(describeType(42), 'number');
