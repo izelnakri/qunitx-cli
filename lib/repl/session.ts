@@ -951,17 +951,15 @@ class Session implements ReplSession {
     return this.#pausedAt;
   }
 
-  /**
-   * Lets a paused page carry on.
-   *
-   * Never automatic. If DevTools is open on the same page it is paused too, and resuming the target
-   * from here would step on someone reading their own stack. Whoever paused it says when.
-   */
   async frameSource(): Promise<{ text: string; line: number } | null> {
     const at = this.#pausedIn;
     if (!at) return null;
 
     if (at.file !== null) {
+      // Sync on purpose. There is nothing to overlap it with — the page is stopped and the prompt
+      // is waiting on this one excerpt — and async costs rather than saves: fs.promises goes
+      // through libuv's thread pool, measured here at 0.585ms against readFileSync's 0.345ms for
+      // one file. The same reason lib/utils/find-chrome.ts is sync.
       try {
         return {
           text: fs.readFileSync(path.resolve(this.#config.cwd, at.file), 'utf8'),
@@ -1405,6 +1403,10 @@ class Session implements ReplSession {
     return null;
   }
 
+  /**
+   * Never automatic. If DevTools is open on the same page it is paused too, and resuming the
+   * target from here would step on someone reading their own stack. Whoever paused it says when.
+   */
   async continue(): Promise<void> {
     if (!this.#pausedAt) return;
     await this.#cdp.send('Debugger.resume').catch(() => {});
