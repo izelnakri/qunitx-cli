@@ -1,5 +1,5 @@
 import { copyValue } from '../clipboard.ts';
-import { noSuchValue } from '../describe.ts';
+import { noSuchValue } from '../describe-value.ts';
 import { blue, red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 

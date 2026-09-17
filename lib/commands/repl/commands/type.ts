@@ -1,6 +1,12 @@
-import { describeType, noSuchValue } from '../describe.ts';
+import path from 'node:path';
+import { noSuchValue } from '../describe-value.ts';
+import { highlight } from '../../../repl/highlight.ts';
+import { readIfThere } from '../editor.ts';
+import { signature } from '../../../repl/docs.ts';
 import { red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
+import type { ReplSession } from '../../../repl/session.ts';
+import type { Theme } from '../../../repl/theme.ts';
 
 /**
  * `.type` — what TypeScript would call it.
@@ -27,3 +33,38 @@ export const command: ReplCommand = {
     repl.log(said === null ? red(noSuchValue(argument, 'type')) : said);
   },
 };
+
+/**
+ * What a value's type is, painted — or `null` where there is no such value to have one.
+ *
+ * The signature from the file first, because a written type is the real answer and a structural one
+ * worked out from a function object could only ever be a worse guess at it. Everything else the
+ * page describes from the value, which for everything else is all there is.
+ *
+ * Private, and here rather than in a module of its own: `.type` is its only caller, and a file
+ * you open once to read one function is a file that did not need to exist.
+ *
+ * Deliberately NOT named `typeOf`:
+ * that word belongs to the two layers under this one — `session.typeOf(expression)`, which asks
+ * the page, and `typeOfValue(value)`, which is what the page then runs. Three `typeOf`s in one
+ * call chain is a stack trace nobody can read.
+ *
+ */
+async function describeType(
+  session: ReplSession,
+  argument: string,
+  cwd: string,
+  palette: Theme,
+): Promise<string | null> {
+  const asked = argument.trim();
+  if (asked === '') return null;
+
+  const at = await session.declaredAt(asked);
+  const source = at === null ? null : readIfThere(path.resolve(cwd, at.file));
+  const written = source === null || at === null ? '' : signature(source, at.line);
+  if (written !== '') return highlight(written, palette);
+
+  const inferred = await session.typeOf(asked);
+
+  return inferred === '' ? null : highlight(inferred, palette);
+}

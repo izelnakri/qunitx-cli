@@ -23,15 +23,17 @@ export type CompleterCallback = (error: null, result: [string[], string]) => voi
 /**
  * The page's identifiers, as something a keystroke can read.
  *
- * Completion has to be instant and the answer lives in another process, so this keeps the last one
- * and asks for the next in the background. A miss is not a stall: {@link NameSource.lookup} says
- * what it knows now, the request lands a moment later, and subscribers redraw with the answer.
+ * Completion has to be instant and the answer lives in ANOTHER PROCESS — `session.completions()`
+ * is a CDP round trip to a browser — so this keeps the last answer and asks for the next in the
+ * background. That is the whole reason it exists, and the reason it is a cache rather than a
+ * lookup: a miss is not a stall. {@link CompletionCache.lookup} says what it knows right now, the
+ * request lands a moment later, and subscribers redraw with the answer.
  *
  * Going stale is deliberately not the same as being emptied. An evaluation may have declared a
  * name, but everything already known is still true, so the old list stays on offer until the new
  * one arrives rather than suggestions blinking out after every line.
  */
-export interface NameSource {
+export interface CompletionCache {
   /** Names on `base` as of the last answer — empty while the first one is in flight. */
   lookup(base: string): readonly string[];
   /** The page's answer for `base`, waited for. What TAB uses, where a moment is affordable. */
@@ -43,20 +45,20 @@ export interface NameSource {
 }
 
 /**
- * The page's names, kept between keystrokes and refreshed behind them.
+ * Opens a cache over one session's completions, kept between keystrokes and refreshed behind them.
  *
  * ```ts
- * import { nameSource } from './completion.ts';
+ * import { completionCache } from './completion.ts';
  *
  * import type { ReplSession } from '../../repl/session.ts';
  *
  * // Defined, not invoked: it asks a live page.
  * function example(session: ReplSession) {
- *   return nameSource(session).lookup(''); // what is known right now, never a wait
+ *   return completionCache(session).lookup(''); // what is known right now, never a wait
  * }
  * ```
  */
-export function nameSource(session: ReplSession): NameSource {
+export function completionCache(session: ReplSession): CompletionCache {
   const known = new Map<string, readonly string[]>();
   // Which answers describe the page as it is NOW. Separate from having an answer at all, because
   // the two differ for exactly as long as a refresh takes — which is when the old one is useful.
@@ -134,7 +136,7 @@ export function nameSource(session: ReplSession): NameSource {
  */
 export function complete(
   server: REPLServer,
-  names: NameSource,
+  names: CompletionCache,
   line: string,
   callback: CompleterCallback,
   cwd: string = process.cwd(),
@@ -175,22 +177,22 @@ export function complete(
  * evaluated.
  *
  * ```ts
- * import { setupSuggestions } from './completion.ts';
+ * import { setupSuggestionBehaviors } from './completion.ts';
  *
  * import type { REPLServer } from 'node:repl';
  *
  * // Defined, not invoked: it listens on a live terminal.
  * function example(server: REPLServer) {
- *   setupSuggestions(server); // ghost text on, Ctrl-F accepts
+ *   setupSuggestionBehaviors(server); // ghost text on, Ctrl-F accepts
  * }
  * ```
  */
-export function setupSuggestions(
+export function setupSuggestionBehaviors(
   server: REPLServer,
-  names?: NameSource,
+  names?: CompletionCache,
   cwd: string = process.cwd(),
 ): () => string {
-  const style = suggestionStyle();
+  const style = mutedSuggestionStyle();
   const internals = server as unknown as { _writeToOutput(text: string): void };
   const write = internals._writeToOutput.bind(server);
 
@@ -295,7 +297,12 @@ export function setupSuggestions(
 }
 
 /**
- * The escape sequence a suggestion is drawn in, muted the way zsh mutes its own.
+ * The terminal escape sequence the GHOST SUGGESTION is drawn in — grey, so it reads as something
+ * offered rather than something typed.
+ *
+ * Not a theme capture and not `red()`: this is one colour, for one piece of text, and the only
+ * question about it is how dim "dim" should be on the terminal you are actually using. Which is
+ * why it is read from the environment.
  *
  * Read from the environment rather than guessed at, because "muted" against a light terminal and
  * against a dark one are different colours and only the developer knows which they are on.
@@ -303,12 +310,12 @@ export function setupSuggestions(
  * it has been exported, since somebody running zsh has already answered this question once.
  *
  * ```ts
- * import { suggestionStyle } from './completion.ts';
+ * import { mutedSuggestionStyle } from './completion.ts';
  *
- * suggestionStyle().startsWith(String.fromCharCode(27)); // true — an SGR sequence either way
+ * mutedSuggestionStyle().startsWith(String.fromCharCode(27)); // true — an SGR sequence either way
  * ```
  */
-export function suggestionStyle(): string {
+export function mutedSuggestionStyle(): string {
   const configured =
     process.env.QUNITX_SUGGEST_STYLE ?? process.env.ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE;
   const colour = configured?.match(/fg=#?([0-9a-fA-F]{6}|\d{1,3})/)?.[1];

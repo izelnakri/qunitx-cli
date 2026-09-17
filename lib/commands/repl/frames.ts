@@ -1,6 +1,5 @@
 import { excerpt, limits } from '../../repl/excerpt.ts';
 import { inStyle } from '../../repl/terminal.ts';
-import { asCount } from './command.ts';
 import { blue, red } from '../../utils/color.ts';
 import type * as Repl from '../../repl/session.ts';
 import type { ReplContext } from './command.ts';
@@ -247,8 +246,9 @@ async function takeSteps(
   argument: string,
   { command, kind }: { command: string; kind: Repl.StepKind },
 ): Promise<void> {
-  const times = asCount(argument);
-  if (times === null) return repl.log(`Usage: .${command} [count]`);
+  const typed = argument.trim();
+  const times = typed === '' ? 1 : Number(typed);
+  if (!Number.isInteger(times)) return repl.log(`Usage: .${command} [count]`);
   if (!repl.session.pausedAt) return repl.log('Not paused');
 
   // Only where it ends up is printed. A count means "do this n times", and n locations on the
@@ -272,8 +272,9 @@ async function selectFrame(
   // `.frame` and `.here` are about a frame number, and default to the one already being read;
   // `.up` and `.down` are about a distance, and default to one of them.
   const byNumber = move === 'to-number' || move === 'nowhere';
-  const given = asCount(argument, byNumber ? here : 1);
-  if (given === null) {
+  const typed = argument.trim();
+  const given = typed === '' ? (byNumber ? here : 1) : Number(typed);
+  if (!Number.isInteger(given)) {
     return repl.log(`Usage: .${command} ${move === 'to-number' ? '[number]' : '[count]'}`);
   }
   // A distance times a direction, or the number itself. `.up -1` is `.down 1`, as in gdb.

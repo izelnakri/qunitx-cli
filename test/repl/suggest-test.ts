@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import { split, suggest } from '../../lib/repl/suggest.ts';
-import { suggestionStyle } from '../../lib/commands/repl/index.ts';
+import { mutedSuggestionStyle } from '../../lib/commands/repl/index.ts';
 import '../helpers/custom-asserts.ts';
 
 // The zsh habit: what you were about to type, offered greyed-out, taken with Ctrl-F. Only the
@@ -148,7 +148,7 @@ module('Repl | suggest | split', { concurrency: true }, () => {
 
 // "Muted" is a different colour on a light terminal than on a dark one, and only the developer
 // knows which they are on — so it is read from the environment rather than guessed at.
-module('Repl | suggestionStyle', { concurrency: true }, () => {
+module('Repl | mutedSuggestionStyle', { concurrency: true }, () => {
   const ESC = String.fromCharCode(27);
   const withEnv = <T>(vars: Record<string, string | undefined>, body: () => T): T => {
     const before = { ...process.env };
@@ -165,7 +165,7 @@ module('Repl | suggestionStyle', { concurrency: true }, () => {
     assert.strictEqual(
       withEnv(
         { QUNITX_SUGGEST_STYLE: undefined, ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE: undefined },
-        suggestionStyle,
+        mutedSuggestionStyle,
       ),
       `${ESC}[90m`,
     );
@@ -173,12 +173,12 @@ module('Repl | suggestionStyle', { concurrency: true }, () => {
 
   test("zsh's own setting is honoured, in both spellings it uses", (assert) => {
     assert.strictEqual(
-      withEnv({ ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE: 'fg=8' }, suggestionStyle),
+      withEnv({ ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE: 'fg=8' }, mutedSuggestionStyle),
       `${ESC}[38;5;8m`,
       'a palette index',
     );
     assert.strictEqual(
-      withEnv({ ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE: 'fg=#585858' }, suggestionStyle),
+      withEnv({ ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE: 'fg=#585858' }, mutedSuggestionStyle),
       `${ESC}[38;2;88;88;88m`,
       'and a truecolour triple',
     );
@@ -188,7 +188,7 @@ module('Repl | suggestionStyle', { concurrency: true }, () => {
     assert.strictEqual(
       withEnv(
         { QUNITX_SUGGEST_STYLE: 'fg=240', ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE: 'fg=8' },
-        suggestionStyle,
+        mutedSuggestionStyle,
       ),
       `${ESC}[38;5;240m`,
     );

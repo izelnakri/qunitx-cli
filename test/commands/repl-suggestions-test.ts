@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { module, test } from 'qunitx';
-import { complete, setupSuggestions } from '../../lib/commands/repl/index.ts';
+import { complete, setupSuggestionBehaviors } from '../../lib/commands/repl/index.ts';
 import '../helpers/custom-asserts.ts';
 
 const ESC = String.fromCharCode(27);
@@ -213,9 +213,9 @@ function fakeServer(history: string[], names?: unknown, columns?: number) {
       server.cursor = server.line.length;
     },
   };
-  setupSuggestions(
-    server as unknown as Parameters<typeof setupSuggestions>[0],
-    names as Parameters<typeof setupSuggestions>[1],
+  setupSuggestionBehaviors(
+    server as unknown as Parameters<typeof setupSuggestionBehaviors>[0],
+    names as Parameters<typeof setupSuggestionBehaviors>[1],
   );
 
   /** One keystroke: the line as readline would have left it, then the key that left it there. */
@@ -233,7 +233,7 @@ function fakeServer(history: string[], names?: unknown, columns?: number) {
   return { server, drawn, press };
 }
 
-/** A NameSource whose answers are handed over on demand, so lateness can be tested. */
+/** A CompletionCache whose answers are handed over on demand, so lateness can be tested. */
 function stubNames(names: Record<string, string[]>) {
   const listeners: Array<() => void> = [];
   const delivered = new Set<string>();

@@ -861,6 +861,11 @@ module('Commands | repl | traversal', { concurrency: true }, () => {
   test('what is not a count says how to use it', async (assert) => {
     assert.includes(await stepping('outer()\n.up zz\n'), 'Usage: .up [count]');
     assert.includes(await stepping('outer()\n.step zz\n'), 'Usage: .step [count]');
+    // Half a frame is not a frame. Both in one session, because each of these is a browser.
+    const fractional = await stepping('outer()\n.up 1.5\n.backtrace 1.5\n');
+
+    assert.includes(fractional, 'Usage: .up [count]');
+    assert.includes(fractional, 'Usage: .backtrace [count]');
   });
 });
 

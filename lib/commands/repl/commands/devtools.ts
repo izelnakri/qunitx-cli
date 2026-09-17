@@ -1,4 +1,4 @@
-import { openInBrowser } from '../desktop.ts';
+import { openInBrowser } from '../open-in-browser.ts';
 import { blue, red } from '../../../utils/color.ts';
 import type { Config as ResolvedConfig } from '../../../types.ts';
 import type { ReplCommand } from '../command.ts';

@@ -21,7 +21,7 @@ import type { ReplCommand } from '../command.ts';
 export const command: ReplCommand = {
   description: 'Reload the page — every module again, every binding gone',
   async main(repl) {
-    repl.nameSource.stale();
+    repl.completionCache.stale();
     const brought = await repl.session.reload();
     repl.log(brought.length === 0 ? 'Reloaded' : `Reloaded, with ${brought.join(', ')}`);
   },

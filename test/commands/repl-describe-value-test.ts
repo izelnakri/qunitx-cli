@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import { clipboardCommands } from '../../lib/commands/repl/clipboard.ts';
-import { noSuchValue } from '../../lib/commands/repl/describe.ts';
+import { noSuchValue } from '../../lib/commands/repl/describe-value.ts';
 import '../helpers/custom-asserts.ts';
 
 // Every desktop has a clipboard and no two agree on the name of the thing that writes to it.

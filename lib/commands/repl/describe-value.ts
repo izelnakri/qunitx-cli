@@ -27,7 +27,7 @@ interface Depth {
  * worth printing, so what is known about those is where they came in and what they are.
  *
  * ```ts
- * import { describeValue } from './describe.ts';
+ * import { describeValue } from './describe-value.ts';
  *
  * import type { ReplSession } from '../../repl/session.ts';
  * import type { Theme } from '../../repl/theme.ts';
@@ -62,53 +62,10 @@ export async function describeValue(
 }
 
 /**
- * What a value's type is, painted — or `null` where there is no such value to have one.
- *
- * The signature from the file first, because a written type is the real answer and a structural one
- * worked out from a function object could only ever be a worse guess at it. Everything else the
- * page describes from the value, which for everything else is all there is.
- *
- * Named beside {@link describeValue}, which it is the parallel of, and deliberately NOT `typeOf`:
- * that word belongs to the two layers under this one — `session.typeOf(expression)`, which asks
- * the page, and `typeOfValue(value)`, which is what the page then runs. Three `typeOf`s in one
- * call chain is a stack trace nobody can read.
- *
- * ```ts
- * import { describeType } from './describe.ts';
- *
- * import type { ReplSession } from '../../repl/session.ts';
- * import type { Theme } from '../../repl/theme.ts';
- *
- * // Defined, not invoked: it asks a live page what something is.
- * function example(session: ReplSession, palette: Theme) {
- *   return describeType(session, 'answer', process.cwd(), palette); // 'number', or null
- * }
- * ```
- */
-export async function describeType(
-  session: ReplSession,
-  argument: string,
-  cwd: string,
-  palette: Theme,
-): Promise<string | null> {
-  const asked = argument.trim();
-  if (asked === '') return null;
-
-  const at = await session.declaredAt(asked);
-  const source = at === null ? null : readIfThere(path.resolve(cwd, at.file));
-  const written = source === null || at === null ? '' : signature(source, at.line);
-  if (written !== '') return highlight(written, palette);
-
-  const inferred = await session.typeOf(asked);
-
-  return inferred === '' ? null : highlight(inferred, palette);
-}
-
-/**
  * Why there is nothing to show, in the two ways there can be nothing.
  *
  * ```ts
- * import { noSuchValue } from './describe.ts';
+ * import { noSuchValue } from './describe-value.ts';
  *
  * noSuchValue('', 'doc'); // 'Usage: .doc <value>'
  * noSuchValue('helper', 'doc').includes('no such name'); // true — the other way there is nothing

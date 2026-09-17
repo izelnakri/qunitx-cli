@@ -1,4 +1,3 @@
-import { asCount } from '../command.ts';
 import { red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 
@@ -22,8 +21,10 @@ import type { ReplCommand } from '../command.ts';
 export const command: ReplCommand = {
   description: 'Remove a breakpoint by its number — `.delete 1`',
   async main(repl, argument) {
-    const index = asCount(argument, 0);
-    if (index === null || index < 1) {
+    // Breakpoints are numbered from 1, so a bare `.delete` has nothing to remove and says so.
+    const typed = argument.trim();
+    const index = typed === '' ? 0 : Number(typed);
+    if (!Number.isInteger(index) || index < 1) {
       repl.log('Usage: .delete <number>');
 
       return;

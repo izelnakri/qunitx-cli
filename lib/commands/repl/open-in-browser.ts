@@ -12,7 +12,7 @@ import { spawn } from 'node:child_process';
  * session waits on, and some of them chatter on stderr while doing exactly what was asked.
  *
  * ```ts
- * import { openInBrowser } from './desktop.ts';
+ * import { openInBrowser } from './open-in-browser.ts';
  *
  * // Defined, not invoked: it puts a window on somebody's screen.
  * function example() {
@@ -44,17 +44,3 @@ const OPENERS: Record<string, string[] | undefined> = {
   win32: ['cmd', '/c', 'start', ''],
   default: ['xdg-open'],
 };
-
-/**
- * Whether this is an address rather than a path — what a browser takes and an editor does not.
- *
- * ```ts
- * import { isAddress } from './desktop.ts';
- *
- * isAddress('https://localhost:1234'); // true
- * isAddress('lib/repl/session.ts'); // false — a path, whether or not there is a file there yet
- * ```
- */
-export function isAddress(target: string): boolean {
-  return /^(?:https?|file|about|chrome):/i.test(target) || /^www\./i.test(target);
-}

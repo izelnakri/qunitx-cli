@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { asCount, define, failureText } from '../../lib/commands/repl/command.ts';
+import { define, failureText } from '../../lib/commands/repl/command.ts';
 import '../helpers/custom-asserts.ts';
 
 import type { ReplCommand, ReplContext } from '../../lib/commands/repl/command.ts';
@@ -104,15 +104,6 @@ module('Commands | repl | define', { concurrency: true }, () => {
 
 // The two answers a command argument can be, and the two words a failure earns.
 module('Commands | repl | command arguments', { concurrency: true }, () => {
-  test('a count is a count, nothing is the fallback, and a word is neither', (assert) => {
-    assert.strictEqual(asCount('3'), 3);
-    assert.strictEqual(asCount(''), 1, 'nothing typed is once');
-    assert.strictEqual(asCount('  ', 7), 7, 'and so is whitespace');
-    assert.strictEqual(asCount('lots'), null, 'not a count, and not a silent 1');
-    assert.strictEqual(asCount('1.5'), null, 'half a frame is not a frame');
-    assert.strictEqual(asCount('-1'), -1, 'negative is a direction, which gdb allows');
-  });
-
   test('only what the page threw is called uncaught', (assert) => {
     const result = { output: 'boom', failed: true, incomplete: false, tests: [] };
 

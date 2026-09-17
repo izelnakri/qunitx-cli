@@ -1,6 +1,6 @@
 import * as Files from '../../../repl/files.ts';
 import { drawTree, pathError, prefillPrompt } from '../paths.ts';
-import { describeValue } from '../describe.ts';
+import { describeValue } from '../describe-value.ts';
 import { red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 

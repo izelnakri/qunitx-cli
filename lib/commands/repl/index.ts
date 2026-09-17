@@ -8,7 +8,7 @@ import * as Reporter from '../../reporters/index.ts';
 import * as Repl from '../../repl/session.ts';
 import * as Result from '../../result/index.ts';
 import { blue, red } from '../../utils/color.ts';
-import { complete, nameSource, setupSuggestions } from './completion.ts';
+import { complete, completionCache, setupSuggestionBehaviors } from './completion.ts';
 import type { CompleterCallback } from './completion.ts';
 import { showFrameSource } from './frames.ts';
 import { pageGone } from './page-gone.ts';
@@ -155,7 +155,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
     let gone = false;
     // One source of names behind both TAB and the ghost, so the two can never disagree about what
     // the page has.
-    const names = nameSource(session);
+    const names = completionCache(session);
     const palette = theme();
     // The unfinished input so far. Held HERE rather than handed to `node:repl` as a `Recoverable`,
     // because the two do different things with it: node's terminal path folds the block into one
@@ -300,7 +300,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
       cwd,
       palette,
       interactive,
-      nameSource: names,
+      completionCache: names,
       width: terminalWidth(server.output),
       // `node:repl` keeps this and `@types/node` does not admit it, so the cast is here rather
       // than at the one command that reads it.
@@ -362,7 +362,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
     // Before the suggestion, and that order matters: both redraw on a keypress, and the ghost has
     // to be written after the line it hangs off has been painted.
     if (interactive) setupHighlighting(server, palette);
-    const ghost = interactive ? setupSuggestions(server, names, cwd) : () => '';
+    const ghost = interactive ? setupSuggestionBehaviors(server, names, cwd) : () => '';
     if (interactive) setupPreview(server, session, () => evaluating, ghost);
 
     // Registering this listener replaces `node:repl`'s own Ctrl-C handling, so the parts worth
@@ -443,7 +443,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 
 // Re-exported so the terminal layer has one door, whichever room a thing lives in.
 export { edit, replayableSource, whatToRun } from './editor.ts';
-export { complete, setupSuggestions, suggestionStyle } from './completion.ts';
+export { complete, setupSuggestionBehaviors, mutedSuggestionStyle } from './completion.ts';
 export { pageGone } from './page-gone.ts';
 export { trimHistoryFile } from './history.ts';
 export { setupHighlighting } from './highlighting.ts';

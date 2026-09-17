@@ -13,7 +13,7 @@
 
 import { red } from '../../utils/color.ts';
 import type * as Repl from '../../repl/session.ts';
-import type { NameSource } from './completion.ts';
+import type { CompletionCache } from './completion.ts';
 import type { REPLServer } from 'node:repl';
 import type { ReplSession } from '../../repl/session.ts';
 import type { Theme } from '../../repl/theme.ts';
@@ -92,7 +92,7 @@ export interface ReplContext {
    * `repl.session.completions()` put two different things one word apart: this one answers from a
    * cache and never blocks, that one asks the page.
    */
-  nameSource: NameSource;
+  completionCache: CompletionCache;
   /** Every line this session has evaluated, oldest first — what `.save` writes out. */
   lines: readonly string[];
   /** The unfinished input so far, `''` when the line is whole. `.break` abandons it. */
@@ -103,28 +103,6 @@ export interface ReplContext {
   log(text: string): void;
   /** Writes exactly these bytes — for a block that ends in its own newline, or an escape. */
   write(text: string): void;
-}
-
-/**
- * The count typed after a command, `fallback` where none was, or `null` where it was not a count.
- *
- * Every command that takes one used to take it and ignore it, which is the worst way to be wrong:
- * `.up 3` moved one frame and said nothing about the other two.
- *
- * ```ts
- * import { asCount } from './command.ts';
- *
- * asCount('3'); // 3
- * asCount(''); // 1 — nothing typed is once
- * asCount('lots'); // null — not a count, and not a silent 1
- * ```
- */
-export function asCount(argument: string, fallback: number = 1): number | null {
-  const given = argument.trim();
-  if (given === '') return fallback;
-  const asked = Number(given);
-
-  return Number.isInteger(asked) ? asked : null;
 }
 
 /**

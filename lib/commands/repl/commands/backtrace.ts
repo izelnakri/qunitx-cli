@@ -1,4 +1,3 @@
-import { asCount } from '../command.ts';
 import { frameTable } from '../frames.ts';
 import type { ReplCommand } from '../command.ts';
 
@@ -23,8 +22,12 @@ export const command: ReplCommand = {
   description: 'Show the call stack — `.backtrace 3` for the innermost three',
   aliases: ['bt', 'where'],
   main(repl, argument) {
-    const wanted = asCount(argument, Infinity);
-    if (wanted === null) {
+    // Nothing after it is the whole stack, which is what a backtrace is usually asked for. The
+    // check is on what was TYPED rather than on `wanted`, because `Number.isInteger(Infinity)` is
+    // false and a bare `.backtrace` would otherwise answer with its own usage line.
+    const typed = argument.trim();
+    const wanted = typed === '' ? Infinity : Number(typed);
+    if (typed !== '' && !Number.isInteger(wanted)) {
       repl.log('Usage: .backtrace [count]');
 
       return;

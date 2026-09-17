@@ -253,7 +253,7 @@ export interface ReplSession {
    *
    * What both the greyed-out suggestion and TAB are drawn from, so the two agree by construction
    * rather than by two lists kept in step. One caller, `completion.ts`, which feeds both — and
-   * which caches these, so `repl.nameSource` is the cached front and this is the page itself.
+   * which caches these, so `repl.completionCache` is the cached front and this is the page itself.
    *
    * It has to come from the page: the completions for `document.body.` are a list only the page
    * holds, and one assembled in Node would offer names this document does not have. Resolves

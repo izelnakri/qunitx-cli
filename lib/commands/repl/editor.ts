@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { blue, red } from '../../utils/color.ts';
 import { failureText } from './command.ts';
-import { isAddress, openInBrowser } from './desktop.ts';
+import { openInBrowser } from './open-in-browser.ts';
 import type { REPLServer } from 'node:repl';
 import type { ReplCommand, ReplContext } from './command.ts';
 
@@ -385,4 +385,15 @@ function scratchpad(repl: ReplContext, named?: string): void {
       if (text !== '') repl.log(text);
     }
   });
+}
+
+/**
+ * Whether this is an address rather than a path — what a browser takes and an editor does not.
+ *
+ * `https://localhost:1234` is one; `lib/repl/session.ts` is not, whether or not a file is there
+ * yet. Private, and here rather than beside `openInBrowser`: `.open` is the only thing that has to
+ * tell the two apart, because it is the only command that accepts either.
+ */
+function isAddress(target: string): boolean {
+  return /^(?:https?|file|about|chrome):/i.test(target) || /^www\./i.test(target);
 }

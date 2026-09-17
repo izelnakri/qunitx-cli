@@ -1,4 +1,4 @@
-import { describeValue, noSuchValue } from '../describe.ts';
+import { describeValue, noSuchValue } from '../describe-value.ts';
 import { red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 
