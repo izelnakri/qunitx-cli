@@ -1,5 +1,5 @@
 import { highlight } from '../../../repl/highlight.ts';
-import { styled } from '../../../repl/terminal.ts';
+import { inStyle } from '../../../repl/terminal.ts';
 import type { ReplCommand } from '../command.ts';
 import type { Theme } from '../../../repl/theme.ts';
 
@@ -65,7 +65,7 @@ export function lastEntered(newestFirst: readonly string[], count: number, palet
       // colours `-L` as a type and `git` as a call.
       const code = /^\s*[.:]/.test(line) ? line : highlight(line, palette);
 
-      return `${styled(number, style)}  ${code}\n`;
+      return `${inStyle(number, style)}  ${code}\n`;
     })
     .join('');
 }

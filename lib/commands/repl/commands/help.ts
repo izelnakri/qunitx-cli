@@ -1,6 +1,6 @@
 import { command as doc } from './doc.ts';
 import { helpLines } from '../help.ts';
-import { styled } from '../../../repl/terminal.ts';
+import { inStyle } from '../../../repl/terminal.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -39,13 +39,13 @@ export const command: ReplCommand = {
     // The list is what `.help` is reached for, so it is also the only place anybody will find out
     // that it takes an argument. One row of thirty-five saying so is a row nobody reads.
     repl.log(
-      styled(
+      inStyle(
         'Name anything after it for what that is — `.h double`, `.h window.fetch`',
         repl.palette.style('LineNr'),
       ),
     );
     repl.log(
-      styled('Ctrl+C aborts the current expression, Ctrl+D exits', repl.palette.style('LineNr')),
+      inStyle('Ctrl+C aborts the current expression, Ctrl+D exits', repl.palette.style('LineNr')),
     );
   },
 };

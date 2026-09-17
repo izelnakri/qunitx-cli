@@ -1,5 +1,5 @@
 import { excerpt, limits } from '../../repl/excerpt.ts';
-import { styled } from '../../repl/terminal.ts';
+import { inStyle } from '../../repl/terminal.ts';
 import { asCount } from './command.ts';
 import { blue, red } from '../../utils/color.ts';
 import type * as Repl from '../../repl/session.ts';
@@ -46,8 +46,8 @@ export function frameList(frames: readonly Repl.Frame[], palette: Theme): string
     .map(({ index, where, selected }) => {
       const number = `#${index}`;
       const edge = selected
-        ? `${styled('>', mark)} ${styled(number, mark)}`
-        : `  ${styled(number, dim)}`;
+        ? `${inStyle('>', mark)} ${inStyle(number, mark)}`
+        : `  ${inStyle(number, dim)}`;
 
       return `${edge}  ${where}`;
     })

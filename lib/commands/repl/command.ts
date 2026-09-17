@@ -1,3 +1,16 @@
+// WHERE THINGS LIVE. Two directories, and the line between them is one rule: does it know there
+// is a terminal?
+//
+//   lib/repl/*          the ENGINE. A page, a palette, a tokenizer, a filesystem. No `node:repl`,
+//                       no readline, no prompt — grep it for `REPLServer` and there is nothing.
+//                       `repl()` in the JS API is this, and it works with stdin closed.
+//   lib/commands/repl/* the TERMINAL. readline, dot-commands, keybindings, handing stdin to an
+//                       editor. Every `node:repl` import in the codebase is under here.
+//
+// Arrows point one way: this directory imports `../../repl/*` freely, and nothing in lib/repl/
+// imports `../commands/`. That is what lets the engine be tested without a pty, and the reason
+// `.type` is three lines — the thinking is downstairs.
+
 import { red } from '../../utils/color.ts';
 import type * as Repl from '../../repl/session.ts';
 import type { NameSource } from './completion.ts';

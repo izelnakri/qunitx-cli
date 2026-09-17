@@ -1,5 +1,5 @@
 import process from 'node:process';
-import { styled } from './terminal.ts';
+import { inStyle } from './terminal.ts';
 import { highlight, tokenize } from './highlight.ts';
 import type { Theme } from './theme.ts';
 
@@ -109,8 +109,8 @@ export function excerpt(
       const number = String(first + index).padStart(gutter);
       const here = first + index === line;
       const edge = here
-        ? `${styled('>', mark)} ${styled(`${number} │`, mark)}`
-        : `  ${styled(`${number} │`, dim)}`;
+        ? `${inStyle('>', mark)} ${inStyle(`${number} │`, mark)}`
+        : `  ${inStyle(`${number} │`, dim)}`;
 
       return `${edge} ${highlight(text, palette)}`;
     })

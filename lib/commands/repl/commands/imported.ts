@@ -1,4 +1,4 @@
-import { styled } from '../../../repl/terminal.ts';
+import { inStyle } from '../../../repl/terminal.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -28,10 +28,10 @@ export const command: ReplCommand = {
         : `${files
             .map(({ file, exports }) => {
               const painted = exports
-                .map(({ name, capture }) => styled(name, repl.palette.style(capture)))
+                .map(({ name, capture }) => inStyle(name, repl.palette.style(capture)))
                 .join(', ');
 
-              return `${styled(file, repl.palette.style('LineNr'))}: ${painted}`;
+              return `${inStyle(file, repl.palette.style('LineNr'))}: ${painted}`;
             })
             .join('\n')}`,
     );

@@ -2,7 +2,7 @@ import path from 'node:path';
 import { blockAt, commentAbove, renderDoc, signature } from '../../repl/docs.ts';
 import { readIfThere } from './editor.ts';
 import { highlight } from '../../repl/highlight.ts';
-import { styled } from '../../repl/terminal.ts';
+import { inStyle } from '../../repl/terminal.ts';
 import type { ReplSession } from '../../repl/session.ts';
 import type { Theme } from '../../repl/theme.ts';
 
@@ -53,7 +53,7 @@ export async function describeValue(
   // Where, then what was said, then the code — reading order, and the order they were written in.
   // The body opens with the signature, so a `.view` that printed both would print it twice.
   const parts = [
-    styled(`${at.file}:${at.line}`, palette.style('LineNr')),
+    inStyle(`${at.file}:${at.line}`, palette.style('LineNr')),
     renderDoc(commentAbove(source, at.line), palette),
     highlight(depth.body ? blockAt(source, at.line) : signature(source, at.line), palette),
   ];
@@ -141,5 +141,5 @@ async function asWritten(
   if (rendered === '') return null;
   const where = session.whereFrom(asked);
 
-  return where === null ? rendered : `${styled(where, palette.style('LineNr'))}\n${rendered}`;
+  return where === null ? rendered : `${inStyle(where, palette.style('LineNr'))}\n${rendered}`;
 }

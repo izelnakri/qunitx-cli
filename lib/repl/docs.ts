@@ -1,4 +1,4 @@
-import { styled } from './terminal.ts';
+import { inStyle } from './terminal.ts';
 import { highlight, tokenize } from './highlight.ts';
 import type { Theme } from './theme.ts';
 
@@ -74,10 +74,10 @@ export function renderDoc(lines: readonly string[], palette: Theme): string {
       if (FENCE.test(text)) {
         fenced = !fenced;
 
-        return styled(text, comment);
+        return inStyle(text, comment);
       }
 
-      return fenced ? highlight(text, palette) : styled(text, comment);
+      return fenced ? highlight(text, palette) : inStyle(text, comment);
     })
     .join('\n');
 }

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import * as Search from '../../search.ts';
-import { styled } from '../../../repl/terminal.ts';
+import { inStyle } from '../../../repl/terminal.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -34,7 +34,7 @@ export const command: ReplCommand = {
               const said = modules.length === 0 ? name : fullName;
               const where = `${path.relative(repl.cwd, file)}:${line}`;
 
-              return `${styled(where, repl.palette.style('LineNr'))}  ${said}`;
+              return `${inStyle(where, repl.palette.style('LineNr'))}  ${said}`;
             })
             .join('\n')}`,
     );
