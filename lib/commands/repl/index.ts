@@ -10,7 +10,7 @@ import * as Result from '../../result/index.ts';
 import { blue, red } from '../../utils/color.ts';
 import { complete, nameSource, setupSuggestions } from './completion.ts';
 import type { CompleterCallback } from './completion.ts';
-import { showFrame } from './frames.ts';
+import { showFrameSource } from './frames.ts';
 import { pageGone } from './page-gone.ts';
 import { define } from './command.ts';
 import type { ReplContext } from './command.ts';
@@ -227,7 +227,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
               // The lines around it, so which `debugger` this is can be seen rather than worked
               // out from a file and a number. Asked for after the notice, not before: the notice
               // is what the pause IS, and it should not wait on reading a file to say so.
-              return void showFrame(repl).then(() => callback(null, undefined));
+              return void showFrameSource(repl).then(() => callback(null, undefined));
             }
             const text = result.failed ? red(failureText(result)) : result.output;
 
@@ -287,7 +287,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
           `paused at ${where} — \`.locals\` for scope, \`.continue\` to carry on\n`,
         )}`,
       );
-      void showFrame(repl).then(() => server.displayPrompt(true));
+      void showFrameSource(repl).then(() => server.displayPrompt(true));
     });
 
     // Everything a command may need that is not its argument, built once. `buffered` and `scratch`

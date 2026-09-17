@@ -1,5 +1,5 @@
 import { asCount } from '../command.ts';
-import { frameList } from '../frames.ts';
+import { frameTable } from '../frames.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -30,6 +30,8 @@ export const command: ReplCommand = {
       return;
     }
     const frames = repl.session.backtrace();
-    repl.log(frames.length === 0 ? 'Not paused' : frameList(frames.slice(0, wanted), repl.palette));
+    repl.log(
+      frames.length === 0 ? 'Not paused' : frameTable(frames.slice(0, wanted), repl.palette),
+    );
   },
 };

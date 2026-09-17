@@ -1,4 +1,4 @@
-import { withoutMoving } from '../frames.ts';
+import { sayWhichFrame } from '../frames.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -17,5 +17,5 @@ import type { ReplCommand } from '../command.ts';
  */
 export const command: ReplCommand = {
   description: 'Say which frame is being read',
-  main: withoutMoving('here'),
+  main: sayWhichFrame,
 };

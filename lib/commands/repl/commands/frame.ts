@@ -1,4 +1,4 @@
-import { toFrameNumber } from '../frames.ts';
+import { goToFrameNumber } from '../frames.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -17,5 +17,5 @@ import type { ReplCommand } from '../command.ts';
  */
 export const command: ReplCommand = {
   description: 'Say which frame is being read, or go to one — `.frame 1`',
-  main: toFrameNumber('frame'),
+  main: goToFrameNumber,
 };

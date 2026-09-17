@@ -1,4 +1,4 @@
-import { towardCaller } from '../frames.ts';
+import { goBackToCallerFrame } from '../frames.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -20,5 +20,5 @@ import type { ReplCommand } from '../command.ts';
  */
 export const command: ReplCommand = {
   description: 'Back toward the caller, which is back in execution order',
-  main: towardCaller('back'),
+  main: goBackToCallerFrame,
 };

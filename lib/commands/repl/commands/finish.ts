@@ -1,4 +1,4 @@
-import { steppingOut } from '../frames.ts';
+import { stepOutOfThisFrame } from '../frames.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -17,5 +17,5 @@ import type { ReplCommand } from '../command.ts';
  */
 export const command: ReplCommand = {
   description: 'Run until the current frame returns',
-  main: steppingOut('finish'),
+  main: stepOutOfThisFrame,
 };
