@@ -19,10 +19,29 @@ import { test, type Reporter, type ReporterContext, type TestDetails } from '../
 
 const FIXTURES = ['test/fixtures/passing-tests.ts', 'test/fixtures/skip-todo-tests.ts'];
 
+// The ANSI colours this reporter uses, named — `inColor(RED, '!')` says what it draws, and
+// `inColor(31, '!')` makes a reader go and look 31 up.
+const RED = 31;
+const GREEN = 32;
+const YELLOW = 33;
+const BLUE = 34;
+const MAGENTA = 35;
+const CYAN = 36;
+const GREY = 90;
+const BRIGHT_YELLOW = 93;
+
 // The six rainbow rows, and the two frames the cat's legs alternate between.
-const RAINBOW = [31, 33, 32, 36, 34, 35] as const;
+const RAINBOW = [RED, YELLOW, GREEN, CYAN, BLUE, MAGENTA] as const;
 const CAT = ['~=[,,_,,]:3', '~=[,,__,,]:3'] as const;
-const paint = (code: number, text: string): string =>
+
+/**
+ * Text in one of those colours, or the bare text where the environment asked for none.
+ *
+ * The colour first, because every call here reads `inColor(RED, …)`. Honouring `NO_COLOR` is the
+ * one thing a reporter that writes escapes has to remember: a reporter whose output is piped into
+ * a file or compared by a script must be able to produce plain text.
+ */
+const inColor = (code: number, text: string): string =>
   process.env.NO_COLOR ? text : `\x1b[${code}m${text}\x1b[39m`;
 
 /**
@@ -32,8 +51,8 @@ const paint = (code: number, text: string): string =>
  * `TestDetails` to `onTestEnd`, so the mapping is a lookup rather than a guess.
  */
 function segment(status: TestDetails['status']): string {
-  if (status === 'failed') return paint(31, '!');
-  else if (status === 'skipped' || status === 'todo') return paint(90, '·');
+  if (status === 'failed') return inColor(RED, '!');
+  else if (status === 'skipped' || status === 'todo') return inColor(GREY, '·');
 
   return '-';
 }
@@ -60,8 +79,8 @@ export function nyanReporter(): Reporter {
       // Redraw in place: six rainbow rows, each one character further along than the last, with
       // the cat at the head of the middle row. `\x1b[6A` walks the cursor back up over them.
       const rows = RAINBOW.map((colour, row) => {
-        const stripe = paint(colour, trail.slice(Math.max(0, row - 2)).join(''));
-        return `  ${stripe}${row === 3 ? paint(93, CAT[trail.length % 2]) : ''}`;
+        const stripe = inColor(colour, trail.slice(Math.max(0, row - 2)).join(''));
+        return `  ${stripe}${row === 3 ? inColor(BRIGHT_YELLOW, CAT[trail.length % 2]) : ''}`;
       });
       context.console.log(`${rows.join('\n')}\n\x1b[6A`);
     },
@@ -70,7 +89,7 @@ export function nyanReporter(): Reporter {
       // `context.counts` is the run's live counter, so it is already final here — no need to
       // tally anything yourself.
       const { total, passed, failed, skipped, todo } = context.counts;
-      const verdict = failed > 0 ? paint(31, 'nyan is sad') : paint(32, 'nyan is happy');
+      const verdict = failed > 0 ? inColor(RED, 'nyan is sad') : inColor(GREEN, 'nyan is happy');
 
       context.console.log(
         `\x1b[6B\n  ${verdict} — ${passed}/${total} passed` +
