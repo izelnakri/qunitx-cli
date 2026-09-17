@@ -40,23 +40,24 @@ export function inspect(value: unknown, depth: number = 2, color: boolean = fals
   // and written the rest of the day: strings yellow, `true`/`false` red like the keywords they are,
   // dates purple, numbers cyan, nothingness dimmed. Every type keeps a colour of its own — a
   // palette where two of them collide gives up the one thing colour buys.
-  const RED = 31;
-  const YELLOW = 33;
-  const BLUE = 34;
-  const MAGENTA = 35;
-  const CYAN = 36;
-  const DIM = 90;
+  //
+  // One function per colour, the shape kleur made everybody expect: a call site reads
+  // `yellow(quote(input))`, and nobody has to know what 33 is. The number appears exactly once,
+  // next to its own name. Local rather than imported from lib/utils/color.ts because this whole
+  // function is injected into the PAGE as source text and must reference nothing outside itself.
   const ESC = String.fromCharCode(27);
+  const inColor =
+    (code: number) =>
+    (text: string): string =>
+      color ? `${ESC}[${code}m${text}${ESC}[39m` : text;
+  const red = inColor(31);
+  const yellow = inColor(33);
+  const blue = inColor(34);
+  const magenta = inColor(35);
+  const cyan = inColor(36);
+  const dim = inColor(90);
 
   return format(value, depth);
-
-  // `inColor`, not `inStyle`: this takes a colour NUMBER and puts it first, because every call
-  // here reads `inColor(YELLOW, …)`. The terminal module's `inStyle(text, style)` takes a whole
-  // SGR prefix and puts the text first — two functions one letter apart with swapped arguments is
-  // a bug waiting to be typed, so they do not share a name.
-  function inColor(code: number, text: string): string {
-    return color ? `${ESC}[${code}m${text}${ESC}[39m` : text;
-  }
 
   /**
    * Width as the terminal sees it — colour codes take columns nowhere but in the string.
@@ -73,15 +74,15 @@ export function inspect(value: unknown, depth: number = 2, color: boolean = fals
   }
 
   function format(input: unknown, left: number): string {
-    if (input === null) return inColor(DIM, 'null');
-    if (input === undefined) return inColor(DIM, 'undefined');
+    if (input === null) return dim('null');
+    if (input === undefined) return dim('undefined');
 
     const type = typeof input;
-    if (type === 'string') return inColor(YELLOW, quote(input as string));
-    if (type === 'number') return inColor(CYAN, Object.is(input, -0) ? '-0' : String(input));
-    if (type === 'bigint') return inColor(CYAN, `${input}n`);
-    if (type === 'boolean') return inColor(RED, String(input));
-    if (type === 'symbol') return inColor(YELLOW, String(input));
+    if (type === 'string') return yellow(quote(input as string));
+    if (type === 'number') return cyan(Object.is(input, -0) ? '-0' : String(input));
+    if (type === 'bigint') return cyan(`${input}n`);
+    if (type === 'boolean') return red(String(input));
+    if (type === 'symbol') return yellow(String(input));
     if (type === 'function') return formatFunction(input as (...args: unknown[]) => unknown);
 
     return formatObject(input as object, left);
@@ -90,9 +91,9 @@ export function inspect(value: unknown, depth: number = 2, color: boolean = fals
   function formatFunction(input: (...args: unknown[]) => unknown): string {
     const isClass = /^\s*class[\s{]/.test(Function.prototype.toString.call(input));
     const name = input.name;
-    if (isClass) return inColor(BLUE, name ? `[class ${name}]` : '[class (anonymous)]');
+    if (isClass) return blue(name ? `[class ${name}]` : '[class (anonymous)]');
 
-    return inColor(BLUE, name ? `[Function: ${name}]` : '[Function (anonymous)]');
+    return blue(name ? `[Function: ${name}]` : '[Function (anonymous)]');
   }
 
   function formatObject(input: object, left: number): string {
@@ -108,9 +109,9 @@ export function inspect(value: unknown, depth: number = 2, color: boolean = fals
     }
     if (input instanceof Error) return input.stack || `${input.name}: ${input.message}`;
     if (input instanceof Date) {
-      return inColor(MAGENTA, isNaN(input.getTime()) ? 'Invalid Date' : input.toISOString());
+      return magenta(isNaN(input.getTime()) ? 'Invalid Date' : input.toISOString());
     }
-    if (input instanceof RegExp) return inColor(RED, String(input));
+    if (input instanceof RegExp) return red(String(input));
     // Settled-ness is not observable synchronously, so the terminal renders a top-level promise
     // from CDP's preview instead; this is what a promise nested inside something else looks like.
     if (input instanceof Promise) return 'Promise';

@@ -18,9 +18,15 @@ function tutorial(): string {
   return DOC.slice(from, next === -1 ? DOC.length : next);
 }
 
-/** The fenced blocks inside it, which are the part that is a copy of something. */
+/**
+ * The fenced blocks inside it, which are the part that is a copy of something — with their own
+ * comments stripped, because prose is not a reference. A comment reading "the colour FUNCTIONS"
+ * is not the snippet naming a constant, and this test said it was until it was.
+ */
 function snippets(section: string): string[] {
-  return [...section.matchAll(/```(?:ts|js)\n([\s\S]*?)```/g)].map((found) => found[1] ?? '');
+  return [...section.matchAll(/```(?:ts|js)\n([\s\S]*?)```/g)].map((found) =>
+    (found[1] ?? '').replaceAll(/\/\/.*$/gm, ''),
+  );
 }
 
 module('Api | the nyan tutorial quotes the file it links to', { concurrency: true }, () => {
@@ -48,7 +54,9 @@ module('Api | the nyan tutorial quotes the file it links to', { concurrency: tru
     const code = snippets(tutorial()).join('\n');
     // SCREAMING_CASE, which is how this example spells a colour and a frame table.
     const named = new Set([...code.matchAll(/\b([A-Z][A-Z_]{2,})\b/g)].map((found) => found[1]));
-    assert.true(named.has('RED'), 'the colour names are what drifted, so they are what is checked');
+    // Colours are lowercase FUNCTIONS now, so they are caught by the call check above; what is
+    // left in this shape is the two tables. `RAINBOW` is the one the tutorial cannot do without.
+    assert.true(named.has('RAINBOW'), 'the snippets do name a table, or this test proves nothing');
 
     for (const name of named) {
       // Declared by the example, or read off the environment by it — `NO_COLOR` is the second

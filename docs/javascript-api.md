@@ -738,18 +738,20 @@ The complete, runnable version is
 It draws a rainbow that grows one segment per finished test, with the cat riding the end of it.
 
 **1. One segment per test.** `onTestEnd` gets QUnit's `TestDetails`, so the outcome is a lookup.
-`inColor` is the example's own three-line helper — the colour first, and `NO_COLOR` honoured, which
-is the one thing a reporter that writes escapes has to remember:
+Colour is one function per colour — kleur's shape, and all colour ever needs to be. `NO_COLOR` is
+the one thing a reporter that writes escapes has to remember:
 
 ```ts
-const RED = 31;
-const GREY = 90;
-const inColor = (code: number, text: string): string =>
-  process.env.NO_COLOR ? text : `\x1b[${code}m${text}\x1b[39m`;
+const inColor =
+  (code: number) =>
+  (text: string): string =>
+    process.env.NO_COLOR ? text : `\x1b[${code}m${text}\x1b[39m`;
+const red = inColor(31);
+const grey = inColor(90);
 
 function segment(status: TestDetails['status']): string {
-  if (status === 'failed') return inColor(RED, '!');
-  else if (status === 'skipped' || status === 'todo') return inColor(GREY, '·');
+  if (status === 'failed') return red('!');
+  else if (status === 'skipped' || status === 'todo') return grey('·');
 
   return '-';
 }
@@ -761,9 +763,10 @@ same reporter be silenced, or captured into a buffer, without changing it:
 ```ts
 onTestEnd(context: ReporterContext, details: TestDetails): void {
   trail.push(segment(details.status));
+  // RAINBOW holds the colour FUNCTIONS, so drawing a row is calling one.
   const rows = RAINBOW.map((colour, row) => {
-    const stripe = inColor(colour, trail.slice(Math.max(0, row - 2)).join(''));
-    return `  ${stripe}${row === 3 ? inColor(BRIGHT_YELLOW, CAT[trail.length % 2]) : ''}`;
+    const stripe = colour(trail.slice(Math.max(0, row - 2)).join(''));
+    return `  ${stripe}${row === 3 ? brightYellow(CAT[trail.length % 2]) : ''}`;
   });
   context.console.log(`${rows.join('\n')}\n\x1b[6A`); // redraw in place
 }
@@ -775,7 +778,7 @@ final — there is nothing to tally yourself:
 ```ts
 onRunEnd(context: ReporterContext, info): void {
   const { total, passed, failed } = context.counts;
-  const verdict = failed > 0 ? inColor(RED, 'nyan is sad') : inColor(GREEN, 'nyan is happy');
+  const verdict = failed > 0 ? red('nyan is sad') : green('nyan is happy');
   context.console.log(`\x1b[6B\n  ${verdict} — ${passed}/${total} passed in ${info.durationMs}ms\n`);
 }
 ```
