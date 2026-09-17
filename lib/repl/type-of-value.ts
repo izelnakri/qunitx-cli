@@ -7,7 +7,12 @@
 // that across. Helpers live inside it.
 
 /**
- * A TypeScript type for a runtime value.
+ * A TypeScript type for a runtime value — `typeof`, for people who want an answer.
+ *
+ * `typeOfValue` rather than `typeOf` because it is the only one of the three layers that takes a
+ * VALUE: `session.typeOf(expression)` asks the page, the page runs this, and
+ * `describeType(session, …)` above both prefers a written type to either. Naming them all `typeOf`
+ * would make the call chain unreadable in a stack trace.
  *
  * Structural, because that is what is knowable here: the page holds values, not declarations, and
  * `const a: string = 'x'` left no trace of the annotation by the time it is a string. What a
@@ -18,17 +23,17 @@
  * two hundred properties it has, and the same is true of anything with a constructor of its own.
  *
  * ```ts
- * import { describeType } from './describe-type.ts';
+ * import { typeOfValue } from './type-of-value.ts';
  *
- * describeType('hi'); // 'string'
- * describeType([1, 2]); // 'number[]'
- * describeType({ a: 1, b: 'x' }); // '{ a: number; b: string }'
- * describeType([1, 'x']); // '(number | string)[]'
- * describeType(new Map([['k', 1]])); // 'Map<string, number>'
- * describeType(null); // 'null'
+ * typeOfValue('hi'); // 'string'
+ * typeOfValue([1, 2]); // 'number[]'
+ * typeOfValue({ a: 1, b: 'x' }); // '{ a: number; b: string }'
+ * typeOfValue([1, 'x']); // '(number | string)[]'
+ * typeOfValue(new Map([['k', 1]])); // 'Map<string, number>'
+ * typeOfValue(null); // 'null'
  * ```
  */
-export function describeType(value: unknown, depth: number = 2): string {
+export function typeOfValue(value: unknown, depth: number = 2): string {
   // Enough of a shape to recognise it; past this it is noise, and `object` is the honest answer.
   const KEYS = 12;
   const SAMPLED = 20;

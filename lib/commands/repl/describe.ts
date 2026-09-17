@@ -68,19 +68,24 @@ export async function describeValue(
  * worked out from a function object could only ever be a worse guess at it. Everything else the
  * page describes from the value, which for everything else is all there is.
  *
+ * Named beside {@link describeValue}, which it is the parallel of, and deliberately NOT `typeOf`:
+ * that word belongs to the two layers under this one — `session.typeOf(expression)`, which asks
+ * the page, and `typeOfValue(value)`, which is what the page then runs. Three `typeOf`s in one
+ * call chain is a stack trace nobody can read.
+ *
  * ```ts
- * import { typeOf } from './describe.ts';
+ * import { describeType } from './describe.ts';
  *
  * import type { ReplSession } from '../../repl/session.ts';
  * import type { Theme } from '../../repl/theme.ts';
  *
  * // Defined, not invoked: it asks a live page what something is.
  * function example(session: ReplSession, palette: Theme) {
- *   return typeOf(session, 'answer', process.cwd(), palette); // 'number', or null
+ *   return describeType(session, 'answer', process.cwd(), palette); // 'number', or null
  * }
  * ```
  */
-export async function typeOf(
+export async function describeType(
   session: ReplSession,
   argument: string,
   cwd: string,

@@ -16,7 +16,7 @@ import { prelaunchPromise, shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { closeCompletely } from '../utils/close-with-grace.ts';
 import { Failure } from '../task/index.ts';
 import { harness } from '../setup/qunit-harness.ts';
-import { describeType } from './describe-type.ts';
+import { typeOfValue } from './type-of-value.ts';
 import { inspect } from './inspect.ts';
 import { colorEnabled } from '../utils/color.ts';
 import { namespaceFor } from './files.ts';
@@ -1946,7 +1946,7 @@ function initScript(config: Config): string {
     // The colour decision is made HERE and baked in: the page has no TTY, no `NO_COLOR` and no
     // idea whether anything is reading it.
     `globalThis.__qunitxInspect = (value, depth) => (${inspect.toString()})(value, depth ?? 2, ${colorEnabled});`,
-    `globalThis.__qunitxType = (value) => (${describeType.toString()})(value, 2);`,
+    `globalThis.__qunitxType = (value) => (${typeOfValue.toString()})(value, 2);`,
     `(${harness.toString()})({ timeout: ${config.timeout} });`,
   ].join('\n');
 }
