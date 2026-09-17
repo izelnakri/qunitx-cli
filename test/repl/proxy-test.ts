@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import { WebSocket, WebSocketServer } from 'ws';
-import { bridgeTo } from '../../lib/repl/bridge.ts';
+import { proxyTo } from '../../lib/repl/proxy.ts';
 import '../helpers/custom-asserts.ts';
 import type { AddressInfo } from 'node:net';
 
@@ -8,7 +8,7 @@ import type { AddressInfo } from 'node:net';
  * A stand-in for Chrome's debugger endpoint: echoes what it is told, prefixed.
  *
  * `slowly` holds the handshake open, which is the only way to be sure a message arrives before the
- * socket to Chrome is ready — the case the bridge has to hold rather than drop.
+ * socket to Chrome is ready — the case the proxy has to hold rather than drop.
  */
 async function upstream(slowly = 0): Promise<{ url: string; seen: string[]; close: () => void }> {
   const seen: string[] = [];
@@ -50,11 +50,11 @@ const answered = (socket: WebSocket) =>
 // Chrome answers 403 to any debugger connection carrying an Origin header, and the only flag that
 // would lift that takes `*` — every origin, including whatever is open in your own browser. Node
 // sends no Origin, so the frontend connects here and this connects onward.
-module('Repl | bridge', { concurrency: true }, () => {
+module('Repl | proxy', { concurrency: true }, () => {
   test('what the frontend sends reaches Chrome, and what Chrome answers comes back', async (assert) => {
     const chrome = await upstream();
-    const bridge = await bridgeTo(chrome.url);
-    const client = frontend(bridge.address);
+    const proxy = await proxyTo(chrome.url);
+    const client = frontend(proxy.address);
     await new Promise((open) => client.once('open', open));
 
     client.send('{"id":1,"method":"Page.enable"}');
@@ -63,7 +63,7 @@ module('Repl | bridge', { concurrency: true }, () => {
     assert.strictEqual(reply, 'echo:{"id":1,"method":"Page.enable"}', 'both ways');
     assert.deepEqual(chrome.seen, ['{"id":1,"method":"Page.enable"}'], 'verbatim, not re-encoded');
     client.close();
-    await bridge.close();
+    await proxy.close();
     chrome.close();
   });
 
@@ -72,28 +72,28 @@ module('Repl | bridge', { concurrency: true }, () => {
     // Chrome has finished opening. The first message is the one asking what the page IS, and a
     // DevTools that never gets an answer to it shows an empty window.
     const chrome = await upstream(400);
-    const bridge = await bridgeTo(chrome.url);
-    const client = frontend(bridge.address);
+    const proxy = await proxyTo(chrome.url);
+    const client = frontend(proxy.address);
     client.once('open', () => client.send('first'));
 
     assert.strictEqual(await answered(client), 'echo:first');
     client.close();
-    await bridge.close();
+    await proxy.close();
     chrome.close();
   });
 
-  test('closing one end closes the other, and closing the bridge stops it listening', async (assert) => {
+  test('closing one end closes the other, and closing the proxy stops it listening', async (assert) => {
     const chrome = await upstream();
-    const bridge = await bridgeTo(chrome.url);
-    const client = frontend(bridge.address);
+    const proxy = await proxyTo(chrome.url);
+    const client = frontend(proxy.address);
     await new Promise((open) => client.once('open', open));
     const ended = new Promise((closed) => client.once('close', closed));
 
-    await bridge.close();
+    await proxy.close();
     await ended;
 
     const refused = await new Promise<string>((resolve) => {
-      const late = frontend(bridge.address);
+      const late = frontend(proxy.address);
       late.once('error', (error: Error) => resolve(error.message));
       late.once('open', () => resolve('still listening'));
     });

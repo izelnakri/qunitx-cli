@@ -2,8 +2,8 @@ import { WebSocket, WebSocketServer } from 'ws';
 import type { AddressInfo } from 'node:net';
 import type { RawData } from 'ws';
 
-/** A running bridge: the port a frontend may connect to, and how to take it down. */
-export interface Bridge {
+/** A running proxy: the port a frontend may connect to, and how to take it down. */
+export interface Proxy {
   /** Where the DevTools frontend should point its `ws=` — `localhost:<port>`. */
   address: string;
   /** Drops every frontend still attached and stops listening. */
@@ -24,20 +24,23 @@ export interface Bridge {
  * DevTools, and it listens on the loopback interface only.
  *
  * The whole file is that one problem. It serves nothing, knows nothing about `/repl` or about this
- * REPL, and would do the same job for any frontend a browser has to open on any CDP target — which
- * is why it is `bridge.ts` and not `devtools.ts`.
+ * REPL, and would do the same job for any frontend a browser has to open on any CDP target.
+ *
+ * `proxyTo`, not `connect`: it does not open a connection, it LISTENS for one. What comes back is
+ * an address for somebody else to dial, and the socket onward to Chrome is not made until they do.
+ * A `connect()` returning a port to connect to would have the direction backwards.
  *
  * ```ts
- * import { bridgeTo } from './bridge.ts';
+ * import { proxyTo } from './proxy.ts';
  *
  * // Defined, not invoked: it binds a port and talks to a real browser.
  * async function example() {
- *   const bridge = await bridgeTo('ws://127.0.0.1:9222/devtools/page/ABC');
- *   return bridge.address; // 'localhost:41234' — what a frontend's `ws=` should say
+ *   const proxy = await proxyTo('ws://127.0.0.1:9222/devtools/page/ABC');
+ *   return proxy.address; // 'localhost:41234' — what a frontend's `ws=` should say
  * }
  * ```
  */
-export async function bridgeTo(upstream: string): Promise<Bridge> {
+export async function proxyTo(upstream: string): Promise<Proxy> {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   await new Promise((listening) => server.once('listening', listening));
 

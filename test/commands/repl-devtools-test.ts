@@ -54,7 +54,7 @@ module('Flags | repl | /repl', { concurrency: true }, () => {
       assert.true(parts !== null, `Chrome's own frontend, pointed at a socket — got ${location}`);
       // The socket is NOT Chrome's own: a browser sends an Origin header, and Chrome answers 403
       // to any debugger connection that has one.
-      assert.notStrictEqual(parts?.[2], parts?.[1], 'the frontend connects through the bridge');
+      assert.notStrictEqual(parts?.[2], parts?.[1], 'the frontend connects through the proxy');
       assert.includes(said, 'http://localhost:18287/repl\n', '`.devtools` answers the same');
     } else {
       assert.strictEqual(status, 503, 'nothing is promised, and asking says so rather than 404');

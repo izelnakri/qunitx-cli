@@ -20,8 +20,8 @@ import { typeOfValue } from './type-of-value.ts';
 import { inspect } from './inspect.ts';
 import { colorEnabled } from '../utils/color.ts';
 import { namespaceFor } from './files.ts';
-import { bridgeTo } from './bridge.ts';
-import type { Bridge } from './bridge.ts';
+import { proxyTo } from './proxy.ts';
+import type { Proxy } from './proxy.ts';
 import type { Plugin } from 'esbuild';
 import type { Browser as PlaywrightBrowser, CDPSession, Page } from 'playwright-core';
 import type { HTTPServer } from '../web/index.ts';
@@ -639,7 +639,7 @@ export async function start(
     live = session;
     cdp.on('Debugger.paused', (event) => session.onPaused(event));
     session.loaded = await session.readLoaded();
-    // Asked once, so the banner offers the address only where opening it would work. The bridge
+    // Asked once, so the banner offers the address only where opening it would work. The proxy
     // behind it is not made here: nothing listens until somebody actually asks for DevTools.
     session.inspector = (await session.debuggingTarget()) === null ? null : `${url}/repl`;
     // The page's own bundle loaded these, so nothing recorded how — and a preloaded file is the
@@ -736,8 +736,8 @@ class Session implements ReplSession {
   // them a function from an imported file has a location V8 knows and nothing here can read, so
   // `.doc` degrades to "here is the value" the moment a file is brought in.
   #maps = new Map<string, SourceMap.SourceMapDecoder>();
-  // Nothing listens until somebody asks for DevTools, and then one bridge serves every window.
-  #bridge: Bridge | null = null;
+  // Nothing listens until somebody asks for DevTools, and then one proxy serves every window.
+  #proxy: Proxy | null = null;
   #bundles = 0;
   #inputs = 0;
   // Resolves the evaluation that was in flight when the pause happened. `Runtime.evaluate` does not
@@ -1130,15 +1130,15 @@ class Session implements ReplSession {
    *
    * The frontend is Chrome's own, served from its port. Its socket is not: a browser sends an
    * `Origin` header and Chrome answers 403 to any debugger connection that has one, so it goes
-   * through a bridge that connects onward from Node, where there is none to object to. The bridge
+   * through a proxy that connects onward from Node, where there is none to object to. The proxy
    * is made on first use and closed with the session.
    */
   async devtoolsUrl(): Promise<string | null> {
     const found = await this.debuggingTarget();
     if (found === null) return null;
-    this.#bridge ??= await bridgeTo(`ws://127.0.0.1:${found.port}/devtools/page/${found.target}`);
+    this.#proxy ??= await proxyTo(`ws://127.0.0.1:${found.port}/devtools/page/${found.target}`);
 
-    return `http://localhost:${found.port}/devtools/inspector.html?ws=${this.#bridge.address}`;
+    return `http://localhost:${found.port}/devtools/inspector.html?ws=${this.#proxy.address}`;
   }
 
   /** Remembers how a file the page loaded for itself got there, so it can be loaded again. */
@@ -1493,7 +1493,7 @@ class Session implements ReplSession {
     await this.#cdp.detach().catch(() => {});
     // A listening socket outlives the process that forgot it, and this one only exists at all if
     // somebody opened DevTools.
-    await this.#bridge?.close();
+    await this.#proxy?.close();
     // `closeCompletely`, because a REPL session is closed BY a caller that then expects to end.
     // `browser.close()` outliving the first grace is common on a loaded Windows runner, and
     // returning there would hand back a closed session while playwright still held the browser.
