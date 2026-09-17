@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { module, test } from 'qunitx';
-import { setupHighlighting } from '../../lib/commands/repl/index.ts';
+import { setupLineHighlighting } from '../../lib/commands/repl/index.ts';
 import { theme } from '../../lib/repl/theme.ts';
 import '../helpers/custom-asserts.ts';
 
@@ -9,7 +9,7 @@ const ESC = String.fromCharCode(27);
 // readline decides WHERE everything goes and this only decides what it looks like, which is the
 // whole reason the substitution is by value: anything that is not exactly the line readline
 // believes it is drawing passes through untouched, so no cursor arithmetic can go wrong.
-module('Commands | repl | highlighting', { concurrency: true }, () => {
+module('Commands | repl | line highlighting', { concurrency: true }, () => {
   /** A REPLServer with the internals painting reaches for, and a record of what reached output. */
   function fakeServer(prompt = '> ') {
     const input = new EventEmitter();
@@ -23,7 +23,10 @@ module('Commands | repl | highlighting', { concurrency: true }, () => {
       _refreshLine: () => void (server.refreshed += 1),
     };
     // Forced on: the test runner's stdout is a pipe, where a real session paints nothing.
-    setupHighlighting(server as unknown as Parameters<typeof setupHighlighting>[0], theme(true));
+    setupLineHighlighting(
+      server as unknown as Parameters<typeof setupLineHighlighting>[0],
+      theme(true),
+    );
 
     return { server, written, input };
   }

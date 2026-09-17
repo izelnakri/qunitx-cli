@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { module, test } from 'qunitx';
-import { setupPreview } from '../../lib/commands/repl/index.ts';
+import { setupRightMarginPreview } from '../../lib/commands/repl/index.ts';
 import '../helpers/custom-asserts.ts';
 
 const ESC = String.fromCharCode(27);
@@ -38,11 +38,13 @@ module('Commands | repl | preview', { concurrency: true }, () => {
           : Promise.resolve(options.answer ?? '');
       },
     };
-    setupPreview(
-      server as unknown as Parameters<typeof setupPreview>[0],
-      session as unknown as Parameters<typeof setupPreview>[1],
-      () => options.busy ?? false,
-      () => options.reserved ?? '',
+    setupRightMarginPreview(
+      server as unknown as Parameters<typeof setupRightMarginPreview>[0],
+      session as unknown as Parameters<typeof setupRightMarginPreview>[1],
+      {
+        isEvaluating: () => options.busy ?? false,
+        suggestionOnTheRow: () => options.reserved ?? '',
+      },
     );
 
     /** A keystroke, and the wait the debounce asks for. */

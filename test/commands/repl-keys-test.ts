@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream';
 import { module, test } from 'qunitx';
-import { vimKeys, withoutTerminalReports } from '../../lib/commands/repl/index.ts';
+import { withVimHistoryKeys, withoutTerminalReports } from '../../lib/commands/repl/index.ts';
 import '../helpers/custom-asserts.ts';
 
 // Ctrl-K and Ctrl-J are rewritten before readline sees them, because neither can be handled after.
@@ -15,7 +15,7 @@ module('Commands | repl | vim history keys', { concurrency: true }, () => {
   function translate(...chunks: Array<Buffer | string>): Promise<string> {
     const stdin = new PassThrough();
     (stdin as unknown as { setRawMode: (mode: boolean) => void }).setRawMode = () => {};
-    const out = vimKeys(stdin as unknown as NodeJS.ReadStream);
+    const out = withVimHistoryKeys(stdin as unknown as NodeJS.ReadStream);
     const seen: Buffer[] = [];
     out.on('data', (chunk: Buffer) => seen.push(Buffer.from(chunk)));
 

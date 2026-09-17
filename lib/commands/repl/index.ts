@@ -11,7 +11,6 @@ import { blue, red } from '../../utils/color.ts';
 import { complete, completionCache, setupSuggestionBehaviors } from './completion.ts';
 import type { CompleterCallback } from './completion.ts';
 import { showFrameSource } from './frames.ts';
-import { pageGone } from './page-gone.ts';
 import { define } from './command.ts';
 import type { ReplContext } from './command.ts';
 import { command as Back } from './commands/back.ts';
@@ -52,19 +51,41 @@ import { command as Vi } from './commands/vi.ts';
 import { command as Vim } from './commands/vim.ts';
 import { command as View } from './commands/view.ts';
 import { HISTORY_KEPT, setupHistory } from './history.ts';
-import { setupHighlighting } from './highlighting.ts';
-import { setupPreview } from './preview.ts';
 import { shell } from './shell.ts';
-import { vimKeys } from './keys.ts';
 import { findProjectRoot } from '../../utils/find-project-root.ts';
-import { ESCAPE, terminalWidth } from '../../repl/terminal.ts';
+import { ESCAPE, plain, plainLength, terminalWidth, truncate } from '../../repl/terminal.ts';
 import { failureText } from './command.ts';
-import { depth } from '../../repl/highlight.ts';
+import { depth, highlight } from '../../repl/highlight.ts';
 import { theme } from '../../repl/theme.ts';
+import type { Theme } from '../../repl/theme.ts';
 import type { ReplSession } from '../../repl/session.ts';
 import type { Config as ResolvedConfig } from '../../types.ts';
 
 const PROMPT = '> ';
+
+// Ctrl-K and Ctrl-J as their raw bytes, and the arrows readline already understands.
+const CTRL_K = 0x0b;
+const CTRL_J = 0x0a;
+const ARROW_UP = '\u001b[A';
+const ARROW_DOWN = '\u001b[B';
+// SGR mouse (`ESC [ < … M|m`), legacy mouse (`ESC [ M` plus three bytes), and cursor position
+// (`ESC [ … R`). Built rather than written as literals: a regex literal holding a real escape
+// character is exactly what the linter refuses, and it is right to.
+const TERMINAL_REPORTS = [
+  new RegExp(`${ESCAPE}\\[<\\d+;\\d+;\\d+[Mm]`, 'g'),
+  new RegExp(`${ESCAPE}\\[M[\\s\\S]{3}`, 'g'),
+  new RegExp(`${ESCAPE}\\[\\d+;\\d+R`, 'g'),
+];
+// How wide a terminal has to be before an answer can share the line with the question. Under this
+// the two fight for the same columns and the answer wins arguments it should not.
+const PREVIEW_MINIMUM_COLUMNS = 60;
+// And how much room the answer needs to be worth drawing. Less than this is an ellipsis with a
+// character in front of it.
+const PREVIEW_MINIMUM_WIDTH = 12;
+// The gap between what is typed and what it comes to, so the two never read as one expression.
+const PREVIEW_GAP = 2;
+// Long enough that a burst of typing asks once, short enough to feel like it answered as you went.
+const PREVIEW_DELAY_MS = 90;
 
 /**
  * Runs `qunitx repl`: opens a browser page, then reads, evaluates and prints in it until the input
@@ -148,7 +169,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
     // line synchronously — so `echo $'1+1\n2+2' | qunitx repl` started both evaluations at once and
     // reached EOF before either answered. A terminal keeps the real stdin: raw mode, keypresses
     // and history need a TTY, and a human cannot type faster than the page can answer.
-    const input = interactive ? vimKeys(process.stdin) : new PassThrough();
+    const input = interactive ? withVimHistoryKeys(process.stdin) : new PassThrough();
     let evaluating = false;
     // Set once the page has gone, so the session ends on the next thing that notices rather than
     // once per command that fails.
@@ -250,7 +271,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
     const end = (target: REPLServer) => {
       if (gone) return;
       gone = true;
-      target.output.write(red(`\n${pageGone()}\n`));
+      target.output.write(red(`\n${pageGoneMessage()}\n`));
       target.close();
     };
 
@@ -361,9 +382,14 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
     setupHistory(server, interactive);
     // Before the suggestion, and that order matters: both redraw on a keypress, and the ghost has
     // to be written after the line it hangs off has been painted.
-    if (interactive) setupHighlighting(server, palette);
+    if (interactive) setupLineHighlighting(server, palette);
     const ghost = interactive ? setupSuggestionBehaviors(server, names, cwd) : () => '';
-    if (interactive) setupPreview(server, session, () => evaluating, ghost);
+    if (interactive) {
+      setupRightMarginPreview(server, session, {
+        isEvaluating: () => evaluating,
+        suggestionOnTheRow: ghost,
+      });
+    }
 
     // Registering this listener replaces `node:repl`'s own Ctrl-C handling, so the parts worth
     // keeping are reproduced: interrupt a runaway expression when one is in flight, otherwise
@@ -444,9 +470,280 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 // Re-exported so the terminal layer has one door, whichever room a thing lives in.
 export { edit, replayableSource, whatToRun } from './editor.ts';
 export { complete, setupSuggestionBehaviors, mutedSuggestionStyle } from './completion.ts';
-export { pageGone } from './page-gone.ts';
 export { trimHistoryFile } from './history.ts';
-export { setupHighlighting } from './highlighting.ts';
-export { setupPreview } from './preview.ts';
 export { shell } from './shell.ts';
-export { vimKeys, withoutTerminalReports } from './keys.ts';
+
+// ── The prompt itself ─────────────────────────────────────────────────────────
+//
+// Four things that only `drive` above calls, and that only exist so it stays readable: the input
+// stream it reads, the colours it types in, the answer it shows before Enter, and what it says
+// when the page goes. Each was its own file until a reviewer pointed out that a module nobody
+// imports twice is a file you open once and never again.
+
+/**
+ * `stdin`, with Ctrl-K and Ctrl-J walking history — a NEW stream, which is what to read instead.
+ *
+ * Rewritten bytes rather than a keypress listener, for two reasons a listener cannot get around.
+ * Ctrl-K already means kill-to-end-of-line, and a second listener does not replace readline's — it
+ * runs as well, so the line would be shredded on the way to the previous entry. And Ctrl-J is not
+ * a distinguishable key at all: it arrives as `\n`, which readline reads as Enter and every
+ * multi-line paste is full of. Binding it by name would stop pastes submitting.
+ *
+ * The paste is what the single-byte test is for. A keystroke arrives on its own; a paste arrives
+ * as a chunk, so a `\n` with company is left exactly as it was and still submits its line.
+ *
+ * What comes back stands in for the TTY it wraps — readline needs `isTTY` and `setRawMode` to put
+ * the terminal in the mode this depends on, and neither belongs to a plain PassThrough.
+ *
+ * ```ts
+ * import { PassThrough } from 'node:stream';
+ * import { withVimHistoryKeys } from './index.ts';
+ *
+ * const stdin = Object.assign(new PassThrough(), { setRawMode: () => {} });
+ * withVimHistoryKeys(stdin as unknown as NodeJS.ReadStream).isTTY; // true — readline must believe it
+ * ```
+ */
+export function withVimHistoryKeys(stdin: NodeJS.ReadStream): NodeJS.ReadStream {
+  const translated = new PassThrough();
+
+  stdin.on('data', (chunk: Buffer) => {
+    if (chunk.length === 1 && chunk[0] === CTRL_K) return void translated.write(ARROW_UP);
+    if (chunk.length === 1 && chunk[0] === CTRL_J) return void translated.write(ARROW_DOWN);
+    translated.write(withoutTerminalReports(chunk));
+  });
+  stdin.on('end', () => translated.end());
+
+  return Object.defineProperties(translated as unknown as NodeJS.ReadStream, {
+    isTTY: { value: true },
+    setRawMode: { value: (mode: boolean) => stdin.setRawMode(mode) },
+  });
+}
+
+/**
+ * The same bytes with the terminal's answers to ITSELF dropped: mouse and cursor-position reports.
+ *
+ * These are input in the sense that they arrive on stdin, and never in the sense that anyone typed
+ * them. An editor turns mouse tracking on; the terminal then reports every click and drag as
+ * `ESC [ < 32 ; 14 ; 45 M`, and the ones that arrive while nobody is reading sit in the TTY buffer
+ * until somebody is. That somebody was the prompt, which rendered them as text and then failed to
+ * parse them — the `32;14;45M32;11;45M…` after quitting nvim, and the `Invalid or unexpected
+ * token` on the line after.
+ *
+ * Filtered by SHAPE rather than by timing: a report is recognisable, and dropping it is right
+ * whenever it turns up. A settle window would only be a guess about how long the mess lasts.
+ *
+ * ```ts
+ * import { withoutTerminalReports } from './index.ts';
+ *
+ * const ESC = String.fromCharCode(27);
+ * withoutTerminalReports(Buffer.from(`a${ESC}[<32;14;45Mb`)).toString(); // 'ab'
+ * withoutTerminalReports(Buffer.from('1 + 1')).toString(); // '1 + 1' — typing is untouched
+ * ```
+ */
+export function withoutTerminalReports(chunk: Buffer): Buffer {
+  const text = chunk.toString('binary');
+  if (!text.includes(ESCAPE)) return chunk;
+
+  const stripped = TERMINAL_REPORTS.reduce((rest, report) => rest.replace(report, ''), text);
+
+  return stripped === text ? chunk : Buffer.from(stripped, 'binary');
+}
+
+/**
+ * Paints the line AS IT IS TYPED, in the colours the theme gives each capture.
+ *
+ * Two halves. `_writeToOutput` is where readline puts the prompt and the line on screen, so that
+ * is where the line is swapped for a painted one — the substitution is by VALUE, and anything
+ * that is not exactly what readline believes the line to be passes through untouched. And a
+ * refresh is asked for on every keypress, because readline appends a typed character in place
+ * rather than redrawing, and a keyword cannot be recognised one character at a time.
+ *
+ * Only what is written changes, never what readline computed: the painted line occupies the same
+ * columns as the plain one, so every cursor position readline worked out still lands where it
+ * meant to.
+ *
+ * ```ts
+ * import { setupLineHighlighting } from './index.ts';
+ * import { theme } from '../../repl/theme.ts';
+ *
+ * import type { REPLServer } from 'node:repl';
+ *
+ * // Defined, not invoked: it draws on a live terminal.
+ * function example(server: REPLServer) {
+ *   setupLineHighlighting(server, theme());
+ * }
+ * ```
+ */
+export function setupLineHighlighting(server: REPLServer, palette: Theme): void {
+  const internals = server as unknown as {
+    _writeToOutput(text: string): void;
+    _refreshLine(): void;
+  };
+  const write = internals._writeToOutput.bind(server);
+
+  internals._writeToOutput = (text: string) => {
+    const line = server.line ?? '';
+    const prompt = server.getPrompt();
+    // Exactly the prompt and the line, which is what a refresh writes and what nothing else does.
+    // A single appended character, a trailing space, a continuation row: none of them match, and
+    // all of them are written as readline wrote them.
+    const painting = line !== '' && text === `${prompt}${line}`;
+
+    return write(painting ? `${prompt}${highlight(line, palette)}` : text);
+  };
+
+  let scheduled = false;
+  server.input.on('keypress', () => {
+    // After readline has finished with this same keypress — refreshing under it would be undone.
+    // At most once a tick: a paste arrives as one chunk and readline reads a keypress per
+    // character, so without this a hundred-character paste repaints the line a hundred times.
+    if (scheduled) return;
+    scheduled = true;
+    setImmediate(() => {
+      scheduled = false;
+      // Nothing to paint on an empty line, and a redraw of one is actively wrong: the keypress
+      // that empties the line is Enter, which submits it, and the prompt this would draw belongs
+      // to the input just SENT rather than to the next one. It landed in front of the answer —
+      // `| undefined` for a block that had finished. Deleting back to empty is readline's own
+      // redraw, so nothing is lost by leaving that to it.
+      if ((server.line ?? '') !== '') internals._refreshLine();
+    });
+  });
+}
+
+/** What else is on the row, and whether the page is busy — the two things a preview must not fight. */
+interface PreviewRoom {
+  /** Is an evaluation already in flight? One is enough for the page to be doing. */
+  isEvaluating(): boolean;
+  /** The ghost suggestion drawn after the cursor, whose columns are already taken. */
+  suggestionOnTheRow(): string;
+}
+
+/**
+ * Shows what the line would come to, dimmed against the RIGHT MARGIN while it is still being typed.
+ *
+ * ```
+ * > document.title                                              'qunitx repl'
+ * ```
+ *
+ * Free by construction: the session evaluates with V8 refusing anything that has a side effect, so
+ * an expression that would change something answers nothing at all rather than changing it. What
+ * is left is worth showing before Enter, which is the whole point — the answer to `1 + 1` is not
+ * worth a round of the read-eval-print loop.
+ *
+ * Drawn only where there is room for it, and on ONE line. A narrow terminal, a line already near
+ * the edge, a value that needs more columns than are left: in each case it is cut to the room or
+ * not drawn at all, because a preview that crowds the line it belongs to costs more than it gives.
+ * Painted in the colours the page rendered it in, which are the colours the same value will be
+ * printed in a keystroke later.
+ *
+ * ```ts
+ * import { setupRightMarginPreview } from './index.ts';
+ *
+ * import type { REPLServer } from 'node:repl';
+ * import type { ReplSession } from '../../repl/session.ts';
+ *
+ * // Defined, not invoked: it evaluates in a live page and draws on a live terminal.
+ * function example(server: REPLServer, session: ReplSession) {
+ *   setupRightMarginPreview(server, session, {
+ *     isEvaluating: () => false,
+ *     suggestionOnTheRow: () => '',
+ *   });
+ * }
+ * ```
+ */
+export function setupRightMarginPreview(
+  server: REPLServer,
+  session: ReplSession,
+  { isEvaluating, suggestionOnTheRow }: PreviewRoom,
+): void {
+  let timer: NodeJS.Timeout | undefined;
+
+  const room = (line: string): number => {
+    const columns = (server.output as NodeJS.WriteStream).columns ?? 0;
+    // The suggestion counts: it is drawn after the cursor on this same row, and a preview that
+    // ignores it lands on top of the tail of what it is offering.
+    const used = plainLength(server.getPrompt()) + line.length + plainLength(suggestionOnTheRow());
+    // A line that has already wrapped has no right margin left to draw against, and working out
+    // where its rows are is arithmetic readline has already done for itself.
+    if (columns < PREVIEW_MINIMUM_COLUMNS || used >= columns) return 0;
+
+    return columns - used - PREVIEW_GAP;
+  };
+
+  const ask = () => {
+    const line = server.line ?? '';
+    // A dot command is not an expression, `:` is the shell, and an unfinished line is not worth
+    // asking about — the answer to half a line is a syntax error nobody typed yet.
+    const askable =
+      line.trim() !== '' &&
+      !line.trimStart().startsWith('.') &&
+      !line.trimStart().startsWith(':') &&
+      !isEvaluating() &&
+      room(line) >= PREVIEW_MINIMUM_WIDTH;
+    if (!askable) return;
+
+    void session.preview(line).then((rendered) => {
+      // ONE line, whatever it took to render. `window.self` comes back as a page of an object
+      // graph, and a value that shares a row with what is being typed cannot bring its own rows
+      // with it — the newlines land in the middle of the prompt and take the layout apart.
+      const value = rendered.replace(/\s*\n\s*/g, ' ');
+      // Decisions are made on the text, drawing on the colours: a value rendered as `undefined`
+      // is dim, and dim is escape codes that would never compare equal to anything.
+      const text = plain(value);
+      // The line may have moved on while the page was answering, and an answer to a line nobody is
+      // typing any more is worse than none.
+      if (text === '' || text === 'undefined' || server.line !== line) return;
+      // Typing `42` and being told `42` is not information.
+      if (text === line.trim()) return;
+      const width = room(line);
+      if (width < PREVIEW_MINIMUM_WIDTH) return;
+
+      draw(truncate(value, width));
+    });
+  };
+
+  const draw = (value: string) => {
+    const columns = (server.output as NodeJS.WriteStream).columns ?? 0;
+    const cursor = plainLength(server.getPrompt()) + (server.cursor ?? 0) + 1;
+    const at = columns - plainLength(value) + 1;
+    // Out to the right margin and back to where the cursor was, in one write, so nothing is ever
+    // on screen with the caret in the wrong place. Erased by readline's own redraw on the next
+    // keystroke, which clears from the cursor to the end of the screen.
+    server.output.write(`${ESCAPE}[${at}G${value}${ESCAPE}[0m${ESCAPE}[${cursor}G`);
+  };
+
+  server.input.on('keypress', () => {
+    clearTimeout(timer);
+    // After a pause in the typing, not during it: every request is a round trip to the page, and
+    // the answer to a line half typed is thrown away by the next keystroke anyway.
+    timer = setTimeout(ask, PREVIEW_DELAY_MS);
+    // Never the reason the process stays alive.
+    timer.unref();
+  });
+}
+
+/**
+ * What to SAY when the page has gone — the farewell, not the going.
+ *
+ * There is nothing to recover and nothing to offer: a REPL's whole value is the page it is holding
+ * — the bindings, the DOM, the module state — and all of it went at once. Reopening one would not
+ * bring any of it back; it would be the session you get by running the command again, which the
+ * shell already remembers. So the message says what was lost and what to type, and the caller ends
+ * the process rather than sitting at a prompt that cannot answer anything.
+ *
+ * ```ts
+ * import { pageGoneMessage } from './index.ts';
+ *
+ * pageGoneMessage(['node', 'cli.ts', 'repl', 'a.ts']).includes('qunitx repl a.ts'); // true
+ * ```
+ */
+export function pageGoneMessage(argv: readonly string[] = process.argv): string {
+  const again = argv.slice(2).join(' ');
+
+  return [
+    'the page is gone — the browser closed, crashed, or was killed.',
+    'Everything it was holding went with it, so there is nothing here to carry on with.',
+    again === '' ? 'Run qunitx repl again to start over.' : `Start again with: qunitx ${again}`,
+  ].join('\n');
+}
