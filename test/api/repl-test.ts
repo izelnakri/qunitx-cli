@@ -690,7 +690,7 @@ module('API | repl | values', { concurrency: true }, () => {
 
       assert.strictEqual(file?.file, HELPERS);
       assert.deepEqual(
-        file?.names.filter((entry) => ['double', 'GREETING'].includes(entry.name)),
+        file?.exports.filter((entry) => ['double', 'GREETING'].includes(entry.name)),
         [
           { name: 'GREETING', capture: '@string' },
           { name: 'double', capture: '@function' },

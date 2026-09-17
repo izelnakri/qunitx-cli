@@ -26,8 +26,8 @@ export const command: ReplCommand = {
       files.length === 0
         ? 'Nothing preloaded'
         : `${files
-            .map(({ file, names }) => {
-              const painted = names
+            .map(({ file, exports }) => {
+              const painted = exports
                 .map(({ name, capture }) => styled(name, repl.palette.style(capture)))
                 .join(', ');
 

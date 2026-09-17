@@ -30,14 +30,14 @@ import type { TestDetails } from '../reporters/types.ts';
 
 // Every object the page hands back is retained until it is released, and a REPL is a long
 // conversation — so each evaluation frees the previous one's handles by group before making more.
-const OBJECT_GROUP = 'qunitx-repl';
+const CDP_OBJECT_GROUP = 'qunitx-repl';
 // Where a breakpoint's own declarations are kept for as long as it lasts. On the page rather than
 // in this process, because their values are the page's — a DOM node declared at a breakpoint has
 // to still be that node on the next line.
-const HOLDER = 'globalThis.__qunitxPaused';
+const BREAKPOINT_HOLDER = 'globalThis.__qunitxPaused';
 // Kept apart from the group an evaluation uses: a preview is discarded on the next keystroke, and
 // releasing it must never take a handle the prompt is still rendering with.
-const PREVIEW_GROUP = 'qunitx-repl-preview';
+const CDP_PREVIEW_OBJECT_GROUP = 'qunitx-repl-preview';
 // A preview is worth milliseconds and no more — it is an aside, and the typing continues either way.
 const PREVIEW_TIMEOUT_MS = 100;
 // How long a step waits for the page to stop again. V8 stops at the next statement, so this is a
@@ -59,7 +59,7 @@ const BINDS = /\b(?:var|let|const|function|class|import)\b|(?<![=!<>])=(?!=)/;
 // Bounds the harness calls only, never a user's own expression: a slow test is QUnit's
 // `testTimeout` to enforce, and this is the backstop for a page that stops answering entirely.
 // Typed input is deliberately unbounded — `interrupt()` is how you stop it.
-const HARNESS_TIMEOUT_MS = 120_000;
+const CDP_HARNESS_TIMEOUT_MS = 120_000;
 
 /**
  * The REPL evaluates over the Chrome DevTools Protocol, which firefox and webkit do not speak.
@@ -112,9 +112,22 @@ export type ReplStartFailure =
  * ```
  */
 export interface ReplResult {
-  /** The rendered value, or the error and its source-mapped stack. Empty when there is nothing to print. */
+  /**
+   * The text to print, whichever way it went: the rendered value when the input worked, the error
+   * and its source-mapped stack when it did not. Empty when there is nothing to print.
+   *
+   * Always the thing a terminal writes out. It never says whether the input succeeded — an error
+   * message and a value are both just text by the time they get here.
+   */
   output: string;
-  /** The input did not work; `output` says why. */
+  /**
+   * Whether the input worked. What `output` never says, and what a caller needs before it can do
+   * anything but print: colour the line red, decline to add it to the replayable history, exit
+   * non-zero on a piped session.
+   *
+   * Orthogonal to `output` rather than derivable from it — `output` is non-empty in both cases,
+   * and `''` means "nothing to print", not "it went fine".
+   */
   failed: boolean;
   /**
    * The failure was the page throwing, rather than the session refusing the input.
@@ -195,7 +208,14 @@ export interface Frame {
  * ```
  */
 export interface ReplSession {
-  /** Where the page is served, e.g. `http://localhost:1234`. */
+  /**
+   * Where the PAGE is served, e.g. `http://localhost:1234` — the application, as a browser sees it.
+   *
+   * Worth holding apart from {@link ReplSession.inspector}, which is the other address a session
+   * has. Opening this one in a browser gets a FRESH DOCUMENT: same server, same routes, but a
+   * second realm that shares no bindings, no DOM and no module state with the prompt. Opening
+   * `inspector` gets a second VIEW of the realm the prompt is already typing into.
+   */
   url: string;
   /**
    * Where to open Chrome's DevTools on the page this session is evaluating in — the same realm,
@@ -231,10 +251,13 @@ export interface ReplSession {
    * The identifiers the page can complete with: everything on `base`, or what is in scope at top
    * level when `base` is `''`.
    *
-   * What both the suggestion and TAB are drawn from, so the two agree by construction rather than
-   * by two lists kept in step. Resolves empty for anything it cannot answer — a base that is not a
-   * plain dotted path, a closed session — because a completion is a convenience and never a reason
-   * for a prompt to report an error.
+   * What both the greyed-out suggestion and TAB are drawn from, so the two agree by construction
+   * rather than by two lists kept in step. One caller, `completion.ts`, which feeds both.
+   *
+   * It has to come from the page: a completion for `document.body.` is a list only the page holds,
+   * and a list assembled in Node would offer names this document does not have. Resolves empty for
+   * anything it cannot answer — a base that is not a plain dotted path, a closed session — because
+   * a completion is a convenience and never a reason for a prompt to report an error.
    */
   names(base: string): Promise<string[]>;
   /**
@@ -244,22 +267,35 @@ export interface ReplSession {
    * rather than the line-long summary a prompt has room for.
    *
    * V8 refuses to run anything with a side effect for this: an assignment, a declaration, a call
-   * that mutates. That refusal is the feature — an answer offered before Enter has to be free, and
-   * `deleteEverything()` typed at a prompt must not delete everything because it was typed.
+   * that mutates. That refusal is the feature, and it is why three different commands can afford
+   * to call it — an answer offered before Enter has to be free, and `deleteEverything()` typed at
+   * a prompt must not delete everything because it was typed.
+   *
+   * The three: the right-margin preview, on every keystroke, at the default depth; `.view`, at a
+   * depth deep enough to render the whole of a value; and `.copy`, which puts that text on the
+   * clipboard. `depth` is the only thing that differs between them.
    */
   preview(input: string, depth?: number): Promise<string>;
   /**
    * What this session has added to the page's globals — not the several hundred a browser starts
-   * with, which is a list nobody reads.
+   * with, which is a list nobody reads. `.scope`.
    *
    * Preloaded exports are in it too, attributed to the file they came from.
+   *
+   * The pair to {@link ReplSession.locals}, and the two differ in what they are OF, not in how
+   * much they show. This one is the running page's globals and answers at any time; `locals()` is
+   * one stopped frame's scope chain and is empty unless the page is paused. A name can easily be
+   * in one and not the other: `let answer = 1` at the prompt is in `scope()` forever, while a
+   * parameter of the function you are stopped inside is only ever in `locals()`.
    */
   scope(): Promise<ScopeEntry[]>;
   /**
    * What is in scope at the breakpoint, innermost first, or empty when the page is not paused.
+   * `.locals`, and the frame it reads is whichever {@link ReplSession.selectFrame} last chose.
    *
    * Read out of the stopped frame rather than evaluated, because a paused isolate runs nothing —
-   * asking it to would hang the one command a breakpoint exists for.
+   * asking it to would hang the one command a breakpoint exists for. That is the real difference
+   * from {@link ReplSession.scope}, which evaluates: same shape out, opposite mechanism in.
    */
   locals(): Promise<ScopeEntry[]>;
   /**
@@ -344,16 +380,47 @@ export interface ReplSession {
   /**
    * What each preloaded file put in scope, and what kind of thing each one is.
    *
+   * `exports` rather than `names`, because a list of `{ name, capture }` is not a list of names —
+   * and `names: Array<{ name }>` made every reader stop on the stutter. Not `values` either:
+   * nothing here is a value, and going to the page for thirty of them to print a heading would
+   * cost a round trip per file for something nobody asked to see.
+   *
    * The kind is a theme capture rather than a JavaScript type, because it exists to be COLOURED:
    * a list of names says nothing about what they are, and painting a function the colour this
    * REPL paints functions says it without printing a value.
+   *
+   * ```ts
+   * import type { ReplSession } from './session.ts';
+   *
+   * // Defined, not invoked: a real session owns a browser and a bound port.
+   * async function listing(session: ReplSession) {
+   *   return await session.imported();
+   *   // [{ file: 'test/fixtures/repl-helpers.ts',
+   *   //    exports: [{ name: 'double', capture: '@function' }] }]
+   * }
+   * ```
    */
-  imported(): Promise<Array<{ file: string; names: Array<{ name: string; capture: string }> }>>;
+  imported(): Promise<Array<{ file: string; exports: Array<{ name: string; capture: string }> }>>;
   /**
    * Where a value was written — the file and line of its declaration, or `null` for one that has
    * no source: a value typed at this prompt, or anything that is not a function.
    *
    * V8 knows this for functions and for nothing else, so that is the honest limit of it.
+   *
+   * The `file:line` header `.doc` and `.view` print, the path `.open <value>` hands the editor,
+   * and what `.copy` attributes a copied function to — four callers, all asking the same question
+   * a reader asks first: where is this written?
+   *
+   * ```ts
+   * import type { ReplSession } from './session.ts';
+   *
+   * // Defined, not invoked: a real session owns a browser and a bound port.
+   * async function whereWritten(session: ReplSession) {
+   *   await session.declaredAt('double'); // { file: 'test/fixtures/repl-helpers.ts', line: 15 }
+   *
+   *   return await session.declaredAt('GREETING'); // null — a string was never written anywhere
+   * }
+   * ```
    */
   declaredAt(expression: string): Promise<{ file: string; line: number } | null>;
   /**
@@ -368,7 +435,24 @@ export interface ReplSession {
    * declared it. `null` for a name the page already had, and for anything that is not a bare name.
    *
    * What {@link ReplSession.declaredAt} cannot answer: V8 knows the source of functions and of
-   * nothing else, while this session watched every other name arrive.
+   * nothing else, while this session watched every other name arrive. Without it, `.doc` on the
+   * string, the number or the imported namespace you just brought in says nothing at all — which
+   * is most of what a prompt is asked about.
+   *
+   * Synchronous, because the session already knows: it is a lookup in what it recorded, not a
+   * question for the page.
+   *
+   * ```ts
+   * import type { ReplSession } from './session.ts';
+   *
+   * // Defined, not invoked: a real session owns a browser and a bound port.
+   * function whereFrom(session: ReplSession) {
+   *   session.whereFrom('GREETING'); // 'test/fixtures/repl-helpers.ts'
+   *   session.whereFrom('answer'); // 'line 1' — declared at the prompt, not in a file
+   *
+   *   return session.whereFrom('document'); // null — the page already had it
+   * }
+   * ```
    */
   whereFrom(name: string): string | null;
   /** The breakpoints this session has set, in the order they were set. */
@@ -380,7 +464,19 @@ export interface ReplSession {
    * by anything else the prompt did not start.
    *
    * Without it such a pause is silent: the prompt keeps taking input, and every line of it
-   * evaluates in a frame nobody was told about.
+   * evaluates in a frame nobody was told about. That is the whole reason it exists — a pause the
+   * prompt CAUSED comes back on {@link ReplResult.pausedAt} and needs no listener, so this covers
+   * only the ones that arrive on their own.
+   *
+   * ```ts
+   * import type { ReplSession } from './session.ts';
+   *
+   * // Defined, not invoked: a real session owns a browser and a bound port.
+   * function announce(session: ReplSession, log: (line: string) => void) {
+   *   // `setTimeout(() => { debugger; }, 1000)` stops the page a second after the line answered.
+   *   session.whenPaused((where) => log(`paused at ${where} — \`.continue\` to carry on`));
+   * }
+   * ```
    */
   whenPaused(listener: (where: string) => void): void;
   /**
@@ -808,14 +904,14 @@ class Session implements ReplSession {
     // expression would change anything, which is what makes evaluating on a keystroke safe rather
     // than merely fast. The timeout covers what is pure but slow; a preview is worth milliseconds.
     await this.#cdp
-      .send('Runtime.releaseObjectGroup', { objectGroup: PREVIEW_GROUP })
+      .send('Runtime.releaseObjectGroup', { objectGroup: CDP_PREVIEW_OBJECT_GROUP })
       .catch(() => {});
     const evaluated = (await this.#cdp
       .send('Runtime.evaluate', {
         expression: input,
         throwOnSideEffect: true,
         timeout: PREVIEW_TIMEOUT_MS,
-        objectGroup: PREVIEW_GROUP,
+        objectGroup: CDP_PREVIEW_OBJECT_GROUP,
         generatePreview: true,
       })
       .catch(() => null)) as EvaluateResult | null;
@@ -1137,7 +1233,7 @@ class Session implements ReplSession {
         expression: `globalThis.__qunitxType(${expression})`,
         throwOnSideEffect: true,
         returnByValue: true,
-        timeout: HARNESS_TIMEOUT_MS,
+        timeout: CDP_HARNESS_TIMEOUT_MS,
       })
       .catch(() => null)) as EvaluateResult | null;
     if (!evaluated || evaluated.exceptionDetails) return '';
@@ -1150,7 +1246,7 @@ class Session implements ReplSession {
   }
 
   async imported(): Promise<
-    Array<{ file: string; names: Array<{ name: string; capture: string }> }>
+    Array<{ file: string; exports: Array<{ name: string; capture: string }> }>
   > {
     const every = this.loaded.flatMap(([, names]) => names);
     if (every.length === 0) return [];
@@ -1176,7 +1272,7 @@ class Session implements ReplSession {
 
     return this.loaded.map(([file, names]) => ({
       file,
-      names: names.map((name) => ({ name, capture: found[name] ?? '@variable' })),
+      exports: names.map((name) => ({ name, capture: found[name] ?? '@variable' })),
     }));
   }
 
@@ -1189,7 +1285,7 @@ class Session implements ReplSession {
       .send('Runtime.evaluate', {
         expression,
         throwOnSideEffect: true,
-        timeout: HARNESS_TIMEOUT_MS,
+        timeout: CDP_HARNESS_TIMEOUT_MS,
       })
       .catch(() => null)) as EvaluateResult | null;
     const objectId = evaluated?.result?.objectId;
@@ -1333,9 +1429,9 @@ class Session implements ReplSession {
     // it, which leaves the name free for the session to declare its own.
     if (had) {
       await this.#byValue(`(() => {
-        const held = ${HOLDER} ?? {};
+        const held = ${BREAKPOINT_HOLDER} ?? {};
         for (const name of ${JSON.stringify(kept)}) globalThis[name] = held[name];
-        delete ${HOLDER};
+        delete ${BREAKPOINT_HOLDER};
         return [];
       })()`);
     }
@@ -1449,7 +1545,7 @@ class Session implements ReplSession {
     // exists for. The handles are freed by the next input after resuming, or by closing.
     if (!this.#frameId) {
       await this.#cdp
-        .send('Runtime.releaseObjectGroup', { objectGroup: OBJECT_GROUP })
+        .send('Runtime.releaseObjectGroup', { objectGroup: CDP_OBJECT_GROUP })
         .catch(() => {});
     }
     // A declaration at a breakpoint would be thrown away with the evaluation that made it, so its
@@ -1565,7 +1661,7 @@ class Session implements ReplSession {
       return this.#cdp.send('Debugger.evaluateOnCallFrame', {
         callFrameId: this.#frameId,
         expression,
-        objectGroup: OBJECT_GROUP,
+        objectGroup: CDP_OBJECT_GROUP,
         generatePreview: true,
       }) as Promise<EvaluateResult>;
     }
@@ -1573,7 +1669,7 @@ class Session implements ReplSession {
     return this.#cdp.send('Runtime.evaluate', {
       expression,
       replMode: true,
-      objectGroup: OBJECT_GROUP,
+      objectGroup: CDP_OBJECT_GROUP,
       generatePreview: true,
       userGesture: true,
       // Not `awaitPromise`: REPL mode ignores it, and a prompt that silently awaited every promise
@@ -1623,7 +1719,7 @@ class Session implements ReplSession {
       expression: `globalThis.__qunitxHarness.${expression}`,
       awaitPromise: true,
       returnByValue: true,
-      timeout: HARNESS_TIMEOUT_MS,
+      timeout: CDP_HARNESS_TIMEOUT_MS,
     });
     if (evaluated.exceptionDetails) {
       const detail =
@@ -1671,7 +1767,7 @@ function pageHTML(config: Config): string {
 /** The CDP shapes this file reads back — narrower than the protocol's, and only where used. */
 /** One binding's slot in the holder, created on first use. */
 function held(name: string): string {
-  return `(${HOLDER} ??= {})[${JSON.stringify(name)}]`;
+  return `(${BREAKPOINT_HOLDER} ??= {})[${JSON.stringify(name)}]`;
 }
 
 /**
