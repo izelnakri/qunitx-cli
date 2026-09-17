@@ -20,8 +20,8 @@ import { describeType } from './describe-type.ts';
 import { inspect } from './inspect.ts';
 import { colorEnabled } from '../utils/color.ts';
 import { namespaceFor } from './files.ts';
-import { bridgeTo } from './devtools.ts';
-import type { Bridge } from './devtools.ts';
+import { bridgeTo } from './bridge.ts';
+import type { Bridge } from './bridge.ts';
 import type { Plugin } from 'esbuild';
 import type { Browser as PlaywrightBrowser, CDPSession, Page } from 'playwright-core';
 import type { HTTPServer } from '../web/index.ts';
@@ -551,12 +551,15 @@ export async function start(
     response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
     response.end(pageHTML(config));
   });
-  // On this server rather than Chrome's, because this is the port you already have: one address to
-  // remember, and it redirects to whatever port Chrome happened to take this time. Registered
-  // before the port is bound, and answered through a session that arrives later, so knocking while
-  // the browser is still starting is answered rather than 404'd.
+  // `/repl` rather than `/devtools`: this is the address you put in a browser, where the question
+  // being asked is "show me the page my repl is attached to" — and what answers it is Chrome's
+  // whole DevTools, of which the console is one panel. On this server rather than Chrome's,
+  // because this is the port you already have: one address to remember, and it redirects to
+  // whatever port Chrome happened to take this time. Registered before the port is bound, and
+  // answered through a session that arrives later, so knocking while the browser is still starting
+  // is answered rather than 404'd.
   let live: Session | null = null;
-  server.get('/devtools', (_request, response) => {
+  server.get('/repl', (_request, response) => {
     void (live?.devtoolsUrl() ?? Promise.resolve(null)).then((inspector) => {
       if (inspector === null) {
         response.writeHead(503, { 'Content-Type': 'text/plain' });
@@ -638,7 +641,7 @@ export async function start(
     session.loaded = await session.readLoaded();
     // Asked once, so the banner offers the address only where opening it would work. The bridge
     // behind it is not made here: nothing listens until somebody actually asks for DevTools.
-    session.inspector = (await session.debuggingTarget()) === null ? null : `${url}/devtools`;
+    session.inspector = (await session.debuggingTarget()) === null ? null : `${url}/repl`;
     // The page's own bundle loaded these, so nothing recorded how — and a preloaded file is the
     // one most likely to be edited while the session it opened is still up.
     session.rememberPreload(preload);
@@ -1123,7 +1126,7 @@ class Session implements ReplSession {
   }
 
   /**
-   * Chrome's own DevTools frontend, pointed at this session's page — what `/devtools` redirects to.
+   * Chrome's own DevTools frontend, pointed at this session's page — what `/repl` redirects to.
    *
    * The frontend is Chrome's own, served from its port. Its socket is not: a browser sends an
    * `Origin` header and Chrome answers 403 to any debugger connection that has one, so it goes

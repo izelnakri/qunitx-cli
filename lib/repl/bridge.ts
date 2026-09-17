@@ -23,8 +23,12 @@ export interface Bridge {
  * Chrome's protection is left exactly as it was. Nothing is listening until somebody asks for
  * DevTools, and it listens on the loopback interface only.
  *
+ * The whole file is that one problem. It serves nothing, knows nothing about `/repl` or about this
+ * REPL, and would do the same job for any frontend a browser has to open on any CDP target — which
+ * is why it is `bridge.ts` and not `devtools.ts`.
+ *
  * ```ts
- * import { bridgeTo } from './devtools.ts';
+ * import { bridgeTo } from './bridge.ts';
  *
  * // Defined, not invoked: it binds a port and talks to a real browser.
  * async function example() {

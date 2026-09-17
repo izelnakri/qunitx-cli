@@ -7,7 +7,9 @@ import type { ReplCommand } from '../command.ts';
  * `.devtools` — Chrome's own DevTools, on the very page the prompt is driving.
  *
  * The address handed out is this session's server, not Chrome's: one port to remember, and it
- * redirects to whatever port Chrome took this time.
+ * redirects to whatever port Chrome took this time. `<url>/repl` there, `.devtools` here — the
+ * address answers "show me the page my repl is attached to", asked from a browser's bar, while the
+ * command answers "open DevTools", asked from a prompt that already knows which page it is on.
  *
  * ```ts
  * import { command as devtoolsCommand } from './devtools.ts';

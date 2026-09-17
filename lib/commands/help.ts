@@ -65,7 +65,7 @@ ${color('$ qunitx run $scriptFile')}                 # Runs one file as a plain 
   a file that declares tests is run AS a suite, reported exactly as ${color('$ qunitx $file')} would
   accepts ${color('--browser')}, ${color('--port')}, ${color('--open')}, ${color('--timeout')} and ${color('--watch')}
 ${color('$ qunitx repl [files]')}                    # A prompt that evaluates in a real Chrome page; [files] are preloaded
-  open ${color('<url>/devtools')} in any Chromium browser for DevTools on the very page the prompt drives
+  open ${color('<url>/repl')} in any Chromium browser for DevTools on the very page the prompt drives
   ${color('--open')} evaluates in a window you can see instead of a headless one (not on macOS)
 
 ${highlight('Environment:')}

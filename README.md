@@ -251,7 +251,7 @@ a scratch buffer that runs what you save — with a value, a path or a URL after
 the way `xdg-open` would, and saving a file the session had loaded loads it again — `.search` finds
 tests by name, `.reload` evaluates every module again and drops what you typed, `.url` prints the
 server URL, and `.devtools` opens
-Chrome's own DevTools on the very page the prompt is driving). That last one is `<url>/devtools` in
+Chrome's own DevTools on the very page the prompt is driving). That last one is `<url>/repl` in
 any Chromium browser: same realm, same DOM, same paused frame — a value declared at the prompt is
 in that console, and a `debugger` shows as paused in both.
 

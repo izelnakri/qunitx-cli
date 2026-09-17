@@ -17,7 +17,7 @@ async function session(port: number): Promise<{ said: string; status: number; lo
   // Knocked on until it answers something final: the port binds before the browser is up, and
   // "still starting" is the route working rather than the answer being asked for.
   for (let waited = 0; waited < 25_000; waited += 250) {
-    const response = await fetch(`http://localhost:${port}/devtools`, { redirect: 'manual' }).catch(
+    const response = await fetch(`http://localhost:${port}/repl`, { redirect: 'manual' }).catch(
       () => null,
     );
     if (response) {
@@ -41,10 +41,10 @@ async function session(port: number): Promise<{ said: string; status: number; lo
 // nothing is pre-launched, and any runner that installed only the browser it is testing. So what is
 // asserted is the invariant rather than the environment — the address is offered exactly when
 // opening it would work — which is the promise a banner makes and the one worth keeping.
-module('Flags | repl | /devtools', { concurrency: true }, () => {
+module('Flags | repl | /repl', { concurrency: true }, () => {
   test('the address is offered exactly when opening it would work', async (assert) => {
     const { said, status, location } = await session(18287);
-    const offered = said.includes('inspect the same page at http://localhost:18287/devtools');
+    const offered = said.includes('inspect the same page at http://localhost:18287/repl');
 
     if (offered) {
       const parts =
@@ -55,7 +55,7 @@ module('Flags | repl | /devtools', { concurrency: true }, () => {
       // The socket is NOT Chrome's own: a browser sends an Origin header, and Chrome answers 403
       // to any debugger connection that has one.
       assert.notStrictEqual(parts?.[2], parts?.[1], 'the frontend connects through the bridge');
-      assert.includes(said, 'http://localhost:18287/devtools\n', '`.devtools` answers the same');
+      assert.includes(said, 'http://localhost:18287/repl\n', '`.devtools` answers the same');
     } else {
       assert.strictEqual(status, 503, 'nothing is promised, and asking says so rather than 404');
       assert.includes(said, 'no debugging endpoint here', 'and `.devtools` says why');

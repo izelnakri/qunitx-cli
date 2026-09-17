@@ -34,7 +34,7 @@ module('Flags | --open | repl', { concurrency: true }, () => {
       stdin: '.devtools\n',
     });
 
-    assert.notIncludes(result, '/devtools —', 'the banner leaves it out');
+    assert.notIncludes(result, '/repl —', 'the banner leaves it out');
     assert.includes(result, 'press F12 in the window instead');
   });
 });

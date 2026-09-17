@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
 import { WebSocket, WebSocketServer } from 'ws';
-import { bridgeTo } from '../../lib/repl/devtools.ts';
+import { bridgeTo } from '../../lib/repl/bridge.ts';
 import '../helpers/custom-asserts.ts';
 import type { AddressInfo } from 'node:net';
 
@@ -50,7 +50,7 @@ const answered = (socket: WebSocket) =>
 // Chrome answers 403 to any debugger connection carrying an Origin header, and the only flag that
 // would lift that takes `*` — every origin, including whatever is open in your own browser. Node
 // sends no Origin, so the frontend connects here and this connects onward.
-module('Repl | devtools bridge', { concurrency: true }, () => {
+module('Repl | bridge', { concurrency: true }, () => {
   test('what the frontend sends reaches Chrome, and what Chrome answers comes back', async (assert) => {
     const chrome = await upstream();
     const bridge = await bridgeTo(chrome.url);
