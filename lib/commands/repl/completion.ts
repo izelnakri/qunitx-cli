@@ -70,7 +70,7 @@ export function nameSource(session: ReplSession): NameSource {
     if (pending) return pending;
     const asked = generation;
     const request = session
-      .names(base)
+      .completions(base)
       .catch((): string[] => [])
       .then((names) => {
         inFlight.delete(base);

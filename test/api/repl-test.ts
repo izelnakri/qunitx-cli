@@ -488,7 +488,7 @@ module('API | repl | debugger', { concurrency: true }, () => {
 module('API | repl | names', { concurrency: true }, () => {
   test('the page’s own globals, which no history could have known', async (assert) => {
     await withRepl({}, async (session) => {
-      const names = await session.names('');
+      const names = await session.completions('');
 
       assert.true(names.includes('window'), 'a global nobody typed');
       assert.true(names.includes('document'));
@@ -503,7 +503,7 @@ module('API | repl | names', { concurrency: true }, () => {
       await session.eval('const label = "one"');
       await session.eval('globalThis.total = 42');
 
-      const names = await session.names('');
+      const names = await session.completions('');
 
       assert.true(names.includes('label'), 'the lexical scope, which globalThis does not carry');
       assert.true(names.includes('total'));
@@ -512,7 +512,7 @@ module('API | repl | names', { concurrency: true }, () => {
 
   test('properties come off the whole prototype chain', async (assert) => {
     await withRepl({}, async (session) => {
-      const names = await session.names('document');
+      const names = await session.completions('document');
 
       assert.true(names.includes('title'), 'its own');
       assert.true(names.includes('querySelector'), "and Document.prototype's");
@@ -525,7 +525,11 @@ module('API | repl | names', { concurrency: true }, () => {
       await session.eval('globalThis.calls = 0');
       await session.eval('globalThis.sideEffect = () => { calls += 1; return document }');
 
-      assert.deepEqual(await session.names('sideEffect()'), [], 'not a path, so not evaluated');
+      assert.deepEqual(
+        await session.completions('sideEffect()'),
+        [],
+        'not a path, so not evaluated',
+      );
       assert.strictEqual(
         (await session.eval('calls')).output,
         '0',

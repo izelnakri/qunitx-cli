@@ -248,18 +248,30 @@ export interface ReplSession {
    */
   settled(): Promise<void>;
   /**
-   * The identifiers the page can complete with: everything on `base`, or what is in scope at top
-   * level when `base` is `''`.
+   * What could come next after `base`: its own properties, or everything in scope at top level
+   * when `base` is `''`.
    *
    * What both the greyed-out suggestion and TAB are drawn from, so the two agree by construction
-   * rather than by two lists kept in step. One caller, `completion.ts`, which feeds both.
+   * rather than by two lists kept in step. One caller, `completion.ts`, which feeds both — and
+   * which caches these, so `repl.nameSource` is the cached front and this is the page itself.
    *
-   * It has to come from the page: a completion for `document.body.` is a list only the page holds,
-   * and a list assembled in Node would offer names this document does not have. Resolves empty for
-   * anything it cannot answer — a base that is not a plain dotted path, a closed session — because
-   * a completion is a convenience and never a reason for a prompt to report an error.
+   * It has to come from the page: the completions for `document.body.` are a list only the page
+   * holds, and one assembled in Node would offer names this document does not have. Resolves
+   * empty for anything it cannot answer — a base that is not a plain dotted path, a closed session
+   * — because a completion is a convenience and never a reason for a prompt to report an error.
+   *
+   * ```ts
+   * import type { ReplSession } from './session.ts';
+   *
+   * // Defined, not invoked: a real session owns a browser and a bound port.
+   * async function offer(session: ReplSession) {
+   *   await session.completions('document'); // ['body', 'title', 'querySelector', …]
+   *
+   *   return await session.completions(''); // what is in scope, including what you declared
+   * }
+   * ```
    */
-  names(base: string): Promise<string[]>;
+  completions(base: string): Promise<string[]>;
   /**
    * What the input WOULD evaluate to, or `''` where it cannot be known without doing something.
    *
@@ -791,7 +803,7 @@ class Session implements ReplSession {
     );
   }
 
-  async names(base: string): Promise<string[]> {
+  async completions(base: string): Promise<string[]> {
     // Re-checked here and not only in the caller: this interpolates `base` into source that the
     // page then runs, and it runs on a KEYSTROKE. A path of plain identifiers can trip a getter,
     // which is inherent to answering the question at all; anything else could be a function call
@@ -837,7 +849,7 @@ class Session implements ReplSession {
    */
   async takeBaseline(): Promise<void> {
     const exported = new Set(this.loaded.flatMap(([, names]) => names));
-    const present = await this.names('');
+    const present = await this.completions('');
     this.#baseline = new Set(present.filter((name) => !exported.has(name)));
     this.#origins = new Map(
       this.loaded.flatMap(([file, names]) => names.map((name): [string, string] => [name, file])),
@@ -846,7 +858,7 @@ class Session implements ReplSession {
   }
 
   async scope(): Promise<ScopeEntry[]> {
-    const introduced = (await this.names('')).filter((name) => !this.#baseline.has(name));
+    const introduced = (await this.completions('')).filter((name) => !this.#baseline.has(name));
     if (introduced.length === 0) return [];
 
     // Rendered in the page, by the renderer the prompt itself prints with — one round trip for
@@ -1619,7 +1631,7 @@ class Session implements ReplSession {
     // so it is worked out here, and only for inputs that could have declared anything. Never while
     // paused: names bound in a stopped frame belong to the frame, and `.locals` is what reads it.
     if (!this.#frameId && BINDS.test(input)) {
-      for (const name of await this.names('')) {
+      for (const name of await this.completions('')) {
         const introduced = !this.#baseline.has(name) && !this.#origins.has(name);
         if (introduced) this.#origins.set(name, `line ${this.#inputs}`);
       }

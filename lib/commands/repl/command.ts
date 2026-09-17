@@ -72,8 +72,14 @@ export interface ReplContext {
   interactive: boolean;
   /** How wide the terminal is, for anything laid out in columns. 80 where nothing says. */
   width: number;
-  /** The shared name cache behind TAB and the ghost suggestion. */
-  completions: NameSource;
+  /**
+   * The cached front of {@link ReplSession.completions} — what TAB and the ghost suggestion read.
+   *
+   * Named for its type rather than for what it feeds, because `repl.completions` beside
+   * `repl.session.completions()` put two different things one word apart: this one answers from a
+   * cache and never blocks, that one asks the page.
+   */
+  nameSource: NameSource;
   /** Every line this session has evaluated, oldest first — what `.save` writes out. */
   lines: readonly string[];
   /** The unfinished input so far, `''` when the line is whole. `.break` abandons it. */

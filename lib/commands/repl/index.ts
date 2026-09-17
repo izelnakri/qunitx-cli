@@ -155,7 +155,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
     let gone = false;
     // One source of names behind both TAB and the ghost, so the two can never disagree about what
     // the page has.
-    const completions = nameSource(session);
+    const names = nameSource(session);
     const palette = theme();
     // The unfinished input so far. Held HERE rather than handed to `node:repl` as a `Recoverable`,
     // because the two do different things with it: node's terminal path folds the block into one
@@ -185,7 +185,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
       // to list by evaluating the base through `eval`, which for us means running it in the page:
       // pressing TAB after `save()` would have saved.
       completer: (line: string, callback: CompleterCallback) =>
-        complete(server, completions, line, callback, cwd),
+        complete(server, names, line, callback, cwd),
       eval: (source, _context, _file, callback) => {
         // `:` is the shell, the way `:` is the command line in vim. A prompt you cannot run `git
         // status` from is a prompt you keep leaving, and leaving costs every binding in the page.
@@ -206,7 +206,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
             // Whatever just ran may have declared something. Marked stale rather than dropped: the
             // previous answer stays on offer while the new one is on its way, so a suggestion does
             // not blink out after every line.
-            completions.stale();
+            names.stale();
             // Unfinished: keep it, print nothing, and let the prompt say how deep it now is.
             if (result.incomplete) {
               repl.buffered = input.endsWith('\n') ? input : `${input}\n`;
@@ -300,7 +300,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
       cwd,
       palette,
       interactive,
-      completions,
+      nameSource: names,
       width: terminalWidth(server.output),
       // `node:repl` keeps this and `@types/node` does not admit it, so the cast is here rather
       // than at the one command that reads it.
@@ -362,7 +362,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
     // Before the suggestion, and that order matters: both redraw on a keypress, and the ghost has
     // to be written after the line it hangs off has been painted.
     if (interactive) setupHighlighting(server, palette);
-    const ghost = interactive ? setupSuggestions(server, completions, cwd) : () => '';
+    const ghost = interactive ? setupSuggestions(server, names, cwd) : () => '';
     if (interactive) setupPreview(server, session, () => evaluating, ghost);
 
     // Registering this listener replaces `node:repl`'s own Ctrl-C handling, so the parts worth
