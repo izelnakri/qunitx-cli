@@ -28,7 +28,7 @@ export const command: ReplCommand = {
   description: 'Copy a value to the clipboard — a function goes as the code that defines it',
   async main(repl, argument) {
     const copied = await copyValue(repl, argument);
-    repl.log(copied === null ? red(noSuchValueLine(argument, 'copy')) : blue(copied));
+    repl.log(copied === null ? red(noSuchValueLine('copy', argument)) : blue(copied));
   },
 };
 

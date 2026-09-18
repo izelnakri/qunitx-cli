@@ -1,7 +1,7 @@
 import * as Files from '../../../repl/files.ts';
 import { command as tree } from './tree.ts';
 import { reportBadPath } from '../report-bad-path.ts';
-import { valueDetails } from '../value-details.ts';
+import { valueInFull } from '../value-details.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -43,7 +43,7 @@ export const command: ReplCommand = {
     // the same delegation `.help` makes to `.doc`. The whole argument goes on, `-L 2` included.
     if (found.kind === 'directory') return tree.main(repl, argument);
 
-    const said = await valueDetails(repl, file, 'full');
+    const said = await valueInFull(repl, file);
     if (said !== null) {
       repl.log(`${said}`);
 

@@ -30,7 +30,7 @@ export const command: ReplCommand = {
   description: 'Say what type a value is — the signature where one is written, its shape otherwise',
   async main(repl, argument) {
     const said = await describeType(repl.session, argument, repl.cwd, repl.palette);
-    repl.log(said === null ? red(noSuchValueLine(argument, 'type')) : said);
+    repl.log(said === null ? red(noSuchValueLine('type', argument)) : said);
   },
 };
 

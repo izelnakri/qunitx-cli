@@ -6,14 +6,18 @@
  * that prints: `.doc`, `.copy` and `.type` each colour and place it differently, and all three
  * reach for it at the same moment — the one where their own answer came back `null`.
  *
+ * The command comes first because that is the order it is read in and written in —
+ * `noSuchValueLine('doc', argument)` is `.doc` speaking about what it was handed, the same shape
+ * as `reportBadPath(repl, 'cat', …)`.
+ *
  * ```ts
  * import { noSuchValueLine } from './no-such-value-line.ts';
  *
- * noSuchValueLine('', 'doc'); // 'Usage: .doc <value>'
- * noSuchValueLine('helper', 'doc').includes('no such name'); // true — the other way
+ * noSuchValueLine('doc', ''); // 'Usage: .doc <value>'
+ * noSuchValueLine('doc', 'helper').includes('no such name'); // true — the other way
  * ```
  */
-export function noSuchValueLine(argument: string, command: string): string {
+export function noSuchValueLine(command: string, argument: string): string {
   const asked = argument.trim();
 
   return asked === ''
