@@ -1,5 +1,5 @@
 import { noSuchValueLine } from '../no-such-value-line.ts';
-import { valueSummary } from '../value-details.ts';
+import { summarizeValue } from '../value-details.ts';
 import { red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 
@@ -24,7 +24,7 @@ export const command: ReplCommand = {
   description: 'Show a value’s signature, where it is written, and the comment above it',
   aliases: ['explain', 'd'],
   async main(repl, argument) {
-    const said = await valueSummary(repl, argument);
+    const said = await summarizeValue(repl, argument);
     repl.log(said === null ? red(noSuchValueLine('doc', argument)) : said);
   },
 };

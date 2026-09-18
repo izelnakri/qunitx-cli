@@ -10,6 +10,11 @@ import type { Theme } from '../../repl/theme.ts';
 // Two questions about a value, one answer apiece. `.doc` asks the first, `.view` the second, and
 // they share everything except how much comes back — which is why this is one file and two
 // exported functions rather than one function with a word to pass it.
+//
+// Both RETURN their text and neither writes it. The caller logs, because the caller is the one
+// that knows where the answer goes: `.doc` prints it, `.view` prints it or falls through to
+// treating the name as a path, and `null` from either means "no such name" rather than "nothing
+// happened".
 
 /** How far into a value `.view` renders — deep enough that what is in it is what is printed. */
 const WHOLE_VALUE = 8;
@@ -23,18 +28,18 @@ const WHOLE_VALUE = 8;
  * the "nothing written about it" this used to answer.
  *
  * ```ts
- * import { valueSummary } from './value-details.ts';
+ * import { summarizeValue } from './value-details.ts';
  *
  * import type { ReplContext } from './command.ts';
  *
  * // Defined, not invoked: it asks a live page where something came from.
  * function example(repl: ReplContext) {
- *   return valueSummary(repl, 'double');
+ *   return summarizeValue(repl, 'double');
  *   // 'test/fixtures/repl-helpers.ts:15\nDoubles a number…\nexport function double(…)'
  * }
  * ```
  */
-export function valueSummary(repl: ReplContext, argument: string): Promise<string | null> {
+export function summarizeValue(repl: ReplContext, argument: string): Promise<string | null> {
   return describe(repl, argument, false);
 }
 
@@ -47,17 +52,20 @@ export function valueSummary(repl: ReplContext, argument: string): Promise<strin
  * `.view` that did would print it twice.
  *
  * ```ts
- * import { valueInFull } from './value-details.ts';
+ * import { valueDetails } from './value-details.ts';
  *
  * import type { ReplContext } from './command.ts';
  *
  * // Defined, not invoked: it asks a live page where something came from.
  * function example(repl: ReplContext) {
- *   return valueInFull(repl, 'double'); // the same, with the function's body in place of its head
+ *   return valueDetails(repl, 'double'); // the same, with the function's body in place of its head
  * }
  * ```
+ *
+ * Named for what comes back rather than for printing it — `.view` reads the answer before deciding
+ * anything, and a `null` sends it off to try the name as a path instead.
  */
-export function valueInFull(repl: ReplContext, argument: string): Promise<string | null> {
+export function valueDetails(repl: ReplContext, argument: string): Promise<string | null> {
   return describe(repl, argument, true);
 }
 
