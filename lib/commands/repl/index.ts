@@ -1,6 +1,7 @@
 import nodeRepl, { type REPLServer } from 'node:repl';
 import process from 'node:process';
 import readline from 'node:readline';
+import { spawn } from 'node:child_process';
 import { PassThrough } from 'node:stream';
 import * as Args from '../../args/index.ts';
 import * as Config from '../../setup/config.ts';
@@ -51,7 +52,6 @@ import { command as Vi } from './commands/vi.ts';
 import { command as Vim } from './commands/vim.ts';
 import { command as View } from './commands/view.ts';
 import { HISTORY_KEPT, setupHistory } from './history.ts';
-import { shell } from './shell.ts';
 import { findProjectRoot } from '../../utils/find-project-root.ts';
 import { ESCAPE, plain, plainLength, terminalWidth, truncate } from '../../repl/terminal.ts';
 import { failureText } from './command.ts';
@@ -471,14 +471,13 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 export { edit, replayableSource, whatToRun } from './editor.ts';
 export { complete, setupSuggestionBehaviors, mutedSuggestionStyle } from './completion.ts';
 export { trimHistoryFile } from './history.ts';
-export { shell } from './shell.ts';
 
 // ── The prompt itself ─────────────────────────────────────────────────────────
 //
-// Four things that only `drive` above calls, and that only exist so it stays readable: the input
-// stream it reads, the colours it types in, the answer it shows before Enter, and what it says
-// when the page goes. Each was its own file until a reviewer pointed out that a module nobody
-// imports twice is a file you open once and never again.
+// Five things that only `drive` above calls, and that only exist so it stays readable: the input
+// stream it reads, the colours it types in, the answer it shows before Enter, the shell `:` runs
+// a command through, and what it says when the page goes. Each was its own file until a reviewer
+// pointed out that a module nobody imports twice is a file you open once and never again.
 
 /**
  * `stdin`, with Ctrl-K and Ctrl-J walking history — a NEW stream, which is what to read instead.
@@ -746,4 +745,48 @@ export function pageGoneMessage(argv: readonly string[] = process.argv): string 
     'Everything it was holding went with it, so there is nothing here to carry on with.',
     again === '' ? 'Run qunitx repl again to start over.' : `Start again with: qunitx ${again}`,
   ].join('\n');
+}
+
+/**
+ * Runs one shell command, streaming its output to the terminal as it arrives.
+ *
+ * Through a shell on purpose: `:` means "the thing I would have typed in another window", and
+ * pipes, globs and `&&` are most of what that is. The command comes from the person at the prompt,
+ * for their own machine — there is nothing here to protect them from that they could not type
+ * directly. It runs in the session's working directory, so relative paths mean what `.cat` means.
+ *
+ * The child is handed this process's own stdout and stderr rather than a pipe copied across, which
+ * is what makes `:git status` and `:ls` come out in colour: every tool decides whether to colour by
+ * asking whether it is talking to a terminal, and a pipe answers no. It is also what makes a
+ * progress bar work, and what keeps a build that prints for a minute printing for a minute rather
+ * than arriving at the end. Piped in, piped out — a scripted session still gets plain text, for the
+ * same reason and by the same rule.
+ *
+ * `out` is left for the one message that is this REPL's rather than the command's: a command that
+ * will not start at all.
+ *
+ * ```ts
+ * import { shell } from './index.ts';
+ *
+ * // Defined, not invoked: it starts a real process.
+ * function example(out: NodeJS.WritableStream) {
+ *   return shell('git status --short', out, process.cwd()); // resolves with the exit code
+ * }
+ * ```
+ */
+export function shell(command: string, out: NodeJS.WritableStream, cwd: string): Promise<number> {
+  const trimmed = command.trim();
+  if (trimmed === '') return Promise.resolve(0);
+
+  return new Promise((resolve) => {
+    // stdin stays closed: the terminal's is being read by the prompt, and two readers of one
+    // keyboard is a session that loses keystrokes. `.edit` is the way to hand a command the tty.
+    const child = spawn(trimmed, { shell: true, cwd, stdio: ['ignore', 'inherit', 'inherit'] });
+    // A command that will not start is an answer about the command, not a crash of the session.
+    child.on('error', (error: Error) => {
+      out.write(red(`${error.message}\n`));
+      resolve(127);
+    });
+    child.on('close', (code) => resolve(code ?? 0));
+  });
 }

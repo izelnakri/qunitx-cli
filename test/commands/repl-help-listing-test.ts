@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { commandListing } from '../../lib/commands/repl/command-listing.ts';
+import { commandListing } from '../../lib/commands/repl/commands/help.ts';
 import { theme } from '../../lib/repl/theme.ts';
 import '../helpers/custom-asserts.ts';
 
