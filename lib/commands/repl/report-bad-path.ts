@@ -1,5 +1,5 @@
 import { red } from '../../utils/color.ts';
-import type * as Files from '../../repl/files.ts';
+import type { FoundPath } from './typed-path.ts';
 import type { ReplContext } from './command.ts';
 
 /**
@@ -30,7 +30,7 @@ export function reportBadPath(
   repl: ReplContext,
   command: string,
   typed: string,
-  found: Exclude<Files.Resolution, { kind: 'file' }>,
+  found: Exclude<FoundPath, { kind: 'file' }>,
 ): void {
   repl.log(red(whyItFailed(found, typed)));
   if (found.kind === 'unreadable' || !repl.interactive) return;
@@ -48,7 +48,7 @@ export function reportBadPath(
  *   missing     `no such file: lib/nope.ts — lib/ exists`, or without the tail where nothing does
  *   unreadable  `cannot read lib/a.ts: EACCES …`, which is the one that is not a typo
  */
-function whyItFailed(found: Exclude<Files.Resolution, { kind: 'file' }>, typed: string): string {
+function whyItFailed(found: Exclude<FoundPath, { kind: 'file' }>, typed: string): string {
   if (found.kind === 'directory') return `${typed} is a directory`;
   if (found.kind === 'missing') {
     return found.prefill === ''

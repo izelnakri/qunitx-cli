@@ -878,15 +878,15 @@ module('Commands | repl | .tree', { concurrency: true }, () => {
 
     assert.exitCode(result, 0);
     assert.includes(result, 'lib/repl/', 'the root, said as a directory');
-    assert.includes(result, '── files.ts');
+    assert.includes(result, '── session.ts');
     assert.includes(result, 'files', 'and the tally underneath');
   });
 
   test('depth is levels down, and nothing says all the way', async (assert) => {
     const [shallow, deep] = await Promise.all([repl('.tree -L 1 lib\n'), repl('.tree lib\n')]);
 
-    assert.notIncludes(shallow, 'files.ts', 'one level stops at the directory names');
-    assert.includes(deep, 'files.ts', 'and unasked goes all the way down');
+    assert.notIncludes(shallow, 'session.ts', 'one level stops at the directory names');
+    assert.includes(deep, 'session.ts', 'and unasked goes all the way down');
   });
 
   test('.tree refuses a file, by name', async (assert) => {
@@ -908,7 +908,7 @@ module('Commands | repl | .tree', { concurrency: true }, () => {
   test('.view shows a file or a directory, and .cat only a file', async (assert) => {
     const [viewed, catted] = await Promise.all([repl('.view lib/repl\n'), repl('.cat lib/repl\n')]);
 
-    assert.includes(viewed, '── files.ts', '.view shows what is in there');
+    assert.includes(viewed, '── session.ts', '.view shows what is in there');
     assert.includes(catted, 'lib/repl is a directory', 'and .cat says what cat has always said');
   });
 });

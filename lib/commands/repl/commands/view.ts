@@ -1,7 +1,8 @@
-import * as Files from '../../../repl/files.ts';
+import { command as cat } from './cat.ts';
 import { command as tree } from './tree.ts';
-import { reportBadPath } from '../report-bad-path.ts';
+import { findPath, pathAndDepth } from '../typed-path.ts';
 import { printValueDetails } from '../value-details.ts';
+import { reportBadPath } from '../report-bad-path.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -10,6 +11,10 @@ import type { ReplCommand } from '../command.ts';
  *
  * The three are one command because the question is one question. `.view helper` is a fair thing
  * to type, and a name that is not a file is very likely a value.
+ *
+ * Which means this command's whole job is asking, in order, and then handing off — a file IS what
+ * `.cat` prints and a directory IS what `.tree` draws, so it asks them rather than keeping a
+ * second copy of either. The same delegation `.help` makes to `.doc`.
  *
  * ```ts
  * import { command as viewCommand } from './view.ts';
@@ -26,26 +31,21 @@ export const command: ReplCommand = {
   description: 'Show whatever it names: a file numbered, a directory as a tree, or a value whole',
   aliases: ['v'],
   async main(repl, argument) {
-    const { file } = Files.pathAndDepth(argument.trim());
     if (argument.trim() === '') {
       repl.log('Usage: .view <file>');
 
       return;
     }
 
-    const found = Files.resolve(file, repl.cwd);
-    if (found.kind === 'file') {
-      repl.log(`${Files.numbered(found.contents, file, repl.palette)}`);
-
-      return;
-    }
-    // A directory viewed IS a tree, so `.tree` answers rather than a second copy of it here —
-    // the same delegation `.help` makes to `.doc`. The whole argument goes on, `-L 2` included.
+    // The whole argument goes on, `-L 2` included — only the path is needed to decide who answers.
+    const { file } = pathAndDepth(argument.trim());
+    const found = findPath(file, repl.cwd);
+    if (found.kind === 'file') return cat.main(repl, argument);
     if (found.kind === 'directory') return tree.main(repl, argument);
 
     const said = await printValueDetails(repl, file);
     if (said !== null) {
-      repl.log(`${said}`);
+      repl.log(said);
 
       return;
     }

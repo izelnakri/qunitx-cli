@@ -1,7 +1,8 @@
 import process from 'node:process';
 import { ESCAPE, plainLength } from '../../repl/terminal.ts';
-import * as Files from '../../repl/files.ts';
-import { split, suggest } from '../../repl/suggest.ts';
+import fs from 'node:fs';
+import path from 'node:path';
+import { split, suggest as suggestFromNames } from '../../repl/suggest.ts';
 import type { REPLServer } from 'node:repl';
 import type { ReplSession } from '../../repl/session.ts';
 
@@ -142,8 +143,8 @@ export function complete(
   cwd: string = process.cwd(),
 ): void {
   // A path line completes like a shell, because that is what is being typed on it.
-  const typedPath = Files.fragment(line);
-  if (typedPath !== null) return callback(null, [Files.complete(typedPath, cwd), typedPath]);
+  const typedPath = pathBeingTyped(line);
+  if (typedPath !== null) return callback(null, [pathsContinuing(typedPath, cwd), typedPath]);
 
   const typed = line.trimStart();
   if (typed.startsWith('.')) {
@@ -223,12 +224,12 @@ export function setupSuggestionBehaviors(
     const history = (server as unknown as { history?: string[] }).history ?? [];
     // A path line is answered from the filesystem — the only place that knows — and never from
     // history, where `.cat` lines are as likely to be about a file that has since been renamed.
-    const asPath = Files.suggest(line, cwd);
-    if (asPath !== '' || Files.fragment(line) !== null) return asPath;
+    const asPath = pathSuggestion(line, cwd);
+    if (asPath !== '' || pathBeingTyped(line) !== null) return asPath;
 
     const position = split(line);
 
-    return suggest(line, {
+    return suggestFromNames(line, {
       names: position && names ? names.lookup(position.base) : [],
       history,
     });
@@ -326,4 +327,103 @@ export function mutedSuggestionStyle(): string {
   const [r, g, b] = [0, 2, 4].map((at) => parseInt(colour.slice(at, at + 2), 16));
 
   return `${ESCAPE}[38;2;${r};${g};${b}m`;
+}
+
+// ── Completing a path rather than a name ──────────────────────────────────────
+//
+// The other half of what TAB and the ghost answer, and the half the page knows nothing about: a
+// `.cat` line is completed from the FILESYSTEM. Here rather than in lib/repl/, because which
+// commands take a path is a fact about this prompt's commands and nothing else.
+
+/** The commands that take a path, and so complete like a shell rather than like an expression. */
+const PATH_COMMANDS = /^\s*\.(?:cat|view|tree|ls|import|load)\s+(?:.*\s)?(\S*)$/;
+
+/**
+ * The path being typed on a `.cat` or `.view` line, or `null` on any other line.
+ *
+ * What decides whether a completion is a filename or an expression — and `null` is the signal to
+ * go and ask the page instead. A path with a space in it is not completable here, which is the
+ * same bargain a dot command already makes with its argument.
+ *
+ * ```ts
+ * import { pathBeingTyped } from './completion.ts';
+ *
+ * pathBeingTyped('.cat lib/re'); // 'lib/re'
+ * pathBeingTyped('.view '); // '' — everything in the working directory
+ * pathBeingTyped('document.ti'); // null — an expression, not a path
+ * ```
+ */
+export function pathBeingTyped(line: string): string | null {
+  const typed = PATH_COMMANDS.exec(line)?.[1];
+  if (typed === undefined) return null;
+  // `-L` takes a number, and a number is not a path. Completing one would offer files for it.
+  if (typed.startsWith('-') || /(?:^|\s)-L\s*$/.test(line.slice(0, line.length - typed.length))) {
+    return null;
+  }
+
+  return typed;
+}
+
+/**
+ * Every path that continues `typed`, spelled the way it was — directories with a trailing slash.
+ *
+ * Hidden entries only once a dot has been typed, which is the rule every shell uses and the reason
+ * `.cat ` does not open with a list of dotfiles.
+ *
+ * ```ts
+ * import { pathsContinuing } from './completion.ts';
+ *
+ * pathsContinuing('lib/re', process.cwd()); // ['lib/repl/'] — a directory, and it says so
+ * pathsContinuing('nowhere/at/all', process.cwd()); // [] — an unreadable directory offers nothing
+ * ```
+ */
+export function pathsContinuing(typed: string, cwd: string): string[] {
+  const slash = typed.lastIndexOf('/');
+  // Kept verbatim rather than rebuilt, so `./lib/` and `lib/` each come back the way they went in.
+  const prefix = typed.slice(0, slash + 1);
+  const partial = typed.slice(slash + 1);
+  const directory = path.resolve(cwd, prefix || '.');
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(directory, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  return entries
+    .filter((entry) => entry.name.startsWith(partial))
+    .filter((entry) => partial.startsWith('.') || !entry.name.startsWith('.'))
+    .map((entry) => `${prefix}${entry.name}${entry.isDirectory() ? '/' : ''}`)
+    .sort();
+}
+
+/**
+ * What to draw after the cursor on a path line: the rest of the shortest path that continues it.
+ *
+ * `pathSuggestion` and not `suggest`, because `suggest` is what this file already imports for the
+ * OTHER kind of suggestion — the one made from names the page has and from history. Two `suggest`s
+ * in one function, one of them namespaced, is what this used to read as.
+ *
+ * Empty for a line that is not a path line, so a caller can fall through to that other one.
+ * Shortest for the same reason a name is: `lib/` is what `li` meant far more often than the
+ * longest thing underneath it.
+ *
+ * ```ts
+ * import { pathSuggestion } from './completion.ts';
+ *
+ * pathSuggestion('document.ti', process.cwd()); // '' — not a path line, so not this one's answer
+ * ```
+ */
+export function pathSuggestion(line: string, cwd: string): string {
+  const typed = pathBeingTyped(line);
+  if (typed === null || typed === '') return '';
+
+  let best = '';
+  for (const candidate of pathsContinuing(typed, cwd)) {
+    if (candidate.length <= typed.length) continue;
+    if (best === '' || candidate.length < best.length) best = candidate;
+  }
+
+  return best === '' ? '' : best.slice(typed.length);
 }

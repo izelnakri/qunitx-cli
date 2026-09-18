@@ -19,7 +19,6 @@ import { harness } from '../setup/qunit-harness.ts';
 import { typeOfValue } from './type-of-value.ts';
 import { inspect } from './inspect.ts';
 import { colorEnabled } from '../utils/color.ts';
-import { namespaceFor } from './files.ts';
 import { proxyTo } from './proxy.ts';
 import type { Proxy } from './proxy.ts';
 import type { Plugin } from 'esbuild';
@@ -1033,7 +1032,7 @@ class Session implements ReplSession {
     if (stats.isDirectory()) return `${shown} is a directory`;
 
     const asked = as !== undefined && as !== '';
-    const name = asked ? (as as string) : namespaceFor(absolute);
+    const name = asked ? (as as string) : moduleNameFor(absolute);
     if (!IDENTIFIER.test(name)) return `${name} is not a name a value can be given`;
 
     const source = CODE.has(path.extname(absolute).toLowerCase())
@@ -1159,7 +1158,7 @@ class Session implements ReplSession {
       this.#recipes.set(relative(this.#config, file), {
         kind: 'file',
         absolute: file,
-        name: namespaceFor(file),
+        name: moduleNameFor(file),
         asked: false,
         viaBundle: true,
       });
@@ -1978,7 +1977,7 @@ async function bundle(config: Config, preload: string[], outDir: string): Promis
   );
   const modules = preload.map(
     (file, i) =>
-      `[${JSON.stringify(relative(config, file))}, ${JSON.stringify(namespaceFor(file))}, m${i}]`,
+      `[${JSON.stringify(relative(config, file))}, ${JSON.stringify(moduleNameFor(file))}, m${i}]`,
   );
   try {
     const built = await esbuild.build({
@@ -2155,4 +2154,50 @@ function mappedLocation(
   return parsed
     ? { file: parsed[1] as string, line: Number(parsed[2]), column: Number(parsed[3]) }
     : null;
+}
+
+/** Filenames that name their directory instead of themselves. */
+const INDEX_NAMES = new Set(['index', 'mod']);
+
+/**
+ * The name a file goes into scope under when nobody says what to call it.
+ *
+ * Elixir's rule, because it is the one that turns a path into something you can type:
+ * `test/fixtures/repl-helpers.ts` becomes `ReplHelpers`, and every separator a filename uses to
+ * mean a word boundary — `-`, `_`, `.` — becomes a capital letter instead.
+ *
+ * A file called `index` or `mod` is named for the directory holding it, since a session with three
+ * `Index` objects in it has none.
+ *
+ *   test/fixtures/repl-helpers.ts  ->  ReplHelpers
+ *   lib/repl/index.ts              ->  Repl       the directory, since every folder has an index
+ *   package.json                   ->  Package
+ *
+ * Here rather than in a module of its own: `.import` and the start-up banner are the only things
+ * that ever need a name for a file, and both are in this file. Exported for its own test, which is
+ * where the awkward filenames live — a digit first, a name that survives no character of it.
+ *
+ * ```ts
+ * import { moduleNameFor } from './session.ts';
+ *
+ * moduleNameFor('test/fixtures/repl-helpers.ts'); // 'ReplHelpers'
+ * moduleNameFor('lib/repl/index.ts'); // 'Repl' — the directory, since every folder has an index
+ * moduleNameFor('package.json'); // 'Package'
+ * ```
+ */
+export function moduleNameFor(file: string): string {
+  const normalized = file.replaceAll('\\', '/');
+  const parts = normalized.split('/').filter((part) => part !== '' && part !== '.');
+  const base = (parts.at(-1) ?? '').replace(/\.[^.]+$/, '');
+  const named = INDEX_NAMES.has(base.toLowerCase()) ? (parts.at(-2) ?? base) : base;
+  const camelCased = named
+    .split(/[-_. ]+/)
+    .filter((word) => word !== '')
+    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
+    .join('');
+  const identifier = camelCased.replace(/[^\p{L}\p{N}$_]/gu, '');
+
+  // A name has to be typeable to be worth generating: what a filename left unusable falls back to
+  // a shape that is, rather than to a global nobody can reference.
+  return identifier === '' || /^\d/.test(identifier) ? `Module${identifier}` : identifier;
 }
