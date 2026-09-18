@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { helpLines } from '../../lib/commands/repl/help.ts';
+import { commandListing } from '../../lib/commands/repl/command-listing.ts';
 import { theme } from '../../lib/repl/theme.ts';
 import '../helpers/custom-asserts.ts';
 
@@ -8,9 +8,9 @@ const ESC = String.fromCharCode(27);
 
 // This REPL has more names than commands — `.c`, `.s`, `.n`, `.e`, `.bt` — and a row apiece turns
 // one screenful of help into two of the same sentences.
-module('Commands | repl | help', { concurrency: true }, () => {
+module('Commands | repl | commandListing', { concurrency: true }, () => {
   test('names that say the same thing share the line they say it on', (assert) => {
-    const lines = helpLines(
+    const lines = commandListing(
       {
         continue: { help: 'Carry on' },
         c: { help: 'Carry on' },
@@ -26,7 +26,7 @@ module('Commands | repl | help', { concurrency: true }, () => {
   });
 
   test('one alias is an alias, and none is nothing at all', (assert) => {
-    const lines = helpLines(
+    const lines = commandListing(
       { doc: { help: 'Explain' }, explain: { help: 'Explain' }, url: { help: 'Where' } },
       plain,
     );
@@ -37,7 +37,7 @@ module('Commands | repl | help', { concurrency: true }, () => {
   });
 
   test('the rows line up and read alphabetically', (assert) => {
-    const lines = helpLines(
+    const lines = commandListing(
       { url: { help: 'Where' }, break: { help: 'Stop' }, imported: { help: 'What came in' } },
       plain,
     ).split('\n');
@@ -54,11 +54,14 @@ module('Commands | repl | help', { concurrency: true }, () => {
   });
 
   test('what has no help is not a command anybody typed', (assert) => {
-    assert.strictEqual(helpLines({ url: { help: 'Where' }, mystery: {} }, plain), '.url  Where');
+    assert.strictEqual(
+      commandListing({ url: { help: 'Where' }, mystery: {} }, plain),
+      '.url  Where',
+    );
   });
 
   test('the name and the aliases are told apart by colour', (assert) => {
-    const lines = helpLines({ doc: { help: 'Explain' }, d: { help: 'Explain' } }, theme(true));
+    const lines = commandListing({ doc: { help: 'Explain' }, d: { help: 'Explain' } }, theme(true));
 
     assert.includes(lines, `${ESC}[34m.doc`, 'the name reads as the thing you type');
     assert.includes(lines, `${ESC}[90m[alias .d]`, 'and the aliases sit back');

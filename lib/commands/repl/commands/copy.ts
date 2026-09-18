@@ -1,5 +1,5 @@
 import { copyValue } from '../clipboard.ts';
-import { noSuchValue } from '../describe-value.ts';
+import { noSuchValueLine } from '../value-details.ts';
 import { blue, red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 
@@ -24,6 +24,6 @@ export const command: ReplCommand = {
   description: 'Copy a value to the clipboard — a function goes as the code that defines it',
   async main(repl, argument) {
     const copied = await copyValue(repl.session, argument, repl.cwd);
-    repl.log(copied === null ? red(noSuchValue(argument, 'copy')) : blue(copied));
+    repl.log(copied === null ? red(noSuchValueLine(argument, 'copy')) : blue(copied));
   },
 };

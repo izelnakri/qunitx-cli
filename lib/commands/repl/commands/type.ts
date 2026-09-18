@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { noSuchValue } from '../describe-value.ts';
+import { noSuchValueLine } from '../value-details.ts';
 import { highlight } from '../../../repl/highlight.ts';
 import { readIfThere } from '../editor.ts';
 import { signature } from '../../../repl/docs.ts';
@@ -30,7 +30,7 @@ export const command: ReplCommand = {
   description: 'Say what type a value is — the signature where one is written, its shape otherwise',
   async main(repl, argument) {
     const said = await describeType(repl.session, argument, repl.cwd, repl.palette);
-    repl.log(said === null ? red(noSuchValue(argument, 'type')) : said);
+    repl.log(said === null ? red(noSuchValueLine(argument, 'type')) : said);
   },
 };
 

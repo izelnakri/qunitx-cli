@@ -1,5 +1,5 @@
 import * as Files from '../../../repl/files.ts';
-import { drawTree, pathError, prefillPrompt } from '../paths.ts';
+import { pathErrorLine, prefillPrompt, treeWithTally } from '../path-output.ts';
 import { red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 
@@ -27,12 +27,12 @@ export const command: ReplCommand = {
   main(repl, argument) {
     const { file, depth } = Files.pathAndDepth(argument.trim());
     const found = Files.resolve(file, repl.cwd);
-    if (found.kind === 'directory') repl.log(drawTree(file, repl.cwd, repl.palette, depth));
+    if (found.kind === 'directory') repl.log(treeWithTally(repl, file, depth));
     else if (found.kind === 'file') repl.log(red(`${file} is a file, not a directory`));
     else {
-      repl.log(red(`${pathError(found, file)}`));
+      repl.log(red(`${pathErrorLine(found, file)}`));
 
-      return void (found.kind === 'missing' && prefillPrompt('tree', found, repl));
+      return void (found.kind === 'missing' && prefillPrompt(repl, 'tree', found));
     }
   },
 };

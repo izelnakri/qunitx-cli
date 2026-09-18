@@ -3,20 +3,25 @@ import { blockAt, commentAbove, renderDoc, signature } from '../../repl/docs.ts'
 import { readIfThere } from './editor.ts';
 import { highlight } from '../../repl/highlight.ts';
 import { inStyle } from '../../repl/terminal.ts';
+import type { ReplContext } from './command.ts';
 import type { ReplSession } from '../../repl/session.ts';
 import type { Theme } from '../../repl/theme.ts';
 
 /** How far into a value `.view` renders — deep enough that what is in it is what is printed. */
 const WHOLE_VALUE = 8;
 
-/** How much of a value to show: what it is, or what it is and how it is written. */
-interface Depth {
-  /** Include the whole declaration, not only its signature and comment. */
-  body: boolean;
-}
+/**
+ * How much to show — the one thing that differs between `.doc` and `.view`.
+ *
+ * A word rather than `{ body: boolean }`, because the caller site now says which it wants:
+ * `valueDetails(repl, argument, 'brief')`. For a function `brief` is its signature and `full` is
+ * its whole declaration; for anything else `brief` is the line-long summary a prompt has room for
+ * and `full` is the value rendered all the way down.
+ */
+export type Detail = 'brief' | 'full';
 
 /**
- * What is known about a value, ready to print — or `null` where nothing is.
+ * Everything this session can say about a name, ready to print — or `null` where there is nothing.
  *
  * In the order a file has them: where it is, what was written above it, then the thing itself. A
  * value with no comment still has the other two, which is the difference between "here it is" and
@@ -26,52 +31,57 @@ interface Depth {
  * string, an object — still came from somewhere this session watched it arrive from, and is still
  * worth printing, so what is known about those is where they came in and what they are.
  *
- * ```ts
- * import { describeValue } from './describe-value.ts';
+ * Takes `repl` rather than a session, a cwd and a palette spread across five positionals — all
+ * three come off it, and every caller was passing `repl.session, argument, repl.cwd, repl.palette`.
  *
- * import type { ReplSession } from '../../repl/session.ts';
- * import type { Theme } from '../../repl/theme.ts';
+ * ```ts
+ * import { valueDetails } from './value-details.ts';
+ *
+ * import type { ReplContext } from './command.ts';
  *
  * // Defined, not invoked: it asks a live page where something came from.
- * function example(session: ReplSession, palette: Theme) {
- *   return describeValue(session, 'helper', process.cwd(), palette, { body: false });
+ * function example(repl: ReplContext) {
+ *   return valueDetails(repl, 'helper', 'brief'); // `.doc`'s half; 'full' is `.view`'s
  * }
  * ```
  */
-export async function describeValue(
-  session: ReplSession,
+export async function valueDetails(
+  repl: ReplContext,
   argument: string,
-  cwd: string,
-  palette: Theme,
-  depth: Depth,
+  detail: Detail,
 ): Promise<string | null> {
+  const { session, cwd, palette } = repl;
   const asked = argument.trim();
   const at = await session.declaredAt(asked);
   const source = at === null ? null : readIfThere(path.resolve(cwd, at.file));
-  if (at === null || source === null) return await asWritten(session, asked, palette, depth);
+  if (at === null || source === null)
+    return await renderedByThePage(session, asked, palette, detail);
 
   // Where, then what was said, then the code — reading order, and the order they were written in.
   // The body opens with the signature, so a `.view` that printed both would print it twice.
   const parts = [
     inStyle(`${at.file}:${at.line}`, palette.style('LineNr')),
     renderDoc(commentAbove(source, at.line), palette),
-    highlight(depth.body ? blockAt(source, at.line) : signature(source, at.line), palette),
+    highlight(detail === 'full' ? blockAt(source, at.line) : signature(source, at.line), palette),
   ];
 
   return parts.filter((part) => part !== '').join('\n');
 }
 
 /**
- * Why there is nothing to show, in the two ways there can be nothing.
+ * One line saying why there is nothing to show, in the two ways there can be nothing: you named
+ * no value, or you named one this session does not have.
+ *
+ * The sibling of `pathErrorLine` — same job, for a value instead of a path.
  *
  * ```ts
- * import { noSuchValue } from './describe-value.ts';
+ * import { noSuchValueLine } from './value-details.ts';
  *
- * noSuchValue('', 'doc'); // 'Usage: .doc <value>'
- * noSuchValue('helper', 'doc').includes('no such name'); // true — the other way there is nothing
+ * noSuchValueLine('', 'doc'); // 'Usage: .doc <value>'
+ * noSuchValueLine('helper', 'doc').includes('no such name'); // true — the other way
  * ```
  */
-export function noSuchValue(argument: string, command: string): string {
+export function noSuchValueLine(argument: string, command: string): string {
   const asked = argument.trim();
 
   return asked === ''
@@ -80,21 +90,22 @@ export function noSuchValue(argument: string, command: string): string {
 }
 
 /**
- * What is known about a value with no declaration to point at: where it came into this session, and
- * what it is — rendered in the page, by the renderer the prompt prints with.
+ * The fallback for a value with no declaration to point at — a string, a number, an imported
+ * namespace. Where it came into this session, and what it is, rendered IN THE PAGE by the same
+ * renderer the prompt prints values with.
  *
  * `null` for a name that is not there at all, which is the one case where "nothing known" is the
  * true answer rather than the lazy one.
  */
-async function asWritten(
+async function renderedByThePage(
   session: ReplSession,
   asked: string,
   palette: Theme,
-  depth: Depth,
+  detail: Detail,
 ): Promise<string | null> {
   // `.view` is the whole value and `.doc` is what a prompt has room for, which is the same
   // difference as between a function's body and its signature.
-  const rendered = await session.preview(asked, depth.body ? WHOLE_VALUE : undefined);
+  const rendered = await session.preview(asked, detail === 'full' ? WHOLE_VALUE : undefined);
   if (rendered === '') return null;
   const where = session.whereFrom(asked);
 

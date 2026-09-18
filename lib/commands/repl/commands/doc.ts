@@ -1,4 +1,4 @@
-import { describeValue, noSuchValue } from '../describe-value.ts';
+import { noSuchValueLine, valueDetails } from '../value-details.ts';
 import { red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 
@@ -23,9 +23,7 @@ export const command: ReplCommand = {
   description: 'Show a value’s signature, where it is written, and the comment above it',
   aliases: ['explain', 'd'],
   async main(repl, argument) {
-    const said = await describeValue(repl.session, argument, repl.cwd, repl.palette, {
-      body: false,
-    });
-    repl.log(said === null ? red(noSuchValue(argument, 'doc')) : said);
+    const said = await valueDetails(repl, argument, 'brief');
+    repl.log(said === null ? red(noSuchValueLine(argument, 'doc')) : said);
   },
 };

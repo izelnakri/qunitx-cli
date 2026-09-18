@@ -1,6 +1,6 @@
 import * as Files from '../../../repl/files.ts';
-import { drawTree, pathError, prefillPrompt } from '../paths.ts';
-import { describeValue } from '../describe-value.ts';
+import { pathErrorLine, prefillPrompt, treeWithTally } from '../path-output.ts';
+import { valueDetails } from '../value-details.ts';
 import { red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 
@@ -40,18 +40,18 @@ export const command: ReplCommand = {
       return;
     }
     if (found.kind === 'directory') {
-      repl.log(drawTree(file, repl.cwd, repl.palette, depth));
+      repl.log(treeWithTally(repl, file, depth));
 
       return;
     }
 
-    const said = await describeValue(repl.session, file, repl.cwd, repl.palette, { body: true });
+    const said = await valueDetails(repl, file, 'full');
     if (said !== null) {
       repl.log(`${said}`);
 
       return;
     }
-    repl.log(red(`${pathError(found, file)}`));
-    prefillPrompt('view', found, repl);
+    repl.log(red(`${pathErrorLine(found, file)}`));
+    prefillPrompt(repl, 'view', found);
   },
 };

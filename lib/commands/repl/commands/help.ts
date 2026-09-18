@@ -1,5 +1,5 @@
 import { command as doc } from './doc.ts';
-import { helpLines } from '../help.ts';
+import { commandListing } from '../command-listing.ts';
 import { inStyle } from '../../../repl/terminal.ts';
 import type { ReplCommand } from '../command.ts';
 
@@ -35,7 +35,7 @@ export const command: ReplCommand = {
   main(repl, argument) {
     if (argument.trim() !== '') return doc.main(repl, argument);
 
-    repl.log(helpLines(repl.server.commands, repl.palette));
+    repl.log(commandListing(repl.server.commands, repl.palette));
     // The list is what `.help` is reached for, so it is also the only place anybody will find out
     // that it takes an argument. One row of thirty-five saying so is a row nobody reads.
     repl.log(
