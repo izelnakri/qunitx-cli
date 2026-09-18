@@ -69,27 +69,6 @@ export async function valueDetails(
 }
 
 /**
- * One line saying why there is nothing to show, in the two ways there can be nothing: you named
- * no value, or you named one this session does not have.
- *
- * The sibling of `pathErrorLine` — same job, for a value instead of a path.
- *
- * ```ts
- * import { noSuchValueLine } from './value-details.ts';
- *
- * noSuchValueLine('', 'doc'); // 'Usage: .doc <value>'
- * noSuchValueLine('helper', 'doc').includes('no such name'); // true — the other way
- * ```
- */
-export function noSuchValueLine(argument: string, command: string): string {
-  const asked = argument.trim();
-
-  return asked === ''
-    ? `Usage: .${command} <value>`
-    : `nothing known about ${asked} — no such name in this session`;
-}
-
-/**
  * The fallback for a value with no declaration to point at — a string, a number, an imported
  * namespace. Where it came into this session, and what it is, rendered IN THE PAGE by the same
  * renderer the prompt prints values with.

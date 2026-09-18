@@ -3,7 +3,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { blockAt } from '../../../repl/docs.ts';
 import { readIfThere } from '../editor.ts';
-import { noSuchValueLine } from '../value-details.ts';
+import { noSuchValueLine } from '../no-such-value-line.ts';
 import { blue, red } from '../../../utils/color.ts';
 import type { ReplCommand, ReplContext } from '../command.ts';
 

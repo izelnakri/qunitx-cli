@@ -1,4 +1,5 @@
-import { noSuchValueLine, valueDetails } from '../value-details.ts';
+import { noSuchValueLine } from '../no-such-value-line.ts';
+import { valueDetails } from '../value-details.ts';
 import { red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 

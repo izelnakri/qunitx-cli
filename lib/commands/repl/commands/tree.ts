@@ -1,7 +1,7 @@
 import * as Files from '../../../repl/files.ts';
-import { pathErrorLine, prefillPrompt, treeWithTally } from '../path-output.ts';
+import { reportBadPath } from '../report-bad-path.ts';
 import { red } from '../../../utils/color.ts';
-import type { ReplCommand } from '../command.ts';
+import type { ReplCommand, ReplContext } from '../command.ts';
 
 /**
  * `.tree` — a directory, drawn.
@@ -29,10 +29,23 @@ export const command: ReplCommand = {
     const found = Files.resolve(file, repl.cwd);
     if (found.kind === 'directory') repl.log(treeWithTally(repl, file, depth));
     else if (found.kind === 'file') repl.log(red(`${file} is a file, not a directory`));
-    else {
-      repl.log(red(`${pathErrorLine(found, file)}`));
-
-      return void (found.kind === 'missing' && prefillPrompt(repl, 'tree', found));
-    }
+    else reportBadPath(repl, 'tree', file, found);
   },
 };
+
+/**
+ * The tree, plus the tally `tree` prints under one, plus whatever the depth cap left out.
+ *
+ * `Files.tree` does the walking and the colouring; this is the two sentences under it, and they
+ * are why it is here rather than in the engine — a listing that stops without saying so reads as
+ * the whole answer, so the cut is said outright and names the flag that changes it.
+ *
+ * Private: `.tree` is the only command that draws one, and `.view` reaches it by asking `.tree`.
+ */
+function treeWithTally(repl: ReplContext, typed: string, depth: number): string {
+  const { listing, counted, omitted } = Files.tree(typed, repl.cwd, repl.palette, depth);
+  const tally = `${counted.directories} directories, ${counted.files} files`;
+  const cut = omitted === 0 ? '' : ` — ${omitted} more not shown, \`-L\` to narrow`;
+
+  return `${listing}\n\n${tally}${cut}`;
+}

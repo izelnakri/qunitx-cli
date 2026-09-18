@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { noSuchValueLine } from '../value-details.ts';
+import { noSuchValueLine } from '../no-such-value-line.ts';
 import { highlight } from '../../../repl/highlight.ts';
 import { readIfThere } from '../editor.ts';
 import { signature } from '../../../repl/docs.ts';

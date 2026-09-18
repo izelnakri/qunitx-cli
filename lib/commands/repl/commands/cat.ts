@@ -1,6 +1,5 @@
 import * as Files from '../../../repl/files.ts';
-import { pathErrorLine, prefillPrompt } from '../path-output.ts';
-import { red } from '../../../utils/color.ts';
+import { reportBadPath } from '../report-bad-path.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -37,7 +36,6 @@ export const command: ReplCommand = {
 
       return;
     }
-    repl.log(red(`${pathErrorLine(found, file)}`));
-    prefillPrompt(repl, 'cat', found);
+    reportBadPath(repl, 'cat', file, found);
   },
 };

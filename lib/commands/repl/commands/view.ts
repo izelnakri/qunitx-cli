@@ -1,7 +1,7 @@
 import * as Files from '../../../repl/files.ts';
-import { pathErrorLine, prefillPrompt, treeWithTally } from '../path-output.ts';
+import { command as tree } from './tree.ts';
+import { reportBadPath } from '../report-bad-path.ts';
 import { valueDetails } from '../value-details.ts';
-import { red } from '../../../utils/color.ts';
 import type { ReplCommand } from '../command.ts';
 
 /**
@@ -26,7 +26,7 @@ export const command: ReplCommand = {
   description: 'Show whatever it names: a file numbered, a directory as a tree, or a value whole',
   aliases: ['v'],
   async main(repl, argument) {
-    const { file, depth } = Files.pathAndDepth(argument.trim());
+    const { file } = Files.pathAndDepth(argument.trim());
     if (argument.trim() === '') {
       repl.log('Usage: .view <file>');
 
@@ -39,11 +39,9 @@ export const command: ReplCommand = {
 
       return;
     }
-    if (found.kind === 'directory') {
-      repl.log(treeWithTally(repl, file, depth));
-
-      return;
-    }
+    // A directory viewed IS a tree, so `.tree` answers rather than a second copy of it here —
+    // the same delegation `.help` makes to `.doc`. The whole argument goes on, `-L 2` included.
+    if (found.kind === 'directory') return tree.main(repl, argument);
 
     const said = await valueDetails(repl, file, 'full');
     if (said !== null) {
@@ -51,7 +49,6 @@ export const command: ReplCommand = {
 
       return;
     }
-    repl.log(red(`${pathErrorLine(found, file)}`));
-    prefillPrompt(repl, 'view', found);
+    reportBadPath(repl, 'view', file, found);
   },
 };
