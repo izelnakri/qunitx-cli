@@ -367,7 +367,7 @@ export interface ReplSession {
    *
    * A module's exports go into scope under their own names AND together under one — `ReplHelpers`
    * for `test/fixtures/repl-helpers.ts`, Elixir's rule for turning a path into something typeable —
-   * unless `as` says what to call it. The namespace is the point: `ReplHelpers` at the prompt
+   * unless `callItThis` says what to call it. The namespace is the point: `ReplHelpers` at the prompt
    * prints everything the file has in one line, which is the question `.import` is usually asked
    * in service of.
    *
@@ -376,7 +376,7 @@ export interface ReplSession {
    *
    * Resolves to what went into scope, or to the reason nothing did.
    */
-  import(file: string, as?: string): Promise<{ name: string; names: string[] } | string>;
+  import(file: string, callItThis?: string): Promise<{ name: string; names: string[] } | string>;
   /**
    * Loads a file again the way it was loaded the first time, for one that has changed on disk.
    *
@@ -996,10 +996,10 @@ class Session implements ReplSession {
   }
 
   async addBreakpoint(location: string): Promise<Breakpoint | string> {
-    const asked = /^(.*):(\d+)$/.exec(location.trim());
-    if (!asked) return `not a place: ${location.trim() || '(nothing)'} — try file.ts:12`;
+    const place = /^(.*):(\d+)$/.exec(location.trim());
+    if (!place) return `not a place: ${location.trim() || '(nothing)'} — try file.ts:12`;
 
-    const [, file = '', line = ''] = asked;
+    const [, file = '', line = ''] = place;
     const decoder = this.#config.state.group.sourceMapDecoder;
     if (!decoder) return 'the bundle has no source map, so a source line cannot be found in it';
 
@@ -1023,7 +1023,10 @@ class Session implements ReplSession {
     return { index, where };
   }
 
-  async import(file: string, as?: string): Promise<{ name: string; names: string[] } | string> {
+  async import(
+    file: string,
+    callItThis?: string,
+  ): Promise<{ name: string; names: string[] } | string> {
     if (this.#closed) return 'the REPL session is closed';
     const absolute = path.resolve(this.#config.cwd, file);
     const shown = relative(this.#config, absolute);
@@ -1031,21 +1034,28 @@ class Session implements ReplSession {
     if (!stats) return `${shown} is not a file`;
     if (stats.isDirectory()) return `${shown} is a directory`;
 
-    const asked = as !== undefined && as !== '';
-    const name = asked ? (as as string) : moduleNameFor(absolute);
+    // `callItThis` and not `as`, which is a TypeScript operator: `const [file, as] = …` at the
+    // call site read as a half-written type assertion, and a reviewer took it for a line number.
+    const named = callItThis !== undefined && callItThis !== '';
+    const name = named ? callItThis : moduleNameFor(absolute);
     if (!IDENTIFIER.test(name)) return `${name} is not a name a value can be given`;
 
     const source = CODE.has(path.extname(absolute).toLowerCase())
       ? await this.#bundle(
           [
             `import * as m from '${specifier(absolute, this.#config.cwd)}';`,
-            `globalThis.__qunitxHarness.bring(${JSON.stringify(shown)}, ${JSON.stringify(name)}, m, ${asked});`,
+            `globalThis.__qunitxHarness.bring(${JSON.stringify(shown)}, ${JSON.stringify(name)}, m, ${named});`,
           ].join('\n'),
           shown,
         )
       : await plainFile(absolute, shown, name);
     if (typeof source !== 'string') return source.detail;
-    const names = await this.#loadInto(source, shown, { kind: 'file', absolute, name, asked });
+    const names = await this.#loadInto(source, shown, {
+      kind: 'file',
+      absolute,
+      name,
+      nameWasGiven: named,
+    });
 
     return typeof names === 'string' ? names : { name, names };
   }
@@ -1101,7 +1111,10 @@ class Session implements ReplSession {
 
     // The name goes back in only where it was asked for by hand; a worked-out one is worked out
     // again, so a file renamed on disk comes back under the name its new path spells.
-    const brought = await this.import(recipe.absolute, recipe.asked ? recipe.name : undefined);
+    const brought = await this.import(
+      recipe.absolute,
+      recipe.nameWasGiven ? recipe.name : undefined,
+    );
 
     return typeof brought === 'string' ? brought : brought.names;
   }
@@ -1159,7 +1172,7 @@ class Session implements ReplSession {
         kind: 'file',
         absolute: file,
         name: moduleNameFor(file),
-        asked: false,
+        nameWasGiven: false,
         viaBundle: true,
       });
     }
@@ -1907,7 +1920,7 @@ function describe(remote: RemoteObject): string {
 type Recipe =
   // `viaBundle` for a file the PAGE's own bundle loads — a preload named on the command line. A
   // reload re-runs that bundle by itself, so replaying it here would load the file twice.
-  | { kind: 'file'; absolute: string; name: string; asked: boolean; viaBundle?: true }
+  | { kind: 'file'; absolute: string; name: string; nameWasGiven: boolean; viaBundle?: true }
   | { kind: 'statement'; statement: Source.ImportStatement };
 
 /** Extensions `.import` bundles rather than reads: what a JavaScript engine can be handed. */

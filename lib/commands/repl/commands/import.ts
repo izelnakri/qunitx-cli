@@ -23,13 +23,15 @@ export const command: ReplCommand = {
   description: 'Bring a file into the page — `.import lib/a.ts` puts it in scope as `A`',
   aliases: ['load'],
   async main(repl, argument) {
-    const [file, as] = argument.trim().split(/\s+/);
+    // `callItThis` rather than `as`, which is a TypeScript operator — `const [file, as] = …`
+    // reads as a half-written type assertion, and the second word is a NAME, not a number.
+    const [file, callItThis] = argument.trim().split(/\s+/);
     if (file === undefined || file === '') {
       repl.log('Usage: .import <file> [name]');
 
       return;
     }
-    const brought = await repl.session.import(file, as);
+    const brought = await repl.session.import(file, callItThis);
     if (typeof brought === 'string') repl.log(red(`${brought}`));
     else {
       const exported = brought.names.filter((known) => known !== brought.name);
