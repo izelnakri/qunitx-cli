@@ -63,16 +63,31 @@ export interface LaunchTarget {
  * @param skipPrelaunch When true, bypasses the prelaunch CDP path entirely and goes
  * straight to a fresh chromium.launch(). Used by the daemon's crash-recovery path —
  * prelaunch is a one-shot startup optimization and recovery needs a fresh browser.
+ * @param headed When true, a window on the screen rather than a headless process. The pre-launched
+ * Chrome is headless by construction, so a headed session cannot borrow it — the ~80ms that costs
+ * is nothing against a session measured in minutes.
  * @returns {Promise<object>}
  */
-export async function launch(config: LaunchTarget, skipPrelaunch = false): Promise<Browser> {
+export async function launch(
+  config: LaunchTarget,
+  skipPrelaunch = false,
+  headed: boolean = Boolean(config.open && config.watch),
+): Promise<Browser> {
   const browserName = config.browser || 'chromium';
 
   if (browserName === 'chromium') {
     const waitStart = Date.now();
     const [playwrightCore, prelaunch] = await Promise.all([
       playwrightCorePromise,
-      skipPrelaunch ? Promise.resolve(null) : prelaunchPromise(),
+      // Headless by construction, so a headed session cannot use it — and holding it open for a
+      // session that will never connect is a Chrome nobody is looking at. `skipPrelaunch` only
+      // declines to USE it: the daemon's crash recovery says that, and killing the pre-launch
+      // out from under a recovering daemon is not what it asked for.
+      headed
+        ? shutdownPrelaunch().then(() => null)
+        : skipPrelaunch
+          ? Promise.resolve(null)
+          : prelaunchPromise(),
     ]);
     perfLog(
       `browser.js: playwright-core + prelaunch resolved in ${Date.now() - waitStart}ms, prelaunch:`,
@@ -105,10 +120,12 @@ export async function launch(config: LaunchTarget, skipPrelaunch = false): Promi
     // (Google Chrome for Testing) is not used here because playwright-core unconditionally adds
     // --enable-unsafe-swiftshader, which crashes the ARM64 Chrome renderer on macOS CI VMs.
     // chromium-headless-shell is purpose-built for this and does not have that issue.
-    const executablePath = process.platform !== 'darwin' ? await Chrome.find() : null;
+    // Headed on macOS needs a real Chrome: the headless-shell the note above prefers there is,
+    // as its name says, incapable of putting a window on the screen.
+    const executablePath = headed || process.platform !== 'darwin' ? await Chrome.find() : null;
     const launchOptions: Parameters<typeof playwrightCore.chromium.launch>[0] = {
       args: Chrome.CHROMIUM_ARGS,
-      headless: true,
+      headless: !headed,
       // Disable Playwright's async SIGTERM/SIGHUP handlers. When the CLI is killed by an
       // external signal (e.g. exec() timeout in tests), those handlers start an async browser
       // graceful-close that can hang indefinitely on CI, preventing the process from exiting
@@ -124,7 +141,7 @@ export async function launch(config: LaunchTarget, skipPrelaunch = false): Promi
 
   const playwrightCore = await playwrightCorePromise;
   const launchOpts = {
-    headless: !(config.open && config.watch),
+    headless: !headed,
     // See comment in the chromium fallback path above for why these are disabled.
     handleSIGTERM: false,
     handleSIGHUP: false,

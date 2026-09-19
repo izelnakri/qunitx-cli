@@ -16,10 +16,11 @@ import { closeCompletely } from '../utils/close-with-grace.ts';
 import { findProjectRoot } from '../utils/find-project-root.ts';
 import { pathExists } from '../utils/path-exists.ts';
 import { qunitxRuntimePlugin } from '../setup/qunitx-runtime-plugin.ts';
+import { harness } from '../setup/qunit-harness.ts';
 import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { processConsole, type Console } from '../console.ts';
 import { MAX_BROWSER_LOGS } from '../api/reporter.ts';
-import type { BrowserLog } from '../reporters/types.ts';
+import type { BrowserLog, TestDetails } from '../reporters/types.ts';
 import type { ConsoleMessage, Page } from 'playwright-core';
 import type { ProjectRootNotFoundFailure } from '../utils/find-project-root.ts';
 import type { SourceMapDecoder } from '../utils/source-map.ts';
@@ -387,7 +388,7 @@ export async function run(entry: string, settings: ScriptSettings = {}): Promise
 
   if (!config.watch) {
     try {
-      return await execute(page, url, config, () => bundle, server);
+      return await execute(page, url, config, () => bundle);
     } finally {
       // Bounded, never sequential awaits: once the server, browser and Chrome are gone no handle
       // holds the loop open, so a close that never settles drains it and the process exits 0 with
@@ -419,7 +420,7 @@ export async function run(entry: string, settings: ScriptSettings = {}): Promise
 
   return await watchLoop(watched, async () => {
     if (!first) bundle = await build(config);
-    await execute(page, url, config, () => bundle, server);
+    await execute(page, url, config, () => bundle);
     if (!first) return;
     first = false;
     console.log('#', blue(`Watching ${path.relative(config.projectRoot, config.entry)} on ${url}`));
@@ -696,6 +697,12 @@ interface DoneSignal {
   declaredTests?: number;
 }
 
+/** What the injected harness exposes on the page, for the one call this verb makes. */
+type PageHarness = { __qunitxHarness: { flush(): Promise<string | null> } };
+
+/** The shape `flush()` hands back: every `testEnd` QUnit emitted during the batch. */
+type HarnessPayload = { tests: TestDetails[] };
+
 /** The one property {@link wrapperSource} adds to the page's global object. */
 type ScriptGlobal = { __qunitxScript?: { done: DoneSignal | null } };
 
@@ -711,7 +718,6 @@ async function execute(
   url: string,
   config: ScriptConfig,
   bundleOf: () => ScriptBundle,
-  server: HTTPServer,
 ): Promise<ScriptOutcome> {
   // Capped the way a test run caps its own: a script that logs in a loop must not grow this array
   // until the process dies, and dropping from the FRONT keeps the lines next to whatever went
@@ -799,7 +805,7 @@ async function execute(
     if (done.ok && done.declaredTests) streaming = false;
     const tests =
       done.ok && done.declaredTests
-        ? await runDeclaredSuite(page, server, config, bundleOf().decoder)
+        ? await runDeclaredSuite(page, config, bundleOf().decoder)
         : null;
 
     return {
@@ -844,14 +850,12 @@ async function renderConsoleMessage(message: ConsoleMessage): Promise<string> {
  */
 async function runDeclaredSuite(
   page: Page,
-  server: HTTPServer,
   config: ScriptConfig,
   decoder: SourceMapDecoder | null,
 ): Promise<{ exitCode: number; result: RunResult }> {
   // Imported here rather than at the top of the file: the suite half is the whole reporting stack,
   // and a plain script — which is what this verb is mostly pointed at — must not pay to load it.
-  const [WebServer, Reporter, { buildResult }] = await Promise.all([
-    import('../setup/web-server.ts'),
+  const [Reporter, { buildResult }] = await Promise.all([
     import('../reporters/index.ts'),
     import('../api/test.ts'),
   ]);
@@ -860,11 +864,6 @@ async function runDeclaredSuite(
   // is the one this verb built. Without it a failure reports `script.js:6325:17` where the bare
   // verb reports `test/fixtures/failing-tests.js:33:12` — the same run, told two different ways.
   suite.state.group.sourceMapDecoder = decoder;
-  WebServer.setupGroupWSHandler(server, [suite]);
-
-  const finished = new Promise<void>((resolve) => {
-    suite.state.group.signals.testRunDone = resolve;
-  });
   const startedAt = Date.now();
 
   Reporter.runStart(suite, { fileCount: 1, groupCount: 1 });
@@ -885,9 +884,22 @@ async function runDeclaredSuite(
   if (suite.reporter === 'tap' || suite.debug) {
     Reporter.info(suite, blue(`QUnitX running: http://localhost:${suite.port}/`));
   }
-  await page.addScriptTag({ content: WebServer.testRuntimeSource(suite, 0) });
-  await page.evaluate(() => globalThis.dispatchEvent(new CustomEvent('qunitx:tests-ready')));
-  await finished;
+  // The REPL's harness, not the suite's WebSocket runtime. Both make a page run QUnit on command;
+  // this one needs no socket, no group config and no `tests-ready` handshake, and it hands the
+  // results straight back — which is all a single batch wants. It attaches to the QUnit already on
+  // the page (the qunitx runtime turns `autostart` off itself, so the tests are sitting in the
+  // queue) and leaves the real one alone.
+  await page.addScriptTag({
+    content: `(${harness.toString()})({ timeout: ${suite.timeout} })`,
+  });
+  const payload = await page.evaluate(() =>
+    (globalThis as unknown as PageHarness).__qunitxHarness.flush(),
+  );
+  // Reported here rather than as they finish. One file's tests are the whole batch, and the lines
+  // are the same lines in the same order — `runEnd` below still closes the stream.
+  for (const details of (JSON.parse(payload ?? '{"tests":[]}') as HarnessPayload).tests) {
+    Reporter.testEnd(suite, details);
+  }
 
   const durationMs = Date.now() - startedAt;
   await Reporter.runEnd(suite, { durationMs });

@@ -586,6 +586,16 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
   static channel<U, F = never>(
     options: ChannelOptions<U, F> & { overflow: 'fail' },
   ): Channel<U, F | ChannelOverflowFailure>;
+  /**
+   * The same channel, with the default `overflow` — dropping the oldest rather than failing, so
+   * the failure type stays whatever you declared.
+   *
+   * ```ts
+   * const channel = Stream.channel<number>();
+   * channel.emit(1);
+   * await channel.stream.take(1).collect(); // [1]
+   * ```
+   */
   static channel<U, F = never>(options?: ChannelOptions<U, F>): Channel<U, F>;
   static channel<U, F = never>(options: ChannelOptions<U, F> = {}): Channel<U, F> {
     // GenStage's `:buffer_size` default, and its `:buffer_keep :last` — keep the newest, which
@@ -1685,6 +1695,14 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * ```
    */
   scan(fn: (accumulator: T, value: T) => T | PromiseLike<T>): StreamClass<T, E>;
+  /**
+   * The seeded fold: `initial` starts the accumulator, so the result can be a different type from
+   * the values and an empty stream still emits nothing rather than failing to seed.
+   *
+   * ```ts
+   * await Stream.from([1, 2, 3]).scan((acc, n) => `${acc}${n}`, '').collect(); // ['1', '12', '123']
+   * ```
+   */
   scan<A>(fn: (accumulator: A, value: T) => A | PromiseLike<A>, initial: A): StreamClass<A, E>;
   scan<A>(
     fn: (accumulator: A, value: T) => A | PromiseLike<A>,

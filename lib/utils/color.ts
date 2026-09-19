@@ -51,13 +51,25 @@ export function createColors(enabled: boolean) {
   return { red, green, yellow, blue, magenta };
 }
 
-const enabled =
+/**
+ * Whether this process should emit colour: the answer every helper below already uses.
+ *
+ * Exported because the REPL renders values in the BROWSER, where none of these signals exist —
+ * the decision has to be made here and carried across.
+ *
+ * ```ts
+ * import { colorEnabled } from './color.ts';
+ *
+ * typeof colorEnabled; // 'boolean' — decided once, at load, from env and the TTY
+ * ```
+ */
+export const colorEnabled: boolean =
   !process.env.NODE_DISABLE_COLORS &&
   process.env.NO_COLOR == null &&
   process.env.TERM !== 'dumb' &&
   ((process.env.FORCE_COLOR != null && process.env.FORCE_COLOR !== '0') || !!process.stdout?.isTTY);
 
-const colors = createColors(enabled);
+const colors = createColors(colorEnabled);
 
 /**
  * ANSI red text.
