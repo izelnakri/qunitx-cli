@@ -95,21 +95,3 @@ export function truncate(text: string, width: number): string {
 export function terminalWidth(output: NodeJS.WritableStream): number {
   return (output as NodeJS.WriteStream).columns || 80;
 }
-
-/**
- * Clears the visible screen and leaves the scrollback alone.
- *
- * `[2J` erases what is on screen; `[3J` would erase what has scrolled off it, which is the
- * difference between clearing a terminal and losing the last hour of it. Only the first is sent,
- * which is why scrolling still works afterwards — and which is what readline already does for
- * Ctrl-L, so that key needs nothing from us.
- *
- * ```ts
- * import { clearScreen } from './terminal.ts';
- *
- * clearScreen().includes('[3J'); // false — the scrollback is not ours to throw away
- * ```
- */
-export function clearScreen(): string {
-  return `${ESCAPE}[H${ESCAPE}[2J`;
-}
