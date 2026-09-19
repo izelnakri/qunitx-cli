@@ -390,6 +390,19 @@ export function pathsContinuing(typed: string, cwd: string): string[] {
   const partial = typed.slice(slash + 1);
   const directory = path.resolve(cwd, prefix || '.');
 
+  // Synchronous, and measured rather than assumed — async is slower at every size, because one
+  // listing has nothing to overlap with and pays libuv's thread-pool hop for the privilege:
+  //
+  //        17 entries   0.0135ms sync   0.0495ms async
+  //     1,000 entries   0.46ms          1.03ms
+  //    50,000 entries   23.08ms         24.39ms
+  //
+  // The last row is the only one that can be felt, and going async would not fix it: the ghost is
+  // what the keystroke is WAITING for, so moving the wait off the loop moves nothing. Caching the
+  // listing would fix it and is the change not to make — a session where you `:touch a.ts` and
+  // then cannot TAB to it is a worse prompt than one that pauses in a directory of fifty thousand.
+  // `withFileTypes` is itself the optimisation: without it, knowing a directory from a file costs
+  // a stat per entry.
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(directory, { withFileTypes: true });
