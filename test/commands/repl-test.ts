@@ -120,10 +120,16 @@ module('Commands | repl | inputs and refusals', { concurrency: true }, () => {
     );
 
     assert.exitCode(result, 1);
+    // On STDERR specifically, which is the promise a crash makes and the one that broke: the
+    // boundary used to reap the pre-launched Chrome before printing, and on Windows the event
+    // loop drains inside that wait — the process exited 1 having said nothing at all. Asserted
+    // here rather than on a helper, because a helper that orders correctly proves nothing about
+    // whether cli.ts still calls it.
+    assert.strictEqual(result.stdout, '', 'a crash is not output');
     assert.includes(
-      { stdout: result.stdout + result.stderr, stderr: '' },
+      { stdout: result.stderr, stderr: '' },
       'could not read test input',
-      'the unreadable input names itself',
+      'the unreadable input names itself, on the stream a crash belongs on',
     );
   });
 

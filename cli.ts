@@ -9,7 +9,6 @@ import './lib/utils/find-sidecar-esbuild.ts';
 import process from 'node:process';
 import { writeSync } from 'node:fs';
 import { shutdownPrelaunch, startPrelaunch } from './lib/chrome/prelaunch.ts';
-import { reportCrash } from './lib/utils/report-crash.ts';
 import { exitOnSignal } from './lib/utils/exit-on-signal.ts';
 import { Failure, tryCatch } from './lib/result/index.ts';
 import { Task } from './lib/task/index.ts';
@@ -210,10 +209,15 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   // bare `process.exit(1)`, which no caller could test or override.
   //
   // Set first, for the same reason as above: nothing awaited below may decide the exit code by
-  // draining the loop out from under us. `reportCrash` prints before it reaps for the same
-  // reason again — a message queued after that await never reached the Windows runner at all.
+  // draining the loop out from under us.
   process.exitCode = 1;
-  await reportCrash(error, shutdownPrelaunch);
+  // PRINT, THEN REAP, and the order is the whole point. `shutdownPrelaunch()` waits on a Chrome
+  // that may still be starting, and on Windows the event loop can drain inside that wait — Node
+  // then exits on its own, before anything queued after the await is written. This was
+  // `qunitx repl missing-file.ts` exiting 1 with an EMPTY stderr on the Windows runner, while the
+  // same command on Linux reported itself fine.
+  console.error(Failure.is(error) ? Failure.format(error) : error);
+  await shutdownPrelaunch();
   exitAfterFlush(1);
 });
 
