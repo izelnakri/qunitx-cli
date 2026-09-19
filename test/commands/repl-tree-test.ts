@@ -8,7 +8,12 @@ import '../helpers/custom-asserts.ts';
 import type { ReplContext } from '../../lib/commands/repl/command.ts';
 
 const ESC = String.fromCharCode(27);
-const plain = { style: () => '' };
+const plain = { painter: () => (text: string) => text };
+
+/** A theme that paints one capture and leaves the rest alone — the fake a drawing test needs. */
+function painting(capture: string, style: string) {
+  return (name: string) => (text: string) => (name === capture ? `${style}${text}${ESC}[0m` : text);
+}
 
 /** A directory with something in it, since every question here is about a real filesystem. */
 async function sample(name: string) {
@@ -26,7 +31,10 @@ async function sample(name: string) {
 }
 
 /** Just enough of a context for a drawing: where to resolve from, and what to colour with. */
-function at(cwd: string, palette: { style: (name: string) => string }): ReplContext {
+function at(
+  cwd: string,
+  palette: { painter: (name: string) => (text: string) => string },
+): ReplContext {
   return { cwd, palette } as unknown as ReplContext;
 }
 
@@ -75,7 +83,7 @@ module('Commands | repl | .tree drawing', { concurrency: true }, () => {
 
   test('directories are coloured apart from files', async (assert) => {
     await using directory = await sample('files-tree-colour');
-    const blue = { style: (name: string) => (name === 'Directory' ? `${ESC}[34m` : '') };
+    const blue = { painter: painting('Directory', `${ESC}[34m`) };
     const listing = drawTree(at(directory.path, blue), '.', Infinity);
 
     assert.includes(listing, `${ESC}[34mrepl/${ESC}[0m`);

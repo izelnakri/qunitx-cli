@@ -1,5 +1,4 @@
 import process from 'node:process';
-import { inStyle } from './terminal.ts';
 import { highlight, tokenize } from './highlight.ts';
 import type { Theme } from './theme.ts';
 
@@ -80,7 +79,7 @@ export function limits(): Limits {
  * ```ts
  * import { excerpt } from './excerpt.ts';
  *
- * const plain = { style: () => '' };
+ * const plain = { painter: () => (text: string) => text };
  * excerpt('const a = 1;\ndebugger;\n', 2, plain); // '  1 │ const a = 1;\n> 2 │ debugger;'
  * excerpt('', 1, plain); // '' — nothing to show is shown as nothing
  * ```
@@ -100,17 +99,15 @@ export function excerpt(
   const first = openingLine(deltas, line, limits.before);
   const last = closingLine(source, lines, deltas, line, limits.after);
   const gutter = String(last).length;
-  const dim = palette.style('LineNr');
-  const mark = palette.style('@keyword');
+  const dim = palette.painter('LineNr');
+  const mark = palette.painter('@keyword');
 
   return lines
     .slice(first - 1, last)
     .map((text, index) => {
       const number = String(first + index).padStart(gutter);
       const here = first + index === line;
-      const edge = here
-        ? `${inStyle('>', mark)} ${inStyle(`${number} │`, mark)}`
-        : `  ${inStyle(`${number} │`, dim)}`;
+      const edge = here ? `${mark('>')} ${mark(`${number} │`)}` : `  ${dim(`${number} │`)}`;
 
       return `${edge} ${highlight(text, palette)}`;
     })

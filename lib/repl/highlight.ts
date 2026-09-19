@@ -1,4 +1,3 @@
-import { inStyle } from './terminal.ts';
 import type { Theme } from './theme.ts';
 
 /** A run of source, and what nvim's treesitter queries would capture it as. */
@@ -74,16 +73,17 @@ const IDENTIFIER_PART = /[\p{ID_Continue}$]/u;
  * import { theme } from './theme.ts';
  *
  * highlight('const a = 1', theme()).includes('const'); // true — painted, not replaced
- * highlight('const a = 1', { style: () => '' }); // 'const a = 1' — an unstyled theme changes nothing
+ * const plain = { painter: () => (text: string) => text };
+ * highlight('const a = 1', plain); // 'const a = 1' — an unstyled theme changes nothing
  * ```
  */
 export function highlight(source: string, palette: Theme): string {
   let painted = '';
   let at = 0;
   for (const token of tokenize(source)) {
-    const style = palette.style(token.capture);
+    const paint = palette.painter(token.capture);
     const text = source.slice(token.start, token.end);
-    painted += source.slice(at, token.start) + inStyle(text, style);
+    painted += source.slice(at, token.start) + paint(text);
     at = token.end;
   }
 

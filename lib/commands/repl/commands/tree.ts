@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { findPath, pathAndDepth } from '../typed-path.ts';
-import { inStyle } from '../../../repl/terminal.ts';
 import { red } from '../../../utils/color.ts';
 import { reportBadPath } from '../report-bad-path.ts';
 import type { ReplCommand, ReplContext } from '../command.ts';
@@ -76,10 +75,10 @@ export const command: ReplCommand = {
  * ```
  */
 export function drawTree(repl: ReplContext, root: string, depth: number): string {
-  const directoryStyle = repl.palette.style('Directory');
-  const branchStyle = repl.palette.style('LineNr');
+  const asDirectory = repl.palette.painter('Directory');
+  const asBranch = repl.palette.painter('LineNr');
   const counted = { directories: 0, files: 0 };
-  const lines = [inStyle(root.endsWith('/') ? root : `${root}/`, directoryStyle)];
+  const lines = [asDirectory(root.endsWith('/') ? root : `${root}/`)];
   let omitted = 0;
 
   const walk = (directory: string, prefix: string, level: number): void => {
@@ -104,11 +103,9 @@ export function drawTree(repl: ReplContext, root: string, depth: number): string
       const last = index === visible.length - 1;
       const isDirectory = entry.isDirectory();
       counted[isDirectory ? 'directories' : 'files'] += 1;
-      const name = inStyle(
-        `${entry.name}${isDirectory ? '/' : ''}`,
-        isDirectory ? directoryStyle : '',
-      );
-      lines.push(`${inStyle(`${prefix}${last ? '└── ' : '├── '}`, branchStyle)}${name}`);
+      const drawn = `${entry.name}${isDirectory ? '/' : ''}`;
+      const name = isDirectory ? asDirectory(drawn) : drawn;
+      lines.push(`${asBranch(`${prefix}${last ? '└── ' : '├── '}`)}${name}`);
       if (isDirectory && level < depth) {
         walk(path.join(directory, entry.name), `${prefix}${last ? '    ' : '│   '}`, level + 1);
       }

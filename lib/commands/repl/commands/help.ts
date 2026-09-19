@@ -1,5 +1,4 @@
 import { command as doc } from './doc.ts';
-import { inStyle } from '../../../repl/terminal.ts';
 import type { ReplCommand } from '../command.ts';
 import type { Theme } from '../../../repl/theme.ts';
 
@@ -38,15 +37,10 @@ export const command: ReplCommand = {
     repl.log(commandListing(repl.server.commands, repl.palette));
     // The list is what `.help` is reached for, so it is also the only place anybody will find out
     // that it takes an argument. One row of thirty-five saying so is a row nobody reads.
-    repl.log(
-      inStyle(
-        'Name anything after it for what that is — `.h double`, `.h window.fetch`',
-        repl.palette.style('LineNr'),
-      ),
-    );
-    repl.log(
-      inStyle('Ctrl+C aborts the current expression, Ctrl+D exits', repl.palette.style('LineNr')),
-    );
+    const dim = repl.palette.painter('LineNr');
+
+    repl.log(dim('Name anything after it for what that is — `.h double`, `.h window.fetch`'));
+    repl.log(dim('Ctrl+C aborts the current expression, Ctrl+D exits'));
   },
 };
 
@@ -79,7 +73,7 @@ const NAME_COLUMN_GAP = 2;
  * ```ts
  * import { commandListing } from './help.ts';
  *
- * const plain = { style: () => '' };
+ * const plain = { painter: () => (text: string) => text };
  * commandListing({ continue: { help: 'Carry on' }, c: { help: 'Carry on' } }, plain);
  * // '.continue  Carry on [aliases .c]'
  * ```
@@ -103,14 +97,14 @@ export function commandListing(
 
   const width = Math.max(...rows.map((row) => row.name.length + 1)) + NAME_COLUMN_GAP;
 
+  const dim = palette.painter('LineNr');
+  const asCommand = palette.painter('@function');
+
   return rows
     .map(({ name, help, aliases }) => {
-      const said =
-        aliases.length === 0
-          ? help
-          : `${help} ${inStyle(aliasNote(aliases), palette.style('LineNr'))}`;
+      const said = aliases.length === 0 ? help : `${help} ${dim(aliasNote(aliases))}`;
 
-      return `${inStyle(`.${name}`.padEnd(width), palette.style('@function'))}${said}`;
+      return `${asCommand(`.${name}`.padEnd(width))}${said}`;
     })
     .join('\n');
 }

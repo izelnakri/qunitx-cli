@@ -1,5 +1,4 @@
 import { excerpt, limits } from '../../repl/excerpt.ts';
-import { inStyle } from '../../repl/terminal.ts';
 import { blue, red } from '../../utils/color.ts';
 import type * as Repl from '../../repl/session.ts';
 import type { ReplContext } from './command.ts';
@@ -36,21 +35,19 @@ export async function showFrameSource(repl: ReplContext): Promise<void> {
  * ```ts
  * import { frameTable } from './frames.ts';
  *
- * const plain = { style: () => '' };
+ * const plain = { painter: () => (text: string) => text };
  * frameTable([{ index: 0, where: 'outer (a.ts:1:1)', selected: true }], plain);
  * // '> #0  outer (a.ts:1:1)'
  * ```
  */
 export function frameTable(frames: readonly Repl.Frame[], palette: Theme): string {
-  const dim = palette.style('LineNr');
-  const mark = palette.style('@keyword');
+  const dim = palette.painter('LineNr');
+  const mark = palette.painter('@keyword');
 
   return frames
     .map(({ index, where, selected }) => {
       const number = `#${index}`;
-      const edge = selected
-        ? `${inStyle('>', mark)} ${inStyle(number, mark)}`
-        : `  ${inStyle(number, dim)}`;
+      const edge = selected ? `${mark('>')} ${mark(number)}` : `  ${dim(number)}`;
 
       return `${edge}  ${where}`;
     })

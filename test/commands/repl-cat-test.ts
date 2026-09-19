@@ -3,7 +3,7 @@ import { withLineNumbers } from '../../lib/commands/repl/commands/cat.ts';
 import '../helpers/custom-asserts.ts';
 
 const ESC = String.fromCharCode(27);
-const plain = { style: () => '' };
+const plain = { painter: () => (text: string) => text };
 
 // The listing itself: numbered the way anybody quoting a file writes it down.
 module('Commands | repl | .cat line numbers', { concurrency: true }, () => {
@@ -29,7 +29,10 @@ module('Commands | repl | .cat line numbers', { concurrency: true }, () => {
 
   test('code is highlighted and prose is not', (assert) => {
     // The gutter is themed separately from the source, so this paints only the captures.
-    const captures = { style: (name: string) => (name.startsWith('@') ? `${ESC}[31m` : '') };
+    const captures = {
+      painter: (name: string) => (text: string) =>
+        name.startsWith('@') ? `${ESC}[31m${text}${ESC}[0m` : text,
+    };
 
     assert.includes(withLineNumbers("const a = 'one'", 'x.ts', captures), ESC);
     assert.strictEqual(
@@ -40,7 +43,10 @@ module('Commands | repl | .cat line numbers', { concurrency: true }, () => {
   });
 
   test('the gutter takes its colour from the theme, under nvim’s name for it', (assert) => {
-    const gutter = { style: (name: string) => (name === 'LineNr' ? `${ESC}[34m` : '') };
+    const gutter = {
+      painter: (name: string) => (text: string) =>
+        name === 'LineNr' ? `${ESC}[34m${text}${ESC}[0m` : text,
+    };
 
     assert.strictEqual(withLineNumbers('a', 'x.txt', gutter), `${ESC}[34m1 |${ESC}[0m a`);
   });

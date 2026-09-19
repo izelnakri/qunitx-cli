@@ -5,7 +5,7 @@ import { theme } from '../../lib/repl/theme.ts';
 import '../helpers/custom-asserts.ts';
 
 const ESC = String.fromCharCode(27);
-const plain = { style: () => '' };
+const plain = { painter: () => (text: string) => text };
 
 // What `history` prints: the last of what you entered, numbered, oldest first — so the newest is
 // nearest the prompt, which is where you are reading from.

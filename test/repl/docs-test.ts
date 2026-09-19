@@ -4,7 +4,7 @@ import { theme } from '../../lib/repl/theme.ts';
 import '../helpers/custom-asserts.ts';
 
 const ESC = String.fromCharCode(27);
-const plain = { style: () => '' };
+const plain = { painter: () => (text: string) => text };
 
 // What somebody wrote above a declaration, which is the only place a prompt can find out what a
 // value is FOR.

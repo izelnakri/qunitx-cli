@@ -84,53 +84,6 @@ export function truncate(text: string, width: number): string {
 }
 
 /**
- * Text in a style the caller was HANDED, or the text alone where that style is empty.
- *
- * This is the themed half of a two-vocabulary split, and the split is the whole point:
- *
- *   - `red('No such frame')` — `lib/utils/color.ts`, a FIXED colour chosen at the call site. The
- *     tool speaking in its own voice: errors, warnings, notices. Not themeable, because an error
- *     is red in every terminal and nobody wants to configure that.
- *   - `inStyle(name, palette.style('@function'))` — a colour chosen by the DEVELOPER, in their
- *     `QUNITX_REPL_THEME`. The page's content being shown back: a value, a path, an identifier.
- *
- * `red()` cannot do this job, and it is worth being precise about why rather than assuming it is
- * only taste. Three reasons, each load-bearing:
- *
- * 1. **The style is data.** A capture name arrives from the PAGE — `.imported` asks it what kind
- *    each export is and gets back `@function`, `@string`, `@type`. There is no `colors[capture]`
- *    to call; the palette resolves it, and this puts the answer on.
- * 2. **An empty style must cost zero bytes.** Half the default theme is deliberately unstyled
- *    (`@variable`, `@property`, `@punctuation` — a prompt is not a paint chart), and a piped or
- *    `NO_COLOR` session makes ALL of it empty. `red()` shortens to the bare text too, but only
- *    for its own fixed colour; this has to hold for a style it is only told about.
- * 3. **It is half a system.** What goes in here comes back out through {@link plain},
- *    {@link plainLength} and {@link truncate} — a line laid out in columns has to be measured
- *    without its escapes and cut without losing the reset. That contract lives in this module, so
- *    the function that WRITES the escapes belongs here too.
- *
- * ```ts
- * import { inStyle } from './terminal.ts';
- * import { theme } from './theme.ts';
- *
- * const palette = theme(true);
- *
- * // Themed: what the page holds, in the colour the developer picked for it.
- * inStyle('GREETING', palette.style('@string')); // yellow by default, green if they said so
- *
- * // An unstyled capture is the terminal's own colour, and costs nothing to say so.
- * inStyle('answer', palette.style('@variable')); // 'answer' — no escapes at all
- * inStyle('answer', theme(false).style('@string')); // 'answer' — a pipe gets plain text
- *
- * // Whatever it wraps, it closes — so a cut line cannot leak its colour onto the next one.
- * inStyle('hi', palette.style('@string')).endsWith(`${String.fromCharCode(27)}[0m`); // true
- * ```
- */
-export function inStyle(text: string, style: string): string {
-  return style === '' ? text : `${style}${text}${RESET}`;
-}
-
-/**
  * How wide a line may be. 80 where nothing says — a pipe has no width, and neither does a file.
  *
  * ```ts

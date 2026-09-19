@@ -1,4 +1,3 @@
-import { inStyle } from './terminal.ts';
 import { highlight, tokenize } from './highlight.ts';
 import type { Theme } from './theme.ts';
 
@@ -61,12 +60,13 @@ export function commentAbove(source: string, line: number): string[] {
  * ```ts
  * import { renderDoc } from './docs.ts';
  *
- * renderDoc(['what it does'], { style: () => '' }); // 'what it does'
- * renderDoc([], { style: () => '' }); // '' — nothing written is nothing to print
+ * const plain = { painter: () => (text: string) => text };
+ * renderDoc(['what it does'], plain); // 'what it does'
+ * renderDoc([], plain); // '' — nothing written is nothing to print
  * ```
  */
 export function renderDoc(lines: readonly string[], palette: Theme): string {
-  const comment = palette.style('@comment');
+  const comment = palette.painter('@comment');
   let fenced = false;
 
   return lines
@@ -74,10 +74,10 @@ export function renderDoc(lines: readonly string[], palette: Theme): string {
       if (FENCE.test(text)) {
         fenced = !fenced;
 
-        return inStyle(text, comment);
+        return comment(text);
       }
 
-      return fenced ? highlight(text, palette) : inStyle(text, comment);
+      return fenced ? highlight(text, palette) : comment(text);
     })
     .join('\n');
 }

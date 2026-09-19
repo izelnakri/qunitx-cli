@@ -3,7 +3,7 @@ import { commandListing } from '../../lib/commands/repl/commands/help.ts';
 import { theme } from '../../lib/repl/theme.ts';
 import '../helpers/custom-asserts.ts';
 
-const plain = { style: () => '' };
+const plain = { painter: () => (text: string) => text };
 const ESC = String.fromCharCode(27);
 
 // This REPL has more names than commands — `.c`, `.s`, `.n`, `.e`, `.bt` — and a row apiece turns

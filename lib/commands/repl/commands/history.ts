@@ -1,5 +1,4 @@
 import { highlight } from '../../../repl/highlight.ts';
-import { inStyle } from '../../../repl/terminal.ts';
 import type { ReplCommand } from '../command.ts';
 import type { Theme } from '../../../repl/theme.ts';
 
@@ -46,15 +45,15 @@ const HISTORY_SHOWN = 16;
  * ```ts
  * import { lastEntered } from './history.ts';
  *
- * lastEntered(['b', 'a'], 2, { style: () => '' }); // '1  a\n2  b\n' — newest last
- * lastEntered([], 16, { style: () => '' }); // '' — nothing entered yet
+ * lastEntered(['b', 'a'], 2, { painter: () => (t: string) => t }); // '1  a\n2  b\n' — newest last
+ * lastEntered([], 16, { painter: () => (t: string) => t }); // '' — nothing entered yet
  * ```
  */
 export function lastEntered(newestFirst: readonly string[], count: number, palette: Theme): string {
   const oldestFirst = [...newestFirst].reverse();
   const from = Math.max(0, oldestFirst.length - count);
   const gutter = String(oldestFirst.length).length;
-  const style = palette.style('LineNr');
+  const dim = palette.painter('LineNr');
 
   return oldestFirst
     .slice(from)
@@ -65,7 +64,7 @@ export function lastEntered(newestFirst: readonly string[], count: number, palet
       // colours `-L` as a type and `git` as a call.
       const code = /^\s*[.:]/.test(line) ? line : highlight(line, palette);
 
-      return `${inStyle(number, style)}  ${code}\n`;
+      return `${dim(number)}  ${code}\n`;
     })
     .join('');
 }

@@ -2,7 +2,6 @@ import path from 'node:path';
 import { blockAt, commentAbove, renderDoc, signature } from '../../repl/docs.ts';
 import { readIfThere } from './editor.ts';
 import { highlight } from '../../repl/highlight.ts';
-import { inStyle } from '../../repl/terminal.ts';
 import type { ReplContext } from './command.ts';
 import type { ReplSession } from '../../repl/session.ts';
 import type { Theme } from '../../repl/theme.ts';
@@ -89,7 +88,7 @@ async function describe(
 
   // Where, then what was said, then the code — reading order, and the order they were written in.
   const parts = [
-    inStyle(`${at.file}:${at.line}`, palette.style('LineNr')),
+    palette.painter('LineNr')(`${at.file}:${at.line}`),
     renderDoc(commentAbove(source, at.line), palette),
     highlight(body ? blockAt(source, at.line) : signature(source, at.line), palette),
   ];
@@ -117,5 +116,5 @@ async function renderedByThePage(
   if (rendered === '') return null;
   const where = session.whereFrom(asked);
 
-  return where === null ? rendered : `${inStyle(where, palette.style('LineNr'))}\n${rendered}`;
+  return where === null ? rendered : `${palette.painter('LineNr')(where)}\n${rendered}`;
 }

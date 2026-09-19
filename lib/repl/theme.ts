@@ -13,13 +13,38 @@ import { colorEnabled } from '../utils/color.ts';
  * import { theme } from './theme.ts';
  *
  * const palette = theme();
- * palette.style('@keyword.return') === palette.style('@keyword'); // true — inherited
- * palette.style('@variable'); // '' — no style is a style, and it means the terminal's own colour
+ * palette.painter('@keyword.return') === palette.painter('@keyword'); // true — inherited
+ * palette.painter('@variable')('x'); // 'x' — no style is a style: the terminal's own colour
  * ```
  */
 export interface Theme {
-  /** The SGR prefix for a capture, or `''` where it and its parents have no style. */
-  style(capture: string): string;
+  /**
+   * The function that paints text in a capture's colour — kleur's shape, one function per colour.
+   *
+   * `palette.painter('@string')('hi')` rather than a prefix you then have to wrap text in
+   * yourself. It used to hand back the raw SGR sequence, and every single caller did the same
+   * thing with it, which is the definition of an implementation detail that leaked.
+   *
+   * Two colour vocabularies live in this codebase and this is the themed one:
+   *
+   *   - `red('No such frame')` — `lib/utils/color.ts`, a FIXED colour chosen at the call site.
+   *     The tool speaking in its own voice: errors, warnings. Not themeable, because an error is
+   *     red in every terminal and nobody wants to configure that.
+   *   - `palette.painter('@function')(name)` — a colour chosen by the DEVELOPER in their
+   *     `QUNITX_REPL_THEME`. The page's own content shown back: a value, a path, an identifier.
+   *     `red()` cannot do this job, because the capture arrives as DATA — `.imported` asks the
+   *     page what kind each export is and gets back `@function`, `@string`, `@type`, and there is
+   *     no fixed set of functions to name when the set is whatever somebody wrote in an env var.
+   *
+   * An unstyled capture returns the identity function, so it costs no bytes: half the default
+   * theme is deliberately unstyled, and a piped or `NO_COLOR` session makes all of it so. What a
+   * painter writes comes back out through `plain`, `plainLength` and `truncate`, which is how a
+   * line laid out in columns is measured without its escapes.
+   *
+   * The same function comes back for the same capture, so the highlighter can ask on every
+   * keystroke without allocating.
+   */
+  painter(capture: string): (text: string) => string;
 }
 
 /**
@@ -63,6 +88,7 @@ const DEFAULTS: Readonly<Record<string, string>> = {
 const THEME_VARIABLE = 'QUNITX_REPL_THEME';
 
 const ESCAPE = String.fromCharCode(27);
+const RESET = `${ESCAPE}[0m`;
 
 /**
  * The palette to draw with: the defaults, with anything the developer has set on top.
@@ -77,41 +103,65 @@ const ESCAPE = String.fromCharCode(27);
  * ```ts
  * import { theme } from './theme.ts';
  *
- * theme(true).style('@string').endsWith('[33m'); // true — yellow, as the terminal defines yellow
- * theme(false).style('@string'); // '' — nothing is painted where nothing reads colour
+ * theme(true).painter('@string')('hi').includes('[33m'); // true — yellow, as the terminal has it
+ * theme(false).painter('@string')('hi'); // 'hi' — nothing painted where nothing reads colour
  * ```
  */
 export function theme(colour: boolean = colorEnabled): Theme {
-  if (!colour) return { style: () => '' };
+  // One shared identity function rather than a fresh one per capture: with no colour there is
+  // nothing to tell two captures apart by.
+  if (!colour) return { painter: () => asItIs };
 
   const configured = parse(process.env[THEME_VARIABLE]);
-  const resolved = new Map<string, string>();
+  // Two caches, and the second one is the interesting half: painters are keyed by the COLOUR they
+  // came out as, not by the capture that asked. So `@keyword.return`, which inherits `@keyword`,
+  // gets back the very same function — identity means "same colour", and a theme with thirty
+  // captures and six colours holds six closures.
+  const byCapture = new Map<string, (text: string) => string>();
+  const byColour = new Map<string, (text: string) => string>();
 
   return {
-    style(capture) {
-      const cached = resolved.get(capture);
+    painter(capture) {
+      const cached = byCapture.get(capture);
       if (cached !== undefined) return cached;
 
-      // Up the dotted hierarchy, exactly as nvim resolves a capture with no highlight of its own:
-      // `@keyword.return` to `@keyword`, `@punctuation.bracket` to `@punctuation`.
-      let name = capture;
-      for (;;) {
-        const spec = configured[name] ?? DEFAULTS[name];
-        if (spec !== undefined) {
-          const style = ansiStyle(spec);
-          resolved.set(capture, style);
+      const colour = sgrFor(capture, configured);
+      const made = byColour.get(colour) ?? paintingIn(colour);
+      byColour.set(colour, made);
+      byCapture.set(capture, made);
 
-          return style;
-        }
-        const parent = name.lastIndexOf('.');
-        if (parent === -1) break;
-        name = name.slice(0, parent);
-      }
-      resolved.set(capture, '');
-
-      return '';
+      return made;
     },
   };
+}
+
+/** What an unstyled capture paints with, and what every capture paints with on a pipe. */
+function asItIs(text: string): string {
+  return text;
+}
+
+/** Wraps text in a prefix and closes it again, or hands it back untouched where there is none. */
+function paintingIn(style: string): (text: string) => string {
+  if (style === '') return asItIs;
+
+  return (text) => `${style}${text}${RESET}`;
+}
+
+/**
+ * A capture's SGR prefix, `''` where neither it nor any parent of it has one.
+ *
+ * Up the dotted hierarchy, exactly as nvim resolves a capture with no highlight of its own:
+ * `@keyword.return` to `@keyword`, `@punctuation.bracket` to `@punctuation`.
+ */
+function sgrFor(capture: string, configured: Record<string, string>): string {
+  let name = capture;
+  for (;;) {
+    const spec = configured[name] ?? DEFAULTS[name];
+    if (spec !== undefined) return ansiStyle(spec);
+    const parent = name.lastIndexOf('.');
+    if (parent === -1) return '';
+    name = name.slice(0, parent);
+  }
 }
 
 /**

@@ -118,27 +118,33 @@ module('Repl | theme', { concurrency: true }, () => {
   test('a capture with no style of its own inherits its parent’s, as in nvim', (assert) => {
     const palette = withEnv(undefined, () => theme(true));
 
-    assert.strictEqual(palette.style('@keyword.return'), palette.style('@keyword'));
-    assert.strictEqual(palette.style('@punctuation.bracket'), palette.style('@punctuation'));
-    assert.strictEqual(palette.style('@nothing.like.this'), '', 'and nothing invented for a miss');
+    // The painter, not a string: inheriting means getting the SAME function, which is also what
+    // lets the highlighter ask once per token without allocating.
+    assert.strictEqual(palette.painter('@keyword.return'), palette.painter('@keyword'));
+    assert.strictEqual(palette.painter('@punctuation.bracket'), palette.painter('@punctuation'));
+    assert.strictEqual(palette.painter('@nothing.like.this')('x'), 'x', 'nothing invented');
   });
 
   test('the environment overrides, in the spelling zsh and nvim share', (assert) => {
     const palette = withEnv('@string=fg=green @keyword=fg=magenta,bold', () => theme(true));
 
-    assert.strictEqual(palette.style('@string'), `${ESC}[32m`);
-    assert.strictEqual(palette.style('@keyword'), `${ESC}[1;35m`, 'modifiers come with it');
+    assert.strictEqual(palette.painter('@string')('s'), `${ESC}[32ms${ESC}[0m`);
     assert.strictEqual(
-      palette.style('@keyword.return'),
-      `${ESC}[1;35m`,
+      palette.painter('@keyword')('k'),
+      `${ESC}[1;35mk${ESC}[0m`,
+      'modifiers come with it',
+    );
+    assert.strictEqual(
+      palette.painter('@keyword.return')('r'),
+      `${ESC}[1;35mr${ESC}[0m`,
       'and an override is inherited the same way a default is',
     );
   });
 
   test('a session that reads no colour is painted with none', (assert) => {
     assert.strictEqual(
-      theme(false).style('@keyword'),
-      '',
+      theme(false).painter('@keyword')('const'),
+      'const',
       'so a pipe carries the text and no more',
     );
   });
@@ -153,7 +159,7 @@ module('Repl | theme', { concurrency: true }, () => {
 
 // The painter itself: tokens in, a line the terminal draws out. Unstyled captures cost no bytes.
 module('Repl | highlight | paint', { concurrency: true }, () => {
-  const plain = { style: () => '' };
+  const plain = { painter: () => (text: string) => text };
 
   test('an unstyled theme returns the source unchanged', (assert) => {
     const source = 'const a = { b: `x${y}`, c: /r/g }; // done';

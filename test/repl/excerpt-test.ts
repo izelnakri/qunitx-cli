@@ -4,7 +4,7 @@ import { theme } from '../../lib/repl/theme.ts';
 import '../helpers/custom-asserts.ts';
 
 const ESC = String.fromCharCode(27);
-const plain = { style: () => '' };
+const plain = { painter: () => (text: string) => text };
 const show = (source: string, line: number, given?: { before: number; after: number }) =>
   excerpt(source, line, plain, given).split('\n');
 

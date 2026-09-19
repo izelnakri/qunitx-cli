@@ -1,7 +1,6 @@
 import path from 'node:path';
 import { findPath, pathAndDepth } from '../typed-path.ts';
 import { highlight } from '../../../repl/highlight.ts';
-import { inStyle } from '../../../repl/terminal.ts';
 import { reportBadPath } from '../report-bad-path.ts';
 import type { ReplCommand } from '../command.ts';
 import type { Theme } from '../../../repl/theme.ts';
@@ -71,21 +70,22 @@ export const command: ReplCommand = {
  * ```ts
  * import { withLineNumbers } from './cat.ts';
  *
- * withLineNumbers('a\nb', 'x.txt', { style: () => '' }); // '1 | a\n2 | b' — the gutter is themed
+ * const plain = { painter: () => (text: string) => text };
+ * withLineNumbers('a\nb', 'x.txt', plain); // '1 | a\n2 | b' — the gutter is themed too
  * ```
  */
 export function withLineNumbers(contents: string, file: string, palette: Theme): string {
   const lines = contents.replace(/\n$/, '').split('\n');
   const gutter = String(lines.length).length;
   const isCode = HIGHLIGHTED.has(path.extname(file).toLowerCase());
-  const style = palette.style('LineNr');
+  const asGutter = palette.painter('LineNr');
 
   return lines
     .map((line, index) => {
       const number = `${String(index + 1).padStart(gutter)} |`;
       const content = isCode ? highlight(line, palette) : line;
 
-      return `${inStyle(number, style)} ${content}`;
+      return `${asGutter(number)} ${content}`;
     })
     .join('\n');
 }
