@@ -10,35 +10,8 @@ import type { ReplContext } from '../../lib/commands/repl/command.ts';
 const ESC = String.fromCharCode(27);
 const plain = { painter: () => (text: string) => text };
 
-/** A theme that paints one capture and leaves the rest alone — the fake a drawing test needs. */
-function painting(capture: string, style: string) {
-  return (name: string) => (text: string) => (name === capture ? `${style}${text}${ESC}[0m` : text);
-}
-
-/** A directory with something in it, since every question here is about a real filesystem. */
-async function sample(name: string) {
-  const directory = await tempDir(name);
-  await fs.mkdir(path.join(directory.path, 'repl'));
-  await fs.mkdir(path.join(directory.path, 'reports'));
-  await fs.writeFile(
-    path.join(directory.path, 'index.ts'),
-    "const a = 'one';\nexport default a;\n",
-  );
-  await fs.writeFile(path.join(directory.path, 'notes.md'), '# heading\nconst is not code here\n');
-  await fs.writeFile(path.join(directory.path, '.hidden'), 'secret\n');
-
-  return directory;
-}
-
-/** Just enough of a context for a drawing: where to resolve from, and what to colour with. */
-function at(
-  cwd: string,
-  palette: { painter: (name: string) => (text: string) => string },
-): ReplContext {
-  return { cwd, palette } as unknown as ReplContext;
-}
-
 // A directory drawn the way `tree` draws one, with the two sentences under it.
+
 module('Commands | repl | .tree drawing', { concurrency: true }, () => {
   test('the root, then what is under it', async (assert) => {
     await using directory = await sample('files-tree');
@@ -91,3 +64,31 @@ module('Commands | repl | .tree drawing', { concurrency: true }, () => {
     assert.notIncludes(listing, `${ESC}[34mindex.ts`);
   });
 });
+
+/** A theme that paints one capture and leaves the rest alone — the fake a drawing test needs. */
+function painting(capture: string, style: string) {
+  return (name: string) => (text: string) => (name === capture ? `${style}${text}${ESC}[0m` : text);
+}
+
+/** A directory with something in it, since every question here is about a real filesystem. */
+async function sample(name: string) {
+  const directory = await tempDir(name);
+  await fs.mkdir(path.join(directory.path, 'repl'));
+  await fs.mkdir(path.join(directory.path, 'reports'));
+  await fs.writeFile(
+    path.join(directory.path, 'index.ts'),
+    "const a = 'one';\nexport default a;\n",
+  );
+  await fs.writeFile(path.join(directory.path, 'notes.md'), '# heading\nconst is not code here\n');
+  await fs.writeFile(path.join(directory.path, '.hidden'), 'secret\n');
+
+  return directory;
+}
+
+/** Just enough of a context for a drawing: where to resolve from, and what to colour with. */
+function at(
+  cwd: string,
+  palette: { painter: (name: string) => (text: string) => string },
+): ReplContext {
+  return { cwd, palette } as unknown as ReplContext;
+}

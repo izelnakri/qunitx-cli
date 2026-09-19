@@ -4,23 +4,8 @@ import { module, test } from 'qunitx';
 import { findPath, getPathAndDepth } from '../../lib/commands/repl/path-argument.ts';
 import { tempDir } from '../helpers/temp-dir.ts';
 import '../helpers/custom-asserts.ts';
-
-/** A directory with something in it, since every question here is about a real filesystem. */
-async function sample(name: string) {
-  const directory = await tempDir(name);
-  await fs.mkdir(path.join(directory.path, 'repl'));
-  await fs.mkdir(path.join(directory.path, 'reports'));
-  await fs.writeFile(
-    path.join(directory.path, 'index.ts'),
-    "const a = 'one';\nexport default a;\n",
-  );
-  await fs.writeFile(path.join(directory.path, 'notes.md'), '# heading\nconst is not code here\n');
-  await fs.writeFile(path.join(directory.path, '.hidden'), 'secret\n');
-
-  return directory;
-}
-
 // `-L 2` the way `tree` takes it, and the path is whatever is left over.
+
 module('Commands | repl | getPathAndDepth', { concurrency: true }, () => {
   test('a depth flag anywhere, and the rest is where', (assert) => {
     assert.deepEqual(getPathAndDepth('-L 2 lib'), { file: 'lib', depth: 2 });
@@ -70,3 +55,18 @@ module('Commands | repl | findPath', { concurrency: true }, () => {
     );
   });
 });
+
+/** A directory with something in it, since every question here is about a real filesystem. */
+async function sample(name: string) {
+  const directory = await tempDir(name);
+  await fs.mkdir(path.join(directory.path, 'repl'));
+  await fs.mkdir(path.join(directory.path, 'reports'));
+  await fs.writeFile(
+    path.join(directory.path, 'index.ts'),
+    "const a = 'one';\nexport default a;\n",
+  );
+  await fs.writeFile(path.join(directory.path, 'notes.md'), '# heading\nconst is not code here\n');
+  await fs.writeFile(path.join(directory.path, '.hidden'), 'secret\n');
+
+  return directory;
+}

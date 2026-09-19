@@ -8,24 +8,9 @@ import {
 } from '../../lib/commands/repl/completion.ts';
 import { tempDir } from '../helpers/temp-dir.ts';
 import '../helpers/custom-asserts.ts';
-
-/** A directory with something in it, since every question here is about a real filesystem. */
-async function sample(name: string) {
-  const directory = await tempDir(name);
-  await fs.mkdir(path.join(directory.path, 'repl'));
-  await fs.mkdir(path.join(directory.path, 'reports'));
-  await fs.writeFile(
-    path.join(directory.path, 'index.ts'),
-    "const a = 'one';\nexport default a;\n",
-  );
-  await fs.writeFile(path.join(directory.path, 'notes.md'), '# heading\nconst is not code here\n');
-  await fs.writeFile(path.join(directory.path, '.hidden'), 'secret\n');
-
-  return directory;
-}
-
 // `.cat` takes a path, so it completes like a shell rather than like an expression — the
 // filesystem is the only thing that knows, and history is as likely to name a file since renamed.
+
 module('Commands | repl | completing a path', { concurrency: true }, () => {
   test('only a path line has a path being typed on it', (assert) => {
     assert.strictEqual(pathBeingTyped('.cat lib/re'), 'lib/re');
@@ -82,3 +67,18 @@ module('Commands | repl | completing a path', { concurrency: true }, () => {
     assert.strictEqual(pathBeingTyped('.tree -L 2 li'), 'li', 'the path after it still is');
   });
 });
+
+/** A directory with something in it, since every question here is about a real filesystem. */
+async function sample(name: string) {
+  const directory = await tempDir(name);
+  await fs.mkdir(path.join(directory.path, 'repl'));
+  await fs.mkdir(path.join(directory.path, 'reports'));
+  await fs.writeFile(
+    path.join(directory.path, 'index.ts'),
+    "const a = 'one';\nexport default a;\n",
+  );
+  await fs.writeFile(path.join(directory.path, 'notes.md'), '# heading\nconst is not code here\n');
+  await fs.writeFile(path.join(directory.path, '.hidden'), 'secret\n');
+
+  return directory;
+}
