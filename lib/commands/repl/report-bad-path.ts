@@ -1,5 +1,5 @@
 import { red } from '../../utils/color.ts';
-import type { FoundPath } from './typed-path.ts';
+import type { FoundPath } from './path-argument.ts';
 import type { ReplContext } from './command.ts';
 
 /**

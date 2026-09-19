@@ -1,6 +1,6 @@
 import { command as cat } from './cat.ts';
 import { command as tree } from './tree.ts';
-import { findPath, pathAndDepth } from '../typed-path.ts';
+import { findPath, getPathAndDepth } from '../path-argument.ts';
 import { printValueDetails } from '../value-details.ts';
 import { reportBadPath } from '../report-bad-path.ts';
 import type { ReplCommand } from '../command.ts';
@@ -38,7 +38,7 @@ export const command: ReplCommand = {
     }
 
     // The whole argument goes on, `-L 2` included — only the path is needed to decide who answers.
-    const { file } = pathAndDepth(argument.trim());
+    const { file } = getPathAndDepth(argument.trim());
     const found = findPath(file, repl.cwd);
     if (found.kind === 'file') return cat.main(repl, argument);
     if (found.kind === 'directory') return tree.main(repl, argument);

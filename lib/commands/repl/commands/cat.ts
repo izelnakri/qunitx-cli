@@ -1,6 +1,8 @@
 import path from 'node:path';
-import { findPath, pathAndDepth } from '../typed-path.ts';
+import { findPath, getPathAndDepth } from '../path-argument.ts';
 import { highlight } from '../../../repl/highlight.ts';
+import { readIfThere } from '../editor.ts';
+import { red } from '../../../utils/color.ts';
 import { reportBadPath } from '../report-bad-path.ts';
 import type { ReplCommand } from '../command.ts';
 import type { Theme } from '../../../repl/theme.ts';
@@ -36,7 +38,7 @@ const HIGHLIGHTED = new Set([
 export const command: ReplCommand = {
   description: 'Print a file, numbered and highlighted',
   main(repl, argument) {
-    const { file } = pathAndDepth(argument.trim());
+    const { file } = getPathAndDepth(argument.trim());
     if (argument.trim() === '') {
       repl.log('Usage: .cat <file>');
 
@@ -44,12 +46,20 @@ export const command: ReplCommand = {
     }
 
     const found = findPath(file, repl.cwd);
-    if (found.kind === 'file') {
-      repl.log(withLineNumbers(found.contents, file, repl.palette));
+    if (found.kind !== 'file') {
+      reportBadPath(repl, 'cat', file, found);
 
       return;
     }
-    reportBadPath(repl, 'cat', file, found);
+    // The read is here rather than in `findPath` because `.cat` is the only command that wants the
+    // bytes — `.view` asks what a path is and then hands the whole line to this one.
+    const contents = readIfThere(path.resolve(repl.cwd, file));
+    if (contents === null) {
+      repl.log(red(`cannot read ${file}`));
+
+      return;
+    }
+    repl.log(withLineNumbers(contents, file, repl.palette));
   },
 };
 

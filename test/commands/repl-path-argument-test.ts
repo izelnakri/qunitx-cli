@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { module, test } from 'qunitx';
-import { findPath, pathAndDepth } from '../../lib/commands/repl/typed-path.ts';
+import { findPath, getPathAndDepth } from '../../lib/commands/repl/path-argument.ts';
 import { tempDir } from '../helpers/temp-dir.ts';
 import '../helpers/custom-asserts.ts';
 
@@ -21,28 +21,29 @@ async function sample(name: string) {
 }
 
 // `-L 2` the way `tree` takes it, and the path is whatever is left over.
-module('Commands | repl | pathAndDepth', { concurrency: true }, () => {
+module('Commands | repl | getPathAndDepth', { concurrency: true }, () => {
   test('a depth flag anywhere, and the rest is where', (assert) => {
-    assert.deepEqual(pathAndDepth('-L 2 lib'), { file: 'lib', depth: 2 });
-    assert.deepEqual(pathAndDepth('lib -L 2'), { file: 'lib', depth: 2 }, 'in either order');
-    assert.deepEqual(pathAndDepth('-L2 lib'), { file: 'lib', depth: 2 }, 'and either spelling');
+    assert.deepEqual(getPathAndDepth('-L 2 lib'), { file: 'lib', depth: 2 });
+    assert.deepEqual(getPathAndDepth('lib -L 2'), { file: 'lib', depth: 2 }, 'in either order');
+    assert.deepEqual(getPathAndDepth('-L2 lib'), { file: 'lib', depth: 2 }, 'and either spelling');
   });
 
   test('no flag is all the way down, and no path is here', (assert) => {
-    assert.deepEqual(pathAndDepth('lib'), { file: 'lib', depth: Infinity });
-    assert.deepEqual(pathAndDepth(''), { file: '.', depth: Infinity });
-    assert.deepEqual(pathAndDepth('-L 3'), { file: '.', depth: 3 }, 'a depth on its own');
+    assert.deepEqual(getPathAndDepth('lib'), { file: 'lib', depth: Infinity });
+    assert.deepEqual(getPathAndDepth(''), { file: '.', depth: Infinity });
+    assert.deepEqual(getPathAndDepth('-L 3'), { file: '.', depth: 3 }, 'a depth on its own');
   });
 });
 
 // Everything that is not a file says what it is instead, and hands back the part that was real.
 module('Commands | repl | findPath', { concurrency: true }, () => {
-  test('a file comes back with its contents', async (assert) => {
+  test('a file says it is one, and brings nothing else', async (assert) => {
     await using directory = await sample('files-read');
     const found = findPath('index.ts', directory.path);
 
-    assert.strictEqual(found.kind, 'file');
-    assert.includes(found.kind === 'file' ? found.contents : '', "const a = 'one'");
+    // No contents: `.view` asks what a path is and then hands the line to `.cat`, so reading here
+    // read every viewed file twice. `.cat` does its own reading now.
+    assert.deepEqual(found, { kind: 'file' }, 'the kind, and nothing it did not need');
   });
 
   test('a directory says so, and offers itself with a slash', async (assert) => {

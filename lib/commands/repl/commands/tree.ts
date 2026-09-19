@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { findPath, pathAndDepth } from '../typed-path.ts';
+import { findPath, getPathAndDepth } from '../path-argument.ts';
 import { red } from '../../../utils/color.ts';
 import { reportBadPath } from '../report-bad-path.ts';
 import type { ReplCommand, ReplContext } from '../command.ts';
@@ -32,7 +32,7 @@ export const command: ReplCommand = {
   description: 'Show a directory as a tree — `-L 2` for two levels, all the way down by default',
   aliases: ['ls'],
   main(repl, argument) {
-    const { file, depth } = pathAndDepth(argument.trim());
+    const { file, depth } = getPathAndDepth(argument.trim());
     const found = findPath(file, repl.cwd);
     if (found.kind === 'directory') repl.log(drawTree(repl, file, depth));
     else if (found.kind === 'file') repl.log(red(`${file} is a file, not a directory`));
