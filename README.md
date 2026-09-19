@@ -262,6 +262,10 @@ on. Colours follow your terminal, and `QUNITX_REPL_THEME='@string=fg=green'` ove
 nvim's treesitter names. Piped input works, so `echo '1+1' | qunitx repl` is a scriptable browser
 probe. Chromium only — it evaluates over the Chrome DevTools Protocol.
 
+**→ [Testing the REPL by hand](docs/repl-manual-testing.md)** — every feature in the order it makes
+sense to try it, with the output you should get. Most of what a prompt does is only provable by
+typing at one.
+
 ## JavaScript API
 
 Everything the CLI does, available as a function — for CI scripts, editor integrations, agents,
