@@ -1,9 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { module, test } from 'qunitx';
-import { findPath, getPathAndDepth } from '../../lib/commands/repl/path-argument.ts';
-import { tempDir } from '../helpers/temp-dir.ts';
-import '../helpers/custom-asserts.ts';
+import { findPath, getPathAndDepth } from '../../../lib/commands/repl/path-argument.ts';
+import { tempDir } from '../../helpers/temp-dir.ts';
+import '../../helpers/custom-asserts.ts';
 // `-L 2` the way `tree` takes it, and the path is whatever is left over.
 
 module('Commands | repl | getPathAndDepth', { concurrency: true }, () => {

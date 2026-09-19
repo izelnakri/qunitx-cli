@@ -1,7 +1,7 @@
 import process from 'node:process';
 import { module, test } from 'qunitx';
-import { execute } from '../helpers/shell.ts';
-import '../helpers/custom-asserts.ts';
+import { execute } from '../../helpers/shell.ts';
+import '../../helpers/custom-asserts.ts';
 
 /**
  * Whether a window can actually be put on a screen here.

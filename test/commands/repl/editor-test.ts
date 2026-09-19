@@ -2,9 +2,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { module, test } from 'qunitx';
-import { edit, whatToRun } from '../../lib/commands/repl/index.ts';
-import { tempDir } from '../helpers/temp-dir.ts';
-import '../helpers/custom-asserts.ts';
+import { edit, whatToRun } from '../../../lib/commands/repl/index.ts';
+import { tempDir } from '../../helpers/temp-dir.ts';
+import '../../helpers/custom-asserts.ts';
 import type { REPLServer } from 'node:repl';
 
 // The scratchpad is the one piece of REPL state an editor round-trip has to preserve: reopening

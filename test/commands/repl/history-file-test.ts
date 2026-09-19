@@ -1,9 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { module, test } from 'qunitx';
-import { trimHistoryFile } from '../../lib/commands/repl/index.ts';
-import { tempDir } from '../helpers/temp-dir.ts';
-import '../helpers/custom-asserts.ts';
+import { trimHistoryFile } from '../../../lib/commands/repl/index.ts';
+import { tempDir } from '../../helpers/temp-dir.ts';
+import '../../helpers/custom-asserts.ts';
 
 // `node:repl` writes the whole history at position 0 and never shortens the file, so a write
 // smaller than the one before leaves the tail of the old one behind. The file is newest first, so

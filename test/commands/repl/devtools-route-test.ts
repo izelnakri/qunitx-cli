@@ -1,7 +1,7 @@
 import process from 'node:process';
 import { module, test } from 'qunitx';
-import { execute } from '../helpers/shell.ts';
-import '../helpers/custom-asserts.ts';
+import { execute } from '../../helpers/shell.ts';
+import '../../helpers/custom-asserts.ts';
 
 /** What a session said on the way in, and what its own server answered while it was up. */
 async function session(port: number): Promise<{ said: string; status: number; location: string }> {

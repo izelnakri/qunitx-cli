@@ -5,9 +5,9 @@ import {
   pathBeingTyped,
   pathSuggestion,
   pathsContinuing,
-} from '../../lib/commands/repl/completion.ts';
-import { tempDir } from '../helpers/temp-dir.ts';
-import '../helpers/custom-asserts.ts';
+} from '../../../lib/commands/repl/completion.ts';
+import { tempDir } from '../../helpers/temp-dir.ts';
+import '../../helpers/custom-asserts.ts';
 // `.cat` takes a path, so it completes like a shell rather than like an expression — the
 // filesystem is the only thing that knows, and history is as likely to name a file since renamed.
 

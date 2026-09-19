@@ -1,8 +1,8 @@
 import { EventEmitter } from 'node:events';
 import { module, test } from 'qunitx';
-import { setupLineHighlighting } from '../../lib/commands/repl/index.ts';
-import { theme } from '../../lib/repl/theme.ts';
-import '../helpers/custom-asserts.ts';
+import { setupLineHighlighting } from '../../../lib/commands/repl/index.ts';
+import { theme } from '../../../lib/repl/theme.ts';
+import '../../helpers/custom-asserts.ts';
 
 const ESC = String.fromCharCode(27);
 

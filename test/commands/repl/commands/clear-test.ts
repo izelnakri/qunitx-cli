@@ -1,8 +1,8 @@
 import { module, test } from 'qunitx';
-import { command as clear } from '../../lib/commands/repl/commands/clear.ts';
-import '../helpers/custom-asserts.ts';
+import { command as clear } from '../../../../lib/commands/repl/commands/clear.ts';
+import '../../../helpers/custom-asserts.ts';
 
-import type { ReplContext } from '../../lib/commands/repl/command.ts';
+import type { ReplContext } from '../../../../lib/commands/repl/command.ts';
 
 const ESC = String.fromCharCode(27);
 // The scrollback is the part worth protecting: a `.clear` that threw away the last hour of a

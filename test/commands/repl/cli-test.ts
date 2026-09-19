@@ -3,10 +3,10 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { randomUUID } from 'node:crypto';
-import { execute, shellFails, spawnCapture } from '../helpers/shell.ts';
-import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
-import { tempDir } from '../helpers/temp-dir.ts';
-import '../helpers/custom-asserts.ts';
+import { execute, shellFails, spawnCapture } from '../../helpers/shell.ts';
+import { acquireBrowser } from '../../helpers/browser-semaphore-queue.ts';
+import { tempDir } from '../../helpers/temp-dir.ts';
+import '../../helpers/custom-asserts.ts';
 
 // `qunitx repl` reads stdin, so a pipe is a full session: the same code path a terminal drives,
 // minus the prompt. That is what makes the terminal half testable without a pty.

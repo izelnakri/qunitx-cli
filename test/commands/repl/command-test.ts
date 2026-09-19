@@ -1,8 +1,8 @@
 import { module, test } from 'qunitx';
-import { define, failureText } from '../../lib/commands/repl/command.ts';
-import '../helpers/custom-asserts.ts';
+import { define, failureText } from '../../../lib/commands/repl/command.ts';
+import '../../helpers/custom-asserts.ts';
 
-import type { ReplCommand, ReplContext } from '../../lib/commands/repl/command.ts';
+import type { ReplCommand, ReplContext } from '../../../lib/commands/repl/command.ts';
 
 /** A context that records what was said, and a server that records what was asked of it. */
 function fakeRepl() {

@@ -1,7 +1,7 @@
 import { module, test } from 'qunitx';
-import { commandListing } from '../../lib/commands/repl/commands/help.ts';
-import { theme } from '../../lib/repl/theme.ts';
-import '../helpers/custom-asserts.ts';
+import { commandListing } from '../../../../lib/commands/repl/commands/help.ts';
+import { theme } from '../../../../lib/repl/theme.ts';
+import '../../../helpers/custom-asserts.ts';
 
 const plain = { painter: () => (text: string) => text };
 const ESC = String.fromCharCode(27);

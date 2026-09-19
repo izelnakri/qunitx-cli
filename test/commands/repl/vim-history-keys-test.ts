@@ -1,7 +1,7 @@
 import { PassThrough } from 'node:stream';
 import { module, test } from 'qunitx';
-import { withVimHistoryKeys, withoutTerminalReports } from '../../lib/commands/repl/index.ts';
-import '../helpers/custom-asserts.ts';
+import { withVimHistoryKeys, withoutTerminalReports } from '../../../lib/commands/repl/index.ts';
+import '../../helpers/custom-asserts.ts';
 
 // Ctrl-K and Ctrl-J are rewritten before readline sees them, because neither can be handled after.
 // Ctrl-K already means kill-to-end-of-line, and a second listener runs as well as readline's rather

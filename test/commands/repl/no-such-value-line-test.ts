@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
-import { noSuchValueLine } from '../../lib/commands/repl/no-such-value-line.ts';
-import '../helpers/custom-asserts.ts';
+import { noSuchValueLine } from '../../../lib/commands/repl/no-such-value-line.ts';
+import '../../helpers/custom-asserts.ts';
 
 // The two ways there can be nothing to say about a name.
 module('Commands | repl | noSuchValueLine', { concurrency: true }, () => {

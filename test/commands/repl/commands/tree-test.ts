@@ -1,11 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { module, test } from 'qunitx';
-import { drawTree } from '../../lib/commands/repl/commands/tree.ts';
-import { tempDir } from '../helpers/temp-dir.ts';
-import '../helpers/custom-asserts.ts';
+import { drawTree } from '../../../../lib/commands/repl/commands/tree.ts';
+import { tempDir } from '../../../helpers/temp-dir.ts';
+import '../../../helpers/custom-asserts.ts';
 
-import type { ReplContext } from '../../lib/commands/repl/command.ts';
+import type { ReplContext } from '../../../../lib/commands/repl/command.ts';
 
 const ESC = String.fromCharCode(27);
 const plain = { painter: () => (text: string) => text };

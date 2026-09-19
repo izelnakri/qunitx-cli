@@ -1,8 +1,8 @@
 import { module, test } from 'qunitx';
-import { lastEntered } from '../../lib/commands/repl/commands/history.ts';
-import { pageGoneMessage } from '../../lib/commands/repl/index.ts';
-import { theme } from '../../lib/repl/theme.ts';
-import '../helpers/custom-asserts.ts';
+import { lastEntered } from '../../../../lib/commands/repl/commands/history.ts';
+import { pageGoneMessage } from '../../../../lib/commands/repl/index.ts';
+import { theme } from '../../../../lib/repl/theme.ts';
+import '../../../helpers/custom-asserts.ts';
 
 const ESC = String.fromCharCode(27);
 const plain = { painter: () => (text: string) => text };

@@ -1,6 +1,6 @@
 import { module, test } from 'qunitx';
-import { withLineNumbers } from '../../lib/commands/repl/commands/cat.ts';
-import '../helpers/custom-asserts.ts';
+import { withLineNumbers } from '../../../../lib/commands/repl/commands/cat.ts';
+import '../../../helpers/custom-asserts.ts';
 
 const ESC = String.fromCharCode(27);
 const plain = { painter: () => (text: string) => text };
