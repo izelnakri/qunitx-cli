@@ -224,8 +224,9 @@ export function setupSuggestionBehaviors(
     const history = (server as unknown as { history?: string[] }).history ?? [];
     // A path line is answered from the filesystem — the only place that knows — and never from
     // history, where `.cat` lines are as likely to be about a file that has since been renamed.
-    const asPath = pathSuggestion(line, cwd);
-    if (asPath !== '' || pathBeingTyped(line) !== null) return asPath;
+    // Asked once. This used to call `pathSuggestion` — which parses the line — and then parse it
+    // AGAIN to find out whether the empty answer meant "no suggestion" or "not a path line".
+    if (pathBeingTyped(line) !== null) return pathSuggestion(line, cwd);
 
     const position = split(line);
 
@@ -368,7 +369,12 @@ export function pathBeingTyped(line: string): string | null {
  * Every path that continues `typed`, spelled the way it was — directories with a trailing slash.
  *
  * Hidden entries only once a dot has been typed, which is the rule every shell uses and the reason
- * `.cat ` does not open with a list of dotfiles.
+ * `.cat ` does not open with a list of dotfiles. That rule is about what was TYPED, so it is
+ * decided once rather than re-asked for every entry in the directory.
+ *
+ * One pass. This used to filter twice and then map, walking the entries three times and allocating
+ * an array each time; the listing it does first costs five times all of that put together, so the
+ * saving is small — but the two-filter shape was also hiding the loop-invariant above.
  *
  * ```ts
  * import { pathsContinuing } from './completion.ts';
@@ -391,11 +397,15 @@ export function pathsContinuing(typed: string, cwd: string): string[] {
     return [];
   }
 
-  return entries
-    .filter((entry) => entry.name.startsWith(partial))
-    .filter((entry) => partial.startsWith('.') || !entry.name.startsWith('.'))
-    .map((entry) => `${prefix}${entry.name}${entry.isDirectory() ? '/' : ''}`)
-    .sort();
+  const dotWasTyped = partial.startsWith('.');
+  const continuing: string[] = [];
+  for (const entry of entries) {
+    if (!entry.name.startsWith(partial)) continue;
+    if (!dotWasTyped && entry.name.startsWith('.')) continue;
+    continuing.push(`${prefix}${entry.name}${entry.isDirectory() ? '/' : ''}`);
+  }
+
+  return continuing.sort();
 }
 
 /**
