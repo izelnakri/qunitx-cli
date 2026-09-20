@@ -236,8 +236,13 @@ export interface ReplSession {
    *
    * Tests the input registered are run before this resolves and reported as they finish, so the
    * TAP for a test typed at the prompt lands ahead of the value — where a reader expects it.
+   *
+   * `whole` says there is no more input coming. A LINE being typed can be unfinished — `const a =
+   * {` means keep going, and {@link ReplResult.incomplete} is how the prompt is told to. A saved
+   * buffer cannot: you closed the editor, so an unfinished parse is a syntax error and saying
+   * nothing about it is the worst of the three things this could do.
    */
-  eval(input: string): Promise<ReplResult>;
+  eval(input: string, options?: { whole?: boolean }): Promise<ReplResult>;
   /**
    * Resolves once nothing is in flight — a no-op at the back of the evaluation queue.
    *
@@ -785,8 +790,8 @@ class Session implements ReplSession {
     this.#scripts = handles.scripts;
   }
 
-  eval(input: string): Promise<ReplResult> {
-    const next = this.#tail.then(() => this.#eval(input));
+  eval(input: string, options?: { whole?: boolean }): Promise<ReplResult> {
+    const next = this.#tail.then(() => this.#eval(input, false, options?.whole === true));
     this.#tail = next.then(
       () => {},
       () => {},
@@ -1553,7 +1558,7 @@ class Session implements ReplSession {
     return tests;
   }
 
-  async #eval(input: string, stripped = false): Promise<ReplResult> {
+  async #eval(input: string, stripped = false, whole = false): Promise<ReplResult> {
     const nothing = { output: '', failed: false, incomplete: false, tests: [] };
     if (input.trim() === '') return nothing;
     if (this.#closed) return { ...nothing, output: 'the REPL session is closed', failed: true };
@@ -1608,7 +1613,9 @@ class Session implements ReplSession {
     const thrown = evaluated.exceptionDetails;
     if (thrown) {
       const description = thrown.exception?.description ?? thrown.text;
-      if (isSyntaxError(evaluated) && Source.isIncomplete(description)) {
+      // Unfinished input means "keep typing" only where more typing is possible. A saved buffer
+      // has no more coming, so the same parse failure is reported as what it is.
+      if (!whole && isSyntaxError(evaluated) && Source.isIncomplete(description)) {
         return { ...nothing, incomplete: true };
       }
       // The page runs JavaScript and this is a `.ts` project's prompt, so a line the engine could
@@ -1617,11 +1624,11 @@ class Session implements ReplSession {
       // and all but a fraction of what anybody types is JavaScript that never gets here.
       if (!stripped && isSyntaxError(evaluated)) {
         const javascript = await withoutTypes(input);
-        if (typeof javascript === 'string') return await this.#eval(javascript, true);
+        if (typeof javascript === 'string') return await this.#eval(javascript, true, whole);
         // Half a line of TypeScript is a syntax error the engine has no word for — `{ a: 1 as`
         // stops it at `as`, not at the end — so what it is waiting for comes from the parser that
-        // can read the whole language.
-        if (javascript !== null) return { ...nothing, incomplete: true };
+        // can read the whole language. Again, only where more of it could still arrive.
+        if (javascript !== null && !whole) return { ...nothing, incomplete: true };
       }
 
       return {

@@ -83,6 +83,38 @@ module('API | repl | inputs that are not values', { concurrency: true }, () => {
     });
   });
 
+  test('a whole buffer with an unfinished end is a syntax error, not a prompt for more', async (assert) => {
+    // What `.e` sends. A LINE can be unfinished — the prompt keeps taking input — but a buffer you
+    // saved and closed the editor on cannot, so the same parse failure has to be reported rather
+    // than silently held. It was silently held: nothing ran and nothing was said.
+    await withRepl({}, async (session) => {
+      const source = 'class Human {}\n\nconsole.log("ran")\n\nlet me =';
+      const held = await session.eval(source);
+
+      assert.true(held.incomplete, 'as a line, it means keep typing');
+      assert.false(held.failed, 'which is not a failure');
+
+      const whole = await session.eval(source, { whole: true });
+
+      assert.false(whole.incomplete, 'as a buffer, there is no more coming');
+      assert.true(whole.failed, 'so it is what it is');
+      assert.includes(whole.output, 'SyntaxError');
+    });
+  });
+
+  test('a whole buffer that parses runs every statement in it', async (assert) => {
+    await withRepl({}, async (session) => {
+      const result = await session.eval(
+        'class Human {\n  constructor(name) { this.name = name }\n}\nlet me = new Human("izel")\nme.name',
+        { whole: true },
+      );
+
+      assert.false(result.failed);
+      assert.equal(result.output, "'izel'", 'the last expression is the answer');
+      assert.equal((await session.eval('me instanceof Human')).output, 'true', 'and it all stuck');
+    });
+  });
+
   test('a real syntax error is reported instead of waiting for more input', async (assert) => {
     await withRepl({}, async (session) => {
       const result = await session.eval('const x = ;');
