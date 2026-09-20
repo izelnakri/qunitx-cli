@@ -33,7 +33,12 @@ interface ReplHarness {
     modules: Array<[string, string, Record<string, unknown>]>,
   ): void;
   /**
-   * Puts a module in scope: its exports under their own names, and the module itself under `as`.
+   * Puts a module in scope: the module itself under `as`, and — when it is the only one — its
+   * exports under their own names too.
+   *
+   * `alone` is that second half. One preload owns the scope and spreading it is a convenience;
+   * several cannot, because two files exporting one name means the last brought silently wins and
+   * the other is gone. With more than one, `Task.partition` is the only way to say which.
    *
    * The namespace is what makes one line at the prompt print everything a file has. `as` is skipped
    * where the page already has that name and this session did not put it there — a name worked out
@@ -43,7 +48,13 @@ interface ReplHarness {
    * A file brought in twice replaces what it brought the first time, so `.imported` says what is
    * in scope now rather than everything that ever was.
    */
-  bring(file: string, as: string, namespace: Record<string, unknown>, force: boolean): string[];
+  bring(
+    file: string,
+    as: string,
+    namespace: Record<string, unknown>,
+    force: boolean,
+    alone?: boolean,
+  ): string[];
   /**
    * Puts exactly these names in scope, from this file — what an `import` statement typed at the
    * prompt binds, and what a file that is not code is worth.
@@ -115,15 +126,23 @@ export function harness(options: { timeout: number }): void {
       target.__qunitxRuntime = qunitx;
       api.qunitx = Object.keys(qunitx);
       assign(qunitx);
-      for (const [file, as, namespace] of modules) api.bring(file, as, namespace, false);
+      // `alone` when exactly one file was preloaded: its exports go into scope under their own
+      // names as well as under the module's. Several files do not, because then the same name
+      // means two things and whichever arrived last silently took it.
+      const alone = modules.length === 1;
+      for (const [file, as, namespace] of modules) api.bring(file, as, namespace, false, alone);
       attach(target.QUnit as QUnitLike);
     },
-    bring(file, as, namespace, force) {
+    bring(file, as, namespace, force, alone = true) {
       const owned = new Set(api.loaded.flatMap(([, names]) => names));
       const values: Record<string, unknown> =
         force || !(as in target) || owned.has(as) ? { [as]: namespace } : {};
-      for (const name of Object.keys(namespace)) {
-        if (name !== 'default') values[name] = namespace[name];
+      // A module namespace object is already frozen by the language — its exports cannot be
+      // reassigned through it — so what goes into scope is the module, not a copy of it.
+      if (alone) {
+        for (const name of Object.keys(namespace)) {
+          if (name !== 'default') values[name] = namespace[name];
+        }
       }
       // What the last import of this file left behind and this one does not bring: an export it
       // has since lost, or the name it used to go under. Left in place, they would be a scope full

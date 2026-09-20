@@ -1,33 +1,29 @@
 import { module, test } from 'qunitx';
-import { namespacesTaken } from '../../../lib/commands/repl/index.ts';
+import { renamedNamespaces } from '../../../lib/commands/repl/index.ts';
 import '../../helpers/custom-asserts.ts';
 
-// `qunitx repl lib/task/*` loads both `index.ts` — named for the directory holding it — and
-// `task.ts`, named for itself. Both want `Task`, `task.ts` also exports a class called `Task`,
-// and the last claim won silently: `Task` at the prompt was the class, and neither module
-// namespace was reachable, with nothing said about it.
-module('Commands | repl | two files, one name', { concurrency: true }, () => {
-  test('an index and its sibling both want the directory’s name', (assert) => {
-    const notes = namespacesTaken(['lib/task/index.ts', 'lib/task/task.ts']);
+// A file that lost a name clash answers to something its path does not obviously suggest, so the
+// banner says so. `qunitx repl lib/task/*` is the case: `index.ts` keeps `Task` and `task.ts`
+// becomes `TaskTask`, which nobody would guess.
+module('Commands | repl | a preload that was renamed', { concurrency: true }, () => {
+  test('it says the new name and who took the old one', (assert) => {
+    const notes = renamedNamespaces([
+      ['lib/task/index.ts', ['Task']],
+      ['lib/task/task.ts', ['TaskTask']],
+    ]);
 
-    assert.strictEqual(notes.length, 1, 'said once, not once per file');
-    // Last in the list is the winner by then — `resolvePreload` has already put it there.
-    assert.includes(notes[0] ?? '', 'Task is lib/task/task.ts', 'it names who kept it');
-    assert.includes(notes[0] ?? '', 'lib/task/index.ts also wanted it');
+    assert.strictEqual(notes.length, 1, 'only the file that lost is worth a line');
+    assert.includes(notes[0] ?? '', 'lib/task/task.ts is TaskTask');
+    assert.includes(notes[0] ?? '', 'lib/task/index.ts took Task');
   });
 
-  test('files that do not collide say nothing', (assert) => {
-    assert.deepEqual(namespacesTaken(['lib/task/task.ts']), [], 'one file cannot clash');
-    assert.deepEqual(namespacesTaken(['a/one.ts', 'b/two.ts']), [], 'nor can two unrelated ones');
-    // The ordinary shape of a session, and the false positive this used to have: the name a file
-    // arrives under is listed among its exports, so every single preload looked self-shadowed.
-    assert.deepEqual(namespacesTaken(['test/fixtures/repl-helpers.ts']), []);
-  });
-
-  test('three claimants are one note naming all three', (assert) => {
-    const notes = namespacesTaken(['x/task/index.ts', 'x/task/task.ts', 'y/task.ts']);
-
-    assert.strictEqual(notes.length, 1);
-    assert.includes(notes[0] ?? '', 'x/task/index.ts', 'every file that wanted it is named');
+  test('a preload that got the name it asked for says nothing', (assert) => {
+    assert.deepEqual(renamedNamespaces([['lib/task/index.ts', ['Task']]]), []);
+    // A single preload spreads its exports too, and the module's own name leads that list.
+    assert.deepEqual(
+      renamedNamespaces([['test/fixtures/repl-helpers.ts', ['ReplHelpers', 'GREETING', 'double']]]),
+      [],
+    );
+    assert.deepEqual(renamedNamespaces([]), []);
   });
 });

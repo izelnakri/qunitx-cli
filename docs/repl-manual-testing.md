@@ -97,23 +97,42 @@ Uncaught Error: fixture boom
 That the frame says `repl-helpers.ts:20:9` and not a bundle offset is source-map resolution
 working. A number in the thousands means it regressed.
 
-**Two preloads that want the same name.** `node cli.ts repl lib/task/*` loads `index.ts` (named
-for the directory holding it) and `task.ts` (named for itself) — both want `Task`. The index wins,
-because an index is the door into a directory, and the banner says what happened:
+**One input spreads, several do not.** A single preload puts its exports into scope under their
+own names as well as under the module's, because one file owns the scope and reaching for
+`double(21)` is the point. Two or more cannot: the same name then means two things, and whichever
+was brought last used to take it silently.
 
 ```
-# Task is lib/task/index.ts — lib/task/task.ts also wanted it
+$ node cli.ts repl test/fixtures/repl-helpers.ts     # one file
+# loaded test/fixtures/repl-helpers.ts: ReplHelpers, GREETING, boom, double
+> double(21)
+42
+
+$ node cli.ts repl lib/task/*                        # several
+# loaded lib/task/index.ts as Task
+# loaded lib/task/task.ts as TaskTask
+# lib/task/task.ts is TaskTask — lib/task/index.ts took Task
+> partition
+Uncaught ReferenceError: partition is not defined
+> Task.partition
+[Function: partition]
 ```
 
-To override it, quote the pattern and name the file after it:
+**And two that want one name are pulled apart, not left to overwrite.** `index.ts` is named for
+the directory holding it and `task.ts` for itself, so both ask for `Task`. The index keeps it —
+an index is the door into a directory — and the other is qualified by as much of its path as it
+takes to be unique, so neither module is unreachable. To swap them, quote the pattern and name
+the file after it:
 
 ```
-node cli.ts repl 'lib/task/*' lib/task/task.ts     # Task is task.ts
+node cli.ts repl 'lib/task/*' lib/task/task.ts
+# loaded lib/task/task.ts as Task
+# loaded lib/task/index.ts as TaskIndex
 ```
 
-The quoting matters and is the one rough edge: unquoted, your shell expands `lib/task/*` before
-qunitx sees it, so both arrive as ordinary paths with nothing to say which was a pattern — and the
-index wins. Naming the file _before_ the glob does not override either, since the pattern came
+The quoting is the rough edge: unquoted, your shell expands `lib/task/*` before qunitx sees it,
+so both arrive as ordinary paths with nothing to say which was a pattern — and the index keeps
+the name. Naming the file _before_ the glob does not override either, since the pattern came
 after it.
 
 ## 4. TypeScript at the prompt

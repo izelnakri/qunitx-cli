@@ -702,43 +702,75 @@ export async function resolvePreload(config: Config, inputs: readonly string[]):
   const absolute = Args.applyInputs({ inputs: [] }, config.projectRoot, config.cwd, inputs).inputs;
   const found = Object.keys(await FSTree.build(TestFilePaths.setup(absolute), config));
 
-  // The RAW inputs, not `absolute`: `applyInputs` resolves globs and deduplicates, and both of
-  // those erase which file you named for yourself after a pattern had already matched it.
-  return inClaimOrder(found, inputs, config.cwd);
+  return preferredFirst(found, inputs, config.cwd);
 }
 
 /**
- * The order preloads go into scope, which decides who keeps a name two of them want.
+ * What each preload goes into scope as, with two that want one name pulled apart rather than
+ * left to overwrite each other.
  *
- * Everything is brought in list order and the last claim wins, so the intended claimant is moved
- * to the end. `qunitx repl lib/task/*` is the case: `index.ts` is named for the directory holding
- * it and `task.ts` for itself, both want `Task`, and whoever happened to come last got it — which
- * was `task.ts`, for no better reason than the alphabet.
+ * `qunitx repl lib/task/*` is the case: `index.ts` is named for the directory holding it and
+ * `task.ts` for itself, both want `Task`, and whoever was brought last silently took it. Now one
+ * keeps the plain name and the other is qualified by as much of its path as it takes to be
+ * unique — `TaskTask` — so nothing a preload exports is unreachable.
  *
- * An index is the door into a directory, so it wins by default. Naming a file yourself AFTER a
- * wildcard beats that — `qunitx repl 'lib/task/*' lib/task/task.ts` — because a mention that
- * follows the pattern which already matched it is a decision rather than a coincidence.
- *
- * That only works for a glob the SHELL did not eat. Unquoted, `lib/task/*` reaches this as two
- * ordinary paths and the second mention is deduplicated away long before here, so both spellings
- * look identical and the index wins. Quote the pattern to override it.
+ * An index is the door into a directory, so it keeps the plain name. Naming a file yourself AFTER
+ * a wildcard beats that: `qunitx repl 'lib/task/*' lib/task/task.ts`. Quote the pattern — unquoted,
+ * your shell expands it before qunitx starts, both files arrive as ordinary paths with nothing to
+ * say which was a glob, and the index keeps it.
  *
  * ```ts
- * import { inClaimOrder } from './session.ts';
+ * import { namespacesFor } from './session.ts';
  *
  * const found = ['/p/task/index.ts', '/p/task/task.ts'];
- * inClaimOrder(found, ['task/*'], '/p'); // index.ts last — it claims Task
- * inClaimOrder(found, ['task/*', 'task/task.ts'], '/p'); // task.ts last — you asked for it
+ * namespacesFor(found).get('/p/task/index.ts'); // 'Task' — first in the group keeps it
+ * namespacesFor(found).get('/p/task/task.ts'); // 'TaskTask'
  * ```
  */
-export function inClaimOrder(
+export function namespacesFor(found: readonly string[]): Map<string, string> {
+  const wanted = new Map<string, string[]>();
+  for (const file of found) {
+    const name = moduleNameFor(file);
+    wanted.set(name, [...(wanted.get(name) ?? []), file]);
+  }
+
+  const names = new Map<string, string>();
+  const taken = new Set(wanted.keys());
+  for (const [plain, group] of wanted) {
+    // First in the group keeps the plain name. Which file that is was decided by
+    // `preferredFirst` when the list was built, from what you actually typed.
+    for (const [at, file] of group.entries()) {
+      names.set(file, at === 0 ? plain : qualified(file, taken));
+    }
+  }
+
+  return names;
+}
+
+/**
+ * The preload list with, in each group of files that want one name, the one that should keep it
+ * moved to the front.
+ *
+ * An index is the door into a directory, so it goes first by default. Naming a file yourself
+ * AFTER a wildcard beats that: `qunitx repl 'lib/task/*' lib/task/task.ts`. Quote the pattern —
+ * unquoted, your shell expands it before qunitx starts, both files arrive as ordinary paths with
+ * nothing left to say which was a glob, and `applyInputs` deduplicates a repeat anyway.
+ *
+ * ```ts
+ * import { preferredFirst } from './session.ts';
+ *
+ * const found = ['/p/task/task.ts', '/p/task/index.ts'];
+ * preferredFirst(found, ['task/*'], '/p')[0]; // '/p/task/index.ts'
+ * preferredFirst(found, ['task/*', 'task/task.ts'], '/p')[0]; // '/p/task/task.ts'
+ * ```
+ */
+export function preferredFirst(
   found: readonly string[],
   asked: readonly string[],
   cwd: string,
 ): string[] {
-  // Only where a pattern actually survived the shell. With no wildcard in the list there is
-  // nothing to have named a file AFTER, and treating every path as an override would mean the
-  // index never won the case this exists for — `qunitx repl lib/task/*`, unquoted.
+  // Only where a pattern survived the shell. With no wildcard there is nothing to have named a
+  // file AFTER, and counting every path as an override would lose the index the case this is for.
   const lastWildcard = asked.findLastIndex((given) => /[*?[\]]/.test(given));
   const namedAfterWildcard =
     lastWildcard === -1
@@ -751,18 +783,42 @@ export function inClaimOrder(
     wanted.set(name, [...(wanted.get(name) ?? []), file]);
   }
 
-  const winners = new Set<string>();
+  const first = new Set<string>();
   for (const group of wanted.values()) {
     if (group.length < 2) continue;
-    const overridden = group.findLast((file) => namedAfterWildcard.has(file));
-    const chosen = overridden ?? group.find((file) => INDEX_NAMES.has(stem(file)));
-    if (chosen !== undefined) winners.add(chosen);
+    const keeps =
+      group.findLast((file) => namedAfterWildcard.has(file)) ??
+      group.find((file) => INDEX_NAMES.has(stem(file)));
+    if (keeps !== undefined) first.add(keeps);
   }
 
-  return [
-    ...found.filter((file) => !winners.has(file)),
-    ...found.filter((file) => winners.has(file)),
-  ];
+  return [...found.filter((file) => first.has(file)), ...found.filter((file) => !first.has(file))];
+}
+
+/**
+ * A name built from enough of a file's path to be free — `TaskTask` for `lib/task/task.ts` once
+ * `Task` is spoken for, and `LibTaskTask` if that is taken too.
+ */
+function qualified(file: string, taken: Set<string>): string {
+  const parts = file
+    .replaceAll('\\', '/')
+    .split('/')
+    .filter((part) => part !== '');
+  let name = moduleNameFor(file);
+  for (let up = 2; up <= parts.length && taken.has(name); up++) {
+    name = parts.slice(-up).map(segment).join('');
+  }
+  // Every segment exhausted and still taken: a number is ugly and unambiguous, which beats two
+  // modules quietly sharing one name.
+  for (let nth = 2; taken.has(name); nth++) name = `${moduleNameFor(file)}${nth}`;
+  taken.add(name);
+
+  return name;
+}
+
+/** One path segment as it would look in a name: `repl-helpers.ts` becomes `ReplHelpers`. */
+function segment(part: string): string {
+  return moduleNameFor(part);
 }
 
 /** A file's own name without its extension — `index` for `lib/task/index.ts`. */
@@ -2064,9 +2120,10 @@ async function bundle(config: Config, preload: string[], outDir: string): Promis
   const imports = preload.map(
     (file, i) => `import * as m${i} from '${specifier(file, config.cwd)}';`,
   );
+  const named = namespacesFor(preload);
   const modules = preload.map(
     (file, i) =>
-      `[${JSON.stringify(relative(config, file))}, ${JSON.stringify(moduleNameFor(file))}, m${i}]`,
+      `[${JSON.stringify(relative(config, file))}, ${JSON.stringify(named.get(file) ?? moduleNameFor(file))}, m${i}]`,
   );
   try {
     const built = await esbuild.build({

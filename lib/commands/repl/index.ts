@@ -89,47 +89,35 @@ const PREVIEW_GAP = 2;
 const PREVIEW_DELAY_MS = 90;
 
 /**
- * Preloaded files that go into scope under the SAME name, said out loud instead of silently
- * resolved.
+ * Preloads that did not get the name they asked for, and what they answer to instead.
  *
- * A file arrives under a name worked out from its path as well as under its own exports, and two
- * files can want the same one. `qunitx repl lib/task/*` is the case that found this: `index.ts`
- * takes its name from the directory holding it, so it wants `Task`; `task.ts` wants `Task` from
- * its filename; and `task.ts` also exports a class called `Task`. Last claim wins, so `Task` at
- * the prompt is the class and neither module namespace is reachable — with nothing said about it.
+ * A file goes into scope under a name worked out from its path, and two can want the same one:
+ * `qunitx repl lib/task/*` has `index.ts` named for the directory holding it and `task.ts` named
+ * for itself, both wanting `Task`. One keeps it and the other is qualified by as much of its path
+ * as it takes — `TaskTask` — so nothing is unreachable, but nobody would guess the second name
+ * without being told.
  *
- * Only the cross-file clash is reported, because it is the only one visible from here: the name a
- * file went into scope under is listed among its exports, so a file whose namespace is shadowed
- * by its OWN export looks identical to one that is not. Two files wanting one name is
- * unambiguous, and it is the half that loses a whole module.
- *
- * Nothing is reordered, on purpose. Which claim should win is a judgement — an export is what you
- * named, a namespace is what we named — and quietly picking one is what made this confusing.
- * Saying it costs a line and leaves the choice where it belongs.
+ * Read off what actually happened rather than recomputed: the name a file went into scope under
+ * is the first thing the harness reports for it, so a file whose name differs from the one its
+ * path asks for is exactly a file that lost a clash.
  *
  * ```ts
- * import { namespacesTaken } from './index.ts';
+ * import { renamedNamespaces } from './index.ts';
  *
- * namespacesTaken(['lib/task/task.ts', 'lib/task/index.ts']); // ['Task is lib/task/index.ts …']
- * namespacesTaken(['a/one.ts', 'b/two.ts']); // [] — nothing collides
+ * renamedNamespaces([['lib/task/task.ts', ['TaskTask']]]); // ['lib/task/task.ts is TaskTask …']
+ * renamedNamespaces([['lib/task/index.ts', ['Task']]]); // [] — it got what it asked for
  * ```
  */
-export function namespacesTaken(files: readonly string[]): string[] {
-  const wantedBy = new Map<string, string[]>();
-  for (const file of files) {
-    const namespace = moduleNameFor(file);
-    wantedBy.set(namespace, [...(wantedBy.get(namespace) ?? []), file]);
-  }
+export function renamedNamespaces(
+  loaded: ReadonlyArray<readonly [string, readonly string[]]>,
+): string[] {
+  return loaded
+    .filter(([file, names]) => names.length > 0 && names[0] !== moduleNameFor(file))
+    .map(([file, names]) => {
+      const wanted = moduleNameFor(file);
+      const took = loaded.find(([, theirs]) => theirs[0] === wanted)?.[0];
 
-  // Last in the list is the one that keeps the name, and `Repl.resolvePreload` has already put
-  // the intended claimant there — an index by default, or whatever you named after a quoted glob.
-  return [...wantedBy]
-    .filter(([, claimants]) => claimants.length > 1)
-    .map(([namespace, claimants]) => {
-      const winner = claimants[claimants.length - 1];
-      const others = claimants.slice(0, -1).join(', ');
-
-      return `${namespace} is ${winner} — ${others} also wanted it`;
+      return `${file} is ${names[0]}${took === undefined ? '' : ` — ${took} took ${wanted}`}`;
     });
 }
 
@@ -177,11 +165,13 @@ function banner(config: ResolvedConfig, session: ReplSession): void {
     Reporter.info(config, blue(`inspect the same page at ${session.inspector} — or \`.devtools\``));
   }
   for (const [file, names] of session.loaded) {
-    const exported = names.length > 0 ? `: ${names.join(', ')}` : '';
-    Reporter.info(config, blue(`loaded ${file}${exported}`));
+    // One name is the module and nothing else — several files were preloaded, so their exports
+    // stay inside them. `as` rather than `:` because `: Task` reads like a list of one export.
+    const how =
+      names.length === 1 ? ` as ${names[0]}` : names.length > 1 ? `: ${names.join(', ')}` : '';
+    Reporter.info(config, blue(`loaded ${file}${how}`));
   }
-  const preloaded = session.loaded.map(([file]) => file);
-  for (const note of namespacesTaken(preloaded)) Reporter.info(config, yellow(note));
+  for (const note of renamedNamespaces(session.loaded)) Reporter.info(config, yellow(note));
   Reporter.info(
     config,
     blue('type `.help` for commands, `:<cmd>` for a shell, `.exit` or Ctrl-D to quit'),
