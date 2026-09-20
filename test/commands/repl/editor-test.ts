@@ -2,7 +2,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { module, test } from 'qunitx';
-import { asPersonWouldSayIt, edit, meansYes, whatToRun } from '../../../lib/commands/repl/index.ts';
+import {
+  edit,
+  formatPathDisplay,
+  userMeansYes,
+  whatToRun,
+} from '../../../lib/commands/repl/index.ts';
 import { tempDir } from '../../helpers/temp-dir.ts';
 import '../../helpers/custom-asserts.ts';
 import type { REPLServer } from 'node:repl';
@@ -27,26 +32,26 @@ module('Commands | repl | the editor scratchpad', { concurrency: true }, () => {
   // four milliseconds between the write and the exit — measured. There is nothing there to infer
   // an intention from, so the prompt asks, and this is how it reads the answer.
   test('Enter or a y means run it, and nothing else does', (assert) => {
-    assert.true(meansYes(''), 'Enter takes the default');
-    assert.true(meansYes('y'));
-    assert.true(meansYes('  YES  '), 'trimmed, and case does not matter');
-    assert.false(meansYes('n'));
-    assert.false(meansYes('nope'));
+    assert.true(userMeansYes(''), 'Enter takes the default');
+    assert.true(userMeansYes('y'));
+    assert.true(userMeansYes('  YES  '), 'trimmed, and case does not matter');
+    assert.false(userMeansYes('n'));
+    assert.false(userMeansYes('nope'));
     // Stricter than the usual anything-but-n, because this one runs code: a mistyped command at
     // the prompt must not be read as consent.
-    assert.false(meansYes('.exit'), 'a stray command is not a yes');
-    assert.false(meansYes('6 * 7'));
+    assert.false(userMeansYes('.exit'), 'a stray command is not a yes');
+    assert.false(userMeansYes('6 * 7'));
   });
 
   test('a path is said the way a person would say it', (assert) => {
     assert.strictEqual(
-      asPersonWouldSayIt('/home/me/proj/lib/a.ts', '/home/me/proj'),
+      formatPathDisplay('/home/me/proj/lib/a.ts', '/home/me/proj'),
       'proj/lib/a.ts',
     );
-    assert.strictEqual(asPersonWouldSayIt('/etc/hosts', '/home/me/proj'), '/etc/hosts');
+    assert.strictEqual(formatPathDisplay('/etc/hosts', '/home/me/proj'), '/etc/hosts');
     // The project's own name leads, because `lib/a.ts` stops being unambiguous the moment a
     // session has imported something from a sibling checkout.
-    assert.includes(asPersonWouldSayIt('/home/me/proj/a.ts', '/home/me/proj'), 'proj/a.ts');
+    assert.includes(formatPathDisplay('/home/me/proj/a.ts', '/home/me/proj'), 'proj/a.ts');
   });
 
   /** A stand-in for a human: records what it was handed, appends a line, exits. */
