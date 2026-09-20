@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -32,6 +33,10 @@ export function replayableSource(lines: readonly string[]): string {
 
 /**
  * True when the file was written. A save that cannot land is a message, not a crashed session.
+ *
+ * Sync, unlike the writes around an editor session: `.save` is one write with a person waiting on
+ * its answer, and a single `writeFileSync` beats the promise it would otherwise allocate. Nothing
+ * else is queued behind it to be blocked.
  *
  * ```ts
  * import { writeIfPossible } from './editor.ts';
@@ -103,20 +108,23 @@ export async function edit(
   // Unique per call, not per process: two edits in flight at once would otherwise open the same
   // path and each would save over the other's buffer.
   const file = path.join(os.tmpdir(), `qunitx-repl-${process.pid}-${randomUUID()}.js`);
-  fs.writeFileSync(file, contents);
-  const opened = writtenAt(file);
+  await writeFile(file, contents);
+  const openedAt = await getWrittenAt(file);
 
   try {
     const left = await handOver(server, editor, [file]);
-    const text = readIfThere(file) ?? contents;
+    const text = await readFile(file, 'utf8').catch(() => contents);
+    const savedAt = await getWrittenAt(file);
 
-    return { text, saved: wasWritten(file, opened), aborted: left.started && left.code !== 0 };
+    return {
+      text,
+      saved: savedAt !== null && savedAt !== openedAt,
+      aborted: left.started && left.code !== 0,
+    };
   } finally {
-    try {
-      fs.unlinkSync(file);
-    } catch {
+    await unlink(file).catch(() => {
       // Already gone, which is where it was headed.
-    }
+    });
   }
 }
 
@@ -127,8 +135,8 @@ export async function edit(
  * away from is one you stop using for anything you are not sure about. A buffer emptied and saved
  * runs nothing either, for the same reason it would at the prompt.
  *
- * The comparison is of CONTENT, not of whether a write happened: an editor that saves a buffer
- * nobody touched has changed nothing, whatever it did to the mtime.
+ * What it reads is `saved` — whether a WRITE happened, off the file's mtime — not whether the text
+ * came back different. Those are not the same question, and the difference was the bug.
  *
  * ```ts
  * import { whatToRun } from './editor.ts';
@@ -144,6 +152,10 @@ export function whatToRun(edited: { text: string; saved: boolean; aborted: boole
 
 /**
  * A file's contents, or null when it cannot be read — a missing path is an answer, not a crash.
+ *
+ * Sync for the same reason `writeIfPossible` is: `.cat`, `.type` and `.copy` each make one read
+ * that the answer is waiting on, and `readFileSync` measured ~0.35ms against ~0.59ms for the
+ * promise. The reads that BRACKET an editor session are async — nobody is waiting on those.
  *
  * ```ts
  * import { readIfThere } from './editor.ts';
@@ -288,7 +300,7 @@ export async function openInEditor(
   const editor = named ?? process.env.VISUAL ?? process.env.EDITOR;
   if (!editor) return { failed: 'no $EDITOR set — nothing to open it with\n', saved: false };
 
-  const before = writtenAt(file);
+  const openedAt = await getWrittenAt(file);
   // The same handover the scratchpad makes: readline stands down, the editor owns the terminal,
   // and it is given back only to a prompt that had it.
   // Only `started` here, not the exit code. `:cq` on the SCRATCHPAD means "do not run this"; on a
@@ -296,10 +308,11 @@ export async function openInEditor(
   // refusing to notice would put the session back out of step with it, which is the whole thing
   // this path exists to prevent.
   const { started } = await handOver(server, editor, [`+${line}`, file]);
+  const savedAt = started ? await getWrittenAt(file) : null;
 
   return {
     failed: started ? null : `${editor} could not be started\n`,
-    saved: started && wasWritten(file, before),
+    saved: savedAt !== null && savedAt !== openedAt,
   };
 }
 
@@ -385,8 +398,8 @@ function editorCommand(name: string, named?: string): ReplCommand['main'] {
     // RUNS it, so it is asked for the same reason the scratchpad is.
     else if (opened.saved) {
       const whole = readIfThere(path.resolve(repl.cwd, at.file)) ?? '';
-      const said = asPersonWouldSayIt(path.resolve(repl.cwd, at.file), repl.config.projectRoot);
-      if (!(await confirmRun(repl, whole.split('\n').length, said))) return;
+      const said = formatPathDisplay(path.resolve(repl.cwd, at.file), repl.config.projectRoot);
+      if (!(await promptConfirmationToRunForUser(repl, whole.split('\n').length, said))) return;
 
       const brought = await repl.session.refresh(at.file);
       if (typeof brought === 'string') repl.write(red(`${brought}\n`));
@@ -411,7 +424,8 @@ function scratchpad(repl: ReplContext, named?: string): Promise<void> {
     repl.scratch = edited.text;
     const source = whatToRun(edited);
     const asked =
-      source !== '' && (await confirmRun(repl, source.split('\n').length, 'the scratchpad'));
+      source !== '' &&
+      (await promptConfirmationToRunForUser(repl, source.split('\n').length, 'the scratchpad'));
     if (!asked) return;
 
     // `whole`, because you closed the editor: there is no more of this coming. Without it an
@@ -435,12 +449,16 @@ function scratchpad(repl: ReplContext, named?: string): Promise<void> {
  * `[Y/n]`, because saving usually does mean run it. Anything starting with `n` is no; Enter, `y`,
  * or anything else is yes.
  */
-function confirmRun(repl: ReplContext, lines: number, from: string): Promise<boolean> {
+function promptConfirmationToRunForUser(
+  repl: ReplContext,
+  lines: number,
+  from: string,
+): Promise<boolean> {
   const counted = `${lines} line${lines === 1 ? '' : 's'}`;
 
   return new Promise((resolve) => {
     repl.server.question(`run ${counted} from ${from}? [Y/n] `, (answer) => {
-      resolve(meansYes(answer));
+      resolve(userMeansYes(answer));
     });
   });
 }
@@ -454,13 +472,13 @@ function confirmRun(repl: ReplContext, lines: number, from: string): Promise<boo
  * asked in is one about running code.
  *
  * ```ts
- * import { asPersonWouldSayIt } from './editor.ts';
+ * import { formatPathDisplay } from './editor.ts';
  *
- * asPersonWouldSayIt('/home/me/proj/lib/a.ts', '/home/me/proj'); // 'proj/lib/a.ts'
- * asPersonWouldSayIt('/etc/hosts', '/home/me/proj'); // '/etc/hosts' — outside, so say all of it
+ * formatPathDisplay('/home/me/proj/lib/a.ts', '/home/me/proj'); // 'proj/lib/a.ts'
+ * formatPathDisplay('/etc/hosts', '/home/me/proj'); // '/etc/hosts' — outside, so say all of it
  * ```
  */
-export function asPersonWouldSayIt(file: string, projectRoot: string): string {
+export function formatPathDisplay(file: string, projectRoot: string): string {
   const inside = path.relative(projectRoot, file);
   if (inside === '' || inside.startsWith('..') || path.isAbsolute(inside)) return file;
 
@@ -470,24 +488,18 @@ export function asPersonWouldSayIt(file: string, projectRoot: string): string {
 /**
  * When a file was last written, or `null` where there is none yet — `.e` on a path that does not
  * exist is how a file starts.
- */
-function writtenAt(file: string): number | null {
-  return fs.statSync(file, { throwIfNoEntry: false })?.mtimeMs ?? null;
-}
-
-/**
- * Whether the editor wrote this file, rather than whether its text came back different.
  *
- * mtime, because `:w` touches it even when nothing in the buffer moved, and `:q` leaves it alone.
- * Comparing CONTENT instead was the bug: decline a run, reopen, `:wq` without editing, and the
- * text matched what went in — so nothing was offered, and every other `.e` looked ignored. It also
- * covers an editor that saves by writing a new file and renaming it over this one, which gets a
- * new mtime for the same reason.
+ * Read once before the editor opens and once after it closes, and the two compared: a save is an
+ * mtime that MOVED. Comparing content instead was the bug — decline a run, reopen, `:wq` without
+ * editing, and the text matched what went in, so nothing was offered and every other `.e` looked
+ * ignored. mtime also covers the editors that save by writing a new file and renaming it over this
+ * one, and `:q` leaves it alone, which is how quitting still means never mind.
  */
-function wasWritten(file: string, opened: number | null): boolean {
-  const now = writtenAt(file);
-
-  return now !== null && now !== opened;
+function getWrittenAt(file: string): Promise<number | null> {
+  return stat(file).then(
+    (found) => found.mtimeMs,
+    () => null,
+  );
 }
 
 /**
@@ -501,16 +513,16 @@ function wasWritten(file: string, opened: number | null): boolean {
  * inside a promise is one nothing can test without a terminal.
  *
  * ```ts
- * import { meansYes } from './editor.ts';
+ * import { userMeansYes } from './editor.ts';
  *
- * meansYes(''); // true — Enter takes the default, which is to run it
- * meansYes('y'); // true
- * meansYes('  YES  '); // true — trimmed, and case does not matter
- * meansYes('n'); // false
- * meansYes('.exit'); // false — a stray command is not consent
+ * userMeansYes(''); // true — Enter takes the default, which is to run it
+ * userMeansYes('y'); // true
+ * userMeansYes('  YES  '); // true — trimmed, and case does not matter
+ * userMeansYes('n'); // false
+ * userMeansYes('.exit'); // false — a stray command is not consent
  * ```
  */
-export function meansYes(answer: string): boolean {
+export function userMeansYes(answer: string): boolean {
   const said = answer.trim().toLowerCase();
 
   return said === '' || said.startsWith('y');

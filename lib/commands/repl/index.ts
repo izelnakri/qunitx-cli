@@ -506,7 +506,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 // Re-exported so the terminal layer has one door, whichever room a thing lives in.
-export { asPersonWouldSayIt, edit, meansYes, replayableSource, whatToRun } from './editor.ts';
+export { edit, formatPathDisplay, replayableSource, userMeansYes, whatToRun } from './editor.ts';
 export { complete, setupSuggestionBehaviors, mutedSuggestionStyle } from './completion.ts';
 export { trimHistoryFile } from './history.ts';
 
