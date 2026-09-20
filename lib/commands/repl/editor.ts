@@ -113,8 +113,13 @@ export async function edit(
 
   try {
     const left = await handOver(server, editor, [file]);
-    const text = await readFile(file, 'utf8').catch(() => contents);
-    const savedAt = await getWrittenAt(file);
+    // Two independent questions — what came back, and whether it was written — so they are asked
+    // at once rather than one behind the other. Neither answer needs the other, and a `Promise.all`
+    // is the only spelling that says so.
+    const [text, savedAt] = await Promise.all([
+      readFile(file, 'utf8').catch(() => contents),
+      getWrittenAt(file),
+    ]);
 
     return {
       text,
