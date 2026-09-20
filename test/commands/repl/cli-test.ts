@@ -715,6 +715,15 @@ module('Commands | repl | values', { concurrency: true }, () => {
       assert.notIncludes(result.stdout, 'ran', 'and nothing in it ran, as in any JS engine');
     });
 
+    test('a scratchpad saved and then aborted runs nothing', async (assert) => {
+      // The escape hatch for "I saved, but do not run it". `:wq` and `:w` then `:q` leave a
+      // byte-identical file and both exit 0, so the exit code is the only thing left to say it
+      // with — the same signal `git commit` reads to throw a message away.
+      const result = await editing('repl-scratch-aborted', `printf '6 * 7\\n' > "$1"\nexit 1`);
+
+      assert.notIncludes(result.stdout, '42', 'the buffer was saved, and deliberately dropped');
+    });
+
     test('a second scratchpad runs after a first was abandoned', async (assert) => {
       // The reported sequence exactly: the first `.e` is quit without saving, which must run
       // nothing, and the second is saved, which must run. Two opens, one stand-in editor that

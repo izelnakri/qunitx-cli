@@ -211,6 +211,7 @@ Needs `$EDITOR`. With `repl-helpers.ts` preloaded:
 | `.open`                               | a scratch buffer. Type `1 + 1`, `:wq` → it runs, printing `2`           |
 | `.open` again                         | the buffer still holds what you wrote — it lives for the session        |
 | `.open`, edit, `:q` (no save)         | **nothing runs**                                                        |
+| `.open`, write, then `:cq`            | **nothing runs** — saved, and deliberately dropped ¹                    |
 | `.open` again after that, save `:wq`  | it runs — an abandoned buffer does not poison the next one              |
 | a buffer ending `let me =`            | `Uncaught SyntaxError: Unexpected end of input`, and nothing in it runs |
 | `.open double`                        | opens `repl-helpers.ts` at `double`'s line                              |
@@ -220,6 +221,11 @@ Needs `$EDITOR`. With `repl-helpers.ts` preloaded:
 **Save-and-reload:** with the file open, change `double` to `value * 3`, save and quit. The session
 reloads the file and says what came back; then `double(21)` → `63`. A file the session has and the
 file on disk are the same file.
+
+¹ `:wq`, `:x`, `ZZ`, and `:w` followed by `:q` all leave a byte-identical file and all exit 0 —
+measured — so there is nothing to tell them apart by and all four run. `:cq` exits non-zero with
+the file saved, which is the same signal `git commit` reads to abandon a message, and is how you
+say "keep the text, do not run it".
 
 _(Known wart: from outside the editor, `:w` then `:q` cannot be told from `:wq` — all the process
 sees is an exit code and a changed file, so both run. Documented in `editor.ts`.)_
