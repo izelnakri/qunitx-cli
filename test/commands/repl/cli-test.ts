@@ -718,11 +718,19 @@ module('Commands | repl | values', { concurrency: true }, () => {
       assert.notIncludes(result.stdout, 'ran', 'and nothing in it ran, as in any JS engine');
     });
 
-    test('the prompt takes no for an answer', async (assert) => {
+    test('the prompt takes no for an answer, and gives the prompt back', async (assert) => {
       const result = await editing('repl-scratch-declined', `printf '6 * 7\\n' > "$1"`, 'n');
 
       assert.includes(result.stdout, 'run 1 line? [Y/n]', 'it asks before running anything');
       assert.notIncludes(result.stdout, '42', 'and does not run it when told not to');
+      // One Enter, not two. `define` draws the prompt when a command's `main` settles, so a
+      // scratchpad that was fired and forgotten had its prompt drawn while the editor was still
+      // opening — and nothing drew another after the answer. The session looked hung.
+      assert.includes(
+        result.stdout.slice(result.stdout.indexOf('run 1 line?')),
+        '> ',
+        'a prompt comes back without needing a second Enter',
+      );
     });
 
     test('a scratchpad saved and then aborted runs nothing', async (assert) => {
