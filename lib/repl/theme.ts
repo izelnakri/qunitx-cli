@@ -59,30 +59,32 @@ export interface Theme {
  * yellow, numbers cyan, booleans red like the keywords they are. Groups sharing a colour do so
  * because they are the same KIND of thing, never to save a colour.
  */
-const DEFAULTS: Readonly<Record<string, string>> = {
-  '@comment': 'fg=bright-black',
-  // Not a capture: nvim's own name for the line-number column, which `.cat` draws one of. A theme
-  // has one opinion about gutters and it should not have to give it twice.
-  LineNr: 'fg=bright-black',
-  // Neither is this: what `ls` and every file tree colour a directory, and what `.tree` needs.
-  Directory: 'fg=blue',
-  '@string': 'fg=yellow',
-  '@string.escape': 'fg=magenta',
-  '@number': 'fg=cyan',
-  '@boolean': 'fg=red',
-  '@constant.builtin': 'fg=red',
-  '@variable.builtin': 'fg=red',
-  '@keyword': 'fg=red',
-  '@function': 'fg=blue',
-  '@constructor': 'fg=magenta',
-  '@type': 'fg=magenta',
-  // Named so a theme can colour them, unstyled so a prompt is not a paint chart. Most of a line is
-  // variables, properties and punctuation, and colouring those leaves nothing standing out.
-  '@variable': '',
-  '@property': '',
-  '@operator': '',
-  '@punctuation': '',
-};
+const DEFAULTS: ReadonlyMap<string, string> = new Map(
+  Object.entries({
+    '@comment': 'fg=bright-black',
+    // Not a capture: nvim's own name for the line-number column, which `.cat` draws one of. A theme
+    // has one opinion about gutters and it should not have to give it twice.
+    LineNr: 'fg=bright-black',
+    // Neither is this: what `ls` and every file tree colour a directory, and what `.tree` needs.
+    Directory: 'fg=blue',
+    '@string': 'fg=yellow',
+    '@string.escape': 'fg=magenta',
+    '@number': 'fg=cyan',
+    '@boolean': 'fg=red',
+    '@constant.builtin': 'fg=red',
+    '@variable.builtin': 'fg=red',
+    '@keyword': 'fg=red',
+    '@function': 'fg=blue',
+    '@constructor': 'fg=magenta',
+    '@type': 'fg=magenta',
+    // Named so a theme can colour them, unstyled so a prompt is not a paint chart. Most of a line is
+    // variables, properties and punctuation, and colouring those leaves nothing standing out.
+    '@variable': '',
+    '@property': '',
+    '@operator': '',
+    '@punctuation': '',
+  }),
+);
 
 /** What the environment calls a theme. One variable, because a REPL has no config file. */
 const THEME_VARIABLE = 'QUNITX_REPL_THEME';
@@ -153,10 +155,10 @@ function paintingIn(style: string): (text: string) => string {
  * Up the dotted hierarchy, exactly as nvim resolves a capture with no highlight of its own:
  * `@keyword.return` to `@keyword`, `@punctuation.bracket` to `@punctuation`.
  */
-function sgrFor(capture: string, configured: Record<string, string>): string {
+function sgrFor(capture: string, configured: ReadonlyMap<string, string>): string {
   let name = capture;
   for (;;) {
-    const spec = configured[name] ?? DEFAULTS[name];
+    const spec = configured.get(name) ?? DEFAULTS.get(name);
     if (spec !== undefined) return ansiStyle(spec);
     const parent = name.lastIndexOf('.');
     if (parent === -1) return '';
@@ -224,12 +226,18 @@ const COLOURS: Readonly<Record<string, number>> = {
   'bright-white': 97,
 };
 
-/** `@string=fg=green @keyword=fg=red,bold` as a lookup. Anything unreadable is skipped. */
-function parse(configured: string | undefined): Record<string, string> {
-  const styles: Record<string, string> = {};
+/**
+ * `@string=fg=green @keyword=fg=red,bold` as a lookup. Anything unreadable is skipped.
+ *
+ * A Map, like DEFAULTS, and for the reason KEYWORDS is one: a capture called `constructor` or
+ * `toString` reads an inherited property out of an object and hands back something that is not a
+ * style. This one is built from an environment variable, so the name is whatever somebody wrote.
+ */
+function parse(configured: string | undefined): ReadonlyMap<string, string> {
+  const styles = new Map<string, string>();
   for (const entry of (configured ?? '').split(/\s+/)) {
     const at = entry.indexOf('=');
-    if (at > 0) styles[entry.slice(0, at)] = entry.slice(at + 1);
+    if (at > 0) styles.set(entry.slice(0, at), entry.slice(at + 1));
   }
 
   return styles;

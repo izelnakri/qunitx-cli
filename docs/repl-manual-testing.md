@@ -97,6 +97,17 @@ Uncaught Error: fixture boom
 That the frame says `repl-helpers.ts:20:9` and not a bundle offset is source-map resolution
 working. A number in the thousands means it regressed.
 
+**Two preloads that want the same name.** `node cli.ts repl lib/task/*` loads `index.ts` (named
+for its directory) and `task.ts` (named for itself) — both want `Task`, and `task.ts` also exports
+a class called `Task`. The banner says so rather than resolving it quietly:
+
+```
+# lib/task/index.ts and lib/task/task.ts both go into scope as Task — the last one wins
+```
+
+Nothing is reordered: which claim should win is a judgement, and `Task` being the class you wrote
+is a defensible answer. A session with no clash says nothing.
+
 ## 4. TypeScript at the prompt
 
 ```
@@ -169,6 +180,7 @@ they are an alias of (`.backtrace  … [aliases .bt, .where]`) and end with
 | ---------------------------- | ----------------------------------------------------------------------------------- |
 | `.cat package.json`          | numbered, right-aligned gutter, syntax-highlighted                                  |
 | `.cat README.md`             | numbered but **not** highlighted — prose through a JS tokenizer is worse than plain |
+| `.cat lib/task/task.ts`      | prints — a file mentioning `constructor` used to crash this, in a TTY only          |
 | `.tree -L 1 lib/repl`        | a tree, then `0 directories, 12 files`                                              |
 | `.ls -L 1 lib`               | the same command                                                                    |
 | `.view lib/repl`             | the tree — `.view` delegates to `.tree`                                             |

@@ -7,8 +7,9 @@ import * as Args from '../../args/index.ts';
 import * as Config from '../../setup/config.ts';
 import * as Reporter from '../../reporters/index.ts';
 import * as Repl from '../../repl/session.ts';
+import { moduleNameFor } from '../../repl/session.ts';
 import * as Result from '../../result/index.ts';
-import { blue, red } from '../../utils/color.ts';
+import { blue, red, yellow } from '../../utils/color.ts';
 import { complete, completionCache, setupSuggestionBehaviors } from './completion.ts';
 import type { CompleterCallback } from './completion.ts';
 import { showFrameSource } from './frames.ts';
@@ -88,6 +89,47 @@ const PREVIEW_GAP = 2;
 const PREVIEW_DELAY_MS = 90;
 
 /**
+ * Preloaded files that go into scope under the SAME name, said out loud instead of silently
+ * resolved.
+ *
+ * A file arrives under a name worked out from its path as well as under its own exports, and two
+ * files can want the same one. `qunitx repl lib/task/*` is the case that found this: `index.ts`
+ * takes its name from the directory holding it, so it wants `Task`; `task.ts` wants `Task` from
+ * its filename; and `task.ts` also exports a class called `Task`. Last claim wins, so `Task` at
+ * the prompt is the class and neither module namespace is reachable — with nothing said about it.
+ *
+ * Only the cross-file clash is reported, because it is the only one visible from here: the name a
+ * file went into scope under is listed among its exports, so a file whose namespace is shadowed
+ * by its OWN export looks identical to one that is not. Two files wanting one name is
+ * unambiguous, and it is the half that loses a whole module.
+ *
+ * Nothing is reordered, on purpose. Which claim should win is a judgement — an export is what you
+ * named, a namespace is what we named — and quietly picking one is what made this confusing.
+ * Saying it costs a line and leaves the choice where it belongs.
+ *
+ * ```ts
+ * import { namespacesTaken } from './index.ts';
+ *
+ * namespacesTaken(['lib/task/index.ts', 'lib/task/task.ts']); // ['Task is …'] — both want Task
+ * namespacesTaken(['a/one.ts', 'b/two.ts']); // [] — nothing collides
+ * ```
+ */
+export function namespacesTaken(files: readonly string[]): string[] {
+  const wantedBy = new Map<string, string[]>();
+  for (const file of files) {
+    const namespace = moduleNameFor(file);
+    wantedBy.set(namespace, [...(wantedBy.get(namespace) ?? []), file]);
+  }
+
+  return [...wantedBy]
+    .filter(([, claimants]) => claimants.length > 1)
+    .map(
+      ([namespace, claimants]) =>
+        `${claimants.join(' and ')} both go into scope as ${namespace} — the last one wins`,
+    );
+}
+
+/**
  * Runs `qunitx repl`: opens a browser page, then reads, evaluates and prints in it until the input
  * ends. Resolves with the process exit code once everything is closed.
  *
@@ -134,6 +176,8 @@ function banner(config: ResolvedConfig, session: ReplSession): void {
     const exported = names.length > 0 ? `: ${names.join(', ')}` : '';
     Reporter.info(config, blue(`loaded ${file}${exported}`));
   }
+  const preloaded = session.loaded.map(([file]) => file);
+  for (const note of namespacesTaken(preloaded)) Reporter.info(config, yellow(note));
   Reporter.info(
     config,
     blue('type `.help` for commands, `:<cmd>` for a shell, `.exit` or Ctrl-D to quit'),

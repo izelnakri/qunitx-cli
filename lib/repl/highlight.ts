@@ -12,48 +12,50 @@ export interface Token {
 
 // Grouped the way nvim's own queries group them, so a theme written for an editor means the same
 // thing here. `@keyword` catches everything without a more specific home.
-const KEYWORDS: Readonly<Record<string, string>> = {
-  function: '@keyword.function',
-  return: '@keyword.return',
-  if: '@keyword.conditional',
-  else: '@keyword.conditional',
-  switch: '@keyword.conditional',
-  case: '@keyword.conditional',
-  for: '@keyword.repeat',
-  while: '@keyword.repeat',
-  do: '@keyword.repeat',
-  break: '@keyword.repeat',
-  continue: '@keyword.repeat',
-  typeof: '@keyword.operator',
-  instanceof: '@keyword.operator',
-  in: '@keyword.operator',
-  of: '@keyword.operator',
-  void: '@keyword.operator',
-  delete: '@keyword.operator',
-  import: '@keyword.import',
-  export: '@keyword.import',
-  from: '@keyword.import',
-  as: '@keyword.import',
-  try: '@keyword.exception',
-  catch: '@keyword.exception',
-  finally: '@keyword.exception',
-  throw: '@keyword.exception',
-  async: '@keyword.coroutine',
-  await: '@keyword.coroutine',
-  const: '@keyword',
-  let: '@keyword',
-  var: '@keyword',
-  class: '@keyword',
-  new: '@keyword',
-  extends: '@keyword',
-  static: '@keyword',
-  get: '@keyword',
-  set: '@keyword',
-  yield: '@keyword',
-  debugger: '@keyword',
-  default: '@keyword',
-  with: '@keyword',
-};
+const KEYWORDS: ReadonlyMap<string, string> = new Map(
+  Object.entries({
+    function: '@keyword.function',
+    return: '@keyword.return',
+    if: '@keyword.conditional',
+    else: '@keyword.conditional',
+    switch: '@keyword.conditional',
+    case: '@keyword.conditional',
+    for: '@keyword.repeat',
+    while: '@keyword.repeat',
+    do: '@keyword.repeat',
+    break: '@keyword.repeat',
+    continue: '@keyword.repeat',
+    typeof: '@keyword.operator',
+    instanceof: '@keyword.operator',
+    in: '@keyword.operator',
+    of: '@keyword.operator',
+    void: '@keyword.operator',
+    delete: '@keyword.operator',
+    import: '@keyword.import',
+    export: '@keyword.import',
+    from: '@keyword.import',
+    as: '@keyword.import',
+    try: '@keyword.exception',
+    catch: '@keyword.exception',
+    finally: '@keyword.exception',
+    throw: '@keyword.exception',
+    async: '@keyword.coroutine',
+    await: '@keyword.coroutine',
+    const: '@keyword',
+    let: '@keyword',
+    var: '@keyword',
+    class: '@keyword',
+    new: '@keyword',
+    extends: '@keyword',
+    static: '@keyword',
+    get: '@keyword',
+    set: '@keyword',
+    yield: '@keyword',
+    debugger: '@keyword',
+    default: '@keyword',
+    with: '@keyword',
+  }),
+);
 
 const CONSTANTS = new Set(['null', 'undefined', 'NaN', 'Infinity']);
 const BUILTIN_VARIABLES = new Set(['this', 'super', 'globalThis', 'arguments']);
@@ -204,8 +206,12 @@ function word(text: string, previous: Token | undefined, source: string, end: nu
   if (previous?.capture === '@punctuation.delimiter' && source[previous.start] === '.') {
     return called(source, end) ? '@function.method.call' : '@property';
   }
-  const keyword = KEYWORDS[text];
-  if (keyword) return keyword;
+  // A Map, not an object: `KEYWORDS[text]` answered `Object.prototype.constructor` for the word
+  // `constructor` — a truthy FUNCTION where a capture name belongs — and the palette then crashed
+  // on it with `name.lastIndexOf is not a function`. `.cat` on any file mentioning `constructor`
+  // died, and only in a terminal, because a colourless palette never looks at the capture.
+  const keyword = KEYWORDS.get(text);
+  if (keyword !== undefined) return keyword;
   if (text === 'true' || text === 'false') return '@boolean';
   if (CONSTANTS.has(text)) return '@constant.builtin';
   if (BUILTIN_VARIABLES.has(text)) return '@variable.builtin';

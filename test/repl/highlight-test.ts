@@ -1,3 +1,4 @@
+import process from 'node:process';
 import { module, test } from 'qunitx';
 import { depth, highlight, tokenize } from '../../lib/repl/highlight.ts';
 import { ansiStyle, theme } from '../../lib/repl/theme.ts';
@@ -77,6 +78,45 @@ module('Repl | highlight | tokenize', { concurrency: true }, () => {
 
 // What a continuation prompt counts. A brace inside a string is text, which is the whole reason
 // this is counted from tokens rather than characters.
+// A lookup built as a plain object answers for every name `Object.prototype` has. `KEYWORDS`
+// was one, so the word `constructor` came back as a FUNCTION where a capture name belongs, and
+// the palette died on it with `name.lastIndexOf is not a function`. `.cat` on any file mentioning
+// it failed, and only in a terminal — a colourless palette never looks at the capture.
+module('Repl | highlight | names Object.prototype also has', { concurrency: true }, () => {
+  const INHERITED = ['constructor', 'toString', 'valueOf', 'hasOwnProperty', 'isPrototypeOf'];
+
+  test('every token comes back with a capture that is a string', (assert) => {
+    for (const name of INHERITED) {
+      for (const token of tokenize(`const ${name} = 1`)) {
+        assert.strictEqual(typeof token.capture, 'string', `${name} is captured as a string`);
+      }
+    }
+  });
+
+  test('highlighting one does not throw, with a palette that reads the capture', (assert) => {
+    const palette = theme(true);
+    for (const name of INHERITED) {
+      // The reported line, in miniature: a doc comment naming it.
+      const painted = highlight(` * see {@link TaskClass#${name}}. */`, palette);
+
+      assert.true(painted.includes(name), `${name} survives being painted`);
+    }
+  });
+
+  test('a theme may name one too, without taking a style from the prototype', (assert) => {
+    const before = process.env.QUNITX_REPL_THEME;
+    process.env.QUNITX_REPL_THEME = 'constructor=fg=red';
+    try {
+      const painted = theme(true).painter('constructor')('x');
+
+      assert.strictEqual(typeof painted, 'string', 'a style, not whatever an object inherits');
+    } finally {
+      if (before === undefined) delete process.env.QUNITX_REPL_THEME;
+      else process.env.QUNITX_REPL_THEME = before;
+    }
+  });
+});
+
 module('Repl | highlight | depth', { concurrency: true }, () => {
   test('one level per bracket left open', (assert) => {
     assert.strictEqual(depth('const a = {'), 1);

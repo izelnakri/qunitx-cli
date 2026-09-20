@@ -16,6 +16,8 @@ const repl = (stdin: string, args = '') =>
 // The banner's last line: the session is up, and the prompt is reading. What a test waits for
 // instead of guessing how long a browser takes to start on a loaded runner.
 const READY = /type `\.help` for commands/;
+/** The scratchpad's question. Answers wait for it rather than for a clock. */
+const ASKED = /run \d+ lines? from /;
 
 module('Commands | repl | a piped session', { concurrency: true }, () => {
   test('evaluates each line in the page and prints the answers in order', async (assert) => {
@@ -674,7 +676,11 @@ module('Commands | repl | values', { concurrency: true }, () => {
   // Linux has; the macOS spelling differs and Windows has none, so this asks where it can.
   if (process.platform === 'linux') {
     /** A stand-in for a human at an editor: one that saves something, and one that walks away. */
-    const editing = async (label: string, script: string, answer = 'y') => {
+    /**
+     * A stand-in editor, driven through a pty. `answer` is what to type at the run question, or
+     * `null` where no question is coming — an editor that saved nothing, or one that aborted.
+     */
+    const editing = async (label: string, script: string, answer: string | null = 'y') => {
       const directory = await tempDir(label);
       const editor = path.join(directory.path, 'stand-in');
       await fs.writeFile(editor, `#!/bin/sh\n${script}\n`);
@@ -686,10 +692,10 @@ module('Commands | repl | values', { concurrency: true }, () => {
         {
           stdin: [
             { text: '.open\n', after: READY },
-            // Saving cannot be told from saving-and-then-quitting, so the prompt asks. Typed
-            // rather than pasted: the answer has to arrive after the question is on screen.
-            { text: `${answer}\n`, delayMs: 4000 },
-            { text: '.exit\n', delayMs: 3000 },
+            // Gated on the question rather than a clock: on a loaded machine a fixed wait let the
+            // answer arrive first, where readline ate it as a line of JavaScript.
+            ...(answer === null ? [] : [{ text: `${answer}\n`, after: ASKED }]),
+            { text: '.exit\n', delayMs: answer === null ? 6000 : 3000 },
           ],
         },
       );
@@ -731,7 +737,10 @@ module('Commands | repl | values', { concurrency: true }, () => {
         {
           stdin: [
             { text: '.e\n', after: READY },
-            { text: 'n\n', delayMs: 4000 },
+            // Only the FIRST answer is gated on the question: `appears` tests CUMULATIVE output,
+            // so a second `after: ASKED` matches the question already on screen and fires at once.
+            // What is unpredictable is the browser starting, and READY has covered that by here.
+            { text: 'n\n', after: ASKED },
             { text: '.e\n', delayMs: 3000 },
             { text: 'y\n', delayMs: 4000 },
             { text: '.exit\n', delayMs: 3000 },
@@ -767,9 +776,19 @@ module('Commands | repl | values', { concurrency: true }, () => {
       // The escape hatch for "I saved, but do not run it". `:wq` and `:w` then `:q` leave a
       // byte-identical file and both exit 0, so the exit code is the only thing left to say it
       // with — the same signal `git commit` reads to throw a message away.
-      const result = await editing('repl-scratch-aborted', `printf '6 * 7\\n' > "$1"\nexit 1`);
+      // A word, not `42`. The banner prints `http://localhost:1242` on a bad draw of the port,
+      // and `notIncludes(stdout, '42')` was failing on that rather than on anything running.
+      const result = await editing(
+        'repl-scratch-aborted',
+        `printf "'aborted-should-not-run'\\n" > "$1"\nexit 1`,
+        null,
+      );
 
-      assert.notIncludes(result.stdout, '42', 'the buffer was saved, and deliberately dropped');
+      assert.notIncludes(
+        result.stdout,
+        'aborted-should-not-run',
+        'saved, then deliberately dropped',
+      );
       assert.notIncludes(
         result.stdout,
         'run 1 line from the scratchpad',
@@ -795,7 +814,7 @@ module('Commands | repl | values', { concurrency: true }, () => {
           stdin: [
             { text: '.e\n', after: READY },
             { text: '.e\n', delayMs: 4000 },
-            { text: 'y\n', delayMs: 4000 },
+            { text: 'y\n', after: ASKED },
             { text: '.exit\n', delayMs: 3000 },
           ],
         },
@@ -826,7 +845,7 @@ module('Commands | repl | values', { concurrency: true }, () => {
           stdin: [
             { text: `.e ${live}\n`, after: READY },
             // Reloading a module RUNS it, so it is asked about the same way the scratchpad is.
-            { text: 'y\n', delayMs: 4000 },
+            { text: 'y\n', after: ASKED },
             { text: 'second()\n', delayMs: 4000 },
             { text: '.exit\n', delayMs: 2000 },
           ],
@@ -840,7 +859,7 @@ module('Commands | repl | values', { concurrency: true }, () => {
     test('a scratchpad quit without saving is a change of mind', async (assert) => {
       // `:q` means "never mind". A scratchpad that runs what you just walked away from is one you
       // stop using for anything you are not sure about.
-      const result = await editing('repl-scratch-quit', 'exit 0');
+      const result = await editing('repl-scratch-quit', 'exit 0', null);
 
       assert.notIncludes(result.stdout, '42');
     });
