@@ -73,9 +73,12 @@ export function writeIfPossible(file: string, contents: string): boolean {
  * A `.js` extension, because whatever an editor does with syntax and indentation should be what it
  * would do for the file this text is going to behave like.
  *
- * What comes back says whether the text CHANGED, not merely whether it was saved. Quitting without
- * writing means "never mind", and a scratchpad that runs what you just walked away from is a
- * scratchpad you stop using for anything you are not sure about.
+ * `saved` is whether the editor WROTE the file, read off its mtime — not whether the text came
+ * back different. Those are not the same question, and the difference was a bug: decline a run,
+ * reopen, `:wq` without touching anything, and the text matched what went in, so nothing was
+ * offered and every other `.e` looked ignored.
+ *
+ * Quitting without writing still means "never mind", because a `:q` leaves the mtime alone.
  *
  * `aborted` is the other way to say never mind, for when you HAVE saved: `:cq` leaves vim with a
  * non-zero status, which is the same signal `git commit` reads to throw a message away. It is the
@@ -88,7 +91,7 @@ export function writeIfPossible(file: string, contents: string): boolean {
  *
  * // Defined, not invoked: it takes over the terminal.
  * function example(server: REPLServer) {
- *   return edit('vi', 'const x = 1;', server); // { text, changed, aborted }
+ *   return edit('vi', 'const x = 1;', server); // { text, saved, aborted }
  * }
  * ```
  */
@@ -96,17 +99,18 @@ export async function edit(
   editor: string,
   contents: string,
   server: REPLServer,
-): Promise<{ text: string; changed: boolean; aborted: boolean }> {
+): Promise<{ text: string; saved: boolean; aborted: boolean }> {
   // Unique per call, not per process: two edits in flight at once would otherwise open the same
   // path and each would save over the other's buffer.
   const file = path.join(os.tmpdir(), `qunitx-repl-${process.pid}-${randomUUID()}.js`);
   fs.writeFileSync(file, contents);
+  const opened = writtenAt(file);
 
   try {
     const left = await handOver(server, editor, [file]);
     const text = readIfThere(file) ?? contents;
 
-    return { text, changed: text !== contents, aborted: left.started && left.code !== 0 };
+    return { text, saved: wasWritten(file, opened), aborted: left.started && left.code !== 0 };
   } finally {
     try {
       fs.unlinkSync(file);
@@ -129,13 +133,13 @@ export async function edit(
  * ```ts
  * import { whatToRun } from './editor.ts';
  *
- * whatToRun({ text: '1 + 1', changed: true, aborted: false }); // '1 + 1'
- * whatToRun({ text: '1 + 1', changed: false, aborted: false }); // '' — never saved, never mind
- * whatToRun({ text: '1 + 1', changed: true, aborted: true }); // '' — saved, then `:cq`
+ * whatToRun({ text: '1 + 1', saved: true, aborted: false }); // '1 + 1'
+ * whatToRun({ text: '1 + 1', saved: false, aborted: false }); // '' — never written, never mind
+ * whatToRun({ text: '1 + 1', saved: true, aborted: true }); // '' — written, then `:cq`
  * ```
  */
-export function whatToRun(edited: { text: string; changed: boolean; aborted: boolean }): string {
-  return edited.changed && !edited.aborted ? edited.text.trim() : '';
+export function whatToRun(edited: { text: string; saved: boolean; aborted: boolean }): string {
+  return edited.saved && !edited.aborted ? edited.text.trim() : '';
 }
 
 /**
@@ -259,7 +263,7 @@ function closed(server: REPLServer): boolean {
  * ignore it and open the file anyway — which is still the thing that was asked for.
  *
  * `failed` is the line to print when it could not run: no `$EDITOR` set, or one that is not
- * there. `changed` says whether the file is different from the one that was opened, which is how
+ * there. `saved` says whether the editor WROTE it, which is how
  * a caller knows a file the session had in scope has moved out from under it. `named` is for the
  * commands named after an editor, which mean that one rather than whichever the environment
  * prefers.
@@ -271,7 +275,7 @@ function closed(server: REPLServer): boolean {
  *
  * // Defined, not invoked: it hands a real terminal to a real editor.
  * function example(server: REPLServer) {
- *   return openInEditor('/proj/a.ts', 12, server); // { failed: null, changed: boolean }
+ *   return openInEditor('/proj/a.ts', 12, server); // { failed: null, saved: boolean }
  * }
  * ```
  */
@@ -280,11 +284,11 @@ export async function openInEditor(
   line: number,
   server: REPLServer,
   named?: string,
-): Promise<{ failed: string | null; changed: boolean }> {
+): Promise<{ failed: string | null; saved: boolean }> {
   const editor = named ?? process.env.VISUAL ?? process.env.EDITOR;
-  if (!editor) return { failed: 'no $EDITOR set — nothing to open it with\n', changed: false };
+  if (!editor) return { failed: 'no $EDITOR set — nothing to open it with\n', saved: false };
 
-  const before = readIfThere(file);
+  const before = writtenAt(file);
   // The same handover the scratchpad makes: readline stands down, the editor owns the terminal,
   // and it is given back only to a prompt that had it.
   // Only `started` here, not the exit code. `:cq` on the SCRATCHPAD means "do not run this"; on a
@@ -295,7 +299,7 @@ export async function openInEditor(
 
   return {
     failed: started ? null : `${editor} could not be started\n`,
-    changed: started && readIfThere(file) !== before,
+    saved: started && wasWritten(file, before),
   };
 }
 
@@ -377,8 +381,13 @@ function editorCommand(name: string, named?: string): ReplCommand['main'] {
     if (opened.failed !== null) repl.write(opened.failed);
     // A file the session has in scope and the file on disk are the same file, and this is how
     // the second one changes. Saving it and then having to `.load` it by hand is the session
-    // going stale under you at the moment you were least expecting it to.
-    else if (opened.changed) {
+    // going stale under you at the moment you were least expecting it to — but reloading a module
+    // RUNS it, so it is asked for the same reason the scratchpad is.
+    else if (opened.saved) {
+      const whole = readIfThere(path.resolve(repl.cwd, at.file)) ?? '';
+      const said = asPersonWouldSayIt(path.resolve(repl.cwd, at.file), repl.config.projectRoot);
+      if (!(await confirmRun(repl, whole.split('\n').length, said))) return;
+
       const brought = await repl.session.refresh(at.file);
       if (typeof brought === 'string') repl.write(red(`${brought}\n`));
       else if (brought !== null) repl.write(blue(`${brought.join(', ')}\n`));
@@ -401,7 +410,9 @@ function scratchpad(repl: ReplContext, named?: string): Promise<void> {
   return edit(editor, repl.scratch, repl.server).then(async (edited) => {
     repl.scratch = edited.text;
     const source = whatToRun(edited);
-    if (source === '' || !(await confirmRun(repl, source))) return;
+    const asked =
+      source !== '' && (await confirmRun(repl, source.split('\n').length, 'the scratchpad'));
+    if (!asked) return;
 
     // `whole`, because you closed the editor: there is no more of this coming. Without it an
     // unfinished last statement came back as `incomplete` — the prompt's "keep typing" — and a
@@ -424,14 +435,59 @@ function scratchpad(repl: ReplContext, named?: string): Promise<void> {
  * `[Y/n]`, because saving usually does mean run it. Anything starting with `n` is no; Enter, `y`,
  * or anything else is yes.
  */
-function confirmRun(repl: ReplContext, source: string): Promise<boolean> {
-  const lines = source.split('\n').length;
+function confirmRun(repl: ReplContext, lines: number, from: string): Promise<boolean> {
+  const counted = `${lines} line${lines === 1 ? '' : 's'}`;
 
   return new Promise((resolve) => {
-    repl.server.question(`run ${lines} line${lines === 1 ? '' : 's'}? [Y/n] `, (answer) => {
+    repl.server.question(`run ${counted} from ${from}? [Y/n] `, (answer) => {
       resolve(meansYes(answer));
     });
   });
+}
+
+/**
+ * A path as a person would say it: `qunitx-cli/lib/repl/session.ts` for something in this project,
+ * and the absolute path for anything outside it.
+ *
+ * The project's own directory name leads, because `lib/repl/session.ts` alone is ambiguous the
+ * moment a session has `.import`ed something from a sibling checkout — and the question this is
+ * asked in is one about running code.
+ *
+ * ```ts
+ * import { asPersonWouldSayIt } from './editor.ts';
+ *
+ * asPersonWouldSayIt('/home/me/proj/lib/a.ts', '/home/me/proj'); // 'proj/lib/a.ts'
+ * asPersonWouldSayIt('/etc/hosts', '/home/me/proj'); // '/etc/hosts' — outside, so say all of it
+ * ```
+ */
+export function asPersonWouldSayIt(file: string, projectRoot: string): string {
+  const inside = path.relative(projectRoot, file);
+  if (inside === '' || inside.startsWith('..') || path.isAbsolute(inside)) return file;
+
+  return `${path.basename(projectRoot)}/${inside.replaceAll('\\', '/')}`;
+}
+
+/**
+ * When a file was last written, or `null` where there is none yet — `.e` on a path that does not
+ * exist is how a file starts.
+ */
+function writtenAt(file: string): number | null {
+  return fs.statSync(file, { throwIfNoEntry: false })?.mtimeMs ?? null;
+}
+
+/**
+ * Whether the editor wrote this file, rather than whether its text came back different.
+ *
+ * mtime, because `:w` touches it even when nothing in the buffer moved, and `:q` leaves it alone.
+ * Comparing CONTENT instead was the bug: decline a run, reopen, `:wq` without editing, and the
+ * text matched what went in — so nothing was offered, and every other `.e` looked ignored. It also
+ * covers an editor that saves by writing a new file and renaming it over this one, which gets a
+ * new mtime for the same reason.
+ */
+function wasWritten(file: string, opened: number | null): boolean {
+  const now = writtenAt(file);
+
+  return now !== null && now !== opened;
 }
 
 /**

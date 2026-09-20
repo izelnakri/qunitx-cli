@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { module, test } from 'qunitx';
-import { edit, meansYes, whatToRun } from '../../../lib/commands/repl/index.ts';
+import { asPersonWouldSayIt, edit, meansYes, whatToRun } from '../../../lib/commands/repl/index.ts';
 import { tempDir } from '../../helpers/temp-dir.ts';
 import '../../helpers/custom-asserts.ts';
 import type { REPLServer } from 'node:repl';
@@ -38,6 +38,17 @@ module('Commands | repl | the editor scratchpad', { concurrency: true }, () => {
     assert.false(meansYes('6 * 7'));
   });
 
+  test('a path is said the way a person would say it', (assert) => {
+    assert.strictEqual(
+      asPersonWouldSayIt('/home/me/proj/lib/a.ts', '/home/me/proj'),
+      'proj/lib/a.ts',
+    );
+    assert.strictEqual(asPersonWouldSayIt('/etc/hosts', '/home/me/proj'), '/etc/hosts');
+    // The project's own name leads, because `lib/a.ts` stops being unambiguous the moment a
+    // session has imported something from a sibling checkout.
+    assert.includes(asPersonWouldSayIt('/home/me/proj/a.ts', '/home/me/proj'), 'proj/a.ts');
+  });
+
   /** A stand-in for a human: records what it was handed, appends a line, exits. */
   async function fakeEditor(directory: string, appends: string): Promise<string> {
     const editor = path.join(directory, 'fake-editor');
@@ -63,7 +74,7 @@ module('Commands | repl | the editor scratchpad', { concurrency: true }, () => {
 
       const left = await edit(editor, '', server as unknown as REPLServer);
 
-      assert.true(left.changed, 'the buffer did move');
+      assert.true(left.saved, 'the editor did write it');
       assert.true(left.aborted, 'and the editor said to drop it anyway');
       assert.strictEqual(whatToRun(left), '', 'so nothing runs');
     });
@@ -75,23 +86,25 @@ module('Commands | repl | the editor scratchpad', { concurrency: true }, () => {
       const saved = await edit(editor, '', server as unknown as REPLServer);
 
       assert.strictEqual(saved.text, 'const a = 1;\n');
-      assert.true(saved.changed, 'and it says the buffer moved, which is what makes it run');
+      assert.true(saved.saved, 'and it says the editor wrote it, which is what offers it');
     });
 
     test('what runs afterwards is what moved, and nothing else', (assert) => {
       // The rule the scratchpad turns on: `:q` means never mind, and a buffer emptied and saved
       // runs nothing for the same reason an empty line does.
-      assert.strictEqual(whatToRun({ text: '6 * 7', changed: true, aborted: false }), '6 * 7');
-      assert.strictEqual(whatToRun({ text: '6 * 7', changed: false, aborted: false }), '');
-      assert.strictEqual(whatToRun({ text: '  \n ', changed: true, aborted: false }), '');
+      assert.strictEqual(whatToRun({ text: '6 * 7', saved: true, aborted: false }), '6 * 7');
+      assert.strictEqual(whatToRun({ text: '6 * 7', saved: false, aborted: false }), '');
+      assert.strictEqual(whatToRun({ text: '  \n ', saved: true, aborted: false }), '');
       // Saved, and then told to throw it away. `:cq` is the only "never mind" an editor can send
       // after a write, because `:wq` and `:w` then `:q` leave a byte-identical file and both
       // exit 0 — there is nothing else to tell them apart by.
-      assert.strictEqual(whatToRun({ text: '6 * 7', changed: true, aborted: true }), '');
+      assert.strictEqual(whatToRun({ text: '6 * 7', saved: true, aborted: true }), '');
     });
 
-    test('an editor that wrote the same bytes back has changed nothing', async (assert) => {
-      // `:w` on a buffer nobody touched. Content is what is compared, not whether a write happened.
+    test('an editor that wrote the same bytes back still saved', async (assert) => {
+      // `:w` on a buffer nobody touched IS a save, and this used to say otherwise. The cost was
+      // an alternating session: decline a run, reopen, `:wq` without editing — identical text, so
+      // nothing was offered and every other `.e` looked ignored. A WRITE is the question now.
       await using directory = await tempDir('repl-edit-rewrite');
       const editor = path.join(directory.path, 'rewriter');
       await fs.writeFile(editor, '#!/bin/sh\ncat "$1" > "$1.copy"\ncat "$1.copy" > "$1"\n');
@@ -100,7 +113,7 @@ module('Commands | repl | the editor scratchpad', { concurrency: true }, () => {
       const same = await edit(editor, 'const a = 1;\n', server as unknown as REPLServer);
 
       assert.strictEqual(same.text, 'const a = 1;\n');
-      assert.false(same.changed, 'so nothing runs, whatever it did to the mtime');
+      assert.true(same.saved, 'so it is offered, because you did ask for it to be written');
     });
 
     test('an editor that saved nothing is a change of mind, not a buffer', async (assert) => {
@@ -114,7 +127,7 @@ module('Commands | repl | the editor scratchpad', { concurrency: true }, () => {
       const left = await edit(editor, 'const a = 1;\n', server as unknown as REPLServer);
 
       assert.strictEqual(left.text, 'const a = 1;\n', 'the buffer is still there to reopen');
-      assert.false(left.changed, 'but nothing about it is new, so nothing runs');
+      assert.false(left.saved, 'but nothing about it is new, so nothing runs');
     });
 
     test('reopening hands the editor the buffer it left behind', async (assert) => {
@@ -139,7 +152,7 @@ module('Commands | repl | the editor scratchpad', { concurrency: true }, () => {
     );
 
     assert.strictEqual(kept.text, 'const a = 1;\n', 'nothing typed is lost to a missing editor');
-    assert.false(kept.changed, 'and an editor that never ran changed nothing');
+    assert.false(kept.saved, 'and an editor that never ran wrote nothing');
   });
 
   test('the prompt is paused for the editor and resumed after, every time', async (assert) => {

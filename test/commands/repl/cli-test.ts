@@ -718,16 +718,46 @@ module('Commands | repl | values', { concurrency: true }, () => {
       assert.notIncludes(result.stdout, 'ran', 'and nothing in it ran, as in any JS engine');
     });
 
+    test('declining and reopening asks again, on the very same text', async (assert) => {
+      // The alternating bug, exactly as reported: decline a run, reopen, `:wq` without touching
+      // anything — the text matched what went in, so nothing was offered and every other `.e`
+      // looked ignored. A WRITE is the question now, not a difference.
+      await using directory = await tempDir('repl-scratch-rewrite');
+      const editor = path.join(directory.path, 'same-every-time');
+      await fs.writeFile(editor, `#!/bin/sh\nprintf '6 * 7\\n' > "$1"\n`);
+      await fs.chmod(editor, 0o755);
+      const result = await execute(
+        `script -qec "EDITOR=${editor} node cli.ts repl --browser=chromium --output=tmp/run-${randomUUID()}" /dev/null`,
+        {
+          stdin: [
+            { text: '.e\n', after: READY },
+            { text: 'n\n', delayMs: 4000 },
+            { text: '.e\n', delayMs: 3000 },
+            { text: 'y\n', delayMs: 4000 },
+            { text: '.exit\n', delayMs: 3000 },
+          ],
+        },
+      );
+      const asked = result.stdout.split('run 1 line from the scratchpad?').length - 1;
+
+      assert.strictEqual(asked, 2, 'both opens asked, though the second wrote identical text');
+      assert.includes(result.stdout, '42', 'and the one that was accepted ran');
+    });
+
     test('the prompt takes no for an answer, and gives the prompt back', async (assert) => {
       const result = await editing('repl-scratch-declined', `printf '6 * 7\\n' > "$1"`, 'n');
 
-      assert.includes(result.stdout, 'run 1 line? [Y/n]', 'it asks before running anything');
+      assert.includes(
+        result.stdout,
+        'run 1 line from the scratchpad? [Y/n]',
+        'it asks before running anything',
+      );
       assert.notIncludes(result.stdout, '42', 'and does not run it when told not to');
       // One Enter, not two. `define` draws the prompt when a command's `main` settles, so a
       // scratchpad that was fired and forgotten had its prompt drawn while the editor was still
       // opening — and nothing drew another after the answer. The session looked hung.
       assert.includes(
-        result.stdout.slice(result.stdout.indexOf('run 1 line?')),
+        result.stdout.slice(result.stdout.indexOf('run 1 line from')),
         '> ',
         'a prompt comes back without needing a second Enter',
       );
@@ -740,7 +770,11 @@ module('Commands | repl | values', { concurrency: true }, () => {
       const result = await editing('repl-scratch-aborted', `printf '6 * 7\\n' > "$1"\nexit 1`);
 
       assert.notIncludes(result.stdout, '42', 'the buffer was saved, and deliberately dropped');
-      assert.notIncludes(result.stdout, 'run 1 line', 'and it was not even asked about');
+      assert.notIncludes(
+        result.stdout,
+        'run 1 line from the scratchpad',
+        'and it was not even asked about',
+      );
     });
 
     test('a second scratchpad runs after a first was abandoned', async (assert) => {
@@ -791,6 +825,8 @@ module('Commands | repl | values', { concurrency: true }, () => {
         {
           stdin: [
             { text: `.e ${live}\n`, after: READY },
+            // Reloading a module RUNS it, so it is asked about the same way the scratchpad is.
+            { text: 'y\n', delayMs: 4000 },
             { text: 'second()\n', delayMs: 4000 },
             { text: '.exit\n', delayMs: 2000 },
           ],
