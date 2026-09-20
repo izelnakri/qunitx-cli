@@ -81,6 +81,11 @@ const EXIT_CODE_SIGTERM = 128 + 15;
     if (Failure.is(outcome)) return await reportScriptFailure(outcome);
 
     return exitAfterFlush(outcome.exitCode);
+  } else if (cmd === 'repl') {
+    // Never routed through the daemon: a REPL is a page kept open for one terminal, and the
+    // daemon's browser is shared. It uses the pre-launched Chrome like any other local run.
+    const Repl = await import('./lib/commands/repl/index.ts');
+    return exitAfterFlush(await Repl.run());
   }
 
   // Daemon-routed run: when a live daemon exists for this cwd (or QUNITX_DAEMON=1
@@ -206,8 +211,13 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   // Set first, for the same reason as above: nothing awaited below may decide the exit code by
   // draining the loop out from under us.
   process.exitCode = 1;
-  await shutdownPrelaunch();
+  // PRINT, THEN REAP, and the order is the whole point. `shutdownPrelaunch()` waits on a Chrome
+  // that may still be starting, and on Windows the event loop can drain inside that wait — Node
+  // then exits on its own, before anything queued after the await is written. This was
+  // `qunitx repl missing-file.ts` exiting 1 with an EMPTY stderr on the Windows runner, while the
+  // same command on Linux reported itself fine.
   console.error(Failure.is(error) ? Failure.format(error) : error);
+  await shutdownPrelaunch();
   exitAfterFlush(1);
 });
 

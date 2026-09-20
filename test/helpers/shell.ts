@@ -199,13 +199,31 @@ function parseCommand(command: string): {
  * Windows, hides timing data, and wraps everything in cmd.exe — none of which help when
  * diagnosing a "child exited cleanly with truncated stdout" flake.
  */
+/**
+ * One write to a child's stdin: once `after` has appeared on stdout, then `delayMs` later.
+ *
+ * `after` is how a test says "type this when you see the prompt" instead of guessing how long a
+ * browser takes to start — which under a loaded runner is a guess that loses.
+ */
+export interface StdinChunk {
+  text: string;
+  delayMs?: number;
+  after?: RegExp;
+}
+
 export async function spawnCapture(
   command: string,
   {
     timeout = DEFAULT_EXEC_TIMEOUT_MS,
     env,
     cwd,
-  }: { timeout?: number; env?: NodeJS.ProcessEnv; cwd?: string } = {},
+    stdin,
+  }: {
+    timeout?: number;
+    env?: NodeJS.ProcessEnv;
+    cwd?: string;
+    stdin?: string | StdinChunk[];
+  } = {},
 ): Promise<CapturedResult> {
   const { bin, args, env: prefixEnv } = parseCommand(command);
   return await new Promise<CapturedResult>((resolve, reject) => {
@@ -236,12 +254,46 @@ export async function spawnCapture(
       const data = chunk.toString();
       stdoutChunks.push({ time: performance.now() - startTime, data });
       stdout += data;
+      if (watching && watching.pattern.test(stdout)) {
+        const waiting = watching;
+        watching = null;
+        waiting.resolve();
+      }
     });
     child.stderr.on('data', (chunk: Buffer) => {
       const data = chunk.toString();
       stderrChunks.push({ time: performance.now() - startTime, data });
       stderr += data;
     });
+
+    // Written AND ended: a command that reads stdin (`qunitx repl`) needs the EOF to know the
+    // conversation is over. Left untouched when no input was given, which is every other caller.
+    //
+    // A list is input TYPED rather than pasted: one write per chunk, spaced out. A REPL command
+    // that answers asynchronously has not finished when the next line arrives in the same chunk,
+    // and readline hands over every line it was given at once — so anything that needs a command
+    // to have finished first has to arrive after it, in a write of its own.
+    const typing: NodeJS.Timeout[] = [];
+    let watching: { pattern: RegExp; resolve: () => void } | null = null;
+    let closed = false;
+    if (Array.isArray(stdin)) {
+      const pause = (ms: number) =>
+        new Promise<void>((resolve) => void typing.push(setTimeout(resolve, ms)));
+      const appears = (pattern: RegExp) =>
+        pattern.test(stdout)
+          ? Promise.resolve()
+          : new Promise<void>((resolve) => void (watching = { pattern, resolve }));
+
+      void (async () => {
+        for (const chunk of stdin) {
+          if (chunk.after) await appears(chunk.after);
+          if (chunk.delayMs) await pause(chunk.delayMs);
+          if (closed) return;
+          child.stdin.write(chunk.text);
+        }
+        if (!closed) child.stdin.end();
+      })();
+    } else if (stdin !== undefined) child.stdin.end(stdin);
 
     const timer = setTimeout(() => killTree(child), timeout);
     timer.unref();
@@ -258,6 +310,11 @@ export async function spawnCapture(
     // last captured stdout at 1.4 s, the intervening test+after-script output dropped.
     child.once('close', (code, signal) => {
       clearTimeout(timer);
+      // A child that ended early leaves writes scheduled for a stdin nobody is reading, and a
+      // wait for output that will never come.
+      closed = true;
+      for (const pending of typing) clearTimeout(pending);
+      watching?.resolve();
       const result: CapturedResult = {
         stdout,
         stderr,
@@ -418,7 +475,14 @@ export async function execute(
     testName = '',
     expectFailure = false,
     cwd,
-  }: { moduleName?: string; testName?: string; expectFailure?: boolean; cwd?: string } = {},
+    stdin,
+  }: {
+    moduleName?: string;
+    testName?: string;
+    expectFailure?: boolean;
+    cwd?: string;
+    stdin?: string | StdinChunk[];
+  } = {},
 ): Promise<CapturedResult> {
   const command = applyImplicitFlags(commandString);
   const permit = needsBrowser(commandString) ? await acquireBrowser() : { release: () => {} };
@@ -427,6 +491,7 @@ export async function execute(
       timeout: DEFAULT_EXEC_TIMEOUT_MS,
       env: { ...process.env, FORCE_COLOR: '0' },
       cwd,
+      stdin,
     });
 
     if (process.env.QUNITX_VERBOSE) {

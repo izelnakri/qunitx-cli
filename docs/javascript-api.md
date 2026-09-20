@@ -530,6 +530,44 @@ unlistable.total; // declarations the scan could not name — see `.computedName
 A non-zero `unlistable.total` means `total` is a lower bound: ``test(`case ${i}`)`` has no name
 until the browser runs it.
 
+## repl
+
+A live browser page you can ask questions of — what `qunitx repl` is built on, and useful anywhere
+a script needs a real DOM rather than a simulated one.
+
+```js
+import { repl } from 'qunitx-cli';
+
+await using session = await repl('test/helpers.ts', { reporter: 'tap' });
+
+(await session.eval('document.title')).output; // "'qunitx repl'"
+(await session.eval('(await fetch("/tests.js")).status')).output; // '200'
+(await session.eval('test("adds", (a) => a.equal(1 + 1, 2))')).tests; // [{ status: 'passed', … }]
+```
+
+The preload takes the same call shapes as every other verb — positionally, as an array, or as
+`inputs` in an options object. What it names is a preloaded module rather than a test target: each
+one's exports land on the page's `globalThis`, and any tests it registers run as the session opens.
+
+`eval` resolves with the rendered `output`, whether it `failed`, whether the input was
+`incomplete` (unfinished, so the CLI asks for another line), and the `tests` it ran. `reload()`
+evaluates every module again and resolves with the names that came back — bindings you typed do
+not, since they were never on disk. `interrupt()` stops a runaway expression, and `close()` — or
+the `await using` above — releases the browser.
+
+`eval` takes TypeScript too — a line the engine refuses is retried with its types erased — and
+`typeOf(expression)` says what type a value is, worked out from the value.
+
+A session is also a debugger: a `debugger` statement stops the page, `locals()` reads that frame,
+`step()`/`backtrace()`/`selectFrame()` move through it, `continue()` lets it carry on, and
+`addBreakpoint('lib/a.ts:12')` stops it somewhere you did not edit. `import()` brings a module in
+after the fact and `refresh()` runs it again once the file has changed. `session.url` is where the page is served; `session.inspector` is
+where to open Chrome's DevTools on that very page, or `null` where this browser has no debugging
+endpoint to serve them from.
+
+Chromium only: it evaluates over the Chrome DevTools Protocol, so `browser: 'firefox'` rejects with
+`UnsupportedBrowser` rather than pretending.
+
 ## Daemon
 
 Reuses a persistent browser and warm bundle across runs — worth roughly 800 ms per run once it is
@@ -699,12 +737,21 @@ The complete, runnable version is
 [`examples/nyan-reporter.ts`](../examples/nyan-reporter.ts) — `node examples/nyan-reporter.ts`.
 It draws a rainbow that grows one segment per finished test, with the cat riding the end of it.
 
-**1. One segment per test.** `onTestEnd` gets QUnit's `TestDetails`, so the outcome is a lookup:
+**1. One segment per test.** `onTestEnd` gets QUnit's `TestDetails`, so the outcome is a lookup.
+Colour is one function per colour — kleur's shape, and all colour ever needs to be. `NO_COLOR` is
+the one thing a reporter that writes escapes has to remember:
 
 ```ts
+const inColor =
+  (code: number) =>
+  (text: string): string =>
+    process.env.NO_COLOR ? text : `\x1b[${code}m${text}\x1b[39m`;
+const red = inColor(31);
+const grey = inColor(90);
+
 function segment(status: TestDetails['status']): string {
-  if (status === 'failed') return paint(31, '!');
-  else if (status === 'skipped' || status === 'todo') return paint(90, '·');
+  if (status === 'failed') return red('!');
+  else if (status === 'skipped' || status === 'todo') return grey('·');
 
   return '-';
 }
@@ -716,9 +763,10 @@ same reporter be silenced, or captured into a buffer, without changing it:
 ```ts
 onTestEnd(context: ReporterContext, details: TestDetails): void {
   trail.push(segment(details.status));
+  // RAINBOW holds the colour FUNCTIONS, so drawing a row is calling one.
   const rows = RAINBOW.map((colour, row) => {
-    const stripe = paint(colour, trail.slice(Math.max(0, row - 2)).join(''));
-    return `  ${stripe}${row === 3 ? paint(93, CAT[trail.length % 2]) : ''}`;
+    const stripe = colour(trail.slice(Math.max(0, row - 2)).join(''));
+    return `  ${stripe}${row === 3 ? brightYellow(CAT[trail.length % 2]) : ''}`;
   });
   context.console.log(`${rows.join('\n')}\n\x1b[6A`); // redraw in place
 }
@@ -730,7 +778,7 @@ final — there is nothing to tally yourself:
 ```ts
 onRunEnd(context: ReporterContext, info): void {
   const { total, passed, failed } = context.counts;
-  const verdict = failed > 0 ? paint(31, 'nyan is sad') : paint(32, 'nyan is happy');
+  const verdict = failed > 0 ? red('nyan is sad') : green('nyan is happy');
   context.console.log(`\x1b[6B\n  ${verdict} — ${passed}/${total} passed in ${info.durationMs}ms\n`);
 }
 ```
