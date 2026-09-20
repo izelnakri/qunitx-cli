@@ -700,8 +700,77 @@ export async function start(
 export async function resolvePreload(config: Config, inputs: readonly string[]): Promise<string[]> {
   if (inputs.length === 0) return [];
   const absolute = Args.applyInputs({ inputs: [] }, config.projectRoot, config.cwd, inputs).inputs;
+  const found = Object.keys(await FSTree.build(TestFilePaths.setup(absolute), config));
 
-  return Object.keys(await FSTree.build(TestFilePaths.setup(absolute), config));
+  // The RAW inputs, not `absolute`: `applyInputs` resolves globs and deduplicates, and both of
+  // those erase which file you named for yourself after a pattern had already matched it.
+  return inClaimOrder(found, inputs, config.cwd);
+}
+
+/**
+ * The order preloads go into scope, which decides who keeps a name two of them want.
+ *
+ * Everything is brought in list order and the last claim wins, so the intended claimant is moved
+ * to the end. `qunitx repl lib/task/*` is the case: `index.ts` is named for the directory holding
+ * it and `task.ts` for itself, both want `Task`, and whoever happened to come last got it — which
+ * was `task.ts`, for no better reason than the alphabet.
+ *
+ * An index is the door into a directory, so it wins by default. Naming a file yourself AFTER a
+ * wildcard beats that — `qunitx repl 'lib/task/*' lib/task/task.ts` — because a mention that
+ * follows the pattern which already matched it is a decision rather than a coincidence.
+ *
+ * That only works for a glob the SHELL did not eat. Unquoted, `lib/task/*` reaches this as two
+ * ordinary paths and the second mention is deduplicated away long before here, so both spellings
+ * look identical and the index wins. Quote the pattern to override it.
+ *
+ * ```ts
+ * import { inClaimOrder } from './session.ts';
+ *
+ * const found = ['/p/task/index.ts', '/p/task/task.ts'];
+ * inClaimOrder(found, ['task/*'], '/p'); // index.ts last — it claims Task
+ * inClaimOrder(found, ['task/*', 'task/task.ts'], '/p'); // task.ts last — you asked for it
+ * ```
+ */
+export function inClaimOrder(
+  found: readonly string[],
+  asked: readonly string[],
+  cwd: string,
+): string[] {
+  // Only where a pattern actually survived the shell. With no wildcard in the list there is
+  // nothing to have named a file AFTER, and treating every path as an override would mean the
+  // index never won the case this exists for — `qunitx repl lib/task/*`, unquoted.
+  const lastWildcard = asked.findLastIndex((given) => /[*?[\]]/.test(given));
+  const namedAfterWildcard =
+    lastWildcard === -1
+      ? new Set<string>()
+      : new Set(asked.slice(lastWildcard + 1).map((given) => path.resolve(cwd, given)));
+
+  const wanted = new Map<string, string[]>();
+  for (const file of found) {
+    const name = moduleNameFor(file);
+    wanted.set(name, [...(wanted.get(name) ?? []), file]);
+  }
+
+  const winners = new Set<string>();
+  for (const group of wanted.values()) {
+    if (group.length < 2) continue;
+    const overridden = group.findLast((file) => namedAfterWildcard.has(file));
+    const chosen = overridden ?? group.find((file) => INDEX_NAMES.has(stem(file)));
+    if (chosen !== undefined) winners.add(chosen);
+  }
+
+  return [
+    ...found.filter((file) => !winners.has(file)),
+    ...found.filter((file) => winners.has(file)),
+  ];
+}
+
+/** A file's own name without its extension — `index` for `lib/task/index.ts`. */
+function stem(file: string): string {
+  return path
+    .basename(file)
+    .replace(/\.[^.]+$/, '')
+    .toLowerCase();
 }
 
 /** Returned by the race in `#eval` when the page stopped instead of answering. */

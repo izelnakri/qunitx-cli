@@ -110,7 +110,7 @@ const PREVIEW_DELAY_MS = 90;
  * ```ts
  * import { namespacesTaken } from './index.ts';
  *
- * namespacesTaken(['lib/task/index.ts', 'lib/task/task.ts']); // ['Task is …'] — both want Task
+ * namespacesTaken(['lib/task/task.ts', 'lib/task/index.ts']); // ['Task is lib/task/index.ts …']
  * namespacesTaken(['a/one.ts', 'b/two.ts']); // [] — nothing collides
  * ```
  */
@@ -121,12 +121,16 @@ export function namespacesTaken(files: readonly string[]): string[] {
     wantedBy.set(namespace, [...(wantedBy.get(namespace) ?? []), file]);
   }
 
+  // Last in the list is the one that keeps the name, and `Repl.resolvePreload` has already put
+  // the intended claimant there — an index by default, or whatever you named after a quoted glob.
   return [...wantedBy]
     .filter(([, claimants]) => claimants.length > 1)
-    .map(
-      ([namespace, claimants]) =>
-        `${claimants.join(' and ')} both go into scope as ${namespace} — the last one wins`,
-    );
+    .map(([namespace, claimants]) => {
+      const winner = claimants[claimants.length - 1];
+      const others = claimants.slice(0, -1).join(', ');
+
+      return `${namespace} is ${winner} — ${others} also wanted it`;
+    });
 }
 
 /**

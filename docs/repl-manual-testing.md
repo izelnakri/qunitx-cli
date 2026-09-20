@@ -98,15 +98,23 @@ That the frame says `repl-helpers.ts:20:9` and not a bundle offset is source-map
 working. A number in the thousands means it regressed.
 
 **Two preloads that want the same name.** `node cli.ts repl lib/task/*` loads `index.ts` (named
-for its directory) and `task.ts` (named for itself) — both want `Task`, and `task.ts` also exports
-a class called `Task`. The banner says so rather than resolving it quietly:
+for the directory holding it) and `task.ts` (named for itself) — both want `Task`. The index wins,
+because an index is the door into a directory, and the banner says what happened:
 
 ```
-# lib/task/index.ts and lib/task/task.ts both go into scope as Task — the last one wins
+# Task is lib/task/index.ts — lib/task/task.ts also wanted it
 ```
 
-Nothing is reordered: which claim should win is a judgement, and `Task` being the class you wrote
-is a defensible answer. A session with no clash says nothing.
+To override it, quote the pattern and name the file after it:
+
+```
+node cli.ts repl 'lib/task/*' lib/task/task.ts     # Task is task.ts
+```
+
+The quoting matters and is the one rough edge: unquoted, your shell expands `lib/task/*` before
+qunitx sees it, so both arrive as ordinary paths with nothing to say which was a pattern — and the
+index wins. Naming the file _before_ the glob does not override either, since the pattern came
+after it.
 
 ## 4. TypeScript at the prompt
 

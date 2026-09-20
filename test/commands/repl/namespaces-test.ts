@@ -11,8 +11,9 @@ module('Commands | repl | two files, one name', { concurrency: true }, () => {
     const notes = namespacesTaken(['lib/task/index.ts', 'lib/task/task.ts']);
 
     assert.strictEqual(notes.length, 1, 'said once, not once per file');
-    assert.includes(notes[0] ?? '', 'lib/task/index.ts and lib/task/task.ts');
-    assert.includes(notes[0] ?? '', 'as Task', 'and names the name they are fighting over');
+    // Last in the list is the winner by then — `resolvePreload` has already put it there.
+    assert.includes(notes[0] ?? '', 'Task is lib/task/task.ts', 'it names who kept it');
+    assert.includes(notes[0] ?? '', 'lib/task/index.ts also wanted it');
   });
 
   test('files that do not collide say nothing', (assert) => {
@@ -27,6 +28,6 @@ module('Commands | repl | two files, one name', { concurrency: true }, () => {
     const notes = namespacesTaken(['x/task/index.ts', 'x/task/task.ts', 'y/task.ts']);
 
     assert.strictEqual(notes.length, 1);
-    assert.includes(notes[0] ?? '', 'y/task.ts', 'every file that wanted it is named');
+    assert.includes(notes[0] ?? '', 'x/task/index.ts', 'every file that wanted it is named');
   });
 });
