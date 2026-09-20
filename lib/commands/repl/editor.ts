@@ -389,10 +389,16 @@ function editorCommand(name: string, named?: string): ReplCommand['main'] {
 /**
  * The session's own buffer, opened: one buffer for the life of the session, whichever name opened
  * it, so reopening continues the same thought rather than starting a blank one.
+ *
+ * AWAITED, not fired and forgotten. `define` draws the prompt when a command's `main` settles, so
+ * a `main` that returned while the editor was still opening got its prompt drawn then — and after
+ * the editor closed, and the question was answered, nothing drew another. The session looked
+ * hung: you answered, and had to press Enter again to get a prompt back.
  */
-function scratchpad(repl: ReplContext, named?: string): void {
+function scratchpad(repl: ReplContext, named?: string): Promise<void> {
   const editor = named ?? process.env.VISUAL ?? process.env.EDITOR ?? 'vi';
-  void edit(editor, repl.scratch, repl.server).then(async (edited) => {
+
+  return edit(editor, repl.scratch, repl.server).then(async (edited) => {
     repl.scratch = edited.text;
     const source = whatToRun(edited);
     if (source === '' || !(await confirmRun(repl, source))) return;
