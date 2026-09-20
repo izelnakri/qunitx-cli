@@ -674,7 +674,7 @@ module('Commands | repl | values', { concurrency: true }, () => {
   // Linux has; the macOS spelling differs and Windows has none, so this asks where it can.
   if (process.platform === 'linux') {
     /** A stand-in for a human at an editor: one that saves something, and one that walks away. */
-    const editing = async (label: string, script: string) => {
+    const editing = async (label: string, script: string, answer = 'y') => {
       const directory = await tempDir(label);
       const editor = path.join(directory.path, 'stand-in');
       await fs.writeFile(editor, `#!/bin/sh\n${script}\n`);
@@ -686,7 +686,10 @@ module('Commands | repl | values', { concurrency: true }, () => {
         {
           stdin: [
             { text: '.open\n', after: READY },
-            { text: '.exit\n', delayMs: 4000 },
+            // Saving cannot be told from saving-and-then-quitting, so the prompt asks. Typed
+            // rather than pasted: the answer has to arrive after the question is on screen.
+            { text: `${answer}\n`, delayMs: 4000 },
+            { text: '.exit\n', delayMs: 3000 },
           ],
         },
       );
@@ -715,6 +718,13 @@ module('Commands | repl | values', { concurrency: true }, () => {
       assert.notIncludes(result.stdout, 'ran', 'and nothing in it ran, as in any JS engine');
     });
 
+    test('the prompt takes no for an answer', async (assert) => {
+      const result = await editing('repl-scratch-declined', `printf '6 * 7\\n' > "$1"`, 'n');
+
+      assert.includes(result.stdout, 'run 1 line? [Y/n]', 'it asks before running anything');
+      assert.notIncludes(result.stdout, '42', 'and does not run it when told not to');
+    });
+
     test('a scratchpad saved and then aborted runs nothing', async (assert) => {
       // The escape hatch for "I saved, but do not run it". `:wq` and `:w` then `:q` leave a
       // byte-identical file and both exit 0, so the exit code is the only thing left to say it
@@ -722,6 +732,7 @@ module('Commands | repl | values', { concurrency: true }, () => {
       const result = await editing('repl-scratch-aborted', `printf '6 * 7\\n' > "$1"\nexit 1`);
 
       assert.notIncludes(result.stdout, '42', 'the buffer was saved, and deliberately dropped');
+      assert.notIncludes(result.stdout, 'run 1 line', 'and it was not even asked about');
     });
 
     test('a second scratchpad runs after a first was abandoned', async (assert) => {
@@ -742,7 +753,8 @@ module('Commands | repl | values', { concurrency: true }, () => {
           stdin: [
             { text: '.e\n', after: READY },
             { text: '.e\n', delayMs: 4000 },
-            { text: '.exit\n', delayMs: 4000 },
+            { text: 'y\n', delayMs: 4000 },
+            { text: '.exit\n', delayMs: 3000 },
           ],
         },
       );

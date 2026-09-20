@@ -395,7 +395,7 @@ function scratchpad(repl: ReplContext, named?: string): void {
   void edit(editor, repl.scratch, repl.server).then(async (edited) => {
     repl.scratch = edited.text;
     const source = whatToRun(edited);
-    if (source === '') return;
+    if (source === '' || !(await confirmRun(repl, source))) return;
 
     // `whole`, because you closed the editor: there is no more of this coming. Without it an
     // unfinished last statement came back as `incomplete` — the prompt's "keep typing" — and a
@@ -404,6 +404,54 @@ function scratchpad(repl: ReplContext, named?: string): void {
     const text = result.failed ? red(failureText(result)) : result.output;
     if (text !== '') repl.log(text);
   });
+}
+
+/**
+ * Asks before running what the editor left, and defaults to yes.
+ *
+ * Inferring the answer from how you quit is not possible, and it was worth measuring before
+ * believing: `:wq`, `:x`, and `:w` followed by `:q!` leave a byte-identical file, all exit 0, and
+ * the gap between the write and the exit differs by about four milliseconds. There is nothing
+ * there to read, so this asks instead of guessing — which also means one rule for every editor,
+ * rather than a `$EDITOR`-shaped one.
+ *
+ * `[Y/n]`, because saving usually does mean run it. Anything starting with `n` is no; Enter, `y`,
+ * or anything else is yes.
+ */
+function confirmRun(repl: ReplContext, source: string): Promise<boolean> {
+  const lines = source.split('\n').length;
+
+  return new Promise((resolve) => {
+    repl.server.question(`run ${lines} line${lines === 1 ? '' : 's'}? [Y/n] `, (answer) => {
+      resolve(meansYes(answer));
+    });
+  });
+}
+
+/**
+ * How an answer to `[Y/n]` is read: Enter, or anything starting with `y`. Everything else is no.
+ *
+ * Deliberately strict in that direction. Most `[Y/n]` prompts take anything-but-`n` as yes, but
+ * this one RUNS CODE, and the complaint it exists to answer is code running when nobody asked for
+ * it. A prompt that reads a mistyped `.exit` as consent is the same bug with an extra step.
+ *
+ * Its own function because it is the whole of the decision, and a decision made inside a callback
+ * inside a promise is one nothing can test without a terminal.
+ *
+ * ```ts
+ * import { meansYes } from './editor.ts';
+ *
+ * meansYes(''); // true — Enter takes the default, which is to run it
+ * meansYes('y'); // true
+ * meansYes('  YES  '); // true — trimmed, and case does not matter
+ * meansYes('n'); // false
+ * meansYes('.exit'); // false — a stray command is not consent
+ * ```
+ */
+export function meansYes(answer: string): boolean {
+  const said = answer.trim().toLowerCase();
+
+  return said === '' || said.startsWith('y');
 }
 
 /**

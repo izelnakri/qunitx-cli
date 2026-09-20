@@ -208,10 +208,11 @@ Needs `$EDITOR`. With `repl-helpers.ts` preloaded:
 
 | input                                 | expected                                                                |
 | ------------------------------------- | ----------------------------------------------------------------------- |
-| `.open`                               | a scratch buffer. Type `1 + 1`, `:wq` → it runs, printing `2`           |
+| `.open`                               | a scratch buffer. Type `1 + 1`, `:wq` → `run 1 line? [Y/n]`, then `2`   |
 | `.open` again                         | the buffer still holds what you wrote — it lives for the session        |
-| `.open`, edit, `:q` (no save)         | **nothing runs**                                                        |
-| `.open`, write, then `:cq`            | **nothing runs** — saved, and deliberately dropped ¹                    |
+| `.open`, edit, `:q` (no save)         | **nothing runs**, and you are not asked                                 |
+| answer the prompt with `n`            | **nothing runs** — the buffer is kept for the next `.e`                 |
+| `.open`, write, then `:cq`            | **nothing runs**, and you are not asked ¹                               |
 | `.open` again after that, save `:wq`  | it runs — an abandoned buffer does not poison the next one              |
 | a buffer ending `let me =`            | `Uncaught SyntaxError: Unexpected end of input`, and nothing in it runs |
 | `.open double`                        | opens `repl-helpers.ts` at `double`'s line                              |
@@ -222,10 +223,11 @@ Needs `$EDITOR`. With `repl-helpers.ts` preloaded:
 reloads the file and says what came back; then `double(21)` → `63`. A file the session has and the
 file on disk are the same file.
 
-¹ `:wq`, `:x`, `ZZ`, and `:w` followed by `:q` all leave a byte-identical file and all exit 0 —
-measured — so there is nothing to tell them apart by and all four run. `:cq` exits non-zero with
-the file saved, which is the same signal `git commit` reads to abandon a message, and is how you
-say "keep the text, do not run it".
+¹ `:wq`, `:x`, `ZZ`, and `:w` followed by `:q` or `:q!` all leave a byte-identical file, all exit
+0, and differ by about four milliseconds between the write and the exit — measured. There is
+nothing there to infer an intention from, which is why the prompt asks rather than guesses. Enter
+or anything starting with `y` runs it; everything else, including a mistyped command, does not.
+`:cq` exits non-zero and is not asked about at all.
 
 _(Known wart: from outside the editor, `:w` then `:q` cannot be told from `:wq` — all the process
 sees is an exit code and a changed file, so both run. Documented in `editor.ts`.)_

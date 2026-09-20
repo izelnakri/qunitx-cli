@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { module, test } from 'qunitx';
-import { edit, whatToRun } from '../../../lib/commands/repl/index.ts';
+import { edit, meansYes, whatToRun } from '../../../lib/commands/repl/index.ts';
 import { tempDir } from '../../helpers/temp-dir.ts';
 import '../../helpers/custom-asserts.ts';
 import type { REPLServer } from 'node:repl';
@@ -22,6 +22,21 @@ module('Commands | repl | the editor scratchpad', { concurrency: true }, () => {
       server.resumed += 1;
     },
   };
+
+  // `:wq`, `:x` and `:w` then `:q!` leave a byte-identical file, all exit 0, and differ by about
+  // four milliseconds between the write and the exit — measured. There is nothing there to infer
+  // an intention from, so the prompt asks, and this is how it reads the answer.
+  test('Enter or a y means run it, and nothing else does', (assert) => {
+    assert.true(meansYes(''), 'Enter takes the default');
+    assert.true(meansYes('y'));
+    assert.true(meansYes('  YES  '), 'trimmed, and case does not matter');
+    assert.false(meansYes('n'));
+    assert.false(meansYes('nope'));
+    // Stricter than the usual anything-but-n, because this one runs code: a mistyped command at
+    // the prompt must not be read as consent.
+    assert.false(meansYes('.exit'), 'a stray command is not a yes');
+    assert.false(meansYes('6 * 7'));
+  });
 
   /** A stand-in for a human: records what it was handed, appends a line, exits. */
   async function fakeEditor(directory: string, appends: string): Promise<string> {
