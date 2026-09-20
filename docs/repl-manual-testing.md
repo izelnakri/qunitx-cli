@@ -206,18 +206,20 @@ end. A command that does not exist reports and the session survives:
 
 Needs `$EDITOR`. With `repl-helpers.ts` preloaded:
 
-| input                                 | expected                                                                |
-| ------------------------------------- | ----------------------------------------------------------------------- |
-| `.open`                               | a scratch buffer. Type `1 + 1`, `:wq` → `run 1 line? [Y/n]`, then `2`   |
-| `.open` again                         | the buffer still holds what you wrote — it lives for the session        |
-| `.open`, edit, `:q` (no save)         | **nothing runs**, and you are not asked                                 |
-| answer the prompt with `n`            | **nothing runs** — the buffer is kept for the next `.e`                 |
-| `.open`, write, then `:cq`            | **nothing runs**, and you are not asked ¹                               |
-| `.open` again after that, save `:wq`  | it runs — an abandoned buffer does not poison the next one              |
-| a buffer ending `let me =`            | `Uncaught SyntaxError: Unexpected end of input`, and nothing in it runs |
-| `.open double`                        | opens `repl-helpers.ts` at `double`'s line                              |
-| `.open https://example.com`           | opens your browser — `xdg-open`'s bargain                               |
-| `.e`, `.edit`, `.vi`, `.vim`, `.nvim` | the same command                                                        |
+| input                                 | expected                                                                                  |
+| ------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `.open`                               | a scratch buffer. Type `1 + 1`, `:wq` → `run 1 line from the scratchpad? [Y/n]`, then `2` |
+| `.open` again                         | the buffer still holds what you wrote — it lives for the session                          |
+| `.open`, edit, `:q` (no save)         | **nothing runs**, and you are not asked                                                   |
+| answer the prompt with `n`            | **nothing runs** — the buffer is kept for the next `.e`                                   |
+| `.e` again, save without editing      | **it asks again** — a `:w` is a save even when nothing moved                              |
+| `.open double`, edit, `:wq`           | `run N lines from qunitx-cli/test/fixtures/repl-helpers.ts? [Y/n]`                        |
+| `.open`, write, then `:cq`            | **nothing runs**, and you are not asked ¹                                                 |
+| `.open` again after that, save `:wq`  | it runs — an abandoned buffer does not poison the next one                                |
+| a buffer ending `let me =`            | `Uncaught SyntaxError: Unexpected end of input`, and nothing in it runs                   |
+| `.open double`                        | opens `repl-helpers.ts` at `double`'s line                                                |
+| `.open https://example.com`           | opens your browser — `xdg-open`'s bargain                                                 |
+| `.e`, `.edit`, `.vi`, `.vim`, `.nvim` | the same command                                                                          |
 
 **Save-and-reload:** with the file open, change `double` to `value * 3`, save and quit. The session
 reloads the file and says what came back; then `double(21)` → `63`. A file the session has and the
@@ -228,6 +230,10 @@ file on disk are the same file.
 nothing there to infer an intention from, which is why the prompt asks rather than guesses. Enter
 or anything starting with `y` runs it; everything else, including a mistyped command, does not.
 `:cq` exits non-zero and is not asked about at all.
+
+What triggers the question is a WRITE, read off the file's mtime — not whether the text came back
+different. Saving the same bytes twice asks twice, which is the whole point: declining and
+reopening used to leave you with a buffer that could never be offered again.
 
 _(Known wart: from outside the editor, `:w` then `:q` cannot be told from `:wq` — all the process
 sees is an exit code and a changed file, so both run. Documented in `editor.ts`.)_
