@@ -379,11 +379,14 @@ function scratchpad(repl: ReplContext, named?: string): void {
   void edit(editor, repl.scratch, repl.server).then(async (edited) => {
     repl.scratch = edited.text;
     const source = whatToRun(edited);
-    if (source !== '') {
-      const result = await repl.session.eval(source);
-      const text = result.failed ? red(failureText(result)) : result.output;
-      if (text !== '') repl.log(text);
-    }
+    if (source === '') return;
+
+    // `whole`, because you closed the editor: there is no more of this coming. Without it an
+    // unfinished last statement came back as `incomplete` — the prompt's "keep typing" — and a
+    // buffer you had just saved did nothing at all and said nothing about it.
+    const result = await repl.session.eval(source, { whole: true });
+    const text = result.failed ? red(failureText(result)) : result.output;
+    if (text !== '') repl.log(text);
   });
 }
 

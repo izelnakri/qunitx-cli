@@ -206,14 +206,16 @@ end. A command that does not exist reports and the session survives:
 
 Needs `$EDITOR`. With `repl-helpers.ts` preloaded:
 
-| input                                 | expected                                                         |
-| ------------------------------------- | ---------------------------------------------------------------- |
-| `.open`                               | a scratch buffer. Type `1 + 1`, `:wq` → it runs, printing `2`    |
-| `.open` again                         | the buffer still holds what you wrote — it lives for the session |
-| `.open`, edit, `:q` (no save)         | **nothing runs**                                                 |
-| `.open double`                        | opens `repl-helpers.ts` at `double`'s line                       |
-| `.open https://example.com`           | opens your browser — `xdg-open`'s bargain                        |
-| `.e`, `.edit`, `.vi`, `.vim`, `.nvim` | the same command                                                 |
+| input                                 | expected                                                                |
+| ------------------------------------- | ----------------------------------------------------------------------- |
+| `.open`                               | a scratch buffer. Type `1 + 1`, `:wq` → it runs, printing `2`           |
+| `.open` again                         | the buffer still holds what you wrote — it lives for the session        |
+| `.open`, edit, `:q` (no save)         | **nothing runs**                                                        |
+| `.open` again after that, save `:wq`  | it runs — an abandoned buffer does not poison the next one              |
+| a buffer ending `let me =`            | `Uncaught SyntaxError: Unexpected end of input`, and nothing in it runs |
+| `.open double`                        | opens `repl-helpers.ts` at `double`'s line                              |
+| `.open https://example.com`           | opens your browser — `xdg-open`'s bargain                               |
+| `.e`, `.edit`, `.vi`, `.vim`, `.nvim` | the same command                                                        |
 
 **Save-and-reload:** with the file open, change `double` to `value * 3`, save and quit. The session
 reloads the file and says what came back; then `double(21)` → `63`. A file the session has and the

@@ -701,6 +701,47 @@ module('Commands | repl | values', { concurrency: true }, () => {
       assert.includes(result.stdout, '42', 'and the answer comes back to the prompt');
     });
 
+    test('a scratchpad whose last statement is unfinished says so', async (assert) => {
+      // The bug, reported from a released binary: open `.e`, walk away without saving, open it
+      // again, write something ending in `let me =`, `:wq` — and the prompt said NOTHING. The
+      // unfinished tail came back as the prompt's "keep typing", so a buffer that had just been
+      // saved neither ran nor complained. Silence is the one answer a scratchpad must not give.
+      const result = await editing(
+        'repl-scratch-unfinished',
+        `printf 'class Human {}\\n\\nconsole.log("ran")\\n\\nlet me =\\n' > "$1"`,
+      );
+
+      assert.includes(result.stdout, 'SyntaxError', 'the buffer is parsed as the whole of itself');
+      assert.notIncludes(result.stdout, 'ran', 'and nothing in it ran, as in any JS engine');
+    });
+
+    test('a second scratchpad runs after a first was abandoned', async (assert) => {
+      // The reported sequence exactly: the first `.e` is quit without saving, which must run
+      // nothing, and the second is saved, which must run. Two opens, one stand-in editor that
+      // only writes the second time.
+      await using directory = await tempDir('repl-scratch-twice');
+      const editor = path.join(directory.path, 'stand-in');
+      const counter = path.join(directory.path, 'opens');
+      await fs.writeFile(
+        editor,
+        `#!/bin/sh\nN=$(cat "${counter}" 2>/dev/null || echo 0)\nN=$((N+1))\necho "$N" > "${counter}"\n[ "$N" -ge 2 ] && printf '6 * 7\\n' > "$1"\ntrue\n`,
+      );
+      await fs.chmod(editor, 0o755);
+      const result = await execute(
+        `script -qec "EDITOR=${editor} node cli.ts repl --browser=chromium --output=tmp/run-${randomUUID()}" /dev/null`,
+        {
+          stdin: [
+            { text: '.e\n', after: READY },
+            { text: '.e\n', delayMs: 4000 },
+            { text: '.exit\n', delayMs: 4000 },
+          ],
+        },
+      );
+
+      assert.strictEqual((await fs.readFile(counter, 'utf8')).trim(), '2', 'it opened twice');
+      assert.includes(result.stdout, '42', 'and the saved one ran');
+    });
+
     test('editing a file the session has loaded puts what you saved in scope', async (assert) => {
       // The complaint this exists for: add an export, `:wq`, and the new name was not there until
       // the file was loaded again by hand. A file in scope and a file on disk are the same file.
