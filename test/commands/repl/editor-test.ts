@@ -40,6 +40,19 @@ module('Commands | repl | the editor scratchpad', { concurrency: true }, () => {
   // check is the buffer's journey to a file and back, which has nothing platform-specific in it;
   // the handover below, which does, is asked everywhere.
   if (process.platform !== 'win32') {
+    test('an editor that exits non-zero means never mind, however much was saved', async (assert) => {
+      await using directory = await tempDir('repl-edit-abort');
+      const editor = path.join(directory.path, 'aborting');
+      await fs.writeFile(editor, `#!/bin/sh\nprintf '6 * 7\\n' > "$1"\nexit 1\n`);
+      await fs.chmod(editor, 0o755);
+
+      const left = await edit(editor, '', server as unknown as REPLServer);
+
+      assert.true(left.changed, 'the buffer did move');
+      assert.true(left.aborted, 'and the editor said to drop it anyway');
+      assert.strictEqual(whatToRun(left), '', 'so nothing runs');
+    });
+
     test('what the editor saves is what comes back', async (assert) => {
       await using directory = await tempDir('repl-edit');
       const editor = await fakeEditor(directory.path, 'const a = 1;');
@@ -53,9 +66,13 @@ module('Commands | repl | the editor scratchpad', { concurrency: true }, () => {
     test('what runs afterwards is what moved, and nothing else', (assert) => {
       // The rule the scratchpad turns on: `:q` means never mind, and a buffer emptied and saved
       // runs nothing for the same reason an empty line does.
-      assert.strictEqual(whatToRun({ text: '6 * 7', changed: true }), '6 * 7');
-      assert.strictEqual(whatToRun({ text: '6 * 7', changed: false }), '');
-      assert.strictEqual(whatToRun({ text: '  \n ', changed: true }), '');
+      assert.strictEqual(whatToRun({ text: '6 * 7', changed: true, aborted: false }), '6 * 7');
+      assert.strictEqual(whatToRun({ text: '6 * 7', changed: false, aborted: false }), '');
+      assert.strictEqual(whatToRun({ text: '  \n ', changed: true, aborted: false }), '');
+      // Saved, and then told to throw it away. `:cq` is the only "never mind" an editor can send
+      // after a write, because `:wq` and `:w` then `:q` leave a byte-identical file and both
+      // exit 0 — there is nothing else to tell them apart by.
+      assert.strictEqual(whatToRun({ text: '6 * 7', changed: true, aborted: true }), '');
     });
 
     test('an editor that wrote the same bytes back has changed nothing', async (assert) => {

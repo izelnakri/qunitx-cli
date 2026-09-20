@@ -77,13 +77,18 @@ export function writeIfPossible(file: string, contents: string): boolean {
  * writing means "never mind", and a scratchpad that runs what you just walked away from is a
  * scratchpad you stop using for anything you are not sure about.
  *
+ * `aborted` is the other way to say never mind, for when you HAVE saved: `:cq` leaves vim with a
+ * non-zero status, which is the same signal `git commit` reads to throw a message away. It is the
+ * only "do not use this" an editor can send that the file cannot, because `:wq` and `:w` followed
+ * by `:q` leave a byte-identical file and both exit 0.
+ *
  * ```ts
  * import type { REPLServer } from 'node:repl';
  * import { edit } from './editor.ts';
  *
  * // Defined, not invoked: it takes over the terminal.
  * function example(server: REPLServer) {
- *   return edit('vi', 'const x = 1;', server); // { text: whatever was saved, changed: boolean }
+ *   return edit('vi', 'const x = 1;', server); // { text, changed, aborted }
  * }
  * ```
  */
@@ -91,17 +96,17 @@ export async function edit(
   editor: string,
   contents: string,
   server: REPLServer,
-): Promise<{ text: string; changed: boolean }> {
+): Promise<{ text: string; changed: boolean; aborted: boolean }> {
   // Unique per call, not per process: two edits in flight at once would otherwise open the same
   // path and each would save over the other's buffer.
   const file = path.join(os.tmpdir(), `qunitx-repl-${process.pid}-${randomUUID()}.js`);
   fs.writeFileSync(file, contents);
 
   try {
-    await handOver(server, editor, [file]);
+    const left = await handOver(server, editor, [file]);
     const text = readIfThere(file) ?? contents;
 
-    return { text, changed: text !== contents };
+    return { text, changed: text !== contents, aborted: left.started && left.code !== 0 };
   } finally {
     try {
       fs.unlinkSync(file);
@@ -124,12 +129,13 @@ export async function edit(
  * ```ts
  * import { whatToRun } from './editor.ts';
  *
- * whatToRun({ text: '1 + 1', changed: true }); // '1 + 1'
- * whatToRun({ text: '1 + 1', changed: false }); // '' — quit without saving, so never mind
+ * whatToRun({ text: '1 + 1', changed: true, aborted: false }); // '1 + 1'
+ * whatToRun({ text: '1 + 1', changed: false, aborted: false }); // '' — never saved, never mind
+ * whatToRun({ text: '1 + 1', changed: true, aborted: true }); // '' — saved, then `:cq`
  * ```
  */
-export function whatToRun(edited: { text: string; changed: boolean }): string {
-  return edited.changed ? edited.text.trim() : '';
+export function whatToRun(edited: { text: string; changed: boolean; aborted: boolean }): string {
+  return edited.changed && !edited.aborted ? edited.text.trim() : '';
 }
 
 /**
@@ -157,10 +163,16 @@ export function readIfThere(file: string): string | null {
  * for as long as the process lives. `readableFlowing` and not `isPaused()`: a stdin nobody has
  * read yet is neither flowing nor paused, and `isPaused()` calls that false.
  *
- * Resolves `false` where the child could not be started, which is the one failure worth telling
- * anybody about; everything else it does is the child's business.
+ * Resolves `{ started: false }` where the child could not be started, which is the one failure
+ * worth telling anybody about. `code` is how the editor CHOSE to leave: every normal way out of
+ * vim, nvim, emacs, nano and helix exits 0, and `:cq` — the one git already reads to abort a
+ * commit — exits non-zero. It is the only thing an editor tells us that the file does not.
  */
-async function handOver(server: REPLServer, command: string, args: string[]): Promise<boolean> {
+async function handOver(
+  server: REPLServer,
+  command: string,
+  args: string[],
+): Promise<{ started: boolean; code: number | null }> {
   pausePrompt(server);
   const stdin = process.stdin;
   const wasRaw = Boolean(stdin.isRaw);
@@ -169,10 +181,10 @@ async function handOver(server: REPLServer, command: string, args: string[]): Pr
   if (wasRaw) stdin.setRawMode(false);
 
   try {
-    return await new Promise<boolean>((resolve) => {
+    return await new Promise<{ started: boolean; code: number | null }>((resolve) => {
       const child = spawn(command, args, { stdio: 'inherit' });
-      child.on('error', () => resolve(false));
-      child.on('close', () => resolve(true));
+      child.on('error', () => resolve({ started: false, code: null }));
+      child.on('close', (code) => resolve({ started: true, code }));
     });
   } finally {
     if (wasRaw) stdin.setRawMode(true);
@@ -275,7 +287,11 @@ export async function openInEditor(
   const before = readIfThere(file);
   // The same handover the scratchpad makes: readline stands down, the editor owns the terminal,
   // and it is given back only to a prompt that had it.
-  const started = await handOver(server, editor, [`+${line}`, file]);
+  // Only `started` here, not the exit code. `:cq` on the SCRATCHPAD means "do not run this"; on a
+  // real file it would mean "pretend I did not save", and the file on disk is saved either way —
+  // refusing to notice would put the session back out of step with it, which is the whole thing
+  // this path exists to prevent.
+  const { started } = await handOver(server, editor, [`+${line}`, file]);
 
   return {
     failed: started ? null : `${editor} could not be started\n`,
