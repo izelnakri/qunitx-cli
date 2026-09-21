@@ -5,9 +5,10 @@ REGRESSION_THRESHOLD ?= 26
 
 # Which platform package this machine builds. Recursively expanded, so `node` runs only for
 # the targets that actually use it rather than on every `make`.
+CONTAINER ?= $(shell command -v docker 2>/dev/null || command -v podman 2>/dev/null)
 SEA_TARGET = $(shell node -p "['darwin', 'linux'].includes(process.platform) ? process.platform + '-' + process.arch : ''")
 
-.PHONY: bench bench-check bench-print bench-typecheck bench-update build build-deno build-deno-all build-sea check coverage coverage-report demo dev docs fix fmt format help lint lint-docs release smoke-deno smoke-sea test test-all-browsers test-chrome test-debug test-firefox publish-sea test-release test-webkit vendor
+.PHONY: bench bench-check bench-print bench-typecheck bench-update build build-deno build-deno-all build-sea build-sea-musl check coverage coverage-report demo dev docs fix fmt format help lint lint-docs release smoke-deno smoke-sea test test-all-browsers test-chrome test-debug test-firefox publish-sea test-release test-webkit vendor
 
 bench:
 	deno task bench:update
@@ -130,6 +131,14 @@ build-sea:
 	rm -f sea-entry.cjs sea-config.json sea.blob qunitx-sea; \
 	echo "build-sea: npm/$$TARGET/bin is ready — 'make publish-sea' publishes it"
 
+# The standalone for musl systems (Alpine), into dist/qunitx-linux-<arch>-musl/. Built inside an
+# Alpine container because its host only runs on musl — see scripts/build-sea-musl.ts. Released by
+# CI; nothing here publishes it.
+build-sea-musl:
+	@if [ -z "$(CONTAINER)" ]; then echo "build-sea-musl needs docker or podman" >&2; exit 1; fi
+	$(CONTAINER) run --rm -e GITHUB_ACTIONS -v "$(CURDIR):/repo" -w /repo docker.io/library/node:24-alpine \
+	  sh -euc 'apk add --no-cache -q libstdc++ patchelf && node scripts/build-sea-musl.ts $(shell node -p process.version)'
+
 # Publishes what build-sea left behind.
 publish-sea: build-sea
 	@TARGET="$(SEA_TARGET)"; \
@@ -180,6 +189,7 @@ help:
 	@echo "  build-deno      Build a Deno-compiled binary for the local platform into dist/qunitx"
 	@echo "  build-deno-all  Cross-compile Deno binaries for linux/macos/windows × x64/arm64"
 	@echo "  build-sea       Build + smoke the SEA binary for this platform (no publish)"
+	@echo "  build-sea-musl  Build the musl (Alpine) standalone in a container, into dist/"
 	@echo "  publish-sea     build-sea, then publish the platform package to npm"
 	@echo "  check           Format + lint + bench-typecheck + tests"
 	@echo "  coverage        Run tests with coverage report"
