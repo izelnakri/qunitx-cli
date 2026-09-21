@@ -322,19 +322,48 @@ jobs:
           EOF
           exit $failed
 
-      # Neither binary can run on musl, so each way in has to say so rather than install something
-      # dead — and the npm route that does work there is run for real, as test-global-install does.
-      - name: Alpine refuses the binaries and runs the npm package
+      - name: Build the musl standalone as a release does
+        run: make build-sea-musl
+
+      # The musl build has to start with nothing installed — its libraries travel with it — and
+      # install.sh has to pick it on its own. The installer runs for real against a release served
+      # from dist/ by a stand-in curl, then the installed `qunitx` runs a test in Alpine's Chromium.
+      - name: Alpine installs the musl build and runs a test with it
+        run: |
+          TARGET=$(node -p "'linux-' + process.arch + '-musl'")
+          RELEASE="$RUNNER_TEMP/release" && mkdir -p "$RELEASE"
+          tar czf "$RELEASE/qunitx-$TARGET.tar.gz" -C dist "qunitx-$TARGET"
+          cat > "$RELEASE/curl" <<'EOF'
+          #!/bin/sh
+          for a; do
+            case "$a" in https://*) url="$a" ;; esac
+            [ "${prev:-}" = -o ] && out="$a"
+            prev="$a"
+          done
+          cp "/release/${url##*/}" "$out"
+          EOF
+          chmod +x "$RELEASE/curl"
+
+          docker run --rm -v "$PWD/dist/qunitx-$TARGET:/opt/qunitx:ro" alpine:3.20 /opt/qunitx/qunitx --version
+
+          docker run --rm -v "$PWD/install.sh:/install.sh:ro" -v "$RELEASE:/release:ro" alpine:3.20 sh -euc '
+            apk add --no-cache chromium >/dev/null
+            PATH=/release:$PATH VERSION=v0.0.0 sh /install.sh
+            test -L ~/.qunitx/qunitx
+            mkdir /bare && cd /bare && printf "{\"name\":\"bare\",\"version\":\"1.0.0\"}" > package.json
+            ~/.qunitx/qunitx init && ~/.qunitx/qunitx new some-test.js
+            ~/.qunitx/qunitx some-test.js | tee run.tap
+            grep -q "^# fail 0" run.tap'
+
+      # npm's route on Alpine: the glibc-only platform package is refused by its `libc` field, and
+      # the JavaScript CLI runs as-is — installed globally, as test-global-install does.
+      - name: Alpine refuses the glibc npm package and runs the JavaScript CLI
         run: |
           TARGET=$(node -p "process.platform + '-' + process.arch")
           PACK="$RUNNER_TEMP/pack" && mkdir -p "$PACK/platform"
           npm run build
           npm pack --pack-destination "$PACK" --quiet
           npm pack "./npm/$TARGET" --pack-destination "$PACK/platform" --quiet
-
-          said=$(docker run --rm -v "$PWD/install.sh:/install.sh:ro" alpine:3.20 sh /install.sh 2>&1) \
-            && { echo "::error title=install.sh on Alpine::installed a glibc binary on musl: $said"; exit 1; }
-          echo "$said" | grep -q 'musl' || { echo "::error title=install.sh on Alpine::$said"; exit 1; }
 
           docker run --rm -v "$PACK:/pack:ro" node:24-alpine sh -euc '
             if npm install --prefix /tmp/p /pack/platform/*.tgz 2>/tmp/npm.err; then
@@ -1037,6 +1066,38 @@ jobs:
           name: qunitx-deno-${{ matrix.target }}
           path: qunitx-deno-${{ matrix.target }}.*
 
+  # ── musl standalone binaries (tags only) ──────────────────────────────────────
+  # For Alpine and other musl systems, which neither the deno binary nor the glibc SEA can start
+  # on. Built in an Alpine container on each architecture — see scripts/build-sea-musl.ts.
+  build-musl-binaries:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [lint, test, portable-binaries]
+    name: Build musl binary · ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64-musl
+          - os: ubuntu-24.04-arm
+            target: linux-arm64-musl
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: package.json
+          cache: npm
+      - run: npm ci
+      - run: make build-sea-musl
+      - name: Package
+        run: tar czf qunitx-${{ matrix.target }}.tar.gz -C dist qunitx-${{ matrix.target }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qunitx-${{ matrix.target }}
+          path: qunitx-${{ matrix.target }}.tar.gz
+
   # ── GitHub release (tags only) ────────────────────────────────────────────────
   # Creates the release entry from the matching CHANGELOG.md section (so the
   # body matches the rich changelog `make release` already committed) and
@@ -1050,7 +1111,7 @@ jobs:
   # publish failures (GH API outages, runner death, etc.).
   github-release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-binaries, build-deno-binaries]
+    needs: [build-binaries, build-deno-binaries, build-musl-binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -1108,6 +1169,9 @@ jobs:
           - os: macos-latest
             browser: webkit
             test_script: test:browser
+          - os: ubuntu-24.04-arm
+            browser: chromium
+            test_script: test
           # windows-latest/firefox omitted: Playwright cannot spawn Firefox from a
           # deno-compiled binary on Windows (Deno child_process "handle is invalid"
           # bug — denoland/deno#35994). Consistent with browser-compat.yml; the
@@ -1176,6 +1240,30 @@ jobs:
           QUNITX_BROWSER: ${{ matrix.browser }}
           TEST_SCRIPT: ${{ matrix.test_script }}
           FORCE_COLOR: 0
+
+  # install.sh on Alpine, against the release just published: the musl build it picks has to
+  # install and run a test with nothing on the machine but Chromium.
+  release-install-sh-alpine:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [github-release]
+    name: Release install.sh test · alpine · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install via install.sh and run a test
+        run: |
+          docker run --rm -v "$PWD/install.sh:/install.sh:ro" -e VERSION="${{ github.ref_name }}" alpine:3.20 sh -euc '
+            apk add --no-cache curl chromium >/dev/null
+            sh /install.sh
+            mkdir /bare && cd /bare && printf "{\"name\":\"bare\",\"version\":\"1.0.0\"}" > package.json
+            ~/.qunitx/qunitx init && ~/.qunitx/qunitx new some-test.js
+            ~/.qunitx/qunitx some-test.js | tee run.tap
+            grep -q "^# fail 0" run.tap'
 
   # ── Docker versioned image (tags only) ────────────────────────────────────────
   publish-docker:
