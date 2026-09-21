@@ -38,6 +38,16 @@ case "$TARGET" in
   *) echo "qunitx-cli installer: no prebuilt binary published for $TARGET" >&2; exit 1 ;;
 esac
 
+# The prebuilt Linux binary links against glibc. On a musl system (Alpine) the kernel cannot find
+# its loader, so it would install "successfully" and then fail with a bare "not found" — and even
+# Alpine's gcompat shim is missing symbols it needs. Say so here instead, before downloading.
+if [ "$OS" = "linux" ] && { ls /lib/ld-musl-* >/dev/null 2>&1 || ldd --version 2>&1 | grep -qi musl; }; then
+  echo "qunitx-cli installer: this system uses musl libc (Alpine?); the prebuilt binary needs glibc." >&2
+  echo "  Install from npm instead — on Node 24 it runs the JavaScript CLI:" >&2
+  echo "    npm install --save-dev qunitx-cli" >&2
+  exit 1
+fi
+
 # Resolve the version: default is the GitHub `latest` release pointer. Done via
 # the public API (no auth required for public repos, 60 unauthenticated requests
 # per IP per hour — fine for one-shot installs).
