@@ -111,6 +111,8 @@ export interface UpgradeDeps {
   platform?: NodeJS.Platform;
   /** Architecture used for asset selection. Defaults to the host's. */
   arch?: string;
+  /** C library used for asset selection. Defaults to the host's, asked only of a SEA. */
+  libc?: Release.Libc;
   /** Runs another tool's installer. Defaults to {@link Process.spawn}. */
   spawn?: (argv: string[]) => Promise<Process.SpawnResult>;
   /**
@@ -263,10 +265,12 @@ export async function run(
     return 1;
   }
 
-  const assetName = Release.assetName(channel.flavor, deps.platform, deps.arch);
+  // Only a SEA can be on musl: deno itself does not run there, so its answer would be noise.
+  const libc = deps.libc ?? (channel.flavor === 'sea' ? Release.hostLibc() : 'glibc');
+  const assetName = Release.assetName(channel.flavor, deps.platform, deps.arch, libc);
   if (!assetName) {
     out.error(
-      `No prebuilt ${channel.flavor === 'sea' ? 'Node' : 'Deno'} binary is published for ${deps.platform ?? process.platform}-${deps.arch ?? process.arch}.\n`,
+      `No prebuilt ${channel.flavor === 'sea' ? 'Node' : 'Deno'} binary is published for ${deps.platform ?? process.platform}-${deps.arch ?? process.arch}${libc === 'musl' ? '-musl' : ''}.\n`,
     );
     return 2;
   }

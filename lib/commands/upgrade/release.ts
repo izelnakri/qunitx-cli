@@ -8,9 +8,9 @@ import pkg from '../../../package.json' with { type: 'json' };
 // npm does not have yet — the error only ever points the other way.
 const RELEASES_API = 'https://api.github.com/repos/izelnakri/qunitx-cli/releases';
 
-// Release naming, from the ci.yml matrices: `build-binaries` (Node SEA) publishes three targets,
-// `build-deno-binaries` (deno compile) publishes five. Anything absent here has no asset, which is
-// a refusal rather than a download of the wrong architecture.
+// Release naming, from the ci.yml matrices: `build-binaries` (Node SEA) publishes three targets
+// and `build-musl-binaries` two more, `build-deno-binaries` (deno compile) publishes five. Anything
+// absent here has no asset, which is a refusal rather than a download of the wrong architecture.
 const TARGETS: Record<string, string> = {
   'linux-x64': 'linux-x64',
   'linux-arm64': 'linux-arm64',
@@ -18,7 +18,13 @@ const TARGETS: Record<string, string> = {
   'win32-x64': 'windows-x64',
   'win32-arm64': 'windows-arm64',
 };
-const SEA_TARGETS = new Set(['linux-x64', 'macos-arm64', 'windows-x64']);
+const SEA_TARGETS = new Set([
+  'linux-x64',
+  'linux-x64-musl',
+  'linux-arm64-musl',
+  'macos-arm64',
+  'windows-x64',
+]);
 const DENO_TARGETS = new Set(Object.values(TARGETS));
 
 /**
@@ -143,27 +149,50 @@ export async function find(version?: string, fetchImpl: typeof fetch = fetch): P
 
 /**
  * The release asset that replaces a running binary of this `flavor`, or `null` when this
- * platform has no published build — the SEA matrix covers three targets, the deno one five.
+ * platform has no published build — the SEA matrices cover five targets, the deno one five.
  *
  * ```ts
  * import * as Release from './release.ts';
  *
  * Release.assetName('deno', 'linux', 'arm64'); // 'qunitx-deno-linux-arm64.tar.gz'
- * Release.assetName('sea', 'linux', 'arm64'); // null — no SEA is built for it
+ * Release.assetName('sea', 'linux', 'arm64'); // null — no glibc SEA is built for it
+ * Release.assetName('sea', 'linux', 'arm64', 'musl'); // 'qunitx-linux-arm64-musl.tar.gz'
  * ```
  */
 export function assetName(
   flavor: 'sea' | 'deno',
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
+  libc: Libc = 'glibc',
 ): string | null {
-  const target = TARGETS[`${platform}-${arch}`];
+  const base = TARGETS[`${platform}-${arch}`];
+  const target = base && platform === 'linux' && libc === 'musl' ? `${base}-musl` : base;
   const published = flavor === 'sea' ? SEA_TARGETS : DENO_TARGETS;
   if (!target || !published.has(target)) return null;
 
   const stem = flavor === 'sea' ? `qunitx-${target}` : `qunitx-deno-${target}`;
 
   return target.startsWith('windows') ? `${stem}.zip` : `${stem}.tar.gz`;
+}
+
+/** Which C library a Linux binary links; everywhere else it is `glibc` by convention. */
+export type Libc = 'glibc' | 'musl';
+
+/**
+ * The C library this process runs on. Node's report names the glibc version it found at runtime,
+ * and leaves it out on musl.
+ *
+ * ```ts
+ * import * as Release from './release.ts';
+ *
+ * Release.hostLibc(); // 'glibc' on a mainstream distribution, 'musl' on Alpine
+ * ```
+ */
+export function hostLibc(): Libc {
+  if (process.platform !== 'linux') return 'glibc';
+  const report = process.report?.getReport() as { header?: { glibcVersionRuntime?: string } };
+
+  return report?.header?.glibcVersionRuntime ? 'glibc' : 'musl';
 }
 
 /**

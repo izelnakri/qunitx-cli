@@ -6,6 +6,9 @@ import { spawn } from 'node:child_process';
 import { Failure } from '../../result/index.ts';
 import { parseChecksums, type Release } from './release.ts';
 
+/** What the musl build ships beside its binary, replaced whole on upgrade. */
+const BUNDLED_DIRECTORIES = ['lib', 'node_modules'];
+
 // Replacing a running executable, once the release is known. Everything that talks to the network
 // or the filesystem arrives through `InstallDeps`, so every failure below is reachable in a test
 // without a release, a download, or a real binary.
@@ -233,8 +236,26 @@ export async function apply(plan: InstallPlan, deps: InstallDeps = {}): Promise<
     const sidecarName = platform === 'win32' ? 'esbuild.exe' : 'esbuild';
     const sidecarPath = path.join(directory, sidecarName);
     const replaced: string[] = [];
+    const restores: (() => Promise<void>)[] = [];
 
-    // Sidecar first, binary last, and only when the install already has one: esbuild's JS half
+    // The musl build's directories — the libraries bare Alpine lacks, and playwright-core — swapped
+    // whole, and only where the install already has them, which is its own qunitx-musl/ directory.
+    // The old one is renamed into staging rather than deleted, so a failure below can put it back.
+    for (const name of BUNDLED_DIRECTORIES) {
+      const installed = path.join(directory, name);
+      if (!(await exists(installed)) || !(await exists(path.join(unpacked, name)))) continue;
+
+      const previous = path.join(staging, `${name}.previous`);
+      await fs.rename(installed, previous);
+      await fs.rename(path.join(unpacked, name), installed);
+      replaced.push(installed);
+      restores.push(async () => {
+        await fs.rm(installed, { recursive: true, force: true });
+        await fs.rename(previous, installed);
+      });
+    }
+
+    // Sidecar next, binary last, and only when the install already has one: esbuild's JS half
     // version-checks the executable it spawns, so the pair must not be left crossed. The window
     // between the two renames is microseconds, and a failure in the second rolls the first back.
     const sidecarBackup = path.join(staging, `${sidecarName}.previous`);
@@ -244,12 +265,13 @@ export async function apply(plan: InstallPlan, deps: InstallDeps = {}): Promise<
       await makeExecutable(path.join(unpacked, sidecarName), platform);
       await fs.rename(path.join(unpacked, sidecarName), sidecarPath);
       replaced.push(sidecarPath);
+      restores.push(() => fs.rename(sidecarBackup, sidecarPath));
     }
 
     await makeExecutable(path.join(unpacked, binaryName), platform);
     await swapBinary(path.join(unpacked, binaryName), plan.binaryPath, platform).catch(
       async (error: unknown) => {
-        if (replaced.length > 0) await fs.rename(sidecarBackup, sidecarPath).catch(() => {});
+        for (const restore of restores.reverse()) await restore().catch(() => {});
         throw error;
       },
     );
