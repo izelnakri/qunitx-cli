@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { module, test } from 'qunitx';
 import {
   archiveNameFor,
@@ -31,6 +33,7 @@ module('Bin | the launcher | a binary that cannot start', { concurrency: true },
     // One test, one planting: the package has to be installed under its real name for
     // `require.resolve` to find it, so two tests doing this at once would fight over the path.
     test('falls back to the JS CLI instead of dying with 254, and says why', async (assert) => {
+      await ensureBundledCli();
       await using planted = await plantBrokenPlatformPackage();
       // `--version` because it is the one flag that answers without needing inputs, a browser or
       // a project — so a non-zero exit here means the launcher, not the run.
@@ -131,6 +134,20 @@ async function plantBrokenPlatformPackage() {
       await rmRetry(directory);
     },
   };
+}
+
+/**
+ * Builds `dist/cli.js` if it is not there.
+ *
+ * `dist/` is gitignored and nothing in the test flow builds it, so on a fresh checkout — which is
+ * every CI run — the launcher's fallback target does not exist and the import at the end of it
+ * throws. Without this the test failed in CI for that reason rather than the one it is about,
+ * which is exactly the kind of red that teaches people to ignore red. Half a second, once.
+ */
+async function ensureBundledCli(): Promise<void> {
+  if (await exists(path.join(repoRoot, 'dist', 'cli.js'))) return;
+
+  await promisify(execFile)('node', ['scripts/build-cli.js'], { cwd: repoRoot });
 }
 
 async function exists(target: string): Promise<boolean> {
