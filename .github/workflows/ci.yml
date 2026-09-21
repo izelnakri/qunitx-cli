@@ -128,6 +128,14 @@ jobs:
       # CI job stream), but uploading as artifact lets a human download and grep across
       # all daemon runs even on green builds — useful for tail-latency analysis and for
       # the rare case where the test runner crashes before printing the annotated error.
+      # A red job has to be readable from outside the repository: job logs need admin rights
+      # and artifacts need a token, but annotations need neither. Reads the junit XML the
+      # runner already wrote and prints one `::error` per failing test, so the names show up
+      # on the check run itself. Never fails: the job already has its own reason.
+      - name: Surface failing tests as annotations
+        if: failure()
+        run: node scripts/annotate-failures.ts tmp
+
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -321,6 +329,14 @@ jobs:
           # trace pinpoints which milestone stalls, no second CI round-trip
           # needed. See lib/utils/perf-logger.ts for the gating semantics.
           QUNITX_TRACE_PERF: '1'
+      # A red job has to be readable from outside the repository: job logs need admin rights
+      # and artifacts need a token, but annotations need neither. Reads the junit XML the
+      # runner already wrote and prints one `::error` per failing test, so the names show up
+      # on the check run itself. Never fails: the job already has its own reason.
+      - name: Surface failing tests as annotations
+        if: failure()
+        run: node scripts/annotate-failures.ts tmp
+
       - uses: actions/upload-artifact@v7
         if: always()
         with:
