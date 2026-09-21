@@ -129,12 +129,38 @@ module('Commands | Upgrade | Release.assetName', { concurrency: true }, () => {
     assert.strictEqual(Release.assetName('sea', 'win32', 'x64'), 'qunitx-windows-x64.zip');
   });
 
+  test('a SEA on musl gets the musl build, which build-musl-binaries publishes', (assert) => {
+    assert.strictEqual(
+      Release.assetName('sea', 'linux', 'x64', 'musl'),
+      'qunitx-linux-x64-musl.tar.gz',
+    );
+    assert.strictEqual(
+      Release.assetName('sea', 'linux', 'arm64', 'musl'),
+      'qunitx-linux-arm64-musl.tar.gz',
+    );
+    // musl is a Linux question; elsewhere it changes nothing.
+    assert.strictEqual(
+      Release.assetName('sea', 'darwin', 'arm64', 'musl'),
+      'qunitx-macos-arm64.tar.gz',
+    );
+  });
+
   test('a target with no published build is null, never a near-miss archive', (assert) => {
-    // build-binaries has three targets, build-deno-binaries five; Intel macOS is in neither.
-    assert.strictEqual(Release.assetName('sea', 'linux', 'arm64'), null);
+    assert.strictEqual(Release.assetName('sea', 'linux', 'arm64'), null, 'no glibc arm64 SEA');
     assert.strictEqual(Release.assetName('sea', 'win32', 'arm64'), null);
+    assert.strictEqual(
+      Release.assetName('sea', 'darwin', 'x64'),
+      null,
+      'Intel macOS is in neither',
+    );
     assert.strictEqual(Release.assetName('deno', 'darwin', 'x64'), null);
+    assert.strictEqual(Release.assetName('deno', 'linux', 'x64', 'musl'), null, 'deno has no musl');
     assert.strictEqual(Release.assetName('deno', 'freebsd', 'x64'), null);
+  });
+
+  test('this host’s C library is one of the two', (assert) => {
+    const libc = Release.hostLibc();
+    assert.true(libc === 'glibc' || libc === 'musl', libc);
   });
 });
 

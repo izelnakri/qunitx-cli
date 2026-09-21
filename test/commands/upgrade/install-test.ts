@@ -50,6 +50,7 @@ const unpacks = (files: Record<string, string>) => async (archivePath: string, d
   const inner = path.join(dest, path.basename(archivePath).replace(/\.(tar\.gz|zip)$/, ''));
   await fs.mkdir(inner, { recursive: true });
   for (const [name, content] of Object.entries(files)) {
+    await fs.mkdir(path.dirname(path.join(inner, name)), { recursive: true });
     await fs.writeFile(path.join(inner, name), content);
   }
 };
@@ -258,6 +259,75 @@ module('Commands | Upgrade | Install.apply', { concurrency: true }, () => {
     assert.strictEqual(await read(binary), 'old-binary', 'the working binary is still working');
     assert.strictEqual(await read(sidecar), 'old-esbuild', 'and the pair is not left crossed');
     assert.deepEqual((await fs.readdir(dir.path)).sort(), ['esbuild', 'qunitx']);
+  });
+
+  test('the musl build’s lib/ and node_modules/ are replaced whole', async (assert) => {
+    await using dir = await tempDir('upgrade-musl');
+    const binary = path.join(dir.path, 'qunitx');
+    await fs.writeFile(binary, 'old-binary');
+    await fs.writeFile(path.join(dir.path, 'esbuild'), 'old-esbuild');
+    await fs.mkdir(path.join(dir.path, 'lib'));
+    await fs.writeFile(path.join(dir.path, 'lib', 'gone.so'), 'old');
+    await fs.mkdir(path.join(dir.path, 'node_modules', 'playwright-core'), { recursive: true });
+
+    const replaced = await Install.apply(
+      { release: release(), assetName: ASSET, binaryPath: binary, platform: 'linux' },
+      {
+        fetch: downloads([]),
+        extract: unpacks({
+          qunitx: 'new-binary',
+          esbuild: 'new-esbuild',
+          'lib/libstdc++.so.6': 'new-lib',
+          'node_modules/playwright-core/index.mjs': 'new-playwright',
+        }),
+      },
+    );
+
+    assert.true(replaced.includes(path.join(dir.path, 'lib')));
+    assert.true(replaced.includes(path.join(dir.path, 'node_modules')));
+    assert.deepEqual(
+      await fs.readdir(path.join(dir.path, 'lib')),
+      ['libstdc++.so.6'],
+      'no stale file',
+    );
+    assert.strictEqual(
+      await read(path.join(dir.path, 'node_modules', 'playwright-core', 'index.mjs')),
+      'new-playwright',
+    );
+  });
+
+  test('an install without those directories does not grow them', async (assert) => {
+    await using dir = await tempDir('upgrade-no-bundled-dirs');
+    const binary = path.join(dir.path, 'qunitx');
+    await fs.writeFile(binary, 'old-binary');
+
+    await Install.apply(
+      { release: release(), assetName: ASSET, binaryPath: binary, platform: 'linux' },
+      { fetch: downloads([]), extract: unpacks({ qunitx: 'new', 'lib/libstdc++.so.6': 'x' }) },
+    );
+
+    assert.deepEqual(
+      await fs.readdir(dir.path),
+      ['qunitx'],
+      'a deno install in ~/.local/bin stays tidy',
+    );
+  });
+
+  test('a replace that fails halfway puts the musl directories back too', async (assert) => {
+    await using dir = await tempDir('upgrade-musl-interrupted');
+    const binary = path.join(dir.path, 'qunitx');
+    await fs.writeFile(binary, 'old-binary');
+    await fs.mkdir(path.join(dir.path, 'lib'));
+    await fs.writeFile(path.join(dir.path, 'lib', 'libstdc++.so.6'), 'old-lib');
+
+    const failure = await Install.apply(
+      { release: release(), assetName: ASSET, binaryPath: binary, platform: 'linux' },
+      { fetch: downloads([]), extract: unpacks({ 'lib/libstdc++.so.6': 'new-lib' }) },
+    ).catch((error: unknown) => error);
+
+    assert.ok(Failure.is(failure) && failure.code === 'UpgradeReplaceFailed');
+    assert.strictEqual(await read(path.join(dir.path, 'lib', 'libstdc++.so.6')), 'old-lib');
+    assert.strictEqual(await read(binary), 'old-binary');
   });
 });
 
