@@ -76,11 +76,38 @@ async function trySeaBinary() {
     }
 
     await new Promise((_resolve, reject) => {
+      // `spawn` is the only reliable line between "it ran and exited" and "it never started".
+      // A binary whose ELF interpreter is missing — the shape of a SEA built on one distribution
+      // and installed on another — fails inside `execve`, so BOTH `error` and `close` fire, and
+      // `close` arrives with code -2.
+      let started = false;
       const child = spawn(binaryPath, process.argv.slice(2), { stdio: 'inherit', env });
-      child.on('close', (code) => process.exit(code ?? 1));
+      child.on('spawn', () => {
+        started = true;
+      });
       child.on('error', reject);
+      child.on('close', (code, signal) => {
+        // Without this guard the launcher killed its own fallback: `error` rejected and the JS
+        // CLI began loading, then `close` called process.exit(-2) — which a shell reports as
+        // 254, with no output at all. That was the whole of the bug report.
+        if (!started) return;
+        if (signal !== null) return void process.kill(process.pid, signal);
+
+        process.exit(code ?? 1);
+      });
     });
-  } catch (_) {
+  } catch (error) {
+    // Said once, on stderr, and only when a binary that IS installed cannot be started. A silent
+    // fallback is correct but undiagnosable: the JS CLI works, so nothing looks wrong, and the
+    // platform package stays broken for as long as nobody thinks to check it.
+    if (error?.code === 'ENOENT' || error?.code === 'EACCES') {
+      process.stderr.write(
+        `# qunitx: the ${target.seaPkg} binary could not be started (${error.code}) — ` +
+          'running the JavaScript CLI instead.\n' +
+          '# That binary is built for this platform but not for this system; please report it.\n',
+      );
+    }
+
     return false;
   }
 }
