@@ -40,6 +40,67 @@ module('Args | parse | inputs', { concurrency: true }, () => {
   });
 });
 
+module('Args | parse | URL inputs', { concurrency: true }, () => {
+  test('a URL is kept verbatim, not resolved against cwd', (assert) => {
+    const flags = parseFlags(['https://example.com/tests/cart-test.js']);
+
+    // `path.join(cwd, 'https://example.com/…')` is a directory nobody has, and the failure
+    // would have arrived far from the thing that caused it.
+    assert.deepEqual(flags.inputs, ['https://example.com/tests/cart-test.js']);
+  });
+
+  test('a URL glob survives parsing as it was typed', (assert) => {
+    const flags = parseFlags(['https://example.com/tests/**/*-test.js']);
+
+    assert.deepEqual(flags.inputs, ['https://example.com/tests/**/*-test.js']);
+  });
+
+  test('a URL is a whole-file mention, the same as a bare path', (assert) => {
+    const flags = parseFlags(['https://example.com/a.js']);
+
+    assert.deepEqual(flags.inputsWithoutLineTargets, ['https://example.com/a.js']);
+    assert.strictEqual(flags.lineTargets, undefined);
+  });
+
+  test('`#34` still targets a line', (assert) => {
+    const flags = parseFlags(['https://example.com/tests/a-test.js#34']);
+
+    assert.deepEqual(flags.inputs, ['https://example.com/tests/a-test.js']);
+    assert.deepEqual(flags.lineTargets, { 'https://example.com/tests/a-test.js': [34] });
+  });
+
+  test('`:3000` is a PORT, and reading it as a line was the bug this prevents', (assert) => {
+    const flags = parseFlags(['http://localhost:3000']);
+
+    assert.deepEqual(flags.inputs, ['http://localhost:3000']);
+    assert.strictEqual(flags.lineTargets, undefined, 'no line 3000 of `http://localhost`');
+  });
+
+  test('a port and a line target can be said together', (assert) => {
+    const flags = parseFlags(['http://localhost:3000/a-test.js#12']);
+
+    assert.deepEqual(flags.lineTargets, { 'http://localhost:3000/a-test.js': [12] });
+  });
+
+  test('a remote .html is an input, not one of the project’s fixtures', (assert) => {
+    const flags = parseFlags(['https://example.com/suite.html']);
+
+    // `htmlPaths` are fixtures this project serves, resolved against `projectRoot`. A URL is
+    // neither, and the loader refuses it later by name.
+    assert.strictEqual(flags.htmlPaths, undefined);
+    assert.deepEqual(flags.inputs, ['https://example.com/suite.html']);
+  });
+
+  test('a URL and a path can be given together', (assert) => {
+    const flags = parseFlags(['tests/foo.ts', 'https://example.com/a.js']);
+
+    assert.deepEqual(flags.inputs, [
+      path.join(process.cwd(), 'tests/foo.ts'),
+      'https://example.com/a.js',
+    ]);
+  });
+});
+
 module('Args | parse | --extensions', { concurrency: true }, () => {
   test('parses a single extension', (assert) => {
     const flags = parseFlags(['--extensions=mjs']);
