@@ -1,7 +1,7 @@
 import process from 'node:process';
 import { module, test } from 'qunitx';
 import { randomUUID } from 'node:crypto';
-import { spawnCapture } from '../../helpers/shell.ts';
+import { execute } from '../../helpers/shell.ts';
 import '../../helpers/custom-asserts.ts';
 
 const ESC = String.fromCharCode(27);
@@ -77,7 +77,15 @@ module('Commands | repl | vim mode at a real terminal', { concurrency: true }, (
   }
 });
 
-/** One `qunitx repl` through a pty, with the keys typed once the prompt is reading. */
+/**
+ * One `qunitx repl` through a pty, with the keys typed once the prompt is reading.
+ *
+ * Through `execute`, as every other pty test here goes, and not `spawnCapture` directly: that
+ * one hands the child NO environment unless given one, so `CHROME_BIN` — the only way CI finds
+ * Chrome — never arrived, and all six of these exited 1 on ubuntu while passing on a machine that
+ * finds Chrome by itself. `execute` also takes the browser semaphore, which caps how many Chromes
+ * a 4-core runner is asked to start at once.
+ */
 function session(keys: string, options: { vim?: boolean; env?: boolean } = {}) {
   const flag = options.vim === false ? '' : ' --vim';
   const environment = options.env ? 'QUNITX_REPL_VIM=1 ' : '';
@@ -85,7 +93,5 @@ function session(keys: string, options: { vim?: boolean; env?: boolean } = {}) {
     `${environment}node cli.ts repl${flag} --browser=chromium ` +
     `--output=tmp/run-${randomUUID()}`;
 
-  return spawnCapture(`script -qec "${inner}" /dev/null`, {
-    stdin: [{ text: keys, after: READY }],
-  });
+  return execute(`script -qec "${inner}" /dev/null`, { stdin: [{ text: keys, after: READY }] });
 }
