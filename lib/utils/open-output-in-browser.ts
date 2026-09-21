@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import * as Chrome from '../chrome/index.ts';
 import { buildQUnitFilterQuery } from '../selection/filter.ts';
 import { Task } from '../task/index.ts';
+import { importPlaywrightCore } from './import-playwright-core.ts';
 import type { Config } from '../types.ts';
 
 /**
@@ -49,7 +50,7 @@ async function launch(config: Config): Promise<void> {
     if (process.platform === 'darwin') spawnDetached('open', ['-a', 'Safari', outputFile]);
   } else {
     const chromePath =
-      (await Chrome.find()) ?? (await import('playwright-core')).chromium.executablePath();
+      (await Chrome.find()) ?? (await importPlaywrightCore()).chromium.executablePath();
     if (chromePath) spawnDetached(chromePath, [outputFile]);
   }
 }
