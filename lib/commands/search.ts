@@ -7,6 +7,7 @@ import { blue, yellow } from '../utils/color.ts';
 import type { TestDeclaration, DeclarationScan } from '../selection/parse-test-declarations.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
 import type { Config } from '../types.ts';
+import { fetchRemote, isRemoteInput } from '../setup/remote-inputs.ts';
 
 /** One scanned file: its parsed declarations (null when unparseable) and the tests derived from them. */
 interface ScannedFile {
@@ -263,8 +264,13 @@ function matchesLineTargets(test: FoundTest, lineSelectors: FileSelectors): bool
  * listable tests derived from them. `scan` is null when the file cannot be read or parsed.
  */
 async function scanFile(file: string, projectRoot: string): Promise<ScannedFile> {
-  const displayPath = path.relative(projectRoot, file).replaceAll('\\', '/');
-  const source = await fs.readFile(file, 'utf8').catch(() => null);
+  const displayPath = shownAs(file, projectRoot);
+  // A remote input is fetched rather than read, so `--search` and `#34` targeting see the
+  // same declarations in a URL they would in a file. Unreachable is `null` either way, which
+  // the caller already counts as a file it could not parse.
+  const source = isRemoteInput(file)
+    ? await fetchRemote(file, new Map()).catch(() => null)
+    : await fs.readFile(file, 'utf8').catch(() => null);
   const scan = source === null ? null : await parseTestDeclarations(source, file);
   if (!scan) return { file, displayPath, scan: null, tests: [], computedNames: 0 };
 
@@ -308,5 +314,18 @@ function modulePathOf(declarations: TestDeclaration[], index: number): string[] 
 
 /** The `path#line` a listing prints, relative to the project root. */
 function locationOf(config: Config, test: FoundTest): string {
-  return `${path.relative(config.projectRoot, test.file).replaceAll('\\', '/')}#${test.line}`;
+  return `${shownAs(test.file, config.projectRoot)}#${test.line}`;
+}
+
+/**
+ * How one input is printed: a URL as itself, a path relative to the project with forward slashes.
+ *
+ * A listing's location is meant to be pasted back as a line target, and `path.relative` turns a
+ * URL into something that is neither — it collapses `//` into `/`, so `https://x/a-test.js` came
+ * out as `https:/x/a-test.js`, which no longer names anything.
+ */
+function shownAs(file: string, projectRoot: string): string {
+  if (isRemoteInput(file)) return file;
+
+  return path.relative(projectRoot, file).replaceAll('\\', '/');
 }

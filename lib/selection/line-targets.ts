@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { parseTestDeclarations } from './parse-test-declarations.ts';
 import type { TestDeclaration, DeclarationScan } from './parse-test-declarations.ts';
+import { fetchRemote, isRemoteInput } from '../setup/remote-inputs.ts';
 
 /**
  * One thing a `file#34` target selects. `test` omitted means "this module and everything nested
@@ -62,7 +63,9 @@ export async function resolve(
   lines: number[],
   displayPath: string = filePath,
 ): Promise<LineTargetResolution> {
-  const source = await fs.readFile(filePath, 'utf8').catch(() => null);
+  const source = isRemoteInput(filePath)
+    ? await fetchRemote(filePath, new Map()).catch(() => null)
+    : await fs.readFile(filePath, 'utf8').catch(() => null);
   if (source === null) {
     return {
       selectors: null,
