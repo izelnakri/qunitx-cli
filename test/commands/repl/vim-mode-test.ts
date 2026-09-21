@@ -9,6 +9,9 @@ import type { REPLServer } from 'node:repl';
 const ESC = String.fromCharCode(27);
 const CTRL_C = String.fromCharCode(3);
 
+/** How long a keystroke is given to reach readline before the test calls it a failure. */
+const WAIT_MS = 10_000;
+
 // A real `node:repl` over a fake TTY, which is the only way to show the part that matters: that
 // normal mode edits the line READLINE holds, rather than a copy of it that drifts.
 
@@ -216,11 +219,17 @@ function replOverVim() {
     resume: () => void vim.stream.resume(),
     written: () => chunks.join(''),
     async until(check: () => boolean, what: string) {
-      for (let round = 0; round < 500; round++) {
-        if (check()) return;
-        await new Promise((resolve) => setImmediate(resolve));
+      // Bounded by TIME, not by a number of ticks. 500 `setImmediate` rounds is a count, and on a
+      // loaded CI runner all 500 can elapse in a couple of milliseconds of wall clock while the
+      // stream event this is waiting for has not been serviced yet — a flake by construction.
+      // `setTimeout` also lets the loop reach the poll phase, which is where that event arrives.
+      const deadline = Date.now() + WAIT_MS;
+      while (!check()) {
+        if (Date.now() > deadline) {
+          throw new Error(`vim mode never got to ${what} — line is ${JSON.stringify(server.line)}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2));
       }
-      throw new Error(`vim mode never got to ${what} — line is ${JSON.stringify(server.line)}`);
     },
     [Symbol.dispose]() {
       server.close();
