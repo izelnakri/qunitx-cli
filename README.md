@@ -241,6 +241,16 @@ qunitx test/**/*.js test/**/*.ts
 # TypeScript — no tsconfig required
 qunitx test/my-test.ts
 
+# A URL, fetched and bundled like a local file — relative imports resolve on the server,
+# and `import { test } from 'qunitx'` still means the runtime running it
+qunitx https://example.com/tests/cart-test.js
+
+# A URL glob or directory, expanded against the server's own listing: a JSON array of
+# names (the GitHub contents API shape included), or an HTML autoindex. Quote it, or the
+# shell will try to expand it first.
+qunitx 'https://example.com/tests/**/*-test.js'
+qunitx https://example.com/tests/
+
 # Watch mode: re-run on file changes
 qunitx test/**/*.js --watch
 
@@ -309,6 +319,32 @@ qunitx test/**/*.js --browser=webkit
 ```
 
 Firefox and WebKit need Playwright's browser builds installed once — see [Browsers](#browsers).
+
+### Remote inputs
+
+A `http://` or `https://` input is fetched rather than read. Everything downstream is the same
+run: the bundle, the browser, the reporters, `-t`, `--search`, `#34` line targets and
+`--only-failed` all treat a URL as the path it is.
+
+| shape                                   | what it means                                              |
+| --------------------------------------- | ---------------------------------------------------------- |
+| `https://x/tests/a-test.js`             | that one file                                              |
+| `https://x/tests/` or `https://x/tests` | every test file under it, recursively                      |
+| `https://x/tests/*-test.js`             | the matches beside it                                      |
+| `https://x/tests/**/*-test.{js,ts}`     | and everything below                                       |
+| `https://x/tests/a-test.js#34`          | just the test on line 34 — `#`, never `:`, which is a port |
+
+A glob needs the server to list its directories: a JSON array of names, a JSON array of
+`{ name, type }` (what the GitHub contents API answers), or an HTML autoindex (what nginx, Caddy
+and `python -m http.server` give for free). A server that will not be listed says so by name. The
+walk stays inside the tree it was pointed at, and stops at 10 levels or 1,000 files.
+
+Two things a remote input cannot join in on, both because it is not on this disk: `--watch` has
+nothing to watch, and `--changed`/`--since` compare against your working tree, which a remote file
+can never be part of.
+
+Remote code is fetched and executed in the browser, exactly as the URL asked. Point it at
+suites you would run anyway.
 
 ## Configuration
 
