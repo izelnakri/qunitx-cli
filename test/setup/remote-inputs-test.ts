@@ -4,6 +4,7 @@ import {
   fetchRemote,
   isRemoteGlob,
   isRemoteInput,
+  namedInWords,
   remoteDirectoryPattern,
 } from '../../lib/setup/remote-inputs.ts';
 import { staticServer } from '../helpers/static-server.ts';
@@ -282,5 +283,52 @@ module('Setup | remote inputs | expanding a glob', { concurrency: true }, () => 
 
     // The `../` every autoindex emits would otherwise walk back up and out of the pattern.
     for (const url of found) assert.includes(url, '/tests/deep/');
+  });
+});
+
+module('Setup | remote inputs | a failure said in words', { concurrency: true }, () => {
+  // Deno gives no error code, only the operating system's own sentence — and CI's Windows lane
+  // failed because Windows words a refusal without the phrase "connection refused" in it. Every
+  // sentence below is verbatim from the platform that produces it, so this runs on any of them.
+  test('a refusal, as Linux and macOS say it', (assert) => {
+    assert.strictEqual(
+      namedInWords(
+        'error sending request for url (http://127.0.0.1:1/x): client error (Connect): ' +
+          'tcp connect error: Connection refused (os error 111)',
+      ),
+      'connection refused',
+    );
+  });
+
+  test('a refusal, as Windows says it', (assert) => {
+    assert.strictEqual(
+      namedInWords(
+        'error sending request for url (http://127.0.0.1:1/x): client error (Connect): ' +
+          'tcp connect error: No connection could be made because the target machine actively ' +
+          'refused it. (os error 10061)',
+      ),
+      'connection refused',
+    );
+  });
+
+  test('the other Windows sentences land on the same words as their Unix twins', (assert) => {
+    assert.strictEqual(
+      namedInWords(
+        'An existing connection was forcibly closed by the remote host. (os error 10054)',
+      ),
+      'connection reset',
+    );
+    assert.strictEqual(namedInWords('No such host is known. (os error 11001)'), 'no such host');
+    assert.strictEqual(
+      namedInWords(
+        'A connection attempt failed because the connected party did not properly respond after ' +
+          'a period of time (os error 10060)',
+      ),
+      'connection timed out',
+    );
+  });
+
+  test('a sentence nobody has named is left for the caller to print as it is', (assert) => {
+    assert.strictEqual(namedInWords('the moon is in the way'), null);
   });
 });
