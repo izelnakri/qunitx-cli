@@ -246,6 +246,109 @@ jobs:
           PUPPETEER_SKIP_DOWNLOAD: 'true'
           FORCE_COLOR: 0
 
+  # ── Portable binaries (every push, not just tags) ─────────────────────────────
+  # Builds both Linux binaries the way a release does — the SEA through `make build-sea`, the one
+  # a maintainer publishes to npm from their own machine — and starts them on other distributions.
+  # Before this, binaries were only ever run on the machine or runner that built them, and only at
+  # tag time, so a SEA that started on NixOS alone reached npm and nothing noticed.
+  #
+  # `--version` is enough per distribution: a missing loader, library or GLIBC_x.y symbol version
+  # fails at exec, before any JavaScript. The pinned images sit on each binary's glibc floor
+  # (deno 2.27 = ubuntu:18.04, SEA 2.28 = almalinux:8) and span the families people run.
+  portable-binaries:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
+    name: Portable binaries · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: package.json
+          cache: npm
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+          cache: true
+      - uses: browser-actions/setup-chrome@v2
+        id: setup-chrome
+      - run: npm ci
+
+      # Includes smoke-sea: the portability check, the daemon, and a real test run in Chrome.
+      - name: Build the SEA as a release does
+        run: make build-sea
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          FORCE_COLOR: 0
+
+      - name: Build the deno binary as a release does
+        run: |
+          make build-deno
+          node scripts/check-sea-portability.ts dist/qunitx
+          make smoke-deno
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          FORCE_COLOR: 0
+
+      - name: Start both on other distributions
+        run: |
+          TARGET=$(node -p "process.platform + '-' + process.arch")
+          failed=0
+          while read -r image binaries; do
+            for bin in $binaries; do
+              if said=$(docker run --rm -v "$PWD/npm/$TARGET/bin:/sea:ro" -v "$PWD/dist:/deno:ro" \
+                  "$image" "/$bin/qunitx" --version 2>&1); then
+                echo "✓ $bin on $image: $said"
+              else
+                echo "::error title=The $bin binary does not start on $image::$said"
+                failed=1
+              fi
+            done
+          done <<'EOF'
+          ubuntu:18.04 deno
+          almalinux:8 sea deno
+          debian:11 sea deno
+          ubuntu:20.04 sea deno
+          debian:12 sea deno
+          amazonlinux:2023 sea deno
+          ubuntu:24.04 sea deno
+          opensuse/leap:15.6 sea deno
+          debian:13 sea deno
+          fedora:42 sea deno
+          EOF
+          exit $failed
+
+      # Neither binary can run on musl, so each way in has to say so rather than install something
+      # dead — and the npm route that does work there is run for real, as test-global-install does.
+      - name: Alpine refuses the binaries and runs the npm package
+        run: |
+          TARGET=$(node -p "process.platform + '-' + process.arch")
+          PACK="$RUNNER_TEMP/pack" && mkdir -p "$PACK/platform"
+          npm run build
+          npm pack --pack-destination "$PACK" --quiet
+          npm pack "./npm/$TARGET" --pack-destination "$PACK/platform" --quiet
+
+          said=$(docker run --rm -v "$PWD/install.sh:/install.sh:ro" alpine:3.20 sh /install.sh 2>&1) \
+            && { echo "::error title=install.sh on Alpine::installed a glibc binary on musl: $said"; exit 1; }
+          echo "$said" | grep -q 'musl' || { echo "::error title=install.sh on Alpine::$said"; exit 1; }
+
+          docker run --rm -v "$PACK:/pack:ro" node:24-alpine sh -euc '
+            if npm install --prefix /tmp/p /pack/platform/*.tgz 2>/tmp/npm.err; then
+              echo "::error title=npm on Alpine::installed the glibc-only platform package"; exit 1
+            fi
+            grep -q "Actual libc: musl" /tmp/npm.err
+
+            apk add --no-cache chromium >/dev/null
+            npm install --global --quiet /pack/qunitx-cli-*.tgz
+            mkdir /bare && cd /bare && printf "{\"name\":\"bare\",\"version\":\"1.0.0\"}" > package.json
+            qunitx init && qunitx new some-test.js
+            qunitx some-test.js | tee run.tap
+            grep -q "^# fail 0" run.tap'
+
   # ── Test (Deno end-to-end) ────────────────────────────────────────────────────
   # Runs the entire test pipeline through Deno:
   #   • test/runner.ts itself runs under `deno run -A` (`npm run test:deno`).
@@ -701,7 +804,7 @@ jobs:
   # Chrome is not bundled — users supply it via CHROME_BIN (same as today).
   build-binaries:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [lint, test]
+    needs: [lint, test, portable-binaries]
     name: Build binary · ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -843,7 +946,7 @@ jobs:
   #     same host they were built for; staleness/path mismatches surface here).
   build-deno-binaries:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [lint, test]
+    needs: [lint, test, portable-binaries]
     name: Build deno binary · ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
