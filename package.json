@@ -15,7 +15,9 @@
   ],
   "files": [
     "bin/",
-    "dist/",
+    "dist/cli.js",
+    "dist/index.js",
+    "dist/types/",
     "lib/",
     "templates/"
   ],
