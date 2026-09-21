@@ -325,8 +325,38 @@ function saidOutLoud(error: unknown): string {
 
   const said = ((inner as Error)?.message ?? (error as Error)?.message ?? String(error)).trim();
 
-  return said === '' ? 'the request failed' : said;
+  return namedInWords(said) ?? (said === '' ? 'the request failed' : said);
 }
+
+/**
+ * The same conditions as {@link REFUSALS}, recognised from a runtime that reports them only in
+ * prose.
+ *
+ * Node attaches a `code` to the cause; Deno attaches nothing and puts one hyper sentence in the
+ * message — `error sending request for url (…): client error (Connect): tcp connect error:
+ * Connection refused (os error 111)`. That is all true and none of it is worth printing at a
+ * prompt, so the condition is read out of the words and said the same way on both.
+ */
+function namedInWords(message: string): string | null {
+  const lowered = message.toLowerCase();
+  for (const [phrase, said] of PHRASES) {
+    if (lowered.includes(phrase)) return said;
+  }
+
+  return null;
+}
+
+/** Ordered, so the more specific phrase wins where two could match. */
+const PHRASES: ReadonlyArray<readonly [string, string]> = [
+  ['connection refused', 'connection refused'],
+  ['connection reset', 'connection reset'],
+  ['failed to lookup address', 'no such host'],
+  ['name or service not known', 'no such host'],
+  ['dns error', 'no such host'],
+  ['network is unreachable', 'host unreachable'],
+  ['operation timed out', 'connection timed out'],
+  ['certificate', 'the certificate was rejected'],
+];
 
 /** The socket errors worth saying in words, since their codes are not words. */
 const REFUSALS: Readonly<Record<string, string>> = {

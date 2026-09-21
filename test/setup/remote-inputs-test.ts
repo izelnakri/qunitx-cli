@@ -89,6 +89,23 @@ module('Setup | remote inputs | fetching one', { concurrency: true }, () => {
     assert.notIncludes(String((failed as Error).message), 'fetch failed');
   });
 
+  test('a refusal is said the same way whichever runtime reported it', async (assert) => {
+    // Node attaches `cause.code = ECONNREFUSED`; Deno attaches no code at all and puts one hyper
+    // sentence in the message. Reading only the code left Deno users with `error sending request
+    // for url (…): client error (Connect): tcp connect error: Connection refused (os error 111)`,
+    // which is all true and none of it worth printing. This is the assertion that keeps the two
+    // answers identical, and it holds on whichever runtime is running the suite.
+    const closed = await staticServer({ files: {} });
+    const url = closed.url;
+    await closed[Symbol.asyncDispose]();
+    const failed = await fetchRemote(`${url}/a.js`, new Map()).catch((error: Error) => error);
+    const message = String((failed as Error).message);
+
+    assert.includes(message, 'connection refused');
+    assert.notIncludes(message, 'os error', 'and not the sentence the runtime handed us');
+    assert.notIncludes(message, 'client error');
+  });
+
   test('a URL that answers with a page is refused by name', async (assert) => {
     await using server = await staticServer({ files: { '/docs/a.js': 'export const a = 1;' } });
     // `/docs` is a directory here, so the server answers with its HTML index — which is exactly
