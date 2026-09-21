@@ -71,6 +71,11 @@ jobs:
         env:
           QUNITX_BROWSER: ${{ matrix.browser }}
           FORCE_COLOR: 0
+      # Same as ci.yml: a red lane names its failing tests on the check run, where they can be
+      # read without admin rights. Reads the junit the runner already writes; never fails itself.
+      - name: Surface failing tests as annotations
+        if: failure()
+        run: node scripts/annotate-failures.ts tmp
 
   # Same matrix as `browser-compat`, but routed entirely through Deno:
   #   1. `test/runner.ts` itself runs under `deno run -A` (script `test:browser:deno`).
@@ -175,3 +180,8 @@ jobs:
         env:
           QUNITX_BROWSER: ${{ matrix.browser }}
           FORCE_COLOR: 0
+      # Same as ci.yml: a red lane names its failing tests on the check run, where they can be
+      # read without admin rights. Reads the junit the runner already writes; never fails itself.
+      - name: Surface failing tests as annotations
+        if: failure()
+        run: node scripts/annotate-failures.ts tmp
