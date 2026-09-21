@@ -24,7 +24,7 @@ const PORTABLE = [
   '/lib/ld-linux-aarch64.so.1',
   '/lib/ld-linux-armhf.so.3',
   '/lib64/ld64.so.2',
-  '/lib/ld-musl-x86-64.so.1',
+  '/lib/ld-musl-x86_64.so.1',
   '/lib/ld-musl-aarch64.so.1',
 ];
 
