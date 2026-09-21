@@ -48,6 +48,7 @@ import { command as Step } from './commands/step.ts';
 import { command as Type } from './commands/type.ts';
 import { command as Up } from './commands/up.ts';
 import { command as Url } from './commands/url.ts';
+import { withVimMode } from './vim-mode.ts';
 import { command as Version } from './commands/version.ts';
 import { command as Vi } from './commands/vi.ts';
 import { command as Vim } from './commands/vim.ts';
@@ -207,7 +208,12 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
     // line synchronously — so `echo $'1+1\n2+2' | qunitx repl` started both evaluations at once and
     // reached EOF before either answered. A terminal keeps the real stdin: raw mode, keypresses
     // and history need a TTY, and a human cannot type faster than the page can answer.
-    const input = interactive ? withVimHistoryKeys(process.stdin) : new PassThrough();
+    // Three layers, outermost last: Ctrl-K/Ctrl-J become history and the terminal's reports to
+    // itself are dropped, then — where it was asked for — normal mode takes the printable keys
+    // before readline can type them. A pipe gets none of it; there is no prompt to put in a mode.
+    const translated = interactive ? withVimHistoryKeys(process.stdin) : null;
+    const vim = translated && config.vim ? withVimMode(translated) : null;
+    const input = vim ? vim.stream : (translated ?? new PassThrough());
     let evaluating = false;
     // Set once the page has gone, so the session ends on the next thing that notices rather than
     // once per command that fails.
@@ -418,6 +424,9 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
     });
 
     setupHistory(server, interactive);
+    // After the server exists, because normal mode edits ITS line — and before anything can be
+    // typed, because until it is attached every key is forwarded as if vim mode were off.
+    vim?.attach(server);
     // Before the suggestion, and that order matters: both redraw on a keypress, and the ghost has
     // to be written after the line it hangs off has been painted.
     if (interactive) setupLineHighlighting(server, palette);

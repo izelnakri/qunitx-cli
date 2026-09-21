@@ -586,6 +586,8 @@ export interface Config extends ParsedFlags {
   testFileLookupPaths: string[];
   /** Current file-system snapshot, diffed in watch mode to detect added / removed files. */
   fsTree: FSTree;
+  /** `--vim` / `QUNITX_REPL_VIM`: vim keys at the REPL prompt. */
+  vim?: boolean;
   /**
    * Custom esbuild plugins applied during the test bundle build. Loaded from
    * `qunitx.config.{ts,js,mjs}` in the project root. Common use cases: SFC formats
