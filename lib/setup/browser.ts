@@ -6,6 +6,7 @@ import { bindServerToPort } from './bind-server-to-port.ts';
 import * as Chrome from '../chrome/index.ts';
 import { prelaunchPromise, shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { perfLog } from '../utils/perf-log.ts';
+import { importPlaywrightCore } from '../utils/import-playwright-core.ts';
 import * as RunState from './run-state.ts';
 import type { Browser } from 'playwright-core';
 import type { HTTPServer } from '../web/index.ts';
@@ -20,7 +21,7 @@ const WINDOWS_SPAWN_RETRY_MS = 100;
 // and saturate libuv's thread pool, which would delay the dynamic import resolution.
 // chrome-prelaunch.ts (statically imported by cli.ts) already started Chrome pre-launch,
 // so both race in parallel — Chrome is typically ready when playwright-core finishes.
-const playwrightCorePromise = import('playwright-core');
+const playwrightCorePromise = importPlaywrightCore();
 perfLog('browser.js: playwright-core import started');
 
 /**
