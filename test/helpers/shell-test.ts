@@ -75,6 +75,16 @@ module('Helpers | spawnCapture | failure paths', { concurrency: true }, () => {
     );
   });
 
+  test('the message ends with what the child last said on stderr, on the same line', async (assert) => {
+    // CI failures are read from annotations, which keep the first line of the message only.
+    await assert.rejects(spawnCapture(cmd('fail-saying-why')), (err: Error) => {
+      assert.true(err.message.startsWith('Process exited with code 3 after '), err.message);
+      assert.true(err.message.endsWith(' — Error: the actual reason'), 'the last line, uncoloured');
+      assert.false(err.message.includes('\n'), 'still one line');
+      return true;
+    });
+  });
+
   test('rejects with a CapturedError reporting the terminating signal when timed out', async (assert) => {
     // Long sleep + short timeout — spawnCapture sends SIGTERM, the child exits via signal,
     // and the rejection's `signal` field is what tells us "this was a timeout, not a crash."

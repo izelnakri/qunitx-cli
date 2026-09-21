@@ -11,6 +11,9 @@ if (mode === 'success') {
 } else if (mode === 'fail') {
   process.stdout.write('partial');
   process.exit(7);
+} else if (mode === 'fail-saying-why') {
+  process.stderr.write('some warning\n\u001b[31mError: the actual reason\u001b[39m\n\n');
+  process.exit(3);
 } else if (mode === 'sleep') {
   setTimeout(() => {}, 5_000);
 } else if (mode === 'two-chunks') {

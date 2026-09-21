@@ -698,7 +698,19 @@ function makeCapturedError(result: CapturedResult): CapturedError {
   const summary = result.signal
     ? `Process killed by ${result.signal} after ${result.duration.toFixed(0)} ms`
     : `Process exited with code ${result.code} after ${result.duration.toFixed(0)} ms`;
-  return Object.assign(new Error(summary), result) as CapturedError;
+  // The child's last word, on the same line: a CI failure is read from its annotation, which keeps
+  // one line of the message — and "exited with code 1 after 621 ms" alone says nothing about why.
+  const why = lastLineOf(result.stderr);
+  return Object.assign(new Error(why ? `${summary} — ${why}` : summary), result) as CapturedError;
+}
+
+/** The last non-blank line of `text`, without colour codes, capped for a one-line message. */
+function lastLineOf(text: string): string {
+  // deno-lint-ignore no-control-regex
+  const lines = text.replace(/\u001b\[[0-9;]*m/g, '').split('\n');
+  const last = lines.findLast((line) => line.trim() !== '')?.trim() ?? '';
+
+  return last.length > 300 ? `${last.slice(0, 300)}…` : last;
 }
 
 /**
