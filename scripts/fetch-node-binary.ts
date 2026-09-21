@@ -29,6 +29,13 @@ const execFileAsync = promisify(execFile);
 const CACHE = path.join('node_modules', '.cache', 'qunitx', 'node-hosts');
 
 /**
+ * Which C library the host links. nodejs.org builds against glibc only; the musl builds Alpine
+ * needs come from unofficial-builds.nodejs.org — run by the Node.js build team, listed on the
+ * download page, and published with the same SHASUMS256.txt this checks against.
+ */
+export type Libc = 'glibc' | 'musl';
+
+/**
  * What nodejs.org calls the archive for one version and target.
  *
  * Windows ships a `.zip`; everything else a `.tar.gz`. The `.tar.xz` is smaller and needs `xz`,
@@ -40,12 +47,18 @@ const CACHE = path.join('node_modules', '.cache', 'qunitx', 'node-hosts');
  * archiveNameFor('v24.19.0', 'linux', 'x64'); // 'node-v24.19.0-linux-x64.tar.gz'
  * archiveNameFor('v24.19.0', 'darwin', 'arm64'); // 'node-v24.19.0-darwin-arm64.tar.gz'
  * archiveNameFor('v24.19.0', 'win32', 'x64'); // 'node-v24.19.0-win-x64.zip'
+ * archiveNameFor('v24.19.0', 'linux', 'x64', 'musl'); // 'node-v24.19.0-linux-x64-musl.tar.gz'
  * ```
  */
-export function archiveNameFor(version: string, platform: string, arch: string): string {
+export function archiveNameFor(
+  version: string,
+  platform: string,
+  arch: string,
+  libc: Libc = 'glibc',
+): string {
   if (platform === 'win32') return `node-${version}-win-${arch}.zip`;
 
-  return `node-${version}-${platform}-${arch}.tar.gz`;
+  return `node-${version}-${platform}-${arch}${libc === 'musl' ? '-musl' : ''}.tar.gz`;
 }
 
 /**
@@ -56,10 +69,14 @@ export function archiveNameFor(version: string, platform: string, arch: string):
  *
  * archiveUrlFor('v24.19.0', 'node-v24.19.0-linux-x64.tar.gz');
  * // 'https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-x64.tar.gz'
+ * archiveUrlFor('v24.19.0', 'SHASUMS256.txt', 'musl');
+ * // 'https://unofficial-builds.nodejs.org/download/release/v24.19.0/SHASUMS256.txt'
  * ```
  */
-export function archiveUrlFor(version: string, archive: string): string {
-  return `https://nodejs.org/dist/${version}/${archive}`;
+export function archiveUrlFor(version: string, archive: string, libc: Libc = 'glibc'): string {
+  return libc === 'musl'
+    ? `https://unofficial-builds.nodejs.org/download/release/${version}/${archive}`
+    : `https://nodejs.org/dist/${version}/${archive}`;
 }
 
 /**
@@ -118,21 +135,22 @@ export async function fetchNodeBinary(
   version: string,
   platform: string,
   arch: string,
+  libc: Libc = 'glibc',
 ): Promise<string> {
-  const target = `${platform}-${arch}`;
+  const target = `${platform}-${arch}${libc === 'musl' ? '-musl' : ''}`;
   const kept = path.join(CACHE, version, target, platform === 'win32' ? 'node.exe' : 'node');
   if (await readable(kept)) return kept;
 
-  const archive = archiveNameFor(version, platform, arch);
-  const manifest = await get(archiveUrlFor(version, 'SHASUMS256.txt')).then((body) =>
+  const archive = archiveNameFor(version, platform, arch, libc);
+  const manifest = await get(archiveUrlFor(version, 'SHASUMS256.txt', libc)).then((body) =>
     body.toString('utf8'),
   );
   const expected = shaFor(manifest, archive);
   if (expected === null) {
-    throw new Error(`nodejs.org has no ${archive} for ${version} — check the version and target`);
+    throw new Error(`no ${archive} is published for ${version} — check the version and target`);
   }
 
-  const body = await get(archiveUrlFor(version, archive));
+  const body = await get(archiveUrlFor(version, archive, libc));
   const actual = createHash('sha256').update(body).digest('hex');
   if (actual !== expected) {
     throw new Error(`${archive} failed its checksum: expected ${expected}, got ${actual}`);
@@ -178,12 +196,14 @@ async function readable(file: string): Promise<boolean> {
   }
 }
 
-// `node scripts/fetch-node-binary.ts [version] [platform] [arch]` prints the path, which is what
-// the Makefile and the workflow interpolate. Defaults to this process's own version and target, so
-// the binary that gets published is built for the Node this repo is tested on.
+// `node scripts/fetch-node-binary.ts [version] [platform] [arch] [libc]` prints the path, which is
+// what the Makefile and the workflow interpolate. Defaults to this process's own version and
+// target, so the binary that gets published is built for the Node this repo is tested on.
 if (process.argv[1]?.endsWith('fetch-node-binary.ts')) {
-  const [version = process.version, platform = process.platform, arch = process.arch] =
+  const [version = process.version, platform = process.platform, arch = process.arch, libc] =
     process.argv.slice(2);
 
-  process.stdout.write(await fetchNodeBinary(version, platform, arch));
+  process.stdout.write(
+    await fetchNodeBinary(version, platform, arch, libc === 'musl' ? 'musl' : 'glibc'),
+  );
 }

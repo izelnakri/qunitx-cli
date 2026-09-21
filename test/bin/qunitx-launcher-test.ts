@@ -71,10 +71,24 @@ module('Bin | the host Node it builds on', { concurrency: true }, () => {
     assert.strictEqual(archiveNameFor('v24.19.0', 'win32', 'x64'), 'node-v24.19.0-win-x64.zip');
   });
 
+  test('a musl host is the same name with -musl on the end', (assert) => {
+    assert.strictEqual(
+      archiveNameFor('v24.19.0', 'linux', 'arm64', 'musl'),
+      'node-v24.19.0-linux-arm64-musl.tar.gz',
+    );
+  });
+
   test('the URL is the official dist path', (assert) => {
     assert.strictEqual(
       archiveUrlFor('v24.19.0', 'node-v24.19.0-linux-x64.tar.gz'),
       'https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-x64.tar.gz',
+    );
+  });
+
+  test('a musl host comes from unofficial-builds, which nodejs.org does not carry', (assert) => {
+    assert.strictEqual(
+      archiveUrlFor('v24.19.0', 'node-v24.19.0-linux-x64-musl.tar.gz', 'musl'),
+      'https://unofficial-builds.nodejs.org/download/release/v24.19.0/node-v24.19.0-linux-x64-musl.tar.gz',
     );
   });
 
