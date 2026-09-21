@@ -541,6 +541,29 @@ module('Setup | FileWatcher.handleWatchEvent', { concurrency: true }, () => {
 // ---------------------------------------------------------------------------
 
 module('Setup | FileWatcher.setup', { concurrency: true }, () => {
+  test('a remote lookup path is not watched, and does not drag in the whole project', async (assert) => {
+    // `toWatchableRoot` answers with the deepest EXISTING ancestor, and a URL has none — so it
+    // walks all the way up and falls back to `cwd`. Unfiltered, pointing a watch run at a URL
+    // would put one recursive fs.watch on the entire project, for a file that cannot change
+    // under us.
+    const config = asConfig({ fsTree: {}, projectRoot: process.cwd(), extensions: ['ts'] });
+    const { fileWatchers, killFileWatchers, ready } = FileWatcher.setup(
+      ['https://example.com/tests/', path.join(process.cwd(), 'test', 'fixtures')],
+      config,
+      () => {},
+      null,
+    );
+    try {
+      await ready;
+      const roots = Object.keys(fileWatchers);
+
+      assert.deepEqual(roots, [path.join(process.cwd(), 'test', 'fixtures')]);
+      assert.notIncludes(roots.join(' '), 'https://', 'no watcher for a URL');
+    } finally {
+      killFileWatchers();
+    }
+  });
+
   test('seeds config.state.watch.lastBuildEndMs at startup so the rescan has a baseline', async (assert) => {
     // The initial build runs from run.ts directly (not through handleWatchEvent), so without
     // this seed lastBuildEndMs would stay 0 after a failed initial build — and the macOS

@@ -6,6 +6,7 @@ import { pathExists } from './path-exists.ts';
 import { Task } from '../task/index.ts';
 import { readJsonCache } from './read-json-cache.ts';
 import type { Config, FSTree } from '../types.ts';
+import { isRemoteInput } from '../setup/remote-inputs.ts';
 
 // Persistent cross-run cache of the last run's failures, living beside tmp/test-timings.json.
 // Always literal `tmp/` (not config.output) so `--only-failed` finds it regardless of the
@@ -115,7 +116,9 @@ export async function filesToRerun(
   const scoped = hasInputTargets ? cache.files.filter((file) => file in fsTree) : cache.files;
   const existing: string[] = [];
   for (const file of scoped) {
-    if (await pathExists(file)) existing.push(file);
+    // A remote file is never on this disk, and asking whether it is would drop every URL from a
+    // re-run. It was reachable when it failed; whether it still is, is the run's business.
+    if (isRemoteInput(file) || (await pathExists(file))) existing.push(file);
   }
   return existing;
 }

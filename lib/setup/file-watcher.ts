@@ -8,6 +8,7 @@ import { setInterval, clearInterval, setTimeout, clearTimeout } from 'node:timer
 import { green, magenta, red, yellow } from '../utils/color.ts';
 import * as Reporter from '../reporters/index.ts';
 import { defaultProjectConfigValues } from './default-project-config-values.ts';
+import { isRemoteInput } from './remote-inputs.ts';
 import type { FSWatcher } from 'node:fs';
 import type { Config, FSTree } from '../types.ts';
 
@@ -228,7 +229,11 @@ export function setup(
   // base dir — and dedupe, so several globs under one tree share a single recursive watcher. Real
   // file/dir inputs pass through unchanged. The extension + fsTree filtering downstream still
   // decides which changes trigger a rerun, exactly as it does for a plain folder input.
-  const watchRoots = [...new Set(testFileLookupPaths.map(toWatchableRoot))];
+  // A remote input has no path to watch, and `toWatchableRoot` walks a path that does not exist
+  // up to `cwd` — which would hand fs.watch the whole project, recursively, on behalf of a file
+  // that cannot change under us.
+  const watchable = testFileLookupPaths.filter((lookupPath) => !isRemoteInput(lookupPath));
+  const watchRoots = [...new Set(watchable.map(toWatchableRoot))];
 
   for (const watchPath of watchRoots) {
     let ready = false;

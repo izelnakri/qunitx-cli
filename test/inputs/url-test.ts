@@ -152,6 +152,11 @@ module('Inputs | a URL', { concurrency: true }, () => {
     assert.exitCode(result, 0);
     // The scan fetches the source the same way the bundle does, so a URL is listable.
     assert.includes(result, 'adds up');
+    // And the location it prints is the URL, which is the whole point of printing one: it is
+    // meant to be pasted back as a line target. `path.relative` collapsed the `//` into `/`,
+    // and `http:/127.0.0.1:…` names nothing at all.
+    assert.includes(result, `${server.url}/tests/cart-test.js#`);
+    assert.notIncludes(result, server.url.replace('http://', 'http:/'));
   });
 });
 
