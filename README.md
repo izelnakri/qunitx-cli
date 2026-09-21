@@ -67,20 +67,20 @@ With Nix:
 nix profile install github:izelnakri/qunitx-cli
 ```
 
-Standalone binary — no Node or Deno required at runtime (Linux x64, macOS arm64, Windows x64):
+Standalone binary — no Node or Deno required at runtime (Linux x64/arm64, macOS arm64, Windows x64/arm64):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/izelnakri/qunitx-cli/main/install.sh | sh
 export PATH="$HOME/.qunitx:$PATH"
 ```
 
-The Linux binary needs glibc 2.27 or newer — any mainstream distribution — and nothing else.
-Alpine and other musl systems can't run it, and the installer says so rather than installing it.
-There, use npm on Node 24 with Alpine's Chromium; the JavaScript CLI runs as-is:
+On Linux it needs glibc 2.27 or newer, which covers any mainstream distribution. On Alpine and
+other musl systems the installer picks a musl build instead. It needs nothing installed but a
+browser:
 
 ```sh
-apk add chromium && npm install --save-dev qunitx-cli
-CHROME_BIN=/usr/bin/chromium-browser npx qunitx test/
+apk add chromium curl
+curl -fsSL https://raw.githubusercontent.com/izelnakri/qunitx-cli/main/install.sh | sh
 ```
 
 Already on Deno? `deno install` resolves the bootstrap which fetches the matching prebuilt binary on first run and caches it under `~/.cache/qunitx/`:
@@ -97,7 +97,8 @@ VERSION=v0.25.0 INSTALL_DIR=$HOME/.local/bin sh install.sh
 
 The script downloads the matching `qunitx-deno-<target>.tar.gz` (or `.zip` on
 Windows) from GitHub Releases — a `deno compile`d binary plus the matching
-esbuild sidecar — and unpacks both into `$INSTALL_DIR`. A system Chrome on
+esbuild sidecar — and unpacks both into `$INSTALL_DIR`. On musl it downloads
+`qunitx-<target>-musl.tar.gz` into `$INSTALL_DIR/qunitx-musl/` instead. A system Chrome on
 `PATH` (or `CHROME_BIN`) is the only remaining runtime dependency for the
 default `--browser=chromium`.
 
@@ -107,6 +108,7 @@ Build the same binary yourself from source:
 deno task build:binary       # → dist/qunitx for the host platform
 make build-deno              # same, plus copies the local @esbuild sidecar next to it
 make build-deno-all          # cross-compiles every supported platform
+make build-sea-musl          # the musl build, in an Alpine container (docker or podman)
 ```
 
 ### Upgrading
