@@ -12,6 +12,8 @@ import * as MetafileCache from '../../utils/metafile-cache.ts';
 import * as FailureCache from '../../utils/failure-cache.ts';
 import { isFilteredRun, buildQUnitFilterQuery } from '../../selection/filter.ts';
 import { qunitxRuntimePlugin } from '../../setup/qunitx-runtime-plugin.ts';
+import { isRemoteInput } from '../../setup/remote-inputs.ts';
+import { remoteModulePlugin } from '../../setup/remote-module-plugin.ts';
 import * as RunState from '../../setup/run-state.ts';
 import type { AffectedMetafile } from '../../utils/get-changed-files.ts';
 import type { Page } from 'playwright-core';
@@ -227,7 +229,11 @@ export async function buildTestBundle(config: Config): Promise<void> {
     // `import { jsx } from 'react/jsx-runtime'` for .tsx/.jsx files. Per-file overrides via
     // tsconfig's `jsxImportSource` or a `@jsxImportSource <pkg>` pragma cover Vue/Preact/Solid.
     jsx: 'automatic',
-    plugins: [qunitxRuntimePlugin(config.cwd), ...(config.plugins ?? [])],
+    plugins: [
+      remoteModulePlugin(config.cwd),
+      qunitxRuntimePlugin(config.cwd),
+      ...(config.plugins ?? []),
+    ],
     // Required for --changed/--since dep-graph filter on subsequent runs (cache
     // populates here, reads in Config.setup). Inputs map carries the full reverse-dep
     // graph; output cost is negligible.
@@ -588,7 +594,12 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
     // groupEntryPlugin must run first — it owns the virtual entry-point modules every other
     // plugin sees. User plugins follow and apply to the resolved test files just like in
     // single-group mode (`buildTestBundle`).
-    plugins: [groupEntryPlugin, qunitxRuntimePlugin(cwd), ...(groupConfigs[0].plugins ?? [])],
+    plugins: [
+      groupEntryPlugin,
+      remoteModulePlugin(cwd),
+      qunitxRuntimePlugin(cwd),
+      ...(groupConfigs[0].plugins ?? []),
+    ],
     nodePaths: nodePathsFrom(cwd),
     bundle: true,
     logLevel: 'silent',
@@ -697,7 +708,11 @@ function buildFilteredTests(
       target: esbuildTarget(config.browser),
       sourcemap,
       jsx: 'automatic',
-      plugins: [qunitxRuntimePlugin(config.cwd), ...(config.plugins ?? [])],
+      plugins: [
+        remoteModulePlugin(config.cwd),
+        qunitxRuntimePlugin(config.cwd),
+        ...(config.plugins ?? []),
+      ],
       footer: { js: 'window.dispatchEvent(new CustomEvent("qunitx:tests-ready"));' },
     },
     needsDisk,
@@ -1122,6 +1137,10 @@ export function reconcileUndeliveredResults(counter: Counter, result: QUnitResul
 // cwd. On Windows, absolute paths like "D:/..." are treated as bare module specifiers in stdin
 // content, so we must use relative paths instead.
 function toEsbuildImportPath(filePath: string, cwd: string): string {
+  // A URL is already the specifier esbuild wants; making it relative to `cwd` would turn it into
+  // a path on this disk, which is the one thing it is not.
+  if (isRemoteInput(filePath)) return filePath;
+
   const rel = path.relative(cwd, filePath);
   const normalized = rel.replace(/\\/g, '/');
   if (path.isAbsolute(rel)) return filePath.replace(/\\/g, '/');

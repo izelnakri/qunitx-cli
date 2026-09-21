@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { isRemoteInput } from '../setup/remote-inputs.ts';
 import { tokenize, type QueryToken } from './tokenize.ts';
 import { REPORTERS, type ReporterName } from '../reporters/types.ts';
 import { type Result, Failure } from '../result/index.ts';
@@ -338,10 +339,12 @@ function addInput(
   cwd: string,
   arg: string,
 ): void {
-  if (arg.endsWith('.html')) {
-    (result.htmlPaths ??= []).push(arg);
-    return;
-  }
+  // Before the `.html` fixture branch and before any path joining: a URL is neither a fixture
+  // this project serves nor something to resolve against `cwd`, and `path.join(cwd, 'https://x')`
+  // is a directory nobody has.
+  if (isRemoteInput(arg)) return addRemoteInput(result, inputs, arg);
+  else if (arg.endsWith('.html')) return void (result.htmlPaths ??= []).push(arg);
+
   // A trailing `#34` / `:34` narrows the run to the test at that line; the bare path is what
   // still goes into inputs, so discovery is unaffected.
   const { filePath, line } = splitLineTarget(arg);
@@ -428,6 +431,27 @@ function parseModule(value: string): string | false {
  * The `[^#:]` before the separator keeps the path non-empty, and requiring an all-digit
  * suffix leaves genuine `#`/`:` in filenames — and Windows drive letters — untouched.
  */
+/**
+ * A remote input, with `#34` still meaning the test on line 34.
+ *
+ * Only `#`, never `:`. A colon before digits is a PORT — `https://localhost:3000` would otherwise
+ * be a request for line 3000 of `https://localhost`, which is the kind of bug that is found in
+ * production rather than in review.
+ */
+function addRemoteInput(result: ParsedFlags, inputs: Set<string>, arg: string): void {
+  const match = /^(.*[^#])#(\d+)$/.exec(arg);
+  const line = match ? Number(match[2]) : 0;
+  const url = match && line > 0 ? (match[1] as string) : arg;
+
+  if (match && line > 0) {
+    result.lineTargets = result.lineTargets ?? {};
+    result.lineTargets[url] = (result.lineTargets[url] ?? []).concat(line);
+  } else {
+    (result.inputsWithoutLineTargets ??= []).push(url);
+  }
+  inputs.add(url);
+}
+
 function splitLineTarget(arg: string): { filePath: string; line: number | null } {
   const match = /^(.*[^#:])[#:](\d+)$/.exec(arg);
   if (!match) {

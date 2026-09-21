@@ -3,6 +3,12 @@ import path from 'node:path';
 import { Task } from '../task/index.ts';
 import * as Failure from '../result/failure.ts';
 import { defaultProjectConfigValues } from './default-project-config-values.ts';
+import {
+  expandRemoteGlob,
+  isRemoteGlob,
+  isRemoteInput,
+  remoteDirectoryPattern,
+} from './remote-inputs.ts';
 import type { FSTree } from '../types.ts';
 
 /**
@@ -73,6 +79,16 @@ export function build(
  */
 async function collectFiles(input: string, extensions: string[]): Promise<string[]> {
   const wanted = (name: string) => extensions.some((extension) => name.endsWith(`.${extension}`));
+
+  // A server has no `stat` and no `readdir`. A named URL is one file, exactly as a named path is
+  // one file whatever its extension; a pattern has to ask the directory to list itself.
+  if (isRemoteInput(input)) {
+    const cache = new Map<string, string>();
+    if (isRemoteGlob(input)) return await expandRemoteGlob(input, extensions, cache);
+    const directory = remoteDirectoryPattern(input);
+
+    return directory === null ? [input] : await expandRemoteGlob(directory, extensions, cache);
+  }
 
   if (isGlob(input)) {
     const names: string[] = [];
