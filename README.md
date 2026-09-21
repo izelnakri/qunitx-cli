@@ -74,9 +74,14 @@ curl -fsSL https://raw.githubusercontent.com/izelnakri/qunitx-cli/main/install.s
 export PATH="$HOME/.qunitx:$PATH"
 ```
 
-The Linux binaries are built on an official Node.js release, so they need glibc 2.28 or newer —
-older than any supported distribution — and nothing else. Alpine and other musl systems are not
-covered by them: install `qunitx-cli` from npm there and the JavaScript CLI runs instead.
+The Linux binary needs glibc 2.27 or newer — any mainstream distribution — and nothing else.
+Alpine and other musl systems can't run it, and the installer says so rather than installing it.
+There, use npm on Node 24 with Alpine's Chromium; the JavaScript CLI runs as-is:
+
+```sh
+apk add chromium && npm install --save-dev qunitx-cli
+CHROME_BIN=/usr/bin/chromium-browser npx qunitx test/
+```
 
 Already on Deno? `deno install` resolves the bootstrap which fetches the matching prebuilt binary on first run and caches it under `~/.cache/qunitx/`:
 
