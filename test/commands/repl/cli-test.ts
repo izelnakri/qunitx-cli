@@ -754,14 +754,20 @@ module('Commands | repl | values', { concurrency: true }, () => {
     });
 
     test('the prompt takes no for an answer, and gives the prompt back', async (assert) => {
-      const result = await editing('repl-scratch-declined', `printf '6 * 7\\n' > "$1"`, 'n');
+      // Its answer is a word that is not in the file, rather than `42`: the banner prints
+      // `http://localhost:1242` on a bad draw of the port, as it did for the aborted case below.
+      const result = await editing(
+        'repl-scratch-declined',
+        `printf "'declined' + '-ran'\\n" > "$1"`,
+        'n',
+      );
 
       assert.includes(
         result.stdout,
         'run 1 line from the scratchpad? [Y/n]',
         'it asks before running anything',
       );
-      assert.notIncludes(result.stdout, '42', 'and does not run it when told not to');
+      assert.notIncludes(result.stdout, 'declined-ran', 'and does not run it when told not to');
       // One Enter, not two. `define` draws the prompt when a command's `main` settles, so a
       // scratchpad that was fired and forgotten had its prompt drawn while the editor was still
       // opening — and nothing drew another after the answer. The session looked hung.
