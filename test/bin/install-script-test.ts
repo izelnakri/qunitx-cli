@@ -10,54 +10,91 @@ import '../helpers/custom-asserts.ts';
 const run = promisify(execFile);
 const INSTALLER = path.join(process.cwd(), 'install.sh');
 
-// `install.sh` ships a glibc binary. On Alpine it used to print "installed" and hand over a file
-// whose loader does not exist there — `No such file or directory`, the same silence as the NixOS
-// bug — and gcompat does not rescue it (`__res_init: symbol not found`). These drive the real
-// script with a stand-in `ldd`, so musl is simulated without a container or a download.
-module('Bin | install.sh on musl', { concurrency: true }, () => {
+// `install.sh` used to ship only a glibc binary, and on Alpine it printed "installed" and handed
+// over a file whose loader does not exist there. These drive the real script with a stand-in
+// `ldd` and a stand-in `curl` that serves a release built in the sandbox, so musl and the whole
+// install are exercised without a container or a network.
+const ARCH = process.arch === 'arm64' ? 'arm64' : 'x64';
+
+module('Bin | install.sh | which build it installs', { concurrency: true }, () => {
   if (process.platform !== 'linux') {
-    test('skipped: the libc check only runs on Linux', (assert) => {
+    test('skipped: the libc choice only happens on Linux', (assert) => {
       assert.ok(true);
     });
   }
 
   if (process.platform === 'linux') {
-    test('a musl system is refused before anything is downloaded', async (assert) => {
+    test('a musl system gets the musl build, in its own directory', async (assert) => {
       await using sandbox = await tempDir('install-musl');
       const result = await installer(sandbox.path, 'musl libc (x86_64)\nVersion 1.2.5');
 
-      assert.notStrictEqual(result.code, 0, 'it does not claim to have installed anything');
-      assert.includes(result.stderr, 'musl libc');
-      assert.includes(result.stderr, 'npm install --save-dev qunitx-cli', 'and says what works');
-      assert.notIncludes(result.stdout + result.stderr, 'fetching', 'nothing was downloaded');
-      assert.false(await exists(path.join(sandbox.path, 'bin', 'qunitx')));
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.includes(result.stdout, `qunitx-linux-${ARCH}-musl.tar.gz`);
+      const bin = path.join(sandbox.path, 'bin');
+      assert.strictEqual(await fs.readlink(path.join(bin, 'qunitx')), 'qunitx-musl/qunitx');
+      assert.true(await exists(path.join(bin, 'qunitx-musl', 'lib', 'libstdc++.so.6')));
+      assert.true(await exists(path.join(bin, 'qunitx-musl', 'node_modules', 'playwright-core')));
+      assert.false(await exists(path.join(bin, 'lib')), 'nothing loose beside other binaries');
     });
 
-    test('a glibc system goes straight past the check', async (assert) => {
+    test('a glibc system gets the deno build', async (assert) => {
       await using sandbox = await tempDir('install-glibc');
       const result = await installer(sandbox.path, 'ldd (GNU libc) 2.40');
 
-      assert.notIncludes(result.stderr, 'musl', 'no refusal');
-      // The stand-in curl fails on purpose, so reaching it is the proof the check let this through.
-      assert.includes(result.stdout, 'fetching');
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.includes(result.stdout, `qunitx-deno-linux-${ARCH}.tar.gz`);
+      assert.strictEqual(
+        await fs.readFile(path.join(sandbox.path, 'bin', 'qunitx'), 'utf8'),
+        'deno',
+      );
+    });
+
+    test('the deno build over a musl install replaces the link, not what it points at', async (assert) => {
+      await using sandbox = await tempDir('install-switch');
+      await installer(sandbox.path, 'musl libc (x86_64)');
+      await installer(sandbox.path, 'ldd (GNU libc) 2.40');
+
+      const bin = path.join(sandbox.path, 'bin');
+      assert.false((await fs.lstat(path.join(bin, 'qunitx'))).isSymbolicLink());
+      assert.strictEqual(
+        await fs.readFile(path.join(bin, 'qunitx-musl', 'qunitx'), 'utf8'),
+        'musl',
+        'cp did not write through the old link',
+      );
     });
   }
 });
 
 /**
- * Runs the real installer with `ldd` answering as `lddSays`, a curl that fails at once, and every
- * path it could write confined to the sandbox.
+ * Runs the real installer with `ldd` answering as `lddSays` and a `curl` that serves the one
+ * release asset the script asks for from the sandbox. Every path it could write is inside it.
  */
 async function installer(
   sandbox: string,
   lddSays: string,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   const shims = path.join(sandbox, 'shims');
-  await fs.mkdir(shims, { recursive: true });
-  await fs.writeFile(path.join(shims, 'ldd'), `#!/bin/sh\nprintf '%s\\n' '${lddSays}' >&2\n`);
-  await fs.writeFile(path.join(shims, 'curl'), '#!/bin/sh\nexit 22\n');
-  await fs.chmod(path.join(shims, 'ldd'), 0o755);
-  await fs.chmod(path.join(shims, 'curl'), 0o755);
+  const release = path.join(sandbox, 'release');
+  // Only `-o <file> <url>` downloads are served; anything else (the latest-release lookup) fails,
+  // since every run here pins VERSION.
+  const scripts = {
+    ldd: `#!/bin/sh\nprintf '%s\\n' '${lddSays}' >&2\n`,
+    curl:
+      `#!/bin/sh\nfor a; do case "$a" in https://*) url="$a";; esac; done\n` +
+      `prev=""; for a; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\n` +
+      `[ -n "\${out:-}" ] || exit 22\ncp "${release}/\${url##*/}" "$out" || exit 22\n`,
+  };
+  await Promise.all([
+    buildRelease(release),
+    fs.mkdir(shims, { recursive: true }).then(() =>
+      Promise.all(
+        Object.entries(scripts).map(async ([name, script]) => {
+          await fs.writeFile(path.join(shims, name), script);
+          await fs.chmod(path.join(shims, name), 0o755);
+        }),
+      ),
+    ),
+  ]);
 
   try {
     const done = await run('sh', [INSTALLER], {
@@ -76,6 +113,39 @@ async function installer(
 
     return { code: failed.code, stdout: failed.stdout, stderr: failed.stderr };
   }
+}
+
+/** Both Linux assets for this arch, laid out as the release workflow packs them. */
+async function buildRelease(release: string): Promise<void> {
+  const deno = path.join(release, 'src', `qunitx-deno-linux-${ARCH}`);
+  const musl = path.join(release, 'src', `qunitx-linux-${ARCH}-musl`);
+  await Promise.all(
+    [deno, path.join(musl, 'lib'), path.join(musl, 'node_modules', 'playwright-core')].map((dir) =>
+      fs.mkdir(dir, { recursive: true }),
+    ),
+  );
+  await Promise.all(
+    Object.entries({
+      [path.join(deno, 'qunitx')]: 'deno',
+      [path.join(deno, 'esbuild')]: '',
+      [path.join(musl, 'qunitx')]: 'musl',
+      [path.join(musl, 'esbuild')]: '',
+      [path.join(musl, 'lib', 'libstdc++.so.6')]: '',
+    }).map(([file, content]) => fs.writeFile(file, content)),
+  );
+  // Each archive reads only its own directory, so the two are packed side by side.
+  await Promise.all(
+    [deno, musl].map((dir) => {
+      const name = path.basename(dir);
+      return run('tar', [
+        'czf',
+        path.join(release, `${name}.tar.gz`),
+        '-C',
+        path.dirname(dir),
+        name,
+      ]);
+    }),
+  );
 }
 
 async function exists(file: string): Promise<boolean> {
