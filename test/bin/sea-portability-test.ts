@@ -20,7 +20,11 @@ module('Bin | SEA portability | which interpreters travel', { concurrency: true 
   test('the standard loaders are portable', (assert) => {
     assert.true(isPortableInterpreter('/lib64/ld-linux-x86-64.so.2'), 'glibc x64');
     assert.true(isPortableInterpreter('/lib/ld-linux-aarch64.so.1'), 'glibc arm64');
-    assert.true(isPortableInterpreter('/lib/ld-musl-x86-64.so.1'), 'musl x64');
+    // musl spells its x64 loader with an underscore, unlike glibc. The hyphenated spelling was
+    // listed here once, and refused the musl build it was meant to let through.
+    assert.true(isPortableInterpreter('/lib/ld-musl-x86_64.so.1'), 'musl x64');
+    assert.true(isPortableInterpreter('/lib/ld-musl-aarch64.so.1'), 'musl arm64');
+    assert.false(isPortableInterpreter('/lib/ld-musl-x86-64.so.1'), 'a loader no system has');
   });
 
   test('a store path is not, which is the whole point', (assert) => {
