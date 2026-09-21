@@ -3,7 +3,11 @@
 LEVEL ?= patch
 REGRESSION_THRESHOLD ?= 26
 
-.PHONY: bench bench-check bench-print bench-typecheck bench-update build build-deno build-deno-all build-sea check coverage coverage-report demo dev docs fix fmt format help lint lint-docs release smoke-deno smoke-sea test test-all-browsers test-chrome test-debug test-firefox test-release test-webkit vendor
+# Which platform package this machine builds. Recursively expanded, so `node` runs only for
+# the targets that actually use it rather than on every `make`.
+SEA_TARGET = $(shell node -p "['darwin', 'linux'].includes(process.platform) ? process.platform + '-' + process.arch : ''")
+
+.PHONY: bench bench-check bench-print bench-typecheck bench-update build build-deno build-deno-all build-sea check coverage coverage-report demo dev docs fix fmt format help lint lint-docs release smoke-deno smoke-sea test test-all-browsers test-chrome test-debug test-firefox publish-sea test-release test-webkit vendor
 
 bench:
 	deno task bench:update
@@ -72,20 +76,27 @@ build-deno-all:
 	deno compile --allow-all --no-check --target aarch64-apple-darwin      --include templates --include lib --include package.json --output dist/qunitx-darwin-arm64    cli.ts
 	deno compile --allow-all --no-check --target x86_64-pc-windows-msvc    --include templates --include lib --include package.json --output dist/qunitx-windows-x64.exe cli.ts
 
-# Builds a Node.js SEA binary for the current platform, places it in the
-# matching npm/<target>/bin/ directory, and publishes that platform package.
-# Automatically detects linux-x64, linux-arm64, darwin-arm64, darwin-x64.
+# Builds a Node.js SEA binary for the current platform and leaves it in the matching
+# npm/<target>/bin/ directory. Does NOT publish — `make publish-sea` does that.
+#
+# The host Node is DOWNLOADED from nodejs.org rather than copied from this machine. Copying
+# `process.execPath` made the published binary a property of the machine that released it: on
+# NixOS its ELF interpreter lives in /nix/store, so `execve` failed on every other distribution
+# with no output at all. See scripts/fetch-node-binary.ts; smoke-sea is the gate that keeps it
+# true. Nothing below this line may be a bare `#` comment — the recipe is one backslash-continued
+# shell command, and a comment inside it silently splits that into two.
+#
+# The two were one target, and that is how a binary runnable on exactly one machine shipped
+# for months: there was no way to build the artifact and look at it without publishing it.
 build-sea:
 # The whole recipe is one shell, so a trap covers the paths `||` cannot: Ctrl-C, SIGTERM, a killed
 # terminal. Without it an interrupted build left sea-entry.cjs, sea-config.json, sea.blob and
 # qunitx-sea in the repo root as untracked debris, which the next release then reported as
 # "uncommitted changes" — noise that looks like a real problem mid-release.
 	@trap 'rm -f sea-entry.cjs sea-config.json sea.blob qunitx-sea' INT TERM HUP; \
+	TARGET="$(SEA_TARGET)"; \
+	if [ -z "$$TARGET" ]; then echo "Unsupported platform for a SEA build" >&2 && exit 1; fi; \
 	NODE_PLATFORM=$$(node -p "process.platform"); \
-	NODE_ARCH=$$(node -p "process.arch"); \
-	if [ "$$NODE_PLATFORM" = "darwin" ]; then TARGET="darwin-$$NODE_ARCH"; \
-	elif [ "$$NODE_PLATFORM" = "linux" ]; then TARGET="linux-$$NODE_ARCH"; \
-	else echo "Unsupported platform: $$NODE_PLATFORM-$$NODE_ARCH" && exit 1; fi; \
 	echo "Building SEA for $$TARGET..."; \
 	PREAMBLE=';(function(){if(!process.env.ESBUILD_BINARY_PATH){var path=require("path"),fs=require("fs");["esbuild","esbuild.exe"].forEach(function(n){var p=path.join(path.dirname(process.execPath),n);try{fs.accessSync(p,fs.constants.X_OK);process.env.ESBUILD_BINARY_PATH=p;}catch(_){}});}})();'; \
 	npx esbuild cli.ts --bundle --platform=node --format=cjs --banner:js="$$PREAMBLE" \
@@ -95,9 +106,10 @@ build-sea:
 	  --log-override:empty-import-meta=silent \
 	  --log-override:require-resolve-not-external=silent; \
 	node scripts/write-sea-config.js; \
-	node --experimental-sea-config sea-config.json; \
+	HOST=$$(node scripts/fetch-node-binary.ts); \
+	"$$HOST" --experimental-sea-config sea-config.json; \
 	rm -f qunitx-sea; \
-	cp "$$(node --input-type=commonjs -e 'process.stdout.write(process.execPath)')" qunitx-sea; \
+	cp "$$HOST" qunitx-sea; \
 	chmod u+w qunitx-sea; \
 	codesign --remove-signature qunitx-sea 2>/dev/null || true; \
 	if [ "$$NODE_PLATFORM" = "darwin" ]; then \
@@ -115,8 +127,14 @@ build-sea:
 	$(MAKE) smoke-sea TARGET=$$TARGET || { rm -f sea-entry.cjs sea-config.json sea.blob qunitx-sea; exit 1; }; \
 	VERSION=$$(node -p 'require("./package.json").version'); \
 	node scripts/set-pkg-version.js npm/$$TARGET/package.json $$VERSION; \
-	npm publish ./npm/$$TARGET --access public; \
-	rm -f sea-entry.cjs sea-config.json sea.blob qunitx-sea
+	rm -f sea-entry.cjs sea-config.json sea.blob qunitx-sea; \
+	echo "build-sea: npm/$$TARGET/bin is ready — 'make publish-sea' publishes it"
+
+# Publishes what build-sea left behind.
+publish-sea: build-sea
+	@TARGET="$(SEA_TARGET)"; \
+	if [ -z "$$TARGET" ]; then echo "Unsupported platform for a SEA build" >&2 && exit 1; fi; \
+	npm publish ./npm/$$TARGET --access public
 
 # Everything that answers in seconds. Split out so `release` can run it before the minutes-long
 # gates: a formatting slip should not cost a bench run and two full suites to discover.
@@ -161,7 +179,8 @@ help:
 	@echo "  build           Build the project"
 	@echo "  build-deno      Build a Deno-compiled binary for the local platform into dist/qunitx"
 	@echo "  build-deno-all  Cross-compile Deno binaries for linux/macos/windows × x64/arm64"
-	@echo "  build-sea       Build SEA binary for the local platform and publish its npm package"
+	@echo "  build-sea       Build + smoke the SEA binary for this platform (no publish)"
+	@echo "  publish-sea     build-sea, then publish the platform package to npm"
 	@echo "  check           Format + lint + bench-typecheck + tests"
 	@echo "  coverage        Run tests with coverage report"
 	@echo "  demo            Regenerate docs/demo.gif"
@@ -297,7 +316,7 @@ release:
 # that never started rather than one that half-finished.
 	node scripts/stage-jsr-library.ts
 	cd jsr && deno publish --dry-run --allow-dirty
-	$(MAKE) build-sea
+	$(MAKE) publish-sea
 	@NODE_PLATFORM=$$(node -p "process.platform"); \
 	NODE_ARCH=$$(node -p "process.arch"); \
 	if [ "$$NODE_PLATFORM" = "darwin" ]; then TARGET="darwin-$$NODE_ARCH"; \
@@ -355,17 +374,14 @@ smoke-deno:
 # TARGET is auto-detected from the host platform when not passed in.
 smoke-sea:
 	@TARGET="$(TARGET)"; \
-	if [ -z "$$TARGET" ]; then \
-	  NODE_PLATFORM=$$(node -p "process.platform"); NODE_ARCH=$$(node -p "process.arch"); \
-	  if [ "$$NODE_PLATFORM" = "darwin" ]; then TARGET="darwin-$$NODE_ARCH"; \
-	  elif [ "$$NODE_PLATFORM" = "linux" ]; then TARGET="linux-$$NODE_ARCH"; \
-	  else echo "smoke-sea: unsupported platform $$NODE_PLATFORM-$$NODE_ARCH" >&2; exit 1; fi; \
-	fi; \
+	if [ -z "$$TARGET" ]; then TARGET="$(SEA_TARGET)"; fi; \
+	if [ -z "$$TARGET" ]; then echo "smoke-sea: unsupported platform" >&2; exit 1; fi; \
 	SEA=$$(pwd)/npm/$$TARGET/bin/qunitx; \
 	ESBUILD=$$(pwd)/node_modules/@esbuild/$$TARGET/bin/esbuild; \
 	if [ ! -x "$$SEA" ]; then echo "smoke-sea: $$SEA not found (run make build-sea first)" >&2; exit 1; fi; \
 	echo "Smoking SEA binary at $$SEA..."; \
 	OUT=tmp/sea-smoke-$$$$; FAIL=0; \
+	node scripts/check-sea-portability.ts "$$SEA"                                      || { echo "  ✗ portability" >&2; FAIL=1; }; \
 	"$$SEA" --version >/dev/null                                                      || { echo "  ✗ --version" >&2; FAIL=1; }; \
 	"$$SEA" daemon 2>&1 | grep -q "Usage: qunitx daemon"                              || { echo "  ✗ daemon (no args)" >&2; FAIL=1; }; \
 	ESBUILD_BINARY_PATH=$$ESBUILD "$$SEA" daemon start >/dev/null                     || { echo "  ✗ daemon start" >&2; FAIL=1; }; \

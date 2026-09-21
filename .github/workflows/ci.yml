@@ -763,13 +763,19 @@ jobs:
               'test.js': 'templates/test.js'
             }
           }, null, 2));"
-          node --experimental-sea-config sea-config.json
+          # Built BY the host it will be injected into: the blob carries a V8 code cache, and a
+          # cache made by a different Node build is rejected at startup — a warning on every run
+          # and the startup saving lost.
+          "$(node scripts/fetch-node-binary.ts)" --experimental-sea-config sea-config.json
 
       - name: Inject blob into Node binary (Unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          cp "$(node --input-type=commonjs -e 'process.stdout.write(process.execPath)')" qunitx
+          # An official build from nodejs.org rather than the runner's own Node, so a binary
+          # built here and one built by `make build-sea` on a maintainer's machine are the
+          # same artifact. See scripts/fetch-node-binary.ts.
+          cp "$(node scripts/fetch-node-binary.ts)" qunitx
           codesign --remove-signature qunitx 2>/dev/null || true
           if [ "$(uname)" = "Darwin" ]; then
             npx --yes postject qunitx NODE_SEA_BLOB sea.blob \
@@ -786,10 +792,17 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $nodePath = node --input-type=commonjs -e "process.stdout.write(process.execPath)"
+          $nodePath = node scripts/fetch-node-binary.ts
           Copy-Item $nodePath qunitx.exe
           npx --yes postject qunitx.exe NODE_SEA_BLOB sea.blob `
             --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+
+      # The check that would have caught a binary runnable on one machine only. Cheap, and placed
+      # before packaging so a bad artifact is never uploaded.
+      - name: Verify the binary can start anywhere
+        if: runner.os == 'Linux'
+        shell: bash
+        run: node scripts/check-sea-portability.ts qunitx
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
