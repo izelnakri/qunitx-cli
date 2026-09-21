@@ -2,7 +2,7 @@ import nodeRepl, { type REPLServer } from 'node:repl';
 import process from 'node:process';
 import readline from 'node:readline';
 import { spawn } from 'node:child_process';
-import { PassThrough } from 'node:stream';
+import { PassThrough, type Readable } from 'node:stream';
 import * as Args from '../../args/index.ts';
 import * as Config from '../../setup/config.ts';
 import * as Reporter from '../../reporters/index.ts';
@@ -484,7 +484,7 @@ async function pipe(
     ready.resolve();
   };
 
-  for await (const line of readline.createInterface({ input: source, crlfDelay: Infinity })) {
+  for await (const line of linesOf(source)) {
     await ready.promise;
     ready = deferred();
     input.write(`${line}\n`);
@@ -492,6 +492,28 @@ async function pipe(
   // The last line's answer still has to be printed, so EOF waits for it.
   await ready.promise;
   input.end();
+}
+
+/**
+ * The lines of `source`, ending when it does — including when it ended before anyone asked.
+ *
+ * readline waits for an `end` event, and a stream emits that once: a stdin that reached EOF while
+ * the browser was still starting leaves readline waiting forever. Deno on Windows ends an empty
+ * piped stdin that early, and `qunitx repl < /dev/null` hung there until the test timeout killed it.
+ *
+ * ```ts
+ * import { Readable } from 'node:stream';
+ * import { linesOf } from './index.ts';
+ *
+ * const lines = [];
+ * for await (const line of linesOf(Readable.from(['a\nb\n']))) lines.push(line);
+ * lines; // ['a', 'b']
+ * ```
+ */
+export function linesOf(source: NodeJS.ReadableStream): AsyncIterable<string> {
+  if ((source as Readable).readableEnded) return (async function* () {})();
+
+  return readline.createInterface({ input: source, crlfDelay: Infinity });
 }
 
 /** A promise with its resolver, for "wake me when the REPL wants the next line". */
