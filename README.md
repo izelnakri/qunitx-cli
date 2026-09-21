@@ -74,6 +74,10 @@ curl -fsSL https://raw.githubusercontent.com/izelnakri/qunitx-cli/main/install.s
 export PATH="$HOME/.qunitx:$PATH"
 ```
 
+The Linux binaries are built on an official Node.js release, so they need glibc 2.28 or newer —
+older than any supported distribution — and nothing else. Alpine and other musl systems are not
+covered by them: install `qunitx-cli` from npm there and the JavaScript CLI runs instead.
+
 Already on Deno? `deno install` resolves the bootstrap which fetches the matching prebuilt binary on first run and caches it under `~/.cache/qunitx/`:
 
 ```sh
@@ -795,7 +799,20 @@ make test-webkit                # run browser tests with WebKit
 make test-all-browsers          # run full suite on all three browsers
 make demo                       # regenerate docs/demo.gif
 make release LEVEL=patch        # bump version, update changelog, tag, push
+make build-sea                  # build + smoke this platform's SEA binary (no publish)
+make publish-sea                # …and publish its npm platform package
 ```
+
+The SEA host — the Node executable the bundle is injected into — is **downloaded from nodejs.org**
+by `scripts/fetch-node-binary.ts`, checked against that release's `SHASUMS256.txt`, and cached.
+It is deliberately not this machine's `process.execPath`: doing that makes the published binary a
+property of the machine that built it. Released from NixOS, the npm platform package named an ELF
+interpreter inside `/nix/store`, so `execve` failed on every other distribution — exit 127 from a
+shell, and no output at all to go on.
+
+`make smoke-sea` gates on it (`scripts/check-sea-portability.ts`), and so does CI before it
+packages anything. `make build-sea` no longer publishes, so the artifact can be built and looked
+at without cutting a release — which is how the above went unnoticed for months.
 
 For a tight TDD loop on this repo (or any consuming project), run `qunitx daemon start` once at the top of your session — every subsequent `qunitx` invocation reuses the warm Chrome and esbuild context, roughly halving the wait-per-iteration. AI/LLM coding agents benefit even more, since their inner loop is dozens of `qunitx <file>` invocations per feature. Caveat: agents running inside containers or CI-style environments (GitHub Actions Copilot, sandboxed coding agents) often have `CI=1` set, which bypasses the daemon by default — set `QUNITX_DAEMON=1` in those environments to opt back in.
 
