@@ -336,8 +336,21 @@ function saidOutLoud(error: unknown): string {
  * message — `error sending request for url (…): client error (Connect): tcp connect error:
  * Connection refused (os error 111)`. That is all true and none of it is worth printing at a
  * prompt, so the condition is read out of the words and said the same way on both.
+ *
+ * And the words are the OPERATING SYSTEM's, not Deno's: on Windows the same refusal arrives as
+ * `No connection could be made because the target machine actively refused it. (os error 10061)`,
+ * which says "refused" without ever saying "connection refused". The Windows sentences are listed
+ * beside the Unix ones for that reason.
+ *
+ * ```ts
+ * import { namedInWords } from './remote-inputs.ts';
+ *
+ * namedInWords('tcp connect error: Connection refused (os error 111)'); // 'connection refused'
+ * namedInWords('the target machine actively refused it. (os error 10061)'); // 'connection refused'
+ * namedInWords('something nobody has named'); // null
+ * ```
  */
-function namedInWords(message: string): string | null {
+export function namedInWords(message: string): string | null {
   const lowered = message.toLowerCase();
   for (const [phrase, said] of PHRASES) {
     if (lowered.includes(phrase)) return said;
@@ -349,6 +362,11 @@ function namedInWords(message: string): string | null {
 /** Ordered, so the more specific phrase wins where two could match. */
 const PHRASES: ReadonlyArray<readonly [string, string]> = [
   ['connection refused', 'connection refused'],
+  // Windows, which words each of these its own way (WSAECONNREFUSED, WSAECONNRESET, …).
+  ['actively refused', 'connection refused'],
+  ['forcibly closed by the remote host', 'connection reset'],
+  ['no such host is known', 'no such host'],
+  ['did not properly respond after a period of time', 'connection timed out'],
   ['connection reset', 'connection reset'],
   ['failed to lookup address', 'no such host'],
   ['name or service not known', 'no such host'],
