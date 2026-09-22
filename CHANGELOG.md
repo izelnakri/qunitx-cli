@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.37.2] - 2026-09-22
+[`v0.37.1...v0.37.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.37.1...v0.37.2)
+
+### Bug Fixes
+- The launcher test plants its broken binary for the host's architecture — 2026-09-22 by [@izelnakri](https://github.com/izelnakri) ([`5d18f18`](https://github.com/izelnakri/qunitx-cli/commit/5d18f182d8dc324ee892ba13ed3dd1409cadba29))
+
 ## [0.37.1] - 2026-09-22
 [`v0.37.0...v0.37.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.37.0...v0.37.1)
 
