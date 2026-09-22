@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.37.1] - 2026-09-22
+[`v0.37.0...v0.37.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.37.0...v0.37.1)
+
+### Bug Fixes
+- The v0.37.0 release failures — a port race in tests, and Windows unpacking with the wrong tar — 2026-09-22 by [@izelnakri](https://github.com/izelnakri) ([`51e21c8`](https://github.com/izelnakri/qunitx-cli/commit/51e21c854f63b609e9295f3c77952d7418b749cc))
+
+### Documentation
+- Lead with the one-liner, and lay it out for someone arriving cold — 2026-09-22 by [@izelnakri](https://github.com/izelnakri) ([`c41d31e`](https://github.com/izelnakri/qunitx-cli/commit/c41d31ebb7afd50d96ddfa46f0d108ada9769c4b))
+
 ## [0.37.0] - 2026-09-22
 [`v0.36.0...v0.37.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.36.0...v0.37.0)
 
