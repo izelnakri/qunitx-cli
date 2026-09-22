@@ -6,109 +6,149 @@
 [![npm downloads](https://img.shields.io/npm/dm/qunitx-cli)](https://www.npmjs.com/package/qunitx-cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Browser-based test runner for [QUnitX](https://github.com/izelnakri/qunitx) — bundles your JS/TS tests
-with esbuild, runs them in a headless browser via [Playwright](https://playwright.dev), and streams TAP
-output to the terminal.
+Run your JavaScript and TypeScript tests and **code** in a real browser, from the terminal.
+qunitx-cli bundles [QUnitX](https://github.com/izelnakri/qunitx) tests with esbuild, runs them in
+headless Chrome, Firefox or WebKit through [Playwright](https://playwright.dev), and streams TAP
+output as they finish. It also provides an advanced terminal [REPL](#repl) that runs in Google
+Chrome, and you can view the same session from your browser: what you declare at the prompt is live
+in that page's DevTools.
 
 ![qunitx-cli demo](docs/demo.gif)
 
-## Features
-
-- Runs `.js`, `.ts`, `.jsx`, and `.tsx` test files in headless Chrome, Firefox, or WebKit (Playwright + esbuild)
-- TypeScript and JSX work with zero configuration — esbuild handles transpilation, including the React 17+ automatic JSX runtime
-- Bring your own esbuild plugins through `package.json` for `.vue`, `.svelte`, and other custom loaders
-- Inline source maps for accurate stack traces pointing to original source files
-- Streams TAP-formatted output to the terminal in real time
-- Concurrent mode (default) splits test files across all CPU cores for fast parallel runs
-- `--watch` mode re-runs affected tests on file change
-- `--failFast` stops the run after the first failing test
-- `--only-failed` / `-f` re-runs only the test files that failed on the previous run (cached in `tmp/.qunitx-last-failures.json`)
-- `--filter` / `-t` / `--module` / `-m` / `-n` — one test filter, five spellings, matched against `"Module: test name"`: substring, `/regex/`, `/regex/i`, or `!` to invert
-- `--search` / `-s` / `--print` / `--preview` lists the tests a filter matches and exits, without running them (no browser — instant)
-- `file.ts#34` / `file.ts:34` runs just the test at that line — or the whole module, when the line is a `module(...)`
-- `--debug` prints the local server URL and pipes browser console to stdout
-- `--open` / `-o` opens the test output in the same browser the tests run in as soon as the bundle is ready; `--open=brave` opens in a specific binary instead
-- `--before` / `--after` hook scripts for server setup and teardown
-- `--timeout` controls the maximum ms to wait for the full suite to finish
-- `--port` / `-p` defaults to 1234 and auto-increments if taken; fails fast if an explicit port is unavailable
-- `--browser` flag to run tests in Chromium, Firefox, or WebKit
-- `--reporter` picks the stdout format: `tap` (default), `spec`, `dot`, or `github` (annotates failures on the PR diff)
-- `--junit` writes a JUnit XML report for CI dashboards, alongside the normal terminal output
-- `--coverage` reports V8 line coverage (terminal summary, plus optional `lcov` and `html` reports)
-- `--version` / `-v` prints the installed version
-- [`qunitx repl`](#repl) — a prompt that evaluates in a real Chrome page: the DOM, `fetch`, and `test(...)` running for real as you type
-- [JavaScript API](#javascript-api) — `await test('test/')` returns the results as data, `await run('seed.ts')` executes one script; silent by default, with `watch`, `search`, custom reporters and daemon control. On npm and JSR (`jsr:@izelnakri/qunitx-cli/api`)
-- Optional daemon mode (`qunitx daemon start`) keeps Chrome and the esbuild context warm across runs — roughly halves the wall-clock time of repeated invocations
-- Docker image for zero-install CI usage
-
-## Installation
-
-Requires Node.js >= 24 or Deno >= 2.7.
-
-```sh
-npm install --save-dev qunitx-cli
-```
-
-Or run without installing:
-
-```sh
-npx qunitx test/**/*.js
-```
-
-With Docker — no install needed:
-
-```sh
-docker run --rm -v "$(pwd):/code" -w /code ghcr.io/izelnakri/qunitx-cli:latest npx qunitx test/**/*.js
-```
-
-With Nix:
-
-```sh
-nix profile install github:izelnakri/qunitx-cli
-```
-
-Standalone binary — no Node or Deno required at runtime (Linux x64/arm64, macOS arm64, Windows x64/arm64):
+## Quick start
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/izelnakri/qunitx-cli/main/install.sh | sh
 export PATH="$HOME/.qunitx:$PATH"
 ```
 
-On Linux it needs glibc 2.27 or newer, which covers any mainstream distribution. On Alpine and
-other musl systems the installer picks a musl build instead. It needs nothing installed but a
-browser:
+Then, in any project with a `package.json`:
 
 ```sh
-apk add chromium curl
-curl -fsSL https://raw.githubusercontent.com/izelnakri/qunitx-cli/main/install.sh | sh
+qunitx new test/example-test.js   # writes a sample test
+qunitx test/                      # runs everything under test/
 ```
 
-Already on Deno? `deno install` resolves the bootstrap which fetches the matching prebuilt binary on first run and caches it under `~/.cache/qunitx/`:
+It needs Chrome or Chromium on your `PATH` (or `CHROME_BIN` pointing at one), and nothing else.
+Rather use npm? `npm install --save-dev qunitx-cli`, then `npx qunitx test/`. Every other way in is
+under [Installation](#installation).
+
+## Contents
+
+- [Features](#features)
+- [Installation](#installation) · [Upgrading](#upgrading)
+- [Writing tests](#writing-tests) · [Usage](#usage) · [CLI reference](#cli-reference)
+- [Configuration](#configuration) · [Environment variables](#environment-variables) ·
+  [JSX / TSX](#jsx--tsx) · [esbuild plugins](#esbuild-plugins)
+- [REPL](#repl) · [Running a script](#running-a-script) · [JavaScript API](#javascript-api) ·
+  [Daemon mode](#daemon-mode)
+- [JUnit reports](#junit-reports) · [Code coverage](#code-coverage) · [Timezone](#timezone)
+- [Development](#development)
+
+## Features
+
+**Running tests**
+
+- Runs `.js`, `.ts`, `.jsx`, and `.tsx` test files in headless Chrome, Firefox, or WebKit (Playwright + esbuild)
+- TypeScript and JSX work with zero configuration — esbuild handles transpilation, including the React 17+ automatic JSX runtime
+- Bring your own esbuild plugins through `package.json` for `.vue`, `.svelte`, and other custom loaders
+- Inline source maps for accurate stack traces pointing to original source files
+- Concurrent mode (default) splits test files across all CPU cores for fast parallel runs
+- `--watch` mode re-runs affected tests on file change
+- `--browser` flag to run tests in Chromium, Firefox, or WebKit
+- `--before` / `--after` hook scripts for server setup and teardown
+- `--timeout` controls the maximum ms to wait for the full suite to finish
+- `--port` / `-p` defaults to 1234 and auto-increments if taken; fails fast if an explicit port is unavailable
+- Optional daemon mode (`qunitx daemon start`) keeps Chrome and the esbuild context warm across runs — roughly halves the wall-clock time of repeated invocations
+- Docker image for zero-install CI usage
+
+**Choosing what runs**
+
+- `--failFast` stops the run after the first failing test
+- `--only-failed` / `-f` re-runs only the test files that failed on the previous run (cached in `tmp/.qunitx-last-failures.json`)
+- `--filter` / `-t` / `--module` / `-m` / `-n` — one test filter, five spellings, matched against `"Module: test name"`: substring, `/regex/`, `/regex/i`, or `!` to invert
+- `--search` / `-s` / `--print` / `--preview` lists the tests a filter matches and exits, without running them (no browser — instant)
+- `file.ts#34` / `file.ts:34` runs just the test at that line — or the whole module, when the line is a `module(...)`
+
+**Output**
+
+- Streams TAP-formatted output to the terminal in real time
+- `--reporter` picks the stdout format: `tap` (default), `spec`, `dot`, or `github` (annotates failures on the PR diff)
+- `--junit` writes a JUnit XML report for CI dashboards, alongside the normal terminal output
+- `--coverage` reports V8 line coverage (terminal summary, plus optional `lcov` and `html` reports)
+- `--debug` prints the local server URL and pipes browser console to stdout
+- `--open` / `-o` opens the test output in the same browser the tests run in as soon as the bundle is ready; `--open=brave` opens in a specific binary instead
+- `--version` / `-v` prints the installed version
+
+**Beyond the test run**
+
+- [`qunitx repl`](#repl) — a prompt that evaluates in a real Chrome page: the DOM, `fetch`, and `test(...)` running for real as you type
+- [JavaScript API](#javascript-api) — `await test('test/')` returns the results as data, `await run('seed.ts')` executes one script; silent by default, with `watch`, `search`, custom reporters and daemon control. On npm and JSR (`jsr:@izelnakri/qunitx-cli/api`)
+- [`qunitx run <file>`](#running-a-script) runs one file as a plain script in a real page — top-level `await`, a DOM, `fetch` against a real origin
+
+## Installation
+
+### Standalone binary (recommended)
+
+No Node or Deno needed to run it:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/izelnakri/qunitx-cli/main/install.sh | sh
+export PATH="$HOME/.qunitx:$PATH"   # add this to your shell profile
+```
+
+| Platform                           | Notes                                                                  |
+| ---------------------------------- | ---------------------------------------------------------------------- |
+| Linux x64 / arm64                  | glibc 2.27 or newer — any mainstream distribution                      |
+| Alpine and other musl, x64 / arm64 | picked automatically; install a browser first: `apk add chromium curl` |
+| macOS arm64                        |                                                                        |
+| Windows x64 / arm64                | from Git Bash or MSYS2                                                 |
+
+Pin a version or install somewhere else:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/izelnakri/qunitx-cli/main/install.sh \
+  | VERSION=v0.37.0 INSTALL_DIR=$HOME/.local/bin sh
+```
+
+### npm
+
+Requires Node.js 24 or newer.
+
+```sh
+npm install --save-dev qunitx-cli
+npx qunitx test/
+```
+
+### Deno
+
+Requires Deno 2.7 or newer. Fetches the matching prebuilt binary on first run and caches it under
+`~/.cache/qunitx/`:
 
 ```sh
 deno install -Agf jsr:@izelnakri/qunitx-cli
 ```
 
-Pin a version or change the install location with env vars:
+### Docker
 
 ```sh
-VERSION=v0.25.0 INSTALL_DIR=$HOME/.local/bin sh install.sh
+docker run --rm -v "$(pwd):/code" -w /code ghcr.io/izelnakri/qunitx-cli:latest npx qunitx test/
 ```
 
-The script downloads the matching `qunitx-deno-<target>.tar.gz` (or `.zip` on
-Windows) from GitHub Releases — a `deno compile`d binary plus the matching
-esbuild sidecar — and unpacks both into `$INSTALL_DIR`. On musl it downloads
-`qunitx-<target>-musl.tar.gz` into `$INSTALL_DIR/qunitx-musl/` instead. A system Chrome on
-`PATH` (or `CHROME_BIN`) is the only remaining runtime dependency for the
-default `--browser=chromium`.
-
-Build the same binary yourself from source:
+### Nix
 
 ```sh
-deno task build:binary       # → dist/qunitx for the host platform
-make build-deno              # same, plus copies the local @esbuild sidecar next to it
-make build-deno-all          # cross-compiles every supported platform
-make build-sea-musl          # the musl build, in an Alpine container (docker or podman)
+nix profile install github:izelnakri/qunitx-cli
+```
+
+### Browsers
+
+Chromium, the default, is whichever Chrome or Chromium is on your `PATH`; set `CHROME_BIN` to use a
+specific one. Firefox and WebKit run through Playwright's own builds, installed once:
+
+```sh
+npx playwright install firefox
+npx playwright install webkit
 ```
 
 ### Upgrading
@@ -137,6 +177,57 @@ installed nothing to upgrade.
 
 Set `QUNITX_NO_SELF_UPGRADE=1` to make `upgrade` never run another installer, printing the command
 it would have run instead.
+
+## Writing tests
+
+qunitx-cli runs [QUnitX](https://github.com/izelnakri/qunitx) tests — a superset of QUnit with async
+hooks, concurrency control, and test metadata.
+
+Migrating from QUnit? Change a single import:
+
+```js
+// before
+import { module, test } from 'qunit';
+// after
+import { module, test } from 'qunitx';
+```
+
+Example test file — ES modules, npm imports, and nested modules all work out of the box:
+
+```js
+// some-test.js (TypeScript is also supported)
+import { module, test } from 'qunitx';
+import $ from 'jquery';
+
+module('Basic sanity check', (hooks) => {
+  test('it works', (assert) => {
+    assert.equal(true, true);
+  });
+
+  module('More advanced cases', (hooks) => {
+    test('deepEqual works', (assert) => {
+      assert.deepEqual({ username: 'izelnakri' }, { username: 'izelnakri' });
+    });
+
+    test('can import ES & npm modules', (assert) => {
+      assert.ok(Object.keys($));
+    });
+  });
+});
+```
+
+Run it:
+
+```sh
+# Headless Chromium (default, recommended for CI)
+qunitx some-test.js
+
+# With browser console output
+qunitx some-test.js --debug
+
+# TypeScript — no config needed
+qunitx some-test.ts
+```
 
 ## Usage
 
@@ -217,12 +308,125 @@ qunitx test/**/*.js --browser=firefox
 qunitx test/**/*.js --browser=webkit
 ```
 
-> **Prerequisite for Firefox / WebKit:** install the Playwright browser binaries once:
->
-> ```sh
-> npx playwright install firefox
-> npx playwright install webkit
-> ```
+Firefox and WebKit need Playwright's browser builds installed once — see [Browsers](#browsers).
+
+## Configuration
+
+All CLI flags can also be set in `package.json` under the `qunitx` key, so you don't have to repeat them on every invocation:
+
+```json
+{
+  "qunitx": {
+    "inputs": ["test/**/*-test.js", "test/**/*-test.ts"],
+    "htmlPaths": ["test/tests.html"],
+    "extensions": ["js", "ts", "jsx", "tsx"],
+    "output": "tmp",
+    "timeout": 20000,
+    "failFast": false,
+    "port": 1234,
+    "browser": "chromium",
+    "plugins": []
+  }
+}
+```
+
+| Key          | Default                      | Description                                                                                                                                                                  |
+| ------------ | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `inputs`     | `[]`                         | Glob patterns, file paths, or directories to use as test entry points. Merged with any paths given on the CLI.                                                               |
+| `htmlPaths`  | `[]`                         | Optional HTML templates to run tests inside. Any listed `.html` file that contains `{{qunitxScript}}` or other handlebars-style tokens is treated as a test runner template. |
+| `extensions` | `["js", "ts", "jsx", "tsx"]` | File extensions tracked for test discovery (directory scans) and watch-mode rebuild triggers. Add `"mjs"`, `"cjs"`, or any other extension your project uses.                |
+| `output`     | `"tmp"`                      | Directory where compiled test bundles are written.                                                                                                                           |
+| `timeout`    | `20000`                      | Maximum milliseconds to wait for the full test suite before timing out.                                                                                                      |
+| `failFast`   | `false`                      | Stop the run after the first failing test.                                                                                                                                   |
+| `port`       | `1234`                       | Preferred HTTP server port. qunitx auto-selects a free port if this one is taken.                                                                                            |
+| `browser`    | `"chromium"`                 | Browser engine to use: `"chromium"`, `"firefox"`, or `"webkit"`. Overridden by `--browser` on the CLI.                                                                       |
+| `plugins`    | `[]`                         | esbuild plugin specifiers loaded from your `node_modules` and applied to the test bundle. See [esbuild plugins](#esbuild-plugins).                                           |
+
+CLI flags always override `package.json` values when both are present.
+
+### Custom HTML template
+
+If you do not provide any HTML template, qunitx falls back to its built-in `test/tests.html` boilerplate internally, so `qunitx init` is optional.
+
+You can also pass a custom HTML file on the CLI:
+
+```sh
+qunitx test/**/*.js custom.html
+```
+
+If that file contains `{{qunitxScript}}`, qunitx injects the runner script block at that exact spot. If it contains other handlebars-style tokens (e.g. `{{applicationName}}`), qunitx still treats it as a custom runner template and injects the runner before `</body>`.
+
+The `{{qunitxScript}}` placeholder is replaced with a `<script>` tag containing the WebSocket runtime, QUnit event hooks, and the bundled test code.
+
+## Environment variables
+
+| Variable             | Description                                                                                                                                                                                                                                                                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `CHROME_BIN`         | Path to the Chrome/Chromium executable. Required on systems where Chrome is not on `PATH` (e.g. many CI environments). Set automatically when using `browser-actions/setup-chrome` in GitHub Actions.                                                                                                                                            |
+| `QUNITX_BROWSER`     | Browser engine to use (`chromium`, `firefox`, `webkit`). Equivalent to `--browser` on the CLI. Useful in CI matrix jobs.                                                                                                                                                                                                                         |
+| `NODE_COMPILE_CACHE` | Standard Node env, auto-enabled by qunitx. Stores V8 bytecode for the CLI + its dep graph on disk so the second and subsequent `qunitx` runs skip the parser pass — measured ~8% faster end-to-end (more on slow CI disks). Defaults to `${TMPDIR}/node-compile-cache`; set to a path to relocate (handy for a CI cache key) or `""` to disable. |
+
+## JSX / TSX
+
+`.jsx` and `.tsx` files are picked up automatically — no configuration needed. The bundle uses esbuild's automatic JSX runtime so React 17+ "no `import React`" code just works:
+
+```tsx
+// test/button-test.tsx
+import { module, test } from 'qunitx';
+import { flushSync } from 'react-dom';
+import { createRoot } from 'react-dom/client';
+import { Button } from '../src/button.tsx';
+
+module('Button', (hooks) => {
+  let container;
+  hooks.beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+  });
+  hooks.afterEach(() => container.remove());
+
+  test('renders the label', (assert) => {
+    flushSync(() => createRoot(container).render(<Button label="Save" />));
+    assert.equal(container.querySelector('button').textContent, 'Save');
+  });
+});
+```
+
+Vue, Preact, Solid, and other JSX dialects work via a one-line override at the top of each file:
+
+```tsx
+/** @jsxImportSource vue */
+import { createApp } from 'vue';
+// ...JSX uses vue/jsx-runtime instead of react/jsx-runtime
+```
+
+You can also set `compilerOptions.jsxImportSource` in your `tsconfig.json` to apply the override across a directory.
+
+## esbuild plugins
+
+For file formats esbuild does not handle natively (e.g. `.vue` SFCs, `.svelte`), declare plugin specifiers in `package.json#qunitx.plugins`. qunitx dynamic-imports each one from your project's `node_modules` and passes it to the build:
+
+```json
+{
+  "qunitx": {
+    "extensions": ["js", "ts", "jsx", "tsx", "vue"],
+    "plugins": [
+      "esbuild-plugin-vue-next",
+      ["esbuild-svelte", { "compilerOptions": { "css": "injected" } }]
+    ]
+  }
+}
+```
+
+Each entry is one of:
+
+| Form                            | Behavior                                                                                                                                                   |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"<package-name>"`              | Imports the package. If the default export is a function, it's called with no arguments to produce the plugin; otherwise the export is used as the plugin. |
+| `["<package-name>", <options>]` | Same, but the factory is called with `<options>` as its only argument. Use this form to pass plugin-specific configuration.                                |
+| `"./relative/plugin.js"`        | Loads a plugin you wrote yourself. Resolved against the project root (where your `package.json` lives).                                                    |
+
+Don't forget to add the plugin's file extension(s) to `qunitx.extensions` so directory scans and watch-mode rebuilds pick them up.
 
 ## REPL
 
@@ -276,6 +480,64 @@ probe. Chromium only — it evaluates over the Chrome DevTools Protocol.
 **→ [Testing the REPL by hand](docs/repl-manual-testing.md)** — every feature in the order it makes
 sense to try it, with the output you should get. Most of what a prompt does is only provable by
 typing at one.
+
+## Running a script
+
+`qunitx run <file>` runs a single file as a plain script instead of a test suite — the browser
+equivalent of `deno run`. No TAP, no QUnit, no test declarations required; the script's own
+`console` output **is** the output.
+
+```console
+$ qunitx run scripts/seed.ts
+seeded 42 rows
+```
+
+The script is bundled with esbuild (TypeScript and JSX work unchanged) and evaluated as a module
+in a real page, so it gets a DOM, `fetch` against a real `http://localhost` origin, `import.meta`,
+and **top-level `await`**. `console.log`/`info`/`debug` go to stdout, `warn`/`error` to stderr, in
+the order the page emitted them.
+
+It finishes when the script's top level settles — set `globalThis.exitCode` to choose the exit
+code, or throw to exit 1 with a source-mapped stack trace:
+
+```ts
+const response = await fetch('/api/health');
+if (!response.ok) {
+  globalThis.exitCode = 1;
+}
+```
+
+`--browser`, `--port`, `--open`, `--timeout` and `--watch` work here too (`--watch` re-runs the
+script on every save).
+
+### Point it at a test file and it runs the tests
+
+A file that registers QUnit tests is a suite, whichever verb you used to reach it — so `run` runs
+it as one, reporting exactly what the bare form reports:
+
+```console
+$ qunitx run test/cart-test.ts
+TAP version 13
+# Running 1 test file across 1 group
+ok 1 Cart | sums line items # (2 ms)
+1..1
+```
+
+It says so, and names the shorter way to have asked:
+
+```
+# Warning: ran as a suite (declares tests); globalThis.exitCode is ignored. Prefer: qunitx test/cart-test.ts
+```
+
+The tests decide the exit code: a failing one exits 1 even if the file set `globalThis.exitCode = 0`,
+and a passing suite exits 0 whatever the file set. `--reporter`, `--junit`, `--filter` and `--debug`
+all apply. Nothing is bundled or evaluated twice:
+the file is evaluated once, and whether it declared any tests is read from QUnit afterwards — so a
+test file that reaches qunitx through a barrel or a helper is recognised just the same.
+
+The alternative was to run it as a script, which registers the tests, runs none of them, and exits
+0 in silence. Reporting success for tests that never ran is the one thing a test runner must not
+do.
 
 ## JavaScript API
 
@@ -370,271 +632,6 @@ tail -f /tmp/qunitx-daemon.log
 ```
 
 The log captures startup banners, browser-crash recovery, idle-timeout shutdown, package.json-mutation restarts, and any unhandled rejection. During an active run the per-run interceptor still forwards stdout to the client; the log catches everything else.
-
-## Writing Tests
-
-qunitx-cli runs [QUnitX](https://github.com/izelnakri/qunitx) tests — a superset of QUnit with async
-hooks, concurrency control, and test metadata.
-
-Migrating from QUnit? Change a single import:
-
-```js
-// before
-import { module, test } from 'qunit';
-// after
-import { module, test } from 'qunitx';
-```
-
-Example test file — ES modules, npm imports, and nested modules all work out of the box:
-
-```js
-// some-test.js (TypeScript is also supported)
-import { module, test } from 'qunitx';
-import $ from 'jquery';
-
-module('Basic sanity check', (hooks) => {
-  test('it works', (assert) => {
-    assert.equal(true, true);
-  });
-
-  module('More advanced cases', (hooks) => {
-    test('deepEqual works', (assert) => {
-      assert.deepEqual({ username: 'izelnakri' }, { username: 'izelnakri' });
-    });
-
-    test('can import ES & npm modules', (assert) => {
-      assert.ok(Object.keys($));
-    });
-  });
-});
-```
-
-Run it:
-
-```sh
-# Headless Chromium (default, recommended for CI)
-qunitx some-test.js
-
-# With browser console output
-qunitx some-test.js --debug
-
-# TypeScript — no config needed
-qunitx some-test.ts
-```
-
-## Configuration
-
-All CLI flags can also be set in `package.json` under the `qunitx` key, so you don't have to repeat them on every invocation:
-
-```json
-{
-  "qunitx": {
-    "inputs": ["test/**/*-test.js", "test/**/*-test.ts"],
-    "htmlPaths": ["test/tests.html"],
-    "extensions": ["js", "ts", "jsx", "tsx"],
-    "output": "tmp",
-    "timeout": 20000,
-    "failFast": false,
-    "port": 1234,
-    "browser": "chromium",
-    "plugins": []
-  }
-}
-```
-
-| Key          | Default                      | Description                                                                                                                                                                  |
-| ------------ | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `inputs`     | `[]`                         | Glob patterns, file paths, or directories to use as test entry points. Merged with any paths given on the CLI.                                                               |
-| `htmlPaths`  | `[]`                         | Optional HTML templates to run tests inside. Any listed `.html` file that contains `{{qunitxScript}}` or other handlebars-style tokens is treated as a test runner template. |
-| `extensions` | `["js", "ts", "jsx", "tsx"]` | File extensions tracked for test discovery (directory scans) and watch-mode rebuild triggers. Add `"mjs"`, `"cjs"`, or any other extension your project uses.                |
-| `output`     | `"tmp"`                      | Directory where compiled test bundles are written.                                                                                                                           |
-| `timeout`    | `20000`                      | Maximum milliseconds to wait for the full test suite before timing out.                                                                                                      |
-| `failFast`   | `false`                      | Stop the run after the first failing test.                                                                                                                                   |
-| `port`       | `1234`                       | Preferred HTTP server port. qunitx auto-selects a free port if this one is taken.                                                                                            |
-| `browser`    | `"chromium"`                 | Browser engine to use: `"chromium"`, `"firefox"`, or `"webkit"`. Overridden by `--browser` on the CLI.                                                                       |
-| `plugins`    | `[]`                         | esbuild plugin specifiers loaded from your `node_modules` and applied to the test bundle. See [esbuild plugins](#esbuild-plugins).                                           |
-
-CLI flags always override `package.json` values when both are present.
-
-## JSX / TSX
-
-`.jsx` and `.tsx` files are picked up automatically — no configuration needed. The bundle uses esbuild's automatic JSX runtime so React 17+ "no `import React`" code just works:
-
-```tsx
-// test/button-test.tsx
-import { module, test } from 'qunitx';
-import { flushSync } from 'react-dom';
-import { createRoot } from 'react-dom/client';
-import { Button } from '../src/button.tsx';
-
-module('Button', (hooks) => {
-  let container;
-  hooks.beforeEach(() => {
-    container = document.createElement('div');
-    document.body.appendChild(container);
-  });
-  hooks.afterEach(() => container.remove());
-
-  test('renders the label', (assert) => {
-    flushSync(() => createRoot(container).render(<Button label="Save" />));
-    assert.equal(container.querySelector('button').textContent, 'Save');
-  });
-});
-```
-
-Vue, Preact, Solid, and other JSX dialects work via a one-line override at the top of each file:
-
-```tsx
-/** @jsxImportSource vue */
-import { createApp } from 'vue';
-// ...JSX uses vue/jsx-runtime instead of react/jsx-runtime
-```
-
-You can also set `compilerOptions.jsxImportSource` in your `tsconfig.json` to apply the override across a directory.
-
-## esbuild plugins
-
-For file formats esbuild does not handle natively (e.g. `.vue` SFCs, `.svelte`), declare plugin specifiers in `package.json#qunitx.plugins`. qunitx dynamic-imports each one from your project's `node_modules` and passes it to the build:
-
-```json
-{
-  "qunitx": {
-    "extensions": ["js", "ts", "jsx", "tsx", "vue"],
-    "plugins": [
-      "esbuild-plugin-vue-next",
-      ["esbuild-svelte", { "compilerOptions": { "css": "injected" } }]
-    ]
-  }
-}
-```
-
-Each entry is one of:
-
-| Form                            | Behavior                                                                                                                                                   |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `"<package-name>"`              | Imports the package. If the default export is a function, it's called with no arguments to produce the plugin; otherwise the export is used as the plugin. |
-| `["<package-name>", <options>]` | Same, but the factory is called with `<options>` as its only argument. Use this form to pass plugin-specific configuration.                                |
-| `"./relative/plugin.js"`        | Loads a plugin you wrote yourself. Resolved against the project root (where your `package.json` lives).                                                    |
-
-Don't forget to add the plugin's file extension(s) to `qunitx.extensions` so directory scans and watch-mode rebuilds pick them up.
-
-### Environment variables
-
-| Variable             | Description                                                                                                                                                                                                                                                                                                                                      |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `CHROME_BIN`         | Path to the Chrome/Chromium executable. Required on systems where Chrome is not on `PATH` (e.g. many CI environments). Set automatically when using `browser-actions/setup-chrome` in GitHub Actions.                                                                                                                                            |
-| `QUNITX_BROWSER`     | Browser engine to use (`chromium`, `firefox`, `webkit`). Equivalent to `--browser` on the CLI. Useful in CI matrix jobs.                                                                                                                                                                                                                         |
-| `NODE_COMPILE_CACHE` | Standard Node env, auto-enabled by qunitx. Stores V8 bytecode for the CLI + its dep graph on disk so the second and subsequent `qunitx` runs skip the parser pass — measured ~8% faster end-to-end (more on slow CI disks). Defaults to `${TMPDIR}/node-compile-cache`; set to a path to relocate (handy for a CI cache key) or `""` to disable. |
-
-If you do not provide any HTML template, qunitx falls back to its built-in `test/tests.html` boilerplate internally, so `qunitx init` is optional.
-
-You can also pass a custom HTML file on the CLI:
-
-```sh
-qunitx test/**/*.js custom.html
-```
-
-If that file contains `{{qunitxScript}}`, qunitx injects the runner script block at that exact spot. If it contains other handlebars-style tokens (e.g. `{{applicationName}}`), qunitx still treats it as a custom runner template and injects the runner before `</body>`.
-
-The `{{qunitxScript}}` placeholder is replaced with a `<script>` tag containing the WebSocket runtime, QUnit event hooks, and the bundled test code.
-
-## CLI Reference
-
-```
-Usage: qunitx [files/folders...] [options]
-
-Options:
-  --watch, -w         Re-run tests on file changes
-  --failFast          Stop after the first failure
-  --only-failed, -f   Re-run only the files that failed on the previous run (alias: --failed)
-  --filter, -t        Run only tests matching "Module: test name"  (substring, /regex/, !invert)
-  --module, -m, -n    Same flag as --filter — one matcher, several spellings
-  --search, -s        List the tests the filter matches, then exit without running them
-  --print             Same flag as --search
-  --preview           Same flag as --search
-  --reporter, -r      stdout format: tap, spec, dot, github
-  --console           Alias for --debug
-  --debug             Print the server URL; pipe browser console to stdout
-  --timeout=<ms>      Max ms to wait for the suite to finish  [default: 20000]
-  --output=<dir>      Directory for compiled test assets     [default: ./tmp]
-  --extensions=<...>  Comma-separated file extensions to track  [default: js,ts,jsx,tsx]
-  --before=<file>     Script to run (and optionally await) before tests start
-  --after=<file>      Script to run (and optionally await) after tests finish
-  --open, -o          Open output in the test browser as soon as the bundle is ready
-  --open=<binary>     Open output in a specific browser binary (e.g. brave, google-chrome-lts)
-  --port=<n>, -p=<n>  HTTP server port (auto-selects a free port if taken)
-  --browser=<name>    Browser engine: chromium (default), firefox, or webkit
-  --reporter=<name>   Stdout format: tap, spec, dot, github  [default: tap]
-  --junit[=<path>]    Also write a JUnit XML report  [default: <output>/junit.xml]
-  --coverage[=fmts]   Collect V8 line coverage (chromium only). fmts: lcov,html (comma-separated)
-  --no-daemon         Don't use the daemon for this run — skips a running daemon and prevents QUNITX_DAEMON auto-spawn
-
-Subcommands:
-  qunitx repl [files...]                  A prompt that evaluates in a real Chrome page
-  qunitx daemon start | stop | status     Manage the optional persistent daemon
-  qunitx init                             Bootstrap qunitx config + base HTML in this project
-  qunitx new <testFileName>               Create a new qunitx test file
-  qunitx upgrade [version]                Update the standalone binary (--check reports only)
-  qunitx run <scriptFile>                 Run one file as a plain script in the browser
-```
-
-## Running a script
-
-`qunitx run <file>` runs a single file as a plain script instead of a test suite — the browser
-equivalent of `deno run`. No TAP, no QUnit, no test declarations required; the script's own
-`console` output **is** the output.
-
-```console
-$ qunitx run scripts/seed.ts
-seeded 42 rows
-```
-
-The script is bundled with esbuild (TypeScript and JSX work unchanged) and evaluated as a module
-in a real page, so it gets a DOM, `fetch` against a real `http://localhost` origin, `import.meta`,
-and **top-level `await`**. `console.log`/`info`/`debug` go to stdout, `warn`/`error` to stderr, in
-the order the page emitted them.
-
-It finishes when the script's top level settles — set `globalThis.exitCode` to choose the exit
-code, or throw to exit 1 with a source-mapped stack trace:
-
-```ts
-const response = await fetch('/api/health');
-if (!response.ok) {
-  globalThis.exitCode = 1;
-}
-```
-
-`--browser`, `--port`, `--open`, `--timeout` and `--watch` work here too (`--watch` re-runs the
-script on every save).
-
-### Point it at a test file and it runs the tests
-
-A file that registers QUnit tests is a suite, whichever verb you used to reach it — so `run` runs
-it as one, reporting exactly what the bare form reports:
-
-```console
-$ qunitx run test/cart-test.ts
-TAP version 13
-# Running 1 test file across 1 group
-ok 1 Cart | sums line items # (2 ms)
-1..1
-```
-
-It says so, and names the shorter way to have asked:
-
-```
-# Warning: ran as a suite (declares tests); globalThis.exitCode is ignored. Prefer: qunitx test/cart-test.ts
-```
-
-The tests decide the exit code: a failing one exits 1 even if the file set `globalThis.exitCode = 0`,
-and a passing suite exits 0 whatever the file set. `--reporter`, `--junit`, `--filter` and `--debug`
-all apply. Nothing is bundled or evaluated twice:
-the file is evaluated once, and whether it declared any tests is read from QUnit afterwards — so a
-test file that reaches qunitx through a barrel or a helper is recognised just the same.
-
-The alternative was to run it as a script, which registers the tests, runs none of them, and exits
-0 in silence. Reporting success for tests that never ran is the one thing a test runner must not
-do.
 
 ## JUnit reports
 
@@ -795,6 +792,46 @@ globalThis.Date = class extends realDate {
 
 This runs in the browser context before any test module loads, so every test in the run sees the mocked `Date` with no changes to the OS, no env vars, and no qunitx-cli configuration.
 
+## CLI Reference
+
+```
+Usage: qunitx [files/folders...] [options]
+
+Options:
+  --watch, -w         Re-run tests on file changes
+  --failFast          Stop after the first failure
+  --only-failed, -f   Re-run only the files that failed on the previous run (alias: --failed)
+  --filter, -t        Run only tests matching "Module: test name"  (substring, /regex/, !invert)
+  --module, -m, -n    Same flag as --filter — one matcher, several spellings
+  --search, -s        List the tests the filter matches, then exit without running them
+  --print             Same flag as --search
+  --preview           Same flag as --search
+  --reporter, -r      stdout format: tap, spec, dot, github
+  --console           Alias for --debug
+  --debug             Print the server URL; pipe browser console to stdout
+  --timeout=<ms>      Max ms to wait for the suite to finish  [default: 20000]
+  --output=<dir>      Directory for compiled test assets     [default: ./tmp]
+  --extensions=<...>  Comma-separated file extensions to track  [default: js,ts,jsx,tsx]
+  --before=<file>     Script to run (and optionally await) before tests start
+  --after=<file>      Script to run (and optionally await) after tests finish
+  --open, -o          Open output in the test browser as soon as the bundle is ready
+  --open=<binary>     Open output in a specific browser binary (e.g. brave, google-chrome-lts)
+  --port=<n>, -p=<n>  HTTP server port (auto-selects a free port if taken)
+  --browser=<name>    Browser engine: chromium (default), firefox, or webkit
+  --reporter=<name>   Stdout format: tap, spec, dot, github  [default: tap]
+  --junit[=<path>]    Also write a JUnit XML report  [default: <output>/junit.xml]
+  --coverage[=fmts]   Collect V8 line coverage (chromium only). fmts: lcov,html (comma-separated)
+  --no-daemon         Don't use the daemon for this run — skips a running daemon and prevents QUNITX_DAEMON auto-spawn
+
+Subcommands:
+  qunitx repl [files...]                  A prompt that evaluates in a real Chrome page
+  qunitx daemon start | stop | status     Manage the optional persistent daemon
+  qunitx init                             Bootstrap qunitx config + base HTML in this project
+  qunitx new <testFileName>               Create a new qunitx test file
+  qunitx upgrade [version]                Update the standalone binary (--check reports only)
+  qunitx run <scriptFile>                 Run one file as a plain script in the browser
+```
+
 ## Development
 
 ```sh
@@ -806,24 +843,30 @@ make test-webkit                # run browser tests with WebKit
 make test-all-browsers          # run full suite on all three browsers
 make demo                       # regenerate docs/demo.gif
 make release LEVEL=patch        # bump version, update changelog, tag, push
-make build-sea                  # build + smoke this platform's SEA binary (no publish)
-make publish-sea                # …and publish its npm platform package
 ```
 
-The SEA host — the Node executable the bundle is injected into — is **downloaded from nodejs.org**
-by `scripts/fetch-node-binary.ts`, checked against that release's `SHASUMS256.txt`, and cached.
-It is deliberately not this machine's `process.execPath`: doing that makes the published binary a
-property of the machine that built it. Released from NixOS, the npm platform package named an ELF
-interpreter inside `/nix/store`, so `execve` failed on every other distribution — exit 127 from a
-shell, and no output at all to go on.
+Building the release binaries locally:
 
-`make smoke-sea` gates on it (`scripts/check-sea-portability.ts`), and so does CI before it
-packages anything. `make build-sea` no longer publishes, so the artifact can be built and looked
-at without cutting a release — which is how the above went unnoticed for months.
+```sh
+make build-deno                 # deno compile for this platform → dist/qunitx (+ esbuild sidecar)
+make build-deno-all             # cross-compile every deno target
+make build-sea                  # Node SEA for this platform, smoke-tested (no publish)
+make build-sea-musl             # the musl (Alpine) build, in a container (docker or podman)
+make publish-sea                # build-sea, then publish its npm platform package
+```
 
-For a tight TDD loop on this repo (or any consuming project), run `qunitx daemon start` once at the top of your session — every subsequent `qunitx` invocation reuses the warm Chrome and esbuild context, roughly halving the wait-per-iteration. AI/LLM coding agents benefit even more, since their inner loop is dozens of `qunitx <file>` invocations per feature. Caveat: agents running inside containers or CI-style environments (GitHub Actions Copilot, sandboxed coding agents) often have `CI=1` set, which bypasses the daemon by default — set `QUNITX_DAEMON=1` in those environments to opt back in.
+A SEA is always built on an official nodejs.org Node (`scripts/fetch-node-binary.ts`), never on
+this machine's own, and `scripts/check-sea-portability.ts` refuses one that could only start here.
 
-Use `--trace-perf` to print internal timing to stderr — useful when investigating startup or e2e regressions:
+For a tight TDD loop on this repo (or any consuming project), run `qunitx daemon start` once at the
+top of your session — every subsequent `qunitx` invocation reuses the warm Chrome and esbuild
+context, roughly halving the wait per iteration. Coding agents benefit even more, since their inner
+loop is dozens of `qunitx <file>` invocations per feature. Agents inside containers or CI-style
+environments often have `CI=1` set, which bypasses the daemon by default — set `QUNITX_DAEMON=1`
+there to opt back in.
+
+Use `--trace-perf` to print internal timing to stderr — useful when investigating startup or e2e
+regressions:
 
 ```sh
 qunitx test/my-test.js --trace-perf
@@ -831,4 +874,4 @@ qunitx test/my-test.js --trace-perf
 
 ## License
 
-MIT
+MIT License, Copyright © Izel Nakri, Memoria Technologies
