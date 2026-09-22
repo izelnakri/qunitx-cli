@@ -1,4 +1,8 @@
 import { Buffer } from 'node:buffer';
+import process from 'node:process';
+
+/** `e_machine` for the architectures this repo builds for. */
+const MACHINES = { x64: 0x3e, arm64: 0xb7 } as const;
 
 /**
  * The smallest ELF64 file that names a dynamic loader — 121 bytes plus the path.
@@ -17,9 +21,17 @@ import { Buffer } from 'node:buffer';
  *
  * elfNaming('/lib64/ld-linux-x86-64.so.2').length; // 148
  * elfNaming('/x').readUInt32BE(0).toString(16); // '7f454c46' — the ELF magic
+ * elfNaming('/x', 'arm64').readUInt16LE(0x12); // 0xb7 — EM_AARCH64
  * ```
+ *
+ * The machine defaults to the host's. A kernel checks it before it looks for the loader, so an
+ * x86-64 file on an arm64 runner fails with ENOEXEC rather than the missing-loader ENOENT a test
+ * of that case needs — which is how the launcher test failed on v0.37.1's arm64 lane.
  */
-export function elfNaming(interpreter: string): Buffer {
+export function elfNaming(
+  interpreter: string,
+  arch: keyof typeof MACHINES = process.arch === 'arm64' ? 'arm64' : 'x64',
+): Buffer {
   const HEADER = 64;
   const PROGRAM_HEADER = 56;
   const path = Buffer.from(`${interpreter}\0`, 'utf8');
@@ -32,7 +44,7 @@ export function elfNaming(interpreter: string): Buffer {
   file[6] = 1;
 
   file.writeUInt16LE(2, 0x10); // e_type: ET_EXEC
-  file.writeUInt16LE(0x3e, 0x12); // e_machine: x86-64
+  file.writeUInt16LE(MACHINES[arch], 0x12); // e_machine
   file.writeUInt32LE(1, 0x14); // e_version
   file.writeBigUInt64LE(BigInt(HEADER), 0x20); // e_phoff
   file.writeUInt16LE(HEADER, 0x34); // e_ehsize

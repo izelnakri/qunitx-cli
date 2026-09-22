@@ -19,6 +19,10 @@ import '../helpers/custom-asserts.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 
+// The package the launcher looks for on THIS machine — hard-coded to linux-x64, the test planted a
+// package an arm64 launcher never asks for, so it fell back silently and the note never came.
+const PLATFORM_PACKAGE = `qunitx-cli-linux-${process.arch}`;
+
 // `bin/qunitx.js` prefers a prebuilt SEA binary from the matching platform package and falls back
 // to the bundled JS CLI. It used to fall back only when that package was ABSENT — a binary that
 // was present and could not start took the process down with exit 254 and no output at all, which
@@ -54,7 +58,7 @@ module('Bin | the launcher | a binary that cannot start', { concurrency: true },
       // Said once, on stderr. A silent fallback is correct and undiagnosable: everything works,
       // just slower, so a broken platform package stays broken until somebody thinks to look.
       assert.includes(result.stderr, 'could not be started');
-      assert.includes(result.stderr, 'qunitx-cli-linux-x64', 'naming the package to report');
+      assert.includes(result.stderr, PLATFORM_PACKAGE, 'naming the package to report');
     });
   }
 });
@@ -150,14 +154,14 @@ async function plantBrokenPlatformPackage() {
   const version = JSON.parse(
     await fs.readFile(path.join(repoRoot, 'package.json'), 'utf8'),
   ).version;
-  const directory = path.join(repoRoot, 'node_modules', 'qunitx-cli-linux-x64');
+  const directory = path.join(repoRoot, 'node_modules', PLATFORM_PACKAGE);
   if (await exists(directory)) {
     throw new Error(`${directory} already exists — refusing to write over a real package`);
   }
   await fs.mkdir(path.join(directory, 'bin'), { recursive: true });
   await fs.writeFile(
     path.join(directory, 'package.json'),
-    JSON.stringify({ name: 'qunitx-cli-linux-x64', version }),
+    JSON.stringify({ name: PLATFORM_PACKAGE, version }),
   );
   const binary = path.join(directory, 'bin', 'qunitx');
   await fs.writeFile(binary, elfNaming('/nonexistent/ld-linux-x86-64.so.2'));
