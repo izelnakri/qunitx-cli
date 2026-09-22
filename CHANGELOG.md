@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.37.0] - 2026-09-22
+[`v0.36.0...v0.37.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.36.0...v0.37.0)
+
+### Bug Fixes
+- A scratchpad you saved runs, even when its last line is unfinished — 2026-09-20 by [@izelnakri](https://github.com/izelnakri) ([`6a51ae8`](https://github.com/izelnakri/qunitx-cli/commit/6a51ae8365ec0c981948f83ec08d2b4093fcb762))
+- The prompt comes back after the scratchpad, on one Enter — 2026-09-20 by [@izelnakri](https://github.com/izelnakri) ([`bdfa83d`](https://github.com/izelnakri/qunitx-cli/commit/bdfa83d99f9d41ed833dc66fc0260af6a3ba2f2d))
+- A save is a write, not a difference — and the prompt says from where — 2026-09-20 by [@izelnakri](https://github.com/izelnakri) ([`581ebfc`](https://github.com/izelnakri/qunitx-cli/commit/581ebfc28a6112e11818e07e593472406250e3ba))
+- `.cat` died on the word `constructor`, and a name two files want is said out loud — 2026-09-20 by [@izelnakri](https://github.com/izelnakri) ([`7f4ee1b`](https://github.com/izelnakri/qunitx-cli/commit/7f4ee1bcdd7bba4af4c5fc7dfdbebcee6b8686ba))
+- Build namespace fixtures with path.resolve, not POSIX literals — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`bfa0ec1`](https://github.com/izelnakri/qunitx-cli/commit/bfa0ec102d84f5338d7ffffc8252f8cfaa4322cd))
+- Ship the build's own files from dist/, not the whole directory — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`fccfb08`](https://github.com/izelnakri/qunitx-cli/commit/fccfb08bad1e545319f275f4080b166969f3e6cd))
+- A piped stdin that ends before the session is up still ends it — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`178cc72`](https://github.com/izelnakri/qunitx-cli/commit/178cc7275dcabfbb9cccad7c3368728178b5eaa9))
+- A declined scratchpad is checked for its own answer, not for "42" — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`0adb3ac`](https://github.com/izelnakri/qunitx-cli/commit/0adb3ac4c3f1f5297b710b1e67128e11f144e3d1))
+- [**breaking**] Build the SEA on an official Node, not on whatever this machine has — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`65e768c`](https://github.com/izelnakri/qunitx-cli/commit/65e768ce22aa6f27f7c7cf7a1d8fa2c469a2ad40))
+- The launcher no longer kills the fallback it just started — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`66a8a06`](https://github.com/izelnakri/qunitx-cli/commit/66a8a0697fe4fec44f771996510499cc6a866c15))
+- Npm skips the Linux binary on musl, instead of installing one that cannot start — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`bc907b1`](https://github.com/izelnakri/qunitx-cli/commit/bc907b1508da970b016b496b888851ff0de561cc))
+- Refuse musl by name, before downloading a binary it cannot run — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`ea7c132`](https://github.com/izelnakri/qunitx-cli/commit/ea7c132787880ac404627149240d0bd409dce09a))
+- The portability check lets the real musl loader through — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`531f578`](https://github.com/izelnakri/qunitx-cli/commit/531f578fd1739b5d89d6538513725fa35eeb3bf9))
+
+### Documentation
+- What the Linux binaries run on, and how they are built — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`1208c54`](https://github.com/izelnakri/qunitx-cli/commit/1208c54619a47467b0cb297e6963559c2f80e6b4))
+- The one-liner on arm64 and Alpine — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`5d0325c`](https://github.com/izelnakri/qunitx-cli/commit/5d0325c67a04178176ee439002a660645869a0a1))
+
+### Features
+- `:cq` saves the buffer and throws it away — 2026-09-20 by [@izelnakri](https://github.com/izelnakri) ([`103468f`](https://github.com/izelnakri/qunitx-cli/commit/103468f07c8ec7c1044e270bf14318c628d6a466))
+- The scratchpad asks before it runs — 2026-09-20 by [@izelnakri](https://github.com/izelnakri) ([`8a5d38c`](https://github.com/izelnakri/qunitx-cli/commit/8a5d38cb9829004cf8dffba4699d3ba6476e46c3))
+- An index wins a name its siblings also want — 2026-09-20 by [@izelnakri](https://github.com/izelnakri) ([`d4cdea8`](https://github.com/izelnakri/qunitx-cli/commit/d4cdea856e7e4f82675b43e83f582ad181584506))
+- [**breaking**] Several preloads are modules, not a pile of globals — 2026-09-20 by [@izelnakri](https://github.com/izelnakri) ([`caddb4c`](https://github.com/izelnakri/qunitx-cli/commit/caddb4c59b69b99b9ac5fe1bd1be59a1cbe413a6))
+- Fetch musl Node hosts, from unofficial-builds — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`c98674f`](https://github.com/izelnakri/qunitx-cli/commit/c98674fe648cc729464f2a95c628caed342a6f6f))
+- A SEA loads the playwright-core shipped beside it — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`278e77b`](https://github.com/izelnakri/qunitx-cli/commit/278e77b07080c5614c180f377385efd1d2d05662))
+- Make build-sea-musl — a standalone binary for Alpine — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`634f391`](https://github.com/izelnakri/qunitx-cli/commit/634f3917d4f12f8e27d3d3e2080705d6fb2958a2))
+- Every target that is built — linux arm64, Windows arm64, and musl — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`0e6e48c`](https://github.com/izelnakri/qunitx-cli/commit/0e6e48cfb5818b64389f2f0ddc4782363fe96ee0))
+- The musl build upgrades itself too — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`8ec9e83`](https://github.com/izelnakri/qunitx-cli/commit/8ec9e8338b27f7411874d32aa76cd6a4dda060e4))
+
+### Performance
+- The read and the stat after an edit are one round, not two — 2026-09-20 by [@izelnakri](https://github.com/izelnakri) ([`7c2f2cc`](https://github.com/izelnakri/qunitx-cli/commit/7c2f2cc1b2241f40d88a2b6b4647cc9d3337b4e3))
+
+### Refactoring
+- The editor's own file work stops blocking the loop — 2026-09-20 by [@izelnakri](https://github.com/izelnakri) ([`7fa8a6f`](https://github.com/izelnakri/qunitx-cli/commit/7fa8a6f2ed3efc028e2cdda55c2e8c09c905d649))
+
 ## [0.36.0] - 2026-09-20
 [`v0.35.1...v0.36.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.35.1...v0.36.0)
 
