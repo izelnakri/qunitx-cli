@@ -65,7 +65,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # arm64 Linux is a release target, so its suite runs here rather than first at a release:
+        # the tag-only install.sh lane was once its only run, and v0.37.1 is where it went red.
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

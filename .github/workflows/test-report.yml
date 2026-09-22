@@ -59,6 +59,14 @@ jobs:
       - uses: dorny/test-reporter@v3
         if: always()
         with:
+          name: Tests (Ubuntu · arm64)
+          path: ./junit-artifacts/junit-ubuntu-24.04-arm/*.xml
+          reporter: java-junit
+          fail-on-empty: false
+
+      - uses: dorny/test-reporter@v3
+        if: always()
+        with:
           name: Tests (macOS)
           path: ./junit-artifacts/junit-macos-latest/*.xml
           reporter: java-junit
