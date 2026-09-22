@@ -156,14 +156,12 @@ export async function fetchNodeBinary(
     throw new Error(`${archive} failed its checksum: expected ${expected}, got ${actual}`);
   }
 
-  // Unpacked with the system `tar`, which reads both .tar.gz and .zip on every platform this
-  // releases from — bsdtar on macOS and Windows 10+, GNU tar on Linux.
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'qunitx-node-host-'));
   try {
     const downloaded = path.join(scratch, archive);
     await fs.writeFile(downloaded, body);
     const stem = archive.replace(/\.tar\.gz$|\.zip$/, '');
-    await execFileAsync('tar', ['-xf', downloaded, '-C', scratch]);
+    await execFileAsync(tarFor(process.platform, process.env), ['-xf', downloaded, '-C', scratch]);
 
     await fs.mkdir(path.dirname(kept), { recursive: true });
     await fs.copyFile(path.join(scratch, binaryInsideArchive(stem, platform)), kept);
@@ -173,6 +171,46 @@ export async function fetchNodeBinary(
   } finally {
     await fs.rm(scratch, { recursive: true, force: true });
   }
+}
+
+/**
+ * The `tar` that can unpack this platform's archive.
+ *
+ * Windows ships bsdtar as `System32\\tar.exe`, which reads the `.zip` nodejs.org publishes for it.
+ * Taking `tar` from PATH instead finds Git's GNU tar first in Git Bash — which reads `C:\\…` as a
+ * remote `host:path` ("Cannot connect to C: resolve failed") and cannot read a zip at all. That
+ * failed the Windows SEA build. Elsewhere PATH's `tar` is the right one: bsdtar on macOS, GNU tar
+ * on Linux, both reading the `.tar.gz`.
+ *
+ * ```ts
+ * import { tarFor } from './fetch-node-binary.ts';
+ *
+ * tarFor('win32', { SystemRoot: 'C:\\Windows' }); // 'C:\\Windows\\System32\\tar.exe'
+ * tarFor('linux', {}); // 'tar'
+ * ```
+ */
+export function tarFor(platform: string, env: Record<string, string | undefined>): string {
+  if (platform !== 'win32') return 'tar';
+
+  return path.win32.join(env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe');
+}
+
+/**
+ * A path as every shell that interpolates it can run it: absolute, with `/` separators.
+ *
+ * Git Bash treats a command word as a path only if it contains a `/`, so Windows' own
+ * `node_modules\\.cache\\…\\node.exe` would be looked up on PATH instead and fail with exit 127.
+ * PowerShell, make and every POSIX shell take the `/` form just the same.
+ *
+ * ```ts
+ * import { forShells } from './fetch-node-binary.ts';
+ *
+ * forShells('D:\\a\\repo\\node.exe', '\\'); // 'D:/a/repo/node.exe'
+ * forShells('/home/me/repo/node', '/'); // '/home/me/repo/node'
+ * ```
+ */
+export function forShells(absolute: string, separator: string = path.sep): string {
+  return absolute.split(separator).join('/');
 }
 
 /** One GET, as bytes, refusing anything but a 200 by name. */
@@ -203,7 +241,6 @@ if (process.argv[1]?.endsWith('fetch-node-binary.ts')) {
   const [version = process.version, platform = process.platform, arch = process.arch, libc] =
     process.argv.slice(2);
 
-  process.stdout.write(
-    await fetchNodeBinary(version, platform, arch, libc === 'musl' ? 'musl' : 'glibc'),
-  );
+  const host = await fetchNodeBinary(version, platform, arch, libc === 'musl' ? 'musl' : 'glibc');
+  process.stdout.write(forShells(path.resolve(host)));
 }

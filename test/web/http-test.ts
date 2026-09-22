@@ -6,13 +6,14 @@ import WebSocket from 'ws';
 import { HTTPServer } from '../../lib/web/index.ts';
 import { bindServerToPort } from '../../lib/setup/bind-server-to-port.ts';
 import * as Result from '../../lib/result/index.ts';
+import { reservePort } from '../helpers/reserve-port.ts';
 
 module('Web | bindServerToPort | port selection', { concurrency: true }, () => {
   test('binds to the requested port when it is free', async (assert) => {
+    // Reserved, not found-then-released: a released ephemeral port was taken by someone else
+    // before the bind on v0.37.0's Deno lane, and the search correctly moved on to port + 1.
     const server = new HTTPServer();
-    const blocker = await findFreePort();
-    const port = blocker.number;
-    await blocker.release();
+    const port = await reservePort();
 
     const config = { port };
     await bindServerToPort(server, config);
@@ -159,8 +160,8 @@ module('Web | HTTPServer | close()', { concurrency: true }, () => {
   });
 });
 
-// Finds a free OS-assigned port by binding to :0, then releases it.
-// Returns { number, release } so callers can hold it open or release immediately.
+// Finds a free OS-assigned port by binding to :0, and holds it until release() — for a caller that
+// needs the port OCCUPIED. To hand one to something else, use reservePort() instead.
 function findFreePort(): Promise<{ number: number; release: () => Promise<void> }> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();

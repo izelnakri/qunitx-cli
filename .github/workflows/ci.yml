@@ -897,8 +897,10 @@ jobs:
           }, null, 2));"
           # Built BY the host it will be injected into: the blob carries a V8 code cache, and a
           # cache made by a different Node build is rejected at startup — a warning on every run
-          # and the startup saving lost.
-          "$(node scripts/fetch-node-binary.ts)" --experimental-sea-config sea-config.json
+          # and the startup saving lost. Assigned first: inline, a failure to fetch it became an
+          # empty command word and a bare "command not found" instead of the script's own error.
+          host=$(node scripts/fetch-node-binary.ts)
+          "$host" --experimental-sea-config sea-config.json
 
       - name: Inject blob into Node binary (Unix)
         if: runner.os != 'Windows'
@@ -907,7 +909,8 @@ jobs:
           # An official build from nodejs.org rather than the runner's own Node, so a binary
           # built here and one built by `make build-sea` on a maintainer's machine are the
           # same artifact. See scripts/fetch-node-binary.ts.
-          cp "$(node scripts/fetch-node-binary.ts)" qunitx
+          host=$(node scripts/fetch-node-binary.ts)
+          cp "$host" qunitx
           codesign --remove-signature qunitx 2>/dev/null || true
           if [ "$(uname)" = "Darwin" ]; then
             npx --yes postject qunitx NODE_SEA_BLOB sea.blob \
@@ -925,6 +928,7 @@ jobs:
         shell: pwsh
         run: |
           $nodePath = node scripts/fetch-node-binary.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } # pwsh carries on past a failed native command
           Copy-Item $nodePath qunitx.exe
           npx --yes postject qunitx.exe NODE_SEA_BLOB sea.blob `
             --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2

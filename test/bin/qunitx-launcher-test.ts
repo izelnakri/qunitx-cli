@@ -8,6 +8,8 @@ import {
   archiveNameFor,
   archiveUrlFor,
   binaryInsideArchive,
+  forShells,
+  tarFor,
   shaFor,
 } from '../../scripts/fetch-node-binary.ts';
 import { elfNaming } from '../helpers/tiny-elf.ts';
@@ -104,6 +106,28 @@ module('Bin | the host Node it builds on', { concurrency: true }, () => {
     assert.strictEqual(shaFor(manifest, 'node-v1-darwin-arm64.tar.gz'), 'aaa11');
     // A target the manifest does not mention must not resolve to something else's checksum.
     assert.strictEqual(shaFor(manifest, 'node-v1-win-x64.zip'), null);
+  });
+
+  test('Windows unpacks with its own bsdtar, not whichever tar PATH finds first', (assert) => {
+    // In Git Bash, PATH's tar is GNU tar: it read `C:\\…\\node-…-win-x64.zip` as a remote host `C`
+    // and failed the Windows SEA build with "Cannot connect to C: resolve failed".
+    assert.strictEqual(
+      tarFor('win32', { SystemRoot: 'C:\\Windows' }),
+      'C:\\Windows\\System32\\tar.exe',
+    );
+    assert.strictEqual(tarFor('win32', {}), 'C:\\Windows\\System32\\tar.exe', 'the default root');
+    assert.strictEqual(tarFor('linux', { SystemRoot: 'ignored' }), 'tar');
+    assert.strictEqual(tarFor('darwin', {}), 'tar');
+  });
+
+  test('the path it prints runs in Git Bash, which only treats `/` as a path', (assert) => {
+    // A word with no `/` in it is looked up on PATH, so Windows' own `\\` path would be
+    // "command not found" (exit 127) in `"$(node scripts/fetch-node-binary.ts)" …`.
+    assert.strictEqual(
+      forShells('D:\\a\\qunitx-cli\\node_modules\\.cache\\node.exe', '\\'),
+      'D:/a/qunitx-cli/node_modules/.cache/node.exe',
+    );
+    assert.strictEqual(forShells('/home/me/repo/node', '/'), '/home/me/repo/node', 'POSIX as is');
   });
 
   test('the executable sits where the archive puts it', (assert) => {

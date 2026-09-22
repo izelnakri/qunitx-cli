@@ -107,7 +107,7 @@ build-sea:
 	  --log-override:empty-import-meta=silent \
 	  --log-override:require-resolve-not-external=silent; \
 	node scripts/write-sea-config.js; \
-	HOST=$$(node scripts/fetch-node-binary.ts); \
+	HOST=$$(node scripts/fetch-node-binary.ts) || exit 1; \
 	"$$HOST" --experimental-sea-config sea-config.json; \
 	rm -f qunitx-sea; \
 	cp "$$HOST" qunitx-sea; \

@@ -9,14 +9,14 @@ import { setTimeout, clearTimeout } from 'node:timers';
 import '../helpers/custom-asserts.ts';
 import { execute as shell, shellFails, terminateChild } from '../helpers/shell.ts';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
+import { reservePort } from '../helpers/reserve-port.ts';
 
 module('Flags | --port', { concurrency: true }, (_hooks, moduleMetadata) => {
   // The `-p=<n>` spelling shares one branch with `--port=<n>` in lib/args/parse.ts and is owned
   // by test/args/parse-test.ts 'Args | parse | --port' — this asserts the wiring from the parsed
   // value through to the port the server actually announces and runs the suite on.
   test('serves the suite on the requested port and echoes it in the debug URL', async (assert, testMetadata) => {
-    const { number: port, release } = await findFreePort();
-    await release();
+    const port = await reservePort();
     const result = await shell(
       `node cli.ts test/fixtures/passing-tests.js --port=${port} --debug`,
       {
@@ -36,10 +36,8 @@ module('Flags | --port', { concurrency: true }, (_hooks, moduleMetadata) => {
   });
 
   test('accepts TCP connections on the bound port while running, and frees it on exit', async (assert) => {
-    // Use a dynamically found free port via --port so the test is isolated from concurrent runs.
-    const free = await findFreePort();
-    const port = free.number;
-    await free.release();
+    // Reserved, so no other worker is handed it between here and the CLI's own bind.
+    const port = await reservePort();
 
     const boundPort = await withRunningServer(
       `node cli.ts test/fixtures/passing-tests.js --watch --port=${port}`,
@@ -92,8 +90,8 @@ module('Flags | --port', { concurrency: true }, (_hooks, moduleMetadata) => {
 });
 
 // Finds a free OS-assigned port by binding to :: (all interfaces) to match how the CLI binds.
-// Returns { number, release }. Caller can hold the server open to occupy the port, or call
-// release() immediately to free it.
+// Returns { number, release } for a caller that HOLDS the port to occupy it. To hand a port to
+// something else, use reservePort(): one released here is fair game for any other worker.
 function findFreePort(): Promise<{ number: number; release: () => Promise<void> }> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
