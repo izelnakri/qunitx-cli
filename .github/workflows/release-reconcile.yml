@@ -180,13 +180,56 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+      actions: read # the tag's own CI run, and the binaries it built
     strategy:
       fail-fast: false
       matrix:
         tag: ${{ fromJSON(needs.detect.outputs.missing) }}
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/publish-release
+        with:
+          fetch-depth: 0 # every tag, to tell whether this one is the newest
+
+      # A release without its binaries is worse than none: it becomes `releases/latest`, and then
+      # install.sh and `qunitx upgrade` 404 for everyone. So the binaries come from the tag's own
+      # CI run, and a tag whose builds did not all succeed (v0.37.0: windows-x64) is left alone.
+      - name: Collect the binaries the tag's CI run built
+        id: binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ matrix.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          run=$(gh run list --workflow ci.yml --branch "$TAG" --event push --limit 1 \
+            --json databaseId --jq '.[0].databaseId // empty')
+          builds='[.jobs[] | select(.name | test("^Build (binary|deno binary|musl binary) "))]'
+          if [ -z "$run" ]; then
+            reason="no CI run for the tag"
+          elif [ "$(gh run view "$run" --json jobs --jq "$builds | length")" = 0 ]; then
+            reason="its CI run ($run) built no binaries"
+          else
+            reason=$(gh run view "$run" --json jobs \
+              --jq "$builds | map(select(.conclusion != \"success\") | .name) | join(\", \")")
+            [ -n "$reason" ] && reason="these builds did not succeed in run $run: $reason"
+          fi
+          if [ -n "$reason" ]; then
+            echo "::warning title=$TAG not backfilled::$reason — a release without its binaries would break install.sh; cut a patch release instead."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          gh run download "$run" --pattern 'qunitx-*' --dir downloaded
+          mkdir artifacts
+          find downloaded -type f -exec mv -t artifacts {} +
+          newest=$(git tag -l 'v*' | sort -V | tail -1)
+          echo "latest=$([ "$TAG" = "$newest" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - if: steps.binaries.outputs.ready == 'true'
+        uses: ./.github/actions/publish-release
         with:
           tag: ${{ matrix.tag }}
+          artifacts_dir: artifacts
+          latest: ${{ steps.binaries.outputs.latest }}
           github_token: ${{ github.token }}

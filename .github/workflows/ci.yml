@@ -817,7 +817,7 @@ jobs:
           TEST_SCRIPT: ${{ matrix.test_script }}
           FORCE_COLOR: 0
 
-  # ── Node.js SEA binaries (tags only) ──────────────────────────────────────────
+  # ── Node.js SEA binaries (every push; released on tags) ───────────────────────
   # Builds a standalone native binary per platform using Node.js Single
   # Executable Applications (node --experimental-sea-config, Node ≥ 22).
   #
@@ -832,7 +832,10 @@ jobs:
   #
   # Chrome is not bundled — users supply it via CHROME_BIN (same as today).
   build-binaries:
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Built on every push, not only on tags: the first run of a release build used to BE the
+    # release, and v0.37.0's Windows SEA step failed there for the first time. Only github-release,
+    # which publishes, waits for a tag.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
     needs: [lint, test, portable-binaries]
     name: Build binary · ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -965,7 +968,7 @@ jobs:
           name: qunitx-${{ matrix.target }}
           path: qunitx-${{ matrix.target }}.*
 
-  # ── Deno-compiled binaries (tags only) ────────────────────────────────────────
+  # ── Deno-compiled binaries (every push; released on tags) ─────────────────────
   # Parallel to build-binaries (which uses Node SEA): produces a self-contained
   # binary built with `deno compile` plus the matching @esbuild sidecar, packaged
   # as `qunitx-deno-<target>.tar.gz` (or .zip on Windows). Lives alongside the SEA
@@ -978,7 +981,8 @@ jobs:
   #   - Each native runner gets a free smoke (binary + sidecar are cp'd on the
   #     same host they were built for; staleness/path mismatches surface here).
   build-deno-binaries:
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Every push, not only tags — see build-binaries.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
     needs: [lint, test, portable-binaries]
     name: Build deno binary · ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -1070,11 +1074,12 @@ jobs:
           name: qunitx-deno-${{ matrix.target }}
           path: qunitx-deno-${{ matrix.target }}.*
 
-  # ── musl standalone binaries (tags only) ──────────────────────────────────────
+  # ── musl standalone binaries (every push; released on tags) ───────────────────
   # For Alpine and other musl systems, which neither the deno binary nor the glibc SEA can start
   # on. Built in an Alpine container on each architecture — see scripts/build-sea-musl.ts.
   build-musl-binaries:
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Every push, not only tags — see build-binaries.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
     needs: [lint, test, portable-binaries]
     name: Build musl binary · ${{ matrix.target }}
     runs-on: ${{ matrix.os }}

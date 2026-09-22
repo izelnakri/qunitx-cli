@@ -12,6 +12,10 @@ inputs:
   github_token:
     description: 'GitHub token with `contents: write` permission.'
     required: true
+  latest:
+    description: Whether this becomes the `releases/latest` that install.sh resolves. False for a backfilled older tag.
+    required: false
+    default: 'true'
 
 runs:
   using: composite
@@ -22,6 +26,7 @@ runs:
         GH_TOKEN: ${{ inputs.github_token }}
         TAG: ${{ inputs.tag }}
         ARTIFACTS_DIR: ${{ inputs.artifacts_dir }}
+        LATEST: ${{ inputs.latest }}
       run: |
         set -euo pipefail
 
@@ -35,14 +40,7 @@ runs:
           echo "::warning::No CHANGELOG.md section found for ${TAG}; release notes will be empty."
         fi
 
-        # Explicit existence check so real errors (auth, rate limit) surface
-        # instead of being swallowed by `create || edit`.
-        if gh release view "$TAG" >/dev/null 2>&1; then
-          gh release edit "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
-        else
-          gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
-        fi
-
+        files=()
         if [ -n "$ARTIFACTS_DIR" ]; then
           if [ ! -d "$ARTIFACTS_DIR" ]; then
             echo "::error::artifacts_dir '$ARTIFACTS_DIR' does not exist"
@@ -52,7 +50,18 @@ runs:
           shopt -s nullglob
           files=( "$ARTIFACTS_DIR"/* )
           shopt -u nullglob
+        fi
+
+        # Explicit existence check so real errors (auth, rate limit) surface
+        # instead of being swallowed by `create || edit`. A new release is created WITH its files:
+        # created first and uploaded after, it was `releases/latest` with no binaries for as long
+        # as the upload took, and install.sh 404s on exactly that.
+        if gh release view "$TAG" >/dev/null 2>&1; then
+          gh release edit "$TAG" --title "$TAG" --notes-file "$NOTES_FILE" --latest="$LATEST"
           if [ ${#files[@]} -gt 0 ]; then
             gh release upload "$TAG" --clobber "${files[@]}"
           fi
+        else
+          gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE" --latest="$LATEST" \
+            "${files[@]}"
         fi
