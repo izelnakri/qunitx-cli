@@ -345,6 +345,18 @@ qunitx repl https://example.com/tests/helpers.js
 At the prompt, `.import https://example.com/tests/helpers.js` and a typed
 `import { a } from 'https://example.com/tests/helpers.js'` both work too.
 
+**A QUnit runner page** runs where it stands — nothing is bundled. qunitx opens the page, hooks
+QUnit before the page's own scripts run, and reports what QUnit reports.
+
+```sh
+qunitx https://objectmodel.js.org/test/          # 90 tests, reported as any other suite
+qunitx 'https://x/test/?moduleId=6e15ed5f'       # QUnit's own URL filters still apply
+qunitx https://x/test/ -t 'Set Models'           # and `-t` becomes QUnit's `filter`
+```
+
+A page is a whole suite, so it runs alone: passing one alongside other inputs is refused, and
+`--watch` has nothing to watch.
+
 A glob needs the server to list its directories: a JSON array of names, a JSON array of
 `{ name, type }` (what the GitHub contents API answers), or an HTML autoindex (what nginx, Caddy
 and `python -m http.server` give for free). A server that will not be listed says so by name. The

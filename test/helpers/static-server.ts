@@ -54,9 +54,23 @@ export async function staticServer(
     const pathname = decodeURIComponent(new URL(request.url ?? '/', 'http://x').pathname);
     requests.push(pathname);
 
-    const contents = files[pathname];
+    // A directory serves its `index.html`, which is what every real server does and what makes
+    // `/test/` a page rather than a listing. The content type follows the file actually served,
+    // not the path asked for: `/test/` typed as text/javascript is a page Chrome never renders.
+    // …and a directory asked for without its slash redirects, as every real server does: the
+    // page's own `./runtime.js` resolves against `/test/`, and against `/test` it would 404.
+    if (files[pathname] === undefined && files[`${pathname}/index.html`] !== undefined) {
+      response.writeHead(301, { location: `${pathname}/` });
+
+      return void response.end();
+    }
+    const served =
+      files[pathname] === undefined ? `${pathname.replace(/\/$/, '')}/index.html` : pathname;
+    const contents = files[served];
     if (contents !== undefined) {
-      response.writeHead(200, { 'content-type': types[pathname] ?? contentTypeOf(pathname) });
+      response.writeHead(200, {
+        'content-type': types[pathname] ?? types[served] ?? contentTypeOf(served),
+      });
 
       return void response.end(contents);
     }
