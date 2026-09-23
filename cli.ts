@@ -64,6 +64,9 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   } else if (cmd === 'upgrade') {
     const Upgrade = await import('./lib/commands/upgrade/index.ts');
     process.exit(await Upgrade.run());
+  } else if (cmd === 'uninstall') {
+    const Uninstall = await import('./lib/commands/uninstall/index.ts');
+    process.exit(await Uninstall.run());
   } else if (cmd === 'run') {
     // A KEYWORD, not a guess. `qunitx foo.ts` means "run the tests foo.ts declares", and the only
     // thing that could tell a script from a test file before the browser has run it is a static
