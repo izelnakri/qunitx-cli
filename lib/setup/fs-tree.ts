@@ -9,6 +9,7 @@ import {
   isRemoteInput,
   remoteDirectoryPattern,
 } from './remote-inputs.ts';
+import { isRemoteQUnitPage } from './remote-page.ts';
 import type { FSTree } from '../types.ts';
 
 /**
@@ -85,6 +86,10 @@ async function collectFiles(input: string, extensions: string[]): Promise<string
   if (isRemoteInput(input)) {
     const cache = new Map<string, string>();
     if (isRemoteGlob(input)) return await expandRemoteGlob(input, extensions, cache);
+    // A QUnit page is one input, not a directory to walk: `/test/` and `/test` are pages far more
+    // often than they are listings, and asking one for its contents finds nothing — which is how
+    // `qunitx https://objectmodel.js.org/test/` reported "Running 0 test files" about a suite of 90.
+    if (await isRemoteQUnitPage(input)) return [input];
     const directory = remoteDirectoryPattern(input);
 
     return directory === null ? [input] : await expandRemoteGlob(directory, extensions, cache);
