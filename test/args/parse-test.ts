@@ -610,7 +610,7 @@ module('Args | applyInputs', { concurrency: true }, () => {
 
     assert.deepEqual(flags.lineTargets, { [path.normalize('/proj/test/a-test.ts')]: [34] });
     assert.deepEqual(flags.htmlPaths, ['test/tests.html']);
-    assert.deepEqual(flags.wholeInputPaths, [path.normalize('/proj/test/b-test.ts')]);
+    assert.deepEqual(flags.inputsWithoutLineTargets, [path.normalize('/proj/test/b-test.ts')]);
     assert.deepEqual(flags.inputs, [
       path.normalize('/proj/test/a-test.ts'),
       path.normalize('/proj/test/b-test.ts'),
@@ -629,7 +629,7 @@ module('Args | applyInputs', { concurrency: true }, () => {
 
     assert.deepEqual(flags.inputs, [path.normalize('/proj/a.ts')], 'one entry, not two');
     assert.deepEqual(flags.lineTargets, { [path.normalize('/proj/a.ts')]: [7] });
-    assert.deepEqual(flags.wholeInputPaths, [path.normalize('/proj/a.ts')]);
+    assert.deepEqual(flags.inputsWithoutLineTargets, [path.normalize('/proj/a.ts')]);
   });
 });
 

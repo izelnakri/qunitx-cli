@@ -115,7 +115,7 @@ export interface ParsedFlags {
   /** Absolute path → the `#34` line targets given for it. */
   lineTargets?: Record<string, number[]>;
   /** Absolute paths mentioned WITHOUT a line target — whole-file requests that supersede a line target. */
-  wholeInputPaths?: string[];
+  inputsWithoutLineTargets?: string[];
 }
 
 /**
@@ -186,7 +186,8 @@ export function parse(
 /**
  * Classifies raw positional targets into `flags`, exactly as the CLI does with argv positionals:
  * `.html` fixtures become `htmlPaths`, a trailing `#34`/`:34` becomes a `lineTargets` entry, and
- * everything else is an absolute path in `inputs` (deduplicated) plus a `wholeInputPaths` mention.
+ * everything else is an absolute path in `inputs` (deduplicated) plus an
+ * `inputsWithoutLineTargets` mention.
  *
  * Shared with the JS API so `run({ inputs: ['test/cart-test.ts#34'] })` means precisely what
  * `qunitx test/cart-test.ts#34` means — the same targeting grammar, resolved by the same code.
@@ -361,7 +362,7 @@ function addInput(
     // same path — from `a.ts a.ts#34` — is superseded like any other broader input (see config.ts).
     // Tracked separately because `inputs` is a Set: the bare and line-target mentions collapse to
     // one entry, losing the fact that a whole-file mention was made.
-    (result.wholeInputPaths ??= []).push(absolutePath);
+    (result.inputsWithoutLineTargets ??= []).push(absolutePath);
   }
   inputs.add(absolutePath);
 }

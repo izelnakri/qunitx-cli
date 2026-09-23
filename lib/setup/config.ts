@@ -244,10 +244,10 @@ function pruneSupersededLineTargets(config: Config): void {
   // Only whole-file mentions supersede — a directory, a glob, or the same path given bare
   // (`a.ts a.ts#34`). A path present ONLY as a line target is not in this list, so it keeps its
   // target.
-  const wholeInputs = config.wholeInputPaths ?? [];
+  const withoutLineTargets = config.inputsWithoutLineTargets ?? [];
 
   for (const file of Object.keys(lineTargets)) {
-    const coveredBy = wholeInputs.find((input) => coversFileWhole(input, file));
+    const coveredBy = withoutLineTargets.find((input) => coversFileWhole(input, file));
     if (!coveredBy) continue;
     const rel = path.relative(config.projectRoot, file).replaceAll('\\', '/');
     Reporter.warning(
