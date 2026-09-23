@@ -334,6 +334,17 @@ run: the bundle, the browser, the reporters, `-t`, `--search`, `#34` line target
 | `https://x/tests/**/*-test.{js,ts}`     | and everything below                                       |
 | `https://x/tests/a-test.js#34`          | just the test on line 34 — `#`, never `:`, which is a port |
 
+`qunitx run` and `qunitx repl` take a URL as well — the browser equivalent of `deno run
+https://…`, and a prompt with a remote helper already in scope:
+
+```sh
+qunitx run https://example.com/scripts/seed.js
+qunitx repl https://example.com/tests/helpers.js
+```
+
+At the prompt, `.import https://example.com/tests/helpers.js` and a typed
+`import { a } from 'https://example.com/tests/helpers.js'` both work too.
+
 A glob needs the server to list its directories: a JSON array of names, a JSON array of
 `{ name, type }` (what the GitHub contents API answers), or an HTML autoindex (what nginx, Caddy
 and `python -m http.server` give for free). A server that will not be listed says so by name. The

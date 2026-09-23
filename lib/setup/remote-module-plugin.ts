@@ -1,7 +1,18 @@
 import { RemoteUnreadable, fetchRemote } from './remote-inputs.ts';
 import type { Loader, Plugin } from 'esbuild';
 
-const NAMESPACE = 'qunitx-remote';
+/**
+ * The esbuild namespace a fetched module lives in. Exported so a plugin that RESOLVES an entry
+ * itself — `qunitx run`'s, which hands esbuild a path rather than a specifier — can mark a URL as
+ * belonging here; a plain path would otherwise be looked for on this disk.
+ *
+ * ```ts
+ * import { REMOTE_NAMESPACE } from './remote-module-plugin.ts';
+ *
+ * REMOTE_NAMESPACE; // 'qunitx-remote'
+ * ```
+ */
+export const REMOTE_NAMESPACE = 'qunitx-remote';
 
 /**
  * esbuild plugin that lets a bundle reach modules served over HTTP, so
@@ -36,12 +47,12 @@ export function remoteModulePlugin(cwd: string = process.cwd()): Plugin {
     setup(build) {
       build.onResolve({ filter: /^https?:\/\//i }, (args) => ({
         path: args.path,
-        namespace: NAMESPACE,
+        namespace: REMOTE_NAMESPACE,
       }));
 
-      build.onResolve({ filter: /.*/, namespace: NAMESPACE }, async (args) => {
+      build.onResolve({ filter: /.*/, namespace: REMOTE_NAMESPACE }, async (args) => {
         if (/^\.{0,2}\//.test(args.path)) {
-          return { path: new URL(args.path, args.importer).href, namespace: NAMESPACE };
+          return { path: new URL(args.path, args.importer).href, namespace: REMOTE_NAMESPACE };
         }
         // A bare specifier goes back through the normal resolver — `resolveDir` is this project,
         // not the server, so the `qunitx` a remote test imports is the one running it. Any other
@@ -49,7 +60,7 @@ export function remoteModulePlugin(cwd: string = process.cwd()): Plugin {
         return await build.resolve(args.path, { kind: args.kind, resolveDir: cwd });
       });
 
-      build.onLoad({ filter: /.*/, namespace: NAMESPACE }, async (args) => ({
+      build.onLoad({ filter: /.*/, namespace: REMOTE_NAMESPACE }, async (args) => ({
         contents: await fetchRemote(args.path, cache),
         loader: loaderFor(args.path),
         // Where a relative import inside this module would resolve if it escaped the namespace,
