@@ -178,6 +178,25 @@ installed nothing to upgrade.
 Set `QUNITX_NO_SELF_UPGRADE=1` to make `upgrade` never run another installer, printing the command
 it would have run instead.
 
+### Uninstalling
+
+```sh
+qunitx uninstall            # remove this install, after saying what it will remove
+qunitx uninstall --dry-run  # print that list and stop
+qunitx uninstall --yes      # skip the question
+```
+
+It removes what qunitx installed and asks whoever else owns the rest: a standalone install loses
+its binary, esbuild sidecar and musl bundle; a `deno install` from JSR runs `deno uninstall -g` and
+clears the downloaded-binary cache (`--keep-cache` leaves it); a global npm install is handed to
+`npm uninstall -g`. A running daemon is stopped first, since it would outlive the binary that
+stops it.
+
+A **project** dependency and a **source checkout** are refused, as they are by `upgrade` and for
+the same reason — both are changes to someone's repository. Those print the command that would do
+it, and `qunitx uninstall --write-manifest` drops the entry from `package.json` or `deno.json` if
+you want that part done.
+
 ## Writing tests
 
 qunitx-cli runs [QUnitX](https://github.com/izelnakri/qunitx) tests — a superset of QUnit with async
