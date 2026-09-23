@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { execute, shellFails, spawnCapture } from '../../helpers/shell.ts';
 import { acquireBrowser } from '../../helpers/browser-semaphore-queue.ts';
 import { tempDir } from '../../helpers/temp-dir.ts';
+import { staticServer } from '../../helpers/static-server.ts';
 import '../../helpers/custom-asserts.ts';
 
 // `qunitx repl` reads stdin, so a pipe is a full session: the same code path a terminal drives,
@@ -1142,5 +1143,47 @@ module('Commands | repl | scope and breakpoints', { concurrency: true }, () => {
 
     assert.includes(carried, '42', 'the session is a session again');
     assert.includes(older, '42', 'the name it shipped with still works');
+  });
+});
+
+// A URL is an input everywhere else, so it is one here: `qunitx repl https://x/helpers.ts` is the
+// same session as `qunitx repl test/helpers.ts`, and `.import` takes one at the prompt. Both go
+// through the same fetch-and-bundle plugin the test run uses.
+module('Commands | repl | a URL as an input', { concurrency: true }, () => {
+  const HELPERS =
+    "export const GREETING = 'hello from the server';\nexport const double = (n) => n * 2;\n";
+
+  test('a named URL is preloaded, and its exports are in scope', async (assert) => {
+    await using server = await staticServer({ files: { '/helpers.js': HELPERS } });
+    const result = await repl('double(21)\nGREETING\n.exit\n', `${server.url}/helpers.js`);
+
+    assert.exitCode(result, 0);
+    assert.includes(result, '42', 'an export is callable at the prompt');
+    assert.includes(result, 'hello from the server');
+    assert.includes(result, `loaded ${server.url}/helpers.js`, 'announced as the URL it is');
+  });
+
+  test('the namespace is there too, named after the URL’s own last segment', async (assert) => {
+    await using server = await staticServer({ files: { '/helpers.js': HELPERS } });
+    const result = await repl('Helpers.double(4)\n.exit\n', `${server.url}/helpers.js`);
+
+    assert.includes(result, '8');
+  });
+
+  test('`.import` fetches one at the prompt', async (assert) => {
+    await using server = await staticServer({ files: { '/helpers.js': HELPERS } });
+    const result = await repl(`.import ${server.url}/helpers.js\nHelpers.double(5)\n.exit\n`);
+
+    assert.exitCode(result, 0);
+    assert.includes(result, '10', 'and what it brought is callable');
+  });
+
+  test('an `import` statement typed at the prompt takes one as well', async (assert) => {
+    await using server = await staticServer({ files: { '/helpers.js': HELPERS } });
+    const result = await repl(
+      `import { GREETING } from '${server.url}/helpers.js'\nGREETING\n.exit\n`,
+    );
+
+    assert.includes(result, 'hello from the server');
   });
 });

@@ -12,6 +12,8 @@ import { HTTPServer } from '../web/index.ts';
 import { Task } from '../task/index.ts';
 import { bindServerToPort } from '../setup/bind-server-to-port.ts';
 import { blue, red } from '../utils/color.ts';
+import { isRemoteInput } from '../setup/remote-inputs.ts';
+import { REMOTE_NAMESPACE, remoteModulePlugin } from '../setup/remote-module-plugin.ts';
 import { closeCompletely } from '../utils/close-with-grace.ts';
 import { findProjectRoot } from '../utils/find-project-root.ts';
 import { pathExists } from '../utils/path-exists.ts';
@@ -318,9 +320,13 @@ async function configFor(entry: string, settings: ScriptSettings = {}): Promise<
   const cwd = settings.cwd ?? process.cwd();
   const projectRoot = settings.projectRoot ?? (await findProjectRoot(cwd));
   // Resolved here so a programmatic `run('seed.ts')` means the same file as the CLI's, which gets
-  // its absolute path from Args.parse. Already-absolute paths pass through untouched.
-  const absoluteEntry = path.resolve(cwd, entry);
-  if (!(await pathExists(absoluteEntry))) throw ScriptNotFound({ entry: absoluteEntry });
+  // its absolute path from Args.parse. Already-absolute paths pass through untouched — and a URL
+  // is already what it is: resolving one against `cwd` turns it into a path nobody has, and the
+  // existence check below would then refuse every remote script by name.
+  const absoluteEntry = isRemoteInput(entry) ? entry : path.resolve(cwd, entry);
+  if (!isRemoteInput(absoluteEntry) && !(await pathExists(absoluteEntry))) {
+    throw ScriptNotFound({ entry: absoluteEntry });
+  }
 
   return {
     entry: absoluteEntry,
@@ -423,7 +429,10 @@ export async function run(entry: string, settings: ScriptSettings = {}): Promise
     await execute(page, url, config, () => bundle);
     if (!first) return;
     first = false;
-    console.log('#', blue(`Watching ${path.relative(config.projectRoot, config.entry)} on ${url}`));
+    const shown = isRemoteInput(config.entry)
+      ? config.entry
+      : path.relative(config.projectRoot, config.entry);
+    console.log('#', blue(`Watching ${shown} on ${url}`));
   });
 }
 
@@ -475,7 +484,11 @@ async function build(config: ScriptConfig): Promise<ScriptBundle> {
       target: esbuildTarget(config.browser),
       sourcemap: 'inline',
       jsx: 'automatic',
-      plugins: [entryPlugin(config.entry), qunitxRuntimePlugin(config.cwd)],
+      plugins: [
+        entryPlugin(config.entry),
+        remoteModulePlugin(config.cwd),
+        qunitxRuntimePlugin(config.cwd),
+      ],
     })
     .catch((cause: unknown) => {
       throw ScriptBuildFailed({ entry: config.entry }, { cause });
@@ -486,7 +499,13 @@ async function build(config: ScriptConfig): Promise<ScriptBundle> {
   // Keys are relative to `absWorkingDir` when there is a relative form and absolute when there
   // is not, which `resolve` flattens either way. esbuild leaves `format` unset for a file with
   // no module syntax at all rather than calling it cjs, so only `esm` counts as a yes.
-  const entry = inputs.find(([input]) => path.resolve(config.cwd, input) === config.entry);
+  // A fetched entry is keyed `qunitx-remote:https://…` rather than by a path, so it is matched by
+  // its own URL instead of by resolution against `cwd`.
+  const entry = inputs.find(([input]) =>
+    isRemoteInput(config.entry)
+      ? input.endsWith(config.entry)
+      : path.resolve(config.cwd, input) === config.entry,
+  );
 
   return {
     code,
@@ -523,7 +542,10 @@ export function watchDirectoriesFrom(
   pathApi: Pick<typeof path, 'resolve' | 'dirname'> = path,
 ): string[] {
   const directories = inputs
-    .filter((input) => !input.includes('node_modules') && !input.startsWith('<'))
+    .filter(
+      (input) =>
+        !input.includes('node_modules') && !input.startsWith('<') && !input.includes('://'),
+    )
     .map((input) => pathApi.dirname(pathApi.resolve(cwd, input)));
 
   return [...new Set(directories)];
@@ -571,10 +593,16 @@ export async function realWatchDirectories(
  * build "succeeded" and the page 404'd instead of the syntax error being reported.
  */
 function entryPlugin(entry: string): esbuild.Plugin {
+  // A resolved path is final — esbuild runs no other resolver over it — so a URL entry carries the
+  // remote namespace from here, and remoteModulePlugin's loader fetches it.
+  const resolved = isRemoteInput(entry)
+    ? { path: entry, namespace: REMOTE_NAMESPACE }
+    : { path: entry };
+
   return {
     name: 'qunitx-script-entry',
     setup(build) {
-      build.onResolve({ filter: new RegExp(`^${ENTRY_SPECIFIER}$`) }, () => ({ path: entry }));
+      build.onResolve({ filter: new RegExp(`^${ENTRY_SPECIFIER}$`) }, () => resolved);
     },
   };
 }
@@ -971,6 +999,8 @@ export function suiteHint(
   entry: string,
   relativeTo: (from: string, to: string) => string = path.relative,
 ): string {
+  if (isRemoteInput(entry)) return `qunitx ${entry}`;
+
   return `qunitx ${relativeTo(cwd, entry).replaceAll('\\', '/')}`;
 }
 

@@ -145,6 +145,19 @@ module('Inputs | a URL', { concurrency: true }, () => {
     assert.includes(result, 'Running 0 test files');
   });
 
+  test('`qunitx run` takes one too — the script is fetched and runs in the page', async (assert) => {
+    await using server = await staticServer({
+      files: {
+        '/scripts/seed.js':
+          "document.title = 'set by a remote script';\nconsole.log('seeded', document.title);\n",
+      },
+    });
+    const result = await run(`run ${server.url}/scripts/seed.js`);
+
+    assert.exitCode(result, 0);
+    assert.includes(result, 'seeded set by a remote script', 'its own console output, as a script');
+  });
+
   test('--search reads a remote file’s declarations without running them', async (assert) => {
     await using server = await staticServer({ files: SUITE });
     const result = await run(`${server.url}/tests/cart-test.js --search`);

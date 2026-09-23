@@ -12,6 +12,8 @@ import * as FSTree from '../setup/fs-tree.ts';
 import * as TestFilePaths from '../setup/test-file-paths.ts';
 import { bindServerToPort } from '../setup/bind-server-to-port.ts';
 import { qunitxRuntimePlugin } from '../setup/qunitx-runtime-plugin.ts';
+import { isRemoteInput } from '../setup/remote-inputs.ts';
+import { remoteModulePlugin } from '../setup/remote-module-plugin.ts';
 import { prelaunchPromise, shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { closeCompletely } from '../utils/close-with-grace.ts';
 import { Failure } from '../task/index.ts';
@@ -1158,11 +1160,15 @@ class Session implements ReplSession {
     callItThis?: string,
   ): Promise<{ name: string; names: string[] } | string> {
     if (this.#closed) return 'the REPL session is closed';
-    const absolute = path.resolve(this.#config.cwd, file);
+    const remote = isRemoteInput(file);
+    const absolute = remote ? file : path.resolve(this.#config.cwd, file);
     const shown = relative(this.#config, absolute);
-    const stats = fs.statSync(absolute, { throwIfNoEntry: false });
-    if (!stats) return `${shown} is not a file`;
-    if (stats.isDirectory()) return `${shown} is a directory`;
+    // A URL has nothing to stat, and `remoteModulePlugin` refuses what is not a module by name.
+    if (!remote) {
+      const stats = fs.statSync(absolute, { throwIfNoEntry: false });
+      if (!stats) return `${shown} is not a file`;
+      if (stats.isDirectory()) return `${shown} is a directory`;
+    }
 
     // `callItThis` and not `as`, which is a TypeScript operator: `const [file, as] = …` at the
     // call site read as a half-written type assertion, and a reviewer took it for a line number.
@@ -1170,15 +1176,16 @@ class Session implements ReplSession {
     const name = named ? callItThis : moduleNameFor(absolute);
     if (!IDENTIFIER.test(name)) return `${name} is not a name a value can be given`;
 
-    const source = CODE.has(path.extname(absolute).toLowerCase())
-      ? await this.#bundle(
-          [
-            `import * as m from '${specifier(absolute, this.#config.cwd)}';`,
-            `globalThis.__qunitxHarness.bring(${JSON.stringify(shown)}, ${JSON.stringify(name)}, m, ${named});`,
-          ].join('\n'),
-          shown,
-        )
-      : await plainFile(absolute, shown, name);
+    const source =
+      remote || CODE.has(path.extname(absolute).toLowerCase())
+        ? await this.#bundle(
+            [
+              `import * as m from '${specifier(absolute, this.#config.cwd)}';`,
+              `globalThis.__qunitxHarness.bring(${JSON.stringify(shown)}, ${JSON.stringify(name)}, m, ${named});`,
+            ].join('\n'),
+            shown,
+          )
+        : await plainFile(absolute, shown, name);
     if (typeof source !== 'string') return source.detail;
     const names = await this.#loadInto(source, shown, {
       kind: 'file',
@@ -1364,7 +1371,11 @@ class Session implements ReplSession {
         legalComments: 'none',
         sourcemap: 'inline',
         jsx: 'automatic',
-        plugins: [pageRuntimePlugin(exports), ...(this.#config.plugins ?? [])],
+        plugins: [
+          pageRuntimePlugin(exports),
+          remoteModulePlugin(this.#config.cwd),
+          ...(this.#config.plugins ?? []),
+        ],
       });
       // A script evaluated rather than fetched has no URL, and a location in one is a script id
       // nothing outside V8 can read. Naming it gives every function it defines somewhere to point
@@ -2147,7 +2158,11 @@ async function bundle(config: Config, preload: string[], outDir: string): Promis
       legalComments: 'none',
       sourcemap: 'inline',
       jsx: 'automatic',
-      plugins: [qunitxRuntimePlugin(config.cwd), ...(config.plugins ?? [])],
+      plugins: [
+        remoteModulePlugin(config.cwd),
+        qunitxRuntimePlugin(config.cwd),
+        ...(config.plugins ?? []),
+      ],
     });
 
     return built.outputFiles[0].text;
@@ -2241,12 +2256,16 @@ async function withoutTypes(input: string): Promise<string | { unfinished: true 
 
 /** Path relative to the project root, for display. */
 function relative(config: Config, file: string): string {
+  if (isRemoteInput(file)) return file;
+
   return path.relative(config.projectRoot, file).replaceAll('\\', '/');
 }
 
 // Absolute paths read as bare specifiers inside esbuild's stdin content on Windows, so imports go
 // in relative to the run's cwd.
 function specifier(file: string, cwd: string): string {
+  // A URL is already a specifier, and the only thing relativising one does is collapse its `//`.
+  if (isRemoteInput(file)) return file;
   const relativePath = path.relative(cwd, file);
   const normalized = relativePath.replaceAll('\\', '/');
   if (path.isAbsolute(relativePath)) return file.replaceAll('\\', '/');
