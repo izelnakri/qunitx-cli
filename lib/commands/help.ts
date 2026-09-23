@@ -29,6 +29,7 @@ ${highlight('Input options:')}
 - Line target: $ ${color('qunitx test/foo-test.ts#34')} — run just the test at that line (or: ${color('test/foo-test.ts:34')})
 - URL: $ ${color('qunitx https://example.com/tests/cart-test.js')} — fetched and run like a local file
 - URL glob: $ ${color("qunitx 'https://example.com/tests/**/*-test.js'")} — expands against the server's own listing
+- QUnit page: $ ${color('qunitx https://objectmodel.js.org/test/')} — run where it stands, reported as TAP
 
 ${highlight('Optional flags:')}
 ${color('--debug')} : print console output when tests run in browser (alias: ${color('--console')})
