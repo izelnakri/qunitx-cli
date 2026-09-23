@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.37.3] - 2026-09-23
+[`v0.37.2...v0.37.3`](https://github.com/izelnakri/qunitx-cli/compare/v0.37.2...v0.37.3)
+
+### Bug Fixes
+- The four paths that assumed every input was on this disk — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`aad3791`](https://github.com/izelnakri/qunitx-cli/commit/aad3791b43d7d47bffe66f7b75425c7419cfd980))
+- Say a refused connection the same way on Deno as on Node — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`a9ded41`](https://github.com/izelnakri/qunitx-cli/commit/a9ded41f9468f1a32485eda3015ad87819cadb8a))
+- Read a refusal in Windows' words too — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`7d4bad4`](https://github.com/izelnakri/qunitx-cli/commit/7d4bad4f8d49b929e156da1fdadfdecf9067b874))
+
+### Documentation
+- URLs as inputs, in the help and the README — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`fcfe637`](https://github.com/izelnakri/qunitx-cli/commit/fcfe63769c02784551afcbeaa9eb6866f7fab941))
+
+### Features
+- Fetch test files from a server, and let a glob list one — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`576fab3`](https://github.com/izelnakri/qunitx-cli/commit/576fab304f5084c13a26d7ad3539d38ff6f0db74))
+- [**breaking**] A URL is an input, and `#34` still means line 34 — 2026-09-21 by [@izelnakri](https://github.com/izelnakri) ([`7ec7eae`](https://github.com/izelnakri/qunitx-cli/commit/7ec7eae0646d46158975d89b4f8d7bcbca43a086))
+- `qunitx run` and `qunitx repl` take a URL too — 2026-09-23 by [@izelnakri](https://github.com/izelnakri) ([`840231b`](https://github.com/izelnakri/qunitx-cli/commit/840231bca433461798f588df496d5d18ae0ee335))
+
+### Refactoring
+- ParsedFlags.inputsWithoutLineTargets says what it holds — 2026-09-23 by [@izelnakri](https://github.com/izelnakri) ([`939fd7d`](https://github.com/izelnakri/qunitx-cli/commit/939fd7d8f7dd96c7f7849f8d17ac83dad54bce32))
+
 ## [0.37.2] - 2026-09-22
 [`v0.37.1...v0.37.2`](https://github.com/izelnakri/qunitx-cli/compare/v0.37.1...v0.37.2)
 
