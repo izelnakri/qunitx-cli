@@ -26,6 +26,8 @@ import { findInternalAssetsFromHTML } from '../utils/find-internal-assets-from-h
 import { runUserModule } from '../utils/run-user-module.ts';
 import { writeOutputStaticFiles } from '../setup/write-output-static-files.ts';
 import * as TimeCounter from '../utils/time-counter.ts';
+import { RemotePageMixedWithOtherInputs, runRemotePages } from './test/remote-pages.ts';
+import { filterRemotePagesFromConfig } from '../setup/remote-page.ts';
 import * as Reporter from '../reporters/index.ts';
 import { readTemplate } from '../utils/read-template.ts';
 import { isCustomTemplate } from '../utils/html.ts';
@@ -184,6 +186,20 @@ export async function run(config: Config): Promise<RunOutcome> {
   // Daemon mode reuses its persistent browser; local runs launch their own.
   const daemonBrowser = config.state.daemon?.browser;
   const browserPromise = daemonBrowser ? Promise.resolve(daemonBrowser) : Browser.launch(config);
+
+  // A suite that already has a page is not a bundle: it is opened where it lives and QUnit is
+  // reported through. Mixing the two in one run would mean two announces and two plans over one
+  // TAP stream, so a run is one or the other and says so.
+  const pages = await filterRemotePagesFromConfig(config);
+  if (pages.length > 0) {
+    const others = Object.keys(config.fsTree).filter((file) => !pages.includes(file));
+    if (others.length > 0) {
+      throw RemotePageMixedWithOtherInputs({ page: pages[0] as string, alongside: others.length });
+    }
+
+    return await runRemotePages(config, pages, browserPromise);
+  }
+
   const [, timings] = await Promise.all([
     resolveHtmlFixtures(config),
     Timings.read(config.projectRoot),
