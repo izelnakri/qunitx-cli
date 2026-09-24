@@ -1017,9 +1017,12 @@ export function testRuntimeSource(config: Config, groupId?: number): string {
       // Promise.all is naturally idempotent — resolving a Promise a second time is a no-op,
       // so WebKit firing WS error after open (causing a retry that re-opens) cannot double-start.
       let resolveWsReady = () => {};
-      const wsReadyPromise = window.location.protocol === 'file:'
-        ? Promise.resolve()
-        : new Promise(resolve => { resolveWsReady = resolve; });
+      // Only a page the runner drives waits for the socket — it is where the results go. A page
+      // nobody is watching (a human's own tab, a copy on a static host) runs as soon as its
+      // tests load, so the run is never held up by a socket it does not need.
+      const wsReadyPromise = runnerIsListening()
+        ? new Promise(resolve => { resolveWsReady = resolve; })
+        : Promise.resolve();
 
       // { once: true } auto-removes the listener after the first fire.
       const testsReadyPromise = new Promise(resolve => {
@@ -1028,9 +1031,9 @@ export function testRuntimeSource(config: Config, groupId?: number): string {
 
       Promise.all([wsReadyPromise, testsReadyPromise]).then(setupQUnit);
 
-      // For static files (file:// protocol) there is no WebSocket server; wsReadyPromise
-      // is already resolved above, so setupQUnit fires as soon as tests load.
-      if (window.location.protocol === 'file:') return;
+      // No qunitx server behind the page: there is no socket to open, and on a published copy
+      // (https, another host) trying would be a mixed-content error in the console for nothing.
+      if (!qunitxServerBehindPage()) return;
 
       const WS_MAX_RETRIES = Math.ceil(${config.timeout} / ${WS_RETRY_INTERVAL_MS}); // retry for the full test timeout window
 
@@ -1068,6 +1071,27 @@ export function testRuntimeSource(config: Config, groupId?: number): string {
     })();
     }
 
+    // The page a run leaves in --output is the same HTML the server sent, and it is meant to be
+    // opened again: from disk, or published to a static host the way this project publishes its
+    // own suite. What follows is what such a page can no longer count on — a socket to open, and
+    // a runner to report to. Functions, so a second injection cannot collide on the name.
+    //
+    // The socket URL is localhost by construction, so only a page on localhost has one to open.
+    function qunitxServerBehindPage() {
+      return /^(localhost|127\\.0\\.0\\.1|\\[?::1\\]?)$/.test(window.location.hostname);
+    }
+
+    // __QUNITX_RUNNER__ is set by an init script on the pages this process drives (browser.ts) —
+    // the only pages whose results are wanted over the socket. navigator.webdriver is not enough:
+    // Playwright sets it on a remote QUnit page too, where there is no socket and the send throws.
+    function runnerIsListening() {
+      return Boolean(window.__QUNITX_RUNNER__);
+    }
+
+    function reportsToRunner() {
+      return runnerIsListening() && Boolean(window.socket);
+    }
+
     function getCircularReplacer() {
       const ancestors = [];
       return function (key, value) {
@@ -1094,7 +1118,7 @@ export function testRuntimeSource(config: Config, groupId?: number): string {
       // stub here and blow up on QUnit.begin instead of reporting 0 tests.
       if (!window.QUnit || !window.QUnit.version) {
         console.log('QUnit not found after WebSocket connected');
-        if (navigator.webdriver) {
+        if (reportsToRunner()) {
           // Signal the Playwright runner that the run is complete with 0 tests rather than
           // waiting for the inactivity timeout. The runner treats totalTests === 0 as a
           // "no tests registered" warning (not a failure), so this gives a fast, clean result.
@@ -1108,7 +1132,7 @@ export function testRuntimeSource(config: Config, groupId?: number): string {
       }
 
       window.QUnit.begin(() => { // NOTE: might be useful in future for hanged module tracking
-        if (navigator.webdriver) {
+        if (reportsToRunner()) {
           window.socket.send(JSON.stringify({ event: 'connection' }));
         }
       });
@@ -1120,7 +1144,7 @@ export function testRuntimeSource(config: Config, groupId?: number): string {
         window.QUNIT_RESULT.finishedTests++;
         if (details.status === 'failed') window.QUNIT_RESULT.failedTests++;
         window.QUNIT_RESULT.currentTest = null;
-        if (navigator.webdriver) {
+        if (reportsToRunner()) {
           const isFailed = details.status === 'failed';
           const payload = isFailed ? details : { status: details.status, fullName: details.fullName, runtime: details.runtime };
           window.socket.send(JSON.stringify({ event: 'testEnd', details: payload, abort: window.abortQUnit }, isFailed ? getCircularReplacer() : undefined));
@@ -1131,7 +1155,7 @@ export function testRuntimeSource(config: Config, groupId?: number): string {
         }
       });
       window.QUnit.done((details) => {
-        if (navigator.webdriver) {
+        if (reportsToRunner()) {
           window.socket.send(JSON.stringify({ event: 'done', details: details, qunitResult: window.QUNIT_RESULT, abort: window.abortQUnit }, getCircularReplacer()));
         }
       });
