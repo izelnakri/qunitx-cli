@@ -306,6 +306,38 @@ module('Setup | WebServer | runtime IIFE idempotency', { concurrency: true }, ()
 });
 
 // ---------------------------------------------------------------------------
+// Asset hrefs — a URL on every host, including the one that writes `\`
+// ---------------------------------------------------------------------------
+
+module('Setup | WebServer | the hrefs in the page it serves', { concurrency: true }, () => {
+  test('are URLs, not host paths', async (assert) => {
+    // The bundled template's link, and the path resolveMainHTML gives the page it injects into:
+    // the shape whose rewrite has to come out as a URL.
+    const config = makeConfig();
+    config.state.htmlAssets.mainHTML = {
+      filePath: `${CWD}/test/tests.html`,
+      html:
+        '<html><head><link href="../node_modules/qunitx/vendor/qunit.css" rel="stylesheet">' +
+        '</head><body>{{qunitxScript}}</body></html>',
+    };
+    const server = WebServer.setup(config);
+    await server.listen(0);
+    const port = (server._server.address() as { port: number }).port;
+    try {
+      const { body } = await get(port, '/', { accept: 'text/html' });
+
+      assert.includes(body, './node_modules/qunitx/vendor/qunit.css');
+      // Windows is where this bites: `path.normalize` there answers `.\node_modules\…`, which
+      // browsers forgive and a published page should not carry. Trivially true on POSIX, which is
+      // the point — the assertion lives here so the Windows lane is what proves it.
+      assert.notIncludes(body, '\\node_modules');
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The same page, published — what a run leaves in --output has no server behind it
 // ---------------------------------------------------------------------------
 
