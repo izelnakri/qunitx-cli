@@ -4,13 +4,14 @@ import { HTTPServer } from '../web/index.ts';
 import { bindServerToPort } from '../setup/bind-server-to-port.ts';
 import * as WebServer from '../setup/web-server.ts';
 import { openOutputInBrowser } from '../utils/open-output-in-browser.ts';
+import { withLoopAlive } from '../utils/with-loop-alive.ts';
 import fs from 'node:fs/promises';
 import { normalize, relative, resolve as resolvePath } from 'node:path';
 import { availableParallelism } from 'node:os';
 // node:timers returns Timer objects with .unref()/.ref() in both Node and Deno.
 // The bare `setTimeout` global in Deno is the Web platform variant, which returns
 // a number with no unref method.
-import { setTimeout, setInterval, clearInterval } from 'node:timers';
+import { setTimeout } from 'node:timers';
 import { blue, yellow } from '../utils/color.ts';
 import {
   run as runInBrowser,
@@ -44,8 +45,6 @@ import { Task } from '../task/index.ts';
 
 // Playwright navigation timeout for headed watch-mode reloads (not test execution).
 const WATCH_NAV_TIMEOUT_MS = 5_000;
-// setInterval period that keeps the event loop alive while Promise.allSettled runs.
-const KEEP_ALIVE_INTERVAL_MS = 10_000;
 // Daemon-only bound on the "connecting" phase (Browser.setup → newPage on the reused
 // browser). newPage() is the one connecting step with no timeout — it only rejects once
 // Playwright observes the transport close, which under load can lag a browser that died in
@@ -175,7 +174,14 @@ export interface WatchSession {
  * }
  * ```
  */
-export async function run(config: Config): Promise<RunOutcome> {
+export function run(config: Config): Promise<RunOutcome> {
+  // Held open for the whole run, not just the part that waits on the groups: everything a run
+  // holds is unref'd or dropped when a browser dies, and a process with nothing left to do exits
+  // 0 (see with-loop-alive.ts for the CI run that did). A run now has to END, one way or another.
+  return withLoopAlive(() => runOnce(config));
+}
+
+async function runOnce(config: Config): Promise<RunOutcome> {
   disableUnsupportedCoverage(config);
 
   // Kick off all I/O that doesn't need the HTML fixtures in parallel with resolveHtmlFixtures:
@@ -726,13 +732,6 @@ async function runConcurrentMode(
   // any still-pending Playwright calls in background async fns.
   const GROUP_TIMEOUT_MS = 3 * 60 * 1000;
 
-  // Keep the event loop alive during Promise.allSettled. The Chrome child process and its
-  // stderr pipe are unref'd (pre-launch-chrome.js). If Chrome crashes during group cleanup,
-  // all active handles close and the event loop would drain — exiting silently before
-  // allSettled resolves or results are printed. This interval holds the loop open so that
-  // unref'd group/page-close timers can still fire normally.
-  const keepAlive = setInterval(() => {}, KEEP_ALIVE_INTERVAL_MS);
-
   const groupResults = await Promise.allSettled(
     groupConfigs.map((groupConfig, i) => {
       const groupTimeout = new Promise((_, reject) => {
@@ -884,7 +883,6 @@ async function runConcurrentMode(
   // owns it across runs, and the next run reuses it.
   if (config.state.daemon) {
     await closeWithGrace({ server: Task(sharedServer?.close()).ignore('server.close') });
-    clearInterval(keepAlive);
     return { exitCode, durationMs, startedAt, finishedAt };
   }
 
@@ -893,10 +891,10 @@ async function runConcurrentMode(
   // process; now that the caller does, "finish cleaning up, then hand back the outcome" is both
   // simpler and stricter — the failure cache can no longer be lost to an exit that fires first.
   //
-  // keepAlive is cleared AFTER cleanup so the interval holds the event loop open throughout,
-  // preventing a premature drain if every close resolves instantly (e.g. Chrome already dead)
-  // before proc.ref() takes effect inside shutdownPrelaunch. closeWithGrace bounds the other
-  // side: Playwright's browser.close() can deadlock on Firefox + Windows.
+  // The loop stays held open throughout by `run`'s withLoopAlive, which is what keeps a premature
+  // drain out of this window too: every close can resolve instantly (Chrome already dead) before
+  // proc.ref() takes effect inside shutdownPrelaunch. closeWithGrace bounds the other side:
+  // Playwright's browser.close() can deadlock on Firefox + Windows.
   // `closeCompletely` because this is also the JS API's return: `test()` handing back a result
   // while playwright still holds the browser leaves a caller that cannot exit. Costs nothing in
   // the ordinary case — the second wait only happens when the first one gave up on something.
@@ -906,7 +904,6 @@ async function runConcurrentMode(
     browser: Task(browser.close()).ignore('browser.close'),
     prelaunch: shutdownPrelaunch(),
   });
-  clearInterval(keepAlive);
 
   return { exitCode, durationMs, startedAt, finishedAt };
 }
