@@ -3,6 +3,9 @@ import path from 'node:path';
 import { readTemplate } from '../utils/read-template.ts';
 import type { HtmlAssets } from '../types.ts';
 
+// Relative to the page, and to the output directory the page is copied into.
+const VENDOR_CSS_PATH = 'node_modules/qunitx/vendor/qunit.css';
+
 /**
  * Copies static HTML files and referenced assets from the project into the configured output directory.
  *
@@ -45,7 +48,39 @@ export async function writeOutputStaticFiles(
     await copyAsset(assetAbsolutePath, destPath);
   });
 
-  await Promise.all(staticHTMLPromises.concat(assetPromises));
+  await Promise.all(
+    staticHTMLPromises.concat(assetPromises, stylesheetPromise(projectRoot, output, htmlAssets)),
+  );
+}
+
+/**
+ * The bundled page links `node_modules/qunitx/vendor/qunit.css`, which the web server answers from
+ * the CLI's embedded copy — so the served page is styled and the copy left in `--output` was not.
+ * Writing the stylesheet beside the page makes that directory a standalone site: the same styling
+ * whether it is opened from disk or published to a static host.
+ *
+ * Skipped when the page's own assets already cover that path, so a custom template's copy (which
+ * may be the consumer's own qunit.css) is not overwritten by ours.
+ */
+function stylesheetPromise(
+  projectRoot: string,
+  output: string,
+  htmlAssets: HtmlAssets,
+): Promise<void> {
+  const links = htmlAssets.mainHTML.html?.includes(VENDOR_CSS_PATH);
+  const copied = Array.from(htmlAssets.assets).some((asset) =>
+    asset.replace(/\\/g, '/').endsWith(VENDOR_CSS_PATH),
+  );
+  if (!links || copied) return Promise.resolve();
+
+  return writeVendorStylesheet(
+    path.join(path.resolve(projectRoot, output), ...VENDOR_CSS_PATH.split('/')),
+  );
+}
+
+async function writeVendorStylesheet(destination: string): Promise<void> {
+  await ensureFolderExists(destination);
+  await fs.writeFile(destination, await readTemplate('vendor/qunit.css'));
 }
 
 async function ensureFolderExists(assetPath: string): Promise<void> {

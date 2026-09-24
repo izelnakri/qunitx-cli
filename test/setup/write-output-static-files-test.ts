@@ -11,10 +11,11 @@ import type { HtmlAssets } from '../../lib/types.ts';
 function htmlAssetsFor(opts: {
   staticHTMLs?: Record<string, string>;
   assets?: string[];
+  mainHTML?: string;
 }): HtmlAssets {
   return {
     assets: new Set(opts.assets ?? []),
-    mainHTML: { filePath: null, html: null },
+    mainHTML: { filePath: opts.mainHTML ? 'test/tests.html' : null, html: opts.mainHTML ?? null },
     staticHTMLs: opts.staticHTMLs ?? {},
     dynamicContentHTMLs: {},
   };
@@ -168,6 +169,62 @@ module('Setup | writeOutputStaticFiles | missing assets', { concurrency: true },
     );
 
     assert.strictEqual(await fs.readFile(path.join(dir, 'out/real.css'), 'utf8'), '/* real */');
+  });
+});
+
+// The output directory is not a build artifact nobody opens: it is the page again, and CI
+// publishes this project's own copy of it to GitHub Pages. Whatever the server answered for has
+// to be in there, or the page renders unstyled everywhere except the run that produced it.
+module('Setup | writeOutputStaticFiles | the page taken with it', { concurrency: true }, () => {
+  test('the bundled page gets the stylesheet it links written beside it', async (assert) => {
+    const dir = await tempDir('page-standalone');
+
+    await writeOutputStaticFiles(
+      { projectRoot: dir, output: 'out' },
+      htmlAssetsFor({
+        mainHTML: '<link href="../node_modules/qunitx/vendor/qunit.css" rel="stylesheet">',
+      }),
+    );
+
+    const written = await fs.readFile(
+      path.join(dir, 'out/node_modules/qunitx/vendor/qunit.css'),
+      'utf8',
+    );
+    assert.true(written.includes('#qunit'), 'the embedded stylesheet, at the path the page names');
+  });
+
+  test('a page that brings its own copy keeps it', async (assert) => {
+    const dir = await tempDir('page-own-css');
+    const own = path.join(dir, 'node_modules/qunitx/vendor/qunit.css');
+    await writeAsset(own, '/* the consumer own qunit.css */');
+
+    await writeOutputStaticFiles(
+      { projectRoot: dir, output: 'out' },
+      htmlAssetsFor({
+        assets: [own],
+        mainHTML: '<link href="./node_modules/qunitx/vendor/qunit.css" rel="stylesheet">',
+      }),
+    );
+
+    assert.strictEqual(
+      await fs.readFile(path.join(dir, 'out/node_modules/qunitx/vendor/qunit.css'), 'utf8'),
+      '/* the consumer own qunit.css */',
+      'copied from the project, not overwritten by ours',
+    );
+  });
+
+  test('a page that links no stylesheet gets none', async (assert) => {
+    const dir = await tempDir('page-no-css');
+
+    await writeOutputStaticFiles(
+      { projectRoot: dir, output: 'out' },
+      htmlAssetsFor({ mainHTML: '<div id="qunit"></div>' }),
+    );
+
+    assert.false(
+      await pathExists(path.join(dir, 'out/node_modules')),
+      'nothing invented for a page that never asked for it',
+    );
   });
 });
 

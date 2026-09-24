@@ -230,6 +230,14 @@ export async function setup(
     return [newServer, activeBrowser, newPage] as const;
   })();
 
+  // The runner announcing itself to the page: only a page this process drives has a WebSocket
+  // server waiting for its results, so only that page holds its tests back until the socket is
+  // open (see qunitxServerBehindPage/runnerIsListening in web-server.ts). The same HTML copied
+  // into --output, opened from disk or published to a static host, has nobody to report to and
+  // runs on load. Per-Page, so a remote QUnit page opened on this same browser never sees it —
+  // and skipped for a reused daemon page, which was given the flag when it was first created.
+  if (!slotPage) await page.addInitScript({ content: 'window.__QUNITX_RUNNER__ = true;' });
+
   // Firefox BiDi sends all object console args by handle (no inline value), so
   // arg.jsonValue() always fails for objects — even plain ones with no special types.
   // Pre-serialize objects to JSON strings in the browser before BiDi sees them:

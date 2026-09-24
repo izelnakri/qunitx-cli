@@ -266,9 +266,12 @@ module('Setup | WebServer | runtime IIFE idempotency', { concurrency: true }, ()
       close() {}
     }
     const fakeWindow = {
-      location: { protocol: 'http:', port: '1234' },
+      // The socket URL is localhost by construction, so the hostname is what decides whether
+      // the runtime opens one at all — see the static-host test below.
+      location: { protocol: 'http:', hostname: 'localhost', port: '1234' },
       addEventListener: () => {},
       setTimeout: setTimeout,
+      __QUNITX_RUNNER__: true,
     } as Record<string, unknown>;
     fakeWindow.window = fakeWindow;
     // Browser globals are exposed both as `window.foo` AND bare `foo`
@@ -298,6 +301,83 @@ module('Setup | WebServer | runtime IIFE idempotency', { concurrency: true }, ()
       wsConstructorCalls.length,
       1,
       `second invocation MUST NOT construct another WebSocket (got ${wsConstructorCalls.length}) — without the guard this would be 2, the exact CI 26046813154 failure shape`,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The same page, published — what a run leaves in --output has no server behind it
+// ---------------------------------------------------------------------------
+
+module('Setup | WebServer | a published page', { concurrency: true }, () => {
+  test('runs its tests without a socket, and reports to nobody', async (assert) => {
+    const server = WebServer.setup(makeConfig());
+    await server.listen(0);
+    const port = (server._server.address() as { port: number }).port;
+    let runtimeJs: string;
+    try {
+      const { body } = await get(port, '/', { accept: 'text/html' });
+      runtimeJs = body.match(/<script>([\s\S]+?)<\/script>/)![1];
+    } finally {
+      await server.close();
+    }
+
+    // The page CI publishes to GitHub Pages: same HTML, different origin, and no qunitx behind
+    // it. Playwright still sets navigator.webdriver when `qunitx <url>` opens it, which is why
+    // that is not what the runtime keys on — the missing __QUNITX_RUNNER__ is.
+    const wsConstructorCalls: string[] = [];
+    const started: string[] = [];
+    const listeners: Record<string, (event?: unknown) => void> = {};
+    const qunitHandlers: Record<string, (details: unknown) => void> = {};
+    const fakeWindow = {
+      location: { protocol: 'https:', hostname: 'izelnakri.github.io', port: '' },
+      addEventListener: (name: string, callback: () => void) => (listeners[name] = callback),
+      setTimeout: setTimeout,
+      QUnit: {
+        version: '2.24.1',
+        config: {} as Record<string, unknown>,
+        begin: (callback: () => void) => (qunitHandlers.begin = callback),
+        on: (name: string, callback: (details: unknown) => void) =>
+          (qunitHandlers[name] = callback),
+        done: (callback: (details: unknown) => void) => (qunitHandlers.done = callback),
+        start: () => started.push('start'),
+      },
+    } as Record<string, unknown>;
+    fakeWindow.window = fakeWindow;
+    const sandbox = {
+      window: fakeWindow,
+      location: fakeWindow.location,
+      WebSocket: class {
+        constructor(url: string) {
+          wsConstructorCalls.push(url);
+        }
+      },
+      navigator: { webdriver: true },
+      console: { log: () => {} },
+      setTimeout: setTimeout,
+      Promise: Promise,
+      JSON: JSON,
+    };
+    vm.createContext(sandbox);
+    vm.runInContext(runtimeJs, sandbox);
+
+    assert.equal(wsConstructorCalls.length, 0, 'no socket is opened to a host that has none');
+
+    listeners['qunitx:tests-ready']();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.deepEqual(started, ['start'], 'the tests run as soon as they are loaded');
+    // Every send is behind reportsToRunner(), so the hooks a published page still registers are
+    // inert: without the guard this throws on `window.socket` and takes QUnit's callback with it.
+    qunitHandlers.begin();
+    qunitHandlers.testStart({ fullName: ['Mod', 'a test'] });
+    qunitHandlers.testEnd({ fullName: ['Mod', 'a test'], status: 'passed', runtime: 1 });
+    qunitHandlers.done({ passed: 1, failed: 0, runtime: 1 });
+
+    assert.equal(
+      (fakeWindow.QUNIT_RESULT as { finishedTests: number }).finishedTests,
+      1,
+      'the page still counts its own results, for anyone reading the page',
     );
   });
 });
