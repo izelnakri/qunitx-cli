@@ -520,6 +520,14 @@ jobs:
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
+      # This project's own browser-runnable tests, published as a live QUnit page at /tests/.
+      # The run both gates the deploy — a red suite fails the job — and writes the page that is
+      # uploaded, so what the README links is a page qunitx proved it can run.
+      - name: Build the browser test page
+        run: node cli.ts test/browser-suite.ts --output=_site/tests
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          FORCE_COLOR: 0
       - name: Generate API docs
         run: npm run docs && mkdir -p _site && cp -r docs/lib _site/docs
       - uses: actions/download-artifact@v8
@@ -576,6 +584,7 @@ jobs:
               <a href="https://npmjs.com/package/qunitx-cli">npm</a>
               <a href="https://ghcr.io/v2/${repo}/tags/list">docker</a>
               <a href="docs/">api docs</a>
+              <a href="tests/">browser tests</a>
               <a href="coverage/">coverage</a>
             </header>
             <main>

@@ -349,13 +349,18 @@ At the prompt, `.import https://example.com/tests/helpers.js` and a typed
 QUnit before the page's own scripts run, and reports what QUnit reports.
 
 ```sh
-qunitx https://objectmodel.js.org/test/          # 90 tests, reported as any other suite
-qunitx 'https://x/test/?moduleId=6e15ed5f'       # QUnit's own URL filters still apply
-qunitx https://x/test/ -t 'Set Models'           # and `-t` becomes QUnit's `filter`
+qunitx https://izelnakri.github.io/qunitx-cli/tests/  # this project's own suite, as a page
+qunitx https://objectmodel.js.org/test/               # 90 tests, reported as any other suite
+qunitx 'https://x/test/?moduleId=6e15ed5f'            # QUnit's own URL filters still apply
+qunitx https://x/test/ -t 'Set Models'                # and `-t` becomes QUnit's `filter`
 ```
 
 A page is a whole suite, so it runs alone: passing one alongside other inputs is refused, and
 `--watch` has nothing to watch.
+
+That first page is this project's own: `--output` leaves a standalone page behind every run, and
+CI publishes the one from [`test/browser-suite.ts`](test/browser-suite.ts) to GitHub Pages — copy
+the `pages` job in [ci.yml](.github/workflows/ci.yml) to publish yours the same way.
 
 A glob needs the server to list its directories: a JSON array of names, a JSON array of
 `{ name, type }` (what the GitHub contents API answers), or an HTML autoindex (what nginx, Caddy

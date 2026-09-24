@@ -2,6 +2,7 @@ import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { pathExists } from '../../lib/utils/path-exists.ts';
 import '../helpers/custom-asserts.ts';
 
 // What CI runs has to match what this repo declares, and nothing but a test can say so: a
@@ -36,14 +37,14 @@ async function inTheMatrix(): Promise<string[]> {
   return found.flat();
 }
 
-/** Every `- run:` in one job of a workflow, in order. */
+/** Every `run:` in one job of a workflow, in order — named steps included. */
 async function stepsOf(workflow: string, job: string): Promise<string[]> {
   const yaml = await fs.readFile(path.join(repoRoot, '.github/workflows', workflow), 'utf8');
   // From this job's key to the next one at the same indent — enough of a parser for `- run:`
   // lines, and a dependency-free one.
   const block = new RegExp(`^  ${job}:$([\\s\\S]*?)(?=^  \\S+:$)`, 'm').exec(yaml)?.[1] ?? '';
 
-  return [...block.matchAll(/^\s+- run: (.+)$/gm)].map(([, command]) => command.trim());
+  return [...block.matchAll(/^\s+(?:- )?run: (.+)$/gm)].map(([, command]) => command.trim());
 }
 
 module('Setup | browser-compat matrix scope', { concurrency: true }, () => {
@@ -86,6 +87,30 @@ module('Setup | the lint job and `npm run verify`', { concurrency: true }, () =>
       job,
       verify,
       'add the check to both, or to `verify` and then to .github/workflows/ci.yml',
+    );
+  });
+});
+
+// The page this project publishes is three things agreeing: the entry it is built from, the path
+// CI uploads it to, and the URL the README sends people to. Only a push exercises the middle one,
+// so this is where the other two are held to it — a renamed entry or a moved directory otherwise
+// deploys green and leaves a dead link in the README.
+module('Setup | the published browser suite', { concurrency: true }, () => {
+  test('CI builds an entry that exists, at the path the README links', async (assert) => {
+    const build = (await stepsOf('ci.yml', 'pages')).find((command) =>
+      command.includes('--output=_site/'),
+    );
+    const [, entry, directory] =
+      /^node cli\.ts (\S+) --output=_site\/(\S+)$/.exec(build ?? '') ?? [];
+
+    assert.ok(entry, 'the pages job builds a page from an entry file');
+    assert.true(await pathExists(path.join(repoRoot, entry)), `${entry} is in the repository`);
+
+    const readme = await fs.readFile(path.join(repoRoot, 'README.md'), 'utf8');
+    assert.includes(
+      readme,
+      `github.io/qunitx-cli/${directory}/`,
+      'and the README points at where it lands',
     );
   });
 });
