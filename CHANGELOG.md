@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.37.4] - 2026-09-24
+[`v0.37.3...v0.37.4`](https://github.com/izelnakri/qunitx-cli/compare/v0.37.3...v0.37.4)
+
+### Bug Fixes
+- An asset href in the page is a URL, not a host path — 2026-09-24 by [@izelnakri](https://github.com/izelnakri) ([`4b773d4`](https://github.com/izelnakri/qunitx-cli/commit/4b773d495e2bedfc776d7cf7a7661c47721592e7))
+- A daemon that nobody has reached yet is starting, not idle — 2026-09-24 by [@izelnakri](https://github.com/izelnakri) ([`773a8fe`](https://github.com/izelnakri/qunitx-cli/commit/773a8fee179ac58c2a5d8d36fd906b9fefbd1521))
+- No test moves the process's working directory — 2026-09-24 by [@izelnakri](https://github.com/izelnakri) ([`413ca5b`](https://github.com/izelnakri/qunitx-cli/commit/413ca5b6620e511d9f31a45131974fffb5e76f23))
+
+### Features
+- [**breaking**] A QUnit page on the web is a suite qunitx can run — 2026-09-23 by [@izelnakri](https://github.com/izelnakri) ([`9c71f50`](https://github.com/izelnakri/qunitx-cli/commit/9c71f501c3b5e9edb51bcf0d807581cbca2f7eed))
+- The page a run leaves behind stands on its own — 2026-09-24 by [@izelnakri](https://github.com/izelnakri) ([`9b93db8`](https://github.com/izelnakri/qunitx-cli/commit/9b93db860bf23241bfe03cff58274066877e17c6))
+
 ## [0.37.3] - 2026-09-23
 [`v0.37.2...v0.37.3`](https://github.com/izelnakri/qunitx-cli/compare/v0.37.2...v0.37.3)
 
