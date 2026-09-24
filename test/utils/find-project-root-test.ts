@@ -6,11 +6,18 @@ import process from 'node:process';
 import { module, test } from 'qunitx';
 import { findProjectRoot, ProjectRootNotFound } from '../../lib/utils/find-project-root.ts';
 
-// findProjectRoot resolves against process.cwd(), so every test here restores it. The tests are
-// serial for that reason — a concurrent chdir would be read by the wrong test.
-module('Utils | findProjectRoot', () => {
+// Every case here hands `findProjectRoot` the directory to search from, which is why the `cwd`
+// parameter exists. These tests used to `process.chdir()` instead and restore it afterwards, safe
+// because they run serially — but only within this file. `deno test --parallel` runs test modules
+// as workers in ONE process, so the chdir moved the cwd of every other module running at the
+// time, and any `node cli.ts` a concurrent test spawned inherited a temp directory with no
+// package.json above it. That is CI run 35944599684: repl/cli-test.ts died on
+// `ProjectRootNotFound: … /private/var/folders/…/T/<uuid>`, a path only this file builds.
+module('Utils | findProjectRoot', { concurrency: true }, () => {
   test('resolves to the directory holding the nearest package.json', async (assert) => {
-    const root = await withCwd(await makeProject(), () => findProjectRoot().result());
+    const project = await makeProject();
+
+    const root = await findProjectRoot(project).result();
 
     assert.false(ProjectRootNotFound.is(root));
     assert.true(await fileExists(path.join(root as string, 'package.json')));
@@ -21,15 +28,24 @@ module('Utils | findProjectRoot', () => {
     const nested = path.join(project, 'src', 'deep');
     await fs.mkdir(nested, { recursive: true });
 
-    const root = await withCwd(nested, () => findProjectRoot().result());
+    const root = await findProjectRoot(nested).result();
 
     assert.equal(await realpath(root as string), await realpath(project));
+  });
+
+  // The parameter defaults to the working directory, which is what the CLI relies on. Asserting
+  // it against the directory the suite already runs in needs no chdir: this repository has a
+  // package.json, so the answer for its own cwd is its own root.
+  test('searches the working directory when it is given nothing', async (assert) => {
+    const root = await findProjectRoot().result();
+
+    assert.equal(await realpath(root as string), await realpath(process.cwd()));
   });
 
   // Before this returned a declared failure it called process.exit(1) from inside a library
   // function, so there was no way to assert the miss — the assertion killed the test worker.
   test('a missing package.json is a declared failure, not a process exit', async (assert) => {
-    const outcome = await withCwd(await makeEmptyDir(), () => findProjectRoot().result());
+    const outcome = await findProjectRoot(await makeEmptyDir()).result();
 
     assert.true(ProjectRootNotFound.is(outcome));
   });
@@ -37,7 +53,7 @@ module('Utils | findProjectRoot', () => {
   test('the failure names the directory it searched from', async (assert) => {
     const dir = await makeEmptyDir();
 
-    const failure = await withCwd(dir, () => findProjectRoot().result());
+    const failure = await findProjectRoot(dir).result();
 
     assert.equal(
       await realpath((failure as { data: { cwd: string } }).data.cwd),
@@ -47,23 +63,11 @@ module('Utils | findProjectRoot', () => {
   });
 
   test('the caller decides — unwrapOr substitutes a root instead of exiting', async (assert) => {
-    const root = await withCwd(await makeEmptyDir(), () =>
-      findProjectRoot().unwrapOr('/fallback/root'),
-    );
+    const root = await findProjectRoot(await makeEmptyDir()).unwrapOr('/fallback/root');
 
     assert.equal(root, '/fallback/root');
   });
 });
-
-async function withCwd<T>(dir: string, fn: () => Promise<T> | T): Promise<T> {
-  const previous = process.cwd();
-  process.chdir(dir);
-  try {
-    return await fn();
-  } finally {
-    process.chdir(previous);
-  }
-}
 
 // A directory with no package.json at any level: os.tmpdir()'s ancestors have none, but this
 // repository's do, so the temp root is the only place the miss can be observed. os.tmpdir()
