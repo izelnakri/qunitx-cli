@@ -54,6 +54,7 @@
     "dev": "node test/runner.ts --watch",
     "test:browser": "node test/runner.ts test/flags/*-test.ts test/inputs/*-test.ts",
     "test:browser:deno": "deno run -A test/runner.ts test/flags/*-test.ts test/inputs/*-test.ts",
+    "test:browser-suite": "node cli.ts test/browser-suite.ts",
     "test:release": "bash scripts/test-release.sh",
     "test:sanity-first": "./cli.ts test/fixtures/failing-tests.js test/fixtures/failing-tests.ts",
     "test:sanity-second": "./cli.ts test/fixtures/passing-tests.js test/fixtures/passing-tests.ts"
