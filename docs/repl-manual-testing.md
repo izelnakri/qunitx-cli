@@ -426,7 +426,37 @@ mean "reload, except keep my mistakes".
 | `node cli.ts repl no-such-file.ts`  | exits 1, names the file, **on stderr**                                         |
 | `node cli.ts repl --browser=webkit` | exits 1: CDP is Chromium-only, refused by name                                 |
 
-## 16. If something looks wrong
+## 16. Vim mode — **TTY**
+
+Off unless asked for: `node cli.ts repl --vim` (or `QUNITX_REPL_VIM=1`). The caret is the thing to
+watch — a bar in insert, a block in normal — because it is the only indicator there is.
+
+| input                            | expected                                                        |
+| -------------------------------- | --------------------------------------------------------------- |
+| type `1 + 1`, Escape             | the caret becomes a block and steps left, onto the last `1`     |
+| then `x`, `a`, `2`, Enter        | `3` — `x` took the `1`, `a` appended, `2` was typed             |
+| type `boom()`, Escape, `dd`      | the line clears; nothing ran                                    |
+| `i`, `1 + 1`, Enter              | `2`, and the caret is a bar again                               |
+| type `const a = "old"`, Escape   | block caret on the last `"`                                     |
+| then `ci"`, `new`, Enter         | the line reads `const a = "new"` — this is the one to try first |
+| type `a.b.c`, Escape, `0`, `f.`  | the caret lands on the first dot; `;` moves to the second       |
+| `2w`, `3l`, `d2w`                | counts apply to motions and to operators alike                  |
+| `x` then `.`                     | the delete happens again                                        |
+| `dw` then `u`                    | the word comes back                                             |
+| Ctrl-C in normal mode            | the line is abandoned, as it always was                         |
+| TAB in normal mode               | completion, as it always was                                    |
+| Left/Right arrows in normal mode | the caret moves — normal mode did not take them                 |
+| `.exit`                          | the caret shape is put back; your shell's prompt is not a block |
+
+Two things worth checking on purpose, because both were bugs:
+
+- **Paste a long line, then immediately Escape and `x`.** The REPL keeps its input paused between
+  lines, so the paste may not have reached readline when the Escape arrives. The keystroke must
+  wait for it rather than acting on an empty line.
+- **Press Escape and a command key fast** — `Esc` then `w` inside one keyboard repeat. Terminals
+  deliver that as the same bytes as Alt-W, and reading it that way would make the `w` vanish.
+
+## 17. If something looks wrong
 
 | symptom                               | likely cause                                                                      |
 | ------------------------------------- | --------------------------------------------------------------------------------- |
@@ -435,6 +465,8 @@ mean "reload, except keep my mistakes".
 | `.devtools` says there is no endpoint | macOS, or a headed session — use F12                                              |
 | a stack shows bundle offsets          | source-map resolution regressed; worth a bug                                      |
 | a second `test(…)` prints nothing     | the QUnit re-arm in `lib/setup/qunit-harness.ts` broke                            |
+| vim keys are typed into the line      | `--vim` was not passed, and `QUNITX_REPL_VIM` is unset — it is opt-in             |
+| the caret never changes shape         | your terminal does not do DECSCUSR; the modes still work                          |
 
 That last one is the dangerous one, because it is silent by design — QUnit logs
 `Unexpected test after runEnd` and ignores the test. It is why §2 asks for three tests rather than

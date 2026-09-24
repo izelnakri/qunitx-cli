@@ -75,6 +75,8 @@ export interface ParsedFlags {
   debug?: boolean;
   /** `--watch`/`-w`: re-run on every save instead of exiting after one run. */
   watch?: boolean;
+  /** `--vim`: vim keys at the REPL prompt. Only `qunitx repl` reads it. */
+  vim?: boolean;
   /** `--open`/`-o`: open the output in a browser; a string names a specific binary. */
   open?: boolean | string;
   /** `--failFast`: stop at the first failing test. */
@@ -179,6 +181,14 @@ export function parse(
   // process into debug TAP comments without rewriting commands.
   if (flags.debug === undefined && process.env.QUNITX_DEBUG) {
     flags.debug = true;
+  }
+
+  // QUNITX_REPL_VIM is the same arrangement for vim keys, and the one that matters more: this is
+  // a preference about your hands rather than about a run, so it belongs in an environment you
+  // set once — beside QUNITX_REPL_THEME — rather than on every invocation. `--vim=false` still
+  // wins, which is what makes it switchable for one session.
+  if (flags.vim === undefined && process.env.QUNITX_REPL_VIM) {
+    flags.vim = process.env.QUNITX_REPL_VIM !== '0' && process.env.QUNITX_REPL_VIM !== 'false';
   }
 
   return flags;
@@ -321,6 +331,9 @@ function applyFlag(result: ParsedFlags, arg: string): ParseFailure | undefined {
     }
     result.coverage = true;
     result.coverageFormats = formats.filter((format) => format !== 'text');
+  } else if (arg.startsWith('--vim')) {
+    // Only `qunitx repl` reads this; a run has no prompt to put in a mode.
+    result.vim = parseBoolean(value);
   } else if (arg === '--trace-perf') {
     // consumed by perf-log.ts at module load time, not stored in config
   } else {

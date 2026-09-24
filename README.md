@@ -534,6 +534,24 @@ Chrome's own DevTools on the very page the prompt is driving). That last one is 
 any Chromium browser: same realm, same DOM, same paused frame — a value declared at the prompt is
 in that console, and a `debugger` shows as paused in both.
 
+**Vim keys at the prompt** — `qunitx repl --vim`, or `QUNITX_REPL_VIM=1` once in your shell. Opt-in,
+and off by default. Escape leaves insert mode, `i`/`I`/`a`/`A` go back in, and the caret changes
+shape so you can see which mode you are in.
+
+```
+> const totals = items.filter((item) => item.price > 10)
+                                             ^ Escape, then:
+  ci"  cw  ciw  di(  da{        change or delete inside quotes, a word, a bracket pair
+  w W b B e E 0 ^ $ | f t F T   motions, with ; and , to repeat a find
+  d c y + any motion, dd cc yy  operators, and 3dw / d2w for counts
+  x X s S r D C Y p P ~ u .     the small edits, paste, undo, and repeat
+  k j                           history, as Ctrl-K and Ctrl-J do in insert mode
+```
+
+Word motions use vim's character classes, not readline's — `w` on `const.total` stops at the dot
+and `W` does not. Control keys are left alone: Ctrl-C still interrupts, TAB still completes, and
+the arrows still work in both modes.
+
 The line is syntax-highlighted as you type and what it comes to is shown on the right; TAB completes
 against the page, Ctrl-F takes the greyed-out suggestion, and Ctrl-C interrupts a runaway
 expression. A `debugger` statement stops the page — `.locals` shows the frame, `.continue` carries
@@ -544,6 +562,33 @@ probe. Chromium only — it evaluates over the Chrome DevTools Protocol.
 **→ [Testing the REPL by hand](docs/repl-manual-testing.md)** — every feature in the order it makes
 sense to try it, with the output you should get. Most of what a prompt does is only provable by
 typing at one.
+
+### Vim mode at the REPL prompt
+
+`--vim` on `qunitx repl`, or `QUNITX_REPL_VIM=1` in your environment — a preference about your
+hands belongs beside `QUNITX_REPL_THEME` rather than on every invocation. `--vim=false` wins over
+the variable, so one session can opt out.
+
+What is implemented is the set zsh's `vi-mode` settled on, plus text objects, which a prompt full
+of brackets and quotes wants far more than a shell does:
+
+|                 |                                                                                  |
+| --------------- | -------------------------------------------------------------------------------- |
+| modes           | `i` `I` `a` `A`, Escape back to normal                                           |
+| motions         | `h` `l` `0` `^` `$` `\|` `w` `W` `b` `B` `e` `E` `f` `F` `t` `T` `;` `,` `space` |
+| operators       | `d` `c` `y` over any motion, plus `dd` `cc` `yy` `D` `C` `Y`                     |
+| text objects    | `iw` `aw`, and `i`/`a` with `( ) [ ] { } < > " ' \``                             |
+| edits           | `x` `X` `s` `S` `r` `~` `p` `P`                                                  |
+| counts          | on motions and operators — `5w`, `3dw`, `d2w`                                    |
+| undo and repeat | `u` (multi-level), `.`                                                           |
+| history         | `k` and `j`, which Ctrl-K and Ctrl-J already do in insert mode                   |
+
+Not implemented: visual mode, named registers, `/` search (Ctrl-R is readline's own), and marks.
+`dd`/`yy` are linewise in vim; a prompt has no second line to put one on, so a linewise `p`
+replaces the line — which is what makes `ddp` put it back.
+
+Control keys stay the terminal's in both modes: Ctrl-C interrupts, Ctrl-D exits, Ctrl-R searches,
+TAB completes, and the arrows move the caret.
 
 ## Running a script
 

@@ -131,3 +131,69 @@ module('Test Helpers | spawnCapture | timing out', { concurrency: true }, () => 
     );
   });
 });
+
+// `spawnCapture` hands its child exactly the environment it is given — none, when given none —
+// so a test that starts the CLI through it directly runs `node` with no PATH and Chrome with no
+// CHROME_BIN. On a NixOS machine that is invisible: util-linux `script` falls back to the passwd
+// shell, zsh sources /etc/zshenv, and PATH comes back by accident. On an ubuntu runner the passwd
+// shell sources nothing, `node` is not found, and every such test exits 1 — which is how six vim
+// tests passed locally and failed in CI. `execute` passes `process.env` and takes the browser
+// semaphore besides, so a test that runs the CLI goes through it or passes `env` itself.
+module('Helpers | spawnCapture adoption', { concurrency: true }, () => {
+  test('a test that runs the CLI through spawnCapture gives it an environment', async (assert) => {
+    const testRoot = path.join(process.cwd(), 'test');
+    const files = await testFilesUnder(testRoot);
+    assert.ok(files.length > 50, 'the walk actually traversed the test tree');
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      // The helper and this guard carry the call as text; neither runs the CLI through it.
+      if (/helpers\/shell(-test)?\.ts$/.test(file.replaceAll('\\', '/'))) continue;
+      const source = await fs.readFile(file, 'utf8');
+      if (!source.includes('cli.ts')) continue;
+      for (const call of callsTo(source, 'spawnCapture(')) {
+        if (!/\benv\b/.test(call)) offenders.push(path.relative(testRoot, file));
+      }
+    }
+
+    assert.deepEqual(
+      [...new Set(offenders)],
+      [],
+      'run the CLI through execute(), or pass `env: { ...process.env }` — without it the child ' +
+        'has no PATH, and CI cannot find node',
+    );
+  });
+});
+
+/** Every test file under `directory`, recursively. */
+async function testFilesUnder(directory: string): Promise<string[]> {
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  const nested = await Promise.all(
+    entries.map((entry) => {
+      const full = path.join(directory, entry.name);
+      if (entry.isDirectory()) return testFilesUnder(full);
+
+      return Promise.resolve(full.endsWith('-test.ts') ? [full] : []);
+    }),
+  );
+
+  return nested.flat();
+}
+
+/** The text of each call to `callee`, from its name to its matching close paren. */
+function callsTo(source: string, callee: string): string[] {
+  const calls: string[] = [];
+  let at = source.indexOf(callee);
+  while (at !== -1) {
+    let depth = 0;
+    let end = at + callee.length - 1;
+    for (; end < source.length; end++) {
+      if (source[end] === '(') depth++;
+      else if (source[end] === ')' && --depth === 0) break;
+    }
+    calls.push(source.slice(at, end + 1));
+    at = source.indexOf(callee, end);
+  }
+
+  return calls;
+}
