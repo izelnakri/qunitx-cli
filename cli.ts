@@ -11,6 +11,7 @@ import { writeSync } from 'node:fs';
 import { shutdownPrelaunch, startPrelaunch } from './lib/chrome/prelaunch.ts';
 import { exitOnSignal } from './lib/utils/exit-on-signal.ts';
 import { Failure, tryCatch } from './lib/result/index.ts';
+import { armExitGuard, type ExitGuard } from './lib/utils/exit-guard.ts';
 import { Task } from './lib/task/index.ts';
 import pkg from './package.json' with { type: 'json' };
 
@@ -27,6 +28,9 @@ startPrelaunch();
 // write queue stalls until the reader catches up. 250ms was tight enough to be the normal path
 // there, which is exactly what it must never be.
 const FLUSH_GRACE_MS = 30_000;
+// Armed once the batch run starts (see below), and the reason `exitAfterFlush` is the only way
+// to report success. Module-scoped because the exit funnel is not inside the run's closure.
+let guard: ExitGuard | null = null;
 // Conventional exit code for a process terminated by SIGTERM (128 + signal number 15).
 const EXIT_CODE_SIGTERM = 128 + 15;
 
@@ -189,7 +193,19 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   // browser playwright kills from one of those would be left behind.
   exitOnSignal();
 
+  // From here until the run has an answer is the window where a run can be lost: an await that
+  // never comes back, a browser that takes the last handle with it. Armed, that exits 1 and says
+  // where it had got to, instead of 0 saying nothing at all.
+  guard = armExitGuard(
+    () =>
+      `phase '${config.state.group.phase ?? 'unknown'}', ${config.state.results.counter.total} results so far`,
+  );
+
   const outcome = await run(config);
+  // Reported the moment the run has an answer, not at the exit below: everything between here and
+  // there is epilogue (a newline, a first-time hint), and an epilogue that stalls should not turn
+  // a finished run into a failure.
+  guard.reported(outcome.exitCode);
   // The trailing newline the batch run has always ended on. Daemon-routed runs skip it — the
   // daemon's own local run produced it inside the socket stream already.
   process.stdout.write('\n');
@@ -249,6 +265,8 @@ async function reportScriptFailure(failure: unknown): Promise<void> {
 // covers the case where the loop drains on its own first — three ways to reach the same code,
 // because the one thing that must not happen is exiting 0.
 function exitAfterFlush(code: number): void {
+  // The single funnel every path leaves through, so it is also where a run says it has a result.
+  guard?.reported(code);
   process.exitCode = code;
   const exit = (route: string) => () => {
     // Under --debug only: which of the three routes actually ended the process, and with what.
