@@ -910,9 +910,16 @@ function replaceAssetPaths(html: string, htmlPath: string | null, projectRoot: s
   const htmlDirectory = (htmlPath ?? '').split('/').slice(0, -1).join('/');
 
   return assetPaths.reduce((result, assetPath) => {
-    const normalizedFullAbsolutePath = path.normalize(`${htmlDirectory}/${assetPath}`);
+    // An href is a URL, never a host path: `path.normalize` answers in the host's separator, so
+    // on Windows this wrote `.\node_modules\qunitx\vendor\qunit.css` into the page — and into the
+    // copy `--output` keeps. Browsers read a backslash as `/` in a URL, which is why a run never
+    // noticed; a page that gets published should still be a page anyone can read.
+    const rewritten = path
+      .normalize(`${htmlDirectory}/${assetPath}`)
+      .replace(projectRoot, '.')
+      .replace(/\\/g, '/');
 
-    return result.replace(assetPath, normalizedFullAbsolutePath.replace(projectRoot, '.'));
+    return result.replace(assetPath, rewritten);
   }, html);
 }
 
