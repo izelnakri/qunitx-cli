@@ -33,6 +33,13 @@ import type {
 // is fixed by the env at spawn time. The CLI side validates and warns separately,
 // so any warning here would only land in QUNITX_DAEMON_LOG (or be lost).
 const IDLE_TIMEOUT_MS = parseIdleTimeout(process.env.QUNITX_DAEMON_IDLE_TIMEOUT).ms;
+// Floor for the FIRST idle window only. The timer is armed when the daemon starts listening,
+// which is before the client that spawned it can have said anything — so with a short
+// QUNITX_DAEMON_IDLE_TIMEOUT the daemon could shut down inside its own startup handshake and
+// `qunitx daemon start` would fail with "Daemon did not start" (seen on a loaded Windows runner
+// at 500ms). A daemon that nobody has reached yet is starting, not idle; once a client has been
+// served, the configured window applies as written.
+const STARTUP_IDLE_FLOOR_MS = 5_000;
 // After this many back-to-back browser crashes (no successful run between), the daemon
 // gives up rather than entering a relaunch loop. Two attempts catches the common case
 // (one transient crash followed by recovery) without papering over a broken environment.
@@ -91,6 +98,8 @@ interface DaemonState {
   lockPath: string;
   /** Reset to 0 after any run that left the browser connected. */
   consecutiveCrashes: number;
+  /** `true` once a client has been answered, which is when the idle window starts meaning it. */
+  served: boolean;
   /**
    * `true` after `listen()` resolves. Gates file cleanup in `shutdown`: a
    * process whose `listen()` failed (concurrent-spawn EADDRINUSE) does not own the
@@ -212,6 +221,7 @@ export async function serve(): Promise<void> {
     infoPath,
     lockPath,
     consecutiveCrashes: 0,
+    served: false,
     listenSucceeded: false,
     esbuildCache: { context: null },
     pageSlot: { page: null },
@@ -394,10 +404,11 @@ function resetIdleTimer(state: DaemonState): void {
   // entirely: Node clamps any delay > 2^31-1 ms (~24.8 days) to 1 ms, so passing
   // Infinity would fire the shutdown almost immediately — the opposite of "never".
   if (!Number.isFinite(IDLE_TIMEOUT_MS)) return;
+  const delay = state.served ? IDLE_TIMEOUT_MS : Math.max(IDLE_TIMEOUT_MS, STARTUP_IDLE_FLOOR_MS);
   // unref so the timer itself doesn't keep the event loop alive — the socket server
   // is the only ref'd handle. When the timer fires, shutdown closes the server, the
   // loop drains, and the process exits cleanly.
-  state.idleTimer = setTimeout(() => void shutdown(state, 'idle timeout'), IDLE_TIMEOUT_MS);
+  state.idleTimer = setTimeout(() => void shutdown(state, 'idle timeout'), delay);
   state.idleTimer.unref();
 }
 
@@ -419,6 +430,11 @@ async function dispatch(req: Request, socket: net.Socket, state: DaemonState): P
       startedAt: state.startedAt,
     });
     socket.end();
+    // `daemon start` finishes with a ping, so this is where a daemon stops starting and begins
+    // waiting: from here the window is the one that was configured, measured from the last
+    // thing a client asked for rather than from the moment the socket opened.
+    state.served = true;
+    resetIdleTimer(state);
   } else if (req.type === 'shutdown') {
     // Synchronously remove the info file before acking so its absence is a reliable
     // "daemon is gone" signal at the moment the client returns. shutdown's
@@ -495,6 +511,7 @@ async function handleRun(req: RunRequest, socket: net.Socket, state: DaemonState
   }
 
   if (state.idleTimer) clearTimeout(state.idleTimer);
+  state.served = true;
 
   // Two browser-readiness cases handled here:
   //   1. Initial launch in progress — `state.browser` is null until the decoupled

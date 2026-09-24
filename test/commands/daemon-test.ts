@@ -685,6 +685,24 @@ module('Commands | Daemon | idle timeout', { concurrency: true }, () => {
     },
   );
 
+  daemonTest(
+    'an idle window shorter than the startup handshake does not kill the daemon before it is up',
+    async (assert, project) => {
+      // 1 ms: with the timer armed at listen() and no floor on that first window, the daemon
+      // self-exits before `daemon start` can ping it and start fails with "Daemon did not
+      // start" — which is what a loaded Windows runner made of the 500 ms case above. The floor
+      // is what keeps start's contract ("exit 0 ⇒ the daemon answered me") independent of how
+      // short the configured window is.
+      const start = await cli(project, 'daemon start', {
+        env: { ...CLI_ENV, QUNITX_DAEMON_IDLE_TIMEOUT: '1ms' },
+      });
+
+      assert.exitCode(start, 0);
+      const gone = await waitForFileGone(project.infoPath, 3000);
+      assert.ok(gone, 'and it still self-exits immediately after the client it was started for');
+    },
+  );
+
   daemonTest('QUNITX_DAEMON_IDLE_TIMEOUT=false disables auto-shutdown', async (assert, project) => {
     // Paired with the short-timeout test above. If the Infinity branch in
     // resetIdleTimer regressed and Node's setTimeout clamp converted Infinity to
