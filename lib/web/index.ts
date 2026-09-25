@@ -194,6 +194,7 @@ export class HTTPServer {
     this.routes = {
       GET: {},
       POST: {},
+      PATCH: {},
       DELETE: {},
       PUT: {},
     };
@@ -297,6 +298,19 @@ export class HTTPServer {
         client.send(data);
       }
     });
+  }
+
+  /**
+   * Registers a PATCH route handler.
+   *
+   * ```ts
+   * const server = new HTTPServer();
+   * server.patch('/runs/:id', (_req, res) => res.json({ patched: true }));
+   * await server.close();
+   * ```
+   */
+  patch(path: string, handler: RouteHandler): void {
+    this.#registerRouteHandler('PATCH', path, handler);
   }
 
   /**
