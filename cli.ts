@@ -13,6 +13,7 @@ import { exitOnSignal } from './lib/utils/exit-on-signal.ts';
 import { Failure, tryCatch } from './lib/result/index.ts';
 import { armExitGuard, type ExitGuard } from './lib/utils/exit-guard.ts';
 import { Task } from './lib/task/index.ts';
+import { isRuntime } from './lib/setup/targets.ts';
 import pkg from './package.json' with { type: 'json' };
 
 process.title = 'qunitx';
@@ -46,6 +47,24 @@ const EXIT_CODE_SIGTERM = 128 + 15;
 
 (async () => {
   const cmd = process.argv[2];
+  // `--browser=node` and `--browser=deno` open a PROMPT on a runtime; every other command here
+  // runs tests, and a run puts its bundle in a document. Refused while the command is still known,
+  // so it reads as a sentence rather than as a stack out of `Browser.launch` — which keeps its own
+  // guard for callers coming through the JS API instead of through here.
+  // `findLast`, because `applyFlag` overwrites and the LAST `--browser=` is the effective one —
+  // taking the first refused `--browser=node --browser=chromium`, whose target is chromium. And
+  // the environment as well as argv: `QUNITX_BROWSER` feeds the same field, so a shell exporting
+  // it for the repl would otherwise have every run slip past this.
+  const target =
+    process.argv.findLast((arg) => arg.startsWith('--browser='))?.slice(10) ??
+    process.env.QUNITX_BROWSER;
+  if (cmd !== 'repl' && isRuntime(target)) {
+    process.stderr.write(
+      `--browser=${target} opens a prompt, not a test run — try \`qunitx repl --browser=${target}\`\n`,
+    );
+
+    return exitAfterFlush(1);
+  }
   if (!cmd) {
     return await (await import('./lib/commands/help.ts')).run();
   } else if (['--version', '-v', 'version'].includes(cmd)) {
@@ -86,6 +105,13 @@ const EXIT_CODE_SIGTERM = 128 + 15;
 
     return exitAfterFlush(outcome.exitCode);
   } else if (cmd === 'repl') {
+    // A prompt is the longest-lived thing this CLI starts, and the likeliest to be stopped from
+    // outside — a Ctrl-C that readline does not take, a terminal closing, a supervisor. Without a
+    // handler none of that runs an exit handler, and whatever the session started is left behind:
+    // the pre-launched Chrome on a browser session, the `--inspect-brk` child on a runtime one,
+    // whose host module holds its event loop open on purpose. The batch run installs this below
+    // for the same reason; the repl returned before reaching it.
+    exitOnSignal();
     // Never routed through the daemon: a REPL is a page kept open for one terminal, and the
     // daemon's browser is shared. It uses the pre-launched Chrome like any other local run.
     const Repl = await import('./lib/commands/repl/index.ts');
