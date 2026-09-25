@@ -21,7 +21,12 @@ import { harness } from '../setup/qunit-harness.ts';
 import { typeOfValue } from './type-of-value.ts';
 import { inspect } from './inspect.ts';
 import { colorEnabled } from '../utils/color.ts';
+import { pathToFileURL } from 'node:url';
 import { pageRealm } from './page-realm.ts';
+import { inspectorRealm } from './inspector-realm.ts';
+import { isRuntime } from '../setup/targets.ts';
+import type { RuntimeRealm } from './inspector-realm.ts';
+import type { RuntimeName } from '../setup/targets.ts';
 import type { Realm } from './realm.ts';
 import type { Plugin } from 'esbuild';
 import type { HTTPServer } from '../web/index.ts';
@@ -574,14 +579,23 @@ export async function start(
   preload: string[] = [],
   onOpen?: (session: ReplSession) => void,
 ): Promise<ReplSession> {
-  if (config.browser !== 'chromium') throw UnsupportedBrowser({ browser: config.browser });
+  const runtime = isRuntime(config.browser) ? config.browser : null;
+  if (runtime === null && config.browser !== 'chromium') {
+    throw UnsupportedBrowser({ browser: config.browser });
+  }
 
-  const build = config.state.group.build;
-  const outDir = path.resolve(config.projectRoot, config.output);
-  build.allTestCode = await bundle(config, preload, outDir);
-  // Served as `/tests.js` below, which is the URL the frame resolver recognises — so a stack from
-  // a preloaded file maps back to its own source, exactly as it does in a run.
-  config.state.group.sourceMapDecoder = SourceMap.extractInline(build.allTestCode, outDir);
+  // Only a page gets a bundle. A runtime imports the real files off disk — which is not a
+  // shortcut but the better answer: `.ts` runs as it is on both, a breakpoint in one is a line in
+  // that file rather than a line in a bundle found through a source map, and there is no second
+  // copy of `qunitx` to keep a bundler from shipping.
+  if (runtime === null) {
+    const build = config.state.group.build;
+    const outDir = path.resolve(config.projectRoot, config.output);
+    build.allTestCode = await bundle(config, preload, outDir);
+    // Served as `/tests.js` below, which is the URL the frame resolver recognises — so a stack
+    // from a preloaded file maps back to its own source, exactly as it does in a run.
+    config.state.group.sourceMapDecoder = SourceMap.extractInline(build.allTestCode, outDir);
+  }
 
   // The run's own server, for its asset routes and its `/tests.js`. Only `/` is replaced, and it
   // has to be: the page a run serves starts QUnit the moment it loads, which is the one thing a
@@ -589,7 +603,7 @@ export async function start(
   const server = WebServer.setup(config);
   server.get('/', (_request, response) => {
     response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
-    response.end(pageHTML(config));
+    response.end(runtime === null ? pageHTML(config) : runtimeHTML(runtime));
   });
   // `/repl` rather than `/devtools`: this is the address you put in a browser, where the question
   // being asked is "show me the page my repl is attached to" — and what answers it is Chrome's
@@ -624,23 +638,28 @@ export async function start(
   // this platform falls back to. Said out loud and carried on headless rather than refused: a
   // prompt that will not start is worse than a prompt without a window, and everything else about
   // the session is the same either way.
-  if (config.open === true && process.platform === 'darwin') {
+  if (runtime === null && config.open === true && process.platform === 'darwin') {
     Reporter.info(config, `--open cannot open a window on macOS — evaluating headlessly instead`);
     config.open = false;
   }
-  const browser = await Browser.launch(config, false, config.open === true);
+  // A page needs a browser before there is anything to bind a port for; a runtime needs the port
+  // first, because `session.url` is what its `.get /x` resolves against and it has no origin of
+  // its own to fall back on.
+  const browser =
+    runtime === null ? await Browser.launch(config, false, config.open === true) : null;
   try {
-    const page = await browser.newPage();
-    await bindServerToPort(server, config);
+    let realm: Realm;
+    if (runtime === null) {
+      const page = await browser!.newPage();
+      await bindServerToPort(server, config);
+      await page.addInitScript({ content: initScript(config) });
+      await page.goto(`http://localhost:${config.port}`);
+      realm = pageRealm({ cdp: await page.context().newCDPSession(page), page, browser: browser! });
+    } else {
+      await bindServerToPort(server, config);
+      realm = await inspectorRealm(runtime, config.cwd, initScript(config));
+    }
     const url = `http://localhost:${config.port}`;
-    await page.addInitScript({ content: initScript(config) });
-    await page.goto(url);
-
-    const realm: Realm = pageRealm({
-      cdp: await page.context().newCDPSession(page),
-      page,
-      browser,
-    });
     realm.on('Runtime.consoleAPICalled', (event: ConsoleAPICalled) => {
       // The page's own output, on the SAME CDP session as the evaluations — so it arrives in the
       // order it was produced rather than racing the result it belongs to.
@@ -675,6 +694,21 @@ export async function start(
     // answer `undefined` to it. Enabled for the session rather than on demand, because a statement
     // already executing is too late to start listening for.
     await realm.send('Debugger.enable');
+    // A runtime is still stopped before its first statement at this point, which is what let the
+    // handlers above be registered in time. Releasing it runs the host module and the prelude;
+    // the preloads follow, as real imports rather than as a bundle.
+    if (runtime !== null) {
+      await (realm as RuntimeRealm).release();
+      const loaded = await realm.send<EvaluateResult>('Runtime.evaluate', {
+        expression: preloadExpression(config, preload),
+        awaitPromise: true,
+      });
+      if (loaded.exceptionDetails) {
+        throw PreloadBuildFailed({
+          detail: loaded.exceptionDetails.exception?.description ?? loaded.exceptionDetails.text,
+        });
+      }
+    }
 
     // The script map is handed over at construction rather than at the first pause: `declaredAt`
     // needs it to turn a function's script id into a file, and nobody pauses to ask where
@@ -700,7 +734,7 @@ export async function start(
     // them: `close()` belongs to the session this never returned.
     await closeCompletely({
       server: server.close(),
-      browser: browser.close(),
+      browser: browser?.close(),
       prelaunch: shutdownPrelaunch(),
     });
     throw error;
@@ -2143,6 +2177,68 @@ function initScript(config: Config): string {
  * also arrives under one name worked out from its path, the same one `.import` would give it — a
  * file named on the command line and a file brought in later should be the same kind of thing.
  */
+/**
+ * What `/` serves when the prompt is on a runtime: a page that says where everything is.
+ *
+ * A browser session serves the document its tests run in, and there is no such thing here — the
+ * code is in a process. So this is the one thing a person visiting the address actually wants,
+ * which is the way through to the console attached to it.
+ */
+function runtimeHTML(runtime: RuntimeName): string {
+  return [
+    '<!doctype html>',
+    `<title>qunitx repl — ${runtime}</title>`,
+    '<meta name="color-scheme" content="light dark">',
+    '<style>',
+    'body{font:16px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;max-width:34rem;margin:12vh auto;padding:0 1.5rem}',
+    'h1{font-size:1.1rem;font-weight:600;margin:0 0 .25rem}p{opacity:.75;margin:.25rem 0 1.5rem}',
+    'a{display:inline-block;padding:.6rem 1rem;border:1px solid currentColor;border-radius:.4rem;text-decoration:none;color:inherit}',
+    'code{opacity:.75}',
+    '</style>',
+    `<h1>qunitx repl — ${runtime}</h1>`,
+    '<p>The prompt in your terminal is attached to this process. So is the console below: same',
+    ' globalThis, same modules, live.</p>',
+    '<p><a href="/repl">Open DevTools for it &rarr;</a></p>',
+    '<p><code>.devtools</code> at the prompt prints this address too.</p>',
+  ].join('\n');
+}
+
+/**
+ * What a runtime loads instead of a bundle: the real files, through the host's import bridge.
+ *
+ * The same footer the bundle ends with — `harness.load(qunitx, [[file, name, namespace], …])` —
+ * reached by importing rather than by bundling. `qunitx` resolves to the runtime's own build of
+ * the package, and each preload to the file itself, so a breakpoint in one is a line in that file
+ * and `.ts` needs nobody's help to run.
+ *
+ * Absolute `file://` URLs, not paths: the bridge lives in `node_modules/.cache/qunitx`, so a
+ * relative specifier would resolve from there.
+ */
+function preloadExpression(config: Config, preload: readonly string[]): string {
+  const named = namespacesFor([...preload]);
+  const specifiers = preload
+    .map((file) => `globalThis.__qunitxImport(${JSON.stringify(pathToFileURL(file).href)})`)
+    .join(', ');
+  const modules = preload.map(
+    (file, i) =>
+      `[${JSON.stringify(relative(config, file))}, ${JSON.stringify(named.get(file) ?? moduleNameFor(file))}, m[${i}]]`,
+  );
+
+  return [
+    'globalThis.__qunitxRuntimeModule().then((q) => {',
+    // The DEFAULT export is QUnit itself — `reset`, `on`, `start` and the queue. The named
+    // exports beside it are the authoring API, which `load` assigns onto globalThis. A page gets
+    // this global from qunit.js on load and a runtime has to be given it.
+    '  const QUnit = q.default || q;',
+    // `version` is what tells the real thing from a build whose tests belong to `node:test`. With
+    // one of those the prompt still opens and only `flush` has nothing to do.
+    '  if (QUnit.version) { globalThis.QUnit = QUnit; QUnit.config.autostart = false; }',
+    `  return Promise.all([${specifiers}]).then((m) =>`,
+    `    globalThis.__qunitxHarness.load(q, [${modules.join(', ')}]));`,
+    '})',
+  ].join('\n');
+}
+
 async function bundle(config: Config, preload: string[], outDir: string): Promise<string> {
   const imports = preload.map(
     (file, i) => `import * as m${i} from '${specifier(file, config.cwd)}';`,

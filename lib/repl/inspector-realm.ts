@@ -2,7 +2,8 @@ import * as Chrome from '../chrome/index.ts';
 import { connect } from './inspector/client.ts';
 import { spawn } from './inspector/spawn.ts';
 import type { InspectorClient } from './inspector/client.ts';
-import type { InspectedRuntime, RuntimeName } from './inspector/spawn.ts';
+import type { InspectedRuntime } from './inspector/spawn.ts';
+import type { RuntimeName } from '../setup/targets.ts';
 import type { EarlyChrome } from '../types.ts';
 import type { Realm } from './realm.ts';
 
@@ -13,28 +14,48 @@ import type { Realm } from './realm.ts';
  * tell me when you stop, what is in this scope — both runtimes answer exactly as a page does; what
  * they do not have is a document, and nothing in a prompt needs one.
  *
+ * What comes back is STOPPED, before its first statement — the caller registers its handlers and
+ * enables the domains it wants, and then calls {@link RuntimeRealm.release}. Handing back a
+ * running process would mean the prelude, the preloads and any breakpoint in them raced the
+ * prompt that was still setting itself up.
+ *
  * ```ts
  * import { inspectorRealm } from './inspector-realm.ts';
  *
  * // Defined, not invoked: it starts a process.
  * async function example(cwd: string) {
- *   const realm = await inspectorRealm('node', cwd);
+ *   const realm = await inspectorRealm('node', cwd, 'globalThis.ready = true;');
  *   await realm.send('Runtime.enable');
+ *   await realm.release();
  *
  *   return realm.alive(); // true
  * }
  * ```
  */
-export async function inspectorRealm(runtime: RuntimeName, cwd: string): Promise<RuntimeRealm> {
+export async function inspectorRealm(
+  runtime: RuntimeName,
+  cwd: string,
+  prelude: string,
+): Promise<RuntimeRealm> {
   const started = await spawn(runtime, cwd);
 
-  return new Runtime(runtime, cwd, started, await connect(started.inspectorURL));
+  return new Runtime(runtime, cwd, prelude, started, await connect(started.inspectorURL));
 }
 
 /** A {@link Realm} that knows which runtime it is — which the banner and `.url` both ask. */
 export interface RuntimeRealm extends Realm {
   /** `node` or `deno`, for what is printed where a page would have shown an origin. */
   readonly runtime: RuntimeName;
+  /**
+   * Lets the runtime past its break-on-start, and installs the prompt's prelude in it.
+   *
+   * Called once the caller's handlers are registered and its domains enabled. Two steps rather
+   * than one, and neither is optional: `Runtime.runIfWaitingForDebugger` releases the WAIT, and
+   * the runtime then stops again on its first statement — as a `Debugger.paused` event, with the
+   * event loop still frozen until something answers it. A `runIfWaitingForDebugger` alone leaves a
+   * process that looks attached, answers synchronous evaluations, and hangs on every `await`.
+   */
+  release(): Promise<void>;
 }
 
 // A class, not a closure, for the same reason the session is one: it owns a process and a socket
@@ -42,6 +63,8 @@ export interface RuntimeRealm extends Realm {
 class Runtime implements RuntimeRealm {
   #runtime: RuntimeName;
   #cwd: string;
+  // Kept because a reload re-spawns: the new process needs the same prelude the first one got.
+  #prelude: string;
   #started: InspectedRuntime;
   #client: InspectorClient;
   // Kept so a restart can put them back: the session subscribed once, to a socket that a reload
@@ -54,11 +77,13 @@ class Runtime implements RuntimeRealm {
   constructor(
     runtime: RuntimeName,
     cwd: string,
+    prelude: string,
     started: InspectedRuntime,
     client: InspectorClient,
   ) {
     this.#runtime = runtime;
     this.#cwd = cwd;
+    this.#prelude = prelude;
     this.#started = started;
     this.#client = client;
   }
@@ -94,6 +119,28 @@ class Runtime implements RuntimeRealm {
     this.#started = await spawn(this.#runtime, this.#cwd);
     this.#client = await connect(this.#started.inspectorURL);
     for (const [event, handler] of this.#listeners) this.#client.on(event, handler);
+    // The domains too: they were enabled on a socket that no longer exists, and without
+    // `Debugger.enable` a `debugger` statement in a reloaded file is a no-op again.
+    await this.send('Runtime.enable');
+    await this.send('Debugger.enable');
+    await this.release();
+  }
+
+  async release(): Promise<void> {
+    const client = this.#client;
+    const started = new Promise<void>((resume) => {
+      let released = false;
+      client.on('Debugger.paused', () => {
+        if (released) return;
+        released = true;
+        void client.send('Debugger.resume').then(() => resume());
+      });
+    });
+    await this.send('Runtime.runIfWaitingForDebugger');
+    await started;
+    // After the resume, not before: the prelude is ordinary code, and code does not run in a
+    // process whose event loop has not started.
+    await this.send('Runtime.evaluate', { expression: this.#prelude });
   }
 
   /** Whether Chrome is here to serve a DevTools frontend. Nothing is started to find out. */

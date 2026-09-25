@@ -29,6 +29,25 @@ globalThis.__qunitxImport = (specifier) => import(specifier);
 globalThis.__qunitxImportSource = (source) =>
   import('data:text/javascript;charset=utf-8,' + encodeURIComponent(source));
 
+// \`qunitx\` ships a build per runtime, and the node and deno ones register tests with node:test
+// and Deno.test — runners that own the process and hand out no queue a prompt could flush on
+// demand. The BROWSER build is the one whose QUnit has that queue, and it needs no DOM to run:
+// same version, same assertions, same pass/fail. Resolved through the package rather than guessed
+// at, and falling back to this runtime's own build, where a prompt still works for everything
+// except running tests at it.
+globalThis.__qunitxRuntimeModule = async () => {
+  const own = import.meta.resolve('qunitx');
+  const browser = own
+    .replace('/dist/node/index.js', '/dist/browser/index.js')
+    .replace('/dist/deno/index.js', '/dist/browser/index.js');
+  if (browser === own) return await import(own);
+  try {
+    return await import(browser);
+  } catch {
+    return await import(own);
+  }
+};
+
 // A runtime with an empty event loop exits, and between two typed lines this one has nothing to
 // do. Unref'd would defeat the point; this is the handle that makes the process wait for you.
 globalThis.__qunitxAlive = setInterval(() => {}, 1 << 30);

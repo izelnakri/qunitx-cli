@@ -13,6 +13,7 @@ import { exitOnSignal } from './lib/utils/exit-on-signal.ts';
 import { Failure, tryCatch } from './lib/result/index.ts';
 import { armExitGuard, type ExitGuard } from './lib/utils/exit-guard.ts';
 import { Task } from './lib/task/index.ts';
+import { isRuntime } from './lib/setup/targets.ts';
 import pkg from './package.json' with { type: 'json' };
 
 process.title = 'qunitx';
@@ -46,6 +47,18 @@ const EXIT_CODE_SIGTERM = 128 + 15;
 
 (async () => {
   const cmd = process.argv[2];
+  // `--browser=node` and `--browser=deno` open a PROMPT on a runtime; every other command here
+  // runs tests, and a run puts its bundle in a document. Refused while the command is still known,
+  // so it reads as a sentence rather than as a stack out of `Browser.launch` — which keeps its own
+  // guard for callers coming through the JS API instead of through here.
+  const target = process.argv.find((arg) => arg.startsWith('--browser='))?.slice(10);
+  if (cmd !== 'repl' && isRuntime(target)) {
+    process.stderr.write(
+      `--browser=${target} opens a prompt, not a test run — try \`qunitx repl --browser=${target}\`\n`,
+    );
+
+    return exitAfterFlush(1);
+  }
   if (!cmd) {
     return await (await import('./lib/commands/help.ts')).run();
   } else if (['--version', '-v', 'version'].includes(cmd)) {
