@@ -426,7 +426,178 @@ mean "reload, except keep my mistakes".
 | `node cli.ts repl no-such-file.ts`  | exits 1, names the file, **on stderr**                                         |
 | `node cli.ts repl --browser=webkit` | exits 1: CDP is Chromium-only, refused by name                                 |
 
-## 16. If something looks wrong
+## 16. HTTP from the prompt
+
+Requests go out from **Node**, not from the page — which is the only way `.header sent` can be
+true. A path is the page's own server, so nothing else has to be running for this section.
+
+For the half that wants a real API rather than a bundle, this repository ships one — the same
+users API the request commands are tested against. In a second terminal:
+
+```
+npm run api-test-server     # http://localhost:4000, PORT=… to move it
+```
+
+```
+
+> .get http://localhost:4000/api/users
+> 200 OK · 101 bytes · 3ms | GET http://localhost:4000/api/users
+> [
+>   {
+>     "id": 1,
+>     "name": "Ada",
+>     "email": "ada@example.com"
+>   },
+> …
+
+```
+
+| input                                         | expected                                                        |
+| --------------------------------------------- | --------------------------------------------------------------- |
+| `.post :4000/api/users { name: 'Alan' }`      | `201 Created` — the body is JavaScript, `:4000` is this machine |
+| `.patch :4000/api/users/1 { name: 'Ada L.' }` | the merge — the name changes, the email does not                |
+| `.put :4000/api/users/1 { name: 'Ada' }`      | the replacement — the email is gone, which is what PUT is       |
+| `.delete :4000/api/users/2`                   | `{ "deleted": 2 }`, and `.get :4000/api/users` is one shorter   |
+| `.get :4000/api/users/99`                     | `404 Not Found` with `no user 99` — a reply, not an error       |
+| `.get :4000/image`                            | `<3.0 KB of image/png, not shown>`                              |
+| `.get :4000/big`                              | forty lines, then what shows the rest                           |
+| `.get :4000/forever`                          | `no answer within 30s`, and the session carries on              |
+
+Save a header first (`.header accept=application/json`) and `.get :4000/echo-headers` answers with
+what actually arrived — which is the check that saving one does anything at all.
+
+Two spellings worth trying on purpose, because both are what a person types rather than what a
+client usually takes:
+
+| input                                                                                           | expected                                           |
+| ----------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `` .post :4000/api/users `{ name: 'Izel' }` ``                                                  | the same object, wrapped in backticks              |
+| `const u = { name: 'Izel' }` then `.post :4000/api/users u`                                     | a variable is what it holds                        |
+| `class User { constructor(n) { this.name = n } }` then `.post :4000/api/users new User('Izel')` | an instance, `toJSON` included                     |
+| `.post :4000/echo-headers hello`                                                                | a string is a text body, not JSON                  |
+| `.post :4000/echo-headers nothingDeclared`                                                      | what the page cannot read is sent exactly as typed |
+
+```
+
+> .get /tests.js
+> 200 OK · 836.2 KB · 23ms | GET http://localhost:1234/tests.js
+> (() => {
+>   var __create = Object.create;
+> …
+> — 6288 more lines, `.request body` for all of it
+
+```
+
+Header names are in the info colour wherever they are printed — a header block is looked
+THROUGH for a name, so the names are the part that is read.
+
+One line per answer, and the request is in it rather than above it — you typed the request, so it
+is there to identify the answer, not to be read again. It ends with the request's own id (`| #3`),
+which is the spelling that asks for it again: `.request #3`. The status wears its class as a ground
+(green 2xx, yellow 3xx, blue 4xx — an answer, not a breakage — red 5xx and no-answer-at-all), and
+the size and the round trip are green, yellow or red on their own scales: 100 KB and 1 MB, 100 ms
+and 1 s. `FORCE_COLOR=0` turns all of it back into plain text.
+
+A long body stops at forty lines and says what shows the rest; a body that is not text is
+described rather than printed (`.get /favicon.ico` → `<… of image/png, not shown>`), because a
+terminal handed a PNG loses its cursor.
+
+| input                       | expected                                                                            |
+| --------------------------- | ----------------------------------------------------------------------------------- |
+| `.get`                      | the usage line, including the rule that a path is the page's own server             |
+| `.get /nowhere`             | `404 Not Found`, and the server's own 404 page as the body — a reply, not an error  |
+| `.get http://127.0.0.1:1/x` | `connection refused`, and the session carries on                                    |
+| `.get /tests.js { a: 1 }`   | `?a=1` — a GET has no body, so an object after its URL is its query                 |
+| `.get /tests.js hello`      | `.get sends no body — an object after the URL is its query, or did you mean .post?` |
+| `.post /x {"name":"Ada"}`   | `content-type: application/json` guessed from the `{`                               |
+| `.post /x @package.json`    | the file's contents as the body — `@` references                                    |
+| `.post /x @nowhere.json`    | `no file at nowhere.json to send as the body`, and nothing is sent                  |
+| `.post /x :`                | `$EDITOR` on the session's body buffer — `:` opens. Save and it is sent             |
+| `.post /x :` again          | the buffer opens with what you left in it; saving it empty clears it                |
+| `.post /x :body.json`       | that file in `$EDITOR`, created if it is not there, sent once saved                 |
+
+A body from the editor is read the same way a typed one is, so `{ name: 'Ada' }` in the buffer is
+an object. Quitting without writing sends nothing — the same "never mind" the scratchpad means.
+
+Headers are session-wide, and the point is that the next request remembers them. A session starts
+with the two a browser would send — the page's own user-agent, and JSON for the accept — saved
+rather than applied behind your back, so `.header list` shows them and `.header delete` drops them.
+
+```
+
+> .header list
+> accept: application/json
+> user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
+> .header x-token: abc
+> x-token: abc
+> .get /tests.js
+> .header sent
+> accept: application/json
+> user-agent: Mozilla/5.0 (X11; Linux x86_64) …
+> x-token: abc
+> — the runtime adds host, content-length, accept-encoding and its own sec-fetch-*
+> .header delete x-token
+> no longer sending x-token
+
+```
+
+That user-agent is this page's own with `Headless` taken out of it — a server that behaves
+differently for a robot behaves differently for you, and the prompt is a person. `.get
+:4000/echo-headers` proves what actually arrived.
+
+`.headers` is the same command as `.header`, with one difference: bare, the plural lists (the
+block is what its name means) where the singular says what it can do. Both take the same shapes:
+
+| input                          | expected                                                         |
+| ------------------------------ | ---------------------------------------------------------------- |
+| `.header`                      | the shapes, on one screen — it is a question about the command   |
+| `.headers`                     | the plural, bare, is the list — the block is what its name means |
+| `.header list`                 | what is saved for the next request                               |
+| `.header accept`               | what that one is set to, or `accept is not set`                  |
+| `.header add x-token=abc`      | the same as `.header x-token=abc`                                |
+| `.header del x-token`          | `delete`, `del`, `remove` and `rm` all drop it                   |
+| `.header clear`                | all of them, with a count                                        |
+| `.header received`             | the reply's headers on the last request                          |
+| `.header 2 sent`, `.header #3` | the same, for an earlier request — a position or an id           |
+| `.header received #3`          | either order: which half and which request, in either sequence   |
+| `.header received #99`         | `No request #99` — not the last request wearing the wrong name   |
+
+Then `.request`, which is how you ask a narrower question afterwards:
+
+| input                             | expected                                                                                                                               |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `.request`                        | everything about the last one: target, sent, status, received, body                                                                    |
+| `.request 2`                      | the one before it — counting back, the way the list reads                                                                              |
+| `.request #7`                     | the request called `#7`, whatever has happened since                                                                                   |
+| `.request list`                   | newest first, so the top line is `.request 1`: age (yellow while recent), `#id` dim, status on its ground, verb in its colour, URL dim |
+| `.request /tests.js status`       | just the status line                                                                                                                   |
+| `.request /tests.js headers sent` | just what went out — `headers.sent` says it as a field, `.headers` is forgiven the dot                                                 |
+| `.request /tests.js headers.etag` | just one of them — `header.etag`, `headers[etag]` and `header['content-type']` all read the same                                       |
+| `.request /tests.js body`         | the **whole** body, not the forty-line preview                                                                                         |
+| `.request get:/tests.js`          | the same, narrowed to GETs                                                                                                             |
+| `.request tests`                  | matching is forgiving — any part of the URL finds it                                                                                   |
+| `.request /nowhere`               | `No request to /nowhere`, naming `.request list`                                                                                       |
+| `.request 99`                     | `Only N requests so far` — a position past the end is its own mistake                                                                  |
+| `.request #99`                    | `No request #99` — an id nobody handed out is a different mistake again                                                                |
+
+Last, the one collision worth checking by hand. `.delete` is two commands, told apart exactly the
+way `.break` is — by the form of its argument:
+
+```
+
+> .delete 1
+> No breakpoint 1
+> .delete http://localhost:4000/api/users/2
+> 200 OK · 13 bytes · 2ms | DELETE http://localhost:4000/api/users/2
+> {
+>   "deleted": 2
+> }
+
+```
+
+A breakpoint has a number; a URL never does.
+
+## 17. If something looks wrong
 
 | symptom                               | likely cause                                                                      |
 | ------------------------------------- | --------------------------------------------------------------------------------- |
@@ -435,6 +606,8 @@ mean "reload, except keep my mistakes".
 | `.devtools` says there is no endpoint | macOS, or a headed session — use F12                                              |
 | a stack shows bundle offsets          | source-map resolution regressed; worth a bug                                      |
 | a second `test(…)` prints nothing     | the QUnit re-arm in `lib/setup/qunit-harness.ts` broke                            |
+| a `.get` hangs for 30s                | the server is not answering — that is the timeout, and it says so                 |
+| `.header sent` looks short            | it is: the runtime adds its own on the way to the socket, and says which          |
 
 That last one is the dangerous one, because it is silent by design — QUnit logs
 `Unexpected test after runEnd` and ignores the test. It is why §2 asks for three tests rather than
