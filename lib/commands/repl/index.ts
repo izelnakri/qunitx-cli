@@ -7,6 +7,8 @@ import * as Args from '../../args/index.ts';
 import * as Config from '../../setup/config.ts';
 import * as Reporter from '../../reporters/index.ts';
 import * as Repl from '../../repl/session.ts';
+import * as Http from '../../repl/http-service.ts';
+import type { HttpService } from '../../repl/http-service.ts';
 import { moduleNameFor } from '../../repl/session.ts';
 import * as Result from '../../result/index.ts';
 import { blue, red, yellow } from '../../utils/color.ts';
@@ -29,6 +31,7 @@ import { command as Devtools } from './commands/devtools.ts';
 import { command as Down } from './commands/down.ts';
 import { command as Finish } from './commands/finish.ts';
 import { command as Frame } from './commands/frame.ts';
+import { command as Header, plural as Headers } from './commands/header.ts';
 import { command as Help } from './commands/help.ts';
 import { command as Here } from './commands/here.ts';
 import { command as History } from './commands/history.ts';
@@ -41,8 +44,10 @@ import { command as Nvim } from './commands/nvim.ts';
 import { command as Open } from './commands/open.ts';
 import { command as Pwd } from './commands/pwd.ts';
 import { command as Reload } from './commands/reload.ts';
+import { command as Request } from './commands/request.ts';
 import { command as Save } from './commands/save.ts';
 import { command as SearchCommand } from './commands/search.ts';
+import { buildCommand } from './commands/http.ts';
 import { command as Scope } from './commands/scope.ts';
 import { command as Step } from './commands/step.ts';
 import { command as Type } from './commands/type.ts';
@@ -151,7 +156,13 @@ export async function run(): Promise<number> {
     (open) => banner(config, open),
   );
 
-  return await drive(session, config);
+  // Built here rather than inside `drive`, because the page's user-agent has to be asked for and
+  // `drive`'s body is synchronous — and a request that went out with the wrong one because of a
+  // start-up race is unexplainable afterwards.
+  const http = Http.create();
+  await Http.setUserAgent(http, session);
+
+  return await drive(session, config, http);
 }
 
 /** What the session is, what it loaded, and how to leave — through the run's reporters, as `#` lines. */
@@ -198,7 +209,7 @@ function where(config: ResolvedConfig, url: string): string {
  * supports the same subset, so the compiled binary gets the same prompt. What it does NOT do is
  * wait for an asynchronous `eval` before reading the next line — see {@link pipe}.
  */
-function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
+function drive(session: ReplSession, config: ResolvedConfig, http: HttpService): Promise<number> {
   const cwd = config.cwd;
   return new Promise((resolve) => {
     const interactive = Boolean(process.stdin.isTTY);
@@ -368,6 +379,7 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
       },
       buffered: '',
       scratch: '',
+      http,
       log: (text) => void server.output.write(`${text}\n`),
       write: (text) => void server.output.write(text),
     };
@@ -415,6 +427,13 @@ function drive(session: ReplSession, config: ResolvedConfig): Promise<number> {
       url: Url,
       devtools: Devtools,
       history: History,
+      get: buildCommand('GET'),
+      post: buildCommand('POST'),
+      put: buildCommand('PUT'),
+      patch: buildCommand('PATCH'),
+      header: Header,
+      headers: Headers,
+      request: Request,
     });
 
     setupHistory(server, interactive);
@@ -531,6 +550,18 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 export { edit, formatPathDisplay, replayableSource, userMeansYes, whatToRun } from './editor.ts';
 export { complete, setupSuggestionBehaviors, mutedSuggestionStyle } from './completion.ts';
 export { trimHistoryFile } from './history.ts';
+export {
+  agoInWords,
+  printBody,
+  printRequest,
+  printRequestLine,
+  printHeaders,
+  printStatus,
+  printTarget,
+  durationTone,
+  sizeTone,
+  statusTone,
+} from './print-request.ts';
 
 // ── The prompt itself ─────────────────────────────────────────────────────────
 //

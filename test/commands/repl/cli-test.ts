@@ -927,7 +927,11 @@ module('Commands | repl | breakpoints', { concurrency: true }, () => {
 
   test('what cannot be done says why', async (assert) => {
     assert.includes(await stepping('.break oops\n'), 'not a place');
-    assert.includes(await stepping('.delete\n'), 'Usage: .delete <number>');
+    // `.delete` is two commands now — a number is the debugger's, anything else is a DELETE — so
+    // the usage line has to say both, or the half nobody knew about stays unknown.
+    const usage = await stepping('.delete\n');
+    assert.includes(usage, 'Usage: .delete <breakpoint number>');
+    assert.includes(usage, '<url>');
     assert.includes(await stepping('.delete 9\n'), 'No breakpoint 9');
   });
 });
