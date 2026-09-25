@@ -3,6 +3,7 @@ import { module, test } from 'qunitx';
 import * as Chrome from '../../lib/chrome/index.ts';
 import { inspectorRealm } from '../../lib/repl/inspector-realm.ts';
 import { importPlaywrightCore } from '../../lib/utils/import-playwright-core.ts';
+import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 import '../helpers/custom-asserts.ts';
 
 const ROOT = path.resolve(import.meta.dirname!, '..', '..');
@@ -72,6 +73,10 @@ module('Repl | inspector realm', () => {
   // version of this test passes while the feature is broken — the frontend is a single-page app
   // that fails silently when the `ws=` parameter is wrong.
   test("Chrome's DevTools attaches to the runtime through the served URL", async (assert) => {
+    // This one starts a Chrome, so it queues behind the same permit every other browser test
+    // takes. Without it, it competes with the browser REPL tests for the machine — and those
+    // have a 180s budget they were quietly spending on contention with this.
+    const permit = await acquireBrowser();
     const realm = await inspectorRealm('node', ROOT, PRELUDE);
     const playwright = await importPlaywrightCore();
     try {
@@ -116,6 +121,7 @@ module('Repl | inspector realm', () => {
     } finally {
       await realm.detach();
       await Promise.all(Object.values(realm.closing()));
+      permit.release();
     }
   });
 });
