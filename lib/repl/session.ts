@@ -295,6 +295,29 @@ export interface ReplSession {
    */
   preview(input: string, depth?: number): Promise<string>;
   /**
+   * What an expression is worth in the page, as JSON — `null` where the page cannot say.
+   *
+   * The one way to get a VALUE back rather than a rendering of one: `eval` answers with what to
+   * print, and `{ name: 'Ada' }` printed is not `{"name":"Ada"}`. The expression is parenthesised
+   * on the way out, so an object literal is an object rather than a block with a label in it.
+   *
+   * `null` covers everything it cannot answer — an expression that throws, a value JSON has no
+   * word for, a closed session — because a caller always has something else to do with the text.
+   *
+   * ```ts
+   * import type { ReplSession } from './session.ts';
+   *
+   * // Defined, not invoked: a real session owns a browser and a bound port.
+   * async function bodyFor(session: ReplSession) {
+   *   await session.toJSON('{ name: "Ada" }'); // '{"name":"Ada"}'
+   *   await session.toJSON('new Date(0)'); // '"1970-01-01T00:00:00.000Z"' — the page's own toJSON
+   *
+   *   return await session.toJSON('nothingDeclared'); // null — the page could not say
+   * }
+   * ```
+   */
+  toJSON(expression: string): Promise<string | null>;
+  /**
    * What this session has added to the page's globals — not the several hundred a browser starts
    * with, which is a list nobody reads. `.scope`.
    *
@@ -986,6 +1009,20 @@ class Session implements ReplSession {
       this.loaded.flatMap(([file, names]) => names.map((name): [string, string] => [name, file])),
     );
     this.#inputs = 0;
+  }
+
+  async toJSON(expression: string): Promise<string | null> {
+    if (this.#closed || expression.trim() === '') return null;
+    // Everything inside the page, including the decision about what JSON can say: a value with a
+    // `toJSON` gets to use it, a class instance serialises as the object it is, and anything JSON
+    // has no word for comes back as `undefined` here rather than as half a body.
+    const answered = await this.#byValue<string | null>(
+      `(() => { try { const value = (${expression});` +
+        ` return value === undefined ? null : JSON.stringify(value) ?? null; }` +
+        ` catch { return null; } })()`,
+    );
+
+    return typeof answered === 'string' ? answered : null;
   }
 
   async scope(): Promise<ScopeEntry[]> {
