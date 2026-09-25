@@ -534,6 +534,24 @@ Chrome's own DevTools on the very page the prompt is driving). That last one is 
 any Chromium browser: same realm, same DOM, same paused frame — a value declared at the prompt is
 in that console, and a `debugger` shows as paused in both.
 
+**HTTP from the prompt.** `.get`, `.post`, `.put`, `.patch` and `.delete` request a URL. A path is
+the page's own server — `.get /api/users` hits the suite's origin — `:4000` is that port on this
+machine, and anywhere else takes an `http://`. A body is JavaScript, evaluated in the page: an
+object literal, a variable, an instance with a `toJSON` — and after a `.get`, which has no body,
+an object is the query instead (`{ page: 2 }` is `?page=2`). The request itself is made from Node
+rather than the tab, so nothing is hidden by CORS and what went out can be reported honestly.
+
+```
+> .post :4000/api/users { name: 'Ada' }   # a body after the URL, `@file` to send one, `:` to edit one
+ 201 Created  · 26 bytes · 13ms | POST http://localhost:4000/api/users | #1
+> .header sent                            # what went out; `.header received` for the reply
+> .request #1 body                        # the whole body, however long — `.request 2` counts back
+> .request list                           # every request this session has made, newest first
+```
+
+A session starts with the two headers a browser would send — its own user-agent, and JSON for the
+accept — and `.header list` shows them, so nothing is sent that you cannot see.
+
 The line is syntax-highlighted as you type and what it comes to is shown on the right; TAB completes
 against the page, Ctrl-F takes the greyed-out suggestion, and Ctrl-C interrupts a runaway
 expression. A `debugger` statement stops the page — `.locals` shows the frame, `.continue` carries
