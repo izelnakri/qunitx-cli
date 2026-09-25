@@ -48,7 +48,23 @@ export function createColors(enabled: boolean) {
     };
   }) as MagentaFn;
 
-  return { red, green, yellow, blue, magenta };
+  // A badge is the same colour behind the text rather than in it, for the one thing on a line
+  // that should be found before the line is read — an HTTP status among its own measurements.
+  // The ground is set and the text is left alone: a terminal's foreground is already legible on
+  // its own ground and against these four, and a colour chosen here would be the one thing on
+  // screen that ignores the theme the reader picked.
+  //
+  // The padding is part of the colour: a block with no room inside it reads as a mistake, and
+  // adding spaces that no colour fills would misalign the plain-text output every test reads.
+  const makeBadge = (background: number) => (text: string) =>
+    enabled ? `\x1b[${background}m ${text} \x1b[49m` : String(text);
+
+  const onGreen = makeBadge(42);
+  const onYellow = makeBadge(43);
+  const onBlue = makeBadge(44);
+  const onRed = makeBadge(41);
+
+  return { red, green, yellow, blue, magenta, onGreen, onYellow, onBlue, onRed };
 }
 
 /**
@@ -110,6 +126,46 @@ export function yellow(text: string): string {
  */
 export function blue(text: string): string {
   return colors.blue(text);
+}
+/**
+ * The terminal's own text on a green ground, padded — a 2xx.
+ *
+ * ```ts
+ * onGreen('200 OK'); // ' 200 OK ' on green when colour is enabled; '200 OK' otherwise
+ * ```
+ */
+export function onGreen(text: string): string {
+  return colors.onGreen(text);
+}
+/**
+ * The same on a yellow ground — a 3xx, or a measurement worth a second look.
+ *
+ * ```ts
+ * onYellow('301 Moved Permanently'); // padded and painted when colour is enabled
+ * ```
+ */
+export function onYellow(text: string): string {
+  return colors.onYellow(text);
+}
+/**
+ * The same on a blue ground — a 4xx, which is information rather than breakage.
+ *
+ * ```ts
+ * onBlue('404 Not Found'); // padded and painted when colour is enabled
+ * ```
+ */
+export function onBlue(text: string): string {
+  return colors.onBlue(text);
+}
+/**
+ * The same on a red ground — a 5xx, or a request that never got an answer.
+ *
+ * ```ts
+ * onRed('500 Internal Server Error'); // padded and painted when colour is enabled
+ * ```
+ */
+export function onRed(text: string): string {
+  return colors.onRed(text);
 }
 /**
  * ANSI magenta text. Call without arguments to chain: `magenta().bold(text)`.
