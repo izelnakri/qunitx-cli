@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.38.0] - 2026-09-25
+[`v0.37.4...v0.38.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.37.4...v0.38.0)
+
+### Bug Fixes
+- A run cannot end by the event loop going quiet — 2026-09-24 by [@izelnakri](https://github.com/izelnakri) ([`5d34e3d`](https://github.com/izelnakri/qunitx-cli/commit/5d34e3dc29f9df259e04c9117d1984edf478364d))
+- Exiting 0 is something a run has to say — 2026-09-24 by [@izelnakri](https://github.com/izelnakri) ([`6a10836`](https://github.com/izelnakri/qunitx-cli/commit/6a108362adc9646baab42e809881817719700011))
+
+### Documentation
+- The request commands, in the README and by hand — 2026-09-25 by [@izelnakri](https://github.com/izelnakri) ([`8254b37`](https://github.com/izelnakri/qunitx-cli/commit/8254b37defd680a5b4d815d70efb7d896d135ab9))
+
+### Features
+- A PATCH route, so a server can answer .patch — 2026-09-25 by [@izelnakri](https://github.com/izelnakri) ([`a24fc70`](https://github.com/izelnakri/qunitx-cli/commit/a24fc7017de03da433bbb7dd1099a480b2014cc8))
+- An HTTP client, and a way to print what it did — 2026-09-25 by [@izelnakri](https://github.com/izelnakri) ([`ad0e4a3`](https://github.com/izelnakri/qunitx-cli/commit/ad0e4a320c4e7dce9f5b8d434ba3e5d03a76d4aa))
+- [**breaking**] .get, .post, .put, .patch — and .delete, which was already taken — 2026-09-25 by [@izelnakri](https://github.com/izelnakri) ([`fe9b7a9`](https://github.com/izelnakri/qunitx-cli/commit/fe9b7a97d360f781fdbf4f1fd1a93091b48d9180))
+
 ## [0.37.4] - 2026-09-24
 [`v0.37.3...v0.37.4`](https://github.com/izelnakri/qunitx-cli/compare/v0.37.3...v0.37.4)
 
