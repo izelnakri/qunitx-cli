@@ -6,7 +6,7 @@ import { spawn } from '../../lib/repl/inspector/spawn.ts';
 import { connect } from '../../lib/repl/inspector/client.ts';
 import { HOST_READY_BINDING } from '../../lib/repl/inspector/host.ts';
 import type { InspectorClient } from '../../lib/repl/inspector/client.ts';
-import type { RuntimeName } from '../../lib/repl/inspector/spawn.ts';
+import type { RuntimeName } from '../../lib/setup/targets.ts';
 import '../helpers/custom-asserts.ts';
 
 // Against REAL runtimes, deliberately. A stubbed inspector would have agreed with every wrong

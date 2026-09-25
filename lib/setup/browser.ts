@@ -1,7 +1,9 @@
 import { format } from 'node:util';
 import * as WebServer from './web-server.ts';
 import * as Reporter from '../reporters/index.ts';
-import { Task } from '../task/index.ts';
+import { Task, Failure } from '../task/index.ts';
+import { isRuntime } from './targets.ts';
+import type { TargetName } from './targets.ts';
 import { bindServerToPort } from './bind-server-to-port.ts';
 import * as Chrome from '../chrome/index.ts';
 import { prelaunchPromise, shutdownPrelaunch } from '../chrome/prelaunch.ts';
@@ -25,6 +27,25 @@ const playwrightCorePromise = importPlaywrightCore();
 perfLog('browser.js: playwright-core import started');
 
 /**
+ * `--browser=node` or `--browser=deno` was given to something that runs tests.
+ *
+ * Both are real targets, and `qunitx repl` opens on either — but a run puts its bundle in a
+ * document and reads the results back out of one, and neither runtime has a document to put it in.
+ *
+ * ```ts
+ * import { NotABrowser } from './browser.ts';
+ *
+ * NotABrowser({ target: 'node' }).data.target; // 'node'
+ * ```
+ */
+export const NotABrowser: Failure.FailureFactory<'NotABrowser', { target: string }> =
+  Failure.define(
+    'NotABrowser',
+    (data: { target: string }) =>
+      `--browser=${data.target} opens a prompt, not a test run — \`qunitx repl --browser=${data.target}\`, or a browser here`,
+  );
+
+/**
  * The three fields {@link launch} actually reads. Narrower than `Config` on purpose: `qunitx run`
  * has a config of its own with no test files in it, and asking it to fake thirty unrelated fields
  * to borrow the CDP pre-launch fast path would be a cast pretending to be a type.
@@ -35,8 +56,14 @@ perfLog('browser.js: playwright-core import started');
  * ```
  */
 export interface LaunchTarget {
-  /** Engine to launch. Defaults to chromium when absent. */
-  browser?: 'chromium' | 'firefox' | 'webkit';
+  /**
+   * Engine to launch. Defaults to chromium when absent.
+   *
+   * Typed as every `--browser` value rather than the three engines, because `Config.browser` is —
+   * `node` and `deno` are prompts, not runs. Refused below with a sentence rather than excluded
+   * here with a type error, so that `qunitx test --browser=node` explains itself.
+   */
+  browser?: TargetName;
   /** `--open`: `true` asks for a visible window (honoured together with `watch`). */
   open?: boolean | string;
   /** `--watch`: keeps firefox/webkit headed when `open` is also set. */
@@ -75,6 +102,10 @@ export async function launch(
   headed: boolean = Boolean(config.open && config.watch),
 ): Promise<Browser> {
   const browserName = config.browser || 'chromium';
+  // A test run needs a document: QUnit's fixture, the page that loads the bundle, the console that
+  // reports it. `--browser=node` is `qunitx repl`'s, and saying so here catches every run path at
+  // once rather than failing later somewhere with less to say.
+  if (isRuntime(browserName)) throw NotABrowser({ target: browserName });
 
   if (browserName === 'chromium') {
     const waitStart = Date.now();

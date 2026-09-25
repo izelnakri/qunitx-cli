@@ -1,13 +1,11 @@
 import { spawn as spawnProcess } from 'node:child_process';
 import { writeHost } from './host.ts';
 import type { ChildProcess } from 'node:child_process';
+import type { RuntimeName } from '../../setup/targets.ts';
 
 // Starting a runtime with its inspector open, and finding out where the inspector is. The same
 // shape as `lib/chrome/spawn.ts`, and for the same reason: the port is chosen by the child and
 // announced on stderr, so the only way to learn it is to read what the child said.
-
-/** Which runtime a prompt is being opened on. `chromium` is the other one, and lives elsewhere. */
-export type RuntimeName = 'node' | 'deno';
 
 /** A runtime that is up, stopped before its first statement, and waiting to be told to go. */
 export interface InspectedRuntime {

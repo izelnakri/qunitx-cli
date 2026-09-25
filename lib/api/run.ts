@@ -7,6 +7,7 @@ import type { Console } from '../console.ts';
 import type { BrowserLog } from '../reporters/types.ts';
 import type { ScriptEntryFailure } from '../commands/run.ts';
 import type { RunResult } from './test.ts';
+import type { TargetName } from '../setup/targets.ts';
 
 // A path only a shell expands. Passing one to `run` means the caller thinks it selects many
 // files, which is the test verb's grammar rather than this one's.
@@ -52,7 +53,7 @@ export interface ScriptOptions {
   /** Directory the file, its relative imports and `node_modules` lookups resolve against. */
   cwd?: string;
   /** Browser engine. Defaults to `chromium`. */
-  browser?: 'chromium' | 'firefox' | 'webkit';
+  browser?: TargetName;
   /** Port the local server binds. Defaults to 1234, stepping over a taken one. */
   port?: number;
   /** Ms the script may run before it is declared hung. Unbounded by default, like `deno run`. */

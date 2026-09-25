@@ -3,6 +3,7 @@ import { BUILT_IN_REPORTERS } from '../reporters/index.ts';
 import { processConsole, silentConsole, type Console } from '../console.ts';
 import { APIReporter } from './reporter.ts';
 import { REPORTERS } from '../reporters/types.ts';
+import { TARGETS, type TargetName } from '../setup/targets.ts';
 import { Failure } from '../task/index.ts';
 import type { Reporter, ReporterName } from '../reporters/types.ts';
 import type { ConfigOptions } from '../setup/config.ts';
@@ -37,7 +38,7 @@ export interface UserRunOptions {
    */
   filter?: string;
   /** Browser engine. Defaults to `chromium`, the only one that can collect coverage. */
-  browser?: 'chromium' | 'firefox' | 'webkit';
+  browser?: TargetName;
   /** Milliseconds a single test may take before the run is declared stalled. Defaults to 20000. */
   timeout?: number;
   /** Stop the run at the first failing test. */
@@ -125,7 +126,6 @@ export const InvalidOption: Failure.FailureFactory<
 /** The one failure {@link validate} raises. */
 export type InvalidOptionFailure = Failure.Of<typeof InvalidOption>;
 
-const BROWSERS = ['chromium', 'firefox', 'webkit'];
 const COVERAGE_FORMATS = ['lcov', 'html'];
 
 /**
@@ -147,11 +147,14 @@ const COVERAGE_FORMATS = ['lcov', 'html'];
  * ```
  */
 export function validate(userRunOptions: UserRunOptions): void {
-  if (userRunOptions.browser !== undefined && !BROWSERS.includes(userRunOptions.browser)) {
+  if (
+    userRunOptions.browser !== undefined &&
+    !TARGETS.includes(userRunOptions.browser as TargetName)
+  ) {
     throw InvalidOption({
       option: 'browser',
       value: userRunOptions.browser,
-      expected: `one of ${BROWSERS.join(', ')}`,
+      expected: `one of ${TARGETS.join(', ')}`,
     });
   }
   if (userRunOptions.reporter !== undefined && userRunOptions.reporters !== undefined) {
