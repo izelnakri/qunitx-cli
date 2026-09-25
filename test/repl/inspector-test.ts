@@ -152,14 +152,19 @@ for (const runtime of RUNTIMES) {
       await using target = await attach(runtime);
       const file = path.join(ROOT, 'test', 'fixtures', 'repl-breakable.mjs');
 
-      // Set BEFORE the file is loaded, which is the whole reason the runtime starts stopped: at
-      // this point there is nothing to bind to and `locations` comes back empty.
-      const set = await target.client.send<{ breakpointId?: string; locations?: unknown[] }>(
+      // Set BEFORE the file is loaded, which is the whole reason the runtime starts stopped.
+      // Whether V8 binds it now or when the script parses is V8's business and varies with what
+      // the runtime already has cached — what matters is that it is accepted, and that it stops
+      // the import below.
+      const set = await target.client.send<{ breakpointId?: string }>(
         'Debugger.setBreakpointByUrl',
-        { lineNumber: 1, columnNumber: 0, url: `file://${file}` },
+        {
+          lineNumber: 1,
+          columnNumber: 0,
+          url: `file://${file}`,
+        },
       );
-      assert.ok(set.breakpointId, 'the breakpoint is accepted while it is still unresolved');
-      assert.deepEqual(set.locations, [], 'and binds nothing until the file is loaded');
+      assert.ok(set.breakpointId, 'the breakpoint is accepted before anything has loaded');
 
       const stopped = new Promise<{
         callFrames: Array<{ scopeChain: Array<{ type: string; object: { objectId?: string } }> }>;
@@ -171,7 +176,9 @@ for (const runtime of RUNTIMES) {
 
       const pause = await Promise.race([
         stopped,
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
+        // Generous: this runs alongside fifteen other workers and a browser semaphore, and a
+        // cold `deno run` under that is not a fast thing.
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 20_000)),
       ]);
       assert.ok(pause, 'the pending breakpoint resolved when the file finally loaded');
 

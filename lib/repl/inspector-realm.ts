@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'node:url';
 import * as Chrome from '../chrome/index.ts';
 import { connect } from './inspector/client.ts';
 import { spawn } from './inspector/spawn.ts';
@@ -5,7 +6,7 @@ import type { InspectorClient } from './inspector/client.ts';
 import type { InspectedRuntime } from './inspector/spawn.ts';
 import type { RuntimeName } from '../setup/targets.ts';
 import type { EarlyChrome } from '../types.ts';
-import type { Realm } from './realm.ts';
+import type { BreakpointTarget, Realm } from './realm.ts';
 
 /**
  * A {@link Realm} that is a `node` or `deno` process rather than a page.
@@ -100,6 +101,29 @@ class Runtime implements RuntimeRealm {
   on(event: string, handler: (params: never) => void): void {
     this.#listeners.push([event, handler]);
     this.#client.on(event, handler);
+  }
+
+  /** A runtime imports files, which is the whole reason its breakpoints are simple. */
+  readonly importsFromDisk = true;
+
+  /**
+   * The file, and the line as typed.
+   *
+   * No source map, because there is no bundle to find the line inside of — the runtime loaded
+   * that file and V8 knows it by its own `file://` URL. Type-stripping shifts nothing: node and
+   * deno both blank types in place rather than reformatting, so line 12 stays line 12.
+   *
+   * CDP counts from zero and people count from one, which is the only arithmetic here.
+   */
+  breakpointAt(absolute: string, line: number): BreakpointTarget | string {
+    if (line < 1) return `${line} is not a line number`;
+
+    return {
+      url: pathToFileURL(absolute).href,
+      lineNumber: line - 1,
+      columnNumber: 0,
+      sourceLine: line,
+    };
   }
 
   alive(): boolean {

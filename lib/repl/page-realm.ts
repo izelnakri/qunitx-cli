@@ -1,8 +1,9 @@
+import * as SourceMap from '../utils/source-map.ts';
 import { prelaunchPromise, shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { proxyTo } from './proxy.ts';
 import type { Proxy } from './proxy.ts';
 import type { Browser as PlaywrightBrowser, CDPSession, Page } from 'playwright-core';
-import type { Realm } from './realm.ts';
+import type { BreakpointTarget, Realm } from './realm.ts';
 
 /**
  * A {@link Realm} that is a browser page — what `qunitx repl` has always talked to.
@@ -19,7 +20,9 @@ import type { Realm } from './realm.ts';
  *
  * // Defined, not invoked: it takes live handles.
  * function example(cdp: CDPSession, page: Page, browser: Browser) {
- *   return pageRealm({ cdp, page, browser }).send('Runtime.enable');
+ *   const realm = pageRealm({ cdp, page, browser, bundleURL: 'http://x/tests.js', decoder: null });
+ *
+ *   return realm.send('Runtime.enable');
  * }
  * ```
  */
@@ -27,6 +30,10 @@ export function pageRealm(handles: {
   cdp: CDPSession;
   page: Page;
   browser: PlaywrightBrowser;
+  /** The bundle every preloaded file ended up inside, and what a breakpoint is set on. */
+  bundleURL: string;
+  /** Its inline map, or `null` where the bundle was built without one. */
+  decoder: SourceMap.SourceMapDecoder | null;
 }): Realm {
   return new PageRealm(handles);
 }
@@ -39,11 +46,39 @@ class PageRealm implements Realm {
   #browser: PlaywrightBrowser;
   // Nothing listens until somebody asks for DevTools, and then one proxy serves every window.
   #proxy: Proxy | null = null;
+  #bundleURL: string;
+  #decoder: SourceMap.SourceMapDecoder | null;
 
-  constructor(handles: { cdp: CDPSession; page: Page; browser: PlaywrightBrowser }) {
+  constructor(handles: {
+    cdp: CDPSession;
+    page: Page;
+    browser: PlaywrightBrowser;
+    bundleURL: string;
+    decoder: SourceMap.SourceMapDecoder | null;
+  }) {
     this.#cdp = handles.cdp;
     this.#page = handles.page;
     this.#browser = handles.browser;
+    this.#bundleURL = handles.bundleURL;
+    this.#decoder = handles.decoder;
+  }
+
+  /** A page runs a bundle and nothing else: there is no way to hand it a file. */
+  readonly importsFromDisk = false;
+
+  breakpointAt(absolute: string, line: number): BreakpointTarget | string {
+    if (!this.#decoder)
+      return 'the bundle has no source map, so a source line cannot be found in it';
+
+    const found = SourceMap.findGenerated(this.#decoder, absolute, line);
+    if (!found) return `${absolute} is not a file this session bundled`;
+
+    return {
+      url: this.#bundleURL,
+      lineNumber: found.line,
+      columnNumber: found.column,
+      sourceLine: found.sourceLine,
+    };
   }
 
   send<T = void>(method: string, params?: Record<string, unknown>): Promise<T> {

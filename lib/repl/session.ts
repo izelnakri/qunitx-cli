@@ -654,7 +654,13 @@ export async function start(
       await bindServerToPort(server, config);
       await page.addInitScript({ content: initScript(config) });
       await page.goto(`http://localhost:${config.port}`);
-      realm = pageRealm({ cdp: await page.context().newCDPSession(page), page, browser: browser! });
+      realm = pageRealm({
+        cdp: await page.context().newCDPSession(page),
+        page,
+        browser: browser!,
+        bundleURL: `http://localhost:${config.port}/tests.js`,
+        decoder: config.state.group.sourceMapDecoder ?? null,
+      });
     } else {
       await bindServerToPort(server, config);
       realm = await inspectorRealm(runtime, config.cwd, initScript(config));
@@ -1198,18 +1204,16 @@ class Session implements ReplSession {
     if (!place) return `not a place: ${location.trim() || '(nothing)'} — try file.ts:12`;
 
     const [, file = '', line = ''] = place;
-    const decoder = this.#config.state.group.sourceMapDecoder;
-    if (!decoder) return 'the bundle has no source map, so a source line cannot be found in it';
-
-    const absolute = path.resolve(this.#config.cwd, file);
-    const found = SourceMap.findGenerated(decoder, absolute, Number(line));
-    if (!found) return `${file} is not a file this session bundled`;
+    // Where that line IS depends on what is running it: a bundle the page fetched, or the file
+    // itself. The realm knows which; this only has to carry the answer to CDP.
+    const found = this.#realm.breakpointAt(path.resolve(this.#config.cwd, file), Number(line));
+    if (typeof found === 'string') return found;
 
     const set = (await this.#realm
       .send<{ breakpointId?: string }>('Debugger.setBreakpointByUrl', {
-        url: `${this.url}/tests.js`,
-        lineNumber: found.line,
-        columnNumber: found.column,
+        url: found.url,
+        lineNumber: found.lineNumber,
+        columnNumber: found.columnNumber,
       })
       .catch(() => null)) as { breakpointId?: string; locations?: unknown[] } | null;
     if (!set?.breakpointId) return `nothing to stop on at ${file}:${line}`;
@@ -1242,16 +1246,25 @@ class Session implements ReplSession {
     const name = named ? callItThis : moduleNameFor(absolute);
     if (!IDENTIFIER.test(name)) return `${name} is not a name a value can be given`;
 
-    const source =
-      remote || CODE.has(path.extname(absolute).toLowerCase())
-        ? await this.#bundle(
+    const code = remote || CODE.has(path.extname(absolute).toLowerCase());
+    // Three ways in, and the middle one is why a runtime session can stop inside what it brought:
+    // the file is imported as ITSELF, so V8 knows it by its own URL and a breakpoint on that file
+    // is a breakpoint this import hits. A page has no such option — code reaches it as a bundle or
+    // not at all — and a remote input is a URL the runtime cannot fetch, so both go to esbuild.
+    const source = !code
+      ? await plainFile(absolute, shown, name)
+      : this.#realm.importsFromDisk && !remote
+        ? [
+            `globalThis.__qunitxImport(${JSON.stringify(pathToFileURL(absolute).href)}).then((m) =>`,
+            `  globalThis.__qunitxHarness.bring(${JSON.stringify(shown)}, ${JSON.stringify(name)}, m, ${named}))`,
+          ].join('\n')
+        : await this.#bundle(
             [
               `import * as m from '${specifier(absolute, this.#config.cwd)}';`,
               `globalThis.__qunitxHarness.bring(${JSON.stringify(shown)}, ${JSON.stringify(name)}, m, ${named});`,
             ].join('\n'),
             shown,
-          )
-        : await plainFile(absolute, shown, name);
+          );
     if (typeof source !== 'string') return source.detail;
     const names = await this.#loadInto(source, shown, {
       kind: 'file',
@@ -1288,13 +1301,24 @@ class Session implements ReplSession {
         return `${JSON.stringify(name)}: ${value}`;
       })
       .join(', ');
-    const source = await this.#bundle(
-      [
-        `import * as m from ${JSON.stringify(from)};`,
-        `globalThis.__qunitxHarness.bind(${JSON.stringify(shown)}, { ${values} });`,
-      ].join('\n'),
-      shown,
-    );
+    // A relative specifier is resolved HERE rather than left to the bridge: the bridge lives in
+    // `node_modules/.cache/qunitx`, so `./foo.ts` would resolve from there. A bare one is left
+    // alone, because that is the runtime's own resolution and it walks up to the project.
+    const resolved = from.startsWith('.')
+      ? pathToFileURL(path.resolve(this.#config.cwd, from)).href
+      : from;
+    const source = this.#realm.importsFromDisk
+      ? [
+          `globalThis.__qunitxImport(${JSON.stringify(resolved)}).then((m) =>`,
+          `  globalThis.__qunitxHarness.bind(${JSON.stringify(shown)}, { ${values} }))`,
+        ].join('\n')
+      : await this.#bundle(
+          [
+            `import * as m from ${JSON.stringify(from)};`,
+            `globalThis.__qunitxHarness.bind(${JSON.stringify(shown)}, { ${values} });`,
+          ].join('\n'),
+          shown,
+        );
     if (typeof source !== 'string') return { ...nothing, output: source.detail, failed: true };
     const names = await this.#loadInto(source, shown, { kind: 'statement', statement });
     if (typeof names === 'string') return { ...nothing, output: names, failed: true };

@@ -1,3 +1,15 @@
+/** Where a breakpoint goes, in whatever coordinates the realm running the code uses. */
+export interface BreakpointTarget {
+  /** What the realm calls the script: a bundle's URL, or the file's own. */
+  url: string;
+  /** Zero-based, because that is what CDP takes. */
+  lineNumber: number;
+  /** Zero-based too, and 0 wherever nothing narrower is known. */
+  columnNumber: number;
+  /** One-based, and what the prompt echoes back — the line in the file the person named. */
+  sourceLine: number;
+}
+
 /**
  * The V8 a prompt is talking to.
  *
@@ -31,6 +43,22 @@ export interface Realm {
    * script already parsed, and a listener added afterwards misses the bundle it most wants.
    */
   on(event: string, handler: (params: never) => void): void;
+  /**
+   * Whether a file on disk can be loaded as ITSELF here, rather than bundled into the realm first.
+   *
+   * False for a page, which can only be given code through a document and therefore only ever
+   * runs a bundle. True for a runtime, and worth the branch: a file imported as itself keeps its
+   * own identity in V8, so a breakpoint set on it is a breakpoint the import actually hits.
+   */
+  readonly importsFromDisk: boolean;
+  /**
+   * Where a `file:line` somebody typed lives in THIS realm, or why it cannot be found.
+   *
+   * The two answers are genuinely different questions. A page runs a BUNDLE, so the line has to
+   * be looked up in a source map and the breakpoint set on the bundle's URL. A runtime runs the
+   * file, so the line IS the line and the URL is the file — no map, and nothing to be missing.
+   */
+  breakpointAt(absolute: string, line: number): BreakpointTarget | string;
   /** Whether there is still something on the other end to ask. */
   alive(): boolean;
   /** The same code again with an empty scope — a page reload, or a runtime restarted. */
