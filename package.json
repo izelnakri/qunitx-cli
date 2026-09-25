@@ -53,6 +53,7 @@
     "test:deno": "deno run -A test/runner.ts",
     "dev": "node test/runner.ts --watch",
     "test:browser": "node test/runner.ts test/flags/*-test.ts test/inputs/*-test.ts",
+    "api-test-server": "node test/helpers/api-server.ts",
     "test:browser:deno": "deno run -A test/runner.ts test/flags/*-test.ts test/inputs/*-test.ts",
     "test:release": "bash scripts/test-release.sh",
     "test:sanity-first": "./cli.ts test/fixtures/failing-tests.js test/fixtures/failing-tests.ts",
