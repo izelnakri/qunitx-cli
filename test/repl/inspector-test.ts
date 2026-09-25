@@ -4,6 +4,7 @@ import { module, test } from 'qunitx';
 import { spawn } from '../../lib/repl/inspector/spawn.ts';
 import { connect } from '../../lib/repl/inspector/client.ts';
 import type { InspectorClient } from '../../lib/repl/inspector/client.ts';
+import { installedRuntimes } from '../helpers/installed-runtimes.ts';
 import type { RuntimeName } from '../../lib/setup/targets.ts';
 import '../helpers/custom-asserts.ts';
 
@@ -14,10 +15,6 @@ import '../helpers/custom-asserts.ts';
 // invisible to anything but a process.
 
 const ROOT = path.resolve(import.meta.dirname!, '..', '..');
-// deno is not a hard dependency of working on this package, so its lane is skipped where it is
-// not installed rather than failing somebody who does not have it.
-const RUNTIMES: RuntimeName[] = ['node', 'deno'];
-
 /** Everything a prompt does at start-up, in the order that is load-bearing. */
 async function attach(runtime: RuntimeName): Promise<{
   client: InspectorClient;
@@ -60,7 +57,7 @@ async function attach(runtime: RuntimeName): Promise<{
   };
 }
 
-for (const runtime of RUNTIMES) {
+for (const runtime of installedRuntimes()) {
   module(`Repl | inspector | ${runtime}`, () => {
     test('it starts stopped, and runs once it is told to', async (assert) => {
       await using target = await attach(runtime);

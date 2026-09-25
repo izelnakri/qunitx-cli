@@ -45,7 +45,10 @@ class PageRealm implements Realm {
   #page: Page;
   #browser: PlaywrightBrowser;
   // Nothing listens until somebody asks for DevTools, and then one proxy serves every window.
-  #proxy: Proxy | null = null;
+  // The PROMISE is memoised rather than the proxy: `??=` reads before its await and assigns after
+  // it, so two overlapping `/repl` hits each saw null, each bound a socket, and the loser was left
+  // listening with nothing holding it. Carried over from when this lived in the session.
+  #proxy: Promise<Proxy> | null = null;
   #bundleURL: string;
   #decoder: SourceMap.SourceMapDecoder | null;
 
@@ -66,12 +69,14 @@ class PageRealm implements Realm {
   /** A page runs a bundle and nothing else: there is no way to hand it a file. */
   readonly importsFromDisk = false;
 
-  breakpointAt(absolute: string, line: number): BreakpointTarget | string {
+  breakpointAt(absolute: string, shown: string, line: number): BreakpointTarget | string {
     if (!this.#decoder)
       return 'the bundle has no source map, so a source line cannot be found in it';
 
     const found = SourceMap.findGenerated(this.#decoder, absolute, line);
-    if (!found) return `${absolute} is not a file this session bundled`;
+    // `shown` rather than the resolved path: the answer is about what was typed, and a prompt
+    // that replies with a different spelling of it reads as though it misheard.
+    if (!found) return `${shown} is not a file this session bundled`;
 
     return {
       url: this.#bundleURL,
@@ -116,16 +121,17 @@ class PageRealm implements Realm {
   async devtoolsURL(): Promise<string | null> {
     const found = await this.#debuggingTarget();
     if (found === null) return null;
-    this.#proxy ??= await proxyTo(`ws://127.0.0.1:${found.port}/devtools/page/${found.target}`);
+    this.#proxy ??= proxyTo(`ws://127.0.0.1:${found.port}/devtools/page/${found.target}`);
+    const proxy = await this.#proxy;
 
-    return `http://localhost:${found.port}/devtools/inspector.html?ws=${this.#proxy.address}`;
+    return `http://localhost:${found.port}/devtools/inspector.html?ws=${proxy.address}`;
   }
 
   async detach(): Promise<void> {
     await this.#cdp.detach().catch(() => {});
     // A listening socket outlives the process that forgot it, and this one only exists at all if
     // somebody opened DevTools.
-    await this.#proxy?.close();
+    await this.#proxy?.then((proxy) => proxy.close()).catch(() => {});
   }
 
   closing(): Readonly<Record<string, Promise<unknown>>> {

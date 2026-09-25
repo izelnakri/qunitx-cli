@@ -638,6 +638,14 @@ export async function start(
   // this platform falls back to. Said out loud and carried on headless rather than refused: a
   // prompt that will not start is worse than a prompt without a window, and everything else about
   // the session is the same either way.
+  if (runtime !== null && config.open) {
+    // Said out loud rather than ignored, the same way the macOS downgrade below is: a flag that
+    // quietly does nothing is a flag you spend a minute wondering about.
+    Reporter.info(
+      config,
+      `--open has no window to open on ${runtime} — \`.devtools\` is the way in`,
+    );
+  }
   if (runtime === null && config.open === true && process.platform === 'darwin') {
     Reporter.info(config, `--open cannot open a window on macOS — evaluating headlessly instead`);
     config.open = false;
@@ -647,8 +655,11 @@ export async function start(
   // its own to fall back on.
   const browser =
     runtime === null ? await Browser.launch(config, false, config.open === true) : null;
+  // Declared out here so the catch can reach it. A runtime child is not killed by this process
+  // dying and its host module holds its event loop open on purpose, so an orphan is an orphan for
+  // good — and the likeliest way to get one is the expected failure below, a preload that throws.
+  let realm: Realm | null = null;
   try {
-    let realm: Realm;
     if (runtime === null) {
       const page = await browser!.newPage();
       await bindServerToPort(server, config);
@@ -701,14 +712,26 @@ export async function start(
     // already executing is too late to start listening for.
     await realm.send('Debugger.enable');
     // A runtime is still stopped before its first statement at this point, which is what let the
-    // handlers above be registered in time. Releasing it runs the host module and the prelude;
-    // the preloads follow, as real imports rather than as a bundle.
+    // handlers above be registered in time. Releasing it runs the host module and the prelude; the
+    // preloads follow, as real imports rather than as a bundle.
+    //
+    // BEFORE the session's own pause handler goes on, which is the ordering that matters: the
+    // runtime's break-on-start belongs to `release()`, and a session handler attached in time to
+    // see it reads a frame inside the host module, calls it a breakpoint, and then answers
+    // `Can only perform operation while paused` to every line typed afterwards.
     if (runtime !== null) {
       await (realm as RuntimeRealm).release();
+      // Pauses OFF for the duration. A preloaded file is free to contain a `debugger`, and there
+      // is no prompt yet to stop at one with — so a stop here is a process frozen inside an
+      // evaluation that never answers, before anything has been printed. The browser path is
+      // accidentally immune, enabling `Debugger` only after its bundle has run; this is the same
+      // answer said out loud. Once the prompt is up, a `debugger` stops it exactly as it should.
+      await realm.send('Debugger.setSkipAllPauses', { skip: true });
       const loaded = await realm.send<EvaluateResult>('Runtime.evaluate', {
         expression: preloadExpression(config, preload),
         awaitPromise: true,
       });
+      await realm.send('Debugger.setSkipAllPauses', { skip: false });
       if (loaded.exceptionDetails) {
         throw PreloadBuildFailed({
           detail: loaded.exceptionDetails.exception?.description ?? loaded.exceptionDetails.text,
@@ -739,6 +762,7 @@ export async function start(
     // top level throws — still holds a browser and a bound port, and nothing else will release
     // them: `close()` belongs to the session this never returned.
     await closeCompletely({
+      ...(realm?.closing() ?? {}),
       server: server.close(),
       browser: browser?.close(),
       prelaunch: shutdownPrelaunch(),
@@ -1141,6 +1165,10 @@ class Session implements ReplSession {
   async reload(): Promise<string[]> {
     // A new page has none of it, declared at a breakpoint or otherwise.
     this.#pausedBindings.clear();
+    // A page reload reuses one CDP session and V8 keeps counting up, so a stale script id is
+    // never re-issued. A runtime reload is a NEW process numbering from scratch, and every id in
+    // here would then resolve a frame to whichever file happened to hold that id last time.
+    if (this.#realm.importsFromDisk) this.#scripts.clear();
     await this.#realm.reload();
     this.loaded = await this.readLoaded();
     // A reload is a new page: nothing this session declared survives it, so what counts as "what
@@ -1206,7 +1234,11 @@ class Session implements ReplSession {
     const [, file = '', line = ''] = place;
     // Where that line IS depends on what is running it: a bundle the page fetched, or the file
     // itself. The realm knows which; this only has to carry the answer to CDP.
-    const found = this.#realm.breakpointAt(path.resolve(this.#config.cwd, file), Number(line));
+    const found = this.#realm.breakpointAt(
+      path.resolve(this.#config.cwd, file),
+      file,
+      Number(line),
+    );
     if (typeof found === 'string') return found;
 
     const set = (await this.#realm
@@ -1366,7 +1398,12 @@ class Session implements ReplSession {
         absolute: file,
         name: moduleNameFor(file),
         nameWasGiven: false,
-        viaBundle: true,
+        // `viaBundle` means "a reload brings this back by itself", and only a page's does: it
+        // re-fetches and re-evaluates the bundle the preloads are inside. A runtime's reload is a
+        // new process running the host module and nothing else, so its preloads have to be
+        // replayed like any other file — without this they silently vanished from scope, on the
+        // one command whose entire purpose is picking up an edit to them.
+        ...(this.#realm.importsFromDisk ? {} : { viaBundle: true as const }),
       });
     }
   }

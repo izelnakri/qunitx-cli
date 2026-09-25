@@ -58,7 +58,7 @@ export interface Realm {
    * be looked up in a source map and the breakpoint set on the bundle's URL. A runtime runs the
    * file, so the line IS the line and the URL is the file — no map, and nothing to be missing.
    */
-  breakpointAt(absolute: string, line: number): BreakpointTarget | string;
+  breakpointAt(absolute: string, shown: string, line: number): BreakpointTarget | string;
   /** Whether there is still something on the other end to ask. */
   alive(): boolean;
   /** The same code again with an empty scope — a page reload, or a runtime restarted. */

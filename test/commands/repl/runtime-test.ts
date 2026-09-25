@@ -1,13 +1,13 @@
 import { module, test } from 'qunitx';
 import { execute, shellFails } from '../../helpers/shell.ts';
-import { RUNTIMES } from '../../../lib/setup/targets.ts';
+import { installedRuntimes } from '../../helpers/installed-runtimes.ts';
 import '../../helpers/custom-asserts.ts';
 
 /** The prompt, on a runtime, fed a script and asked what it said. */
 const repl = (runtime: string, stdin: string, args = '') =>
   execute(`node cli.ts repl --browser=${runtime} ${args}`.trim(), { stdin: `${stdin}\n.exit\n` });
 
-for (const runtime of RUNTIMES) {
+for (const runtime of installedRuntimes()) {
   module(`Commands | repl | on ${runtime}`, () => {
     test('it is the same prompt, in a process with no page in it', async (assert) => {
       const result = await repl(runtime, ['1 + 1', 'typeof window', 'typeof document'].join('\n'));
@@ -75,6 +75,53 @@ for (const runtime of RUNTIMES) {
 
       assert.includes(result, 'loaded test/fixtures/repl-breakable.mjs');
       assert.includes(result, '42');
+    });
+
+    // Found in review, and every one of these shipped green before it: the suite had no `.reload`
+    // case at all, and no preload that stopped or threw.
+    test('a reload brings the preloads back, rather than emptying the scope', async (assert) => {
+      const result = await repl(
+        runtime,
+        ['.reload', 'typeof ReplBreakable', 'ReplBreakable.hit()'].join('\n'),
+        'test/fixtures/repl-breakable.mjs',
+      );
+
+      assert.includes(result, 'Reloaded, with ReplBreakable');
+      assert.includes(result, "'object'", 'the preload is in scope again');
+      assert.includes(result, '42', 'and it still works');
+      assert.notIncludes(result, 'Can only perform operation while paused');
+      assert.notIncludes(
+        result,
+        'repl-host.mjs',
+        'the new process\u2019s break-on-start is not a breakpoint',
+      );
+    });
+
+    test('a `debugger` in a preloaded file does not freeze the prompt before it opens', async (assert) => {
+      const result = await repl(runtime, 'reached', 'test/fixtures/repl-debugger-probe.mjs');
+
+      assert.includes(result, "'past the debugger'");
+    });
+
+    test('a `debugger` typed at the prompt still stops it', async (assert) => {
+      const result = await repl(
+        runtime,
+        ['(() => { const local = 7; debugger; return local })()', '.locals', '.continue'].join(
+          '\n',
+        ),
+      );
+
+      assert.includes(result, 'paused at');
+      assert.includes(result, 'local', 'and its scope is readable');
+    });
+
+    test('a preload that throws fails the start without leaving the runtime behind', async (assert) => {
+      const result = await shellFails(
+        `node cli.ts repl --browser=${runtime} test/fixtures/repl-throwing-preload.mjs`,
+        { stdin: '.exit\n' },
+      );
+
+      assert.includes(result.stderr, 'explodes on purpose', 'the reason survives');
     });
 
     test('there is still a URL, so a relative HTTP target still means something', async (assert) => {

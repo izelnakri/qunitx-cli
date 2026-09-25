@@ -26,6 +26,20 @@ const INSPECTOR_URL = /(ws:\/\/[^\s]+)/;
 // never announce itself is a message rather than a hang.
 const ANNOUNCE_TIMEOUT_MS = 15_000;
 
+// Every runtime this process started and has not reaped. `lib/chrome/prelaunch.ts` keeps the same
+// net for Chrome and for the same reason: a child is not killed by its parent dying, and the host
+// module deliberately holds its event loop open forever, so an orphan is an orphan for good.
+const live = new Set<ChildProcess>();
+let netted = false;
+
+function netOrphans(): void {
+  if (netted) return;
+  netted = true;
+  process.on('exit', () => {
+    for (const child of live) if (child.pid != null) child.kill('SIGKILL');
+  });
+}
+
 /**
  * Starts `node` or `deno` stopped at its first line, with the qunitx host module loaded.
  *
@@ -60,15 +74,21 @@ export async function spawn(runtime: RuntimeName, cwd: string): Promise<Inspecte
   // `Runtime.consoleAPICalled` AND the child's stdout, and the prompt prints the first. Piping the
   // second without draining it would fill a pipe buffer and wedge the runtime mid-log.
   const child = spawnProcess(runtime, argv, { cwd, stdio: ['ignore', 'ignore', 'pipe'] });
+  netOrphans();
+  live.add(child);
 
-  let ended = false;
-  const shutdown = async (): Promise<void> => {
-    if (ended) return;
-    ended = true;
-    child.kill('SIGKILL');
-    await new Promise<void>((done) =>
-      child.exitCode === null ? child.once('exit', () => done()) : done(),
-    );
+  // Memoised rather than a boolean: a second caller — the start-up error path racing `closing()` —
+  // used to be told the process was gone while it was still dying.
+  let ending: Promise<void> | null = null;
+  const shutdown = (): Promise<void> => {
+    ending ??= new Promise<void>((done) => {
+      live.delete(child);
+      if (child.exitCode !== null) return done();
+      child.once('exit', () => done());
+      child.kill('SIGKILL');
+    });
+
+    return ending;
   };
 
   try {
@@ -95,15 +115,21 @@ function announced(child: ChildProcess): Promise<string> {
     // Unref'd: this timer must not be the reason a prompt that is otherwise done stays open.
     timer.unref?.();
 
-    const settle = (outcome: () => void) => {
-      clearTimeout(timer);
-      outcome();
-    };
-    child.stderr?.on('data', (chunk: Buffer) => {
+    const read = (chunk: Buffer) => {
       said += String(chunk);
       const found = INSPECTOR_URL.exec(said);
       if (found) settle(() => resolve(found[1]!));
-    });
+    };
+    const settle = (outcome: () => void) => {
+      clearTimeout(timer);
+      // Detached, and this is not tidiness: left on, it appends every byte the runtime ever writes
+      // to stderr into `said` and re-scans the whole thing on each chunk — for the life of a
+      // session that is meant to stay open all afternoon.
+      child.stderr?.off('data', read);
+      said = '';
+      outcome();
+    };
+    child.stderr?.on('data', read);
     // A runtime that is not installed fails here rather than at the timeout, which is the
     // difference between a sentence and a fifteen-second pause.
     child.once('error', (error: Error) => settle(() => reject(error)));

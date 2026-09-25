@@ -27,6 +27,8 @@ import type { BreakpointTarget, Realm } from './realm.ts';
  * async function example(cwd: string) {
  *   const realm = await inspectorRealm('node', cwd, 'globalThis.ready = true;');
  *   await realm.send('Runtime.enable');
+ *   // `Debugger.enable` first: `release` waits for a pause that is not delivered without it.
+ *   await realm.send('Debugger.enable');
  *   await realm.release();
  *
  *   return realm.alive(); // true
@@ -39,8 +41,15 @@ export async function inspectorRealm(
   prelude: string,
 ): Promise<RuntimeRealm> {
   const started = await spawn(runtime, cwd);
-
-  return new Runtime(runtime, cwd, prelude, started, await connect(started.inspectorURL));
+  try {
+    return new Runtime(runtime, cwd, prelude, started, await connect(started.inspectorURL));
+  } catch (error) {
+    // A node inspector takes ONE debugger session, so a leftover `chrome://inspect` is enough to
+    // refuse this handshake. Nothing else holds the child at this point, and it is stopped at its
+    // first line holding a port, so it would hold it for the life of the machine.
+    await started.shutdown();
+    throw error;
+  }
 }
 
 /** A {@link Realm} that knows which runtime it is — which the banner and `.url` both ask. */
@@ -73,7 +82,10 @@ class Runtime implements RuntimeRealm {
   #listeners: Array<[string, (params: never) => void]> = [];
   // Chrome, if anybody ever asks for DevTools. Not for driving anything — purely as the web server
   // that has the DevTools frontend on it.
-  #frontend: EarlyChrome | null = null;
+  // Memoised as a PROMISE rather than a handle: `??=` reads before the await and assigns after it,
+  // so two overlapping `/repl` hits each saw null, each started a Chrome, and the loser — with its
+  // own temp profile under os.tmpdir() — was never shut down again.
+  #frontend: Promise<EarlyChrome | null> | null = null;
 
   constructor(
     runtime: RuntimeName,
@@ -115,8 +127,8 @@ class Runtime implements RuntimeRealm {
    *
    * CDP counts from zero and people count from one, which is the only arithmetic here.
    */
-  breakpointAt(absolute: string, line: number): BreakpointTarget | string {
-    if (line < 1) return `${line} is not a line number`;
+  breakpointAt(absolute: string, shown: string, line: number): BreakpointTarget | string {
+    if (line < 1) return `${shown}:${line} is not a line number`;
 
     return {
       url: pathToFileURL(absolute).href,
@@ -139,32 +151,58 @@ class Runtime implements RuntimeRealm {
    * listener the session registered is put back on the new one.
    */
   async reload(): Promise<void> {
+    // The old socket first. Left open it survives until the killed process drops the connection,
+    // and one is added per reload.
+    this.#client.close();
     await this.#started.shutdown();
     this.#started = await spawn(this.#runtime, this.#cwd);
     this.#client = await connect(this.#started.inspectorURL);
-    for (const [event, handler] of this.#listeners) this.#client.on(event, handler);
-    // The domains too: they were enabled on a socket that no longer exists, and without
-    // `Debugger.enable` a `debugger` statement in a reloaded file is a no-op again.
+    // The listeners come back in two halves, and which half goes where is load-bearing.
+    //
+    // Everything EXCEPT `Debugger.paused` goes back first, because `Debugger.enable` replays a
+    // `scriptParsed` for every script already parsed and a subscriber added afterwards misses that
+    // replay — which is the note `session.ts` keeps beside its own registration order.
+    for (const [event, handler] of this.#listeners) {
+      if (event !== 'Debugger.paused') this.#client.on(event, handler);
+    }
+    // Without `Debugger.enable` a `debugger` statement in a reloaded file is a no-op again.
     await this.send('Runtime.enable');
     await this.send('Debugger.enable');
+    // `Debugger.paused` stays off until the break-on-start has been consumed. The re-spawned
+    // runtime stops on its first statement, and that stop belongs to this realm — a session
+    // handler attached in time to see it reads a frame inside the host module, calls it a
+    // breakpoint, and then answers `Can only perform operation while paused` to everything typed
+    // afterwards.
     await this.release();
+    for (const [event, handler] of this.#listeners) {
+      if (event === 'Debugger.paused') this.#client.on(event, handler);
+    }
   }
 
   async release(): Promise<void> {
     const client = this.#client;
-    const started = new Promise<void>((resume) => {
-      let released = false;
-      client.on('Debugger.paused', () => {
-        if (released) return;
-        released = true;
-        void client.send('Debugger.resume').then(() => resume());
-      });
+    // `Debugger.enable` must already have been sent, or the pause below is never delivered and
+    // this waits for it forever. `start()` and `reload()` both send it first.
+    const stopped = new Promise<void>((resume, fail) => {
+      const released = (): void => {
+        client.off('Debugger.paused', released);
+        client.send('Debugger.resume').then(() => resume(), fail);
+      };
+      client.on('Debugger.paused', released);
+      // A runtime that dies between the pause and the resume would otherwise leave this pending
+      // and the prompt with it — there is deliberately no timeout anywhere below this.
+      client.on('Inspector.detached', () => fail(new Error('the runtime went away')));
     });
     await this.send('Runtime.runIfWaitingForDebugger');
-    await started;
+    await stopped;
     // After the resume, not before: the prelude is ordinary code, and code does not run in a
     // process whose event loop has not started.
-    await this.send('Runtime.evaluate', { expression: this.#prelude });
+    const installed = await this.send<{ exceptionDetails?: { text: string } }>('Runtime.evaluate', {
+      expression: this.#prelude,
+    });
+    if (installed.exceptionDetails) {
+      throw new Error(`the prompt's prelude threw — ${installed.exceptionDetails.text}`);
+    }
   }
 
   /** Whether Chrome is here to serve a DevTools frontend. Nothing is started to find out. */
@@ -187,10 +225,11 @@ class Runtime implements RuntimeRealm {
    * directly. Started on first ask, because most sessions never ask.
    */
   async devtoolsURL(): Promise<string | null> {
-    this.#frontend ??= await Chrome.spawn(await Chrome.find(), Chrome.CHROMIUM_ARGS, true);
-    if (this.#frontend === null) return null;
+    this.#frontend ??= Chrome.find().then((path) => Chrome.spawn(path, Chrome.CHROMIUM_ARGS, true));
+    const frontend = await this.#frontend;
+    if (frontend === null) return null;
 
-    const port = new URL(this.#frontend.cdpEndpoint).port;
+    const port = new URL(frontend.cdpEndpoint).port;
     // `ws=` takes host, port and path with no scheme in front of it.
     const socket = this.#started.inspectorURL.replace(/^ws:\/\//, '');
 
@@ -204,9 +243,11 @@ class Runtime implements RuntimeRealm {
   }
 
   closing(): Readonly<Record<string, Promise<unknown>>> {
+    const frontend = this.#frontend;
+
     return {
       runtime: this.#started.shutdown(),
-      ...(this.#frontend === null ? {} : { devtoolsHost: this.#frontend.shutdown() }),
+      ...(frontend === null ? {} : { devtoolsHost: frontend.then((chrome) => chrome?.shutdown()) }),
     };
   }
 }
