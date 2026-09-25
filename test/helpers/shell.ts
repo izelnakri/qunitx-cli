@@ -476,12 +476,20 @@ export async function execute(
     expectFailure = false,
     cwd,
     stdin,
+    env,
   }: {
     moduleName?: string;
     testName?: string;
     expectFailure?: boolean;
     cwd?: string;
     stdin?: string | StdinChunk[];
+    /**
+     * Added to this process's env, after the defaults — so a test can name the `$EDITOR` a
+     * command will reach for, and still get the browser permit `execute` takes out. Passing one
+     * used to be silently ignored, which is a slow way to learn that the child inherited YOUR
+     * editor and sat in it until the test timed out.
+     */
+    env?: NodeJS.ProcessEnv;
   } = {},
 ): Promise<CapturedResult> {
   const command = applyImplicitFlags(commandString);
@@ -489,7 +497,7 @@ export async function execute(
   try {
     const result = await spawnCapture(command, {
       timeout: DEFAULT_EXEC_TIMEOUT_MS,
-      env: { ...process.env, FORCE_COLOR: '0' },
+      env: { ...process.env, FORCE_COLOR: '0', ...env },
       cwd,
       stdin,
     });

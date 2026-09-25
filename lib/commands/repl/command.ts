@@ -14,6 +14,7 @@
 import { red } from '../../utils/color.ts';
 import type * as Repl from '../../repl/session.ts';
 import type { CompletionCache } from './completion.ts';
+import type { HttpService } from '../../repl/http-service.ts';
 import type { REPLServer } from 'node:repl';
 import type { ReplSession } from '../../repl/session.ts';
 import type { Theme } from '../../repl/theme.ts';
@@ -99,6 +100,14 @@ export interface ReplContext {
   buffered: string;
   /** The scratch buffer `.open` keeps for the life of the session. */
   scratch: string;
+  /**
+   * The HTTP client's state: headers saved for the next request, and every request made.
+   *
+   * Session-lived for the same reason {@link ReplContext.scratch} is — `.header accept=…` and the
+   * `.get` three lines later are different commands, and the second one remembering the first is
+   * the entire point of saving it.
+   */
+  http: HttpService;
   /** Says one line to whoever typed the command, ending it for them. */
   log(text: string): void;
   /** Writes exactly these bytes — for a block that ends in its own newline, or an escape. */
