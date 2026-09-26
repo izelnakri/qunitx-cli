@@ -22,7 +22,11 @@
         pkgs.deno
         pkgs.nodejs_24
         pkgs.git-cliff
-        pkgs.vhs
+        # `make demo`: docs/demo/make-gif.ts records a real shell (ttyd, bat), composites with ffmpeg + gifsicle
+        pkgs.ttyd
+        pkgs.bat
+        pkgs.ffmpeg
+        pkgs.gifsicle
         # self.packages.default.nativeBuildInputs
         # self.packages.default.buildInputs
       ];
