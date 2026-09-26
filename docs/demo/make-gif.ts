@@ -1,31 +1,28 @@
-// Regenerates docs/demo.gif: a caption strip over a terminal beside the browser pane.
+// Records docs/demo.gif from docs/demo.tape.
 //
 //   make demo        (or: node docs/demo/make-gif.ts)
 //
+// The tape is the demo; this is the studio it is recorded in, and nothing here knows what the
+// demo says. Each scene types into a real shell — ttyd, driven by Playwright — while a CDP
+// screencast records it, and `Wait` blocks until the terminal shows the pattern, so the browser
+// pane switches the moment the matching output does rather than at a guessed offset. That timing
+// is why this is not a VHS tape: VHS records one terminal beautifully and hands back a finished
+// GIF, with no record of when each wait resolved and no second pane to switch.
+//
 // Needs ttyd, ffmpeg, gifsicle and bat (all in the nix devShell) and a Chrome. Firefox comes from
-// `npx playwright install firefox`, run under steam-run on NixOS. The storyboard below is the whole
-// demo. Each scene types into a real shell (ttyd, driven by Playwright) while a CDP screencast
-// records it; a step can wait for text to appear in the terminal, so the browser pane switches the
-// moment the matching output does, rather than at a guessed offset.
+// `npx playwright install firefox`, run under steam-run on NixOS.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import type { Page } from 'playwright-core';
+import type { Browser, Page } from 'playwright-core';
 import * as Chrome from '../../lib/chrome/index.ts';
-
-type Step =
-  | { type: string }
-  | { key: 'Enter' | 'Control+C' }
-  | { sleep: number }
-  // Waits until the terminal shows this, then holds for `hold` ms so it can be read.
-  | { until: RegExp; hold: number }
-  // Switches the browser pane to this shot from here on.
-  | { pane: string }
-  // Does something off screen, like saving the fix --watch is waiting for.
-  | { run: () => Promise<void> };
+import { captionsOf, panesOf, parseTape } from './tape.ts';
+import type { Scene } from './tape.ts';
+import { PANE, SHOTS } from './capture-browser.ts';
+import type { Shot } from './capture-browser.ts';
 
 interface Recording {
   name: string;
@@ -38,7 +35,9 @@ const DEMO = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(DEMO, '../..');
 const WORK = path.join(DEMO, 'tmp/gif');
 const OUTPUT = path.join(ROOT, 'docs/demo.gif');
+const TAPE = path.join(DEMO, 'demo.tape');
 const TERMINAL = { width: 720, height: 600 };
+const CAPTION = { width: TERMINAL.width + PANE.width, height: 56 };
 const FPS = 12;
 const TYPING_MS = 35;
 const TEST_FILE = path.join(DEMO, 'test/cart-test.ts');
@@ -70,70 +69,6 @@ const THEME = {
   brightWhite: '#ffffff',
 };
 
-const type = (text: string): Step[] => [{ type: text }, { key: 'Enter' }];
-const sleep = (ms: number): Step => ({ sleep: ms });
-const until = (pattern: RegExp, hold = 0): Step => ({ until: pattern, hold });
-const pane = (shot: string): Step => ({ pane: shot });
-
-// One entry per caption in capture-browser.ts, in the same order.
-const SCENES: Step[][] = [
-  [pane('intro'), sleep(600), ...type('bat test/cart-test.ts'), until(/'2 × Tea'\);/, 4500)],
-  [sleep(400), ...type('qunitx test/'), until(/not ok 2/), pane('red'), until(/# duration/, 3500)],
-  [
-    pane('red'),
-    sleep(400),
-    ...type('qunitx test/ --watch'),
-    until(/# Shortcuts/, 2500),
-    { run: () => fs.writeFile(TEST_FILE, fixed) },
-    until(/# fail 0/),
-    pane('green'),
-    sleep(2500),
-    { key: 'Control+C' },
-    sleep(500),
-  ],
-  [
-    sleep(400),
-    ...type('qunitx test/ -s dom'),
-    until(/1 of 5 tests match/, 1800),
-    ...type('qunitx test/cart-test.ts#17'),
-    until(/ok 1 Cart/),
-    pane('filtered'),
-    until(/# duration/, 2500),
-  ],
-  [
-    sleep(400),
-    ...type('qunitx test/ --browser=firefox --reporter=spec'),
-    until(/passing/),
-    pane('firefox'),
-    sleep(2200),
-  ],
-  [
-    sleep(400),
-    ...type('qunitx test/ --coverage=html --reporter=dot'),
-    until(/All files/),
-    pane('coverage'),
-    sleep(3500),
-  ],
-  [
-    sleep(400),
-    ...type('qunitx repl src/cart.ts'),
-    until(/type `\.help`/),
-    pane('repl-1'),
-    sleep(800),
-    ...type("const cart = new Cart().add({ name: 'Coffee', price: 4, qty: 3 })"),
-    sleep(500),
-    ...type('cart.total'),
-    until(/^12$/m, 700),
-    ...type('document.body.append(cart.render())'),
-    pane('repl-2'),
-    sleep(1500),
-    ...type("test('adds up', (assert) => assert.equal(cart.total, 12))"),
-    until(/ok 1 adds up/),
-    pane('repl-3'),
-    sleep(3500),
-  ],
-];
-
 const tools = {
   ttyd: resolveTool('ttyd'),
   ffmpeg: resolveTool('ffmpeg'),
@@ -142,31 +77,40 @@ const tools = {
   steamRun: IS_NIXOS ? resolveTool('steam-run') : null,
 };
 
+const scenes = parseTape(await fs.readFile(TAPE, 'utf8'));
+const shots = shotsFor(scenes);
+
 const fixed = await fs.readFile(TEST_FILE, 'utf8');
 const buggy = fixed.replace(WITH_QTY, WITHOUT_QTY);
 if (buggy === fixed) throw new Error(`${TEST_FILE} no longer contains ${WITH_QTY}`);
+const source = { broken: buggy, fixed };
 process.on('exit', () => writeFileSync(TEST_FILE, fixed));
 process.on('SIGINT', () => process.exit(130));
 
 await fs.rm(WORK, { recursive: true, force: true });
 await fs.mkdir(WORK, { recursive: true });
 
+console.log(`==> ${scenes.length} scenes from ${path.relative(ROOT, TAPE)}`);
+
 console.log('==> Capturing the browser pane');
-await fs.writeFile(TEST_FILE, buggy);
-capture(['red']);
-await fs.writeFile(TEST_FILE, fixed);
-capture(['captions', 'intro', 'green', 'filtered', 'coverage', 'repl']);
-capture(['firefox'], ['--engine=firefox']);
+// Grouped by what each shot needs on disk and renders with, so the test file is written once per
+// group rather than once per shot — and so a pane added to the tape needs nothing added here.
+for (const [key, names] of groupShots(shots)) {
+  const [needs, engine] = key.split(':');
+  await fs.writeFile(TEST_FILE, source[needs as 'broken' | 'fixed']);
+  capture(names, engine === 'firefox' ? ['--engine=firefox'] : []);
+}
 
 console.log('==> Recording the terminal');
 await fs.writeFile(TEST_FILE, buggy);
 const browser = await chromium.launch({ executablePath: (await Chrome.find()) ?? undefined });
 const recordings: Recording[] = [];
 try {
-  for (const [index, steps] of SCENES.entries()) {
+  await captions(browser);
+  for (const [index, scene] of scenes.entries()) {
     const carried = recordings.at(-1)?.panes.at(-1);
-    recordings.push(await record(`scene-${index + 1}`, steps, carried));
-    console.log(`  scene-${index + 1}`);
+    recordings.push(await record(`scene-${index + 1}`, scene, carried));
+    console.log(`  scene-${index + 1}  ${scene.title}`);
   }
 } finally {
   await browser.close();
@@ -192,14 +136,49 @@ run(tools.gifsicle, ['-O3', '--lossy=20', `${WORK}/demo.gif`, '-o', OUTPUT]);
 const { size } = await fs.stat(OUTPUT);
 console.log(`==> ${path.relative(ROOT, OUTPUT)}: ${(size / 1024).toFixed(0)} KB`);
 
-/** Plays the steps into a fresh shell and returns its frames and pane switches, timed from 0. */
+/** Which shots the tape's panes come from, and the complaint when one of them comes from none. */
+function shotsFor(storyboard: Scene[]): [name: string, shot: Shot][] {
+  const wanted = panesOf(storyboard);
+  const owns = (shot: [string, Shot], pane: string) =>
+    (shot[1].produces ?? [shot[0]]).includes(pane);
+  const missing = wanted.filter((pane) => !Object.entries(SHOTS).some((s) => owns(s, pane)));
+  if (missing.length > 0) {
+    throw new Error(`demo.tape names panes no shot takes: ${missing.join(', ')}`);
+  }
+
+  return Object.entries(SHOTS).filter((shot) => wanted.some((pane) => owns(shot, pane)));
+}
+
+/** `needs:engine` to the shots that want it — one capture-browser run per distinct pair. */
+function groupShots(wanted: [string, Shot][]): Map<string, string[]> {
+  const grouped = new Map<string, string[]>();
+  for (const [name, shot] of wanted) {
+    const key = `${shot.needs}:${shot.engine ?? 'chromium'}`;
+    grouped.set(key, [...(grouped.get(key) ?? []), name]);
+  }
+
+  return grouped;
+}
+
+/** The strip along the top: one PNG per scene, from the tape's own words. */
+async function captions(chrome: Browser): Promise<void> {
+  const page = await chrome.newPage({ viewport: CAPTION });
+  const all = captionsOf(scenes);
+  for (const [index, [title, detail]] of all.entries()) {
+    await page.setContent(captionHTML(index, all.length, title, detail));
+    await page.screenshot({ path: `${WORK}/caption-${index + 1}.png` });
+  }
+  await page.close();
+}
+
+/** Plays a scene into a fresh shell and returns its frames and pane switches, timed from 0. */
 async function record(
   name: string,
-  steps: Step[],
+  scene: Scene,
   carried: { shot: string } | undefined,
 ): Promise<Recording> {
   const rcfile = `${WORK}/${name}.bashrc`;
-  await fs.writeFile(rcfile, bashrc(steps));
+  await fs.writeFile(rcfile, bashrc(scene));
   const port = 4800 + recordings.length;
   const ttyd = spawn(
     tools.ttyd[0],
@@ -235,16 +214,13 @@ async function record(
     });
     await cdp.send('Page.startScreencast', { format: 'png', everyNthFrame: 1 });
 
-    for (const step of steps) {
-      if ('type' in step) await page.keyboard.type(step.type, { delay: TYPING_MS });
-      else if ('key' in step) await page.keyboard.press(step.key);
-      else if ('sleep' in step) await page.waitForTimeout(step.sleep);
-      else if ('pane' in step) panes.push({ shot: step.pane, atMs: Date.now() - start });
-      else if ('run' in step) await step.run();
-      else {
-        await waitForTerminal(page, step.until);
-        await page.waitForTimeout(step.hold);
-      }
+    for (const step of scene.steps) {
+      if (step.do === 'type') await page.keyboard.type(step.text, { delay: TYPING_MS });
+      else if (step.do === 'press') await page.keyboard.press(step.key);
+      else if (step.do === 'sleep') await page.waitForTimeout(step.ms);
+      else if (step.do === 'pane') panes.push({ shot: step.shot, atMs: Date.now() - start });
+      else if (step.do === 'fix') await fs.writeFile(TEST_FILE, fixed);
+      else await waitForTerminal(page, step.pattern);
     }
     await cdp.send('Page.stopScreencast');
     const durationMs = Date.now() - start;
@@ -264,8 +240,9 @@ async function record(
 }
 
 /** The shell each scene starts in: a plain prompt, and `qunitx` meaning this checkout's CLI. */
-function bashrc(steps: Step[]): string {
-  const needsFhs = tools.steamRun && steps.some((s) => 'type' in s && s.type.includes('firefox'));
+function bashrc(scene: Scene): string {
+  const types = (text: string) => scene.steps.some((s) => s.do === 'type' && s.text.includes(text));
+  const needsFhs = tools.steamRun && types('firefox');
   const qunitx = [
     ...(needsFhs ? tools.steamRun! : []),
     process.execPath,
@@ -339,11 +316,11 @@ async function gotoWhenUp(page: Page, url: string): Promise<void> {
   }
 }
 
-function capture(shots: string[], flags: string[] = []): void {
+function capture(names: string[], flags: string[] = []): void {
   const wrapper = flags.includes('--engine=firefox') && tools.steamRun ? tools.steamRun : [];
   run(
     [...wrapper, process.execPath],
-    [path.join(DEMO, 'capture-browser.ts'), WORK, ...flags, ...shots],
+    [path.join(DEMO, 'capture-browser.ts'), WORK, ...flags, ...names],
   );
 }
 
@@ -370,6 +347,29 @@ function resolveTool(name: string): string[] {
   throw new Error(
     `${name} is needed to record the demo: put it on PATH (it is in the nix devShell)`,
   );
+}
+
+function captionHTML(index: number, total: number, title: string, detail: string): string {
+  const segments = Array.from(
+    { length: total },
+    (_, i) => `<span class="${i < index ? 'done' : i === index ? 'now' : ''}"></span>`,
+  ).join('');
+  return `
+    <style>
+      body { margin: 0; height: ${CAPTION.height}px; background: #1e1f29; color: #f8f8f2;
+             font: 15px/1 system-ui, sans-serif; display: flex; flex-direction: column; }
+      .text { flex: 1; display: flex; align-items: center; gap: 12px; padding: 0 18px; }
+      .step { color: #6272a4; font-variant-numeric: tabular-nums; }
+      .title { font-weight: 700; font-size: 17px; }
+      .detail { color: #b4bad0; }
+      .progress { display: flex; gap: 3px; height: 4px; }
+      .progress span { flex: 1; background: #343746; }
+      .progress .done { background: #6d5a9c; }
+      .progress .now { background: #bd93f9; }
+    </style>
+    <div class="text"><span class="step">${index + 1}/${total}</span>
+      <span class="title">${title}</span><span class="detail">${detail}</span></div>
+    <div class="progress">${segments}</div>`;
 }
 
 /** The terminal's whole buffer as text. Its source is installed into the ttyd page, where `term` is xterm.js. */
