@@ -266,10 +266,7 @@ export async function setup(
   config.state.group.pendingConsoleHandlers = new Set();
   page.on('console', (msg) => {
     const type = msg.type();
-    // Always surface warnings and errors so CI logs capture browser-side failures
-    // without requiring --debug. Other log levels are debug-only to avoid noise.
-    const alwaysShow = type === 'warning' || type === 'error';
-    if (!alwaysShow && !config.debug) return;
+    if (!showsWithoutDebug(type, msg.text()) && !config.debug) return;
     // Track each handler promise so callers can await all pending BiDi round-trips
     // before closing the browser/page. Without this, Firefox BiDi delivers console
     // events asynchronously after QUnit done, and arg.evaluate() round-trips fail
@@ -295,4 +292,24 @@ export async function setup(
   });
 
   return { server, browser, page };
+}
+
+/**
+ * Whether a page console message prints without `--debug`. Warnings and errors do, so CI logs
+ * capture browser-side failures; other levels are debug-only. Firefox also reports its own parser
+ * diagnostics as warnings — `[JavaScript Warning: "unreachable code after return statement" …]`,
+ * about the bundle rather than anything the page said, and on every run — so those are debug-only.
+ *
+ * ```ts
+ * import { showsWithoutDebug } from './browser.ts';
+ *
+ * showsWithoutDebug('warning', 'deprecated option'); // true
+ * showsWithoutDebug('log', 'hello'); // false
+ * showsWithoutDebug('warning', '[JavaScript Warning: "unreachable code after return statement"]'); // false
+ * ```
+ */
+export function showsWithoutDebug(type: string, text: string): boolean {
+  if (type === 'error') return true;
+
+  return type === 'warning' && !text.startsWith('[JavaScript Warning: ');
 }
