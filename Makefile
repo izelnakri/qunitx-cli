@@ -157,10 +157,10 @@ coverage:
 coverage-report:
 	npx c8 --reporter=lcov --reporter=text --reporter=html --open npm test
 
-# Regenerate docs/demo.gif (composite terminal + browser GIF).
-# Requires: nix (for vhs, ffmpeg, gifsicle), CHROME_BIN set or Nix-resolved chromium.
+# Regenerate docs/demo.gif from the storyboard in docs/demo/make-gif.ts.
+# Requires: ttyd, bat, ffmpeg, gifsicle (nix devShell), Chrome, and `npx playwright install firefox`.
 demo:
-	bash docs/make-demo-gif.sh
+	node docs/demo/make-gif.ts
 
 dev:
 	npm run dev
