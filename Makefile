@@ -157,7 +157,7 @@ coverage:
 coverage-report:
 	npx c8 --reporter=lcov --reporter=text --reporter=html --open npm test
 
-# Regenerate docs/demo.gif from the storyboard in docs/demo/make-gif.ts.
+# Regenerate docs/demo.gif from the storyboard in docs/demo/demo.tape.
 # Requires: ttyd, bat, ffmpeg, gifsicle (nix devShell), Chrome, and `npx playwright install firefox`.
 demo:
 	node docs/demo/make-gif.ts

@@ -1,10 +1,11 @@
-// Renders the right-hand pane of docs/demo.gif: the real pages qunitx serves, in a browser frame,
-// plus the caption strip and the intro card. Driven by make-gif.ts, one process per engine:
+// The right-hand pane of docs/demo.gif: the real pages qunitx serves, in a browser frame. Driven
+// by make-gif.ts, one process per engine:
 //
 //   node docs/demo/capture-browser.ts <outDir> [--engine=firefox] <shot>...
 //
-// Each shot reads the demo project as it is on disk, so make-gif.ts writes the buggy or the
-// fixed test file before asking for the shots that need it.
+// A shot reads the demo project as it is on disk, and says in `needs` whether it wants the bug
+// there or gone — make-gif.ts reads that and writes the file before asking. Nothing here knows
+// the storyboard; `demo.tape` names these by the panes it switches to.
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
@@ -16,7 +17,6 @@ import type { Browser, Page } from 'playwright-core';
 import * as Chrome from '../../lib/chrome/index.ts';
 
 export const PANE = { width: 440, height: 600 };
-export const CAPTION = { width: 1160, height: 56 };
 const TOOLBAR_HEIGHT = 30;
 // The page is laid out at this width and scaled down into the pane, so QUnit's UI keeps its
 // desktop layout instead of wrapping at 440px.
@@ -24,93 +24,107 @@ const PAGE_SCALE = 0.75;
 const DEMO = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.resolve(DEMO, '../../cli.ts');
 
-/** The storyboard's captions, in scene order: what a stranger needs to read to follow along. */
-export const CAPTIONS: [title: string, detail: string][] = [
-  [
-    'Write tests in TypeScript',
-    'no config, no tsconfig: the DOM and Intl in them are the browser’s own',
-  ],
-  ['Run them in headless Chrome', 'test files run in parallel, results stream back as TAP'],
-  ['--watch', 're-runs on every save, and serves the same page to open yourself'],
-  ['Pick what runs', 'list tests by name without a browser, run one by its line'],
-  ['Firefox and WebKit too', 'the same suite, any Playwright engine, four reporters'],
-  ['--coverage', 'V8 line coverage: a terminal summary, lcov, or this HTML report'],
-  ['qunitx repl', 'a prompt that evaluates inside the page: its DOM, its fetch, QUnit'],
-];
+/** One pane of the demo: what it needs on disk, what it renders with, and what it leaves behind. */
+export interface Shot {
+  /** Whether the demo project's test file must still have the bug in it, or not. */
+  needs: 'broken' | 'fixed';
+  /** The engine that renders it. Chromium unless it is the shot about Firefox. */
+  engine?: 'firefox';
+  /** The pane names it writes, where one shot makes several. Defaults to its own name. */
+  produces?: string[];
+  take(browser: Browser, outDir: string): Promise<void>;
+}
 
-const SHOTS: Record<string, (browser: Browser, outDir: string) => Promise<void>> = {
-  async captions(browser, outDir) {
-    const page = await browser.newPage({ viewport: CAPTION });
-    for (const [index, [title, detail]] of CAPTIONS.entries()) {
-      await page.setContent(captionHTML(index, title, detail));
-      await page.screenshot({ path: `${outDir}/caption-${index + 1}.png` });
-    }
-    await page.close();
+export const SHOTS: Record<string, Shot> = {
+  intro: {
+    needs: 'fixed',
+    async take(browser, outDir) {
+      const page = await browser.newPage({ viewport: PANE });
+      await page.setContent(INTRO_HTML);
+      await page.screenshot({ path: `${outDir}/pane-intro.png` });
+      await page.close();
+    },
   },
-  async intro(browser, outDir) {
-    const page = await browser.newPage({ viewport: PANE });
-    await page.setContent(INTRO_HTML);
-    await page.screenshot({ path: `${outDir}/pane-intro.png` });
-    await page.close();
+  // The one shot taken with the bug still on disk: the failing run the demo opens on.
+  red: {
+    needs: 'broken',
+    take: (browser, outDir) => shootSuite(browser, `${outDir}/pane-red.png`, ['test/']),
   },
-  red: (browser, outDir) => shootSuite(browser, `${outDir}/pane-red.png`, ['test/']),
-  green: (browser, outDir) => shootSuite(browser, `${outDir}/pane-green.png`, ['test/']),
-  filtered: (browser, outDir) =>
-    shootSuite(browser, `${outDir}/pane-filtered.png`, ['test/cart-test.ts#17']),
-  firefox: (browser, outDir) =>
-    shootSuite(browser, `${outDir}/pane-firefox.png`, ['test/', '--browser=firefox'], 'Firefox'),
-  async coverage(browser, outDir) {
-    const output = path.join(outDir, 'coverage-run');
-    await run([CLI, 'test/', '--coverage=html', `--output=${output}`, '--reporter=dot']);
-    const page = await browser.newPage({ viewport: pageViewport() });
-    await page.goto(`file://${output}/coverage/index.html`);
-    await frame(
-      browser,
-      await base64(page),
-      `${outDir}/pane-coverage.png`,
-      'tmp/coverage/index.html',
-      'Chrome',
-    );
-    await page.close();
+  green: {
+    needs: 'fixed',
+    take: (browser, outDir) => shootSuite(browser, `${outDir}/pane-green.png`, ['test/']),
   },
-  async repl(browser, outDir) {
-    // The REPL's own page: `<url>/repl` redirects to DevTools, whose `ws=` is a CDP socket on the
-    // very page the prompt drives, so these are its pixels, not a replica.
-    const repl = spawn(process.execPath, [CLI, 'repl', 'src/cart.ts', '--port=1234'], {
-      cwd: DEMO,
-      stdio: ['pipe', 'pipe', 'inherit'],
-    });
-    try {
-      await outputMatching(repl, /type `\.help`/);
-      const redirect = await fetch('http://localhost:1234/repl', { redirect: 'manual' });
-      const cdp = await CDP.connect(
-        new URL(redirect.headers.get('location')!).searchParams.get('ws')!,
+  filtered: {
+    needs: 'fixed',
+    take: (browser, outDir) =>
+      shootSuite(browser, `${outDir}/pane-filtered.png`, ['test/cart-test.ts#17']),
+  },
+  firefox: {
+    needs: 'fixed',
+    engine: 'firefox',
+    take: (browser, outDir) =>
+      shootSuite(browser, `${outDir}/pane-firefox.png`, ['test/', '--browser=firefox'], 'Firefox'),
+  },
+  coverage: {
+    needs: 'fixed',
+    async take(browser, outDir) {
+      const output = path.join(outDir, 'coverage-run');
+      await run([CLI, 'test/', '--coverage=html', `--output=${output}`, '--reporter=dot']);
+      const page = await browser.newPage({ viewport: pageViewport() });
+      await page.goto(`file://${output}/coverage/index.html`);
+      await frame(
+        browser,
+        await base64(page),
+        `${outDir}/pane-coverage.png`,
+        'tmp/coverage/index.html',
+        'Chrome',
       );
-      await cdp.send('Emulation.setDeviceMetricsOverride', {
-        ...pageViewport(),
-        deviceScaleFactor: 1,
-        mobile: false,
+      await page.close();
+    },
+  },
+  // Three panes from one prompt: the same session, photographed as it is typed into.
+  repl: {
+    needs: 'fixed',
+    produces: ['repl-1', 'repl-2', 'repl-3'],
+    async take(browser, outDir) {
+      // The REPL's own page: `<url>/repl` redirects to DevTools, whose `ws=` is a CDP socket on the
+      // very page the prompt drives, so these are its pixels, not a replica.
+      const repl = spawn(process.execPath, [CLI, 'repl', 'src/cart.ts', '--port=1234'], {
+        cwd: DEMO,
+        stdio: ['pipe', 'pipe', 'inherit'],
       });
-      const shoot = async (name: string) => {
-        const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' });
-        await frame(browser, data, `${outDir}/pane-${name}.png`, 'localhost:1234', 'Chrome');
-      };
-      const say = async (line: string, pattern: RegExp) => {
-        repl.stdin!.write(`${line}\n`);
-        await outputMatching(repl, pattern);
-      };
+      try {
+        await outputMatching(repl, /type `\.help`/);
+        const redirect = await fetch('http://localhost:1234/repl', { redirect: 'manual' });
+        const cdp = await CDP.connect(
+          new URL(redirect.headers.get('location')!).searchParams.get('ws')!,
+        );
+        await cdp.send('Emulation.setDeviceMetricsOverride', {
+          ...pageViewport(),
+          deviceScaleFactor: 1,
+          mobile: false,
+        });
+        const shoot = async (name: string) => {
+          const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' });
+          await frame(browser, data, `${outDir}/pane-${name}.png`, 'localhost:1234', 'Chrome');
+        };
+        const say = async (line: string, pattern: RegExp) => {
+          repl.stdin!.write(`${line}\n`);
+          await outputMatching(repl, pattern);
+        };
 
-      await shoot('repl-1');
-      await say("const cart = new Cart().add({ name: 'Coffee', price: 4, qty: 3 })", /undefined/);
-      await say('document.body.append(cart.render())', /undefined/);
-      await shoot('repl-2');
-      await say("test('adds up', (assert) => assert.equal(cart.total, 12))", /ok 1/);
-      await shoot('repl-3');
-      cdp.close();
-      repl.stdin!.end('.exit\n');
-    } finally {
-      await stop(repl);
-    }
+        await shoot('repl-1');
+        await say("const cart = new Cart().add({ name: 'Coffee', price: 4, qty: 3 })", /undefined/);
+        await say('document.body.append(cart.render())', /undefined/);
+        await shoot('repl-2');
+        await say("test('adds up', (assert) => assert.equal(cart.total, 12))", /ok 1/);
+        await shoot('repl-3');
+        cdp.close();
+        repl.stdin!.end('.exit\n');
+      } finally {
+        await stop(repl);
+      }
+    },
   },
 };
 
@@ -235,28 +249,6 @@ async function run(args: string[]): Promise<void> {
   await once(child, 'exit');
 }
 
-function captionHTML(index: number, title: string, detail: string): string {
-  const segments = CAPTIONS.map(
-    (_, i) => `<span class="${i < index ? 'done' : i === index ? 'now' : ''}"></span>`,
-  ).join('');
-  return `
-    <style>
-      body { margin: 0; height: ${CAPTION.height}px; background: #1e1f29; color: #f8f8f2;
-             font: 15px/1 system-ui, sans-serif; display: flex; flex-direction: column; }
-      .text { flex: 1; display: flex; align-items: center; gap: 12px; padding: 0 18px; }
-      .step { color: #6272a4; font-variant-numeric: tabular-nums; }
-      .title { font-weight: 700; font-size: 17px; }
-      .detail { color: #b4bad0; }
-      .progress { display: flex; gap: 3px; height: 4px; }
-      .progress span { flex: 1; background: #343746; }
-      .progress .done { background: #6d5a9c; }
-      .progress .now { background: #bd93f9; }
-    </style>
-    <div class="text"><span class="step">${index + 1}/${CAPTIONS.length}</span>
-      <span class="title">${title}</span><span class="detail">${detail}</span></div>
-    <div class="progress">${segments}</div>`;
-}
-
 const INTRO_HTML = `
   <style>
     body { margin: 0; height: ${PANE.height}px; box-sizing: border-box; padding: 44px 36px;
@@ -295,7 +287,7 @@ if (import.meta.main && outDir) {
       : await chromium.launch({ executablePath: (await Chrome.find()) ?? undefined });
   try {
     for (const shot of shots) {
-      await SHOTS[shot](browser, outDir);
+      await SHOTS[shot]!.take(browser, outDir);
       console.log(`  ${shot}`);
     }
   } finally {
