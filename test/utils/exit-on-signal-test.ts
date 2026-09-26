@@ -18,7 +18,7 @@ module('Utils | exitOnSignal', { concurrency: true }, () => {
     const handlers = new Map<string, () => void>();
 
     exitOnSignal({
-      once: (signal, handler) => void handlers.set(signal, handler),
+      on: (signal, handler) => void handlers.set(signal, handler),
       exit: (code) => void exits.push(code),
     });
 
@@ -47,6 +47,18 @@ module('Utils | exitOnSignal', { concurrency: true }, () => {
     );
   });
 
+  signalled('a second signal while the hooks run does not cut them short', async (assert) => {
+    // A supervisor's retry or a harness's follow-up SIGTERM. A listener that fired once is gone by
+    // then, the default is back, and the second signal kills the process mid-cleanup.
+    await using directory = await tempDir('exit-on-signal-twice');
+    const marker = path.join(directory.path, 'ran.txt');
+
+    const exit = await signalAndWait('test/fixtures/signal-exit-hook.ts', marker, '--slow');
+
+    assert.deepEqual(exit, { code: 143, signal: null }, 'the first signal decided the exit');
+    assert.strictEqual(await fs.readFile(marker, 'utf8').catch(() => null), 'exit hook ran');
+  });
+
   signalled('without the wiring the hooks are skipped — the bug itself', async (assert) => {
     // The control. If this ever starts passing, Node changed its default and the wiring above is
     // no longer what is holding the guarantee up.
@@ -63,11 +75,23 @@ module('Utils | exitOnSignal', { concurrency: true }, () => {
   });
 });
 
-/** Starts the fixture, waits for it to say it is ready, SIGTERMs it, and waits for it to go. */
-async function signalAndWait(script: string, ...args: string[]): Promise<void> {
+/**
+ * Starts the fixture, waits for it to say it is ready, SIGTERMs it — twice, 100ms apart, which
+ * lands the second inside a `--slow` exit hook — and waits for it to go.
+ */
+async function signalAndWait(
+  script: string,
+  ...args: string[]
+): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
   const child = spawn(process.execPath, [script, ...args], { stdio: ['ignore', 'pipe', 'ignore'] });
   await new Promise<void>((resolve) => child.stdout.once('data', () => resolve()));
+  const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
+    child.once('close', (code, signal) => resolve({ code, signal })),
+  );
 
   child.kill('SIGTERM');
-  await new Promise<void>((resolve) => child.once('close', () => resolve()));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+
+  return await closed;
 }

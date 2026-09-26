@@ -335,7 +335,8 @@ export async function spawnCapture(
 
 /**
  * Spawns a long-running CLI command (e.g. --watch mode), collects stdout until
- * `until(buf)` returns true, then kills the process.
+ * `until(buf)` returns true, then kills the process — with SIGTERM, or with `stopWith` for a test
+ * about how the command takes a particular signal. One signal, so the test sees that one's exit.
  */
 export async function shellWatch(
   commandString: string,
@@ -344,11 +345,13 @@ export async function shellWatch(
     timeout = DEFAULT_WATCH_TIMEOUT_MS,
     onSpawn,
     cwd,
+    stopWith = 'SIGTERM',
   }: {
     until?: (buf: string) => boolean;
     timeout?: number;
     onSpawn?: (child: ChildProcessWithoutNullStreams) => void;
     cwd?: string;
+    stopWith?: NodeJS.Signals;
   } = {},
 ): Promise<string> {
   const command = applyImplicitFlags(commandString);
@@ -391,7 +394,7 @@ export async function shellWatch(
       child.on('error', reject);
     });
   } finally {
-    await terminateChild(child);
+    await terminateChild(child, stopWith);
     permit.release();
   }
 }
@@ -579,7 +582,10 @@ export function needsBrowser(commandString: string): boolean {
  * even after exit fired), or escaped the wait via a timer race that left
  * Deno's pending op_wait dangling.
  */
-export async function terminateChild(child: ChildProcessWithoutNullStreams): Promise<void> {
+export async function terminateChild(
+  child: ChildProcessWithoutNullStreams,
+  signal: NodeJS.Signals = 'SIGTERM',
+): Promise<void> {
   if (process.platform === 'win32') {
     // Windows: child.kill() is TerminateProcess(), which kills only the direct
     // child. The cli's Chrome subprocesses (renderer / GPU / crashpad helpers)
@@ -604,7 +610,7 @@ export async function terminateChild(child: ChildProcessWithoutNullStreams): Pro
     return;
   }
 
-  child.kill('SIGTERM');
+  child.kill(signal);
   child.stdin.destroy();
   child.stdout.destroy();
   child.stderr.destroy();
