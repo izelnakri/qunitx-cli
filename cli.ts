@@ -31,8 +31,8 @@ const FLUSH_GRACE_MS = 30_000;
 // Armed once the batch run starts (see below), and the reason `exitAfterFlush` is the only way
 // to report success. Module-scoped because the exit funnel is not inside the run's closure.
 let guard: ExitGuard | null = null;
-// Conventional exit code for a process terminated by SIGTERM (128 + signal number 15).
-const EXIT_CODE_SIGTERM = 128 + 15;
+// What watch mode exits with for each signal that stops it: 128 + the signal's number.
+const WATCH_EXIT_CODES = { SIGTERM: 143, SIGINT: 130, SIGHUP: 129 };
 
 // Command-module imports are dynamic so the daemon-routed-run path doesn't
 // load `help.ts`, `init.ts`, `generate.ts`, or `setup/config.ts` (and its
@@ -74,6 +74,9 @@ const EXIT_CODE_SIGTERM = 128 + 15;
     // scan for test declarations — which reports zero for a real test file that reaches qunitx
     // through a barrel, a helper or a side-effect import. Guessing wrong there means reporting
     // success for tests that never ran, so the mode is asked for rather than inferred.
+    // Its page is the pre-launched Chrome, which only an exit reaps — a signal must not kill this
+    // outright, `--watch` or not. The same goes for `repl` below.
+    exitOnSignal();
     const RunCommand = await import('./lib/commands/run.ts');
     const invocation = await RunCommand.setup().result();
     if (Failure.is(invocation)) return await reportScriptFailure(invocation);
@@ -88,6 +91,7 @@ const EXIT_CODE_SIGTERM = 128 + 15;
   } else if (cmd === 'repl') {
     // Never routed through the daemon: a REPL is a page kept open for one terminal, and the
     // daemon's browser is shared. It uses the pre-launched Chrome like any other local run.
+    exitOnSignal();
     const Repl = await import('./lib/commands/repl/index.ts');
     return exitAfterFlush(await Repl.run());
   }
@@ -173,11 +177,22 @@ const EXIT_CODE_SIGTERM = 128 + 15;
     // budget a supervising process allows, and the child had to be killed instead of exiting.
     // Nothing needs closing here anyway — the process is about to exit, and the prelaunch exit
     // hook SIGKILLs Chrome's whole process group on the way out.
-    process.once('SIGTERM', () => {
-      void closeWithGrace({ server: session.connections.server.close() }).finally(() =>
-        process.exit(EXIT_CODE_SIGTERM),
-      );
-    });
+    //
+    // All three signals, not just SIGTERM: one left unhandled kills the process outright, no exit
+    // hook runs, and the detached Chrome outlives it — SIGINT from `kill -INT` or a process
+    // manager, SIGHUP from a closed terminal. (Ctrl+C at the prompt is a keypress, not a signal.)
+    // The first one decides the exit code. The listeners stay, so a second signal while the server
+    // closes changes nothing — without one, it would kill the process before the hooks run.
+    let stopping = false;
+    for (const [signal, code] of Object.entries(WATCH_EXIT_CODES)) {
+      process.on(signal, () => {
+        if (stopping) return;
+        stopping = true;
+        void closeWithGrace({ server: session.connections.server.close() }).finally(() =>
+          process.exit(code),
+        );
+      });
+    }
     console.log('#', blue(`Watching files... You can browse the tests on ${session.url} ...`));
     return console.log(
       '#',

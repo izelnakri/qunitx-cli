@@ -20,6 +20,10 @@ const SIGNALS: Record<string, number> = { SIGTERM: 15, SIGINT: 2, SIGHUP: 1 };
  * off: its handler starts an ASYNC graceful close that can hang, and a process being told to stop
  * has no time to spend. `process.exit` runs the synchronous handlers and goes.
  *
+ * The listener stays installed rather than firing once. Removing it restores the default, so a
+ * second signal landing while the exit hooks run — a supervisor's retry, a harness's follow-up
+ * SIGTERM — would kill the process mid-cleanup, which is the very death this exists to prevent.
+ *
  * Windows gets nothing from this and cannot: `child.kill()` there is `TerminateProcess`, which no
  * handler in this process can intercept. Whoever does the killing has to take the tree down — see
  * the test runner's own `spawnCapture`.
@@ -30,7 +34,7 @@ const SIGNALS: Record<string, number> = { SIGTERM: 15, SIGINT: 2, SIGHUP: 1 };
  * const exits: number[] = [];
  * const signals = new Map<string, () => void>();
  * exitOnSignal({
- *   once: (signal, handler) => void signals.set(signal, handler),
+ *   on: (signal, handler) => void signals.set(signal, handler),
  *   exit: (code) => void exits.push(code),
  * });
  * signals.get('SIGTERM')!();
@@ -38,13 +42,13 @@ const SIGNALS: Record<string, number> = { SIGTERM: 15, SIGINT: 2, SIGHUP: 1 };
  * ```
  */
 export function exitOnSignal({
-  once = (signal: string, handler: () => void) => void process.once(signal, handler),
+  on = (signal: string, handler: () => void) => void process.on(signal, handler),
   exit = (code: number) => process.exit(code),
 }: {
-  once?: (signal: string, handler: () => void) => void;
+  on?: (signal: string, handler: () => void) => void;
   exit?: (code: number) => void;
 } = {}): void {
   for (const [signal, number] of Object.entries(SIGNALS)) {
-    once(signal, () => exit(128 + number));
+    on(signal, () => exit(128 + number));
   }
 }
