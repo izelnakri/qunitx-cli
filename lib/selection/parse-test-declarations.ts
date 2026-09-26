@@ -295,8 +295,9 @@ function readString(scanner: Scanner): string {
       // A line continuation ('a\<newline>') swallows a real newline; count it so `line` stays in
       // sync for later declarations. Rare in esbuild output, but the guard is free.
       if (code[pos + 1] === '\n') line++;
-      value += unescape(code[pos + 1]);
-      pos += 2;
+      const [char, length] = unescape(code, pos + 1);
+      value += char;
+      pos += 1 + length;
     } else {
       value += code[pos];
       pos++;
@@ -308,12 +309,26 @@ function readString(scanner: Scanner): string {
   return value;
 }
 
-function unescape(char: string): string {
-  if (char === 'n') return '\n';
-  else if (char === 't') return '\t';
-  else if (char === 'r') return '\r';
+/**
+ * Cooks the escape whose letter is at `at`, returning the text and how many characters it spans.
+ * esbuild writes ASCII-only output, so `'price × qty'` arrives as `'price \xD7 qty'` and an emoji
+ * as `\u{1F4E6}` or a `\uD83D\uDCE6` pair (each half cooks to its code unit and they rejoin).
+ */
+function unescape(code: string, at: number): [string, number] {
+  const char = code[at];
+  if (char === 'n') return ['\n', 1];
+  else if (char === 't') return ['\t', 1];
+  else if (char === 'r') return ['\r', 1];
+  else if (char === 'x') return [String.fromCharCode(parseInt(code.slice(at + 1, at + 3), 16)), 3];
+  else if (char === 'u' && code[at + 1] === '{') {
+    const close = code.indexOf('}', at);
 
-  return char;
+    return [String.fromCodePoint(parseInt(code.slice(at + 2, close), 16)), close - at + 1];
+  } else if (char === 'u') {
+    return [String.fromCharCode(parseInt(code.slice(at + 1, at + 5), 16)), 5];
+  }
+
+  return [char, 1];
 }
 
 /**
