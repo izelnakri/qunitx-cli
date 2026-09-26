@@ -193,6 +193,15 @@ module('Selection | parseTestDeclarations | names', { concurrency: true }, () =>
     );
   });
 
+  test('a non-ASCII name reads as written, not as the escapes esbuild emits', async (assert) => {
+    assert.equal(
+      await rows(
+        `import { module, test } from 'qunitx';\nmodule('Café', function () {\n  test('price × qty 📦', function () {});\n});\n`,
+      ),
+      `module "Café" 2-4 p=null\ntest "price × qty 📦" 3-3 p=0`,
+    );
+  });
+
   test('a double-quoted name is read as a literal', async (assert) => {
     assert.equal(
       await rows(`import { test } from 'qunitx';\ntest("a b", function () {});\n`),
