@@ -611,11 +611,17 @@ export async function terminateChild(
   }
 
   child.kill(signal);
-  child.stdin.destroy();
+  // NOT stdin, not yet. Closing it hands the child an EOF, and a command that reads one treats
+  // that as its own reason to stop — a second, graceful shutdown racing the signal. For a test
+  // that is ABOUT a signal's exit code, the two answer differently and either can win: `repl`
+  // exits 129 on SIGHUP and 1 on an EOF that finds the page already gone, which is what a loaded
+  // arm runner reported. The read ends are safe to drop here; the write end waits until the
+  // child has actually gone.
   child.stdout.destroy();
   child.stderr.destroy();
 
   if (await waitForClose(child, CHILD_EXIT_GRACE_MS)) {
+    child.stdin.destroy();
     child.unref();
     return;
   }
@@ -626,10 +632,12 @@ export async function terminateChild(
     /* already gone */
   }
   if (await waitForClose(child, POST_SIGKILL_DRAIN_MS)) {
+    child.stdin.destroy();
     child.unref();
     return;
   }
 
+  child.stdin.destroy();
   child.unref();
   throw new Error(
     `Child process (pid=${child.pid}) failed to close within ${CHILD_EXIT_GRACE_MS}ms after SIGTERM + ${POST_SIGKILL_DRAIN_MS}ms after SIGKILL. exitCode=${child.exitCode} signalCode=${child.signalCode}`,
