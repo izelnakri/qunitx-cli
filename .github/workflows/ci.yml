@@ -482,7 +482,7 @@ jobs:
           if-no-files-found: ignore
 
   # ── Pages (main only) ─────────────────────────────────────────────────────────
-  # Runs the CLI against the demo test file to capture live TAP output, copies
+  # Runs the CLI against the demo project to capture live TAP output, copies
   # the composite demo GIF, generates API docs (deno doc --html), embeds the
   # coverage report, then deploys the full site to GitHub Pages.
   # Concurrency guard cancels any stale in-flight deployment.
@@ -516,7 +516,7 @@ jobs:
         id: setup-chrome
       - run: npm ci
       - name: Capture demo output
-        run: node cli.ts docs/demo-math-test.js --output=tmp/pages-demo > demo-output.txt 2>&1 || true
+        run: node cli.ts docs/demo/test/ --output=tmp/pages-demo > demo-output.txt 2>&1 || true
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FORCE_COLOR: 0
@@ -590,7 +590,7 @@ jobs:
             <main>
               <img src="demo.gif" alt="qunitx-cli demo">
               <h2>Live output</h2>
-              <pre><span class="prompt">$ </span><span class="cmd">npx qunitx docs/demo-math-test.js</span>
+              <pre><span class="prompt">$ </span><span class="cmd">npx qunitx docs/demo/test/</span>
           ${escaped}</pre>
             </main>
           </body>
