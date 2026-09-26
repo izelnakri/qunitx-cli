@@ -6,7 +6,7 @@ import * as WebServer from '../setup/web-server.ts';
 import { openOutputInBrowser } from '../utils/open-output-in-browser.ts';
 import { withLoopAlive } from '../utils/with-loop-alive.ts';
 import fs from 'node:fs/promises';
-import { normalize, relative, resolve as resolvePath } from 'node:path';
+import { basename, normalize, relative, resolve as resolvePath } from 'node:path';
 import { availableParallelism } from 'node:os';
 // node:timers returns Timer objects with .unref()/.ref() in both Node and Deno.
 // The bare `setTimeout` global in Deno is the Web platform variant, which returns
@@ -962,12 +962,29 @@ async function resolveMainHTML(projectRoot: string, htmlAssets: HtmlAssets): Pro
       html: htmlAssets.dynamicContentHTMLs[mainHTMLPath],
     };
   } else {
-    const html = await readTemplate('setup/tests.hbs');
+    const [template, name] = await Promise.all([
+      readTemplate('setup/tests.hbs'),
+      applicationName(projectRoot),
+    ]);
+    const html = template.replace('{{applicationName}}', name);
     htmlAssets.mainHTML = { filePath: `${projectRoot}/test/tests.html`, html };
     // qunit.css (linked by the template) is served by the web server from the CLI's own embedded
     // copy — see the /node_modules/qunitx/vendor/qunit.css route in web-server.ts. It is no longer
     // copied out of the consumer's node_modules, so projects need not install `qunitx`.
   }
+}
+
+/**
+ * The bundled template's `{{applicationName}}`: the project's package.json name, or the name of its
+ * directory when it has none. QUnit shows the page title as its header, so an unfilled token was
+ * the first thing every default page said.
+ */
+async function applicationName(projectRoot: string): Promise<string> {
+  const name = await Task(() => fs.readFile(`${projectRoot}/package.json`, 'utf8'))
+    .map((text) => (JSON.parse(text) as { name?: unknown }).name)
+    .recover(() => null);
+
+  return typeof name === 'string' && name !== '' ? name : basename(projectRoot);
 }
 
 function normalizeInternalAssetPathFromHTML(

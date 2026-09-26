@@ -31,4 +31,20 @@ module('Flags | --output', { concurrency: true }, (_hooks, moduleMetadata) => {
     assert.ok(indexStat.value, 'index.html was written to custom output directory');
     assert.ok(testsStat.value, 'tests.js was written to custom output directory');
   });
+
+  test('titles the default page after the package, not a template token', async (assert, testMetadata) => {
+    const customOutput = `tmp/custom-output-${randomUUID()}`;
+
+    await using stack = new AsyncDisposableStack();
+    stack.defer(() => rmRetry(customOutput));
+
+    await shell(`node cli.ts test/fixtures/passing-tests.js --output=${customOutput}`, {
+      ...moduleMetadata,
+      ...testMetadata,
+    });
+    const html = await fs.readFile(`${customOutput}/index.html`, 'utf8');
+
+    assert.includes(html, '<title>qunitx-cli Tests</title>');
+    assert.notIncludes(html, '{{applicationName}}');
+  });
 });
