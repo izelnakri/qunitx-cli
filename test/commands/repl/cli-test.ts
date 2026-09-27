@@ -189,15 +189,24 @@ module('Commands | qunitx repl | .cat', { concurrency: true }, () => {
   });
 
   test('.view is the same command for anyone without the muscle memory', async (assert) => {
-    const [viaCat, viaView] = await Promise.all([
-      repl('.cat test/fixtures/repl-helpers.ts'),
-      repl('.view test/fixtures/repl-helpers.ts'),
-    ]);
+    // Both in ONE session. Two of them was two browsers for a question about an alias, and on a
+    // runner whose semaphore allows one at a time they ran back to back — enough, on the Windows
+    // deno lane, to spend the whole 300s a test is given. One session also makes the comparison
+    // exact: two sessions differ by their port, which says nothing about either command.
+    const mark = (name: string) => `'--- ${name} ---'`;
+    const { stdout } = await repl(
+      [
+        mark('cat'),
+        '.cat test/fixtures/repl-helpers.ts',
+        mark('view'),
+        '.view test/fixtures/repl-helpers.ts',
+      ].join('\n'),
+    );
+    const [, printed = ''] = stdout.split(mark('cat'));
+    const [viaCat = '', viaView = ''] = printed.split(mark('view'));
 
-    // Ports differ between two concurrent sessions and say nothing about the command.
-    const normalise = (text: string) => text.replace(/localhost:\d+/g, 'localhost:PORT');
-
-    assert.strictEqual(normalise(viaView.stdout), normalise(viaCat.stdout));
+    assert.includes(viaCat, 'export const GREETING', 'the first half is the file');
+    assert.strictEqual(viaView.trim(), viaCat.trim(), 'and the second is the same file');
   });
 
   test('a missing file is an answer, not a crash', async (assert) => {
