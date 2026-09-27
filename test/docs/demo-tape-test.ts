@@ -1,8 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { module, test } from 'qunitx';
-import { captionsOf, panesOf, parseTape, TapeError } from '../../docs/demo/tape.ts';
-import { SHOTS } from '../../docs/demo/capture-browser.ts';
+import { captionsOf, panesOf, parseTape, TapeError } from 'demogod';
 import '../helpers/custom-asserts.ts';
 
 const TAPE = path.resolve(import.meta.dirname!, '../../docs/demo/demo.tape');
@@ -17,6 +16,7 @@ module('Docs | the demo tape', () => {
       Wait /ok 1/
       Sleep 2.5s
       Pane green
+      Do fix
       Ctrl+C
     `);
 
@@ -27,7 +27,8 @@ module('Docs | the demo tape', () => {
       { do: 'press', key: 'Enter' },
       { do: 'wait', pattern: /ok 1/ },
       { do: 'sleep', ms: 2500 },
-      { do: 'pane', shot: 'green' },
+      { do: 'pane', name: 'green' },
+      { do: 'action', name: 'fix' },
       { do: 'press', key: 'Control+C' },
     ]);
   });
@@ -56,25 +57,33 @@ module('Docs | the demo tape', () => {
     assert.includes(bad('Caption "a" "b"\nSleep soon'), 'try 500ms');
     assert.includes(bad('Caption "a" "b"\nWait ok'), 'try /ok 1/');
     assert.includes(bad('Caption "a" "b"\nFly away'), 'no such command: Fly');
+    assert.includes(bad('Caption "a" "b"\nPane two words'), 'Pane takes one name');
+    assert.includes(bad('Caption "a" "b"\nDo'), 'Do takes one name');
     assert.includes(bad('Type "too soon"'), 'before any Caption');
     assert.includes(bad('Caption "only a title"'), 'quoted title and a quoted detail');
   });
 
-  test('the real tape is the demo: seven captions, and every pane has a shot', async (assert) => {
+  // The names below are the ones scripts/make-demo-gif.ts declares; `make demo` refuses a tape
+  // that asks for any other, and this says which ones the demo is currently built out of.
+  test('the real tape is the demo: seven captions, nine panes, two actions', async (assert) => {
     const scenes = parseTape(await fs.readFile(TAPE, 'utf8'));
-    const produced = new Set(
-      Object.entries(SHOTS).flatMap(([name, shot]) => shot.produces ?? [name]),
+    const actions = scenes.flatMap(({ steps }) =>
+      steps.flatMap((step) => (step.do === 'action' ? [step.name] : [])),
     );
 
     assert.strictEqual(scenes.length, 7, 'one scene per caption');
     assert.strictEqual(captionsOf(scenes).length, scenes.length);
-    for (const pane of panesOf(scenes)) {
-      assert.true(produced.has(pane), `${pane} is a shot capture-browser.ts takes`);
-    }
-    // The other direction too: a shot nothing shows is a minute of recording for nothing.
-    for (const [name, shot] of Object.entries(SHOTS)) {
-      const shows = (shot.produces ?? [name]).some((pane) => panesOf(scenes).includes(pane));
-      assert.true(shows, `the ${name} shot is used by the tape`);
-    }
+    assert.deepEqual(panesOf(scenes), [
+      'intro',
+      'red',
+      'green',
+      'filtered',
+      'firefox',
+      'coverage',
+      'repl-1',
+      'repl-2',
+      'repl-3',
+    ]);
+    assert.deepEqual(actions, ['break', 'fix'], 'the bug goes in, and comes back out');
   });
 });

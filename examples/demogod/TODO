@@ -1,0 +1,58 @@
+This all API will change in future:
+
+- demogod:
+Probably run it as `demo.runScreenshots()` instead of `demo.capturePanes()`
+Also `demo.recordScenes()` => `demo.record()`
+
+// Maybe we gotta end screenshots as simpleMethod on `demogod`, 
+// or an element with TS script to run at first "compile" stage, "runtime" stage should just retunr theimage element
+
+```
+Current:
+
+const workspace = {
+  column: [
+    { caption: { height: 56 } },
+    {
+      row: [
+        { terminal: { width: 720, height: 600 } },
+        { screenshots: { width: 440, height: 600 } },
+      ],
+    },
+  ],
+};
+```
+
+`column` probably redundant?
+
+IN FUTURE:
+workspace: {
+  id: 
+  height:
+  width:
+  children: [
+    {
+      type: 'caption',
+      height: '',
+      title: '',
+      subtitle: '',
+    },
+    {
+      type: '',
+      element: Row, // without a type this assigns a component, component and type cant be different
+      children: [
+        {
+          element: 'terminal',
+          width:
+          height:
+        },
+        {
+          name: '',
+          element: 'img',
+          width:
+          height:
+        }
+      ]
+    }
+  ] // Default it adds Terminal?, env, actions(`Do @actionName`), init(String[]), zshrc(Path - Optional), `Switch #paneId`
+}

@@ -1,23 +1,23 @@
 # docs/demo.gif, as a tape.
 #
-#   make demo          (or: node docs/demo/make-gif.ts)
+#   make demo          (or: node scripts/make-demo-gif.ts)
 #
 # Every scene is a caption strip over a terminal beside a browser pane. The commands below are
 # VHS's, so a tape reads the same here as it does anywhere else — `Type`, `Enter`, `Sleep`,
-# `Wait`, `Ctrl+C`. Three are ours, because VHS has no idea a second pane exists:
+# `Wait`, `Ctrl+C`. Three are ours, because VHS records one terminal and nothing else:
 #
 #   Caption "<title>" "<detail>"   starts a scene and writes the strip along the top
 #   Pane <name>                    switches the browser pane from here on
-#   Fix                            off camera, saves the corrected test file
+#   Do <name>                      runs something off camera, between two keystrokes
 #
 # `Wait /re/` blocks until the terminal shows that, which is what keeps the pane in step with the
-# output rather than with a guessed offset. A pane name is a shot in capture-browser.ts, and that
-# file says which ones need the bug on disk — nothing here has to know.
+# output rather than with a guessed offset.
 #
-# To add a scene: write another `Caption`, then the keys. To add a pane: add a shot over there and
-# name it here.
+# Both names are the developer's, not this file's: every `Pane` and every `Do` here is spelled out
+# in scripts/make-demo-gif.ts, which is also where to add one.
 
 Caption "Write tests in TypeScript" "no config, no tsconfig: the DOM and Intl in them are the browser’s own"
+Do break
 Pane intro
 Sleep 600ms
 Type "bat test/cart-test.ts"
@@ -41,7 +41,7 @@ Type "qunitx test/ --watch"
 Enter
 Wait /# Shortcuts/
 Sleep 2.5s
-Fix
+Do fix
 Wait /# fail 0/
 Pane green
 Sleep 2.5s
