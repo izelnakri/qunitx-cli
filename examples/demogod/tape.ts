@@ -1,9 +1,14 @@
-// The tape language: `demo.tape` in, scenes out. Pure — it reads a string and returns data, so
-// the studio in make-gif.ts is the only part that needs ttyd, a browser or ffmpeg.
+// The language, and the clock: a `.tape` in, scenes out. Pure — it reads a string and returns
+// data, so `demo.ts` stays the only part that needs ttyd, a browser or ffmpeg.
 //
 // The commands are VHS's wherever VHS has one, because a tape nobody has to learn is the whole
-// point. `Caption`, `Pane` and `Fix` are ours; VHS records one terminal and has no notion of a
-// second pane or of editing a file mid-take.
+// point. `Caption`, `Pane` and `Do` are ours; VHS records one terminal and has no notion of a
+// second pane or of anything happening off camera.
+
+/** Keystroke to keystroke, so typing reads at a human speed rather than appearing at once. */
+export const TYPING_MS = 35;
+/** How long a `Wait` shows for, however long it actually took. */
+export const WAIT_HOLD_MS = 1_200;
 
 /** One thing a scene does. `Wait` blocks on the terminal; the rest are immediate. */
 export type Step =
@@ -11,8 +16,8 @@ export type Step =
   | { do: 'press'; key: 'Enter' | 'Control+C' | 'Control+D' }
   | { do: 'sleep'; ms: number }
   | { do: 'wait'; pattern: RegExp }
-  | { do: 'pane'; shot: string }
-  | { do: 'fix' };
+  | { do: 'pane'; name: string }
+  | { do: 'action'; name: string };
 
 /** A caption, and everything that happens while it is on screen. */
 export interface Scene {
@@ -36,7 +41,7 @@ export class TapeError extends Error {
  * first `Caption` is an error rather than a scene nobody captioned.
  *
  * ```ts
- * import { parseTape } from './tape.ts';
+ * import { parseTape } from 'demogod';
  *
  * const [scene] = parseTape('Caption "Run it" "in a real browser"\nType "qunitx test/"\nEnter');
  * scene.title; // 'Run it'
@@ -63,12 +68,81 @@ export function parseTape(source: string): Scene[] {
 
     const scene = scenes.at(-1);
     if (!scene) throw new TapeError(at, text, `${command} before any Caption`);
-    scene.steps.push(step(at, text, command, rest));
+    scene.steps.push(parseStep(at, text, command, rest));
   }
 
   if (scenes.length === 0) throw new TapeError(1, source.split('\n')[0] ?? '', 'no scenes');
 
   return scenes;
+}
+
+/**
+ * How long a step SHOULD take, which is what the tape says rather than what the machine managed.
+ *
+ * Everything the recorder does takes longer on a busy machine, and two of them take much longer: a
+ * `Wait` ends when a command finishes, and `Type` pays a round trip per keystroke on top of its
+ * delay. Recorded at 2x load this demo ran 84s instead of 64s; recorded while the machine was
+ * still settling, 78s. Nothing was wrong with any of them — they are recordings of real commands,
+ * and the commands were slow.
+ *
+ * So the pictures come from the recording and the clock comes from here. A `Wait` always shows for
+ * {@link WAIT_HOLD_MS}, whether it waited for a tenth of that or ten times it, because what is on
+ * screen while a command runs is a command running.
+ */
+export function nominalMs(step: Step, tookMs: number): number {
+  if (step.do === 'sleep') return step.ms;
+  if (step.do === 'type') return step.text.length * TYPING_MS;
+  if (step.do === 'wait') return WAIT_HOLD_MS;
+
+  // A keypress, a pane switch, something off camera: nothing to watch, nothing to stretch.
+  return Math.min(tookMs, 100);
+}
+
+/** Anything with a moment attached: a recorded frame, a pane switch. */
+export interface Timed {
+  atMs: number;
+}
+
+/**
+ * Puts a recording on the tape's clock.
+ *
+ * `marks` pairs each step boundary's real timestamp with the one it should be shown at, so this
+ * only has to place what happened in between — proportionally, since a step that took four seconds
+ * to type and should take two has frames all the way through it. Whatever then lands on the same
+ * shown millisecond collapses to the first, which is the one the screen actually held.
+ *
+ * ```ts
+ * import { onTapeClock } from 'demogod';
+ *
+ * const marks = [{ atMs: 0, showMs: 0 }, { atMs: 9_000, showMs: 1_200 }];
+ * onTapeClock(marks, [{ atMs: 0 }, { atMs: 4_500 }], []).durationMs; // 1200
+ * ```
+ */
+export function onTapeClock<F extends Timed, P extends Timed>(
+  marks: readonly { atMs: number; showMs: number }[],
+  frames: readonly F[],
+  panes: readonly P[],
+): { frames: F[]; panes: P[]; durationMs: number } {
+  const shown = (atMs: number): number => {
+    const next = marks.findIndex((mark) => mark.atMs > atMs);
+    if (next <= 0) return next === 0 ? 0 : marks.at(-1)!.showMs;
+
+    const from = marks[next - 1]!;
+    const to = marks[next]!;
+    const span = to.atMs - from.atMs;
+    const part = span === 0 ? 1 : (atMs - from.atMs) / span;
+
+    return Math.round(from.showMs + (to.showMs - from.showMs) * part);
+  };
+  const seen = new Set<number>();
+
+  return {
+    frames: frames
+      .map((frame) => ({ ...frame, atMs: shown(frame.atMs) }))
+      .filter(({ atMs }) => !seen.has(atMs) && seen.add(atMs) !== undefined),
+    panes: panes.map((pane) => ({ ...pane, atMs: shown(pane.atMs) })),
+    durationMs: marks.at(-1)!.showMs,
+  };
 }
 
 /** Every caption, in order — what the strip along the top says. */
@@ -79,13 +153,13 @@ export function captionsOf(scenes: readonly Scene[]): [title: string, detail: st
 /** Every pane a tape names, once each, in the order they are first used. */
 export function panesOf(scenes: readonly Scene[]): string[] {
   const named = scenes.flatMap(({ steps }) =>
-    steps.flatMap((one) => (one.do === 'pane' ? [one.shot] : [])),
+    steps.flatMap((one) => (one.do === 'pane' ? [one.name] : [])),
   );
 
   return [...new Set(named)];
 }
 
-function step(at: number, text: string, command: string, rest: string): Step {
+function parseStep(at: number, text: string, command: string, rest: string): Step {
   switch (command) {
     case 'Type': {
       const [typed] = quoted(rest);
@@ -103,16 +177,20 @@ function step(at: number, text: string, command: string, rest: string): Step {
       return { do: 'sleep', ms: duration(at, text, rest) };
     case 'Wait':
       return { do: 'wait', pattern: regexp(at, text, rest) };
-    case 'Pane': {
-      if (!/^[\w-]+$/.test(rest)) throw new TapeError(at, text, 'Pane takes one shot name');
-
-      return { do: 'pane', shot: rest };
-    }
-    case 'Fix':
-      return { do: 'fix' };
+    case 'Pane':
+      return { do: 'pane', name: bareWord(at, text, 'Pane', rest) };
+    case 'Do':
+      return { do: 'action', name: bareWord(at, text, 'Do', rest) };
     default:
       throw new TapeError(at, text, `no such command: ${command}`);
   }
+}
+
+/** A single bare word: the name of a pane to show, or of an action to run. */
+function bareWord(at: number, text: string, command: string, value: string): string {
+  if (!/^[\w-]+$/.test(value)) throw new TapeError(at, text, `${command} takes one name`);
+
+  return value;
 }
 
 /** `500ms`, `2s`, `3.5s` — VHS's own spelling, and the only two units it has. */
