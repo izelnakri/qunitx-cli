@@ -597,7 +597,84 @@ way `.break` is — by the form of its argument:
 
 A breakpoint has a number; a URL never does.
 
-## 17. If something looks wrong
+## 17. On node and deno
+
+Everything above is a browser session. `--browser=node` and `--browser=deno` put the same prompt on
+a runtime instead, and these are the shapes only a person can check.
+
+```sh
+npm run api-test-server    # in another terminal, for the HTTP half below
+node cli.ts repl --browser=node
+```
+
+**It says where it is.** The banner should read `evaluating in node, served at http://localhost:1234`
+— not "in Chrome" — and offer `inspect the same process at …/repl`.
+
+**There is no page, and it does not pretend there is.**
+
+```
+> typeof window
+'undefined'
+> typeof document
+'undefined'
+> process.version
+'v24.21.0'
+```
+
+**DevTools, on the process your terminal is driving.** This is the one worth doing by hand.
+
+1. `globalThis.plantedHere = 'from the terminal'` at the prompt.
+2. Open `http://localhost:1234` in Chrome. A small page, naming the runtime, with a link through.
+3. Follow it. A DevTools window opens — Console and Sources, no Elements tab.
+4. Type `plantedHere` in that console. It should answer `'from the terminal'`.
+5. In Sources, put a breakpoint in a file, then call into it from the TERMINAL. Both stop.
+
+The first open starts a headless Chrome purely to serve the frontend, so it takes a second. After
+that it is instant. Without Chrome installed, `.devtools` should say there is no address rather
+than fail.
+
+**Files are the files.**
+
+```
+> import { create } from './lib/repl/http-service.ts'
+create
+> .import test/fixtures/repl-breakable.mjs
+ReplBreakable, and hit
+> .break test/fixtures/repl-breakable.mjs:4
+breakpoint 1 at test/fixtures/repl-breakable.mjs:4
+> ReplBreakable.hit()
+paused at hit (file:///…/test/fixtures/repl-breakable.mjs:4:17) — …
+> .locals
+answer  41
+> .continue
+```
+
+The frame should name the real file with a `file://` URL and the line you typed — if it names a
+bundle or a different line, the direct-import path has regressed to bundling.
+
+**Tests still run.**
+
+```
+> module('by hand', () => test('two and two', (a) => a.strictEqual(2 + 2, 4)))
+ok 1 by hand | two and two # (2 ms)
+```
+
+**HTTP still works, because there is still a URL.**
+
+```
+> .get /package.json
+200 OK · … | GET http://localhost:1234/package.json | #1
+> .get :4000/api/users
+200 OK · … | GET http://localhost:4000/api/users | #2
+```
+
+**And a runtime is not a run.** `node cli.ts test/repl/input-test.ts --browser=node` should print
+one sentence to stderr and exit 1, naming `qunitx repl --browser=node` as the thing that does work.
+
+Then repeat the lot with `--browser=deno`. The two should be indistinguishable apart from
+`typeof Deno`.
+
+## 18. If something looks wrong
 
 | symptom                               | likely cause                                                                      |
 | ------------------------------------- | --------------------------------------------------------------------------------- |

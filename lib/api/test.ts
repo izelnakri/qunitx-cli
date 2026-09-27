@@ -13,6 +13,7 @@ import type { ConfigFailure } from '../setup/config.ts';
 import type { Config as ResolvedConfig } from '../types.ts';
 import type { Counter, RunGroup } from '../types.ts';
 import type { RunOutcome } from '../commands/test.ts';
+import type { TargetName } from '../setup/targets.ts';
 
 /**
  * Every way a run can fail to happen: an option the runner will not accept, an unreadable input,
@@ -208,7 +209,7 @@ export interface CoverageSummary {
  */
 export interface ResolvedRun {
   /** The engine the tests ran in. */
-  browser: 'chromium' | 'firefox' | 'webkit';
+  browser: TargetName;
   /** Absolute path of the directory holding `package.json`. */
   projectRoot: string;
   /** Absolute path of the build output directory — where the bundle and artifacts landed. */

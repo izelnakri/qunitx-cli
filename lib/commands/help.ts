@@ -45,7 +45,7 @@ ${color('--search')} : list the tests the filter matches and exit, without runni
   substring is case-insensitive; a regex is case-sensitive unless you add ${color('/i')}. For one module and not its lookalikes: ${color("-t '/^Cart(:| >)/'")}
 ${color('--port')} : HTTP server port (auto-selects a free port if the given port is taken)[default: 1234] (short: ${color('-p')})
 ${color('--extensions')} : comma-separated file extensions to track for discovery and watch-mode rebuilds[default: js,ts,jsx,tsx]
-${color('--browser')} : browser engine to run tests in: chromium, firefox, webkit[default: chromium]
+${color('--browser')} : where the code runs: chromium, firefox, webkit — or, for ${color('qunitx repl')} only, node or deno[default: chromium]
 ${color('--reporter')} : stdout format: tap, spec, dot, github[default: tap] (short: ${color('-r')})
 ${color('--junit')} : also write a JUnit XML report[default path: <output>/junit.xml; ${color('--junit=<path>')} to override]
 ${color('--coverage')} : collect V8 line coverage (chromium only); ${color('--coverage=lcov,html')} also writes <output>/coverage/ reports
@@ -74,7 +74,7 @@ ${color('$ qunitx repl [files]')}                    # A prompt that evaluates i
 ${highlight('Environment:')}
 ${color('QUNITX_DAEMON=1')}     : auto-spawn the daemon on the first qunitx run; reuse it on every run after (overrides the CI=1 bypass)
 ${color('QUNITX_NO_DAEMON=1')}  : never use the daemon for this run
-${color('QUNITX_BROWSER=...')}  : default browser engine when ${color('--browser')} is not passed (chromium, firefox, webkit)
+${color('QUNITX_BROWSER=...')}  : default target when ${color('--browser')} is not passed (chromium, firefox, webkit; node/deno for the repl)
 ${color('QUNITX_DEBUG=1')}      : enables ${color('--debug')} for every run; per-invocation ${color('--debug=false')} still wins
 `);
 }

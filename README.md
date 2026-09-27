@@ -82,7 +82,7 @@ under [Installation](#installation).
 
 **Beyond the test run**
 
-- [`qunitx repl`](#repl) — a prompt that evaluates in a real Chrome page: the DOM, `fetch`, and `test(...)` running for real as you type
+- [`qunitx repl`](#repl) — a prompt that evaluates in a real Chrome page: the DOM, `fetch`, and `test(...)` running for real as you type — or in node/deno with `--browser=node`
 - [JavaScript API](#javascript-api) — `await test('test/')` returns the results as data, `await run('seed.ts')` executes one script; silent by default, with `watch`, `search`, custom reporters and daemon control. On npm and JSR (`jsr:@izelnakri/qunitx-cli/api`)
 - [`qunitx run <file>`](#running-a-script) runs one file as a plain script in a real page — top-level `await`, a DOM, `fetch` against a real origin
 
@@ -501,6 +501,8 @@ DOM, `fetch`, timers and QUnit are all the real ones.
 qunitx repl                      # a bare page with the qunitx runtime loaded
 qunitx repl test/helpers.ts      # …plus that file: exports become globals (and `Helpers`), tests run once
 qunitx repl --open               # …in a window you can see (not macOS: it says so and stays headless)
+qunitx repl --browser=node       # …in a node process instead — same prompt, no page
+qunitx repl --browser=deno       # …or a deno one
 ```
 
 ```
@@ -511,6 +513,34 @@ qunitx repl --open               # …in a window you can see (not macOS: it say
 > test('adds', (a) => a.equal(1 + 1, 2))
 ok 1 adds # (2 ms)
 ```
+
+### On node and deno
+
+`--browser=node` and `--browser=deno` put the prompt on a runtime instead of a page. Everything
+else is the same — the same commands, the same debugger, tests still running as TAP as you type —
+minus `window` and `document`, which are simply not there.
+
+```
+$ qunitx repl --browser=node
+# qunitx repl — evaluating in node, served at http://localhost:1234
+# inspect the same process at http://localhost:1234/repl — or `.devtools`
+> process.version
+'v24.21.0'
+> import { create } from './lib/repl/http-service.ts'   # the real file, types and all
+create
+> .break lib/repl/http-service.ts:120
+breakpoint 1 at lib/repl/http-service.ts:120
+```
+
+It is still **served**: `session.url` is a real address, so `.get /package.json` works as it does
+in a browser session, and `http://localhost:1234/repl` opens Chrome's own DevTools attached to the
+very process your terminal is typing into — same `globalThis`, live. Declare something at the
+prompt and it is in the console; set a breakpoint in Sources and the prompt stops on it.
+
+Files are imported rather than bundled here, which is why a breakpoint in one is a line in that
+file rather than a line in a bundle. `.ts` runs as it is on both runtimes.
+
+A runtime is a prompt, not a test run — `qunitx test --browser=node` says so and exits 1.
 
 TypeScript works at the prompt: a line the engine cannot parse is retried with its types taken off,
 so `const port: number = 1234` binds and `interface`/`type`/`as` are erased the way a build erases

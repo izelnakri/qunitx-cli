@@ -1,3 +1,4 @@
+import type { TargetName } from './setup/targets.ts';
 import type { HTTPServer } from './web/index.ts';
 import type { ParsedFlags } from './args/parse.ts';
 import type { Browser, Page } from 'playwright-core';
@@ -568,8 +569,11 @@ export interface Config extends ParsedFlags {
   port: number;
   /** File extensions treated as test files (default: `['js', 'ts']`). */
   extensions: string[];
-  /** Browser engine used for the test run (`'chromium'` | `'firefox'` | `'webkit'`). */
-  browser: 'chromium' | 'firefox' | 'webkit';
+  /**
+   * What the code runs in: an engine for a test run, or — for `qunitx repl` only — `'node'` or
+   * `'deno'`, which are a V8 with an inspector on it and no page anywhere.
+   */
+  browser: TargetName;
   /** Absolute path to the project root (directory containing `package.json`). */
   projectRoot: string;
   /**

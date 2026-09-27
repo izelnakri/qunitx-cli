@@ -2,6 +2,7 @@ import path from 'node:path';
 import { isRemoteInput } from '../setup/remote-inputs.ts';
 import { tokenize, type QueryToken } from './tokenize.ts';
 import { REPORTERS, type ReporterName } from '../reporters/types.ts';
+import { TARGETS, type TargetName } from '../setup/targets.ts';
 import { type Result, Failure } from '../result/index.ts';
 
 /**
@@ -44,7 +45,6 @@ export const InvalidFlag: Failure.FailureFactory<
  */
 export type ParseFailure = Failure.Of<typeof InvalidFlag>;
 
-const BROWSERS = ['chromium', 'firefox', 'webkit'];
 const COVERAGE_FORMATS = ['text', 'lcov', 'html'];
 
 // Fallback when --timeout is passed with an unparseable or zero value.
@@ -94,7 +94,7 @@ export interface ParsedFlags {
   /** `--extensions`: file extensions treated as test files. */
   extensions?: string[];
   /** `--browser`: the engine to run in. */
-  browser?: 'chromium' | 'firefox' | 'webkit';
+  browser?: TargetName;
   /** `--before`: module run before the tests, or `false` to disable a configured one. */
   before?: string | false;
   /** `--after`: module run after the tests, or `false` to disable a configured one. */
@@ -164,14 +164,14 @@ export function parse(
   // without needing to pass --browser on every CLI invocation.
   if (!flags.browser && process.env.QUNITX_BROWSER) {
     const envBrowser = process.env.QUNITX_BROWSER;
-    if (!BROWSERS.includes(envBrowser)) {
+    if (!TARGETS.includes(envBrowser as TargetName)) {
       return InvalidFlag({
         flag: 'QUNITX_BROWSER',
         value: envBrowser,
-        expected: `Must be one of: ${BROWSERS.join(', ')}`,
+        expected: `Must be one of: ${TARGETS.join(', ')}`,
       });
     }
-    flags.browser = envBrowser as 'chromium' | 'firefox' | 'webkit';
+    flags.browser = envBrowser as TargetName;
   }
 
   // QUNITX_DEBUG env mirrors --debug: lower-priority than the explicit flag so
@@ -267,14 +267,14 @@ function applyFlag(result: ParsedFlags, arg: string): ParseFailure | undefined {
       .map((extension) => extension.trim())
       .filter(Boolean);
   } else if (arg.startsWith('--browser')) {
-    if (!BROWSERS.includes(value)) {
+    if (!TARGETS.includes(value as TargetName)) {
       return InvalidFlag({
         flag: '--browser',
         value: value ?? '',
-        expected: `Must be one of: ${BROWSERS.join(', ')}`,
+        expected: `Must be one of: ${TARGETS.join(', ')}`,
       });
     }
-    result.browser = value as 'chromium' | 'firefox' | 'webkit';
+    result.browser = value as TargetName;
   } else if (arg.startsWith('--before')) {
     result.before = parseModule(value);
   } else if (arg.startsWith('--after')) {

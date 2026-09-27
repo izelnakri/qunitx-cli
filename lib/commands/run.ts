@@ -28,6 +28,7 @@ import type { ProjectRootNotFoundFailure } from '../utils/find-project-root.ts';
 import type { SourceMapDecoder } from '../utils/source-map.ts';
 import type { RunResult } from '../api/test.ts';
 import type { Config as ResolvedSuiteConfig } from '../types.ts';
+import type { TargetName } from '../setup/targets.ts';
 
 /** The path the bundle is served from. `SourceMap.isBundleUrl` knows this name. */
 const BUNDLE_ROUTE = '/script.js';
@@ -129,7 +130,7 @@ export interface ScriptConfig {
   /** Directory relative imports and `node_modules` lookups resolve from. */
   cwd: string;
   /** Engine the script runs in. */
-  browser: 'chromium' | 'firefox' | 'webkit';
+  browser: TargetName;
   /** Port the local server binds. Updated in place to the port actually bound. */
   port: number;
   /** True when `--port` was given, which makes a taken port an error instead of a search. */
@@ -274,7 +275,7 @@ export interface ScriptSettings {
   /** Skips the `package.json` walk when the caller has already done it. */
   projectRoot?: string;
   /** Engine the script runs in. Defaults to chromium. */
-  browser?: 'chromium' | 'firefox' | 'webkit';
+  browser?: TargetName;
   /** Port the local server binds. Defaults to 1234. */
   port?: number;
   /** True when a port was named explicitly, which makes a taken one an error rather than a search. */
