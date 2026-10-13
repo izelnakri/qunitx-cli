@@ -3,6 +3,7 @@ import { BUILT_IN_REPORTERS } from '../reporters/index.ts';
 import { processConsole, silentConsole, type Console } from '../console.ts';
 import { APIReporter } from './reporter.ts';
 import { REPORTERS } from '../reporters/types.ts';
+import { BROWSERS, type BrowserName, type TargetName } from '../setup/targets.ts';
 import { Failure } from '../task/index.ts';
 import type { Reporter, ReporterName } from '../reporters/types.ts';
 import type { ConfigOptions } from '../setup/config.ts';
@@ -37,7 +38,7 @@ export interface UserRunOptions {
    */
   filter?: string;
   /** Browser engine. Defaults to `chromium`, the only one that can collect coverage. */
-  browser?: 'chromium' | 'firefox' | 'webkit';
+  browser?: TargetName;
   /** Milliseconds a single test may take before the run is declared stalled. Defaults to 20000. */
   timeout?: number;
   /** Stop the run at the first failing test. */
@@ -125,7 +126,6 @@ export const InvalidOption: Failure.FailureFactory<
 /** The one failure {@link validate} raises. */
 export type InvalidOptionFailure = Failure.Of<typeof InvalidOption>;
 
-const BROWSERS = ['chromium', 'firefox', 'webkit'];
 const COVERAGE_FORMATS = ['lcov', 'html'];
 
 /**
@@ -147,7 +147,13 @@ const COVERAGE_FORMATS = ['lcov', 'html'];
  * ```
  */
 export function validate(userRunOptions: UserRunOptions): void {
-  if (userRunOptions.browser !== undefined && !BROWSERS.includes(userRunOptions.browser)) {
+  // BROWSERS, not every target: `node` and `deno` are `repl()`'s, and `repl()` does not come
+  // through here. Letting them past would mean a run rejecting with `NotABrowser` — a code that is
+  // not in the `RunFailure` union callers switch on, so an exhaustive switch would fall past it.
+  if (
+    userRunOptions.browser !== undefined &&
+    !BROWSERS.includes(userRunOptions.browser as BrowserName)
+  ) {
     throw InvalidOption({
       option: 'browser',
       value: userRunOptions.browser,

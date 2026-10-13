@@ -189,6 +189,11 @@ export function harness(options: { timeout: number }): void {
   // run whose bundle never called it. Twice would report every test twice, which is a wrong count.
   function attach(QUnit: QUnitLike): void {
     if (attached) return;
+    // A QUnit with no `version` is the preconfig stub above rather than the real thing — which is
+    // what a runtime whose `qunitx` build registers tests with `node:test` leaves behind. `flush`
+    // already declines that one; this is the same guard at the other door, so `load` does not
+    // throw on a `QUnit.on` that is not a function and the prompt still opens.
+    if (!QUnit || !QUnit.version) return;
     attached = true;
     QUnit.config.testTimeout = options.timeout;
     // Snapshotted HERE, not at `runEnd`: QUnit calls `slimAssertions()` on the line after it

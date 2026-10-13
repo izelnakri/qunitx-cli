@@ -14,17 +14,21 @@ import { bindServerToPort } from '../setup/bind-server-to-port.ts';
 import { qunitxRuntimePlugin } from '../setup/qunitx-runtime-plugin.ts';
 import { isRemoteInput } from '../setup/remote-inputs.ts';
 import { remoteModulePlugin } from '../setup/remote-module-plugin.ts';
-import { prelaunchPromise, shutdownPrelaunch } from '../chrome/prelaunch.ts';
+import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { closeCompletely } from '../utils/close-with-grace.ts';
 import { Failure } from '../task/index.ts';
 import { harness } from '../setup/qunit-harness.ts';
 import { typeOfValue } from './type-of-value.ts';
 import { inspect } from './inspect.ts';
 import { colorEnabled } from '../utils/color.ts';
-import { proxyTo } from './proxy.ts';
-import type { Proxy } from './proxy.ts';
+import { pathToFileURL } from 'node:url';
+import { pageRealm } from './page-realm.ts';
+import { inspectorRealm } from './inspector-realm.ts';
+import { isRuntime } from '../setup/targets.ts';
+import type { RuntimeRealm } from './inspector-realm.ts';
+import type { RuntimeName } from '../setup/targets.ts';
+import type { Realm } from './realm.ts';
 import type { Plugin } from 'esbuild';
-import type { Browser as PlaywrightBrowser, CDPSession, Page } from 'playwright-core';
 import type { HTTPServer } from '../web/index.ts';
 import type { Config } from '../types.ts';
 import type { TestDetails } from '../reporters/types.ts';
@@ -575,14 +579,23 @@ export async function start(
   preload: string[] = [],
   onOpen?: (session: ReplSession) => void,
 ): Promise<ReplSession> {
-  if (config.browser !== 'chromium') throw UnsupportedBrowser({ browser: config.browser });
+  const runtime = isRuntime(config.browser) ? config.browser : null;
+  if (runtime === null && config.browser !== 'chromium') {
+    throw UnsupportedBrowser({ browser: config.browser });
+  }
 
-  const build = config.state.group.build;
-  const outDir = path.resolve(config.projectRoot, config.output);
-  build.allTestCode = await bundle(config, preload, outDir);
-  // Served as `/tests.js` below, which is the URL the frame resolver recognises — so a stack from
-  // a preloaded file maps back to its own source, exactly as it does in a run.
-  config.state.group.sourceMapDecoder = SourceMap.extractInline(build.allTestCode, outDir);
+  // Only a page gets a bundle. A runtime imports the real files off disk — which is not a
+  // shortcut but the better answer: `.ts` runs as it is on both, a breakpoint in one is a line in
+  // that file rather than a line in a bundle found through a source map, and there is no second
+  // copy of `qunitx` to keep a bundler from shipping.
+  if (runtime === null) {
+    const build = config.state.group.build;
+    const outDir = path.resolve(config.projectRoot, config.output);
+    build.allTestCode = await bundle(config, preload, outDir);
+    // Served as `/tests.js` below, which is the URL the frame resolver recognises — so a stack
+    // from a preloaded file maps back to its own source, exactly as it does in a run.
+    config.state.group.sourceMapDecoder = SourceMap.extractInline(build.allTestCode, outDir);
+  }
 
   // The run's own server, for its asset routes and its `/tests.js`. Only `/` is replaced, and it
   // has to be: the page a run serves starts QUnit the moment it loads, which is the one thing a
@@ -590,7 +603,7 @@ export async function start(
   const server = WebServer.setup(config);
   server.get('/', (_request, response) => {
     response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
-    response.end(pageHTML(config));
+    response.end(runtime === null ? pageHTML(config) : runtimeHTML(runtime));
   });
   // `/repl` rather than `/devtools`: this is the address you put in a browser, where the question
   // being asked is "show me the page my repl is attached to" — and what answers it is Chrome's
@@ -625,20 +638,46 @@ export async function start(
   // this platform falls back to. Said out loud and carried on headless rather than refused: a
   // prompt that will not start is worse than a prompt without a window, and everything else about
   // the session is the same either way.
-  if (config.open === true && process.platform === 'darwin') {
+  if (runtime !== null && config.open) {
+    // Said out loud rather than ignored, the same way the macOS downgrade below is: a flag that
+    // quietly does nothing is a flag you spend a minute wondering about.
+    Reporter.info(
+      config,
+      `--open has no window to open on ${runtime} — \`.devtools\` is the way in`,
+    );
+  }
+  if (runtime === null && config.open === true && process.platform === 'darwin') {
     Reporter.info(config, `--open cannot open a window on macOS — evaluating headlessly instead`);
     config.open = false;
   }
-  const browser = await Browser.launch(config, false, config.open === true);
+  // A page needs a browser before there is anything to bind a port for; a runtime needs the port
+  // first, because `session.url` is what its `.get /x` resolves against and it has no origin of
+  // its own to fall back on.
+  const browser =
+    runtime === null ? await Browser.launch(config, false, config.open === true) : null;
+  // Declared out here so the catch can reach it. A runtime child is not killed by this process
+  // dying and its host module holds its event loop open on purpose, so an orphan is an orphan for
+  // good — and the likeliest way to get one is the expected failure below, a preload that throws.
+  let realm: Realm | null = null;
   try {
-    const page = await browser.newPage();
-    await bindServerToPort(server, config);
+    if (runtime === null) {
+      const page = await browser!.newPage();
+      await bindServerToPort(server, config);
+      await page.addInitScript({ content: initScript(config) });
+      await page.goto(`http://localhost:${config.port}`);
+      realm = pageRealm({
+        cdp: await page.context().newCDPSession(page),
+        page,
+        browser: browser!,
+        bundleURL: `http://localhost:${config.port}/tests.js`,
+        decoder: config.state.group.sourceMapDecoder ?? null,
+      });
+    } else {
+      await bindServerToPort(server, config);
+      realm = await inspectorRealm(runtime, config.cwd, initScript(config));
+    }
     const url = `http://localhost:${config.port}`;
-    await page.addInitScript({ content: initScript(config) });
-    await page.goto(url);
-
-    const cdp = await page.context().newCDPSession(page);
-    cdp.on('Runtime.consoleAPICalled', (event) => {
+    realm.on('Runtime.consoleAPICalled', (event: ConsoleAPICalled) => {
       // The page's own output, on the SAME CDP session as the evaluations — so it arrives in the
       // order it was produced rather than racing the result it belongs to.
       Reporter.browserLog(config, {
@@ -646,12 +685,12 @@ export async function start(
         // A string argument prints as itself — `console.log('hi')` is text, not a value being
         // shown — which is the one place this differs from rendering a result.
         text: event.args
-          .map((arg) => (arg.type === 'string' ? String(arg.value) : describe(arg)))
+          .map((arg: RemoteObject) => (arg.type === 'string' ? String(arg.value) : describe(arg)))
           .join(' '),
         args: [],
       });
     });
-    cdp.on('Runtime.exceptionThrown', ({ exceptionDetails }) => {
+    realm.on('Runtime.exceptionThrown', ({ exceptionDetails }: ExceptionThrown) => {
       const text = exceptionDetails.exception?.description ?? exceptionDetails.text;
       Reporter.browserLog(config, {
         type: 'pageerror',
@@ -663,26 +702,53 @@ export async function start(
     // bundle among them. Registering after the enable misses that replay, and a pause inside a
     // preloaded file could then only report a bundle line.
     const scripts = new Map<string, string>();
-    cdp.on('Debugger.scriptParsed', (event) => {
+    realm.on('Debugger.scriptParsed', (event: ScriptParsed) => {
       if (event.url) scripts.set(event.scriptId, event.url);
     });
-    await cdp.send('Runtime.enable');
+    await realm.send('Runtime.enable');
     // What makes `debugger` mean something here. Without a debugger attached the statement is a
     // no-op — the page runs straight past it — so a prompt that never enables this can only ever
     // answer `undefined` to it. Enabled for the session rather than on demand, because a statement
     // already executing is too late to start listening for.
-    await cdp.send('Debugger.enable');
+    await realm.send('Debugger.enable');
+    // A runtime is still stopped before its first statement at this point, which is what let the
+    // handlers above be registered in time. Releasing it runs the host module and the prelude; the
+    // preloads follow, as real imports rather than as a bundle.
+    //
+    // BEFORE the session's own pause handler goes on, which is the ordering that matters: the
+    // runtime's break-on-start belongs to `release()`, and a session handler attached in time to
+    // see it reads a frame inside the host module, calls it a breakpoint, and then answers
+    // `Can only perform operation while paused` to every line typed afterwards.
+    if (runtime !== null) {
+      await (realm as RuntimeRealm).release();
+      // Pauses OFF for the duration. A preloaded file is free to contain a `debugger`, and there
+      // is no prompt yet to stop at one with — so a stop here is a process frozen inside an
+      // evaluation that never answers, before anything has been printed. The browser path is
+      // accidentally immune, enabling `Debugger` only after its bundle has run; this is the same
+      // answer said out loud. Once the prompt is up, a `debugger` stops it exactly as it should.
+      await realm.send('Debugger.setSkipAllPauses', { skip: true });
+      const loaded = await realm.send<EvaluateResult>('Runtime.evaluate', {
+        expression: preloadExpression(config, preload),
+        awaitPromise: true,
+      });
+      await realm.send('Debugger.setSkipAllPauses', { skip: false });
+      if (loaded.exceptionDetails) {
+        throw PreloadBuildFailed({
+          detail: loaded.exceptionDetails.exception?.description ?? loaded.exceptionDetails.text,
+        });
+      }
+    }
 
     // The script map is handed over at construction rather than at the first pause: `declaredAt`
     // needs it to turn a function's script id into a file, and nobody pauses to ask where
     // something is written.
-    const session = new Session(config, { cdp, page, server, browser, url, scripts });
+    const session = new Session(config, { realm, server, url, scripts });
     live = session;
-    cdp.on('Debugger.paused', (event) => session.onPaused(event));
+    realm.on('Debugger.paused', (event: DebuggerPaused) => session.onPaused(event));
     session.loaded = await session.readLoaded();
     // Asked once, so the banner offers the address only where opening it would work. The proxy
     // behind it is not made here: nothing listens until somebody actually asks for DevTools.
-    session.inspector = (await session.debuggingTarget()) === null ? null : `${url}/repl`;
+    session.inspector = (await realm.inspectable()) ? `${url}/repl` : null;
     // The page's own bundle loaded these, so nothing recorded how — and a preloaded file is the
     // one most likely to be edited while the session it opened is still up.
     session.rememberPreload(preload);
@@ -696,8 +762,9 @@ export async function start(
     // top level throws — still holds a browser and a bound port, and nothing else will release
     // them: `close()` belongs to the session this never returned.
     await closeCompletely({
+      ...(realm?.closing() ?? {}),
       server: server.close(),
-      browser: browser.close(),
+      browser: browser?.close(),
       prelaunch: shutdownPrelaunch(),
     });
     throw error;
@@ -863,7 +930,7 @@ class Session implements ReplSession {
   loaded: Array<[string, string[]]> = [];
   inspector: string | null = null;
   #config: Config;
-  #cdp: CDPSession;
+  #realm: Realm;
   // The frame a `debugger` statement stopped in, and the notice describing where. Both null while
   // the page is running, and set together — one is the capability, the other is what to print.
   #frameId: string | null = null;
@@ -902,8 +969,6 @@ class Session implements ReplSession {
   // them a function from an imported file has a location V8 knows and nothing here can read, so
   // `.doc` degrades to "here is the value" the moment a file is brought in.
   #maps = new Map<string, SourceMap.SourceMapDecoder>();
-  // Nothing listens until somebody asks for DevTools, and then one proxy serves every window.
-  #proxy: Proxy | null = null;
   #bundles = 0;
   #inputs = 0;
   // Resolves the evaluation that was in flight when the pause happened. `Runtime.evaluate` does not
@@ -912,9 +977,7 @@ class Session implements ReplSession {
   // Resolves the step that is waiting for the page to stop again. Separate from the one above
   // because a step has no evaluation in flight to answer — it is waiting on the pause itself.
   #announceStep: (() => void) | null = null;
-  #page: Page;
   #server: HTTPServer;
-  #browser: PlaywrightBrowser;
   #closed = false;
   // Evaluations are serialized: two in flight would interleave their test batches, and "which run
   // did this `ok 2` come from" is not a question a prompt should be able to raise.
@@ -923,19 +986,15 @@ class Session implements ReplSession {
   constructor(
     config: Config,
     handles: {
-      cdp: CDPSession;
-      page: Page;
+      realm: Realm;
       server: HTTPServer;
-      browser: PlaywrightBrowser;
       url: string;
       scripts: Map<string, string>;
     },
   ) {
     this.#config = config;
-    this.#cdp = handles.cdp;
-    this.#page = handles.page;
+    this.#realm = handles.realm;
     this.#server = handles.server;
-    this.#browser = handles.browser;
     this.url = handles.url;
     this.#scripts = handles.scripts;
   }
@@ -986,9 +1045,9 @@ class Session implements ReplSession {
     // `globalThis` and is therefore invisible to everything above — and in a REPL it is where half
     // of what you declared ends up. Asked for even while paused: unlike an evaluation, this one
     // reads the isolate rather than running in it, and a stopped isolate answers it.
-    const lexical = await this.#cdp
-      .send('Runtime.globalLexicalScopeNames', {})
-      .then((result) => (result as { names?: string[] }).names ?? [])
+    const lexical = await this.#realm
+      .send<{ names?: string[] }>('Runtime.globalLexicalScopeNames', {})
+      .then((result) => result.names ?? [])
       .catch(() => []);
 
     return [...new Set([...found, ...lexical])];
@@ -1057,8 +1116,8 @@ class Session implements ReplSession {
     for (const scope of readable) {
       const objectId = scope.object.objectId;
       if (!objectId) continue;
-      const properties = await this.#cdp
-        .send('Runtime.getProperties', {
+      const properties = await this.#realm
+        .send<{ result?: PropertyDescriptor[] }>('Runtime.getProperties', {
           objectId,
           ownProperties: true,
           generatePreview: true,
@@ -1086,11 +1145,11 @@ class Session implements ReplSession {
     // `throwOnSideEffect` is V8's own answer to this question — it aborts the moment the
     // expression would change anything, which is what makes evaluating on a keystroke safe rather
     // than merely fast. The timeout covers what is pure but slow; a preview is worth milliseconds.
-    await this.#cdp
+    await this.#realm
       .send('Runtime.releaseObjectGroup', { objectGroup: CDP_PREVIEW_OBJECT_GROUP })
       .catch(() => {});
-    const evaluated = (await this.#cdp
-      .send('Runtime.evaluate', {
+    const evaluated = (await this.#realm
+      .send<EvaluateResult>('Runtime.evaluate', {
         expression: input,
         throwOnSideEffect: true,
         timeout: PREVIEW_TIMEOUT_MS,
@@ -1106,7 +1165,11 @@ class Session implements ReplSession {
   async reload(): Promise<string[]> {
     // A new page has none of it, declared at a breakpoint or otherwise.
     this.#pausedBindings.clear();
-    await this.#page.reload();
+    // A page reload reuses one CDP session and V8 keeps counting up, so a stale script id is
+    // never re-issued. A runtime reload is a NEW process numbering from scratch, and every id in
+    // here would then resolve a frame to whichever file happened to hold that id last time.
+    if (this.#realm.importsFromDisk) this.#scripts.clear();
+    await this.#realm.reload();
     this.loaded = await this.readLoaded();
     // A reload is a new page: nothing this session declared survives it, so what counts as "what
     // you added" starts again from what the fresh page has.
@@ -1155,8 +1218,8 @@ class Session implements ReplSession {
     }
     // No file: a function typed at this prompt exists nowhere else, and the page is the only one
     // that can say what it says.
-    const fetched = (await this.#cdp
-      .send('Debugger.getScriptSource', { scriptId: at.scriptId })
+    const fetched = (await this.#realm
+      .send<{ scriptSource?: string }>('Debugger.getScriptSource', { scriptId: at.scriptId })
       .catch(() => null)) as { scriptSource?: string } | null;
 
     return fetched?.scriptSource === undefined
@@ -1169,18 +1232,20 @@ class Session implements ReplSession {
     if (!place) return `not a place: ${location.trim() || '(nothing)'} — try file.ts:12`;
 
     const [, file = '', line = ''] = place;
-    const decoder = this.#config.state.group.sourceMapDecoder;
-    if (!decoder) return 'the bundle has no source map, so a source line cannot be found in it';
+    // Where that line IS depends on what is running it: a bundle the page fetched, or the file
+    // itself. The realm knows which; this only has to carry the answer to CDP.
+    const found = this.#realm.breakpointAt(
+      path.resolve(this.#config.cwd, file),
+      file,
+      Number(line),
+    );
+    if (typeof found === 'string') return found;
 
-    const absolute = path.resolve(this.#config.cwd, file);
-    const found = SourceMap.findGenerated(decoder, absolute, Number(line));
-    if (!found) return `${file} is not a file this session bundled`;
-
-    const set = (await this.#cdp
-      .send('Debugger.setBreakpointByUrl', {
-        url: `${this.url}/tests.js`,
-        lineNumber: found.line,
-        columnNumber: found.column,
+    const set = (await this.#realm
+      .send<{ breakpointId?: string }>('Debugger.setBreakpointByUrl', {
+        url: found.url,
+        lineNumber: found.lineNumber,
+        columnNumber: found.columnNumber,
       })
       .catch(() => null)) as { breakpointId?: string; locations?: unknown[] } | null;
     if (!set?.breakpointId) return `nothing to stop on at ${file}:${line}`;
@@ -1213,16 +1278,25 @@ class Session implements ReplSession {
     const name = named ? callItThis : moduleNameFor(absolute);
     if (!IDENTIFIER.test(name)) return `${name} is not a name a value can be given`;
 
-    const source =
-      remote || CODE.has(path.extname(absolute).toLowerCase())
-        ? await this.#bundle(
+    const code = remote || CODE.has(path.extname(absolute).toLowerCase());
+    // Three ways in, and the middle one is why a runtime session can stop inside what it brought:
+    // the file is imported as ITSELF, so V8 knows it by its own URL and a breakpoint on that file
+    // is a breakpoint this import hits. A page has no such option — code reaches it as a bundle or
+    // not at all — and a remote input is a URL the runtime cannot fetch, so both go to esbuild.
+    const source = !code
+      ? await plainFile(absolute, shown, name)
+      : this.#realm.importsFromDisk && !remote
+        ? [
+            `globalThis.__qunitxImport(${JSON.stringify(pathToFileURL(absolute).href)}).then((m) =>`,
+            `  globalThis.__qunitxHarness.bring(${JSON.stringify(shown)}, ${JSON.stringify(name)}, m, ${named}))`,
+          ].join('\n')
+        : await this.#bundle(
             [
               `import * as m from '${specifier(absolute, this.#config.cwd)}';`,
               `globalThis.__qunitxHarness.bring(${JSON.stringify(shown)}, ${JSON.stringify(name)}, m, ${named});`,
             ].join('\n'),
             shown,
-          )
-        : await plainFile(absolute, shown, name);
+          );
     if (typeof source !== 'string') return source.detail;
     const names = await this.#loadInto(source, shown, {
       kind: 'file',
@@ -1259,13 +1333,24 @@ class Session implements ReplSession {
         return `${JSON.stringify(name)}: ${value}`;
       })
       .join(', ');
-    const source = await this.#bundle(
-      [
-        `import * as m from ${JSON.stringify(from)};`,
-        `globalThis.__qunitxHarness.bind(${JSON.stringify(shown)}, { ${values} });`,
-      ].join('\n'),
-      shown,
-    );
+    // A relative specifier is resolved HERE rather than left to the bridge: the bridge lives in
+    // `node_modules/.cache/qunitx`, so `./foo.ts` would resolve from there. A bare one is left
+    // alone, because that is the runtime's own resolution and it walks up to the project.
+    const resolved = from.startsWith('.')
+      ? pathToFileURL(path.resolve(this.#config.cwd, from)).href
+      : from;
+    const source = this.#realm.importsFromDisk
+      ? [
+          `globalThis.__qunitxImport(${JSON.stringify(resolved)}).then((m) =>`,
+          `  globalThis.__qunitxHarness.bind(${JSON.stringify(shown)}, { ${values} }))`,
+        ].join('\n')
+      : await this.#bundle(
+          [
+            `import * as m from ${JSON.stringify(from)};`,
+            `globalThis.__qunitxHarness.bind(${JSON.stringify(shown)}, { ${values} });`,
+          ].join('\n'),
+          shown,
+        );
     if (typeof source !== 'string') return { ...nothing, output: source.detail, failed: true };
     const names = await this.#loadInto(source, shown, { kind: 'statement', statement });
     if (typeof names === 'string') return { ...nothing, output: names, failed: true };
@@ -1294,49 +1379,15 @@ class Session implements ReplSession {
   }
 
   /**
-   * The debugging port and the page target on it, or `null` where this browser has neither.
+   * Chrome's own DevTools, attached to this session's realm — what `/repl` redirects to.
    *
-   * Confirmed against the port rather than assumed: a pre-launch that failed to connect was shut
-   * down and this session is driving a browser Playwright launched, whose targets are not there
-   * and whose transport is a pipe with no HTTP endpoint at all. An address pointing at somebody
-   * else's page would be worse than no address.
+   * A thin pass-through to the realm, kept on the session because `/repl` is registered before
+   * there is a session to ask and holds this by reference.
    *
    * Not on {@link ReplSession}: the answer callers want is {@link ReplSession.inspector}.
    */
-  async debuggingTarget(): Promise<{ port: string; target: string } | null> {
-    const endpoint = (await prelaunchPromise())?.cdpEndpoint;
-    const port = endpoint === undefined ? null : new URL(endpoint).port;
-    if (port === null || port === '') return null;
-
-    const info = (await this.#cdp.send('Target.getTargetInfo').catch(() => null)) as {
-      targetInfo?: { targetId?: string };
-    } | null;
-    const target = info?.targetInfo?.targetId;
-    if (target === undefined) return null;
-
-    const listed = (await fetch(`http://localhost:${port}/json/list`)
-      .then((answer) => answer.json())
-      .catch(() => null)) as Array<{ id?: string }> | null;
-
-    return Array.isArray(listed) && listed.some((known) => known.id === target)
-      ? { port, target }
-      : null;
-  }
-
-  /**
-   * Chrome's own DevTools frontend, pointed at this session's page — what `/repl` redirects to.
-   *
-   * The frontend is Chrome's own, served from its port. Its socket is not: a browser sends an
-   * `Origin` header and Chrome answers 403 to any debugger connection that has one, so it goes
-   * through a proxy that connects onward from Node, where there is none to object to. The proxy
-   * is made on first use and closed with the session.
-   */
-  async devtoolsUrl(): Promise<string | null> {
-    const found = await this.debuggingTarget();
-    if (found === null) return null;
-    this.#proxy ??= await proxyTo(`ws://127.0.0.1:${found.port}/devtools/page/${found.target}`);
-
-    return `http://localhost:${found.port}/devtools/inspector.html?ws=${this.#proxy.address}`;
+  devtoolsUrl(): Promise<string | null> {
+    return this.#realm.devtoolsURL();
   }
 
   /** Remembers how a file the page loaded for itself got there, so it can be loaded again. */
@@ -1347,7 +1398,12 @@ class Session implements ReplSession {
         absolute: file,
         name: moduleNameFor(file),
         nameWasGiven: false,
-        viaBundle: true,
+        // `viaBundle` means "a reload brings this back by itself", and only a page's does: it
+        // re-fetches and re-evaluates the bundle the preloads are inside. A runtime's reload is a
+        // new process running the host module and nothing else, so its preloads have to be
+        // replayed like any other file — without this they silently vanished from scope, on the
+        // one command whose entire purpose is picking up an edit to them.
+        ...(this.#realm.importsFromDisk ? {} : { viaBundle: true as const }),
       });
     }
   }
@@ -1362,8 +1418,8 @@ class Session implements ReplSession {
   async #loadInto(source: string, shown: string, recipe: Recipe): Promise<string[] | string> {
     // Caught rather than thrown: a page that has gone while a file was being edited is an answer
     // about the file, and an unhandled rejection out of here takes the process with it.
-    const evaluated = await this.#cdp
-      .send('Runtime.evaluate', { expression: source, awaitPromise: true })
+    const evaluated = await this.#realm
+      .send<EvaluateResult>('Runtime.evaluate', { expression: source, awaitPromise: true })
       .catch((error: Error) => ({ exceptionDetails: { text: error.message } }) as EvaluateResult);
     if (evaluated.exceptionDetails) {
       const thrown = evaluated.exceptionDetails.exception?.description;
@@ -1431,7 +1487,7 @@ class Session implements ReplSession {
   async typeOf(expression: string): Promise<string> {
     if (this.#closed || expression.trim() === '') return '';
     // Side-effect free, for the reason `declaredAt` is: asking what something IS must not run it.
-    const evaluated = (await this.#cdp
+    const evaluated = (await this.#realm
       .send('Runtime.evaluate', {
         expression: `globalThis.__qunitxType(${expression})`,
         throwOnSideEffect: true,
@@ -1484,7 +1540,7 @@ class Session implements ReplSession {
 
     // Side-effect free, because asking where something is written must not run anything: `.doc
     // save()` would otherwise save.
-    const evaluated = (await this.#cdp
+    const evaluated = (await this.#realm
       .send('Runtime.evaluate', {
         expression,
         throwOnSideEffect: true,
@@ -1494,8 +1550,11 @@ class Session implements ReplSession {
     const objectId = evaluated?.result?.objectId;
     if (!objectId || evaluated?.exceptionDetails) return null;
 
-    const properties = (await this.#cdp
-      .send('Runtime.getProperties', { objectId, ownProperties: false })
+    const properties = (await this.#realm
+      .send<{ result?: PropertyDescriptor[]; internalProperties?: PropertyDescriptor[] }>(
+        'Runtime.getProperties',
+        { objectId, ownProperties: false },
+      )
       .catch(() => null)) as {
       internalProperties?: Array<{ name: string; value?: RemoteObject }>;
     } | null;
@@ -1525,7 +1584,7 @@ class Session implements ReplSession {
     const at = this.#breakpoints.findIndex((breakpoint) => breakpoint.index === index);
     if (at === -1) return false;
     const [removed] = this.#breakpoints.splice(at, 1);
-    await this.#cdp
+    await this.#realm
       .send('Debugger.removeBreakpoint', { breakpointId: removed?.id })
       .catch(() => {});
 
@@ -1581,7 +1640,7 @@ class Session implements ReplSession {
     const stopped = new Promise<void>((resolve) => {
       this.#announceStep = resolve;
     });
-    await this.#cdp.send(STEPS[kind]).catch(() => {});
+    await this.#realm.send(STEPS[kind]).catch(() => {});
     // Bounded, because a step is not guaranteed to reach another one: stepping out of the last
     // frame runs the page to the end of what it was doing, and a prompt that waited for a pause
     // that is never coming would simply stop answering.
@@ -1600,9 +1659,9 @@ class Session implements ReplSession {
     // `1 + 1` after stepping off the end of the stack and the prompt stops on it. So it is spent
     // here instead, on a statement that does not matter, with pauses suppressed for exactly as
     // long as that takes.
-    await this.#cdp.send('Debugger.setSkipAllPauses', { skip: true }).catch(() => {});
-    await this.#cdp.send('Runtime.evaluate', { expression: '0' }).catch(() => {});
-    await this.#cdp.send('Debugger.setSkipAllPauses', { skip: false }).catch(() => {});
+    await this.#realm.send('Debugger.setSkipAllPauses', { skip: true }).catch(() => {});
+    await this.#realm.send('Runtime.evaluate', { expression: '0' }).catch(() => {});
+    await this.#realm.send('Debugger.setSkipAllPauses', { skip: false }).catch(() => {});
     await this.#released();
 
     return null;
@@ -1614,7 +1673,7 @@ class Session implements ReplSession {
    */
   async continue(): Promise<void> {
     if (!this.#pausedAt) return;
-    await this.#cdp.send('Debugger.resume').catch(() => {});
+    await this.#realm.send('Debugger.resume').catch(() => {});
     await this.#released();
   }
 
@@ -1676,14 +1735,14 @@ class Session implements ReplSession {
   interrupt(): Promise<void> {
     // Terminates whatever is running in the page's isolate, so the pending `Runtime.evaluate`
     // comes back as a thrown "Execution terminated" rather than never coming back at all.
-    return this.#cdp.send('Runtime.terminateExecution').then(
+    return this.#realm.send('Runtime.terminateExecution').then(
       () => {},
       () => {},
     );
   }
 
   alive(): boolean {
-    return !this.#closed && this.#browser.isConnected() && !this.#page.isClosed();
+    return !this.#closed && this.#realm.alive();
   }
 
   async close(): Promise<void> {
@@ -1692,10 +1751,7 @@ class Session implements ReplSession {
     // BEFORE the rest, and awaited on its own: a detach whose page is already going away never
     // settles — it cost the full cleanup grace on every exit until it was moved up here. With the
     // page still alive it answers in single-digit milliseconds.
-    await this.#cdp.detach().catch(() => {});
-    // A listening socket outlives the process that forgot it, and this one only exists at all if
-    // somebody opened DevTools.
-    await this.#proxy?.close();
+    await this.#realm.detach();
     // `closeCompletely`, because a REPL session is closed BY a caller that then expects to end.
     // `browser.close()` outliving the first grace is common on a loaded Windows runner, and
     // returning there would hand back a closed session while playwright still held the browser.
@@ -1704,12 +1760,7 @@ class Session implements ReplSession {
     // by handing the event loop back: esbuild's `--service` child does not hold it open (checked
     // — `test/fixtures/repl-handles.ts` exits either way), and stopping the shared service would
     // reach past this session into whatever else in the process is using esbuild.
-    await closeCompletely({
-      page: this.#page.close().catch(() => {}),
-      server: this.#server.close(),
-      browser: this.#browser.close(),
-      prelaunch: shutdownPrelaunch(),
-    });
+    await closeCompletely({ ...this.#realm.closing(), server: this.#server.close() });
   }
 
   [Symbol.asyncDispose](): Promise<void> {
@@ -1751,7 +1802,7 @@ class Session implements ReplSession {
     // this at a breakpoint hangs the input that was going to inspect it — the one thing a pause
     // exists for. The handles are freed by the next input after resuming, or by closing.
     if (!this.#frameId) {
-      await this.#cdp
+      await this.#realm
         .send('Runtime.releaseObjectGroup', { objectGroup: CDP_OBJECT_GROUP })
         .catch(() => {});
     }
@@ -1867,7 +1918,7 @@ class Session implements ReplSession {
     // Paused: run it where the page is STOPPED, so what you type sees the locals at the breakpoint.
     // Inspecting the globals around a breakpoint would answer a question nobody asked.
     if (this.#frameId) {
-      return this.#cdp.send('Debugger.evaluateOnCallFrame', {
+      return this.#realm.send<EvaluateResult>('Debugger.evaluateOnCallFrame', {
         callFrameId: this.#frameId,
         expression,
         objectGroup: CDP_OBJECT_GROUP,
@@ -1875,7 +1926,7 @@ class Session implements ReplSession {
       }) as Promise<EvaluateResult>;
     }
 
-    return this.#cdp.send('Runtime.evaluate', {
+    return this.#realm.send<EvaluateResult>('Runtime.evaluate', {
       expression,
       replMode: true,
       objectGroup: CDP_OBJECT_GROUP,
@@ -1898,12 +1949,12 @@ class Session implements ReplSession {
   async #byValue<T>(expression: string): Promise<T | []> {
     const evaluated = await (
       this.#frameId
-        ? this.#cdp.send('Debugger.evaluateOnCallFrame', {
+        ? this.#realm.send<EvaluateResult>('Debugger.evaluateOnCallFrame', {
             callFrameId: this.#frameId,
             expression,
             returnByValue: true,
           })
-        : this.#cdp.send('Runtime.evaluate', { expression, returnByValue: true })
+        : this.#realm.send<EvaluateResult>('Runtime.evaluate', { expression, returnByValue: true })
     ).catch(() => null);
 
     return (evaluated?.result?.value as T) ?? [];
@@ -1913,7 +1964,7 @@ class Session implements ReplSession {
   async #render(result: RemoteObject, depth?: number): Promise<string> {
     if (!result.objectId || result.subtype === 'promise') return describe(result);
 
-    const rendered = await this.#cdp.send('Runtime.callFunctionOn', {
+    const rendered = await this.#realm.send<EvaluateResult>('Runtime.callFunctionOn', {
       functionDeclaration: `function () { return globalThis.__qunitxInspect(this, ${depth ?? 'undefined'}); }`,
       objectId: result.objectId,
       returnByValue: true,
@@ -1924,7 +1975,7 @@ class Session implements ReplSession {
 
   /** Calls into the page harness — outside REPL mode, which is what makes `awaitPromise` work. */
   async #harness<T>(expression: string): Promise<T> {
-    const evaluated = await this.#cdp.send('Runtime.evaluate', {
+    const evaluated = await this.#realm.send<EvaluateResult>('Runtime.evaluate', {
       expression: `globalThis.__qunitxHarness.${expression}`,
       awaitPromise: true,
       returnByValue: true,
@@ -1990,6 +2041,29 @@ function introducedAt(where: string): number {
   if (line) return Number(line[1]);
 
   return where === '' ? Number.MAX_SAFE_INTEGER : -1;
+}
+
+/** One property as `Runtime.getProperties` hands it back — a name, and a value if it has one. */
+interface PropertyDescriptor {
+  name: string;
+  value?: RemoteObject;
+}
+
+/** The slice of `Runtime.consoleAPICalled` this reads: what the realm said, and what it said it with. */
+interface ConsoleAPICalled {
+  type: string;
+  args: RemoteObject[];
+}
+
+/** The slice of `Runtime.exceptionThrown` this reads — the description, or the text if there is none. */
+interface ExceptionThrown {
+  exceptionDetails: { exception?: { description?: string }; text: string };
+}
+
+/** The slice of `Debugger.scriptParsed` this reads, which is only ever the pair it files away. */
+interface ScriptParsed {
+  scriptId: string;
+  url?: string;
 }
 
 /** The slice of `Debugger.paused` this reads — narrower than the protocol's, and only where used. */
@@ -2164,6 +2238,68 @@ function initScript(config: Config): string {
  * also arrives under one name worked out from its path, the same one `.import` would give it — a
  * file named on the command line and a file brought in later should be the same kind of thing.
  */
+/**
+ * What `/` serves when the prompt is on a runtime: a page that says where everything is.
+ *
+ * A browser session serves the document its tests run in, and there is no such thing here — the
+ * code is in a process. So this is the one thing a person visiting the address actually wants,
+ * which is the way through to the console attached to it.
+ */
+function runtimeHTML(runtime: RuntimeName): string {
+  return [
+    '<!doctype html>',
+    `<title>qunitx repl — ${runtime}</title>`,
+    '<meta name="color-scheme" content="light dark">',
+    '<style>',
+    'body{font:16px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;max-width:34rem;margin:12vh auto;padding:0 1.5rem}',
+    'h1{font-size:1.1rem;font-weight:600;margin:0 0 .25rem}p{opacity:.75;margin:.25rem 0 1.5rem}',
+    'a{display:inline-block;padding:.6rem 1rem;border:1px solid currentColor;border-radius:.4rem;text-decoration:none;color:inherit}',
+    'code{opacity:.75}',
+    '</style>',
+    `<h1>qunitx repl — ${runtime}</h1>`,
+    '<p>The prompt in your terminal is attached to this process. So is the console below: same',
+    ' globalThis, same modules, live.</p>',
+    '<p><a href="/repl">Open DevTools for it &rarr;</a></p>',
+    '<p><code>.devtools</code> at the prompt prints this address too.</p>',
+  ].join('\n');
+}
+
+/**
+ * What a runtime loads instead of a bundle: the real files, through the host's import bridge.
+ *
+ * The same footer the bundle ends with — `harness.load(qunitx, [[file, name, namespace], …])` —
+ * reached by importing rather than by bundling. `qunitx` resolves to the runtime's own build of
+ * the package, and each preload to the file itself, so a breakpoint in one is a line in that file
+ * and `.ts` needs nobody's help to run.
+ *
+ * Absolute `file://` URLs, not paths: the bridge lives in `node_modules/.cache/qunitx`, so a
+ * relative specifier would resolve from there.
+ */
+function preloadExpression(config: Config, preload: readonly string[]): string {
+  const named = namespacesFor([...preload]);
+  const specifiers = preload
+    .map((file) => `globalThis.__qunitxImport(${JSON.stringify(pathToFileURL(file).href)})`)
+    .join(', ');
+  const modules = preload.map(
+    (file, i) =>
+      `[${JSON.stringify(relative(config, file))}, ${JSON.stringify(named.get(file) ?? moduleNameFor(file))}, m[${i}]]`,
+  );
+
+  return [
+    'globalThis.__qunitxRuntimeModule().then((q) => {',
+    // The DEFAULT export is QUnit itself — `reset`, `on`, `start` and the queue. The named
+    // exports beside it are the authoring API, which `load` assigns onto globalThis. A page gets
+    // this global from qunit.js on load and a runtime has to be given it.
+    '  const QUnit = q.default || q;',
+    // `version` is what tells the real thing from a build whose tests belong to `node:test`. With
+    // one of those the prompt still opens and only `flush` has nothing to do.
+    '  if (QUnit.version) { globalThis.QUnit = QUnit; QUnit.config.autostart = false; }',
+    `  return Promise.all([${specifiers}]).then((m) =>`,
+    `    globalThis.__qunitxHarness.load(q, [${modules.join(', ')}]));`,
+    '})',
+  ].join('\n');
+}
+
 async function bundle(config: Config, preload: string[], outDir: string): Promise<string> {
   const imports = preload.map(
     (file, i) => `import * as m${i} from '${specifier(file, config.cwd)}';`,
