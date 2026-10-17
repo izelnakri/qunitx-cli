@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.38.1] - 2026-10-17
+[`v0.38.0...v0.38.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.38.0...v0.38.1)
+
+### Bug Fixes
+- The default test page is titled after the package, not {{applicationName}} — 2026-09-26 by [@izelnakri](https://github.com/izelnakri) ([`acb0b70`](https://github.com/izelnakri/qunitx-cli/commit/acb0b7059a02fdf96780d1ae9323f21084cdc87f))
+- A non-ASCII test name reads as written, not as esbuild's escapes — 2026-09-26 by [@izelnakri](https://github.com/izelnakri) ([`a57ab7a`](https://github.com/izelnakri/qunitx-cli/commit/a57ab7a809347120c1f5d4272a70b8673367dfcf))
+- Firefox's own parser warnings wait for --debug — 2026-09-26 by [@izelnakri](https://github.com/izelnakri) ([`c662cf9`](https://github.com/izelnakri/qunitx-cli/commit/c662cf996e3cc8998066444e18e6d1ac5af43e7f))
+- A signal to --watch, repl or run exits, and takes Chrome with it — 2026-09-26 by [@izelnakri](https://github.com/izelnakri) ([`5b8d414`](https://github.com/izelnakri/qunitx-cli/commit/5b8d4149d7162baab8569829ea06a5edc3e5dcc1))
+- A signal test that only sends the signal, and does not ask deno what it cannot see — 2026-09-26 by [@izelnakri](https://github.com/izelnakri) ([`0ecf879`](https://github.com/izelnakri/qunitx-cli/commit/0ecf879cf1a1d092124de6b7c2a4784affdfe2c5))
+- One session to compare two spellings of one command — 2026-09-27 by [@izelnakri](https://github.com/izelnakri) ([`f921813`](https://github.com/izelnakri/qunitx-cli/commit/f9218139b5a20a74a053cbc0c66ddc7490898686))
+- The doctest sandbox lets playwright-core 1.64 ask whether it runs on WSL — 2026-10-17 by [@izelnakri](https://github.com/izelnakri) ([`347c7e2`](https://github.com/izelnakri/qunitx-cli/commit/347c7e225ad77d43df414a86c66bf3d7f258f959))
+- Shutdown does not wait for a Chrome that was killed by a signal — 2026-10-17 by [@izelnakri](https://github.com/izelnakri) ([`f48bd58`](https://github.com/izelnakri/qunitx-cli/commit/f48bd58089b379b470dff3cb5fce6653726fa42e))
+
+### Documentation
+- A small shop project, and a storyboard that records the GIF from it — 2026-09-26 by [@izelnakri](https://github.com/izelnakri) ([`89a3284`](https://github.com/izelnakri/qunitx-cli/commit/89a3284c9be3b8fad7e3d8d2f18d3d646106e1bf))
+- A new demo.gif, recorded from docs/demo — 2026-09-26 by [@izelnakri](https://github.com/izelnakri) ([`6c38734`](https://github.com/izelnakri/qunitx-cli/commit/6c387348d26536c951d81922dbb5fb3ce7be87f9))
+- The storyboard is a tape again — 2026-09-26 by [@izelnakri](https://github.com/izelnakri) ([`97c7fd4`](https://github.com/izelnakri/qunitx-cli/commit/97c7fd44b09637a05208dc5e9bb61173f474fa3c))
+- The tape is the clock, and the studio is four files — 2026-09-27 by [@izelnakri](https://github.com/izelnakri) ([`38d707c`](https://github.com/izelnakri/qunitx-cli/commit/38d707c387dd8e3436e84e69e10cc9e68fc46558))
+- The panes belong to the script, not to the tool — 2026-09-27 by [@izelnakri](https://github.com/izelnakri) ([`ed48e2a`](https://github.com/izelnakri/qunitx-cli/commit/ed48e2aa10c2d3bd88a90d5414c6bbfc1c01e532))
+
 ## [0.38.0] - 2026-09-25
 [`v0.37.4...v0.38.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.37.4...v0.38.0)
 
