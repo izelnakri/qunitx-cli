@@ -1,4 +1,7 @@
 import { module, test } from 'qunitx';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { spawn } from '../../lib/chrome/spawn.ts';
 import type { ChromeHandle } from '../../lib/types.ts';
 
@@ -40,6 +43,37 @@ module('Chrome | spawn shutdown handle', { concurrency: true }, () => {
     // Idempotent: the exit-handler safety net may also fire, so a second call must be harmless.
     await handle!.shutdown();
     assert.ok(true, 'a second shutdown is a no-op, not a crash');
+  });
+
+  // A signal death leaves exitCode null, so shutdown() used to await a `close` that had already
+  // fired — forever. The daemon hit it when Chrome died mid-connectOverCDP: the fallback launch
+  // waited on shutdownPrelaunch() and the run hung until the harness killed it.
+  test('shutdown() on a Chrome SIGKILLed after CDP-ready resolves', async (assert) => {
+    if (process.platform === 'win32') return assert.ok(true, 'skipped: needs a POSIX script');
+
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'qunitx-fake-chrome-'));
+    try {
+      const fakeChrome = path.join(dir, 'chrome');
+      await writeFile(
+        fakeChrome,
+        '#!/bin/sh\necho "DevTools listening on ws://127.0.0.1:1/devtools/browser/x" >&2\nexec sleep 60\n',
+        { mode: 0o755 },
+      );
+      const chrome = await spawn(fakeChrome, []);
+      assert.ok(chrome, 'resolved an EarlyChrome once the CDP line was printed');
+
+      const closed = new Promise((resolve) => chrome!.proc.once('close', resolve));
+      process.kill(-chrome!.proc.pid!, 'SIGKILL');
+      await closed;
+
+      const outcome = await Promise.race([
+        chrome!.shutdown().then(() => 'resolved'),
+        new Promise((resolve) => setTimeout(resolve, 5_000, 'hung')),
+      ]);
+      assert.equal(outcome, 'resolved', 'shutdown does not wait for a close that already fired');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   test('returns null immediately when no chrome path is given', async (assert) => {
