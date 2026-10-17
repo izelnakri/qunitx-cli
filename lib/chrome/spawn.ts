@@ -109,8 +109,9 @@ export async function spawn(
     proc.ref(); // re-ref so the close event fires while the event loop is still running
     // `pid === undefined` means the spawn itself failed, so there is no group to kill and no
     // `close` worth waiting for. It used to be a non-null assertion, which types away the one
-    // case where the value is genuinely absent.
-    if (proc.exitCode === null && proc.pid !== undefined) {
+    // case where the value is genuinely absent. A signal death leaves `exitCode` null, so a Chrome
+    // killed mid-connectOverCDP looked alive and this awaited a `close` that had already fired.
+    if (proc.exitCode === null && proc.signalCode === null && proc.pid !== undefined) {
       killProcessGroup(proc.pid);
       await new Promise<void>((resolve) => proc.once('close', resolve));
     }
