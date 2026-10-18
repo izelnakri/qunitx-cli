@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.0] - 2026-10-18
+[`v0.38.1...v0.39.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.38.1...v0.39.0)
+
+### Bug Fixes
+- A reader that has gone is not a failed run — 2026-10-18 by [@izelnakri](https://github.com/izelnakri) ([`8569b38`](https://github.com/izelnakri/qunitx-cli/commit/8569b38a0bd3dbb7a3011b8dd38a5ca769f94a25))
+- A page load the OS was briefly out of buffers for is tried again — 2026-10-18 by [@izelnakri](https://github.com/izelnakri) ([`eacf8bd`](https://github.com/izelnakri/qunitx-cli/commit/eacf8bd52ae2edccfdfeabb02ddd9a7983ea612c))
+
 ## [0.38.1] - 2026-10-17
 [`v0.38.0...v0.38.1`](https://github.com/izelnakri/qunitx-cli/compare/v0.38.0...v0.38.1)
 
