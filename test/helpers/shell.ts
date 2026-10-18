@@ -218,11 +218,14 @@ export async function spawnCapture(
     env,
     cwd,
     stdin,
+    closeStdout = false,
   }: {
     timeout?: number;
     env?: NodeJS.ProcessEnv;
     cwd?: string;
     stdin?: string | StdinChunk[];
+    /** The reader is gone before the child writes a byte, as `qunitx … | head` leaves it. */
+    closeStdout?: boolean;
   } = {},
 ): Promise<CapturedResult> {
   const { bin, args, env: prefixEnv } = parseCommand(command);
@@ -245,6 +248,7 @@ export async function spawnCapture(
     child.stdin.on('error', () => {});
     child.stdout.on('error', () => {});
     child.stderr.on('error', () => {});
+    if (closeStdout) child.stdout.destroy();
     const stdoutChunks: Array<{ time: number; data: string }> = [];
     const stderrChunks: Array<{ time: number; data: string }> = [];
     let stdout = '';
@@ -480,6 +484,7 @@ export async function execute(
     cwd,
     stdin,
     env,
+    closeStdout,
   }: {
     moduleName?: string;
     testName?: string;
@@ -493,6 +498,7 @@ export async function execute(
      * editor and sat in it until the test timed out.
      */
     env?: NodeJS.ProcessEnv;
+    closeStdout?: boolean;
   } = {},
 ): Promise<CapturedResult> {
   const command = applyImplicitFlags(commandString);
@@ -503,6 +509,7 @@ export async function execute(
       env: { ...process.env, FORCE_COLOR: '0', ...env },
       cwd,
       stdin,
+      closeStdout,
     });
 
     if (process.env.QUNITX_VERBOSE) {
