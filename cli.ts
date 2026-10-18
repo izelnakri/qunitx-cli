@@ -21,6 +21,15 @@ process.title = 'qunitx';
 // rather than following it. Everything between here and that import is synchronous.
 startPrelaunch();
 
+// A reader that has gone — a pipe whose end hung up (EPIPE), a closed terminal (EIO) — has nothing
+// left to be told. Unhandled, that `error` event exits 1, and under Deno it lands ahead of the
+// signal already stopping the process: `--watch` sent SIGHUP reported 1, not 129.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code !== 'EPIPE' && error.code !== 'EIO') throw error;
+  });
+}
+
 // The timer is a LAST RESORT, not a routine path: whenever it fires before the drain callback,
 // process.exit() drops whatever is still queued. run.ts learned this the hard way and uses the
 // same 30s — on Windows under 16-way CI load the callback can take far longer than seems
