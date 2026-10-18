@@ -35,6 +35,15 @@ import { joinRunnerRegistry } from './helpers/runner-registry.ts';
 // both lanes without a parallel runner-deno.ts.
 const IS_DENO = typeof (globalThis as { Deno?: { execPath(): string } }).Deno !== 'undefined';
 const DENO_EXEC = IS_DENO ? (globalThis as { Deno: { execPath(): string } }).Deno.execPath() : '';
+// Before 2.9.7, Deno's node:child_process reported a child that HANDLED a signal and exited 128+n
+// as killed by it (measured on 2.9.2–2.9.6), and the signal tests assert those exits exactly.
+// Said up front, rather than as one baffling signal-test failure six minutes into the lane.
+const MIN_DENO = '2.9.7';
+if (IS_DENO && process.versions.deno!.localeCompare(MIN_DENO, 'en', { numeric: true }) < 0) {
+  console.error(`The deno lane needs deno >= ${MIN_DENO}, found ${process.versions.deno}.`);
+  console.error('Run `deno upgrade` and try again.');
+  process.exit(1);
+}
 
 // Project-local V8 compile-cache dir for spawned workers and the cli.ts
 // processes the test files invoke. Sits under node_modules/.cache (npm
