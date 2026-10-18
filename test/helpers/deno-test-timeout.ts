@@ -16,6 +16,11 @@
  */
 
 import { PER_TEST_TIMEOUT_MS } from './per-test-timeout.ts';
+import { config } from 'qunitx';
+
+// qunitx 1.4 adopted QUnit 3's 3s per-test default; the deadline below is the only one this
+// lane should have, as `--test-timeout` is on node (see test-worker-preload.ts).
+config.testTimeout = 0;
 
 type TestFn = (...args: unknown[]) => unknown;
 type TestOptions = { name?: string; fn?: TestFn };

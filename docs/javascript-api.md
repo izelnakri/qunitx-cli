@@ -82,7 +82,7 @@ indistinguishable from a complete run of a 2-test one — both `ok: false`, both
 
 ### Picking up where a run stopped
 
-There is no `resume()`, and there cannot be a real one: QUnit 2.x has no pause/resume — `abort`
+There is no `resume()`, and there cannot be a real one: QUnit has no pause/resume — `abort`
 empties its queue, and `QUnit.start()` throws if the run is already going — and the browser is
 torn down afterwards, so no page state survives to resume _into_.
 
