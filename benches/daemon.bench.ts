@@ -22,12 +22,11 @@
  * daemon is expected to be 3-4× faster. A regression here that shrinks the
  * gap is the signal that the daemon's value prop has eroded.
  *
- * Note: this file is run in an isolated subprocess by scripts/check-benchmarks.ts
- * (used by `bench:check` / `bench:update` / `make bench`), so the persistent
- * daemon started below cannot affect other bench files there. It is intentionally
- * NOT added to the in-process `bench` task, where top-level daemon startup would
- * leak into e2e.bench.ts numbers. The daemon's 30-min idle timeout handles
- * cleanup if this file's process exits before manual `qunitx daemon stop`.
+ * A daemon belongs to a directory, not to a process: while one runs, every `qunitx` run in
+ * this checkout goes through it, a bench subprocess's or the developer's. So this file stops
+ * the daemon it starts when its process exits, rather than leaving it for the 30-min idle
+ * timeout. It is still NOT in the in-process `bench` task, where top-level daemon startup
+ * would run alongside e2e.bench.ts.
  */
 import { mkdir } from 'node:fs/promises';
 
@@ -55,6 +54,15 @@ await spawnCLI(['daemon', 'stop']);
 // fixture the bench iterates on. Subsequent measured iterations hit the
 // warm cache — the actual thing the daemon is supposed to optimize.
 await spawnCLI(['daemon', 'start']);
+// Synchronous: an unload listener cannot await.
+globalThis.addEventListener('unload', () => {
+  new Deno.Command('node', {
+    args: ['cli.ts', 'daemon', 'stop'],
+    cwd: PROJECT_ROOT,
+    stdout: 'null',
+    stderr: 'null',
+  }).outputSync();
+});
 await spawnCLI([FIXTURE]);
 
 Deno.bench(
