@@ -10,15 +10,21 @@ interface QUnitLike {
   config: {
     autostart: boolean;
     testTimeout?: number;
-    pageLoaded?: boolean;
     queue: unknown[];
-    modules: unknown[];
-    currentModule: Record<string, unknown>;
-    pq: { finished: boolean };
+    reporters: { html?: boolean };
   };
+  reporters: { html: { init(QUnit: QUnitLike): HtmlReporterLike } };
   on(event: string, callback: (details: Record<string, unknown>) => void): void;
   start(): void;
   reset(): void;
+}
+
+/** The parts of QUnit's HTML reporter that have to be put back between runs. */
+interface HtmlReporterLike {
+  stats: { failedTests: unknown[]; defined: number; completed: number };
+  hiddenTests: unknown[];
+  listen: (() => void) | null;
+  appendInterface(): void;
 }
 
 /** What the terminal calls over CDP. Type-only; the object itself is built below. */
@@ -111,11 +117,18 @@ export function harness(options: { timeout: number }): void {
   // Only when QUnit has not loaded yet. `version` is what tells the real thing from a preconfig
   // stub, and overwriting the real one — which is what injecting this after the bundle would do —
   // would throw away every test already registered.
-  if (!existing || !existing.version) target.QUnit = { config: { autostart: false } };
+  //
+  // `html: false` because QUnit 3's HTML reporter only lasts one run: its second `runStart` throws,
+  // and the run never begins. The harness builds the reporter itself in `attach` instead, which is
+  // the only way to hold the instance it has to prepare again before every run after the first.
+  const ownsReporter = !existing || !existing.version;
+  if (ownsReporter) target.QUnit = { config: { autostart: false, reporters: { html: false } } };
 
   let collected: unknown[] = [];
   let settle: ((payload: string) => void) | null = null;
   let attached = false;
+  let reporter: HtmlReporterLike | null = null;
+  let runs = 0;
 
   const api: ReplHarness = {
     loaded: [],
@@ -176,6 +189,7 @@ export function harness(options: { timeout: number }): void {
       // every `qunitx run` — still gets its results. Idempotent: QUnit would fire each listener
       // once per registration, and a test reported twice is a wrong count, not a cosmetic one.
       attach(QUnit);
+      if (reporter && runs > 0) prepareReporter(reporter);
 
       return new Promise((resolve) => {
         settle = resolve;
@@ -191,6 +205,10 @@ export function harness(options: { timeout: number }): void {
     if (attached) return;
     attached = true;
     QUnit.config.testTimeout = options.timeout;
+    if (ownsReporter) {
+      QUnit.config.reporters.html = true;
+      reporter = QUnit.reporters.html.init(QUnit);
+    }
     // Snapshotted HERE, not at `runEnd`: QUnit calls `slimAssertions()` on the line after it
     // emits `testEnd`, deleting `actual` and `expected` from every assertion to keep a long
     // suite from retaining them. Holding the live object and serializing later reported every
@@ -201,7 +219,10 @@ export function harness(options: { timeout: number }): void {
     QUnit.on('runEnd', () => {
       const payload = JSON.stringify({ tests: collected });
       collected = [];
-      prepare(QUnit);
+      runs++;
+      // Ready for the next evaluation: since QUnit 3, `reset()` alone gives a fresh queue, root
+      // module and `_runStarted`, and keeps the rest of the config.
+      QUnit.reset();
       const resolve = settle;
       settle = null;
       // Deferred a turn: QUnit is mid-emit, and resolving here would let the next evaluation
@@ -210,41 +231,20 @@ export function harness(options: { timeout: number }): void {
     });
   }
 
+  // A fresh page for the next run, as a reload would give. Done when that run starts, not at
+  // `runEnd`: the reporter writes its summary from a `runEnd` listener that fires after this one.
+  // Its other listeners stay registered from the first run, so `listen` must not add them again.
+  function prepareReporter(html: HtmlReporterLike): void {
+    html.stats = { failedTests: [], defined: 0, completed: 0 };
+    html.hiddenTests = [];
+    html.listen = () => {};
+    html.appendInterface();
+  }
+
   function assign(namespace: Record<string, unknown>): void {
     for (const name of Object.keys(namespace)) {
       if (name !== 'default') target[name] = namespace[name];
     }
-  }
-
-  // Puts a finished QUnit back into a state that accepts new tests. `QUnit.reset()` does most of
-  // it, but leaves three things a second run trips over: `pq.finished` (it clears the field on the
-  // class, not on the live queue), `pageLoaded` and friends (deleted, which makes `start()` defer
-  // forever), and the root module (already run, and its hooks are consumed). The fresh root keeps
-  // the previous suite report so `reset()` has something to clear next time.
-  function prepare(QUnit: QUnitLike): void {
-    const previousRoot = QUnit.config.currentModule;
-    QUnit.reset();
-    QUnit.config.pq.finished = false;
-    Object.assign(QUnit.config, {
-      pageLoaded: true,
-      started: 0,
-      updateRate: 1000,
-      filter: '',
-      depth: 0,
-      testTimeout: options.timeout,
-    });
-    const root = {
-      name: '',
-      tests: [],
-      childModules: [],
-      testsRun: 0,
-      testsIgnored: 0,
-      hooks: { before: [], beforeEach: [], afterEach: [], after: [] },
-      suiteReport: previousRoot.suiteReport,
-    };
-    QUnit.config.currentModule = root;
-    QUnit.config.modules.length = 0;
-    QUnit.config.modules.push(root);
   }
 
   // QUnit's failure payloads carry live objects (`actual`, `expected`) that routinely point back

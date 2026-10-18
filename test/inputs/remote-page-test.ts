@@ -9,7 +9,7 @@ import '../helpers/custom-asserts.ts';
 // `qunitx https://objectmodel.js.org/test/`. Nothing is bundled: the page is opened where it
 // lives, and QUnit reports through the hook. These serve one locally and run it for real.
 
-/** The vendored runtime is a genuine QUnit 2.x surface, so the fixture page is a genuine runner. */
+/** The vendored runtime is a genuine QUnit 3 surface, so the fixture page is a genuine runner. */
 const RUNTIME = await fs.readFile('templates/vendor/qunitx-runtime.js', 'utf8');
 
 const page = (body: string) => `<!doctype html>

@@ -177,6 +177,19 @@ module('API | repl | tests typed at the prompt', { concurrency: true }, () => {
     });
   });
 
+  test('the page shows the latest run, as a reload would, not every run piled up', async (assert) => {
+    // QUnit 3's HTML reporter is built for one run per page; the harness re-arms it per batch.
+    await withRepl({}, async (session) => {
+      await session.eval("test('first', (a) => a.true(true))");
+      await session.eval("test('second', (a) => a.true(true))");
+      const page = await session.eval(
+        "[...document.querySelectorAll('#qunit-tests > li .test-name')].map((n) => n.textContent).join() + ' ' + document.querySelectorAll('#qunit-testrunner-toolbar').length",
+      );
+
+      assert.equal(page.output, "'second 1'");
+    });
+  });
+
   test('a failing test reports as one — the prompt does not throw for it', async (assert) => {
     const output = captureStream();
     await withRepl({ reporter: 'tap', console: streamConsole(output) }, async (session) => {

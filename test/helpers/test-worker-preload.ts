@@ -21,6 +21,11 @@
 
 import { after } from 'node:test';
 import { inspect } from 'node:util';
+import { config } from 'qunitx';
+
+// qunitx 1.4 adopted QUnit 3's 3s per-test default, which most browser-driving tests here outrun.
+// The runner's PER_TEST_TIMEOUT_MS (`--test-timeout`) is the deadline; one deadline, not two.
+config.testTimeout = 0;
 
 const o = inspect.defaultOptions;
 o.breakLength = 240;
