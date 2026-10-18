@@ -18,6 +18,7 @@ import { prelaunchPromise, shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { closeCompletely } from '../utils/close-with-grace.ts';
 import { Failure } from '../task/index.ts';
 import { harness } from '../setup/qunit-harness.ts';
+import { navigate } from './navigate.ts';
 import { typeOfValue } from './type-of-value.ts';
 import { inspect } from './inspect.ts';
 import { colorEnabled } from '../utils/color.ts';
@@ -635,7 +636,7 @@ export async function start(
     await bindServerToPort(server, config);
     const url = `http://localhost:${config.port}`;
     await page.addInitScript({ content: initScript(config) });
-    await page.goto(url);
+    await navigate(page, url);
 
     const cdp = await page.context().newCDPSession(page);
     cdp.on('Runtime.consoleAPICalled', (event) => {
