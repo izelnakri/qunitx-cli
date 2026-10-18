@@ -7,6 +7,9 @@
  *   startup  →  Node boot + module load (no Chrome)
  *   e2e-1    →  full run: bundle + browser launch + 1 test file + exit
  *   e2e-3    →  full run: bundle + browser launch + 3 concurrent test files + exit
+ *
+ * Runs pass --no-daemon: a daemon left running for this directory, by daemon.bench.ts or by
+ * anyone, would otherwise serve them warm, and a cold run would measure ~3× faster than it is.
  */
 import { mkdir } from 'node:fs/promises';
 
@@ -18,7 +21,7 @@ await mkdir(`${PROJECT_ROOT}/tmp`, { recursive: true });
 function spawnCLI(args: string[]): Promise<{ code: number }> {
   const id = crypto.randomUUID();
   const cmd = new Deno.Command('node', {
-    args: ['cli.ts', ...args, `--output=tmp/bench-run-${id}`],
+    args: ['cli.ts', ...args, '--no-daemon', `--output=tmp/bench-run-${id}`],
     cwd: PROJECT_ROOT,
     env: { ...Deno.env.toObject(), FORCE_COLOR: '0' },
     stdout: 'null',
