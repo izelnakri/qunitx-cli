@@ -99,6 +99,31 @@ module('Utils | getChangedFilePathsInGitSince | git interaction', { concurrency:
     assert.equal(scan.scope, 'everything');
   });
 
+  test('a project in a subdirectory of its repo gets paths under the project, not doubled', async (assert) => {
+    // git prints paths relative to the repo root; a monorepo package's project root is below it.
+    const repo = await makeRepo({
+      'packages/app/package.json': '{}',
+      'packages/app/src/a.ts': 'export const a = 1;',
+      'packages/lib/b.ts': 'export const b = 1;',
+    });
+    const projectRoot = path.join(repo, 'packages/app');
+    await fs.writeFile(path.join(projectRoot, 'src/a.ts'), 'export const a = 2;');
+    await fs.writeFile(path.join(projectRoot, 'src/new.ts'), '');
+    await fs.writeFile(path.join(repo, 'packages/lib/b.ts'), 'export const b = 2;');
+
+    const scan = await getChangedFilePathsInGitSince(projectRoot, 'HEAD');
+
+    assert.deepEqual(
+      [...paths(scan)].sort(),
+      [
+        path.join(repo, 'packages/app/src/a.ts'),
+        path.join(repo, 'packages/app/src/new.ts'),
+        path.join(repo, 'packages/lib/b.ts'),
+      ],
+      'resolved against the repo root, spelled from the project root as given',
+    );
+  });
+
   test('an unknown ref is a declared failure, not a rejection', async (assert) => {
     const root = await makeRepo({ 'a.ts': '' });
     const scan = await getChangedFilePathsInGitSince(root, 'no-such-ref').result();
