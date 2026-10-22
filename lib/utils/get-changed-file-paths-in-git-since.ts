@@ -152,7 +152,7 @@ export type GitScanFailure = Failure.Of<typeof GitScanFailed>;
  *
  * `timeoutMs` is injectable for tests; production always uses the default.
  *
- * Returns a lazy, retryable `Task`: the two git calls run only when the Task is awaited, and a
+ * Returns a lazy, retryable `Task`: the git calls run only when the Task is awaited, and a
  * caller can `.retry()` a transient failure (e.g. `index.lock` contention) for free — `Task.all`
  * rebuilds over restarted members, so a retry re-runs this whole chain, git calls included. The
  * git boundary is the only throwing step, so `.mapErr` remaps *any* rejection there to a
@@ -178,11 +178,13 @@ export function getChangedFilePathsInGitSince(
   return Task.all([
     runGit(['diff', '--name-only', '--no-renames', ref, '--', projectRoot], projectRoot, timeoutMs),
     runGit(['status', '--porcelain', '--untracked-files=all'], projectRoot, timeoutMs),
+    // Where projectRoot sits inside the repo (`packages/app/`, or empty at the root).
+    runGit(['rev-parse', '--show-prefix'], projectRoot, timeoutMs),
   ])
     .mapErr((cause) =>
       GitScanFailed({ ref, reason: (cause as Error).message.split('\n')[0] }, { cause }),
     )
-    .map(([diffOut, statusOut]): ChangeScan => {
+    .map(([diffOut, statusOut, prefixOut]): ChangeScan => {
       // `git status --porcelain` lines look like "XY path" or "XY path -> newpath"
       // for renames. We disabled renames in `git diff` above; for status, take the
       // rightmost path (post-rename name is what's currently on disk).
@@ -208,9 +210,18 @@ export function getChangedFilePathsInGitSince(
       const trigger = Array.from(relPaths).find(isBlastRadius);
       if (trigger !== undefined) return { scope: 'everything', trigger };
 
+      // Both commands print paths relative to the repo root, which is above projectRoot when the
+      // project is a package inside a larger repo. Climbing one directory per prefix segment
+      // rather than asking git for the toplevel keeps projectRoot's own spelling: git reports the
+      // toplevel as a real path (`/private/var/…` on macOS), which would never match the
+      // test-file paths it is compared against.
+      const repoRoot = prefixOut
+        .trim()
+        .split('/')
+        .reduce((dir, segment) => (segment ? path.dirname(dir) : dir), path.resolve(projectRoot));
       return {
         scope: 'paths',
-        paths: new Set(Array.from(relPaths, (rel) => path.resolve(projectRoot, rel))),
+        paths: new Set(Array.from(relPaths, (rel) => path.resolve(repoRoot, rel))),
       };
     });
 }
