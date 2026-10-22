@@ -44,6 +44,8 @@ const FRAME_LOCATION_RE = /^(.+):(\d+):(\d+)$/;
 // http(s) bundle URLs the local server serves, optionally Chrome's `async ` prefix.
 // `script.js` is `qunitx run`'s bundle; the other two are the test runner's.
 const BUNDLE_URL_RE = /^(?:async )?https?:\/\/.*\/(?:tests|filtered-tests|script)\.js$/;
+// Captures the pathname of an http(s) frame URL, minus any query or fragment.
+const MODULE_URL_RE = /^(?:async )?https?:\/\/[^/]+(\/[^?#]*)/;
 
 // Recognised stack-frame layouts, tried in order.  First whose pattern matches wins —
 // even if its URL fails to resolve (caller falls back to keeping the original frame).
@@ -124,6 +126,35 @@ export interface SourceMapDecoder {
   outDir: string;
   /** Original source texts verbatim from the map JSON; one entry per `sources` element. */
   sourcesContent: (string | null)[];
+  /**
+   * A `--no-bundle` page has no bundle: the browser loads each file as its own module. This maps
+   * each served module's URL pathname to the file behind it, and frames resolve through it rather
+   * than through `segmentsByLine`. Absent for a bundled run.
+   */
+  modules?: Map<string, ServedModule>;
+}
+
+/**
+ * One module a `--no-bundle` run served: the file, the code the browser ran, and how that code's
+ * positions map back. `map` is `null` when they need no mapping — plain JavaScript, and TypeScript
+ * whose types were stripped in place, which keeps every line and column where it was.
+ *
+ * ```ts
+ * import type { ServedModule } from './source-map.ts';
+ *
+ * const served: ServedModule = { absolutePath: '/proj/a.ts', code: 'let a   = 1;', source: 'let a: 1 = 1;', map: null };
+ * served.map; // null — line 1 column 5 of the served code is line 1 column 5 of a.ts
+ * ```
+ */
+export interface ServedModule {
+  /** The file on disk. */
+  absolutePath: string;
+  /** Exactly what the server sent — the text V8's coverage offsets index into. */
+  code: string;
+  /** The file's own text, for the source line a failure points at. */
+  source: string;
+  /** How `code` maps back to `source`, or `null` when positions are identical. */
+  map: SourceMapDecoder | null;
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -628,6 +659,45 @@ function makeDisplayPath(absolutePath: string, projectRoot: string): string {
   return absolute.startsWith(prefix) ? absolute.slice(prefix.length) : absolute;
 }
 
+/**
+ * The served module a frame URL names on a `--no-bundle` page, by its pathname. `null` for a
+ * bundled run (no `modules`) and for any URL the server did not serve as a module.
+ *
+ * ```ts
+ * import * as SourceMap from './source-map.ts';
+ *
+ * const served = { absolutePath: '/proj/a.ts', code: '', source: '', map: null };
+ * const decoder = { ...SourceMap.parse('{"mappings":""}', '/proj/tmp'), modules: new Map([['/@fs/proj/a.ts', served]]) };
+ *
+ * SourceMap.servedModule(decoder, 'async http://localhost:1234/@fs/proj/a.ts') === served; // true
+ * SourceMap.servedModule(decoder, 'http://localhost:1234/tests.js'); // null
+ * ```
+ */
+export function servedModule(decoder: SourceMapDecoder, url: string): ServedModule | null {
+  if (!decoder.modules) return null;
+  const pathname = MODULE_URL_RE.exec(url)?.[1];
+
+  return (pathname && decoder.modules.get(pathname)) || null;
+}
+
+function lookupModulePosition(
+  decoder: SourceMapDecoder,
+  url: string,
+  line: number,
+  col: number,
+): { absolutePath: string; line: number; col: number; sourceText: string | null } | null {
+  const served = servedModule(decoder, url);
+  if (!served) return null;
+  if (served.map) return lookupPosition(served.map, line, col);
+
+  return {
+    absolutePath: served.absolutePath,
+    line,
+    col,
+    sourceText: extractSourceLine(served.source, line - 1),
+  };
+}
+
 /** Resolves a `URL:LINE:COL` string to a display path + userPath + sourceText, or null on miss. */
 function tryResolve(
   urlLineCol: string,
@@ -635,8 +705,10 @@ function tryResolve(
   projectRoot: string,
 ): { display: string; userPath: string | null; sourceText: string | null } | null {
   const location = parseFrameLocation(urlLineCol);
-  if (!location || !isBundleUrl(location.url)) return null;
-  const original = lookupPosition(decoder, location.line, location.col);
+  if (!location) return null;
+  const original = isBundleUrl(location.url)
+    ? lookupPosition(decoder, location.line, location.col)
+    : lookupModulePosition(decoder, location.url, location.line, location.col);
   if (!original) return null;
   const display = `${makeDisplayPath(original.absolutePath, projectRoot)}:${original.line}:${original.col}`;
   return {

@@ -102,6 +102,7 @@ export function create(): RunState {
       staticHTMLs: {},
       dynamicContentHTMLs: {},
     },
+    noBundle: null,
     watch: {
       building: false,
       pendingBuildTrigger: null,

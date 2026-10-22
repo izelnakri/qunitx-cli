@@ -1,0 +1,6 @@
+{
+  // Deno's own import map: qunitx serves it to the browser as-is.
+  "imports": {
+    "@app/": "./lib/",
+  },
+}

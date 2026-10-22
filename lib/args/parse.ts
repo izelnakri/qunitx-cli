@@ -105,6 +105,11 @@ export interface ParsedFlags {
   reporter?: ReporterName;
   /** `--junit`: write a JUnit report. `true` uses the default path; a string overrides it. */
   junit?: boolean | string;
+  /**
+   * `--bundle`/`--no-bundle`: bundle the tests with esbuild (`true`), or have the browser load
+   * them natively through an import map (`false`). Unset: bundle when esbuild is installed.
+   */
+  bundle?: boolean;
   /** `--coverage`: collect V8 line coverage. */
   coverage?: boolean;
   /** Artifact formats beyond the terminal summary (`lcov`, `html`). */
@@ -230,6 +235,10 @@ function applyFlag(result: ParsedFlags, arg: string): ParseFailure | undefined {
   } else if (arg === '-o' || arg.startsWith('-o=') || arg.startsWith('--open')) {
     result.open =
       value === undefined || value === 'true' ? true : value === 'false' ? false : value;
+  } else if (arg === '--no-bundle') {
+    result.bundle = false;
+  } else if (arg === '--bundle' || arg.startsWith('--bundle=')) {
+    result.bundle = parseBoolean(value);
   } else if (arg.startsWith('--failfast') || arg.startsWith('--failFast')) {
     result.failFast = parseBoolean(value);
   } else if (arg === '-f' || arg.startsWith('--only-failed') || arg.startsWith('--failed')) {
