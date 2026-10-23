@@ -3,6 +3,8 @@
 [![CI](https://github.com/izelnakri/qunitx-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/izelnakri/qunitx-cli/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/izelnakri/qunitx-cli/branch/main/graph/badge.svg)](https://codecov.io/gh/izelnakri/qunitx-cli)
 [![npm](https://img.shields.io/npm/v/qunitx-cli)](https://www.npmjs.com/package/qunitx-cli)
+[![JSR](https://jsr.io/badges/@izelnakri/qunitx-cli)](https://jsr.io/@izelnakri/qunitx-cli)
+[![JSR score](https://jsr.io/badges/@izelnakri/qunitx-cli/score)](https://jsr.io/@izelnakri/qunitx-cli)
 [![npm downloads](https://img.shields.io/npm/dm/qunitx-cli)](https://www.npmjs.com/package/qunitx-cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
