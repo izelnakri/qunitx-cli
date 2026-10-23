@@ -5,6 +5,7 @@ import type { ChildProcess } from 'node:child_process';
 import type { Buffer } from 'node:buffer';
 import type { BuildContext, Plugin as EsbuildPlugin } from 'esbuild';
 import type { SourceMapDecoder } from './utils/source-map.ts';
+import type { NoBundleState } from './setup/no-bundle.ts';
 import type { Reporter } from './reporters/types.ts';
 import type { Console } from './console.ts';
 import type { QUnitSelector } from './selection/line-targets.ts';
@@ -314,6 +315,12 @@ export interface RunState {
    * group config is spread off. Frozen from that point on, so all groups share one copy.
    */
   htmlAssets: HtmlAssets;
+  /**
+   * The import map, served modules and import graph of a `--no-bundle` run; `null` for a bundled
+   * one. Set once by config setup, before any group is spread off, so every group — and the one
+   * server they share — reads the same object.
+   */
+  noBundle: NoBundleState | null;
   /**
    * RunState for **this** group only. The group spread replaces this object (everything else in
    * `RunState` is shared by reference), so it is the one place per-group slots may live.

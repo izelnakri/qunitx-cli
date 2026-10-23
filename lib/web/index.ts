@@ -89,7 +89,7 @@ export type Middleware = (req: Request, res: Response, next: () => void) => void
  * ```
  */
 export interface Route {
-  /** The registered path pattern, e.g. `/tests/:id` or the `/*` wildcard. */
+  /** The registered path pattern, e.g. `/tests/:id`, the `/*` catch-all, or a `/assets/*` prefix. */
   path: string;
   /** The handler `#handleRequest` dispatches to when this route matches. */
   handler: RouteHandler;
@@ -97,6 +97,8 @@ export interface Route {
   paramNames: string[];
   /** Whether this is the catch-all `/*` route. */
   isWildcard: boolean;
+  /** For a `/prefix/*` route, the `/prefix/` every matching path starts with; absent otherwise. */
+  prefix?: string;
   /** The captured segment values from the most recent match; feeds `req.params`. */
   paramValues?: string[];
   /** Prebuilt matcher for parameterised paths; `null` for static ones. */
@@ -376,6 +378,7 @@ export class HTTPServer {
       handler,
       paramNames,
       isWildcard: path === '/*',
+      prefix: path !== '/*' && path.endsWith('/*') ? path.slice(0, -1) : undefined,
       compiledRegex:
         paramNames.length > 0 ? new RegExp(`^${this.#buildRegexPattern(path, paramNames)}$`) : null,
     };
@@ -419,8 +422,15 @@ export class HTTPServer {
       return null;
     }
 
+    // A `/prefix/*` route is more specific than the catch-all, so it wins whichever was
+    // registered first; between two prefixes, the longer one does.
+    const prefixed = Object.values(routes)
+      .filter((route) => route.prefix && url.startsWith(route.prefix))
+      .sort((a, b) => b.prefix!.length - a.prefix!.length)[0];
+
     return (
       routes[url] ||
+      prefixed ||
       Object.values(routes).find((route) => {
         const { path, isWildcard } = route;
 

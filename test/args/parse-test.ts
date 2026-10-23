@@ -205,6 +205,21 @@ module('Args | parse | --failFast', { concurrency: true }, () => {
   });
 });
 
+module('Args | parse | --bundle', { concurrency: true }, () => {
+  test('--no-bundle sets bundle to false', (assert) => {
+    assert.strictEqual(parseFlags(['--no-bundle']).bundle, false);
+  });
+
+  test('--bundle and --bundle=false set it either way', (assert) => {
+    assert.strictEqual(parseFlags(['--bundle']).bundle, true);
+    assert.strictEqual(parseFlags(['--bundle=false']).bundle, false);
+  });
+
+  test('left out, bundle stays unset so the run can decide by whether esbuild is installed', (assert) => {
+    assert.strictEqual(parseFlags([]).bundle, undefined);
+  });
+});
+
 module('Args | parse | --only-failed', { concurrency: true }, () => {
   test('--only-failed sets onlyFailed to true', (assert) => {
     const flags = parseFlags(['--only-failed']);

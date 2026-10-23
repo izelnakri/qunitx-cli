@@ -41,7 +41,7 @@ under [Installation](#installation).
 - [Installation](#installation) · [Upgrading](#upgrading)
 - [Writing tests](#writing-tests) · [Usage](#usage) · [CLI reference](#cli-reference)
 - [Configuration](#configuration) · [Environment variables](#environment-variables) ·
-  [JSX / TSX](#jsx--tsx) · [esbuild plugins](#esbuild-plugins)
+  [JSX / TSX](#jsx--tsx) · [esbuild plugins](#esbuild-plugins) · [No-bundle mode](#no-bundle-mode)
 - [REPL](#repl) · [Running a script](#running-a-script) · [JavaScript API](#javascript-api) ·
   [Daemon mode](#daemon-mode)
 - [JUnit reports](#junit-reports) · [Code coverage](#code-coverage) · [Timezone](#timezone)
@@ -54,6 +54,7 @@ under [Installation](#installation).
 - Runs `.js`, `.ts`, `.jsx`, and `.tsx` test files in headless Chrome, Firefox, or WebKit (Playwright + esbuild)
 - TypeScript and JSX work with zero configuration — esbuild handles transpilation, including the React 17+ automatic JSX runtime
 - Bring your own esbuild plugins through `package.json` for `.vue`, `.svelte`, and other custom loaders
+- `--no-bundle` skips esbuild entirely: the browser loads each test file natively through a generated import map — the way Deno runs it — and esbuild becomes optional
 - Inline source maps for accurate stack traces pointing to original source files
 - Concurrent mode (default) splits test files across all CPU cores for fast parallel runs
 - `--watch` mode re-runs affected tests on file change
@@ -391,7 +392,9 @@ All CLI flags can also be set in `package.json` under the `qunitx` key, so you d
     "failFast": false,
     "port": 1234,
     "browser": "chromium",
-    "plugins": []
+    "plugins": [],
+    "bundle": true,
+    "importMap": "./test/import-map.json"
   }
 }
 ```
@@ -407,6 +410,8 @@ All CLI flags can also be set in `package.json` under the `qunitx` key, so you d
 | `port`       | `1234`                       | Preferred HTTP server port. qunitx auto-selects a free port if this one is taken.                                                                                            |
 | `browser`    | `"chromium"`                 | Browser engine to use: `"chromium"`, `"firefox"`, or `"webkit"`. Overridden by `--browser` on the CLI.                                                                       |
 | `plugins`    | `[]`                         | esbuild plugin specifiers loaded from your `node_modules` and applied to the test bundle. See [esbuild plugins](#esbuild-plugins).                                           |
+| `bundle`     | esbuild installed            | `false` loads the test files natively through an import map instead of bundling them. See [No-bundle mode](#no-bundle-mode).                                                 |
+| `importMap`  | —                            | An import map (`{ "imports", "scopes" }`) or the path of a JSON file holding one, layered over the generated map in a no-bundle run. See [No-bundle mode](#no-bundle-mode).  |
 
 CLI flags always override `package.json` values when both are present.
 
@@ -493,6 +498,82 @@ Each entry is one of:
 | `"./relative/plugin.js"`        | Loads a plugin you wrote yourself. Resolved against the project root (where your `package.json` lives).                                                    |
 
 Don't forget to add the plugin's file extension(s) to `qunitx.extensions` so directory scans and watch-mode rebuilds pick them up.
+
+## No-bundle mode
+
+```sh
+qunitx test/ --no-bundle
+```
+
+With `--no-bundle` (or `"bundle": false` in `package.json#qunitx`), qunitx does not bundle anything.
+The page gets an [import map](https://developer.mozilla.org/en-US/docs/Web/HTML/Element/script/type/importmap),
+and the browser loads every test file and everything it imports as its own native ES module — the
+way `deno test` runs the same file. esbuild is not loaded at all, so a project that never runs in
+bundle mode does not need it installed: a run without esbuild switches to no-bundle mode on its
+own and says so once.
+
+**What the import map contains**, each layer overriding the one before:
+
+1. **Your installed packages** — everything in `dependencies`, `devDependencies`,
+   `peerDependencies` and `optionalDependencies`, and everything those depend on, resolved the way
+   Node resolves them: `exports` with the `browser`, `import`, `module` and `default` conditions,
+   falling back to `browser`/`module`/`main`. A package installed in two versions gets a `scopes`
+   entry for the importer that sees the second one. Your own package's `exports` (self-reference)
+   and `imports` (`#internal`) are included, and `qunitx` falls back to the runtime qunitx-cli
+   embeds when you have not installed it.
+2. **`deno.json` / `deno.jsonc`** — its `imports` and `scopes`, or the file its `importMap` points
+   at. `npm:` specifiers resolve to your local install when there is one; `npm:` and `jsr:`
+   specifiers without one resolve to [esm.sh](https://esm.sh).
+3. **`package.json#qunitx.importMap`** — an inline import map, or the path of a JSON file:
+
+```json
+{
+  "qunitx": {
+    "bundle": false,
+    "importMap": {
+      "imports": {
+        "react": "https://esm.sh/react@19",
+        "~/": "./src/"
+      }
+    }
+  }
+}
+```
+
+Relative targets resolve against the file that declares them, as in a browser or in Deno.
+
+**TypeScript** is type-stripped by the runtime qunitx runs on (Node.js ≥ 22.13 or Deno), not
+by esbuild. Stripping replaces types with whitespace, so every line and column stays where you
+wrote it, and stack traces, `at:` locations and coverage need no source map. Syntax that cannot
+be erased (`enum`, `namespace`, parameter properties) is fully transformed instead, with a map.
+As with Node's own TypeScript support, a type-only import needs `import type` (or
+[`verbatimModuleSyntax`](https://www.typescriptlang.org/tsconfig/#verbatimModuleSyntax)), and an
+import of `./util.js` serves `./util.ts`. `.jsx` and `.tsx` files are transformed one at a time
+by esbuild, so they still need it installed.
+
+**A file that fails to load** does not stop the run. It becomes one failing test named after the
+file, carrying the reason, and every other file still runs:
+
+```
+not ok 2 test/cart-test.ts | loads without errors
+  ---
+    message: cannot find src/cart — imports need their file extension in a --no-bundle run; did you mean cart.ts? (imported by test/cart-test.ts)
+```
+
+**What bundling does that this cannot:**
+
+- **CommonJS packages** (React, for one) cannot be imported natively by a browser. Map them to an
+  ESM build in `importMap` (`https://esm.sh/<package>`), or bundle.
+- **esbuild plugins** (`plugins`) are not applied, so `.vue` and `.svelte` files need bundling.
+- **Extensionless imports** (`./util`) do not resolve: write the extension, as Deno requires.
+- **Packages written for bundlers** that read `process.env.NODE_ENV` or other build-time
+  constants fail at runtime without one.
+- A custom HTML template that loads its own `<script type="module">` before the test scripts makes
+  the browser ignore the import map; put such scripts after the `{{qunitxScript}}` placeholder.
+
+`--changed`/`--since`, `--watch`, `--coverage`, line targets (`file.ts#34`) and the daemon all
+work in no-bundle mode. `--changed` reads the import graph the browser actually walked, recorded
+on the previous run.
 
 ## REPL
 
@@ -905,6 +986,8 @@ Options:
   --reporter=<name>   Stdout format: tap, spec, dot, github  [default: tap]
   --junit[=<path>]    Also write a JUnit XML report  [default: <output>/junit.xml]
   --coverage[=fmts]   Collect V8 line coverage (chromium only). fmts: lcov,html (comma-separated)
+  --no-bundle         Load test files natively through an import map instead of bundling with esbuild
+  --bundle            Bundle with esbuild (the default when it is installed)
   --no-daemon         Don't use the daemon for this run — skips a running daemon and prevents QUNITX_DAEMON auto-spawn
 
 Subcommands:
