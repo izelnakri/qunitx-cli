@@ -96,7 +96,10 @@ module('Setup | NoBundle | serving', { concurrency: true }, () => {
     assert.equal(status, 200);
     assert.notOk(body.includes('enum'), 'compiled away');
     assert.equal(SourceMap.lookupPosition(served.map!, throwLine, 1)?.line, 4);
-    assert.equal(SourceMap.lookupPosition(served.map!, throwLine, 1)?.absolutePath, file);
+    assert.equal(
+      SourceMap.lookupPosition(served.map!, throwLine, 1)?.absolutePath,
+      file.replaceAll('\\', '/'),
+    );
   });
 
   test('a `.js` import of a `.ts` file serves the `.ts` file', async (assert) => {

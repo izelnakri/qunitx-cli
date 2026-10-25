@@ -640,9 +640,11 @@ function comparablePath(file: string | null): string {
 }
 
 function toAbsolutePath(rawSource: string, outDir: string, sourceRoot: string): string {
-  const source = toPosix(rawSource);
-  if (source.startsWith('file://')) return source.slice(7);
-  if (source.startsWith('/')) return source;
+  // `file:///C:/a.ts` names `C:/a.ts`, not `/C:/a.ts`; a drive-letter path is as absolute as `/a.ts`.
+  const source = toPosix(rawSource).replace(/^file:\/\/(\/[A-Za-z]:\/)?/, (_, drive) =>
+    drive ? drive.slice(1) : '',
+  );
+  if (source.startsWith('/') || /^[A-Za-z]:\//.test(source)) return source;
   const base = sourceRoot
     ? normalizePosix(`${toPosix(outDir)}/${toPosix(sourceRoot)}`)
     : toPosix(outDir);
