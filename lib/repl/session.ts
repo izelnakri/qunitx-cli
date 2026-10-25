@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import esbuild from 'esbuild';
+import { importEsbuild } from '../utils/import-esbuild.ts';
 import * as Browser from '../setup/browser.ts';
 import * as WebServer from '../setup/web-server.ts';
 import * as Reporter from '../reporters/index.ts';
@@ -1395,7 +1395,9 @@ class Session implements ReplSession {
     const exports = await this.#byValue<string[]>('globalThis.__qunitxHarness.qunitx');
     const outDir = path.resolve(this.#config.projectRoot, this.#config.output);
     try {
-      const built = await esbuild.build({
+      const built = await (
+        await importEsbuild('The REPL')
+      ).build({
         stdin: { contents, resolveDir: this.#config.cwd },
         bundle: true,
         // Named but never written, and named `script.js` under the output directory for the same
@@ -2175,7 +2177,9 @@ async function bundle(config: Config, preload: string[], outDir: string): Promis
       `[${JSON.stringify(relative(config, file))}, ${JSON.stringify(named.get(file) ?? moduleNameFor(file))}, m${i}]`,
   );
   try {
-    const built = await esbuild.build({
+    const built = await (
+      await importEsbuild('The REPL')
+    ).build({
       stdin: {
         contents: [
           `import * as qunitx from 'qunitx';`,
@@ -2278,7 +2282,9 @@ function pageRuntimePlugin(exports: readonly string[]): Plugin {
  *     'const a = )'              ->  null                  wrong in any language
  */
 async function withoutTypes(input: string): Promise<string | { unfinished: true } | null> {
-  const transformed = await esbuild
+  const transformed = await (
+    await importEsbuild('The REPL')
+  )
     // `esnext` because the only job here is erasure: anything a browser cannot run is a question
     // for that browser, and downleveling would answer it with code nobody typed.
     .transform(input, { loader: 'ts', target: 'esnext', logLevel: 'silent' })

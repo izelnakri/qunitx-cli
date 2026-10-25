@@ -64,6 +64,15 @@ export async function collect(config: Config, entries: V8ScriptCoverage[]): Prom
   if (!decoder || !collector) return;
 
   for (const entry of entries) {
+    // A --no-bundle page runs each file as its own script, so each is attributed on its own —
+    // through its transform's map, or position-for-position when its types were stripped in place.
+    const served = SourceMap.servedModule(decoder, entry.url);
+    if (served) {
+      const source = entry.source || served.code;
+      const map = served.map ?? identityMap(served);
+      attributeEntry(source, entry.functions, map, collector);
+      continue;
+    }
     if (!SourceMap.isBundleUrl(entry.url)) continue;
     // Playwright's `source` is often empty for the served bundle; the on-disk tests.js the server
     // wrote is byte-identical to what V8 measured (same buffer), so read it as a fallback. V8
@@ -72,6 +81,38 @@ export async function collect(config: Config, entries: V8ScriptCoverage[]): Prom
     if (!source) continue;
     attributeEntry(source, entry.functions, decoder, collector);
   }
+}
+
+/**
+ * A map for a module whose served code IS its source, position for position: one segment per
+ * line, at the line's first non-blank column — the granularity a bundler's map gives a statement.
+ * Blank lines (type-only lines strip to blank) and comment-only lines get none, as no bundler's
+ * map would give them one: V8 counts them inside their enclosing function, but there is no code
+ * on them to cover.
+ */
+function identityMap(served: SourceMap.ServedModule): SourceMapDecoder {
+  let inBlockComment = false;
+  const segmentsByLine = served.code.split('\n').map((line, sourceLine) => {
+    const trimmed = line.trim();
+    const closesBlock = trimmed.includes('*/');
+    const commentOnly =
+      trimmed === '' ||
+      trimmed.startsWith('//') ||
+      (inBlockComment && (!closesBlock || trimmed.endsWith('*/'))) ||
+      (trimmed.startsWith('/*') && (!closesBlock || trimmed.endsWith('*/')));
+    if (trimmed.startsWith('/*') || inBlockComment) inBlockComment = !closesBlock;
+    if (commentOnly) return [];
+    const firstColumn = line.search(/\S/);
+    return [{ generatedCol: firstColumn, sourceIndex: 0, sourceLine, sourceCol: firstColumn }];
+  });
+
+  return {
+    segmentsByLine,
+    sources: [served.absolutePath],
+    sourceRoot: '',
+    outDir: '',
+    sourcesContent: [served.source],
+  };
 }
 
 /** Reads the served bundle (`tests.js` / `filtered-tests.js`) from the group's output dir. */

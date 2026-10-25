@@ -1,5 +1,7 @@
 import path from 'node:path';
-import esbuild from 'esbuild';
+import type * as esbuild from 'esbuild';
+import { tryImportEsbuild } from '../utils/import-esbuild.ts';
+import { isTransformed, transform } from '../utils/transform-source.ts';
 import * as SourceMap from '../utils/source-map.ts';
 import { Task } from '../task/index.ts';
 import * as Result from '../result/index.ts';
@@ -82,6 +84,9 @@ const LOADERS: Record<string, esbuild.Loader> = {
  * source-level lexer and corrupt every brace depth after it. What is left to lex is comments,
  * strings, template literals and the regex-vs-divide ambiguity.
  *
+ * Without esbuild installed, TypeScript is type-stripped by the runtime instead, which keeps every
+ * line where it was; a JSX file then has no scan and runs whole.
+ *
  * Returns null when the file cannot be parsed — callers fall back to running the whole file.
  *
  * ```ts
@@ -99,31 +104,21 @@ export async function parseTestDeclarations(
   // A file this cannot transform or map is one whose declarations we do not know, and the
   // caller's answer to that is the same either way: run the whole file. `recover`, because a
   // syntax error and an esbuild bug are equally "no declaration scan" to a targeting feature.
-  const transformed = await Task(() =>
-    esbuild.transform(source, {
-      loader: LOADERS[path.extname(filePath)] ?? 'tsx',
-      jsx: 'automatic',
-      sourcefile: filePath,
-      sourcemap: 'external',
-      sourcesContent: false,
-      logLevel: 'silent',
-    }),
-  ).recover(() => null);
+  const transformed = await Task(() => lexableSource(source, filePath)).recover(() => null);
   if (!transformed) return null;
+  const { code, decoder } = transformed;
 
-  const decoded = Result.try(() => SourceMap.parse(transformed.map, path.dirname(filePath)));
-  if (!decoded.ok) return null;
-  const decoder = decoded.value;
-
-  const tokens = tokenize(transformed.code);
+  const tokens = tokenize(code);
   const { declarations, hasOnly } = collectQUnitDeclarations(tokens);
 
   // Generated → source. A declaration's callee line maps to where the user wrote it; the closing
   // paren's line also carries the last body statement, so the closer is the highest of the two.
   const mapped: TestDeclaration[] = [];
   for (const declaration of declarations) {
-    const startLine = mapLine(decoder, declaration.startLine, 'min');
-    const endLine = mapLine(decoder, declaration.endLine, 'max');
+    const startLine = decoder
+      ? mapLine(decoder, declaration.startLine, 'min')
+      : declaration.startLine;
+    const endLine = decoder ? mapLine(decoder, declaration.endLine, 'max') : declaration.endLine;
     if (startLine === null || endLine === null) continue;
     mapped.push({ ...declaration, startLine, endLine: Math.max(startLine, endLine) });
   }
@@ -132,6 +127,34 @@ export async function parseTestDeclarations(
   assignParents(mapped);
 
   return { declarations: mapped, hasOnly };
+}
+
+/**
+ * The file as plain JavaScript, and how its lines map back — `decoder: null` when they need no
+ * mapping. esbuild's transform when it is installed; the runtime's type stripping when it is not.
+ */
+async function lexableSource(
+  source: string,
+  filePath: string,
+): Promise<{ code: string; decoder: SourceMapDecoder | null } | null> {
+  const esbuild = await tryImportEsbuild();
+  if (!esbuild) {
+    const extension = path.extname(filePath);
+    if (!isTransformed(extension)) return { code: source, decoder: null };
+    const { code, map } = await transform(filePath, source);
+    return { code, decoder: map };
+  }
+  const transformed = await esbuild.transform(source, {
+    loader: LOADERS[path.extname(filePath)] ?? 'tsx',
+    jsx: 'automatic',
+    sourcefile: filePath,
+    sourcemap: 'external',
+    sourcesContent: false,
+    logLevel: 'silent',
+  });
+  const decoded = Result.try(() => SourceMap.parse(transformed.map, path.dirname(filePath)));
+
+  return decoded.ok ? { code: transformed.code, decoder: decoded.value } : null;
 }
 
 /** Innermost enclosing module wins, so a test inside a module resolves to `Module > test`. */

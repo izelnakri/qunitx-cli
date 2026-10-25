@@ -970,6 +970,27 @@ module('Utils | SourceMap | Windows path handling', { concurrency: true }, () =>
     assert.strictEqual(firstUserFrame, 'src/app.ts:1:1', 'display path is project-relative');
   });
 
+  test('an absolute Windows source stays itself, not joined onto outDir', (assert) => {
+    // A --no-bundle transform's map names its source by absolute path; `C:/…` has no leading
+    // slash, and reading it as relative doubled it: `C:/out/C:/proj/enum.ts`.
+    const decoder = (source: string) =>
+      SourceMap.parse(JSON.stringify({ version: 3, sources: [source], mappings: '' }), 'C:\\out');
+
+    assert.strictEqual(
+      SourceMap.sourceAbsolutePath(decoder('C:\\proj\\enum.ts'), 0),
+      'C:/proj/enum.ts',
+    );
+    assert.strictEqual(
+      SourceMap.sourceAbsolutePath(decoder('C:/proj/enum.ts'), 0),
+      'C:/proj/enum.ts',
+    );
+    assert.strictEqual(
+      SourceMap.sourceAbsolutePath(decoder('file:///C:/proj/enum.ts'), 0),
+      'C:/proj/enum.ts',
+      'a file URL loses its scheme, not its drive letter',
+    );
+  });
+
   test('returns null for an out-of-range source index', (assert) => {
     assert.strictEqual(SourceMap.sourceAbsolutePath(decoderFor('/proj/tmp'), 99), null);
   });

@@ -18,6 +18,9 @@ import type { Config, FSTree as FSTreeShape } from '../types.ts';
 import type { Reporter as ReporterInstance } from '../reporters/types.ts';
 import type { Console } from '../console.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
+import * as NoBundle from './no-bundle.ts';
+import { ImportMapUnreadable } from './import-map.ts';
+import { EsbuildMissingError, tryImportEsbuild } from '../utils/import-esbuild.ts';
 
 /**
  * `package.json#qunitx.plugins` was present but not an array.
@@ -59,6 +62,25 @@ export const PluginLoadFailed: Result.Failure.FailureFactory<
 );
 
 /**
+ * The run asked to bundle (`--bundle`, or `package.json#qunitx.bundle: true`) and esbuild is not
+ * installed. Reported before anything starts, rather than as a crash out of the first build.
+ *
+ * ```ts
+ * import * as Config from './config.ts';
+ *
+ * const failure = Config.EsbuildNotInstalled({ requestedBy: '--bundle' });
+ * failure.message.startsWith('--bundle needs esbuild'); // true
+ * ```
+ */
+export const EsbuildNotInstalled: Result.Failure.FailureFactory<
+  'EsbuildNotInstalled',
+  { requestedBy: string }
+> = Result.Failure.define(
+  'EsbuildNotInstalled',
+  (data: { requestedBy: string }) => new EsbuildMissingError(data.requestedBy).message,
+);
+
+/**
  * Every way config assembly can fail with something the user can act on.
  *
  * ```ts
@@ -72,7 +94,12 @@ export type ConfigFailure =
   | Args.ParseFailure
   | ProjectRootNotFoundFailure
   | FSTree.InputUnreadableFailure
-  | Result.Failure.Of<typeof InvalidPlugins | typeof PluginLoadFailed>;
+  | Result.Failure.Of<
+      | typeof InvalidPlugins
+      | typeof PluginLoadFailed
+      | typeof ImportMapUnreadable
+      | typeof EsbuildNotInstalled
+    >;
 
 /**
  * Resolved settings handed to {@link setup} in place of an argv, by the JS API and by anyone
@@ -166,10 +193,16 @@ export function setup(options?: ConfigOptions): Task<Config, ConfigFailure> {
       ? Args.applyInputs({ ...provided, inputs: [] }, projectRoot, cwd, provided.inputs ?? [])
       : Result.unwrap(Args.parse(projectRoot, process.argv.slice(2), cwd));
     const projectPackageJSON = await readConfigFromPackageJSON(projectRoot);
-    const { plugins: rawPlugins, ...userQUnitX } =
-      (projectPackageJSON.qunitx as Partial<Config> & {
-        plugins?: unknown;
-      }) ?? {};
+    // `importMap` is read by ImportMap.build straight from package.json, beside the dependencies
+    // it is layered over — it is not a setting the rest of the run consults.
+    const {
+      plugins: rawPlugins,
+      importMap: _importMap,
+      ...userQUnitX
+    } = (projectPackageJSON.qunitx as Partial<Config> & {
+      plugins?: unknown;
+      importMap?: unknown;
+    }) ?? {};
     const inputs = flags.inputs.concat(readInputsFromPackageJSON(projectPackageJSON));
     const config = {
       ...defaultProjectConfigValues,
@@ -200,14 +233,31 @@ export function setup(options?: ConfigOptions): Task<Config, ConfigFailure> {
     // Started together, so plugin dynamic-imports overlap fsTree's I/O. The two used to be kicked
     // off on separate lines to get that overlap; they didn't need to be, because everything between
     // those lines was synchronous and no import could progress during it.
-    const [fsTree, resolvedPlugins] = await Task.all([
+    // The bundle decision rides along: probing for esbuild is an import, and a no-bundle run's
+    // import map is a node_modules walk — both I/O that overlaps the other two.
+    const [fsTree, resolvedPlugins, noBundle] = await Task.all([
       FSTree.build(config.testFileLookupPaths, config),
       resolvePlugins(rawPlugins, projectRoot),
+      Task(async () => {
+        config.bundle = await resolveBundleMode(config);
+        return config.bundle ? null : NoBundle.setup(projectRoot);
+      }),
     ]);
     config.fsTree = fsTree;
+    // Before any group config is spread off this one, so every group shares the one object.
+    config.state.noBundle = noBundle;
     // package.json specifiers first, then the caller's live objects — the same order the two
     // sources are declared in, so an API-supplied plugin can override an earlier one's handlers.
     config.plugins = esbuildPlugins ? resolvedPlugins.concat(esbuildPlugins) : resolvedPlugins;
+
+    if (!config.bundle && config.plugins.length > 0) {
+      Reporter.warning(
+        config,
+        blue(
+          'qunitx: esbuild plugins are not applied in a --no-bundle run — the browser loads each file as it is',
+        ),
+      );
+    }
 
     pruneSupersededLineTargets(config);
 
@@ -228,6 +278,28 @@ export function setup(options?: ConfigOptions): Task<Config, ConfigFailure> {
 
     return config;
   });
+}
+
+/**
+ * Whether this run bundles. An explicit `--bundle`/`--no-bundle` (or `package.json#qunitx.bundle`)
+ * decides it; left unset, a run bundles when esbuild is installed and otherwise loads the test
+ * files natively through an import map, saying so once.
+ */
+async function resolveBundleMode(config: Config): Promise<boolean> {
+  if (config.bundle === false) return false;
+  const esbuildInstalled = (await tryImportEsbuild()) !== null;
+  if (config.bundle === true) {
+    if (!esbuildInstalled)
+      throw EsbuildNotInstalled({ requestedBy: 'Bundling the tests (--bundle)' });
+    return true;
+  }
+  if (esbuildInstalled) return true;
+  Reporter.info(
+    config,
+    blue('qunitx: esbuild is not installed — loading the tests natively through an import map'),
+  );
+
+  return false;
 }
 
 /**

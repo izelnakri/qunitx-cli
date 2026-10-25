@@ -38,6 +38,7 @@ ${color('--open')} : run tests in a visible browser window instead of headless; 
 ${color('--timeout')} : change default timeout per test case
 ${color('--output')} : folder to distribute built qunitx html and js that a webservers can run[default: tmp]
 ${color('--failFast')} : run the target file or folders with immediate abort if a single test fails
+${color('--no-bundle')} : load the test files natively in the browser through an import map instead of bundling them with esbuild (default when esbuild is not installed; ${color('--bundle')} forces bundling)
 ${color('--only-failed')} : re-run only the test files that failed on the previous run (short: ${color('-f')}, alias: ${color('--failed')})
 ${color('--filter')} : run only tests whose ${color('"Module: test name"')} matches; substring, ${color('/regex/')}, ${color('/regex/i')}, or ${color('!')} to invert (spellings: ${color('-t')}, ${color('-m')}, ${color('-n')}, ${color('--module')})
 ${color('--search')} : list the tests the filter matches and exit, without running them (spellings: ${color('-s')}, ${color('--print')}, ${color('--preview')})

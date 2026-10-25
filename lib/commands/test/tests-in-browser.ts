@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { blue, yellow } from '../../utils/color.ts';
-import esbuild from 'esbuild';
+import type * as esbuild from 'esbuild';
+import { importEsbuild } from '../../utils/import-esbuild.ts';
+import * as NoBundle from '../../setup/no-bundle.ts';
 import * as TimeCounter from '../../utils/time-counter.ts';
 import { runUserModule } from '../../utils/run-user-module.ts';
 import * as Reporter from '../../reporters/index.ts';
@@ -253,11 +255,15 @@ export async function buildTestBundle(config: Config): Promise<void> {
   const cacheHolder = config.state.daemon?.esbuildCache ?? build;
   const fileKey = bundleCacheKey(buildOptions, allTestFilePaths);
 
+  const noBundle = config.state.noBundle;
+
   try {
     const [{ js: allTestCode, metafile }] = await Promise.all([
-      config.watch || config.state.daemon
-        ? buildIncrementally(buildOptions, fileKey, cacheHolder, needsDisk, config)
-        : buildWithOverlayfsRetry(buildOptions, needsDisk, config),
+      noBundle
+        ? writeNoBundleEntry(noBundle, allTestFilePaths, outfile, config)
+        : config.watch || config.state.daemon
+          ? buildIncrementally(buildOptions, fileKey, cacheHolder, needsDisk, config)
+          : buildWithOverlayfsRetry(buildOptions, needsDisk, config),
       Promise.all(
         build.htmlPathsToRunTests.map(async (htmlPath) => {
           const targetPath = path.join(outDir, htmlPath);
@@ -269,7 +275,9 @@ export async function buildTestBundle(config: Config): Promise<void> {
       ),
     ]);
     build.allTestCode = allTestCode;
-    config.state.group.sourceMapDecoder = SourceMap.extractInline(allTestCode, outDir);
+    config.state.group.sourceMapDecoder = noBundle
+      ? NoBundle.decoder(noBundle, outDir)
+      : SourceMap.extractInline(allTestCode, outDir);
     // Persist metafile for the next --changed run. Best-effort; cache miss
     // on subsequent reads degrades to "run all tests."
     if (metafile) void MetafileCache.write(projectRoot, config.cwd, metafile);
@@ -359,7 +367,12 @@ export async function run(
         outputPath,
         config,
       );
-      config.state.group.sourceMapDecoder = SourceMap.extractInline(build.filteredTestCode, outDir);
+      if (!config.state.noBundle) {
+        config.state.group.sourceMapDecoder = SourceMap.extractInline(
+          build.filteredTestCode,
+          outDir,
+        );
+      }
     }
 
     const timer = TimeCounter.start();
@@ -371,6 +384,17 @@ export async function run(
         build.htmlPathsToRunTests.map((htmlPath) =>
           runTestInsideHTMLFile(htmlPath, connections, config),
         ),
+      );
+    }
+
+    // A --no-bundle run learns its import graph only as the browser walks it, so the graph
+    // `--changed` reads is persisted here, after the pages ran, rather than after the build.
+    // A file-subset rerun saw only part of the graph, and would shrink the cache to it.
+    if (config.state.noBundle && !runHasFilter) {
+      void MetafileCache.write(
+        projectRoot,
+        config.cwd,
+        NoBundle.metafile(config.state.noBundle, config.cwd),
       );
     }
 
@@ -560,6 +584,20 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
     ),
   );
 
+  const noBundle = groupConfigs[0].state.noBundle;
+  if (noBundle) {
+    NoBundle.resetRun(noBundle);
+    await Promise.all(
+      activeGroups.map(async ({ config, build, files }) => {
+        const outDir = path.resolve(config.projectRoot, config.output);
+        build.allTestCode = Buffer.from(NoBundle.entrySource(files, projectRoot));
+        config.state.group.sourceMapDecoder = NoBundle.decoder(noBundle, outDir);
+        await fs.writeFile(path.join(outDir, 'tests.js'), build.allTestCode);
+      }),
+    );
+    return;
+  }
+
   const sourcemap: esbuild.BuildOptions['sourcemap'] = 'inline';
 
   // Plugin: resolve `group-entry-N` paths from the entry-point list into virtual modules
@@ -630,7 +668,7 @@ export async function buildAllGroupBundles(groupConfigs: Config[]): Promise<void
     );
 
   const buildWithRetry = async (retriesLeft: number): Promise<esbuild.BuildResult> => {
-    const result = await esbuild.build(buildOptions);
+    const result = await (await importEsbuild('Bundling the tests')).build(buildOptions);
     if (!hasSmallOutput(result) || retriesLeft === 0) return result;
     await new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
     return buildWithRetry(retriesLeft - 1);
@@ -688,8 +726,12 @@ function buildFilteredTests(
   outputPath: string,
   config: Config,
 ): Promise<Buffer> {
-  const sourcemap: esbuild.BuildOptions['sourcemap'] = 'inline';
   const needsDisk = Boolean(config.open);
+  if (config.state.noBundle) {
+    const entry = Buffer.from(NoBundle.entrySource(filteredTests, config.projectRoot));
+    return (needsDisk ? fs.writeFile(outputPath, entry) : Promise.resolve()).then(() => entry);
+  }
+  const sourcemap: esbuild.BuildOptions['sourcemap'] = 'inline';
   // Filtered re-runs (qf shortcut) are a subset bundle; the cached metafile
   // would be incomplete, so we don't request one or persist it here.
   return buildWithOverlayfsRetry(
@@ -771,13 +813,29 @@ function buildWithOverlayfsRetry(
   const buildOpts: esbuild.BuildOptions = { ...options, write: false };
   return runWithOverlayfsRetry(
     async () => {
-      const result = await esbuild.build(buildOpts);
+      const result = await (await importEsbuild('Bundling the tests')).build(buildOpts);
       const jsFile = result.outputFiles!.find((f) => !f.path.endsWith('.map'))!;
       return { result, js: Buffer.from(jsFile.contents) };
     },
     needsDisk,
     config,
   );
+}
+
+// A --no-bundle "build": no bundle at all, just the entry module that has the browser import each
+// test file through the page's import map. Written to disk like a bundle is, so `--output` holds
+// the same artifacts either way.
+async function writeNoBundleEntry(
+  noBundle: NoBundle.NoBundleState,
+  files: string[],
+  outfile: string,
+  config: Config,
+): Promise<{ js: Buffer; metafile?: AffectedMetafile }> {
+  NoBundle.resetRun(noBundle);
+  const js = Buffer.from(NoBundle.entrySource(files, config.projectRoot));
+  await fs.writeFile(outfile, js);
+
+  return { js };
 }
 
 // Uses an esbuild incremental context so the module graph stays warm between rebuilds.
@@ -798,7 +856,7 @@ async function buildIncrementally(
 
   if (!cache.context || cache.contextKey !== fileKey) {
     Task(cache.context?.dispose()).ignore('stale esbuild context dispose');
-    cache.context = await esbuild.context(buildOpts);
+    cache.context = await (await importEsbuild('Bundling the tests')).context(buildOpts);
     cache.contextKey = fileKey;
   }
 

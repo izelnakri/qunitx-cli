@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { format } from 'node:util';
-import esbuild from 'esbuild';
+import type * as esbuild from 'esbuild';
+import { importEsbuild } from '../utils/import-esbuild.ts';
 import * as Args from '../args/index.ts';
 import * as Browser from '../setup/browser.ts';
 import * as Failure from '../result/failure.ts';
@@ -463,7 +464,9 @@ interface ScriptBundle {
  * escaping as an unhandled rejection with no stack the page can hand back.
  */
 async function build(config: ScriptConfig): Promise<ScriptBundle> {
-  const result = await esbuild
+  const result = await (
+    await importEsbuild('Running a script')
+  )
     .build({
       stdin: { contents: wrapperSource(), resolveDir: config.cwd },
       nodePaths: ancestorNodeModules(config.cwd),

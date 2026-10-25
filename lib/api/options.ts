@@ -42,6 +42,12 @@ export interface UserRunOptions {
   timeout?: number;
   /** Stop the run at the first failing test. */
   failFast?: boolean;
+  /**
+   * `false` loads the test files natively in the browser, through an import map, instead of
+   * bundling them with esbuild — the same as `--no-bundle`. Defaults to bundling when esbuild is
+   * installed.
+   */
+  bundle?: boolean;
   /** Run only the files that failed last time, from the persistent failure cache. */
   onlyFailed?: boolean;
   /** Run only files whose transitive imports changed since this git ref (`'HEAD'` for uncommitted). */
@@ -257,6 +263,7 @@ export function from(
     browser: userRunOptions.browser,
     timeout: userRunOptions.timeout,
     failFast: userRunOptions.failFast,
+    bundle: userRunOptions.bundle,
     onlyFailed: userRunOptions.onlyFailed,
     changedSince: userRunOptions.changedSince,
     coverage: coverage === undefined ? undefined : Boolean(coverage),

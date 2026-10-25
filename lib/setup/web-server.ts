@@ -11,6 +11,7 @@ import { blue } from '../utils/color.ts';
 import { HTTPServer, MIME_TYPES } from '../web/index.ts';
 import { createReconnectingSocket } from './ws-client.js';
 import { readTemplate } from '../utils/read-template.ts';
+import * as NoBundle from './no-bundle.ts';
 import type { Config } from '../types.ts';
 import type { QUnitSelector } from '../selection/line-targets.ts';
 import { Task } from '../task/index.ts';
@@ -104,11 +105,17 @@ export function setup(config: Config): HTTPServer {
       const runtimeScript = testRuntimeToInject(config);
       pages = {
         selectors,
-        index: escapeAndInjectTestsToHTML(mainHTMLWithReplacedAssets, runtimeScript, './tests.js'),
+        index: escapeAndInjectTestsToHTML(
+          mainHTMLWithReplacedAssets,
+          runtimeScript,
+          './tests.js',
+          config.state.noBundle,
+        ),
         qunitx: escapeAndInjectTestsToHTML(
           mainHTMLWithReplacedAssets,
           runtimeScript,
           './filtered-tests.js',
+          config.state.noBundle,
         ),
       };
     }
@@ -119,6 +126,9 @@ export function setup(config: Config): HTTPServer {
     Task(fsPromise.writeFile(filePath, html)).ignore(`writeFile ${filePath}`);
 
   config.state.group.wsConnectionCount = 0;
+  if (config.state.noBundle) {
+    NoBundle.registerRoutes(server, config.state.noBundle, () => testFileRoots([config]));
+  }
   server.wss.on('connection', function connection(socket) {
     config.state.group.wsConnectionCount = (config.state.group.wsConnectionCount ?? 0) + 1;
     // The abort was requested before this page existed — `signal` already aborted, or `qq` pressed
@@ -376,6 +386,7 @@ export function setup(config: Config): HTTPServer {
         possibleDynamicHTML,
         testRuntimeToInject(config),
         '/tests.js',
+        config.state.noBundle,
       );
       res.writeHead(200, HTML_HEADERS);
       res.end(htmlContent);
@@ -681,6 +692,7 @@ export function registerGroupRoutes(server: HTTPServer, groupConfig: Config): vo
     mainHTMLWithReplacedAssets,
     runtimeScript,
     './tests.js',
+    groupConfig.state.noBundle,
   );
   const saveHTML = (filePath: string, html: string) =>
     Task(fsPromise.writeFile(filePath, html)).ignore(`writeFile ${filePath}`);
@@ -847,6 +859,10 @@ export function setupGroupWSHandler(server: HTTPServer, groupConfigs: Config[]):
  */
 export function registerSharedStaticHandler(server: HTTPServer, groupConfigs: Config[]): void {
   const groupUrlRegex = /^\/group-(\d+)(\/.*)?$/;
+  // One set of module routes for every group: the groups share the run's no-bundle state, and a
+  // module two groups import is the same file, served the same way, to both.
+  const noBundle = groupConfigs[0]?.state.noBundle;
+  if (noBundle) NoBundle.registerRoutes(server, noBundle, () => testFileRoots(groupConfigs));
 
   server.get('/*', (req, res) => {
     const match = groupUrlRegex.exec(req.path);
@@ -1179,11 +1195,36 @@ export function testRuntimeSource(config: Config, groupId?: number): string {
   `;
 }
 
+/**
+ * Directories a --no-bundle server may serve beyond the project and its dependencies: the run's
+ * working directory and every test file's own directory — read per request, since watch mode adds
+ * files, and a test file may sit outside the project altogether (`qunitx /tmp/a-test.ts`).
+ */
+function testFileRoots(configs: Config[]): string[] {
+  const roots = new Set<string>();
+  for (const config of configs) {
+    roots.add(config.cwd);
+    for (const file of Object.keys(config.fsTree)) roots.add(path.dirname(file));
+  }
+
+  return [...roots];
+}
+
 function escapeAndInjectTestsToHTML(
   html: string,
   testRuntimeCode: string,
   testBundleUrl: string,
+  noBundle: NoBundle.NoBundleState | null,
 ): string {
+  // No bundle: the page loads its tests as modules, through the import map that has to precede
+  // them. A module script is deferred, so — as with the async bundle below — the runtime's
+  // WebSocket opens before the tests evaluate.
+  if (noBundle) {
+    return injectScript(
+      html,
+      NoBundle.scriptTags(noBundle.importMap, testRuntimeCode, testBundleUrl),
+    );
+  }
   // The test bundle is an external async script — Chrome compiles it in a background thread
   // so the WS 'open' event (fired by the tiny runtime above) is not blocked by compilation.
   // No need to escape </script> here: testRuntimeCode's closing tag is the legitimate script
