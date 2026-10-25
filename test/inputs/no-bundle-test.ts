@@ -13,6 +13,9 @@ const HIDE_ESBUILD = pathToFileURL(path.join(PROJECT_ROOT, 'test/helpers/hide-es
 const BROWSER = process.env.QUNITX_BROWSER || 'chromium';
 // Deno's node:child_process rewrites a Node-style argv when it spawns deno, and drops `--import` on
 // the way, so the deno lane names its own flag. A file URL, because node rejects `D:\…` there.
+// A compiled release binary (QUNITX_BIN, the deno lane's) carries esbuild inside it: there is no
+// install to take away, and the shell helper hands it only what follows `cli.ts`.
+const withEsbuildHideable = process.env.QUNITX_BIN ? test.skip : test;
 const WITHOUT_ESBUILD =
   'Deno' in globalThis ? `node run -A --preload=${HIDE_ESBUILD}` : `node --import ${HIDE_ESBUILD}`;
 
@@ -100,29 +103,35 @@ module('Inputs | --no-bundle', { concurrency: true }, (_hooks, moduleMetadata) =
 });
 
 module('Inputs | without esbuild installed', { concurrency: true }, (_hooks, moduleMetadata) => {
-  test('a run falls back to --no-bundle on its own, and says so once', async (assert, testMetadata) => {
-    await using output = outputDir('no-esbuild-fallback');
-    const result = await shell(
-      `${WITHOUT_ESBUILD} cli.ts test/fixtures/passing-tests.ts --output=${output}`,
-      { ...moduleMetadata, ...testMetadata },
-    );
+  withEsbuildHideable(
+    'a run falls back to --no-bundle on its own, and says so once',
+    async (assert, testMetadata) => {
+      await using output = outputDir('no-esbuild-fallback');
+      const result = await shell(
+        `${WITHOUT_ESBUILD} cli.ts test/fixtures/passing-tests.ts --output=${output}`,
+        { ...moduleMetadata, ...testMetadata },
+      );
 
-    const notice = 'esbuild is not installed — loading the tests natively through an import map';
-    assert.equal(result.stdout.split(notice).length - 1, 1, 'the notice, exactly once');
-    assert.tapResult(result, { total: 3 });
-  });
+      const notice = 'esbuild is not installed — loading the tests natively through an import map';
+      assert.equal(result.stdout.split(notice).length - 1, 1, 'the notice, exactly once');
+      assert.tapResult(result, { total: 3 });
+    },
+  );
 
-  test('--bundle without esbuild exits 1 with the fix, before starting a browser', async (assert, testMetadata) => {
-    const result = await shellFails(
-      `${WITHOUT_ESBUILD} cli.ts test/fixtures/passing-tests.ts --bundle`,
-      { ...moduleMetadata, ...testMetadata },
-    );
+  withEsbuildHideable(
+    '--bundle without esbuild exits 1 with the fix, before starting a browser',
+    async (assert, testMetadata) => {
+      const result = await shellFails(
+        `${WITHOUT_ESBUILD} cli.ts test/fixtures/passing-tests.ts --bundle`,
+        { ...moduleMetadata, ...testMetadata },
+      );
 
-    assert.exitCode(result, 1);
-    assert.true(
-      result.stderr.includes('needs esbuild, which is not installed') &&
-        result.stderr.includes('--no-bundle'),
-      result.stderr,
-    );
-  });
+      assert.exitCode(result, 1);
+      assert.true(
+        result.stderr.includes('needs esbuild, which is not installed') &&
+          result.stderr.includes('--no-bundle'),
+        result.stderr,
+      );
+    },
+  );
 });
