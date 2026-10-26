@@ -370,3 +370,168 @@ module('API | bench', { concurrency: true }, () => {
     }
   });
 });
+
+module('API | bench | streaming, aborting, watching', { concurrency: true }, () => {
+  const FILE = [
+    "Deno.bench('first', () => [3, 1, 2].sort());",
+    "Deno.bench('second', () => [3, 1, 2].sort());",
+    "Deno.bench('third', () => [3, 1, 2].sort());",
+  ].join('\n');
+  const quick = {
+    time: 20,
+    warmup: 5,
+    browser: BROWSER as 'chromium',
+    console: QUnitX.silentConsole,
+  };
+
+  test('onResult hears of each bench as it is measured; watch is Bench.watch()’s, and refused here', async (assert) => {
+    await using dir = await tempDir('bench-api-stream');
+    await fs.writeFile(path.join(dir.path, 'a.bench.ts'), FILE);
+    const heard: string[] = [];
+    const permit = await acquireBrowser();
+    try {
+      const result = await QUnitX.Bench.run('a.bench.ts', {
+        ...quick,
+        cwd: dir.path,
+        onResult: (entry) => void heard.push(entry.name),
+      });
+      const watching = await QUnitX.Bench.run('a.bench.ts', {
+        cwd: dir.path,
+        watch: true,
+      } as never).result();
+
+      assert.deepEqual(heard, ['first', 'second', 'third']);
+      assert.deepEqual([result.ok, result.aborted], [true, false]);
+      assert.includes(
+        (watching as Error).message,
+        'Bench.watch() is the session that measures again',
+      );
+    } finally {
+      permit.release();
+    }
+  });
+
+  test('a signal stops the run between benches: what was measured is the result, and nothing is saved', async (assert) => {
+    await using dir = await tempDir('bench-api-abort');
+    await fs.writeFile(path.join(dir.path, 'a.bench.ts'), FILE);
+    const already = await QUnitX.Bench.run('a.bench.ts', {
+      ...quick,
+      cwd: dir.path,
+      signal: AbortSignal.abort(),
+    });
+    const controller = new AbortController();
+    const permit = await acquireBrowser();
+    try {
+      const result = await QUnitX.Bench.run('a.bench.ts', {
+        ...quick,
+        cwd: dir.path,
+        save: 'base.json',
+        signal: controller.signal,
+        onResult: () => controller.abort(),
+      });
+
+      assert.deepEqual(
+        [already.aborted, already.exitCode, already.report.benches.length],
+        [true, 1, 0],
+        'an aborted signal launches nothing',
+      );
+      assert.deepEqual([result.aborted, result.ok, result.exitCode], [true, false, 1]);
+      assert.deepEqual(
+        result.report.benches.map((entry) => entry.name),
+        ['first'],
+      );
+      assert.false(
+        await fs.stat(path.join(dir.path, 'base.json')).then(
+          () => true,
+          () => false,
+        ),
+        'a run cut short is no baseline',
+      );
+    } finally {
+      permit.release();
+    }
+  });
+
+  test('Bench.watch() measures, then again when a bench file changes; run() measures now; close() ends it', async (assert) => {
+    await using dir = await tempDir('bench-api-watch');
+    const file = path.join(dir.path, 'a.bench.ts');
+    await fs.writeFile(file, "Deno.bench('before', () => {});\n");
+    const permit = await acquireBrowser();
+    try {
+      const session = await QUnitX.Bench.watch('a.bench.ts', { ...quick, cwd: dir.path });
+      // One consumer, as a watch session's feed always has.
+      const feed = session[Symbol.asyncIterator]();
+      const next = feed.next();
+      await fs.writeFile(file, "Deno.bench('after', () => {});\n");
+      const changed = await next;
+      const manual = await session.run();
+      await session.close();
+      // What was measured before the close is still delivered; then the feed ends.
+      let ended = await feed.next();
+      for (let drained = 0; !ended.done && drained < 10; drained++) ended = await feed.next();
+
+      assert.deepEqual(
+        session.initial.report.benches.map((entry) => entry.name),
+        ['before'],
+      );
+      assert.deepEqual(
+        !changed.done && changed.value.report.benches.map((entry) => entry.name),
+        ['after'],
+        'measured again, from the file as it now is',
+      );
+      assert.deepEqual(
+        manual.report.benches.map((entry) => entry.name),
+        ['after'],
+      );
+      assert.equal(session.latest, manual);
+      assert.false(session.running);
+      assert.true(ended.done, 'closing ends the iteration');
+    } finally {
+      permit.release();
+    }
+  });
+
+  test("Bench.render() and Bench.compare() work on saved reports, deno bench's too, with no browser", (assert) => {
+    const report = (avg: number) => ({
+      version: 1 as const,
+      runtime: 'Deno/2.9.2 x86_64-unknown-linux-gnu',
+      cpu: 'CPU',
+      benches: [
+        {
+          origin: 'file:///p/a.bench.ts',
+          group: null,
+          name: 'parse',
+          baseline: false,
+          results: [
+            {
+              ok: {
+                n: 1,
+                min: avg,
+                max: avg,
+                avg,
+                p75: avg,
+                p99: avg,
+                p995: avg,
+                p999: avg,
+                highPrecision: true,
+                usedExplicitTimers: false,
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const comparison = QUnitX.Bench.compare(report(5_000), report(2_000), {}, '/p');
+
+    assert.deepEqual(
+      comparison.regressions.map((change) => [change.bench.name, change.percent]),
+      [['parse', 150]],
+    );
+    assert.includes(
+      QUnitX.Bench.render(report(5_000), 'pretty', comparison),
+      '| parse     |          5.0 µs |',
+    );
+    assert.includes(QUnitX.Bench.render(report(5_000), 'pretty', comparison), '+150.0%');
+    assert.true(QUnitX.Bench.compare(report(2_000), report(5_000)).regressions.length === 0);
+  });
+});

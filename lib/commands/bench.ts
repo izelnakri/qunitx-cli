@@ -9,7 +9,7 @@ import esbuild from 'esbuild';
 import * as Browser from '../setup/browser.ts';
 import * as Failure from '../result/failure.ts';
 import * as SourceMap from '../utils/source-map.ts';
-import { HTTPServer } from '../web/index.ts';
+import { HTTPServer, type RouteHandler } from '../web/index.ts';
 import { bindServerToPort } from '../setup/bind-server-to-port.ts';
 import { blue, magenta, red, yellow } from '../utils/color.ts';
 import { closeCompletely } from '../utils/close-with-grace.ts';
@@ -47,6 +47,25 @@ const DEFAULT_HTTP_HEADERS = {
   'Cross-Origin-Embedder-Policy': 'require-corp',
   'Cross-Origin-Resource-Policy': 'same-origin',
   'Cache-Control': 'no-store',
+};
+// A file's outcome before it measured anything.
+const NOTHING_MEASURED: FileOutcome = {
+  benches: [],
+  changes: [],
+  failed: false,
+  onlyUsed: false,
+  aborted: false,
+};
+// By browser: the engine esbuild compiles for, and the runtime the report names.
+const TARGETS: Record<string, string> = {
+  chromium: 'chrome120',
+  firefox: 'firefox115',
+  webkit: 'safari16',
+};
+const RUNTIMES: Record<string, string> = {
+  chromium: 'Chromium',
+  firefox: 'Firefox',
+  webkit: 'WebKit',
 };
 
 /**
@@ -98,6 +117,14 @@ export interface BenchSettings {
   timeout?: number;
   /** Where the report and the benches' console output go. Defaults to the process's. */
   console?: Console;
+  /**
+   * Stops the run: between benches, or in the middle of one by closing its page. The benches
+   * measured by then are the result, with `aborted: true`; an already-aborted signal launches
+   * nothing.
+   */
+  signal?: AbortSignal;
+  /** Called with each bench as it is measured, in the order they run: for progress, or a UI. */
+  onResult?: (entry: BenchEntry) => void;
 }
 
 /**
@@ -106,7 +133,7 @@ export interface BenchSettings {
  * bench, a regression, a file that would not build, or an `only` left in.
  *
  * ```ts
- * const result: BenchResult = { ok: true, exitCode: 0, report: { version: 1, runtime: '', cpu: '', benches: [] }, comparison: null, files: [] };
+ * const result: BenchResult = { ok: true, exitCode: 0, aborted: false, report: { version: 1, runtime: '', cpu: '', benches: [] }, comparison: null, files: [] };
  * ```
  */
 export interface BenchResult {
@@ -114,6 +141,8 @@ export interface BenchResult {
   ok: boolean;
   /** 0 or 1. */
   exitCode: number;
+  /** Whether `signal` stopped the run before every bench was measured. */
+  aborted: boolean;
   /** Every bench, as `deno bench --json` reports it. */
   report: Report.BenchReport;
   /** The run against `compare`'s baseline, or null without one. */
@@ -262,6 +291,55 @@ const SWITCHES: Record<string, [keyof BenchSettings, unknown]> = {
   '--watch': ['watch', true],
   '-w': ['watch', true],
 };
+// The settings whose flags take a number, and `--min-delta`'s units in nanoseconds.
+const NUMERIC_SETTINGS = new Set([
+  'threshold',
+  'retries',
+  'warmup',
+  'time',
+  'cpuThrottle',
+  'port',
+  'timeout',
+]);
+const NANOSECONDS: Record<string, number> = { ns: 1, µs: 1e3, us: 1e3, ms: 1e6, s: 1e9 };
+// Each setting's test, and what it expects, as the failure says it.
+const SETTING_RULES: Record<string, [(value: unknown) => boolean, string]> = {
+  cwd: [isText, 'a path'],
+  browser: [
+    (value) => value === 'chromium' || value === 'firefox' || value === 'webkit',
+    'chromium, firefox or webkit',
+  ],
+  filter: [(value) => typeof value === 'string', 'a name, or /a regex/'],
+  ignore: [(value) => Array.isArray(value) && value.every(isText), 'a list of paths or globs'],
+  format: [
+    (value) => Report.BENCH_FORMATS.includes(value as Report.BenchFormat),
+    Report.BENCH_FORMATS.join(', '),
+  ],
+  save: [isText, 'a file path'],
+  compare: [isText, 'a file path'],
+  threshold: [isNumber(0), 'a percentage'],
+  minDelta: [isNumber(0), 'a time, such as 500ns, 2µs or 1ms'],
+  retries: [isWhole(0), 'a whole number of 0 or more'],
+  warmup: [isNumber(0), 'milliseconds'],
+  time: [(value) => isNumber(0)(value) && (value as number) > 0, 'milliseconds above 0'],
+  cpuThrottle: [isNumber(1, 100), 'a slowdown from 1 to 100'],
+  profile: [isText, 'a directory'],
+  noRun: [isBoolean, 'true or false'],
+  permitNoFiles: [isBoolean, 'true or false'],
+  watch: [isBoolean, 'true or false'],
+  port: [isWhole(1, 65_535), 'a port'],
+  timeout: [isWhole(0), 'milliseconds'],
+  console: [(value) => typeof value === 'object' && value !== null, 'a Console'],
+  signal: [
+    (value) => typeof AbortSignal !== 'undefined' && value instanceof AbortSignal,
+    'an AbortSignal',
+  ],
+  onResult: [(value) => typeof value === 'function', 'a function'],
+  inputs: [
+    (value) => Array.isArray(value) && value.every(isText),
+    'a list of files, folders or globs',
+  ],
+};
 
 /**
  * Parses `qunitx bench`'s argv: its inputs, and the settings its flags give. A bare `--profile`
@@ -339,81 +417,32 @@ export function parseArgs(
 export function checkSettings(
   settings: Record<string, unknown>,
 ): Failure.Of<typeof InvalidBenchSetting> | null {
-  const whole = (value: unknown, min: number) =>
-    Number.isInteger(value) && (value as number) >= min;
-  const positive = (value: unknown) =>
-    typeof value === 'number' && Number.isFinite(value) && value > 0;
-  const text = (value: unknown) => typeof value === 'string' && value !== '';
-  const rules: Record<string, [(value: unknown) => boolean, string]> = {
-    cwd: [text, 'a path'],
-    browser: [
-      (value) => ['chromium', 'firefox', 'webkit'].includes(value as string),
-      'chromium, firefox or webkit',
-    ],
-    filter: [(value) => typeof value === 'string', 'a name, or /a regex/'],
-    ignore: [(value) => Array.isArray(value) && value.every(text), 'a list of paths or globs'],
-    format: [
-      (value) => Report.BENCH_FORMATS.includes(value as Report.BenchFormat),
-      Report.BENCH_FORMATS.join(', '),
-    ],
-    save: [text, 'a file path'],
-    compare: [text, 'a file path'],
-    threshold: [
-      (value) => typeof value === 'number' && value >= 0 && Number.isFinite(value),
-      'a percentage',
-    ],
-    minDelta: [
-      (value) => typeof value === 'number' && value >= 0 && Number.isFinite(value),
-      'a time, such as 500ns, 2µs or 1ms',
-    ],
-    retries: [(value) => whole(value, 0), 'a whole number of 0 or more'],
-    warmup: [
-      (value) => typeof value === 'number' && value >= 0 && Number.isFinite(value),
-      'milliseconds',
-    ],
-    time: [positive, 'milliseconds above 0'],
-    cpuThrottle: [
-      (value) => typeof value === 'number' && value >= 1 && value <= 100,
-      'a slowdown from 1 to 100',
-    ],
-    profile: [text, 'a directory'],
-    noRun: [(value) => typeof value === 'boolean', 'true or false'],
-    permitNoFiles: [(value) => typeof value === 'boolean', 'true or false'],
-    watch: [(value) => typeof value === 'boolean', 'true or false'],
-    port: [(value) => whole(value, 1) && (value as number) < 65536, 'a port'],
-    timeout: [(value) => whole(value, 0), 'milliseconds'],
-    console: [(value) => typeof value === 'object' && value !== null, 'a Console'],
-    inputs: [
-      (value) => Array.isArray(value) && value.every(text),
-      'a list of files, folders or globs',
-    ],
-  };
-  for (const [setting, value] of Object.entries(settings)) {
-    if (value === undefined) continue;
-    const rule = rules[setting];
-    if (!rule) {
-      return InvalidBenchSetting({
-        setting,
-        reason: `is not a setting; expected ${Object.keys(rules).join(', ')}`,
-      });
-    }
-    if (!rule[0](value)) {
-      return InvalidBenchSetting({
-        setting,
-        reason: `expected ${rule[1]}, got ${JSON.stringify(value) ?? String(value)}`,
-      });
-    }
-  }
-  if (
-    (settings.cpuThrottle !== undefined || settings.profile !== undefined) &&
-    (settings.browser ?? 'chromium') !== 'chromium'
-  ) {
+  // The first setting given that has no rule, or breaks its rule.
+  const [setting, value] =
+    Object.entries(settings).find(
+      ([setting, value]) => value !== undefined && !SETTING_RULES[setting]?.[0](value),
+    ) ?? [];
+  if (setting !== undefined) {
+    const rule = SETTING_RULES[setting];
     return InvalidBenchSetting({
-      setting: settings.profile !== undefined ? 'profile' : 'cpuThrottle',
-      reason: `needs chromium: ${settings.browser} has no DevTools protocol to ask`,
+      setting,
+      reason: rule
+        ? `expected ${rule[1]}, got ${JSON.stringify(value) ?? String(value)}`
+        : `is not a setting; expected ${Object.keys(SETTING_RULES).join(', ')}`,
     });
   }
-  return null;
+  const devTools =
+    settings.profile !== undefined
+      ? 'profile'
+      : settings.cpuThrottle !== undefined
+        ? 'cpuThrottle'
+        : null;
+  return devTools && (settings.browser ?? 'chromium') !== 'chromium'
+    ? InvalidBenchSetting({
+        setting: devTools,
+        reason: `needs chromium: ${settings.browser} has no DevTools protocol to ask`,
+      })
+    : null;
 }
 
 /**
@@ -435,48 +464,48 @@ export async function benchFiles(
   cwd: string,
   ignore: string[],
 ): Promise<string[]> {
-  const found = new Set<string>();
-  const ignored = await Promise.all(
-    ignore.map(async (pattern) =>
-      /[*?[{]/.test(pattern)
-        ? new Set(
-            (await Array.fromAsync(fs.promises.glob(pattern, { cwd }))).map((file) =>
-              path.resolve(cwd, file),
-            ),
-          )
-        : path.resolve(cwd, pattern),
+  const isGlob = (pattern: string) => /[*?[{]/.test(pattern);
+  const globbed = async (pattern: string) =>
+    (await Array.fromAsync(fs.promises.glob(pattern, { cwd }))).map((file) =>
+      path.resolve(cwd, file),
+    );
+  // A folder's bench files at any depth, its subfolders read at once.
+  const walk = async (directory: string): Promise<string[]> => {
+    const entries = await fs.promises.readdir(directory, { withFileTypes: true }).catch(() => []);
+    const found = await Promise.all(
+      entries.map((entry) => {
+        const file = path.join(directory, entry.name);
+        if (entry.isDirectory()) return SKIPPED_DIRECTORIES.has(entry.name) ? [] : walk(file);
+        return BENCH_FILE.test(entry.name) ? [file] : [];
+      }),
+    );
+    return found.flat();
+  };
+  const [ignored, found] = await Promise.all([
+    Promise.all(
+      ignore.map(async (pattern) =>
+        isGlob(pattern) ? new Set(await globbed(pattern)) : path.resolve(cwd, pattern),
+      ),
     ),
-  );
+    Promise.all(
+      (inputs.length ? inputs : ['.']).map(async (input) => {
+        if (isRemoteInput(input)) return [input];
+        if (isGlob(input)) return await globbed(input);
+        const absolute = path.resolve(cwd, input);
+        const stat = await fs.promises.stat(absolute).catch(() => null);
+        return stat?.isDirectory() ? await walk(absolute) : stat ? [absolute] : [];
+      }),
+    ),
+  ]);
   const isIgnored = (file: string) =>
     ignored.some((entry) =>
       typeof entry === 'string'
         ? file === entry || file.startsWith(entry + path.sep)
         : entry.has(file),
     );
-  const walk = async (directory: string): Promise<void> => {
-    const entries = await fs.promises.readdir(directory, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      const file = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        if (!SKIPPED_DIRECTORIES.has(entry.name)) await walk(file);
-      } else if (BENCH_FILE.test(entry.name)) {
-        found.add(file);
-      }
-    }
-  };
-  for (const input of inputs.length ? inputs : ['.']) {
-    if (isRemoteInput(input)) {
-      found.add(input);
-    } else if (/[*?[{]/.test(input)) {
-      for await (const file of fs.promises.glob(input, { cwd })) found.add(path.resolve(cwd, file));
-    } else {
-      const absolute = path.resolve(cwd, input);
-      const stat = await fs.promises.stat(absolute).catch(() => null);
-      if (stat?.isDirectory()) await walk(absolute);
-      else if (stat) found.add(absolute);
-    }
-  }
-  return [...found].filter((file) => isRemoteInput(file) || !isIgnored(file)).sort();
+  return [...new Set(found.flat())]
+    .filter((file) => isRemoteInput(file) || !isIgnored(file))
+    .sort();
 }
 
 /**
@@ -495,24 +524,102 @@ export async function benchFiles(
  * ```
  */
 export async function run(inputs: string[], given: BenchSettings = {}): Promise<BenchResult> {
+  const prepared = await prepare(inputs, given);
+  if (!prepared.files.length || prepared.settings.signal?.aborted) return prepared.empty;
+  const bench = await launch(prepared);
+  try {
+    if (prepared.settings.noRun) return bench.check();
+    if (!prepared.settings.watch) return await bench.measure();
+    return await watchLoop([...new Set(await bench.watchDirectories())], async () => {
+      await bench.rebuild();
+      await bench.measure();
+      prepared.out.error(
+        `# ${blue('Watching')} ${prepared.files.length} bench file${prepared.files.length === 1 ? '' : 's'}\n`,
+      );
+    });
+  } finally {
+    await bench.close();
+  }
+}
+
+/**
+ * A run's settings resolved — flags or options over `package.json#qunitx.bench` — with its bench
+ * files, its baseline, and how to bundle a file: everything decided before a browser is launched.
+ * `empty` is the result of a run that measures nothing.
+ *
+ * ```ts
+ * import type { PreparedBench } from './bench.ts';
+ *
+ * function count(prepared: PreparedBench) {
+ *   return prepared.files.length;
+ * }
+ * ```
+ */
+export interface PreparedBench {
+  /** Every setting, resolved. */
+  settings: BenchSettings & {
+    browser: 'chromium' | 'firefox' | 'webkit';
+    format: Report.BenchFormat;
+  };
+  /** Where inputs resolved from. */
+  cwd: string;
+  /** The project around it. */
+  projectRoot: string;
+  /** The bench files. */
+  files: string[];
+  /** `compare`'s baseline, or null. */
+  baseline: Compare.BaselineEntry[] | null;
+  /** Where the report goes. */
+  out: Console;
+  /** Bundles one bench file. */
+  build: (file: string) => Promise<Bundle>;
+  /** The result of measuring nothing. */
+  empty: BenchResult;
+}
+
+/**
+ * Resolves a run: settings (flags or options over `package.json#qunitx.bench`), bench files,
+ * baseline and plugins. Throws {@link NoBenchFiles} when there are none, unless `permitNoFiles`,
+ * and {@link InvalidBenchSetting} for a setting or baseline that will not do.
+ *
+ * ```ts
+ * import { prepare } from './bench.ts';
+ *
+ * // Defined, not invoked: reads the file system.
+ * async function files() {
+ *   return (await prepare(['benches'], {})).files;
+ * }
+ * ```
+ */
+export async function prepare(inputs: string[], given: BenchSettings = {}): Promise<PreparedBench> {
   const cwd = given.cwd ?? process.cwd();
   const projectRoot = await findProjectRoot(cwd).catch(() => cwd);
-  const manifest = readManifest(projectRoot);
+  const manifest: { qunitx?: unknown } = await fs.promises
+    .readFile(path.join(projectRoot, 'package.json'), 'utf8')
+    .then(JSON.parse)
+    .catch(() => ({}));
   const configured =
     (manifest.qunitx as { bench?: Record<string, unknown> } | undefined)?.bench ?? {};
   const { inputs: configuredInputs, ...fromManifest } = configured as { inputs?: string[] };
   const invalid = checkSettings(configured);
-  if (invalid)
+  if (invalid) {
     throw InvalidBenchSetting({
       setting: `in package.json#qunitx.bench: ${invalid.data.setting}`,
       reason: invalid.data.reason,
     });
-  const settings = { ...(fromManifest as BenchSettings), ...withoutUndefined(given) };
-  const fromGiven = checkSettings({ ...settings });
+  }
+  const merged = {
+    ...(fromManifest as BenchSettings),
+    ...Object.fromEntries(Object.entries(given).filter(([, value]) => value !== undefined)),
+  } as BenchSettings;
+  const fromGiven = checkSettings({ ...merged });
   if (fromGiven) throw fromGiven;
+  const settings = {
+    ...merged,
+    browser: merged.browser ?? 'chromium',
+    format: merged.format ?? 'pretty',
+  };
   const out = settings.console ?? processConsole;
-  const format = settings.format ?? 'pretty';
-  const browserName = settings.browser ?? 'chromium';
   // Relative to the project when package.json gave them, to where it runs when the command did.
   const files = await benchFiles(
     inputs.length
@@ -521,38 +628,111 @@ export async function run(inputs: string[], given: BenchSettings = {}): Promise<
     cwd,
     (settings.ignore ?? []).map((pattern) => path.resolve(cwd, pattern)),
   );
-  if (!files.length) {
-    if (settings.permitNoFiles) {
-      return { ok: true, exitCode: 0, report: emptyReport(browserName), comparison: null, files };
-    }
+  if (!files.length && !settings.permitNoFiles) {
     throw NoBenchFiles({ inputs: inputs.length ? inputs : (configuredInputs ?? ['.']) });
   }
-  const baseline = settings.compare
-    ? readBaselineFile(path.resolve(cwd, settings.compare), projectRoot)
-    : null;
-  const plugins = await resolvePlugins(
-    (manifest.qunitx as { plugins?: unknown } | undefined)?.plugins,
+  const [baseline, plugins] = await Promise.all([
+    settings.compare ? readBaselineFile(path.resolve(cwd, settings.compare), projectRoot) : null,
+    resolvePlugins((manifest.qunitx as { plugins?: unknown } | undefined)?.plugins, projectRoot)
+      .result()
+      .then((resolved) => {
+        if (Failure.is(resolved)) throw resolved;
+        return resolved;
+      }),
+  ]);
+  return {
+    settings,
+    cwd,
     projectRoot,
-  )
-    .result()
-    .then((resolved) => {
-      if (Failure.is(resolved)) throw resolved;
-      return resolved;
-    });
-  const build = (file: string) => bundle(file, { cwd, projectRoot, browser: browserName, plugins });
-
-  let bundles = await Promise.all(files.map(build));
-  const broken = bundles.filter((built) => built.error);
-  for (const built of broken) out.error(`${red('error')}: ${built.error}\n`);
-  if (settings.noRun) {
-    for (const built of bundles)
-      if (!built.error) out.log(`${blue('Check')} ${shown(built.file, cwd)}\n`);
-    return {
-      ok: !broken.length,
-      exitCode: broken.length ? 1 : 0,
-      report: emptyReport(browserName),
+    files,
+    baseline,
+    out,
+    build: (file) => bundle(file, { cwd, projectRoot, browser: settings.browser, plugins }),
+    empty: {
+      ok: !settings.signal?.aborted,
+      exitCode: settings.signal?.aborted ? 1 : 0,
+      aborted: Boolean(settings.signal?.aborted),
+      report: {
+        version: 1,
+        runtime: RUNTIMES[settings.browser],
+        cpu: os.cpus()[0]?.model?.trim() || 'unknown',
+        benches: [],
+      },
       comparison: null,
       files,
+    },
+  };
+}
+
+/**
+ * A prepared run with its files bundled, a browser launched and a server bound: measured as many
+ * times as asked, until closed.
+ *
+ * ```ts
+ * import type { LaunchedBench } from './bench.ts';
+ *
+ * // Defined, not invoked: needs a launched browser.
+ * async function twice(bench: LaunchedBench) {
+ *   const first = await bench.measure();
+ *   await bench.rebuild();
+ *   return [first, await bench.measure()];
+ * }
+ * ```
+ */
+export interface LaunchedBench {
+  /** Measures every file once, prints and saves as the settings say, and resolves with it. */
+  measure(): Promise<BenchResult>;
+  /** Reports which files build, measuring nothing: `noRun`. */
+  check(): BenchResult;
+  /** Bundles every file again, as it now is on disk. */
+  rebuild(): Promise<void>;
+  /** The directories of the files the bundles were made from, for a watcher. */
+  watchDirectories(): Promise<string[]>;
+  /** Closes the browser and the server. */
+  close(): Promise<void>;
+}
+
+/**
+ * Bundles a prepared run's files, launches its browser and binds its server.
+ *
+ * ```ts
+ * import { launch, prepare } from './bench.ts';
+ *
+ * // Defined, not invoked: launches a browser.
+ * async function once() {
+ *   const bench = await launch(await prepare(['benches'], {}));
+ *   try {
+ *     return await bench.measure();
+ *   } finally {
+ *     await bench.close();
+ *   }
+ * }
+ * ```
+ */
+export async function launch(prepared: PreparedBench): Promise<LaunchedBench> {
+  const { settings, cwd, projectRoot, files, baseline, out } = prepared;
+  let bundles = await Promise.all(files.map(prepared.build));
+  const rebuild = async () => void (bundles = await Promise.all(files.map(prepared.build)));
+  const watchDirectories = () =>
+    realWatchDirectories(bundles.flatMap((built) => built.watchDirectories));
+  const reportBroken = () => {
+    for (const built of bundles) if (built.error) out.error(`${red('error')}: ${built.error}\n`);
+  };
+  const check = (): BenchResult => {
+    reportBroken();
+    for (const built of bundles) {
+      if (!built.error) out.log(`${blue('Check')} ${shown(built.file, cwd)}\n`);
+    }
+    const broken = bundles.some((built) => built.error);
+    return { ...prepared.empty, ok: !broken, exitCode: broken ? 1 : 0 };
+  };
+  if (settings.noRun) {
+    return {
+      check,
+      measure: () => Promise.resolve(check()),
+      rebuild,
+      watchDirectories,
+      close: () => Promise.resolve(),
     };
   }
 
@@ -565,146 +745,212 @@ export async function run(inputs: string[], given: BenchSettings = {}): Promise<
     minSamples: 10,
     maxSamples: 100_000,
   };
-  server.get('/', (_request, response) => {
-    for (const [name, value] of Object.entries(DEFAULT_HTTP_HEADERS))
-      response.setHeader(name, value);
-    response.setHeader('Content-Type', 'text/html; charset=utf-8');
-    response.end(pageHTML(current!.bundle.file, current!.filter, timing));
-  });
-  server.get(BUNDLE_ROUTE, (_request, response) => {
-    for (const [name, value] of Object.entries(DEFAULT_HTTP_HEADERS))
-      response.setHeader(name, value);
-    response.setHeader('Content-Type', 'text/javascript; charset=utf-8');
-    response.end(current!.bundle.code);
-  });
+  const serve =
+    (type: string, body: () => string): RouteHandler =>
+    (_request, response) => {
+      for (const [name, value] of Object.entries({
+        ...DEFAULT_HTTP_HEADERS,
+        'Content-Type': type,
+      })) {
+        response.setHeader(name, value);
+      }
+      response.end(body());
+    };
+  server.get(
+    '/',
+    serve('text/html; charset=utf-8', () =>
+      pageHTML(current!.bundle.file, current!.filter, timing),
+    ),
+  );
+  server.get(
+    BUNDLE_ROUTE,
+    serve('text/javascript; charset=utf-8', () => current!.bundle.code),
+  );
   server.get('/favicon.ico', (_request, response) => {
     response.statusCode = 204;
     response.end();
   });
 
-  const browser = await Browser.launch({ browser: browserName });
+  const browser = await Browser.launch({ browser: settings.browser });
   const config = { port: settings.port ?? 1234, portExplicit: settings.port !== undefined };
-  await bindServerToPort(server, config);
+  try {
+    await bindServerToPort(server, config);
+  } catch (error) {
+    await closeCompletely({ server: server.close(), browser: browser.close() });
+    throw error;
+  }
   const origin = `http://localhost:${config.port}/`;
-  const runtime = `${runtimeName(browserName)}/${browser.version()} ${process.arch}-${process.platform}`;
-  const cpu = os.cpus()[0]?.model?.trim() || 'unknown';
+  const runtime = `${RUNTIMES[settings.browser]}/${browser.version()} ${process.arch}-${process.platform}`;
+  const { cpu } = prepared.empty.report;
+  const rule = { threshold: settings.threshold ?? 10, minDelta: settings.minDelta ?? 1_000 };
+  const profiles = settings.profile ? path.resolve(cwd, settings.profile) : null;
+  if (profiles) await fs.promises.mkdir(profiles, { recursive: true });
 
   // One file, measured in a page of its own: a fresh heap and JIT, nothing left by the last file.
-  const measure = async (built: Bundle, filter: string | undefined) => {
+  const measureOne = async (built: Bundle, filter: string | undefined, retry: boolean) => {
     current = { bundle: built, filter };
     return await measureFile(browser, origin, built, {
       ...settings,
-      browser: browserName,
       filter,
       projectRoot,
       out,
       timing,
+      profiles,
+      // A retry's measurements replace the first only when faster, so they are not news yet.
+      onResult: retry ? undefined : settings.onResult,
     });
   };
 
-  const once = async (): Promise<BenchResult> => {
-    const benches: BenchEntry[] = [];
-    let failed = broken.length > 0;
-    let onlyUsed = false;
-    if (format === 'pretty') out.log(Report.header({ version: 1, runtime, cpu, benches }));
-    const comparisons: Compare.Comparison[] = [];
-    for (const built of bundles) {
-      if (built.error) continue;
-      let measured = await measure(built, settings.filter);
-      if (measured.error) {
-        failed = true;
-        out.error(`${red('error')}: ${shown(built.file, cwd)}\n${measured.error}\n`);
-        continue;
-      }
-      let fileReport: Report.BenchReport = { version: 1, runtime, cpu, benches: measured.benches };
-      let comparison = baseline
-        ? Compare.compare(fileReport, baseline, ruleOf(settings), projectRoot)
-        : null;
-      // A regression is measured again before it counts, keeping each bench's best: the least
-      // disturbed measurement of the same code.
-      for (
-        let attempt = 0;
-        comparison?.regressions.length && attempt < (settings.retries ?? 2);
-        attempt++
-      ) {
-        const names = comparison.regressions.map((change) => change.bench.name);
-        const again = await measure(built, Compare.exactly(names));
-        fileReport = Compare.fastestOf(fileReport, again.benches);
-        comparison = Compare.compare(fileReport, baseline!, ruleOf(settings), projectRoot);
-      }
-      if (comparison) comparisons.push(comparison);
-      onlyUsed ||= measured.onlyUsed;
-      measured = { ...measured, benches: fileReport.benches };
-      benches.push(...measured.benches);
-      failed ||= measured.benches.some((bench) => 'failed' in bench.results[0]);
-      if (format === 'pretty') {
-        out.log(Report.pretty({ origin: built.origin, benches: measured.benches }, comparison));
-        for (const bench of measured.benches) {
-          const result = bench.results[0];
-          if (
-            'ok' in result &&
-            !result.ok.usedExplicitTimers &&
-            result.ok.avg < 10_000 &&
-            result.ok.min === 0
-          ) {
-            out.error(
-              `${yellow(`Warning: "${bench.name}" times each of its n iterations alone, finer than this browser's clock:\nleave n out to have it timed in batches.`)}\n`,
-            );
-          }
-          if ('ok' in result && result.ok.usedExplicitTimers && result.ok.avg < 10_000) {
-            out.error(
-              `${yellow(`Warning: start() and end() calls in "${bench.name}" are ignored because it averages less\nthan 10µs per iteration. Remove them for better results.`)}\n`,
-            );
-          }
-        }
-      }
+  // One file's outcome: measured, its regressions measured again, and printed when pretty.
+  const outcomeOf = async (built: Bundle): Promise<FileOutcome> => {
+    const measured = await measureOne(built, settings.filter, false);
+    if (measured.error) {
+      out.error(`${red('error')}: ${shown(built.file, cwd)}\n${measured.error}\n`);
+      return { ...NOTHING_MEASURED, failed: true, aborted: measured.aborted };
     }
-    const report: Report.BenchReport = { version: 1, runtime, cpu, benches };
-    const comparison = baseline
-      ? mergeComparisons(comparisons, report, baseline, settings, projectRoot)
-      : null;
-    if (format !== 'pretty') out.log(Report.render(report, format, comparison));
-    if (comparison) out.error(verdict(comparison, settings, cwd));
-    if (onlyUsed) out.error(`${red('error')}: Bench failed because the "only" option was used\n`);
-    else if (failed) out.error(`${red('error')}: Bench failed\n`);
-    if (settings.save) {
-      const target = path.resolve(cwd, settings.save);
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, `${JSON.stringify(report, null, 2)}\n`);
-    }
-    const exitCode = failed || onlyUsed || Boolean(comparison?.regressions.length) ? 1 : 0;
-    return { ok: exitCode === 0, exitCode, report, comparison, files };
-  };
-
-  try {
-    if (!settings.watch) return await once();
-    const directories = await realWatchDirectories(
-      bundles.flatMap((built) => built.watchDirectories),
-    );
-    return await watchLoop([...new Set(directories)], async () => {
-      bundles = await Promise.all(files.map(build));
-      await once();
-      out.error(
-        `# ${blue('Watching')} ${files.length} bench file${files.length === 1 ? '' : 's'}\n`,
+    let report: Report.BenchReport = { version: 1, runtime, cpu, benches: measured.benches };
+    let comparison = baseline ? Compare.compare(report, baseline, rule, projectRoot) : null;
+    // A regression is measured again before it counts, keeping each bench's best: the least
+    // disturbed measurement of the same code.
+    for (
+      let attempt = 0;
+      comparison?.regressions.length &&
+      attempt < (settings.retries ?? 2) &&
+      !settings.signal?.aborted;
+      attempt++
+    ) {
+      const again = await measureOne(
+        built,
+        Compare.exactly(comparison.regressions.map((change) => change.bench.name)),
+        true,
       );
-    });
-  } finally {
-    const pending = await closeCompletely({
-      server: server.close(),
-      browser: browser.close(),
-      prelaunch: shutdownPrelaunch(),
-    });
-    if (pending.length) out.error(`# qunitx: ${pending.join(', ')} never finished closing\n`);
+      report = Compare.fastestOf(report, again.benches);
+      comparison = Compare.compare(report, baseline!, rule, projectRoot);
+    }
+    if (settings.format === 'pretty') {
+      out.log(Report.pretty({ origin: built.origin, benches: report.benches }, comparison));
+      warn(report.benches, out);
+    }
+    return {
+      benches: report.benches,
+      changes: comparison?.changes ?? [],
+      failed: report.benches.some((bench) => 'failed' in bench.results[0]),
+      onlyUsed: measured.onlyUsed,
+      aborted: measured.aborted,
+    };
+  };
+
+  const measure = async (): Promise<BenchResult> => {
+    reportBroken();
+    if (settings.format === 'pretty')
+      out.log(Report.header({ version: 1, runtime, cpu, benches: [] }));
+    // One file after another, as one page measures at a time; an abort stops between them.
+    const outcomes: FileOutcome[] = [];
+    for (const built of bundles.filter((built) => !built.error)) {
+      const outcome = settings.signal?.aborted
+        ? { ...NOTHING_MEASURED, aborted: true }
+        : await outcomeOf(built);
+      outcomes.push(outcome);
+      if (outcome.aborted) break;
+    }
+
+    const report: Report.BenchReport = {
+      version: 1,
+      runtime,
+      cpu,
+      benches: outcomes.flatMap((outcome) => outcome.benches),
+    };
+    const aborted = outcomes.some((outcome) => outcome.aborted);
+    const onlyUsed = outcomes.some((outcome) => outcome.onlyUsed);
+    const failed =
+      bundles.some((built) => built.error) || outcomes.some((outcome) => outcome.failed);
+    // One comparison of the whole run, from each file's, so the verdict covers every file.
+    const changes = outcomes.flatMap((outcome) => outcome.changes);
+    const comparison = baseline
+      ? {
+          ...Compare.compare(report, baseline, rule, projectRoot),
+          changes,
+          regressions: changes.filter((change) => change.regressed),
+        }
+      : null;
+    if (settings.format !== 'pretty') out.log(Report.render(report, settings.format, comparison));
+    if (comparison) out.error(verdict(comparison, settings));
+    if (aborted) out.error(`${red('error')}: Bench aborted\n`);
+    else if (onlyUsed)
+      out.error(`${red('error')}: Bench failed because the "only" option was used\n`);
+    else if (failed) out.error(`${red('error')}: Bench failed\n`);
+    // A run cut short is no baseline: saving it would make every bench it skipped "new".
+    if (settings.save && !aborted) {
+      const target = path.resolve(cwd, settings.save);
+      await fs.promises.mkdir(path.dirname(target), { recursive: true });
+      await fs.promises.writeFile(target, `${JSON.stringify(report, null, 2)}\n`);
+    }
+    const exitCode = aborted || onlyUsed || failed || comparison?.regressions.length ? 1 : 0;
+    return { ok: exitCode === 0, exitCode, aborted, report, comparison, files };
+  };
+
+  return {
+    measure,
+    check,
+    rebuild,
+    watchDirectories,
+    close: async () => {
+      const pending = await closeCompletely({
+        server: server.close(),
+        browser: browser.close(),
+        prelaunch: shutdownPrelaunch(),
+      });
+      if (pending.length) out.error(`# qunitx: ${pending.join(', ')} never finished closing\n`);
+    },
+  };
+}
+
+// What one file added to a run: its benches and their changes from the baseline, and whether it
+// failed, used `only`, or was cut short.
+interface FileOutcome {
+  benches: BenchEntry[];
+  changes: Compare.Comparison['changes'];
+  failed: boolean;
+  onlyUsed: boolean;
+  aborted: boolean;
+}
+
+// deno bench's warnings for a timing finer than the clock it was taken with.
+function warn(benches: BenchEntry[], out: Console): void {
+  for (const bench of benches) {
+    const result = bench.results[0];
+    if (!('ok' in result) || result.ok.avg >= 10_000) continue;
+    if (result.ok.usedExplicitTimers) {
+      out.error(
+        `${yellow(`Warning: start() and end() calls in "${bench.name}" are ignored because it averages less\nthan 10µs per iteration. Remove them for better results.`)}\n`,
+      );
+    } else if (result.ok.min === 0) {
+      out.error(
+        `${yellow(`Warning: "${bench.name}" times each of its n iterations alone, finer than this browser's clock:\nleave n out to have it timed in batches.`)}\n`,
+      );
+    }
   }
 }
 
-/** One bench file, bundled: its code and source map, or why it would not build. */
-interface Bundle {
+/**
+ * One bench file, bundled: its code and source map, or why it would not build.
+ *
+ * ```ts
+ * const built: Bundle = { file: '/p/a.bench.ts', origin: 'file:///p/a.bench.ts', code: '', decoder: null, watchDirectories: [], error: null };
+ * ```
+ */
+export interface Bundle {
+  /** The bench file. */
   file: string;
+  /** Its URL, as its benches report it. */
   origin: string;
+  /** The bundle. */
   code: string;
+  /** Its source map. */
   decoder: SourceMapDecoder | null;
+  /** The folders of the files it was made from. */
   watchDirectories: string[];
+  /** Why it would not build, or null. */
   error: string | null;
 }
 
@@ -729,12 +975,7 @@ async function bundle(
       outdir: options.projectRoot,
       keepNames: true,
       legalComments: 'none',
-      target:
-        options.browser === 'firefox'
-          ? ['firefox115']
-          : options.browser === 'webkit'
-            ? ['safari16']
-            : ['chrome120'],
+      target: [TARGETS[options.browser]],
       sourcemap: 'inline',
       jsx: 'automatic',
       define: { 'Deno.bench': 'globalThis.bench' },
@@ -802,8 +1043,11 @@ async function measureFile(
     projectRoot: string;
     out: Console;
     timing: BenchTiming;
+    /** The directory each bench's CPU profile is written to, or null. */
+    profiles: string | null;
   },
-): Promise<{ benches: BenchEntry[]; onlyUsed: boolean; error: string | null }> {
+): Promise<{ benches: BenchEntry[]; onlyUsed: boolean; aborted: boolean; error: string | null }> {
+  const { profiles } = settings;
   const context = await browser.newContext();
   const page: Page = await context.newPage();
   // Back to the file a bench was written in, without the frames of the harness running it.
@@ -829,23 +1073,49 @@ async function measureFile(
       );
   });
   page.on('pageerror', (error) => uncaught.push(mapped(error.stack ?? String(error))));
+  // Each bench as the page hands it over, so an abort mid-file still has what was measured.
+  const streamed: BenchEntry[] = [];
+  const withSourceStack = (bench: BenchEntry): BenchEntry => {
+    const result = bench.results[0];
+    return 'failed' in result
+      ? {
+          ...bench,
+          results: [{ failed: { ...result.failed, stack: mapped(result.failed.stack) } }],
+        }
+      : bench;
+  };
+  // Mid-bench, the page is closed outright: the bench in flight has nothing to give back.
+  let abortedMidBench = false;
+  const stop = () => {
+    abortedMidBench = true;
+    void context.close().catch(() => {});
+  };
+  settings.signal?.addEventListener('abort', stop, { once: true });
   try {
-    const cdp = settings.cpuThrottle || settings.profile ? await context.newCDPSession(page) : null;
+    const cdp = settings.cpuThrottle || profiles ? await context.newCDPSession(page) : null;
     if (cdp && settings.cpuThrottle && settings.cpuThrottle > 1) {
       await cdp.send('Emulation.setCPUThrottlingRate', { rate: settings.cpuThrottle });
     }
-    if (cdp && settings.profile) {
-      const directory = path.resolve(settings.cwd ?? process.cwd(), settings.profile);
-      fs.mkdirSync(directory, { recursive: true });
+    if (cdp && profiles) {
       await cdp.send('Profiler.enable');
       await cdp.send('Profiler.setSamplingInterval', { interval: 100 });
-      await page.exposeFunction('__qunitxBenchStarted', () => cdp.send('Profiler.start'));
-      await page.exposeFunction('__qunitxBenchFinished', async (entry: BenchEntry) => {
+    }
+    // Told of each bench between measurements, never during one: `false` stops the run there.
+    await page.exposeFunction('__qunitxBenchStarted', async () => {
+      if (settings.signal?.aborted) return false;
+      if (cdp && profiles) await cdp.send('Profiler.start');
+      return true;
+    });
+    await page.exposeFunction('__qunitxBenchFinished', async (entry: BenchEntry) => {
+      if (cdp && profiles) {
         const { profile } = await cdp.send('Profiler.stop');
         const name = `${path.basename(built.file).replace(/\.[^.]+$/, '')}--${entry.name.replace(/[^\w.-]+/g, '-')}.cpuprofile`;
-        fs.writeFileSync(path.join(directory, name), JSON.stringify(profile));
-      });
-    }
+        await fs.promises.writeFile(path.join(profiles, name), JSON.stringify(profile));
+      }
+      const mappedEntry = withSourceStack(entry);
+      streamed.push(mappedEntry);
+      settings.onResult?.(mappedEntry);
+    });
     await page.goto(url, { waitUntil: 'commit', timeout: NAVIGATION_TIMEOUT_MS });
     const handle = await page.waitForFunction(
       () => (globalThis as { __qunitxBenchDone?: unknown }).__qunitxBenchDone ?? null,
@@ -853,22 +1123,21 @@ async function measureFile(
       { timeout: settings.timeout ?? 0, polling: 100 },
     );
     const done = (await handle.jsonValue()) as
-      { ok: true; benches: BenchEntry[]; onlyUsed: boolean } | { ok: false; stack: string };
-    if (!done.ok) return { benches: [], onlyUsed: false, error: mapped(done.stack) };
-    if (uncaught.length)
-      return { benches: done.benches, onlyUsed: done.onlyUsed, error: uncaught.join('\n') };
-    // Stacks point at the file the bench was written in, not at the bundle.
-    const benches = done.benches.map((bench) => {
-      const result = bench.results[0];
-      return 'failed' in result
-        ? {
-            ...bench,
-            results: [{ failed: { ...result.failed, stack: mapped(result.failed.stack) } }],
-          }
-        : bench;
-    });
-    return { benches, onlyUsed: done.onlyUsed, error: null };
+      | { ok: true; benches: BenchEntry[]; onlyUsed: boolean; aborted: boolean }
+      | { ok: false; stack: string };
+    if (!done.ok)
+      return { benches: [], onlyUsed: false, aborted: false, error: mapped(done.stack) };
+    return {
+      benches: done.benches.map(withSourceStack),
+      onlyUsed: done.onlyUsed,
+      aborted: done.aborted,
+      error: uncaught.length ? uncaught.join('\n') : null,
+    };
+  } catch (error) {
+    if (abortedMidBench) return { benches: streamed, onlyUsed: false, aborted: true, error: null };
+    throw error;
   } finally {
+    settings.signal?.removeEventListener('abort', stop);
     await context.close().catch(() => {});
   }
 }
@@ -912,23 +1181,7 @@ function wrapperSource(): string {
 `;
 }
 
-// One comparison of the whole run from each file's, so the verdict covers every file.
-function mergeComparisons(
-  comparisons: Compare.Comparison[],
-  report: Report.BenchReport,
-  baseline: Compare.BaselineEntry[],
-  settings: BenchSettings,
-  projectRoot: string,
-): Compare.Comparison {
-  const changes = comparisons.flatMap((comparison) => comparison.changes);
-  return {
-    ...Compare.compare(report, baseline, ruleOf(settings), projectRoot),
-    changes,
-    regressions: changes.filter((change) => change.regressed),
-  };
-}
-
-function verdict(comparison: Compare.Comparison, settings: BenchSettings, cwd: string): string {
+function verdict(comparison: Compare.Comparison, settings: BenchSettings): string {
   const against = settings.compare ? ` against ${settings.compare}` : '';
   const missing = comparison.missing.length
     ? `# ${comparison.missing.length} baseline bench${comparison.missing.length === 1 ? '' : 'es'} did not run: ${comparison.missing.map((entry) => entry.name).join(', ')}\n`
@@ -940,24 +1193,22 @@ function verdict(comparison: Compare.Comparison, settings: BenchSettings, cwd: s
     (change) =>
       `#   ${change.bench.name}: ${Report.duration(change.base)} → ${Report.duration((change.bench.results[0] as { ok: { avg: number } }).ok.avg)} (+${change.percent.toFixed(1)}%, over ${change.threshold}%)`,
   );
-  void cwd;
   return `${red(`# ${comparison.regressions.length} regression${comparison.regressions.length === 1 ? '' : 's'}`)}${against}:\n${lines.join('\n')}\n${missing}`;
 }
 
-function ruleOf(settings: BenchSettings): Compare.RegressionRule {
-  return { threshold: settings.threshold ?? 10, minDelta: settings.minDelta ?? 1_000 };
-}
-
-function readBaselineFile(file: string, projectRoot: string): Compare.BaselineEntry[] {
-  let json: unknown;
-  try {
-    json = JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch (error) {
-    throw InvalidBenchSetting({
-      setting: 'compare',
-      reason: `cannot read ${file}: ${(error as Error).message}`,
+async function readBaselineFile(
+  file: string,
+  projectRoot: string,
+): Promise<Compare.BaselineEntry[]> {
+  const json = await fs.promises
+    .readFile(file, 'utf8')
+    .then(JSON.parse)
+    .catch((error: Error) => {
+      throw InvalidBenchSetting({
+        setting: 'compare',
+        reason: `cannot read ${file}: ${error.message}`,
+      });
     });
-  }
   try {
     return Compare.readBaseline(json, projectRoot);
   } catch (error) {
@@ -968,50 +1219,33 @@ function readBaselineFile(file: string, projectRoot: string): Compare.BaselineEn
   }
 }
 
-function readManifest(projectRoot: string): { qunitx?: unknown } {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
-  } catch {
-    return {};
-  }
-}
-
-function emptyReport(browser: string): Report.BenchReport {
-  return {
-    version: 1,
-    runtime: runtimeName(browser),
-    cpu: os.cpus()[0]?.model?.trim() || 'unknown',
-    benches: [],
-  };
-}
-
-function runtimeName(browser: string): string {
-  return browser === 'firefox' ? 'Firefox' : browser === 'webkit' ? 'WebKit' : 'Chromium';
-}
-
 function fromText(setting: keyof BenchSettings, value: string): unknown {
-  if (setting === 'minDelta') return nanoseconds(value);
-  if (
-    ['threshold', 'retries', 'warmup', 'time', 'cpuThrottle', 'port', 'timeout'].includes(setting)
-  ) {
-    const number = Number(value.replace(/%$/, ''));
-    return value.trim() === '' || Number.isNaN(number) ? value : number;
+  if (setting === 'minDelta') {
+    // `500ns`, `2µs`, `2us`, `1ms`, `1s`, or a bare number of nanoseconds.
+    const match = /^\s*(\d+(?:\.\d+)?)\s*(ns|µs|us|ms|s)?\s*$/.exec(value);
+    return match ? Number(match[1]) * NANOSECONDS[match[2] ?? 'ns'] : value;
   }
-  return value;
+  const number = Number(value.replace(/%$/, ''));
+  return NUMERIC_SETTINGS.has(setting) && value.trim() !== '' && !Number.isNaN(number)
+    ? number
+    : value;
 }
 
-// `500ns`, `2µs`, `2us`, `1ms`, `1s`, or a bare number of nanoseconds.
-function nanoseconds(value: string): number | string {
-  const match = /^\s*(\d+(?:\.\d+)?)\s*(ns|µs|us|ms|s)?\s*$/.exec(value);
-  if (!match) return value;
-  const scale = { ns: 1, µs: 1e3, us: 1e3, ms: 1e6, s: 1e9 }[match[2] ?? 'ns'] ?? 1;
-  return Number(match[1]) * scale;
+function isText(value: unknown): boolean {
+  return typeof value === 'string' && value !== '';
 }
 
-function withoutUndefined<T extends object>(value: T): Partial<T> {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as Partial<T>;
+function isBoolean(value: unknown): boolean {
+  return typeof value === 'boolean';
+}
+
+function isNumber(min: number, max = Infinity): (value: unknown) => boolean {
+  return (value) =>
+    typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
+}
+
+function isWhole(min: number, max = Infinity): (value: unknown) => boolean {
+  return (value) => Number.isInteger(value) && (value as number) >= min && (value as number) <= max;
 }
 
 function shown(file: string, cwd: string): string {

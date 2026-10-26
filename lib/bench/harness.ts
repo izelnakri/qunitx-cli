@@ -142,7 +142,7 @@ export interface BenchTiming {
  * every bench declared so far, measured in turn, ungrouped first and then each group, as
  * `deno bench` orders them. `filter` keeps the benches whose name contains it, or matches it when
  * it is `/a regex/`. `hooks.started` and `hooks.finished` are told of each bench as it starts and
- * ends, between measurements.
+ * ends, between measurements; `started` answering `false` stops the run there, `aborted`.
  *
  * ```ts
  * import { installBench } from './harness.ts';
@@ -165,7 +165,7 @@ export function installBench(settings: {
       started?: (name: string) => unknown;
       finished?: (outcome: BenchEntry) => unknown;
     };
-  }) => Promise<{ benches: BenchEntry[]; onlyUsed: boolean; declared: number }>;
+  }) => Promise<{ benches: BenchEntry[]; onlyUsed: boolean; declared: number; aborted: boolean }>;
 } {
   const definitions: BenchDefinition[] = [];
   // Every iteration's result is kept here, so the optimizer cannot remove the work measured.
@@ -325,7 +325,7 @@ export function installBench(settings: {
       started?: (name: string) => unknown;
       finished?: (outcome: BenchEntry) => unknown;
     };
-  }): Promise<{ benches: BenchEntry[]; onlyUsed: boolean; declared: number }> {
+  }): Promise<{ benches: BenchEntry[]; onlyUsed: boolean; declared: number; aborted: boolean }> {
     const pattern = /^\/(.*)\/([a-z]*)$/.exec(options.filter ?? '');
     const regex = pattern ? new RegExp(pattern[1], pattern[2]) : null;
     const matches = (name: string) =>
@@ -341,8 +341,13 @@ export function installBench(settings: {
       chosen.filter((definition) => (definition.group ?? null) === group),
     );
     const benches: BenchEntry[] = [];
+    let aborted = false;
     for (const definition of ordered) {
-      await options.hooks?.started?.(definition.name);
+      // A hook that answers `false` stops the run here, between benches.
+      if ((await options.hooks?.started?.(definition.name)) === false) {
+        aborted = true;
+        break;
+      }
       const result = await measure(definition).then(
         (ok): BenchEntry['results'][number] => ({ ok }),
         (error) => {
@@ -370,7 +375,7 @@ export function installBench(settings: {
       await options.hooks?.finished?.(outcome);
     }
     void sink;
-    return { benches, onlyUsed, declared: definitions.length };
+    return { benches, onlyUsed, declared: definitions.length, aborted };
   }
 
   return { bench, run };

@@ -674,7 +674,8 @@ file:///project/benches/render.bench.ts
 - `--cpu-throttle=4` runs as a slower device would; `--profile` writes each bench's CPU profile
   for Chrome DevTools (both Chromium); `--watch` measures again on save; `--no-run` only builds.
 - `package.json#qunitx.bench` sets any of these (`{ "inputs": ["benches"], "threshold": 15 }`), and
-  `qunitx.plugins` apply as they do to tests. From JS: `import { Bench } from 'qunitx-cli'`, then `Bench.run()`.
+  `qunitx.plugins` apply as they do to tests. From JS: `Bench.run()`, `Bench.watch()`,
+  `Bench.render()` and `Bench.compare()` (see [the JavaScript API](docs/javascript-api.md#bench)).
 
 ## JavaScript API
 
