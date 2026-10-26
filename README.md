@@ -42,7 +42,8 @@ under [Installation](#installation).
 - [Writing tests](#writing-tests) · [Usage](#usage) · [CLI reference](#cli-reference)
 - [Configuration](#configuration) · [Environment variables](#environment-variables) ·
   [JSX / TSX](#jsx--tsx) · [esbuild plugins](#esbuild-plugins)
-- [REPL](#repl) · [Running a script](#running-a-script) · [JavaScript API](#javascript-api) ·
+- [REPL](#repl) · [Running a script](#running-a-script) · [Benchmarks](#benchmarks) ·
+  [JavaScript API](#javascript-api) ·
   [Daemon mode](#daemon-mode)
 - [JUnit reports](#junit-reports) · [Code coverage](#code-coverage) · [Timezone](#timezone)
 - [Development](#development)
@@ -623,6 +624,58 @@ The alternative was to run it as a script, which registers the tests, runs none 
 0 in silence. Reporting success for tests that never ran is the one thing a test runner must not
 do.
 
+## Benchmarks
+
+`qunitx bench` is `deno bench` in a real browser. Bench files are written for Deno — the same
+file runs under both — and measured in Chromium, Firefox or WebKit, where DOM, layout and
+rendering code can be measured at all:
+
+```ts
+// benches/render.bench.ts
+const element = document.createElement('div');
+
+Deno.bench('render a list', () => {
+  element.innerHTML = '<li>a</li>'.repeat(100);
+});
+Deno.bench({ name: 'sort', group: 'arrays', baseline: true, fn: () => [3, 1, 2].sort() });
+Deno.bench({ name: 'toSorted', group: 'arrays', fn: () => [3, 1, 2].toSorted() });
+Deno.bench('only the middle', (b) => {
+  const rows = build();
+  b.start();
+  rows.reverse();
+  b.end();
+});
+```
+
+```console
+$ qunitx bench benches --browser=firefox
+    CPU | Apple M3
+Runtime | Firefox/146.0 arm64-darwin
+
+file:///project/benches/render.bench.ts
+
+| benchmark     | time/iter (avg) |        iter/s |      (min … max)      |      p75 |      p99 |     p995 |
+| ------------- | --------------- | ------------- | --------------------- | -------- | -------- | -------- |
+| render a list |         18.2 µs |        54,950 | ( 17.4 µs …  21.0 µs) |  18.5 µs |  21.0 µs |  21.0 µs |
+...
+```
+
+- Every `Deno.bench` form works — `(name, fn)`, `(fn)`, `(definition)`, `(name, options, fn)` —
+  with `group`, `baseline`, `only`, `ignore`, `n`, `warmup` and `b.start()` / `b.end()`; or call
+  the global `bench(...)`. Files are `bench.ts`, `*_bench.ts` and `*.bench.ts` (and `.js`, `.jsx`,
+  `.tsx`, `.mts`, `.mjs`); no inputs means the current folder.
+- Each file runs alone in a fresh, cross-origin-isolated page, so `performance.now()` is precise
+  to microseconds, and each sample is a batch long enough for the clock's grain not to matter.
+- `--reporter=json` (or `--json`) prints `deno bench --json`'s report exactly; `markdown` (a
+  pull-request comment or `$GITHUB_STEP_SUMMARY`) and `csv` are there too.
+- `--save=base.json`, then `--compare=base.json`: a "vs base" column, and exit 1 on a regression —
+  slower by over `--threshold` percent (10) and `--min-delta` (1µs). A regressed bench is measured
+  again (`--retries`, 2) before it fails. A `deno bench --json` file works as the baseline too.
+- `--cpu-throttle=4` runs as a slower device would; `--profile` writes each bench's CPU profile
+  for Chrome DevTools (both Chromium); `--watch` measures again on save; `--no-run` only builds.
+- `package.json#qunitx.bench` sets any of these (`{ "inputs": ["benches"], "threshold": 15 }`), and
+  `qunitx.plugins` apply as they do to tests. From JS: `import { Bench } from 'qunitx-cli'`, then `Bench.run()`.
+
 ## JavaScript API
 
 Everything the CLI does, available as a function — for CI scripts, editor integrations, agents,
@@ -914,6 +967,7 @@ Subcommands:
   qunitx new <testFileName>               Create a new qunitx test file
   qunitx upgrade [version]                Update the standalone binary (--check reports only)
   qunitx run <scriptFile>                 Run one file as a plain script in the browser
+  qunitx bench [files...]                 Measure Deno.bench files in a real browser (see --help)
 ```
 
 ## Development

@@ -97,6 +97,12 @@ const WATCH_EXIT_CODES = { SIGTERM: 143, SIGINT: 130, SIGHUP: 129 };
     if (Failure.is(outcome)) return await reportScriptFailure(outcome);
 
     return exitAfterFlush(outcome.exitCode);
+  } else if (cmd === 'bench') {
+    // Never routed through the daemon: a measurement wants a browser of its own, not a slot in
+    // a shared one, and it uses the pre-launched Chrome like any other local run.
+    exitOnSignal();
+    const BenchCommand = await import('./lib/commands/bench.ts');
+    return exitAfterFlush(await BenchCommand.command());
   } else if (cmd === 'repl') {
     // Never routed through the daemon: a REPL is a page kept open for one terminal, and the
     // daemon's browser is shared. It uses the pre-launched Chrome like any other local run.

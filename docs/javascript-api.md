@@ -238,6 +238,30 @@ not build, or a target that is not a single file.
 > is a legal script call. The return type differs, so TypeScript flags it; untyped callers should
 > check that one by hand.
 
+## Bench
+
+`Deno.bench` files measured in a real browser — the API twin of `qunitx bench`.
+
+```js
+import { Bench, silentConsole } from 'qunitx-cli';
+
+const result = await Bench.run('benches', {
+  browser: 'firefox',
+  compare: 'tmp/base.json', // `--save`'s output, or `deno bench --json`'s
+  threshold: 15,
+  console: silentConsole, // print nothing; the default prints the report as the CLI does
+});
+
+result.ok; // false when a bench failed or regressed
+result.report; // exactly `deno bench --json`'s report: { version, runtime, cpu, benches }
+result.comparison?.regressions; // [{ bench, base, percent, threshold, regressed }]
+```
+
+Options are the command's flags by their JS names: `filter`, `ignore`, `format`, `save`,
+`compare`, `threshold`, `minDelta` (ns), `retries`, `warmup` and `time` (ms), `cpuThrottle`,
+`profile`, `noRun`, `permitNoFiles`, `port`, `timeout`, `cwd` and `console`. A failed or regressed
+bench is a result; it rejects only with `NoBenchFiles` or `InvalidBenchSetting`.
+
 ## openSession
 
 One run, watched as it happens. `test()` is the smaller thing when only the outcome matters; this

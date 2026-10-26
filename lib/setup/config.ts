@@ -322,9 +322,15 @@ function readInputsFromPackageJSON(packageJSON: {
  * is either a string specifier (`"esbuild-plugin-vue-next"`) or a `[specifier, options]` tuple.
  * Function exports are invoked as factories with the options; object exports are used directly.
  * `createRequire(projectRoot)` keeps resolution rooted at the user's project so plugins work
- * under local installs, globals, or `npx`.
+ * under local installs, globals, or `npx`. Shared by the test runner and `qunitx bench`.
+ *
+ * ```ts
+ * import { resolvePlugins } from './config.ts';
+ *
+ * await resolvePlugins(undefined, '/project').result(); // [] — no plugins configured
+ * ```
  */
-function resolvePlugins(
+export function resolvePlugins(
   raw: unknown,
   projectRoot: string,
 ): Task<EsbuildPlugin[], Result.Failure.Of<typeof InvalidPlugins | typeof PluginLoadFailed>> {

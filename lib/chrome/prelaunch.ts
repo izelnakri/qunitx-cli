@@ -131,6 +131,8 @@ export function startPrelaunch(): void {
     // `repl` opens a page of its own and keeps it: it never routes to the daemon, so it wants
     // the pre-launched Chrome even when a daemon is up.
     cmd !== 'repl' &&
+    // Nor does `bench`: it measures in a browser of its own.
+    cmd !== 'bench' &&
     !watchFromArgv &&
     !openFromArgv &&
     !process.env.QUNITX_NO_DAEMON &&

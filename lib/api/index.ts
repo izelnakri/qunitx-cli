@@ -46,6 +46,34 @@ export { test, type RunFailure } from './test.ts';
  * return type differs, so TypeScript flags it, but untyped callers must check that one by hand.
  */
 export { run, NotAScriptFile } from './run.ts';
+/**
+ * Benchmarks: `run` measures `Deno.bench` files in a real browser, the API twin of
+ * `qunitx bench`.
+ *
+ * ```ts
+ * import * as Bench from './bench.ts';
+ *
+ * // Defined, not invoked: launches a browser.
+ * async function measure() {
+ *   return (await Bench.run('benches')).report;
+ * }
+ * ```
+ */
+export * as Bench from './bench.ts';
+export type {
+  BenchOptions,
+  BenchFailure,
+  BenchResult,
+  BenchEntry,
+  BenchStats,
+  BenchDefinition,
+  BenchContext,
+  BenchReport,
+  BenchFormat,
+  Comparison,
+  BaselineEntry,
+  RegressionRule,
+} from './bench.ts';
 export type { ScriptOptions, ScriptResult, ScriptFailure } from './run.ts';
 export { openSession, type SessionOptions, type TestSession } from './session.ts';
 export { watch, type SessionPatch, type WatchSession } from './watch.ts';
