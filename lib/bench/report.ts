@@ -188,7 +188,7 @@ function row(
     magenta(pad(duration(stats.p99), 8)),
     magenta(pad(duration(stats.p995), 8)),
   ];
-  const change = comparison?.changes.find((entry) => entry.bench === bench);
+  const change = changeOf(comparison, bench);
   if (comparison) cells.push(change ? changeText(change, color) : pad('new', 10));
   return `| ${cells.join(' | ')} |`;
 }
@@ -244,7 +244,7 @@ function markdown(report: BenchReport, comparison: Comparison | null): string {
           continue;
         }
         const stats = result.ok;
-        const change = comparison?.changes.find((entry) => entry.bench === bench);
+        const change = changeOf(comparison, bench);
         const versus = change
           ? ` ${change.regressed ? '🔴 ' : ''}${change.percent >= 0 ? '+' : ''}${change.percent.toFixed(1)}% |`
           : comparison
@@ -293,7 +293,7 @@ function csv(report: BenchReport, comparison: Comparison | null): string {
   const rows = report.benches.map((bench) => {
     const result = bench.results[0];
     const stats: Partial<BenchStats> = 'ok' in result ? result.ok : {};
-    const change = comparison?.changes.find((entry) => entry.bench === bench);
+    const change = changeOf(comparison, bench);
     return [
       bench.origin,
       bench.group,
@@ -336,6 +336,20 @@ export function files(report: BenchReport): { origin: string; benches: BenchEntr
     byOrigin.set(bench.origin, [...(byOrigin.get(bench.origin) ?? []), bench]);
   }
   return [...byOrigin].map(([origin, benches]) => ({ origin, benches }));
+}
+
+// A bench's change in `comparison`, matched by file, group and name rather than by identity, so
+// a comparison made from one copy of a report describes another.
+function changeOf(
+  comparison: Comparison | null,
+  bench: BenchEntry,
+): Comparison['changes'][number] | undefined {
+  return comparison?.changes.find(
+    (change) =>
+      change.bench.origin === bench.origin &&
+      change.bench.group === bench.group &&
+      change.bench.name === bench.name,
+  );
 }
 
 // Ungrouped first, then each group in the order it first appears.

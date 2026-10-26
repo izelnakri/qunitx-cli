@@ -48,7 +48,8 @@ export { test, type RunFailure } from './test.ts';
 export { run, NotAScriptFile } from './run.ts';
 /**
  * Benchmarks: `run` measures `Deno.bench` files in a real browser, the API twin of
- * `qunitx bench`.
+ * `qunitx bench`, and `watch` measures again on every change; `render` and `compare` work on
+ * saved reports, with no browser.
  *
  * ```ts
  * import * as Bench from './bench.ts';
@@ -64,6 +65,7 @@ export type {
   BenchOptions,
   BenchFailure,
   BenchResult,
+  BenchWatchSession,
   BenchEntry,
   BenchStats,
   BenchDefinition,

@@ -259,8 +259,43 @@ result.comparison?.regressions; // [{ bench, base, percent, threshold, regressed
 
 Options are the command's flags by their JS names: `filter`, `ignore`, `format`, `save`,
 `compare`, `threshold`, `minDelta` (ns), `retries`, `warmup` and `time` (ms), `cpuThrottle`,
-`profile`, `noRun`, `permitNoFiles`, `port`, `timeout`, `cwd` and `console`. A failed or regressed
-bench is a result; it rejects only with `NoBenchFiles` or `InvalidBenchSetting`.
+`profile`, `noRun`, `permitNoFiles`, `port`, `timeout`, `cwd` and `console`. Two more are the
+API's own:
+
+- `onResult(entry)` hears of each bench as it is measured — progress, or a UI of your own.
+- `signal` stops the run: between benches, or mid-bench by closing its page. What was measured is
+  the result, with `aborted: true` (and nothing `save`d); an already-aborted signal launches
+  nothing.
+
+A failed, regressed or aborted run is a result; it rejects only with `NoBenchFiles` or
+`InvalidBenchSetting`.
+
+### Bench.watch
+
+`qunitx bench --watch` as a session: measured once, then again whenever a file a bench imports
+changes.
+
+```js
+import { Bench } from 'qunitx-cli';
+
+const session = await Bench.watch('benches', { compare: 'tmp/base.json' });
+
+session.initial; // the first run's BenchResult
+for await (const result of session) {
+  if (result.comparison?.regressions.length) console.log('slower:', result.comparison.regressions);
+}
+await session.run(); // bundle again and measure now
+await session.close(); // or abort the `signal` given
+```
+
+`latest`, `running` and `results()` (the same feed as a `Stream`) are there too, as on `watch()`.
+
+### Reports without a browser
+
+`Bench.render(report, format, comparison?)` renders a saved report — `qunitx bench --json`'s
+or `deno bench --json`'s — as `pretty`, `json`, `markdown` or `csv`. `Bench.compare(report,
+baseline, { threshold, minDelta }?, root?)` compares two of them under `--compare`'s rule: a
+Chromium run with a Firefox one, or with `deno bench`.
 
 ## openSession
 
