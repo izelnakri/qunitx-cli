@@ -67,6 +67,8 @@ ${color('$ qunitx run $scriptFile')}                 # Runs one file as a plain 
   no TAP, no QUnit; top-level await works, and the exit code is ${color('globalThis.exitCode')} (1 if it throws)
   a file that declares tests is run AS a suite, reported exactly as ${color('$ qunitx $file')} would
   accepts ${color('--browser')}, ${color('--port')}, ${color('--open')}, ${color('--timeout')} and ${color('--watch')}
+${color('$ qunitx bench [files]')}                   # Deno.bench files, measured in a real browser: deno bench's table, --json, markdown, csv
+  ${color('--save=base.json')} then ${color('--compare=base.json')} fails on a regression; see ${color('qunitx bench --help')}
 ${color('$ qunitx repl [files]')}                    # A prompt that evaluates in a real Chrome page; [files] are preloaded
   open ${color('<url>/repl')} in any Chromium browser for DevTools on the very page the prompt drives
   ${color('--open')} evaluates in a window you can see instead of a headless one (not on macOS)
