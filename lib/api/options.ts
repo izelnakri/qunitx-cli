@@ -1,6 +1,11 @@
 import { JUnitReporter } from '../reporters/junit.ts';
 import { BUILT_IN_REPORTERS } from '../reporters/index.ts';
-import { processConsole, silentConsole, type Console } from '../console.ts';
+import {
+  fromConsoleOptionOrElse,
+  processConsole,
+  silentConsole,
+  type ConsoleOption,
+} from '../console.ts';
 import { APIReporter } from './reporter.ts';
 import { REPORTERS } from '../reporters/types.ts';
 import { Failure } from '../task/index.ts';
@@ -63,13 +68,14 @@ export interface UserRunOptions {
    */
   reporters?: ReadonlyArray<ReporterOption>;
   /**
-   * Where the run's text goes. Defaults to the process streams when a reporter is NAMED, and to
-   * {@link silentConsole} otherwise — so a programmatic run prints nothing unless it was asked to.
+   * Where the run's text goes, or `false` for nowhere. Defaults to the process streams when a
+   * reporter is NAMED, and to nowhere otherwise — so a programmatic run prints nothing unless it
+   * was asked to.
    *
    * Set it to capture the built-in reporters' output, which is the only way to reach it:
    * `console: streamConsole(myBuffer)`.
    */
-  console?: Console;
+  console?: ConsoleOption;
   /** Directory for the compiled bundle and HTML output. Defaults to `'tmp'`. */
   output?: string;
   /** Port for the local test server. Defaults to 1234, incrementing on conflict. */
@@ -278,10 +284,11 @@ export function from(
     reporters,
     // A reporter NAME asks for the CLI's text; a reporter OBJECT is a request to observe, not to
     // print, so it stays silent. A `console` of your own wins either way.
-    console:
-      userRunOptions.console ??
-      (requestedReporters.some((entry) => typeof entry === 'string')
+    console: fromConsoleOptionOrElse(
+      userRunOptions.console,
+      requestedReporters.some((entry) => typeof entry === 'string')
         ? processConsole
-        : silentConsole),
+        : silentConsole,
+    ),
   };
 }

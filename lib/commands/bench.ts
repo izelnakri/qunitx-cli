@@ -19,7 +19,12 @@ import { REMOTE_NAMESPACE, remoteModulePlugin } from '../setup/remote-module-plu
 import { qunitxRuntimePlugin } from '../setup/qunitx-runtime-plugin.ts';
 import { resolvePlugins } from '../setup/config.ts';
 import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
-import { processConsole, type Console } from '../console.ts';
+import {
+  fromConsoleOptionOrElse,
+  processConsole,
+  type Console,
+  type ConsoleOption,
+} from '../console.ts';
 import { realWatchDirectories, watchDirectoriesFrom, watchLoop } from './run.ts';
 import { installBench, type BenchEntry, type BenchTiming } from '../bench/harness.ts';
 import * as Report from '../bench/report.ts';
@@ -115,8 +120,8 @@ export interface BenchSettings {
   port?: number;
   /** Milliseconds one file may run before it is declared hung. Unbounded by default. */
   timeout?: number;
-  /** Where the report and the benches' console output go. Defaults to the process's. */
-  console?: Console;
+  /** Where the report and the benches' console output go, or `false` for nowhere. Defaults to the process's. */
+  console?: ConsoleOption;
   /**
    * Stops the run: between benches, or in the middle of one by closing its page. The benches
    * measured by then are the result, with `aborted: true`; an already-aborted signal launches
@@ -329,7 +334,10 @@ const SETTING_RULES: Record<string, [(value: unknown) => boolean, string]> = {
   watch: [isBoolean, 'true or false'],
   port: [isWhole(1, 65_535), 'a port'],
   timeout: [isWhole(0), 'milliseconds'],
-  console: [(value) => typeof value === 'object' && value !== null, 'a Console'],
+  console: [
+    (value) => value === false || (typeof value === 'object' && value !== null),
+    'a Console, or false',
+  ],
   signal: [
     (value) => typeof AbortSignal !== 'undefined' && value instanceof AbortSignal,
     'an AbortSignal',
@@ -619,7 +627,7 @@ export async function prepare(inputs: string[], given: BenchSettings = {}): Prom
     browser: merged.browser ?? 'chromium',
     format: merged.format ?? 'pretty',
   };
-  const out = settings.console ?? processConsole;
+  const out = fromConsoleOptionOrElse(settings.console, processConsole);
   // Relative to the project when package.json gave them, to where it runs when the command did.
   const files = await benchFiles(
     inputs.length

@@ -355,7 +355,7 @@ module('API | bench', { concurrency: true }, () => {
         browser: BROWSER as 'chromium',
         time: 20,
         warmup: 5,
-        console: QUnitX.silentConsole,
+        console: false,
       });
       const missing = await QUnitX.Bench.run('nowhere', { cwd: dir.path }).result();
 
@@ -381,7 +381,7 @@ module('API | bench | streaming, aborting, watching', { concurrency: true }, () 
     time: 20,
     warmup: 5,
     browser: BROWSER as 'chromium',
-    console: QUnitX.silentConsole,
+    console: false,
   };
 
   test('onResult hears of each bench as it is measured; watch is Bench.watch()’s, and refused here', async (assert) => {

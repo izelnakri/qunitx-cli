@@ -2,6 +2,7 @@ import * as Client from '../commands/daemon/client.ts';
 import * as Daemon from '../commands/daemon/index.ts';
 import * as Paths from '../commands/daemon/paths.ts';
 import { Task } from '../task/index.ts';
+import { fromConsoleOptionOrElse, processConsole } from '../console.ts';
 import type { DaemonRunOptions } from '../commands/daemon/protocol.ts';
 import type { RunResult } from './test.ts';
 
@@ -136,6 +137,6 @@ export function test(options: DaemonRunOptions = {}): Task<RunResult, Client.Dae
     // and reporting `DaemonUnreachable` a connect-timeout later — the same failure, minutes
     // after it was already known.
     if (!(await Daemon.ensureRunning())) throw Client.DaemonUnreachable();
-    return await Client.run(options, options.console);
+    return await Client.run(options, fromConsoleOptionOrElse(options.console, processConsole));
   });
 }

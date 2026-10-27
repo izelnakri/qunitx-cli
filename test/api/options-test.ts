@@ -22,6 +22,11 @@ module('API | options | reporting', { concurrency: true }, () => {
     assert.true(reporters[0] instanceof APIReporter, 'collector first');
     assert.true(reporters[1] instanceof TAPReporter);
     assert.equal(Options.from({ reporter: 'tap' }).console, processConsole);
+    assert.equal(
+      Options.from({ reporter: 'tap', console: false }).console,
+      silentConsole,
+      'false prints nothing',
+    );
   });
 
   test('a console of your own is used instead, reporter or not', (assert) => {

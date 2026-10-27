@@ -206,7 +206,7 @@ recorded on the result. `console` and `browserLogs` are a tee, not a switch — 
 elsewhere never loses it:
 
 ```js
-const quiet = await run('scripts/seed.ts', { console: silentConsole });
+const quiet = await run('scripts/seed.ts', { console: false });
 
 quiet.browserLogs; // still every line — silence chose the destination, not the recording
 quiet.browserLogs[0]; // { type: 'log', text: 'seeding…', args: [] }
@@ -243,13 +243,13 @@ not build, or a target that is not a single file.
 `Deno.bench` files measured in a real browser — the API twin of `qunitx bench`.
 
 ```js
-import { Bench, silentConsole } from 'qunitx-cli';
+import { Bench } from 'qunitx-cli';
 
 const result = await Bench.run('benches', {
   browser: 'firefox',
   compare: 'tmp/base.json', // `--save`'s output, or `deno bench --json`'s
   threshold: 15,
-  console: silentConsole, // print nothing; the default prints the report as the CLI does
+  console: false, // print nothing; the default prints the report as the CLI does
 });
 
 result.ok; // false when a bench failed or regressed
@@ -867,7 +867,8 @@ await test({
 });
 ```
 
-Default: `processConsole` when a reporter is **named**, `silentConsole` otherwise. Severity is not
+`console: false` prints nothing, as `silentConsole` does. Default: `processConsole` when a
+reporter is **named**, nothing otherwise. Severity is not
 here — that is `Notice.level`; `error` means the stderr stream, exactly as `console.error` does.
 
 ## Errors

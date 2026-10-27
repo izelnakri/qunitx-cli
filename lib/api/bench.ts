@@ -45,7 +45,7 @@ export type BenchFailure = Failure.Of<
  * Measures `Deno.bench` files in a real browser, as `qunitx bench` does, and resolves with the
  * report in `deno bench --json`'s shape, its comparison with `compare`'s baseline, and the exit
  * code the command line would exit with. The report is printed to `console` as `format` asks —
- * pass `silentConsole` to print nothing; `onResult` hears of each bench as it is measured, and
+ * `console: false` prints nothing; `onResult` hears of each bench as it is measured, and
  * `signal` stops the run, resolving with what was measured (`aborted: true`).
  *
  * **A failed or regressed bench is a result** (`ok: false`), not a rejection; it rejects only
@@ -53,11 +53,10 @@ export type BenchFailure = Failure.Of<
  *
  * ```ts
  * import * as Bench from './bench.ts';
- * import { silentConsole } from '../console.ts';
  *
  * // Defined, not invoked: launches a browser.
  * async function render() {
- *   const result = await Bench.run('benches/render.bench.ts', { console: silentConsole });
+ *   const result = await Bench.run('benches/render.bench.ts', { console: false });
  *   return result.report.benches.map((entry) => entry.name);
  * }
  * ```
@@ -116,11 +115,10 @@ export interface BenchWatchSession extends AsyncIterable<BenchResult> {
  *
  * ```ts
  * import * as Bench from './bench.ts';
- * import { silentConsole } from '../console.ts';
  *
  * // Defined, not invoked: holds a browser open until closed.
  * async function measureWhileEditing() {
- *   const session = await Bench.watch('benches', { console: silentConsole });
+ *   const session = await Bench.watch('benches', { console: false });
  *   for await (const result of session) console.log(result.report.benches.length);
  * }
  * ```
