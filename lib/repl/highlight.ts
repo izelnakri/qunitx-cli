@@ -146,6 +146,7 @@ export function tokenize(source: string): Token[] {
     tokens.push(previous);
   };
 
+  // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
   while (at < source.length) {
     const character = source[at] as string;
     if (/\s/.test(character)) {
@@ -179,6 +180,7 @@ export function tokenize(source: string): Token[] {
       at = endOfNumber(source, at);
       push(at, '@number', start);
     } else if (IDENTIFIER_START.test(character)) {
+      // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
       while (at < source.length && IDENTIFIER_PART.test(source[at] as string)) at += 1;
       push(at, word(source.slice(start, at), previous, source, at), start);
     } else if (OPENING.includes(character) || CLOSING.includes(character)) {
@@ -227,6 +229,7 @@ function word(text: string, previous: Token | undefined, source: string, end: nu
 /** Whether the next thing after `at` is a call. */
 function called(source: string, at: number): boolean {
   let index = at;
+  // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
   while (index < source.length && /\s/.test(source[index] as string)) index += 1;
 
   return source[index] === '(';
@@ -261,6 +264,7 @@ function endOfLine(source: string, at: number): number {
 
 function endOfQuoted(source: string, at: number, quote: string): number {
   let index = at + 1;
+  // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
   while (index < source.length) {
     const character = source[index];
     if (character === '\\') index += 2;
@@ -281,6 +285,7 @@ function endOfQuoted(source: string, at: number, quote: string): number {
 function endOfTemplate(source: string, at: number, tokens: Token[]): number {
   let chunk = at;
   let index = at + 1;
+  // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
   while (index < source.length) {
     const character = source[index];
     if (character === '\\') {
@@ -325,6 +330,7 @@ function matchingBrace(source: string, at: number): number {
 
 function endOfNumber(source: string, at: number): number {
   let index = at;
+  // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
   while (index < source.length && /[0-9a-zA-Z_.]/.test(source[index] as string)) index += 1;
 
   return index;
@@ -334,6 +340,7 @@ function endOfNumber(source: string, at: number): number {
 function endOfRegex(source: string, at: number): number {
   let index = at + 1;
   let inClass = false;
+  // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
   while (index < source.length) {
     const character = source[index];
     if (character === '\\') index += 2;
@@ -342,6 +349,7 @@ function endOfRegex(source: string, at: number): number {
     else if (character === '/' && !inClass) {
       index += 1;
       // Flags belong to the literal.
+      // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
       while (index < source.length && /[a-z]/.test(source[index] as string)) index += 1;
 
       return index;

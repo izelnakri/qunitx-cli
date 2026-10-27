@@ -225,6 +225,7 @@ function tokenize(code: string): Token[] {
   const tokens: Token[] = [];
   const scanner: Scanner = { code, pos: 0, line: 1 };
 
+  // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
   while (scanner.pos < code.length) {
     const char = code[scanner.pos];
     const line = scanner.line;
@@ -267,6 +268,7 @@ function tokenize(code: string): Token[] {
 function skipLineComment(scanner: Scanner): void {
   const { code } = scanner;
   let pos = scanner.pos;
+  // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
   while (pos < code.length && code[pos] !== '\n') pos++;
   scanner.pos = pos;
 }
@@ -276,6 +278,7 @@ function skipBlockComment(scanner: Scanner): void {
   const { code } = scanner;
   let pos = scanner.pos + 2;
   let line = scanner.line;
+  // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
   while (pos < code.length && !(code[pos] === '*' && code[pos + 1] === '/')) {
     if (code[pos] === '\n') line++;
     pos++;
@@ -290,6 +293,7 @@ function readString(scanner: Scanner): string {
   let value = '';
   let pos = scanner.pos + 1;
   let line = scanner.line;
+  // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
   while (pos < code.length && code[pos] !== quote) {
     if (code[pos] === '\\') {
       // A line continuation ('a\<newline>') swallows a real newline; count it so `line` stays in
@@ -342,6 +346,7 @@ function readTemplate(scanner: Scanner): string | null {
   const start = scanner.pos;
   scanner.pos++;
   let hasSubstitution = false;
+  // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
   while (scanner.pos < code.length && code[scanner.pos] !== '`') {
     if (code[scanner.pos] === '\\') {
       scanner.pos += 2;
@@ -349,6 +354,7 @@ function readTemplate(scanner: Scanner): string | null {
       hasSubstitution = true;
       scanner.pos += 2;
       let depth = 1;
+      // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
       while (scanner.pos < code.length && depth > 0) {
         const char = code[scanner.pos];
         if (char === '\n') scanner.line++;
@@ -376,6 +382,7 @@ function readRegex(scanner: Scanner): void {
   const { code } = scanner;
   let pos = scanner.pos + 1;
   let inClass = false;
+  // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
   while (pos < code.length) {
     const char = code[pos];
     if (char === '\\') {
@@ -393,6 +400,7 @@ function readRegex(scanner: Scanner): void {
     }
     pos++;
   }
+  // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
   while (pos < code.length && /[a-z]/.test(code[pos])) pos++;
   scanner.pos = pos;
 }
@@ -402,6 +410,7 @@ function readIdentifier(scanner: Scanner): string {
   const { code } = scanner;
   const start = scanner.pos;
   let pos = start;
+  // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
   while (pos < code.length && isIdentPart(code[pos])) pos++;
   scanner.pos = pos;
 
@@ -413,6 +422,7 @@ function readNumber(scanner: Scanner): string {
   const { code } = scanner;
   const start = scanner.pos;
   let pos = start;
+  // deno-lint-ignore qunitx/no-while -- a character scanner: the index moves by what each character turns out to be
   while (pos < code.length && /[0-9a-fA-FxXoObBnN._]/.test(code[pos])) pos++;
   scanner.pos = pos;
 

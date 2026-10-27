@@ -11,15 +11,10 @@
     "build:binary": "deno compile --allow-all --no-check --include templates --include lib --include package.json --output dist/qunitx cli.ts"
   },
   "lint": {
-    "exclude": [
-      "test/fixtures/"
-    ],
+    "plugins": ["./scripts/deno-lint-plugins/no-while.ts"],
+    "exclude": ["test/fixtures/"],
     "rules": {
-      "exclude": [
-        "no-process-global",
-        "no-node-globals",
-        "no-window"
-      ]
+      "exclude": ["no-process-global", "no-node-globals", "no-window"]
     }
   }
 }
