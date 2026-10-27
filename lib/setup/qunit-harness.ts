@@ -254,7 +254,7 @@ export function harness(options: { timeout: number }): void {
 
     return function (this: unknown, _key: string, value: unknown) {
       if (typeof value !== 'object' || value === null) return value;
-      while (ancestors.length > 0 && ancestors[ancestors.length - 1] !== this) ancestors.pop();
+      ancestors.splice(ancestors.lastIndexOf(this) + 1);
       if (ancestors.indexOf(value) !== -1) return '[Circular]';
       ancestors.push(value);
 

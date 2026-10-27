@@ -199,9 +199,11 @@ function lineStarts(source: string): number[] {
 /** The 1-based line an offset falls on, by binary search over where the lines begin. */
 function lineOf(starts: readonly number[], offset: number): number {
   let low = 0;
-  let high = starts.length - 1;
-  while (low < high) {
-    const middle = Math.ceil((low + high) / 2);
+  for (
+    let high = starts.length - 1, middle = Math.ceil(high / 2);
+    low < high;
+    middle = Math.ceil((low + high) / 2)
+  ) {
     if ((starts[middle] as number) <= offset) low = middle;
     else high = middle - 1;
   }

@@ -59,10 +59,8 @@ const GRANT_BUDGET_MS = 5000;
 // state the next step depends on is what makes the interleaving deterministic instead of
 // merely likely.
 async function until(condition: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + GRANT_BUDGET_MS;
-  while (!condition()) {
+  for (const deadline = Date.now() + GRANT_BUDGET_MS; !condition(); await delay(1)) {
     if (Date.now() > deadline) throw new Error(`timed out waiting until ${what}`);
-    await delay(1);
   }
 }
 

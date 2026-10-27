@@ -438,15 +438,17 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
   ): StreamClass<Exclude<U, AnyFailure>, Extract<U, AnyFailure>> {
     return new StreamClass(async function* () {
       const initial = await start();
-      let state: S | null = initial;
       let last: S = initial;
       try {
-        while (state !== null) {
-          const step = await next(state);
-          if (step === null) return;
+        // Each step yields its value and hands over the state the next is taken from, until a
+        // step says there is none.
+        for (
+          let step = await next(initial);
+          step !== null;
+          step = step[1] === null ? null : await next(step[1])
+        ) {
           yield step[0];
           if (step[1] !== null) last = step[1];
-          state = step[1];
         }
       } finally {
         await after(last);
@@ -499,7 +501,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
       if (ordered) {
         const inflight: Promise<unknown>[] = [];
         for (;;) {
-          while (inflight.length < maxConcurrency) {
+          for (let room = maxConcurrency - inflight.length; room > 0; room--) {
             const { value, done } = await iterator.next();
             if (done) break;
             inflight.push(isFailure(value) ? Promise.resolve(value) : runOne(value as never));
@@ -513,7 +515,7 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
         let nextId = 0;
         let exhausted = false;
         for (;;) {
-          while (!exhausted && window.size < maxConcurrency) {
+          for (let room = maxConcurrency - window.size; room > 0 && !exhausted; room--) {
             const { value, done } = await iterator.next();
             if (done) exhausted = true;
             else {

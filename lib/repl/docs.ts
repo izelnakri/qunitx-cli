@@ -19,9 +19,9 @@ const FENCE = /^\s*```/;
  */
 export function commentAbove(source: string, line: number): string[] {
   const lines = source.split('\n');
-  let at = line - 2;
   // Past `export`, decorators and the like: the comment sits above the whole declaration.
-  while (at >= 0 && /^\s*@/.test(lines[at] ?? '')) at--;
+  let at = line - 2;
+  for (; at >= 0 && /^\s*@/.test(lines[at] ?? ''); at--);
   const last = (lines[at] ?? '').trim();
 
   if (last.endsWith('*/')) {

@@ -23,6 +23,7 @@ export interface Sources {
 
 const IDENTIFIER = /^[\p{ID_Start}_$][\p{ID_Continue}$]*$/u;
 const IDENTIFIER_CHARACTER = /[\p{ID_Continue}$]/u;
+const PATH_CHARACTER = /[\p{ID_Continue}$.]/u;
 
 // Only the ones long enough to be worth finishing. `if`, `new` and `for` are typed faster than a
 // suggestion for them can be read, and offering them turns every third keystroke into a flicker.
@@ -121,8 +122,10 @@ export function suggest(line: string, sources: Sources): string {
  */
 export function split(line: string): Typed | null {
   if (insideString(line)) return null;
+  // Back from the end, a character at a time: a `…*$` pattern would retry from every position, a
+  // cost that grows with the square of the line.
   let start = line.length;
-  while (start > 0 && IDENTIFIER_CHARACTER.test(line[start - 1] as string)) start--;
+  for (; start > 0 && IDENTIFIER_CHARACTER.test(line[start - 1] as string); start--);
   const token = line.slice(start);
   // A number is not a name being typed, and `1.` is not a base.
   if (token !== '' && !IDENTIFIER.test(token)) return null;
@@ -133,7 +136,7 @@ export function split(line: string): Typed | null {
   if (!dotted) return { base: '', token };
 
   let baseStart = start - 1;
-  while (baseStart > 0 && /[\p{ID_Continue}$.]/u.test(line[baseStart - 1] as string)) baseStart--;
+  for (; baseStart > 0 && PATH_CHARACTER.test(line[baseStart - 1] as string); baseStart--);
   const base = line.slice(baseStart, start - 1);
   // Every segment a plain identifier, or this is not a path and nothing is safe to evaluate.
   if (base === '' || !base.split('.').every((segment) => IDENTIFIER.test(segment))) return null;

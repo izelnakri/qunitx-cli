@@ -139,9 +139,8 @@ function getCircularReplacer(): (_key: string, value: unknown) => unknown {
     if (typeof value !== 'object' || value === null) {
       return value;
     }
-    while (ancestors.length > 0 && ancestors.at(-1) !== this) {
-      ancestors.pop();
-    }
+    // Back up to the object this value sits in: its siblings' subtrees are done with.
+    ancestors.splice(ancestors.lastIndexOf(this) + 1);
     if (ancestors.includes(value)) {
       return '[Circular]';
     }
