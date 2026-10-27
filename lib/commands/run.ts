@@ -20,7 +20,12 @@ import { pathExists } from '../utils/path-exists.ts';
 import { qunitxRuntimePlugin } from '../setup/qunitx-runtime-plugin.ts';
 import { harness } from '../setup/qunit-harness.ts';
 import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
-import { processConsole, type Console } from '../console.ts';
+import {
+  fromConsoleOptionOrElse,
+  processConsole,
+  type Console,
+  type ConsoleOption,
+} from '../console.ts';
 import { MAX_BROWSER_LOGS } from '../api/reporter.ts';
 import type { BrowserLog, TestDetails } from '../reporters/types.ts';
 import type { ConsoleMessage, Page } from 'playwright-core';
@@ -298,9 +303,9 @@ export interface ScriptSettings {
   filter?: Args.ParsedFlags['filter'];
   /**
    * Where the script's own output goes, as `test()` and `watch()` take one. Defaults to this
-   * process's stdout and stderr; pass `silentConsole` to capture it from the result instead.
+   * process's stdout and stderr; pass `false` to capture it from the result instead.
    */
-  console?: Console;
+  console?: ConsoleOption;
 }
 
 /** The two ways naming an entry can fail, before any flag or option is even looked at. */
@@ -338,7 +343,7 @@ async function configFor(entry: string, settings: ScriptSettings = {}): Promise<
     watch: settings.watch ?? false,
     open: settings.open ?? false,
     timeout: settings.timeout ?? null,
-    console: settings.console ?? processConsole,
+    console: fromConsoleOptionOrElse(settings.console, processConsole),
     reporter: settings.reporter,
     junit: settings.junit,
     debug: settings.debug,

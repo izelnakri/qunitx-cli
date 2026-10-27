@@ -160,10 +160,16 @@ export type {
 export { REPORTERS } from '../reporters/types.ts';
 
 /**
- * Where reporters write. `processConsole` is the CLI's, `silentConsole` discards, and
- * `streamConsole` adapts anything with a `write(string)`.
+ * Where reporters write. `processConsole` is the CLI's, `silentConsole` discards (as a `console:
+ * false` option does), and `streamConsole` adapts anything with a `write(string)`.
  */
-export { type Console, processConsole, silentConsole, streamConsole } from '../console.ts';
+export {
+  type Console,
+  type ConsoleOption,
+  processConsole,
+  silentConsole,
+  streamConsole,
+} from '../console.ts';
 
 /**
  * The error-handling primitives these functions are built on.

@@ -167,7 +167,7 @@ module('API | run | a file that declares tests', { concurrency: true }, () => {
   const PASSING = `${CWD}/test/fixtures/passing-tests.js`;
 
   test('the suite runs, and comes back on result.tests', async (assert) => {
-    const result = await run(PASSING, { console: QUnitX.silentConsole });
+    const result = await run(PASSING, { console: false });
 
     assert.ok(result.tests, 'a declared suite is reported, not skipped');
     assert.strictEqual(result.tests!.counts.total, 3);

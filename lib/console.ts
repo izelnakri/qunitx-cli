@@ -76,3 +76,33 @@ export const processConsole: Console = streamConsole(process.stdout, process.std
  * ```
  */
 export const silentConsole: Console = { log: () => {}, error: () => {} };
+
+/**
+ * What a `console` option takes: a {@link Console}, or `false` for none, which is
+ * {@link silentConsole} without importing it.
+ *
+ * ```ts
+ * import type { ConsoleOption } from './console.ts';
+ *
+ * const quiet: ConsoleOption = false;
+ * ```
+ */
+export type ConsoleOption = Console | false;
+
+/**
+ * The {@link Console} a `console` option asks for: `false` is {@link silentConsole}, and none is
+ * `otherwise`.
+ *
+ * ```ts
+ * import { fromConsoleOptionOrElse, processConsole, silentConsole } from './console.ts';
+ *
+ * fromConsoleOptionOrElse(false, processConsole) === silentConsole; // true
+ * fromConsoleOptionOrElse(undefined, processConsole) === processConsole; // true
+ * ```
+ */
+export function fromConsoleOptionOrElse(
+  option: ConsoleOption | undefined,
+  otherwise: Console,
+): Console {
+  return option === false ? silentConsole : (option ?? otherwise);
+}

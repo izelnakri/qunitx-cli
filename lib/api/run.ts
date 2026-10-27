@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import * as RunCommand from '../commands/run.ts';
 import * as Failure from '../result/failure.ts';
 import { Task } from '../task/index.ts';
-import type { Console } from '../console.ts';
+import type { ConsoleOption } from '../console.ts';
 import type { BrowserLog } from '../reporters/types.ts';
 import type { ScriptEntryFailure } from '../commands/run.ts';
 import type { RunResult } from './test.ts';
@@ -64,9 +64,9 @@ export interface ScriptOptions {
    * Defaults to this process's stdout and stderr.
    *
    * It is a tee, not a switch: {@link ScriptResult.browserLogs} carries the same lines either way,
-   * so `silentConsole` captures the output rather than discarding it.
+   * so `false` captures the output rather than discarding it.
    */
-  console?: Console;
+  console?: ConsoleOption;
 }
 
 /** Every way {@link run} can reject. A script that merely exits non-zero is NOT one of them. */
