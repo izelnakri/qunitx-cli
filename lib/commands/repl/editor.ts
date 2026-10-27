@@ -215,7 +215,7 @@ async function handOver(
     // half applies: `read()` restarts the flow it drains, and a stdin left flowing with no reader
     // holds the event loop open for the life of the process.
     if (wasFlowing) {
-      while (stdin.read() !== null) {
+      for (let chunk = stdin.read(); chunk !== null; chunk = stdin.read()) {
         // Discarding, deliberately.
       }
       stdin.resume();

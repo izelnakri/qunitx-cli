@@ -121,10 +121,12 @@ module('Task | call form', { concurrency: true }, () => {
 // Polls until `condition` holds — waiting for the state a step depends on rather than
 // sleeping for a duration that may or may not be enough.
 async function until(condition: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 5000;
-  while (!condition()) {
+  for (
+    const deadline = Date.now() + 5000;
+    !condition();
+    await new Promise((resolve) => setTimeout(resolve, 1))
+  ) {
     if (Date.now() > deadline) throw new Error(`timed out waiting until ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 1));
   }
 }
 

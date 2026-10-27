@@ -124,10 +124,12 @@ module('Utils | killProcessGroup', { concurrency: true }, () => {
 // Used to wait for OS process-table cleanup after SIGKILL — the kernel delivers
 // SIGKILL immediately but the entry lingers until the parent calls wait().
 async function pollUntil(check: () => boolean, deadlineMs = 1000): Promise<boolean> {
-  const deadline = Date.now() + deadlineMs;
-  while (Date.now() < deadline) {
+  for (
+    const deadline = Date.now() + deadlineMs;
+    Date.now() < deadline;
+    await new Promise((r) => setTimeout(r, 20))
+  ) {
     if (check()) return true;
-    await new Promise((r) => setTimeout(r, 20));
   }
   return check();
 }

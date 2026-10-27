@@ -57,8 +57,11 @@ export async function cleanupDir(dirPath: string): Promise<void> {
   // Retry until success or the 5s deadline, re-scanning /proc on each failure since new helpers
   // can appear after an earlier pass. Each loop body is bounded (rm + /proc scan + 50ms sleep),
   // so the deadline is always respected and we never stall waiting for process-table cleanup.
-  const deadline = Date.now() + CLEANUP_DEADLINE_MS;
-  while (Date.now() < deadline) {
+  for (
+    const deadline = Date.now() + CLEANUP_DEADLINE_MS;
+    Date.now() < deadline;
+    await new Promise<void>((resolve) => setTimeout(resolve, CLEANUP_RETRY_MS))
+  ) {
     // Verify with fs.access after rm: on overlayfs (Docker CI) the VFS cache can report
     // the directory as gone to rm() while still returning it in readdir() to other processes.
     // Treating rm-success + access-still-exists as a soft failure keeps the retry loop alive
@@ -74,7 +77,6 @@ export async function cleanupDir(dirPath: string): Promise<void> {
       .catch(() => false);
     if (removed) return;
     await killAllReferencingProcesses(dirPath, dirName);
-    await new Promise<void>((resolve) => setTimeout(resolve, CLEANUP_RETRY_MS));
   }
 
   // Diagnostic: if still not removed, log any process still holding the dir.

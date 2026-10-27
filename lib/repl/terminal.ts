@@ -66,18 +66,15 @@ export function truncate(text: string, width: number): string {
 
   let kept = '';
   let columns = 0;
-  let index = 0;
-  while (index < text.length && columns < width - 1) {
-    if (text[index] !== ESCAPE) {
-      kept += text[index++];
-      columns += 1;
-      continue;
-    }
-    // A colour code costs no columns, so it is copied whole and does not count towards the width.
-    const end = text.indexOf('m', index);
-    if (end === -1) break;
-    kept += text.slice(index, end + 1);
-    index = end + 1;
+  // A character at a time, or a colour code whole, which costs no columns; only up to the width,
+  // however long the text.
+  for (let at = 0, next = 0; at < text.length && columns < width - 1; at = next) {
+    const colour = text[at] === ESCAPE;
+    next = colour ? text.indexOf('m', at) + 1 : at + 1;
+    // An escape with no `m` to end it is where a well-formed line ended.
+    if (next === 0) break;
+    kept += text.slice(at, next);
+    if (!colour) columns += 1;
   }
 
   return `${kept}${ELLIPSIS}${RESET}`;

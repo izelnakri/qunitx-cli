@@ -718,13 +718,7 @@ module('Flags | --watch | re-runs', { concurrency: true }, () => {
  * load. Wait for `>= n` runs via waitForRunComplete and assert on the run's content instead.
  */
 function countOccurrences(str: string, needle: string): number {
-  let count = 0;
-  let pos = 0;
-  while ((pos = str.indexOf(needle, pos)) !== -1) {
-    count++;
-    pos += needle.length;
-  }
-  return count;
+  return str.split(needle).length - 1;
 }
 
 interface WatchSession extends AsyncDisposable {
@@ -892,13 +886,15 @@ async function pollUntil<T>(
     label = 'condition',
   }: { interval?: number; timeout?: number; label?: string } = {},
 ): Promise<T> {
-  const deadline = Date.now() + timeout;
-  while (true) {
+  for (
+    const deadline = Date.now() + timeout;
+    ;
+    await new Promise<void>((resolve) => setTimeout(resolve, interval))
+  ) {
     const result = await fn();
     if (predicate(result)) return result;
     if (Date.now() >= deadline)
       throw new Error(`pollUntil: ${label} not satisfied within ${timeout}ms`);
-    await new Promise<void>((resolve) => setTimeout(resolve, interval));
   }
 }
 
