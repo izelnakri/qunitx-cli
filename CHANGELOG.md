@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.40.0] - 2026-10-28
+[`v0.39.0...v0.40.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.39.0...v0.40.0)
+
+### Bug Fixes
+- Cold e2e runs stay cold when a daemon is running — 2026-10-18 by [@izelnakri](https://github.com/izelnakri) ([`110cba6`](https://github.com/izelnakri/qunitx-cli/commit/110cba66e274d96cf152a9b782f57c71813a64d2))
+- A project in a subdirectory of its repo finds its changed files — 2026-10-22 by [@izelnakri](https://github.com/izelnakri) ([`b70b261`](https://github.com/izelnakri/qunitx-cli/commit/b70b2619fb392623fb5b399b53ad6aef01ab14ee))
+
+### Features
+- Qunitx bench, deno bench in a real browser — 2026-10-26 by [@izelnakri](https://github.com/izelnakri) ([`b4190c3`](https://github.com/izelnakri/qunitx-cli/commit/b4190c3530ccf356925328e4a54df24ce5478d81))
+- The whole JS API — Bench.watch(), signal, onResult, and reports without a browser — 2026-10-26 by [@izelnakri](https://github.com/izelnakri) ([`413b74d`](https://github.com/izelnakri/qunitx-cli/commit/413b74d0300ad4395e964e1e7a500aeb1bc9db9a))
+- Console: false prints nothing, with no silentConsole to import — 2026-10-27 by [@izelnakri](https://github.com/izelnakri) ([`5c9f7d3`](https://github.com/izelnakri/qunitx-cli/commit/5c9f7d368f2796dc5459da3e38f498526261e99e))
+
+### Refactoring
+- No while loops outside the character scanners — 2026-10-27 by [@izelnakri](https://github.com/izelnakri) ([`839be51`](https://github.com/izelnakri/qunitx-cli/commit/839be51a557d4d61a52b20aeeb7944f69e7b63e3))
+
 ## [0.39.0] - 2026-10-18
 [`v0.38.1...v0.39.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.38.1...v0.39.0)
 
