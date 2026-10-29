@@ -249,6 +249,127 @@ module('API | record | stills and options', { concurrency: true }, () => {
   });
 });
 
+module('API | record | snapshots', { concurrency: true }, () => {
+  const box = (color: string, clock = '12:00') =>
+    `<!doctype html><body style="margin:0;background:#fff">
+      <div style="position:absolute;left:20px;top:20px;width:100px;height:60px;background:${color}"></div>
+      <div id="clock" style="position:absolute;left:150px;top:20px;font:20px monospace">${clock}</div>`;
+
+  test('compare walks a baseline through new, unchanged, changed and, with update, updated', async (assert) => {
+    await using dir = await tempDir('api-record-compare');
+    const page = path.join(dir.path, 'page.html');
+    const shoot = (options: RecordOptions = {}) =>
+      recorded('page.html', {
+        cwd: dir.path,
+        formats: ['shot.png'],
+        width: 240,
+        height: 120,
+        compare: true,
+        ...options,
+      });
+    await fs.writeFile(page, box('rgb(0,0,255)'));
+    const first = await shoot();
+    const second = await shoot();
+    await fs.writeFile(page, box('rgb(255,0,0)'));
+    const third = await shoot();
+    const review = third.files[0].comparison!;
+    // Written for review now; accepting the change below clears them away.
+    await Promise.all([review.diffPath!, review.currentPath!].map((file) => fs.access(file)));
+    const accepted = await shoot({ update: true });
+    const after = await shoot();
+    const status = (result: RecordResult) => result.files[0].comparison?.status;
+
+    assert.deepEqual([first, second, third, accepted, after].map(status), [
+      'new',
+      'unchanged',
+      'changed',
+      'updated',
+      'unchanged',
+    ]);
+    assert.deepEqual(
+      [first.ok, second.ok, third.ok, accepted.ok, after.ok],
+      [true, true, false, true, true],
+      'a change not accepted is not ok',
+    );
+    const changed = third.files[0].comparison!;
+    assert.deepEqual(third.changedSnapshots, [third.files[0].path]);
+    assert.true(
+      changed.changedPixels >= 100 * 60 * 0.9 && changed.changedPixels <= 100 * 60 * 1.1,
+      `the box (${changed.changedPixels} px)`,
+    );
+    assert.equal(changed.totalPixels, 240 * 120);
+    assert.true(
+      Boolean(changed.diffPath && changed.currentPath),
+      'a diff and the new screenshot to review',
+    );
+  });
+
+  test('threshold, maxDiff and mask decide what counts as a change', async (assert) => {
+    await using dir = await tempDir('api-record-tolerance');
+    const page = path.join(dir.path, 'page.html');
+    const shoot = (name: string, options: RecordOptions) =>
+      recorded('page.html', {
+        cwd: dir.path,
+        formats: [`${name}.png`],
+        width: 240,
+        height: 120,
+        compare: true,
+        ...options,
+      });
+    await fs.writeFile(page, box('rgb(0,0,255)'));
+    // Baselines shot as they will be compared: a mask paints over the baseline as well.
+    await Promise.all([
+      shoot('slight', { mask: ['#clock'] }),
+      shoot('few', {}),
+      shoot('masked', { mask: ['#clock'] }),
+    ]);
+    await fs.writeFile(page, box('rgb(0,0,235)', '12:01'));
+    const [lenient, strict, few, masked] = await Promise.all([
+      shoot('slight', { threshold: 0.5, mask: ['#clock'] }),
+      shoot('slight', { threshold: 0, mask: ['#clock'] }),
+      shoot('few', { threshold: 0.5, maxDiff: 400 }),
+      shoot('masked', { threshold: 0.5, mask: ['#clock'] }),
+    ]);
+    const status = (result: RecordResult) => result.files[0].comparison?.status;
+
+    assert.equal(
+      status(lenient),
+      'unchanged',
+      'a slight shade under a lenient threshold is no change',
+    );
+    assert.equal(status(strict), 'changed', 'and is one at threshold 0');
+    assert.equal(
+      status(few),
+      'unchanged',
+      `a clock tick within maxDiff (${few.files[0].comparison?.changedPixels} px)`,
+    );
+    assert.equal(status(masked), 'unchanged', 'a masked clock is never compared');
+  });
+
+  test('the snapshot options are held to the flags’ rules too', async (assert) => {
+    const outcomes = await Promise.all(
+      (
+        [
+          { threshold: 2 },
+          { maxDiff: -1 },
+          { mask: '#clock' },
+          { compare: 'yes' },
+        ] as unknown as RecordOptions[]
+      ).map((options) => QUnitX.record('https://example.com', options).result()),
+    );
+
+    assert.deepEqual(
+      outcomes.map((outcome) => (outcome as Error).message),
+      [
+        'record option threshold: expected a fraction from 0 to 1, got 2',
+        'record option maxDiff: expected a whole number from 0 to 9007199254740991, got -1',
+        'record option mask: expected a list of CSS selectors, got "#clock"',
+        'record option compare: expected true or false, got "yes"',
+      ],
+    );
+  });
+});
+
 module('API | record | pdf', { concurrency: true }, () => {
   test('pdf settings are an object like any option; the result counts its pages', async (assert) => {
     await using dir = await tempDir('api-record-pdf');

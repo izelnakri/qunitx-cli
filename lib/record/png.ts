@@ -198,8 +198,37 @@ export function getDimensions(png: Uint8Array): { width: number; height: number 
 }
 
 /**
- * Writes a PNG of `page` as it is to `output`: the viewport, or the whole page with `fullPage`,
- * sized by the PNG's own header.
+ * A PNG of `page` as it is: the viewport, or the whole page with `fullPage`, with each `mask`
+ * selector painted over. Under `compare` it is taken to come out the same twice: animations
+ * finished and the text caret hidden.
+ *
+ * ```ts
+ * import * as PNG from './png.ts';
+ * import type { Page } from 'playwright-core';
+ *
+ * // Defined, not invoked: needs a live page.
+ * async function shoot(page: Page) {
+ *   return PNG.getDimensions(await PNG.screenshot(page, { fullPage: false, mask: ['#clock'], compare: true }));
+ * }
+ * ```
+ */
+export function screenshot(
+  page: Page,
+  { fullPage, mask, compare }: Pick<Settings, 'fullPage' | 'mask' | 'compare'>,
+): Promise<Uint8Array> {
+  return page.screenshot({
+    type: 'png',
+    fullPage,
+    // A snapshot has to come out the same twice: a CSS transition caught mid-way or a blinking
+    // caret is a difference nobody made.
+    ...(compare ? { animations: 'disabled' as const, caret: 'hide' as const } : {}),
+    ...(mask.length ? { mask: mask.map((selector) => page.locator(selector)) } : {}),
+  });
+}
+
+/**
+ * Writes a PNG of `page` as it is to `output`, taken as {@link screenshot} takes it and sized by
+ * its own header.
  *
  * ```ts
  * import * as PNG from './png.ts';
@@ -208,15 +237,15 @@ export function getDimensions(png: Uint8Array): { width: number; height: number 
  *
  * // Defined, not invoked: needs a live page.
  * async function shoot(page: Page, output: Output) {
- *   return (await PNG.record(page, output, { fullPage: false })).width;
+ *   return (await PNG.record(page, output, { fullPage: false, mask: [], compare: false })).width;
  * }
  * ```
  */
 export async function record(
   page: Page,
   output: Outputs.Output,
-  { fullPage }: Pick<Settings, 'fullPage'>,
+  settings: Pick<Settings, 'fullPage' | 'mask' | 'compare'>,
 ): Promise<RecordedFile> {
-  const bytes = await page.screenshot({ type: 'png', fullPage });
+  const bytes = await screenshot(page, settings);
   return Outputs.write(output, bytes, { ...getDimensions(bytes), frames: 1 });
 }

@@ -680,6 +680,24 @@ GIFs are encoded in-process (per-frame palettes, only the changed region of each
 (VP9) and `.mp4` (H.264) are encoded by the browser's own WebCodecs encoder and written by
 qunitx, so none of the three needs ffmpeg or any other dependency. From JS: `import { record } from 'qunitx-cli'`.
 
+### Visual diff
+
+`--compare` turns a folder of PNGs into visual snapshots. A png already at an output path is the
+baseline: the new screenshot is compared with it instead of overwriting it.
+
+```sh
+qunitx record http://localhost:4200/ http://localhost:4200/pricing -o snapshots --compare
+# snapshots/localhost-4200.png          1280×720  unchanged
+# snapshots/localhost-4200-pricing.png  1280×720  changed: 1,250 pixels (0.14%) → …diff.png, …new.png
+qunitx record http://localhost:4200/ http://localhost:4200/pricing -o snapshots --update
+```
+
+- Exit 1 when a snapshot changed; `<name>.diff.png` (changes in red) and `<name>.new.png` sit beside
+  the untouched baseline. `--update` accepts them.
+- Pixels are compared the way people see them, with anti-aliased edges told apart from real
+  changes. `--threshold` (default 0.1) and `--max-diff` (pixels, default 0) set the tolerance.
+- Animations are frozen and the caret hidden; `--mask '#clock'` paints over dynamic regions.
+
 ## Benchmarks
 
 `qunitx bench` is `deno bench` in a real browser. Bench files are written for Deno — the same
