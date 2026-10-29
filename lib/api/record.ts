@@ -9,6 +9,7 @@ export type {
   RecordResult,
   SnapshotComparison,
 } from '../record/index.ts';
+export type { PdfField, PdfOptions } from '../record/pdf.ts';
 
 /**
  * Every way {@link record} can reject: an input that is not there or not recordable, a format it

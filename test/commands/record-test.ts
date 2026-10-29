@@ -552,6 +552,83 @@ module('Commands | record | pdf', { concurrency: true }, (_hooks, moduleMetadata
     assert.exitCode(print, 0);
   });
 
+  test('form controls print as fields to fill in, where they are, on the page they are on', async (assert, testMetadata) => {
+    await using dir = await tempDir('record-pdf-forms');
+    await fs.writeFile(
+      path.join(dir.path, 'form.html'),
+      `<!doctype html><meta charset="utf-8"><title>Sign up</title>
+      <style>body{margin:0;font:16px sans-serif} input,select,textarea{font:inherit;box-sizing:border-box}</style>
+      <form action="https://example.com/signup" method="post">
+        <input name="name" value="Ada" required style="position:absolute;left:40px;top:60px;width:200px;height:30px">
+        <div style="padding-top:120px">
+          <textarea name="bio">Zoë</textarea>
+          <select name="plan"><option value="free">Free</option><option value="pro" selected>Pro</option></select>
+          <label><input type="checkbox" name="news" checked> News</label>
+          <label><input type="radio" name="size" value="s"> S</label><label><input type="radio" name="size" value="m" checked> M</label>
+          <input name="city" value="東京">
+        </div>
+        <div style="height:1400px"></div>
+        <input name="late" value="on page two"><button>Send</button>
+      </form>`,
+    );
+    const metadata = { ...moduleMetadata, ...testMetadata, cwd: dir.path };
+    const run = (flags: string) =>
+      shell(
+        `node ${CLI} record form.html -w 600 -h 400 --pdf-paper=A4 ${flags} --output=${dir.path}`,
+        metadata,
+      );
+    await fs.writeFile(path.join(dir.path, 'footer.html'), '<span class="pageNumber"></span>');
+    const [filled, plain, footed] = await Promise.all([
+      run('-f filled.pdf'),
+      run('-f plain.pdf --no-pdf-forms'),
+      vector ? run('-f footed.pdf --pdf-footer=footer.html --pdf-margin=20mm') : null,
+    ]);
+    const [pdf, without] = await Promise.all(
+      ['filled.pdf', 'plain.pdf'].map(async (name) =>
+        parsePdf(await fs.readFile(path.join(dir.path, name))),
+      ),
+    );
+    const name = pdf.fields.find((field) => field.name === 'name')!;
+    // Vector lays the page out at the paper's width; raster shrinks the screen's 600px onto it.
+    const scale = vector ? 1 : ((210 / 25.4) * 96) / 600;
+    const top = (297 / 25.4) * 96;
+
+    assert.true(pdf.xrefValid);
+    assert.equal(pdf.pages.length, 2, `two A4 pages (${pdf.pages})`);
+    assert.deepEqual(
+      pdf.fields.map((field) => [field.name, field.type, field.value, field.page]),
+      [
+        ['name', 'Tx', 'Ada', 0],
+        ['bio', 'Tx', 'Zoë', 0],
+        ['plan', 'Ch', 'pro', 0],
+        ['news', 'Btn', 'Yes', 0],
+        ['size', 'Btn', 'm', 0],
+        ['size', 'Btn', 'm', 0],
+        ['late', 'Tx', 'on page two', 1],
+        ['submit-9', 'Btn', null, 1],
+      ],
+      'every control a field, valued as the page holds it, on its page',
+    );
+    assert.true(
+      [40 * scale, top - (60 + 30) * scale, 240 * scale, top - 60 * scale].every(
+        (expected, index) => Math.abs(name.rect[index] - expected * 0.75) < 0.5,
+      ),
+      `over its control (${name.rect})`,
+    );
+    assert.includes(
+      filled.stderr,
+      "filled.pdf: forms: city printed, not fillable: a PDF's built-in font writes Latin script only",
+    );
+    assert.deepEqual(without.fields, [], '--no-pdf-forms: printed as it looks');
+    if (footed) {
+      assert.includes(
+        footed.stderr,
+        "footed.pdf: forms: printed, not fillable: a header or footer needs the browser's own page breaks",
+      );
+    }
+    assert.exitCode(plain, 0);
+  });
+
   test('a header, a footer, page ranges and an outline in chromium; asked of an engine that cannot print, refused', async (assert, testMetadata) => {
     await using dir = await tempDir('record-pdf-vector');
     await fs.writeFile(path.join(dir.path, 'doc.html'), DOCUMENT);

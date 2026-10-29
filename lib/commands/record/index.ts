@@ -81,6 +81,9 @@ export async function run(
           `# ${count} snapshot${count === 1 ? '' : 's'} changed: see the .diff.png beside each, then run again with --update to accept\n`,
         );
       }
+
+      for (const notice of result.notices)
+        out.error(`# ${await displayPath(notice.path)}: ${notice.message}\n`);
       return result.ok ? 0 : 1;
     })
     .recover((error) => {
@@ -191,7 +194,7 @@ ${blue('--threshold')}     : how far a pixel's color may move before it counts, 
 ${blue('--max-diff')}      : how many pixels may change before a snapshot counts as changed (default 0)
 ${blue('--mask')}          : CSS selector to paint over in every still, e.g. a clock or an avatar; repeatable
 
-${magenta().bold('PDF:')} ${blue('-f pdf')} prints each page where it ended: vector (text and links kept) in chromium, its screenshots on pages elsewhere.
+${magenta().bold('PDF:')} ${blue('-f pdf')} prints each page where it ended: vector (text and links kept) in chromium, its screenshots on pages elsewhere; form controls become fields to fill in.
 ${blue('--pdf-paper')}     : ${blue('fit')} (default: one page the page's size), ${blue('A4')}, ${blue('Letter')}, ${blue('Legal')}, ${blue('A3')}…, or ${blue('20cmx30cm')}
 ${blue('--pdf-landscape')} : turn a named paper sideways
 ${blue('--pdf-margin')}    : around the content, e.g. ${blue('12mm')}, ${blue('0.5in')} (default 0)
@@ -203,6 +206,7 @@ ${blue('--pdf-header')}, ${blue('--pdf-footer')} : HTML template files (${blue('
 ${blue('--pdf-pages')}     : which pages to keep, e.g. ${blue('1-3,5')} (vector)
 ${blue('--pdf-outline')}   : add PDF bookmarks — a reader's clickable sidebar — from the page's h1–h6 headings (vector)
 ${blue('--no-pdf-background')} : leave backgrounds out, as a printer would
+${blue('--no-pdf-forms')}  : print form controls as they look, not as fields to fill in
 
 ${magenta().bold('Exit codes:')} ${blue('0')} recorded, ${blue('1')} a script failed, a snapshot changed, or an input could not be recorded, ${blue('2')} bad arguments.
 `;

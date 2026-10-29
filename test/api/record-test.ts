@@ -393,6 +393,36 @@ module('API | record | pdf', { concurrency: true }, () => {
     assert.true(pdf.pages.every(([, , width, height]) => width === 612 && height === 792));
   });
 
+  test('postProcess gets each PDF with its fields and writes what it returns; notices name what stayed printed', async (assert) => {
+    await using dir = await tempDir('api-record-pdf-forms');
+    await fs.writeFile(
+      path.join(dir.path, 'form.html'),
+      '<!doctype html><meta charset="utf-8"><input name="email" value="ada@example.com"><input name="city" value="東京">',
+    );
+    const seen: { names: string[]; pageCount: number }[] = [];
+    const result = await recorded('form.html', {
+      cwd: dir.path,
+      formats: ['form.pdf'],
+      pdf: {
+        postProcess: (pdf, made) => {
+          seen.push({ names: made.fields.map((field) => field.name), pageCount: made.pageCount });
+          return new Uint8Array([...pdf, ...new TextEncoder().encode('%signed\n')]);
+        },
+      },
+    });
+    const written = await fs.readFile(result.files[0].path);
+
+    assert.deepEqual(seen, [{ names: ['email'], pageCount: 1 }], 'the fields it made fillable');
+    assert.true(new TextDecoder().decode(written).endsWith('%signed\n'), 'its bytes, written');
+    assert.deepEqual(result.notices, [
+      {
+        path: result.files[0].path,
+        message:
+          "forms: city printed, not fillable: a PDF's built-in font writes Latin script only",
+      },
+    ]);
+  });
+
   test("a raster PDF without background leaves the page's own background to the stills after it", async (assert) => {
     await using dir = await tempDir('api-record-pdf-background');
     await fs.writeFile(
@@ -422,6 +452,7 @@ module('API | record | pdf', { concurrency: true }, () => {
           { pdf: { scale: 5 } },
           { pdf: { paper: 'B9' } },
           { pdf: 'A4' },
+          { pdf: { postProcess: 'sign.js' } },
         ] as unknown as RecordOptions[]
       ).map((options) => QUnitX.record('https://example.com', options).result()),
     );
@@ -432,6 +463,7 @@ module('API | record | pdf', { concurrency: true }, () => {
         'record option pdf: scale: expected a number from 0.1 to 2, got 5',
         'record option pdf: paper: expected one of fit, Letter, Legal, Tabloid, Ledger, A0, A1, A2, A3, A4, A5, A6, got "B9"',
         'record option pdf: expected an object of PDF settings, got "A4"',
+        'record option pdf: postProcess: expected a function, got "sign.js"',
       ],
     );
   });

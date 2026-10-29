@@ -672,9 +672,16 @@ qunitx record invoice.html -f pdf --pdf-paper=A4 --pdf-margin=12mm --pdf-media=p
 | `--pdf-outline`                                    | `outline` (PDF bookmarks from the page's h1–h6 headings, shown in a reader's sidebar)            | off                             |
 | `--no-pdf-background`                              | `background: false`                                                                              | backgrounds printed             |
 | `--pdf-mode=raster`                                | `mode` (`auto`, `vector`, `raster`)                                                              | `auto`                          |
+| `--no-pdf-forms`                                   | `forms: false`                                                                                   | fields to fill in               |
+| —                                                  | `postProcess(pdf, { fields, pageCount })`: returns the bytes to write                            | none                            |
 
 Header, footer, page ranges and the outline need vector mode; asking for them elsewhere fails and
 names them.
+
+Form controls become PDF form fields, in every mode: text, check boxes, radio buttons, selects,
+and submit/reset buttons, filled in as the page left them. A value outside Latin script stays
+printed (the PDF's built-in font can't write it) and the run says so. For anything further —
+signing, other fonts — `postProcess` hands each PDF to your own PDF library.
 
 GIFs are encoded in-process (per-frame palettes, only the changed region of each frame). `.webm`
 (VP9) and `.mp4` (H.264) are encoded by the browser's own WebCodecs encoder and written by
