@@ -1,3 +1,4 @@
+import type { SnapshotResult, StepRecording } from './snapshots/index.ts';
 import type { HTTPServer } from './web/index.ts';
 import type { ParsedFlags } from './args/parse.ts';
 import type { Browser, Page } from 'playwright-core';
@@ -530,6 +531,11 @@ export interface RunResults {
    */
   coverage: CoverageFileMap | null;
   /**
+   * What `qunitxSnapshot()` and `qunitxRecording` produced this run, shared by every group so a
+   * name taken in one group is taken for all. Cleared in place by `RunState.reset`.
+   */
+  snapshots: RunSnapshots;
+  /**
    * Whether the browser confirmed it dropped this run's remaining queue — `qq`, `session.abort()`,
    * or an aborted `signal`. Lives here rather than on the group because groups share this object
    * by reference, so one aborted group marks the whole run without any cross-group plumbing.
@@ -538,6 +544,30 @@ export interface RunResults {
    * and nothing else distinguishes "I stopped it" from "it broke".
    */
   aborted: boolean;
+}
+
+/**
+ * A run's snapshots and step recordings, and the review files written for them at its end.
+ *
+ * ```ts
+ * import * as RunState from './setup/run-state.ts';
+ *
+ * RunState.create().results.snapshots.taken.length; // 0
+ * ```
+ */
+export interface RunSnapshots {
+  /** Every snapshot taken, in the order taken. */
+  taken: SnapshotResult[];
+  /** Every step recording written. */
+  recordings: StepRecording[];
+  /** Recordings started and not yet stopped, by the GIF path they would be written to. */
+  open: string[];
+  /** `report.html`, when `snapshots.report` asked for it. */
+  reportPath: string | null;
+  /** `comment.md`, when `snapshots.prComment` asked for it. */
+  commentPath: string | null;
+  /** `report.pdf`, when `snapshots.report` asked for a PDF. */
+  reportPdfPath: string | null;
 }
 
 /**

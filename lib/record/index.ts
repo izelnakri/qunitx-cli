@@ -4,25 +4,24 @@
  * @module
  */
 import { createReadStream } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { availableParallelism } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 import * as Browser from '../setup/browser.ts';
 import * as Capture from './capture.ts';
-import * as Diff from './diff.ts';
 import * as GIF from './gif.ts';
 import * as Video from './video.ts';
 import * as Inputs from './inputs.ts';
 import * as JPEG from './jpeg.ts';
 import * as Outputs from './outputs.ts';
 import * as Options from './options.ts';
+import * as Snapshot from './snapshot.ts';
 import type { Settings } from './options.ts';
 import * as PDF from './pdf.ts';
 import type { PdfOptions } from './pdf.ts';
 import * as PNG from './png.ts';
-import * as Report from './report.ts';
 import { Stream } from '../stream/index.ts';
 import { HTTPServer, MIME_TYPES } from '../web/index.ts';
 import * as Failure from '../result/failure.ts';
@@ -372,37 +371,21 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
     const changedSnapshots = snapshots
       .filter((snapshot) => snapshot.comparison.status === 'changed')
       .map((snapshot) => snapshot.path);
-    // Where each review goes, when asked for. A PDF report is printed from the HTML one, which is
-    // removed after unless it was asked for too.
-    const commentPath = options.prComment ? path.join(directory, 'comment.md') : null;
-    const htmlPath = settings.report.length ? path.join(directory, 'report.html') : null;
-    const reportPdfPath = settings.report.includes('pdf')
-      ? path.join(directory, 'report.pdf')
-      : null;
-    await Promise.all([
-      commentPath &&
-        writeFile(
-          commentPath,
-          Report.renderComment(snapshots, {
-            directory,
-            imagesUrl: options.imagesUrl!,
-            reportUrl: options.reportUrl,
-          }),
-        ),
-      htmlPath &&
-        writeFile(htmlPath, Report.render(snapshots, { directory, generatedAt: new Date() })),
-    ]);
-    if (htmlPath && reportPdfPath) {
-      const printed = await printReport(context, htmlPath, options.pdf ?? {}, pdfMode, settings);
-      await writeFile(reportPdfPath, printed.bytes);
-      if (!settings.report.includes('html')) await rm(htmlPath, { force: true });
-    }
+    const { reportPath, reportPdfPath, commentPath } = await Snapshot.writeReviews(snapshots, {
+      directory,
+      report: settings.report,
+      prComment: options.prComment,
+      imagesUrl: options.imagesUrl,
+      reportUrl: options.reportUrl,
+      print: async (html) =>
+        (await printReport(context, html, options.pdf ?? {}, pdfMode, settings)).bytes,
+    });
     return {
       ok: failedScripts.length === 0 && changedSnapshots.length === 0,
       files,
       failedScripts,
       changedSnapshots,
-      reportPath: settings.report.includes('html') ? htmlPath : null,
+      reportPath,
       reportPdfPath,
       commentPath,
     };
@@ -478,45 +461,11 @@ async function writeSnapshot(
     ...PNG.getDimensions(bytes),
     bytes: bytes.length,
     frames: 1,
-    comparison: await snapshot(output.absolutePath, bytes, settings),
-  };
-}
-
-// Compares a new screenshot with the baseline at `file`, and writes whatever that calls for: a new
-// or accepted screenshot becomes the baseline, and a change not accepted gets its diff and the new
-// screenshot beside it, which anything else clears away.
-async function snapshot(
-  file: string,
-  current: Uint8Array,
-  settings: Settings,
-): Promise<SnapshotComparison> {
-  const stem = file.slice(0, -path.extname(file).length);
-  const [diffPath, currentPath] = [`${stem}.diff.png`, `${stem}.new.png`];
-  const image = PNG.decode(current);
-  const baseline = await readFile(file).catch(() => null);
-  const before = baseline && PNG.decode(baseline);
-  const result = before && Diff.compare(before, image, { threshold: settings.threshold });
-  const status = !result
-    ? 'new'
-    : result.sameSize && result.changedPixels <= settings.maxDiff
-      ? 'unchanged'
-      : settings.accept
-        ? 'updated'
-        : 'changed';
-  const changed = status === 'changed';
-  await Promise.all([
-    status === 'new' || status === 'updated' ? writeFile(file, current) : null,
-    changed ? writeFile(currentPath, current) : rm(currentPath, { force: true }),
-    changed
-      ? PNG.encode(Diff.draw(before!, image, result!)).then((png) => writeFile(diffPath, png))
-      : rm(diffPath, { force: true }),
-  ]);
-  return {
-    status,
-    changedPixels: result?.changedPixels ?? 0,
-    totalPixels: result?.totalPixels ?? image.width * image.height,
-    diffPath: changed ? diffPath : null,
-    currentPath: changed ? currentPath : null,
+    comparison: await Snapshot.compare(output.absolutePath, bytes, {
+      threshold: settings.threshold,
+      maxDiff: settings.maxDiff,
+      accept: settings.accept,
+    }),
   };
 }
 

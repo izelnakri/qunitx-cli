@@ -146,6 +146,14 @@ const benchConfig = (): Config =>
         failedTests: [],
         coverage: null,
         aborted: false,
+        snapshots: {
+          taken: [],
+          recordings: [],
+          open: [],
+          reportPath: null,
+          reportPdfPath: null,
+          commentPath: null,
+        },
       },
     },
   }) as unknown as Config;
