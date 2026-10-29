@@ -12,6 +12,19 @@ import type { Browser } from 'playwright-core';
 import type { HTTPServer } from '../web/index.ts';
 import type { Config, Connections } from '../types.ts';
 
+/**
+ * How long a page may take to commit a navigation before it is declared broken: the test
+ * runner's floor and `record`'s bound. It is the environment's cost (browser start-up, OS
+ * scheduling), so it never shrinks with a small `--timeout`; 60s covers Firefox on Windows CI
+ * beside two other browsers, where 30s had no headroom.
+ *
+ * ```ts
+ * import { NAVIGATION_TIMEOUT_MS } from './browser.ts';
+ *
+ * NAVIGATION_TIMEOUT_MS; // 60000
+ * ```
+ */
+export const NAVIGATION_TIMEOUT_MS = 60_000;
 // Deno's Windows child_process shim intermittently fails the first spawn; see below.
 const WINDOWS_SPAWN_RETRY_MS = 100;
 

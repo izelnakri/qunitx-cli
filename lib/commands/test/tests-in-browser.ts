@@ -26,6 +26,7 @@ import type {
   QUnitResult,
 } from '../../types.ts';
 import { Task } from '../../task/index.ts';
+import { NAVIGATION_TIMEOUT_MS } from '../../setup/browser.ts';
 
 /**
  * Returns all node_modules directories on the ancestor chain of `dir`,
@@ -59,15 +60,8 @@ const EMPTY_BUNDLE_THRESHOLD = 500;
 // Extra ms added on top of config.timeout to give Playwright time to commit the navigation
 // before the test-race timers even start. Floors startupMs/testsJsMs for tiny --timeout values.
 const NAV_GRACE_MS = 10_000;
-// Max tolerated slowdown over NAV_GRACE_MS before declaring the navigation broken.
-// 6× covers the Firefox/Windows CI tail under 3-way concurrent-group load; the prior
-// 3× floor (30_000) had zero headroom over default config.timeout + NAV_GRACE_MS
-// (20s + 10s = 30s). Chromium never approaches 5s for the same op so this is no-op.
-const MAX_NAV_SLOWDOWN_FACTOR = 6;
-// Floor for page.goto, derived from NAV_GRACE_MS not config.timeout: navigation is
-// environment-bound (browser launch + OS scheduling + port setup) and must not shrink
-// when the user passes a small --timeout.
-const MIN_NAV_MS = NAV_GRACE_MS * MAX_NAV_SLOWDOWN_FACTOR;
+// Floor for page.goto: shared with `record`, and why it is 60s is said there.
+const MIN_NAV_MS = NAVIGATION_TIMEOUT_MS;
 // Startup safety-net: Chrome WS 'open' must arrive within 9× config.timeout.
 // Bumped 3× → 6× → 9× over two iterations:
 //   * 3× (60 s) failed JSX on macOS-deno (CI 26042614416)

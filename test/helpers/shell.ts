@@ -29,11 +29,14 @@ const QUNITX_BIN_IS_SCRIPT = QUNITX_BIN?.endsWith('.js') || QUNITX_BIN?.endsWith
 const QUNITX_DEBUG = process.env.QUNITX_DEBUG;
 
 const IS_CLI = /\bnode cli\.ts\b/;
+// cli.ts by any path: a test that runs in a temp directory calls it absolutely, and still
+// needs a browser permit — without one, every `record` in a module launched at once.
+const CALLS_CLI = /\bnode\s+(?:\S*[\\/])?cli\.ts\b/;
 // The two ways cli.ts returns before it ever reaches the run path, and so never
 // touches a browser. Anything that skips Chrome must also skip acquireBrowser(),
 // or it spends a CHROME_CAP slot idling and throttles the rest of the suite.
 const NON_BROWSER_SUBCOMMAND =
-  /\bnode cli\.ts\b\s+(generate|g|new|n|help|h|p|print|init|upgrade|version|--version|-v)\b/;
+  /\bnode\s+(?:\S*[\\/])?cli\.ts\s+(generate|g|new|n|help|h|p|print|init|upgrade|version|--version|-v)\b/;
 // --search/--print/--preview/-s list what the filter matches and exit (cli.ts),
 // and chrome/prelaunch.ts skips the spawn for the same argv scan.
 const SEARCH_FLAG = /(^|\s)(-s|--search|--print|--preview)(=|\s|$)/;
@@ -559,7 +562,7 @@ function applyImplicitFlags(commandString: string): string {
  */
 export function needsBrowser(commandString: string): boolean {
   return (
-    IS_CLI.test(commandString) &&
+    CALLS_CLI.test(commandString) &&
     !NON_BROWSER_SUBCOMMAND.test(commandString) &&
     !SEARCH_FLAG.test(commandString)
   );

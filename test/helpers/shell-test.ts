@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
-import { spawnCapture } from './shell.ts';
+import { needsBrowser, spawnCapture } from './shell.ts';
 import { tempDir } from './temp-dir.ts';
 
 // Use a fixture script rather than `node -e` so the test command line has no whitespace
@@ -15,6 +15,25 @@ import { tempDir } from './temp-dir.ts';
 // `C:\\Program Files\\nodejs\\node.exe` contains a space.
 const FIXTURE = path.join(process.cwd(), 'test/fixtures/spawn-capture-fixture.js');
 const cmd = (mode: string) => `node ${FIXTURE} ${mode}`;
+
+// A test in a temp directory calls cli.ts by its absolute path: it still takes a browser permit,
+// or a module's record runs all launch at once and starve a small runner.
+module('Helpers | needsBrowser', { concurrency: true }, () => {
+  test('cli.ts by any path takes a browser permit; a subcommand without one does not', (assert) => {
+    const cli = path.join(process.cwd(), 'cli.ts');
+    assert.deepEqual(
+      [
+        `node cli.ts test/a.ts`,
+        `node ${cli} record app.tour.ts -f app.gif`,
+        `node D:\\a\\qunitx-cli\\cli.ts record a.ts`,
+        `node ${cli} init`,
+        `node cli.ts help`,
+        `node mycli.ts test/a.ts`,
+      ].map(needsBrowser),
+      [true, true, true, false, false, false],
+    );
+  });
+});
 
 module('Helpers | spawnCapture | success path', { concurrency: true }, () => {
   test('captures stdout, stderr, exit code 0, null signal, and a positive duration', async (assert) => {
