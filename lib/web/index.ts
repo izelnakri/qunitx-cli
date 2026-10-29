@@ -113,12 +113,19 @@ export interface Route {
 export const MIME_TYPES: Record<string, string> = {
   html: 'text/html; charset=UTF-8',
   js: 'application/javascript',
+  mjs: 'application/javascript',
+  json: 'application/json',
   css: 'text/css',
   png: 'image/png',
   jpg: 'image/jpg',
+  jpeg: 'image/jpeg',
   gif: 'image/gif',
+  webp: 'image/webp',
   ico: 'image/x-icon',
   svg: 'image/svg+xml',
+  woff: 'font/woff',
+  woff2: 'font/woff2',
+  txt: 'text/plain; charset=UTF-8',
 };
 
 /**
