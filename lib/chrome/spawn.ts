@@ -96,8 +96,8 @@ export async function spawn(
   // Must be called while the event loop is still alive so rm() can complete without rmSync.
   //
   // No timeout: SIGKILL is a POSIX guarantee — the kernel delivers it unconditionally and
-  // the process cannot catch or ignore it, so `close` always fires. JS's single-threaded
-  // event loop makes the exitCode check and once('close') registration atomic — no event
+  // the process cannot catch or ignore it, so `exit` always fires. JS's single-threaded
+  // event loop makes the exitCode check and once('exit') registration atomic — no event
   // can fire between them.
   //
   // We skip any intermediate rm() attempt and go straight to cleanupDir, which uses
@@ -106,15 +106,19 @@ export async function spawn(
   // (same PGID as Chrome main, awaiting init reaping): kill(-pgid, 0) succeeds for zombies
   // even though their FDs are already released, so the loop never exits.
   async function shutdown(): Promise<void> {
-    proc.ref(); // re-ref so the close event fires while the event loop is still running
+    proc.ref(); // re-ref so the exit event fires while the event loop is still running
     // `pid === undefined` means the spawn itself failed, so there is no group to kill and no
     // `close` worth waiting for. It used to be a non-null assertion, which types away the one
     // case where the value is genuinely absent. A signal death leaves `exitCode` null, so a Chrome
     // killed mid-connectOverCDP looked alive and this awaited a `close` that had already fired.
     if (proc.exitCode === null && proc.signalCode === null && proc.pid !== undefined) {
       killProcessGroup(proc.pid);
-      await new Promise<void>((resolve) => proc.once('close', resolve));
+      // `exit`, not `close`: `close` also waits for every holder of Chrome's stderr, and a helper
+      // in a session of its own can outlive the group kill holding it. With the pipe unref'd,
+      // nothing else would keep the loop alive, and the process would exit 0 mid-await.
+      await new Promise<void>((resolve) => proc.once('exit', resolve));
     }
+    proc.stderr?.destroy();
     await cleanupDir(userDataDir);
   }
 }

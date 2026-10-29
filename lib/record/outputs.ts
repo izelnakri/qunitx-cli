@@ -166,9 +166,11 @@ export async function write(
   return { path: output.absolutePath, format: output.format, ...contents, bytes: bytes.length };
 }
 
-// A single page is a still; anything that moves (two or more inputs, or a script) adds a GIF.
+// A single page is a still; anything that moves (two or more inputs, or anything but a page: a
+// script, a tour) adds a GIF.
 function defaultEntries(inputs: Input[]): string[] {
-  const moves = inputs.length > 1 || inputs.some((input) => input.kind === 'script');
+  const moves =
+    inputs.length > 1 || inputs.some((input) => input.kind !== 'url' && input.kind !== 'html');
   return moves ? ['jpg', 'gif'] : ['jpg'];
 }
 

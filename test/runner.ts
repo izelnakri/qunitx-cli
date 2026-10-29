@@ -19,15 +19,14 @@
  * and dev machines (8+ CPUs) without hardcoded limits.
  */
 import fs from 'node:fs/promises';
-import os, { availableParallelism } from 'node:os';
+import { availableParallelism } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { createSemaphoreServer } from './helpers/semaphore-server.ts';
-import { killProcessGroup } from '../lib/utils/kill-process-group.ts';
-import * as Chrome from '../lib/chrome/index.ts';
 import { PER_TEST_TIMEOUT_MS } from './helpers/per-test-timeout.ts';
 import { joinRunnerRegistry } from './helpers/runner-registry.ts';
+import { sweepOrphanedChrome } from './helpers/orphaned-chrome.ts';
 
 // When invoked as `deno run -A test/runner.ts ...` (CI deno lanes), we spawn
 // `deno test` workers instead of `node --test`. Detection is one runtime
@@ -461,85 +460,4 @@ function spawnTests(files: string[], slug?: string): Promise<number> {
     );
     child.once('exit', (code) => resolve(code ?? 0));
   });
-}
-
-async function sweepOrphanedChrome(): Promise<void> {
-  try {
-    const tmpDir = os.tmpdir();
-    const chromeDirs = (await fs.readdir(tmpDir)).filter((entry) =>
-      entry.startsWith('qunitx-chrome-'),
-    );
-    if (chromeDirs.length === 0) return;
-
-    if (process.platform === 'linux') {
-      await Promise.all(
-        (await fs.readdir('/proc')).map(async (entry) => {
-          if (!/^\d+$/.test(entry)) return;
-          try {
-            const cmdline = await fs.readFile(`/proc/${entry}/cmdline`, 'utf8');
-            if (!chromeDirs.some((dir) => cmdline.includes(dir))) return;
-            const pid = parseInt(entry);
-            // Only group-kill when this process is its own group leader (PGID === PID,
-            // guaranteed when spawned with detached: true). Sending process.kill(-pid)
-            // on a non-leader risks hitting an unrelated group if the PID was recycled.
-            const stat = await fs.readFile(`/proc/${entry}/stat`, 'utf8').catch(() => '');
-            const pgid = parseInt(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[2]);
-            if (pgid === pid) {
-              killProcessGroup(pid);
-            } else {
-              try {
-                process.kill(pid, 'SIGKILL');
-              } catch {
-                /* already gone */
-              }
-            }
-          } catch {
-            /* /proc entry vanished mid-scan */
-          }
-        }),
-      );
-    } else if (process.platform === 'win32') {
-      // Windows: no /proc, no pkill. Use PowerShell to find Chrome processes whose
-      // CommandLine contains one of our user-data-dirs, then kill the whole process
-      // tree with taskkill /T (same as killProcessGroup, but for already-orphaned
-      // children whose parent Chrome has exited and left them behind).
-      await Promise.all(
-        chromeDirs.map(
-          (dir) =>
-            new Promise<void>((resolve) => {
-              spawn(
-                'powershell',
-                [
-                  '-NoProfile',
-                  '-NonInteractive',
-                  '-Command',
-                  `Get-CimInstance Win32_Process | ` +
-                    `Where-Object { $_.CommandLine -like '*${dir}*' } | ` +
-                    `Select-Object -ExpandProperty ProcessId | ` +
-                    `ForEach-Object { taskkill /F /T /PID $_ 2>$null }`,
-                ],
-                { stdio: 'ignore' },
-              ).once('close', resolve);
-            }),
-        ),
-      );
-    } else {
-      // macOS: no /proc. Use pkill -f to match by user-data-dir path in argv.
-      await Promise.all(
-        chromeDirs.map(
-          (dir) =>
-            new Promise<void>((resolve) => {
-              spawn('pkill', ['-9', '-f', dir], { stdio: 'ignore' }).once('close', resolve);
-            }),
-        ),
-      );
-    }
-
-    // cleanupBrowserDir kills any surviving FD-holders and retries rm() for up to 5s,
-    // using rm() as the synchronisation point — correct even when zombie processes are
-    // present (kill(pid, 0) succeeds for zombies but rm() does not).
-    await Promise.all(chromeDirs.map((dir) => Chrome.cleanupDir(path.join(tmpDir, dir))));
-  } catch {
-    /* best effort — never block suite exit */
-  }
 }

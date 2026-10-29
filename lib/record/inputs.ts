@@ -5,6 +5,8 @@ import * as Failure from '../result/failure.ts';
 
 // What `qunitx run` would bundle and execute. A URL that names one of these is a script too.
 const SCRIPT_FILE = /\.(m?[jt]sx?|cjs|cts)$/i;
+// A tour drives the browser from Node rather than running inside the page.
+const TOUR_FILE = /\.tour\.m?[jt]s$/i;
 const PAGE_FILE = /\.html?$/i;
 const URL_INPUT = /^(https?|file):\/\//i;
 
@@ -35,6 +37,7 @@ export const UnrecordableInput: Failure.FailureFactory<
  *   relative assets and module scripts load as they would from a real server.
  * - `script`: a file `qunitx run` would execute, local or at a URL; what it draws while it runs
  *   is the recording.
+ * - `tour`: a `.tour.ts` file, run in Node, driving the browser through the tour API.
  *
  * ```ts
  * const input: Input = { kind: 'url', source: 'https://example.com', url: 'https://example.com', name: 'example.com' };
@@ -44,7 +47,8 @@ export const UnrecordableInput: Failure.FailureFactory<
 export type Input =
   | { kind: 'url'; source: string; url: string; name: string }
   | { kind: 'html'; source: string; path: string; root: string; name: string }
-  | { kind: 'script'; source: string; path: string; name: string };
+  | { kind: 'script'; source: string; path: string; name: string }
+  | { kind: 'tour'; source: string; path: string; name: string };
 
 /**
  * Works out what each input is: a page to load or a script to run. Given a list, resolves every
@@ -97,6 +101,13 @@ export async function resolve(source: string | string[], cwd: string): Promise<I
     return buildHTMLInput(source, index, path.basename(absolute));
   } else if (PAGE_FILE.test(absolute)) {
     return buildHTMLInput(source, absolute, path.basename(absolute).replace(PAGE_FILE, ''));
+  } else if (TOUR_FILE.test(absolute)) {
+    return {
+      kind: 'tour',
+      source,
+      path: absolute,
+      name: path.basename(absolute).replace(TOUR_FILE, ''),
+    };
   } else if (SCRIPT_FILE.test(absolute)) {
     return {
       kind: 'script',

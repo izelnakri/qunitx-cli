@@ -364,7 +364,7 @@ export async function shellWatch(
   const command = applyImplicitFlags(commandString);
   const { bin, args, env: prefixEnv } = parseCommand(command);
 
-  const permit = await acquireBrowser();
+  const permit = await acquireBrowser(browserWeight(commandString));
   const child = spawn(bin, args, {
     env: { ...process.env, FORCE_COLOR: '0', ...prefixEnv },
     ...(cwd ? { cwd } : {}),
@@ -505,7 +505,9 @@ export async function execute(
   } = {},
 ): Promise<CapturedResult> {
   const command = applyImplicitFlags(commandString);
-  const permit = needsBrowser(commandString) ? await acquireBrowser() : { release: () => {} };
+  const permit = needsBrowser(commandString)
+    ? await acquireBrowser(browserWeight(commandString))
+    : { release: () => {} };
   try {
     const result = await spawnCapture(command, {
       timeout: DEFAULT_EXEC_TIMEOUT_MS,
@@ -560,6 +562,25 @@ function applyImplicitFlags(commandString: string): string {
  * Whether this command will actually put a browser on screen — the sole input to
  * both the semaphore permit and the --browser/--debug forwarding above.
  */
+// The browser slots a command holds at once: a `record` of a tour or a deck records in one
+// browser context and composes its frames in another, with a page per tab — weighed as three,
+// so a loaded runner is not asked to run several of them beside everything else.
+const RECORDS_STEPS = /\brecord\b.*(?:\.tour\.[mc]?[jt]sx?|\.md)\b/;
+
+/**
+ * How many of the semaphore's browser slots a command takes: three for a `record` of tours or
+ * decks, one for anything else.
+ *
+ * ```ts
+ * import { browserWeight } from './shell.ts';
+ *
+ * [browserWeight('node cli.ts record a.tour.ts -f a.gif'), browserWeight('node cli.ts test/a.ts')]; // [3, 1]
+ * ```
+ */
+export function browserWeight(commandString: string): number {
+  return RECORDS_STEPS.test(commandString) ? 3 : 1;
+}
+
 export function needsBrowser(commandString: string): boolean {
   return (
     CALLS_CLI.test(commandString) &&

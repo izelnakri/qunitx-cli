@@ -89,6 +89,16 @@ export {
   type RecordResult,
   type SnapshotComparison,
 } from './record.ts';
+export {
+  tour,
+  type MenuOptions,
+  type Target,
+  type Tour,
+  type TourDefinition,
+  type TourOptions,
+  type Style as TourStyle,
+  type TourTab,
+} from '../record/tour/index.ts';
 // Every type a `ReplSession` method hands back. Exporting the session without them left an API
 // whose own signatures could not be written down by anybody using it.
 export type {
