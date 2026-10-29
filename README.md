@@ -676,6 +676,19 @@ qunitx record invoice.html -f pdf --pdf-paper=A4 --pdf-margin=12mm --pdf-media=p
 Header, footer, page ranges and the outline need vector mode; asking for them elsewhere fails and
 names them.
 
+**Google Drive:** `--upload=google` puts every file written on Drive and prints its link; Office
+files and CSV become Google Docs, Sheets and Slides (`--no-upload-convert` keeps them as they are),
+and `--upload-folder=<id>` picks the folder. It asks for the `drive.file` scope only (files it
+creates) and needs no SDK. Credentials, checked before anything is recorded, come from the first of:
+
+- `GOOGLE_OAUTH_ACCESS_TOKEN`;
+- `GOOGLE_APPLICATION_CREDENTIALS`, a service account key: upload into a shared drive's folder,
+  since service accounts have no storage of their own;
+- gcloud's application-default login:
+  `gcloud auth application-default login --scopes=https://www.googleapis.com/auth/drive.file,https://www.googleapis.com/auth/cloud-platform`.
+
+From JS: `upload: 'google'` or `{ to: 'google', folder, convert }`; `result.uploads` has the links.
+
 GIFs are encoded in-process (per-frame palettes, only the changed region of each frame). `.webm`
 (VP9) and `.mp4` (H.264) are encoded by the browser's own WebCodecs encoder and written by
 qunitx, so none of the three needs ffmpeg or any other dependency. From JS: `import { record } from 'qunitx-cli'`.
