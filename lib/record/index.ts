@@ -4,12 +4,13 @@
  * @module
  */
 import { createReadStream } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { availableParallelism } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import * as Browser from '../setup/browser.ts';
 import * as Capture from './capture.ts';
+import * as Diff from './diff.ts';
 import * as GIF from './gif.ts';
 import * as Video from './video.ts';
 import * as Inputs from './inputs.ts';
@@ -22,6 +23,7 @@ import type { PdfOptions } from './pdf.ts';
 import * as PNG from './png.ts';
 import { Stream } from '../stream/index.ts';
 import { HTTPServer, MIME_TYPES } from '../web/index.ts';
+import * as Failure from '../result/failure.ts';
 import { bindServerToPort } from '../setup/bind-server-to-port.ts';
 import { closeCompletely } from '../utils/close-with-grace.ts';
 import { withLoopAlive } from '../utils/with-loop-alive.ts';
@@ -33,6 +35,23 @@ export { FRAME_FUNCTION } from './capture.ts';
 export { UnrecordableInput } from './inputs.ts';
 export { DEFAULT_SIZE, InvalidRecordOption } from './options.ts';
 export { UnknownFormat, type Format } from './outputs.ts';
+
+/**
+ * `compare` was asked of something other than a png still. A jpg's compression shifts pixels every
+ * time it is saved, and an animation has no single frame to hold against a baseline.
+ *
+ * ```ts
+ * import { CompareNeedsPng } from './index.ts';
+ *
+ * CompareNeedsPng({ path: '/shots/home.jpg' }).message.includes('-f png'); // true
+ * ```
+ */
+export const CompareNeedsPng: Failure.FailureFactory<'CompareNeedsPng', { path: string }> =
+  Failure.define(
+    'CompareNeedsPng',
+    (data: { path: string }) =>
+      `--compare works on png stills, and ${path.basename(data.path)} is not one: a jpg's compression changes pixels on every save, and an animation has no single frame to compare. Use -f png.`,
+  );
 
 // What a page of a heavy site can take while it renders: what bounds pages recorded at once.
 const MEMORY_PER_PAGE = 512 * 1024 ** 2;
@@ -93,8 +112,47 @@ export interface RecordOptions {
    * `false` for nowhere.
    */
   console?: ConsoleOption;
+  /**
+   * Treat each png already at an output path as the baseline: compare against it instead of
+   * overwriting it, and write `<name>.diff.png` and `<name>.new.png` beside it when it changed.
+   * Animations are frozen and the caret hidden for every still, so a page renders the same twice.
+   */
+  compare?: boolean;
+  /** With `compare`, accept what changed: the new screenshot replaces the baseline. */
+  update?: boolean;
+  /** How far a pixel's color may move, as a fraction of black-to-white, before it counts. Default 0.1. */
+  threshold?: number;
+  /** How many pixels may change before a snapshot counts as changed. Default 0. */
+  maxDiff?: number;
+  /** CSS selectors of regions to paint over in every still: clocks, avatars, ads. */
+  mask?: string[];
   /** How `pdf` outputs are made: paper, margins, header and footer, vector or raster. */
   pdf?: PdfOptions;
+}
+
+/**
+ * How a still compared with its baseline under `compare`.
+ *
+ * - `new`: there was no baseline; this screenshot is now it.
+ * - `unchanged`: within `threshold` and `maxDiff`; the baseline is left as it was.
+ * - `changed`: the baseline is kept, and `diffPath` and `currentPath` show what changed.
+ * - `updated`: it changed, and `update` made the new screenshot the baseline.
+ *
+ * ```ts
+ * const comparison: SnapshotComparison = { status: 'unchanged', changedPixels: 0, totalPixels: 921_600, diffPath: null, currentPath: null };
+ * ```
+ */
+export interface SnapshotComparison {
+  /** What happened to the baseline; see above. */
+  status: 'new' | 'unchanged' | 'changed' | 'updated';
+  /** Pixels that moved past the threshold, anti-aliasing aside; every pixel when the size changed. */
+  changedPixels: number;
+  /** Pixels in the screenshot. */
+  totalPixels: number;
+  /** The red-on-grey picture of what changed, when it did and was not accepted. */
+  diffPath: string | null;
+  /** The new screenshot, written beside the baseline when it changed and was not accepted. */
+  currentPath: string | null;
 }
 
 /**
@@ -118,23 +176,27 @@ export interface RecordedFile {
   bytes: number;
   /** Frames in the file: 1 for a still; for a PDF, its pages. */
   frames: number;
+  /** How it compared with its baseline, under `compare`. */
+  comparison?: SnapshotComparison;
 }
 
 /**
  * What a recording produced.
  *
  * ```ts
- * const result: RecordResult = { ok: true, files: [], failedScripts: [] };
+ * const result: RecordResult = { ok: true, files: [], failedScripts: [], changedSnapshots: [] };
  * result.ok; // true
  * ```
  */
 export interface RecordResult {
-  /** False when a script exited non-zero. Its files are written all the same. */
+  /** False when a script exited non-zero, or a snapshot changed under `compare`. */
   ok: boolean;
   /** Every file written, in the order `formats` asked for them. */
   files: RecordedFile[];
   /** Each script that exited non-zero, with its exit code. */
   failedScripts: { path: string; exitCode: number }[];
+  /** Baselines that changed and were not accepted, under `compare`. */
+  changedSnapshots: string[];
 }
 
 // The local server of each directory an HTML input is in, started the first time it is needed.
@@ -173,11 +235,13 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
   const settings = Options.from(options);
   const inputs = await Inputs.resolve(sources, cwd);
   const outputs = Outputs.plan(
-    options.formats ?? [],
+    options.formats ?? (settings.compare ? ['png'] : []),
     inputs,
     path.resolve(cwd, options.output ?? '.'),
   );
   if (Outputs.UnknownFormat.is(outputs)) throw outputs;
+  const notPng = outputs.find((output) => output.format !== 'png');
+  if (settings.compare && notPng) throw CompareNeedsPng({ path: notPng.absolutePath });
   // Whether this engine can print as asked is known now, before anything is recorded.
   const pdfMode = outputs.some((output) => output.format === 'pdf')
     ? PDF.getMode(options.pdf ?? {}, settings.browser)
@@ -232,7 +296,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
                 output.format === 'pdf'
                   ? await PDF.record(page, output, options.pdf ?? {}, pdfMode, input.name, settings)
                   : output.format === 'png'
-                    ? await PNG.record(page, output, settings)
+                    ? await (settings.compare ? writeSnapshot : PNG.record)(page, output, settings)
                     : await JPEG.record(page, output, settings),
               ] as const,
           );
@@ -267,7 +331,15 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
     const failedScripts = recordings.flatMap(({ input, exitCode }) =>
       input.kind === 'script' && exitCode !== 0 ? [{ path: input.path, exitCode }] : [],
     );
-    return { ok: failedScripts.length === 0, files, failedScripts };
+    const changedSnapshots = files.flatMap((file) =>
+      file.comparison?.status === 'changed' ? [file.path] : [],
+    );
+    return {
+      ok: failedScripts.length === 0 && changedSnapshots.length === 0,
+      files,
+      failedScripts,
+      changedSnapshots,
+    };
   } finally {
     await closeCompletely({
       servers: Promise.all(
@@ -303,6 +375,82 @@ function maxParallelPageProcessingAtOnce(): number {
     1,
     Math.min(availableParallelism() - 1, Math.floor(process.availableMemory() / MEMORY_PER_PAGE)),
   );
+}
+
+// A still of the page held against its baseline under `compare`: only what the comparison calls
+// for is written, beside the baseline.
+async function writeSnapshot(
+  page: Page,
+  output: Outputs.Output,
+  settings: Settings,
+): Promise<RecordedFile> {
+  const bytes = await PNG.screenshot(page, settings);
+  return {
+    path: output.absolutePath,
+    format: output.format,
+    ...PNG.getDimensions(bytes),
+    bytes: bytes.length,
+    frames: 1,
+    comparison: await snapshot(output.absolutePath, bytes, settings),
+  };
+}
+
+// Compares a new screenshot with the baseline at `file`, and writes whatever that calls for.
+async function snapshot(
+  file: string,
+  current: Uint8Array,
+  settings: Settings,
+): Promise<SnapshotComparison> {
+  const stem = file.slice(0, -path.extname(file).length);
+  const diffPath = `${stem}.diff.png`;
+  const currentPath = `${stem}.new.png`;
+  const clearReview = () =>
+    Promise.all([diffPath, currentPath].map((stale) => rm(stale, { force: true })));
+  const image = PNG.decode(current);
+  const totalPixels = image.width * image.height;
+  const baseline = await readFile(file).catch(() => null);
+  if (!baseline) {
+    await writeFile(file, current);
+    await clearReview();
+    return { status: 'new', changedPixels: 0, totalPixels, diffPath: null, currentPath: null };
+  }
+
+  const result = Diff.compare(PNG.decode(baseline), image, {
+    threshold: settings.threshold,
+  });
+  if (result.sameSize && result.changedPixels <= settings.maxDiff) {
+    await clearReview();
+    return {
+      status: 'unchanged',
+      changedPixels: result.changedPixels,
+      totalPixels,
+      diffPath: null,
+      currentPath: null,
+    };
+  } else if (settings.accept) {
+    await writeFile(file, current);
+    await clearReview();
+    return {
+      status: 'updated',
+      changedPixels: result.changedPixels,
+      totalPixels,
+      diffPath: null,
+      currentPath: null,
+    };
+  }
+  await Promise.all([
+    writeFile(currentPath, current),
+    result.diff
+      ? PNG.encode(result.diff).then((png) => writeFile(diffPath, png))
+      : rm(diffPath, { force: true }),
+  ]);
+  return {
+    status: 'changed',
+    changedPixels: result.changedPixels,
+    totalPixels,
+    diffPath: result.diff ? diffPath : null,
+    currentPath,
+  };
 }
 
 // An HTML file is loaded over http, not file://: Chrome refuses module scripts and fetch() from

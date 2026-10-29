@@ -87,6 +87,7 @@ export {
   type RecordFailure,
   type RecordOptions,
   type RecordResult,
+  type SnapshotComparison,
 } from './record.ts';
 // Every type a `ReplSession` method hands back. Exporting the session without them left an API
 // whose own signatures could not be written down by anybody using it.

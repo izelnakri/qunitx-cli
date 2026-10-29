@@ -54,9 +54,12 @@ export const DEFAULT_SIZE: { width: number; height: number } = { width: 1280, he
  * ```
  */
 export type Settings = Required<
-  Omit<RecordOptions, 'cwd' | 'output' | 'formats' | 'pageDuration' | 'waitFor' | 'timeout' | 'pdf'>
+  Omit<
+    RecordOptions,
+    'cwd' | 'output' | 'formats' | 'pageDuration' | 'waitFor' | 'timeout' | 'update' | 'pdf'
+  >
 > &
-  Pick<RecordOptions, 'pageDuration' | 'waitFor'> & { timeout: number | null };
+  Pick<RecordOptions, 'pageDuration' | 'waitFor'> & { timeout: number | null; accept: boolean };
 
 // A rule a value is held to: its test, and what it expects, for the message when it fails.
 interface Rule {
@@ -92,6 +95,17 @@ const RULES: Record<string, Rule> = {
   quality: wholeNumberBetween(0, 100),
   timeout: wholeNumberBetween(1, Number.MAX_SAFE_INTEGER),
   port: wholeNumberBetween(0, 65_535),
+  maxDiff: wholeNumberBetween(0, Number.MAX_SAFE_INTEGER),
+  threshold: defineRule(
+    (value) => typeof value === 'number' && value >= 0 && value <= 1,
+    'a fraction from 0 to 1',
+  ),
+  compare: TRUE_OR_FALSE,
+  update: TRUE_OR_FALSE,
+  mask: defineRule(
+    (value) => Array.isArray(value) && value.every(isString),
+    'a list of CSS selectors',
+  ),
   scale: defineRule(
     (value) => typeof value === 'number' && value > 0 && value <= 4,
     'a number above 0 and up to 4',
@@ -197,6 +211,11 @@ export function from(options: RecordOptions): Settings {
     timeout: options.timeout ?? null,
     port: options.port ?? 1234,
     console: fromConsoleOptionOrElse(options.console, processConsole),
+    compare: Boolean(options.compare || options.update),
+    accept: options.update ?? false,
+    threshold: options.threshold ?? 0.1,
+    maxDiff: options.maxDiff ?? 0,
+    mask: options.mask ?? [],
   };
 }
 

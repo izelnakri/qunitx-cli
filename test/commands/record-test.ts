@@ -331,6 +331,101 @@ module('Commands | record | video', { concurrency: true }, (_hooks, moduleMetada
   });
 });
 
+module('Commands | record | visual diff', { concurrency: true }, (_hooks, moduleMetadata) => {
+  const cards = (revenue: string) =>
+    page(
+      'rgb(245,246,250)',
+      `<div style="font:28px sans-serif;padding:20px">Revenue <b id="revenue">${revenue}</b></div>
+      <div id="clock" style="font:20px monospace;padding:0 20px">${Date.now()}</div>`,
+    );
+
+  test('first run makes baselines, an unchanged run leaves them, a change exits 1 with a diff, --update accepts', async (assert, testMetadata) => {
+    await using dir = await tempDir('record-compare');
+    const run = (extra = '') =>
+      shellFails(
+        `node ${CLI} record home.html -w 300 -h 120 --mask #clock --output=snapshots --compare ${extra}`,
+        {
+          ...moduleMetadata,
+          ...testMetadata,
+          cwd: dir.path,
+        },
+      ).catch((result: { code: number; stdout: string; stderr: string }) => result);
+    const pass = (extra = '') =>
+      shell(
+        `node ${CLI} record home.html -w 300 -h 120 --mask #clock --output=snapshots --compare ${extra}`,
+        {
+          ...moduleMetadata,
+          ...testMetadata,
+          cwd: dir.path,
+        },
+      );
+    const snapshots = path.join(dir.path, 'snapshots');
+    await fs.writeFile(path.join(dir.path, 'home.html'), cards('$8.2k'));
+
+    const first = await pass();
+    const baseline = await fs.readFile(path.join(snapshots, 'home.png'));
+    await fs.writeFile(path.join(dir.path, 'home.html'), cards('$8.2k')); // a new clock value, masked
+    const second = await pass();
+    const afterSecond = await fs.readFile(path.join(snapshots, 'home.png'));
+    await fs.writeFile(path.join(dir.path, 'home.html'), cards('$12.9k'));
+    const third = await run();
+    const afterThird = await fs.readFile(path.join(snapshots, 'home.png'));
+    const diff = await png(path.join(snapshots, 'home.diff.png'));
+    const fourth = await pass('--update');
+
+    // Shown relative to where the command ran, in the platform's own separators.
+    const shot = path.join('snapshots', 'home.png');
+    assert.includes(first.stdout, `${shot}  300×120  new`);
+    assert.includes(second.stdout, `${shot}  300×120  unchanged`, 'a masked clock is not a change');
+    assert.deepEqual(afterSecond, baseline, 'and the baseline is untouched');
+    assert.equal(third.code, 1);
+    assert.regex(
+      third.stdout,
+      /home\.png {2}300×120 {2}changed: [\d,]+ pixels \([\d.]+%\) → snapshots[\\/]home\.diff\.png, snapshots[\\/]home\.new\.png/,
+    );
+    assert.includes(third.stderr, '1 snapshot changed');
+    assert.deepEqual(afterThird, baseline, 'a change does not overwrite the baseline');
+    let red = 0;
+    for (let offset = 0; offset < diff.data.length; offset += 4) {
+      if (diff.data[offset] === 255 && diff.data[offset + 1] === 0) red++;
+    }
+    assert.true(red > 20, `the diff marks the new figure in red (${red} pixels)`);
+    assert.includes(fourth.stdout, `${shot}  300×120  updated`);
+    assert.deepEqual(
+      (await fs.readdir(snapshots)).sort(),
+      ['home.png'],
+      'the review files are cleaned up',
+    );
+  });
+
+  test('--max-diff tolerates a few pixels; --compare refuses a jpg', async (assert, testMetadata) => {
+    await using dir = await tempDir('record-compare-options');
+    const metadata = { ...moduleMetadata, ...testMetadata, cwd: dir.path };
+    await fs.writeFile(path.join(dir.path, 'dot.html'), page('rgb(255,255,255)'));
+    await shell(`node ${CLI} record dot.html -w 40 -h 40 --output=. --compare`, metadata);
+    await fs.writeFile(
+      path.join(dir.path, 'dot.html'),
+      page(
+        'rgb(255,255,255)',
+        '<i style="position:absolute;left:10px;top:10px;width:2px;height:2px;background:#000"></i>',
+      ),
+    );
+
+    const tolerated = await shell(
+      `node ${CLI} record dot.html -w 40 -h 40 --output=. --compare --max-diff=10`,
+      metadata,
+    );
+    const refused = await shellFails(
+      `node ${CLI} record dot.html -f jpg --output=. --compare`,
+      metadata,
+    );
+
+    assert.includes(tolerated.stdout, 'dot.png  40×40  unchanged');
+    assert.exitCode(refused, 1);
+    assert.includes(refused.stderr, '--compare works on png stills, and dot.jpg is not one');
+  });
+});
+
 module('Commands | record | arguments', { concurrency: true }, (_hooks, moduleMetadata) => {
   test('--help exits 0 with the usage; a bad flag exits 2 with it; no input exits 2', async (assert, testMetadata) => {
     const metadata = { ...moduleMetadata, ...testMetadata };

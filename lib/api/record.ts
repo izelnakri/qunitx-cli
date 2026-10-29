@@ -3,11 +3,18 @@ import * as Failure from '../result/failure.ts';
 import { Task } from '../task/index.ts';
 import type { RecordOptions, RecordResult } from '../record/index.ts';
 
-export type { RecordedFile, RecordOptions, RecordResult } from '../record/index.ts';
+export type {
+  RecordedFile,
+  RecordOptions,
+  RecordResult,
+  SnapshotComparison,
+} from '../record/index.ts';
 
 /**
- * Every way {@link record} can reject: an input that is not there or not recordable, a format
- * it cannot write, or an option outside what `qunitx record` itself would accept. A page that fails to load rejects with the browser's own error.
+ * Every way {@link record} can reject: an input that is not there or not recordable, a format it
+ * cannot write, `compare` asked of something that is not a png still, or an option outside what
+ * `qunitx record` itself would accept. A page that fails to load rejects with the browser's own
+ * error.
  *
  * ```ts
  * import { UnrecordableInput } from '../record/index.ts';
@@ -17,7 +24,10 @@ export type { RecordedFile, RecordOptions, RecordResult } from '../record/index.
  * ```
  */
 export type RecordFailure = Failure.Of<
-  typeof Record.UnrecordableInput | typeof Record.UnknownFormat | typeof Record.InvalidRecordOption
+  | typeof Record.UnrecordableInput
+  | typeof Record.UnknownFormat
+  | typeof Record.CompareNeedsPng
+  | typeof Record.InvalidRecordOption
 >;
 
 /**

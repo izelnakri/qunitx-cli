@@ -70,10 +70,16 @@ export async function run(
           path.join(await realDirectory(path.dirname(file)), path.basename(file)),
         );
       for (const file of result.files) {
-        out.log(`${describeOutputFileDetails(file, await displayPath(file.path))}\n`);
+        out.log(`${await describeOutputFileDetails(file, displayPath)}\n`);
       }
       for (const script of result.failedScripts) {
         out.error(`# ${await displayPath(script.path)} exited ${script.exitCode}\n`);
+      }
+      if (result.changedSnapshots.length) {
+        const count = result.changedSnapshots.length;
+        out.error(
+          `# ${count} snapshot${count === 1 ? '' : 's'} changed: see the .diff.png beside each, then run again with --update to accept\n`,
+        );
       }
       return result.ok ? 0 : 1;
     })
@@ -113,17 +119,27 @@ function readPDFHeaderAndFooterFiles(
   });
 }
 
-function describeOutputFileDetails(
+async function describeOutputFileDetails(
   file: RecordResult['files'][number],
-  displayedPath: string,
-): string {
+  displayPath: (file: string) => Promise<string>,
+): Promise<string> {
   const frames =
     file.format === 'pdf'
       ? `  ${file.frames} page${file.frames === 1 ? '' : 's'}`
       : file.frames > 1
         ? `  ${file.frames} frames`
         : '';
-  return `${displayedPath}  ${file.width}×${file.height}${frames}  ${size(file.bytes)}`;
+  const line = `${await displayPath(file.path)}  ${file.width}×${file.height}${frames}`;
+  const comparison = file.comparison;
+  if (!comparison) return `${line}  ${size(file.bytes)}`;
+  else if (comparison.status !== 'changed') return `${line}  ${comparison.status}`;
+  const share = ((comparison.changedPixels / comparison.totalPixels) * 100).toFixed(2);
+  const review = await Promise.all(
+    [comparison.diffPath, comparison.currentPath]
+      .filter((review) => review !== null)
+      .map((review) => displayPath(review)),
+  );
+  return `${line}  changed: ${comparison.changedPixels.toLocaleString('en-US')} pixels (${share}%) → ${review.join(', ')}`;
 }
 
 function size(bytes: number): string {
@@ -144,6 +160,7 @@ ${blue('$ qunitx record http://a.com -f a.gif, a.jpg')}            # exactly tho
 ${blue('$ qunitx record demo.ts -w 1200 -h 1200')}                  # demo.gif of the script running, demo.jpg of where it ended
 ${blue('$ qunitx record demo.ts -f demo.mp4,demo.webm')}            # the same as video: H.264 and VP9, encoded by the browser
 ${blue('$ qunitx record dist/ -f png --full-page -o shots')}        # shots/dist.png, the whole page
+${blue('$ qunitx record dist/ about.html -o snapshots --compare')}   # compare with the pngs already there; exit 1 on a change
 ${blue('$ qunitx record invoice.html -f pdf --pdf-paper=A4 --pdf-media=print')} # invoice.pdf, printed on A4
 
 ${magenta().bold('Inputs:')} a ${blue('http(s)://')} or ${blue('file://')} URL, an ${blue('.html')} file or a directory with an ${blue('index.html')} (served from a local origin),
@@ -166,6 +183,14 @@ ${blue('--browser')}       : chromium, firefox or webkit (default chromium)
 ${blue('--timeout')}       : ms a script may run, or a page may take to load, before giving up
 ${blue('-p, --port')}      : first port tried for the local server
 
+${magenta().bold('Visual diff:')}
+${blue('--compare')}       : a png already at an output path is the baseline: compare instead of overwriting, writing
+                  ${blue('<name>.diff.png')} and ${blue('<name>.new.png')} beside it when it changed (exit 1). Defaults ${blue('-f')} to png
+${blue('--update')}        : accept the changes: new screenshots replace their baselines
+${blue('--threshold')}     : how far a pixel's color may move before it counts, 0-1 (default 0.1)
+${blue('--max-diff')}      : how many pixels may change before a snapshot counts as changed (default 0)
+${blue('--mask')}          : CSS selector to paint over in every still, e.g. a clock or an avatar; repeatable
+
 ${magenta().bold('PDF:')} ${blue('-f pdf')} prints each page where it ended: vector (text and links kept) in chromium, its screenshots on pages elsewhere.
 ${blue('--pdf-paper')}     : ${blue('fit')} (default: one page the page's size), ${blue('A4')}, ${blue('Letter')}, ${blue('Legal')}, ${blue('A3')}…, or ${blue('20cmx30cm')}
 ${blue('--pdf-landscape')} : turn a named paper sideways
@@ -179,6 +204,6 @@ ${blue('--pdf-pages')}     : which pages to keep, e.g. ${blue('1-3,5')} (vector)
 ${blue('--pdf-outline')}   : add PDF bookmarks — a reader's clickable sidebar — from the page's h1–h6 headings (vector)
 ${blue('--no-pdf-background')} : leave backgrounds out, as a printer would
 
-${magenta().bold('Exit codes:')} ${blue('0')} recorded, ${blue('1')} a script failed or an input could not be recorded, ${blue('2')} bad arguments.
+${magenta().bold('Exit codes:')} ${blue('0')} recorded, ${blue('1')} a script failed, a snapshot changed, or an input could not be recorded, ${blue('2')} bad arguments.
 `;
 }
