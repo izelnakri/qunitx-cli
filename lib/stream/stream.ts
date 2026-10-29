@@ -162,6 +162,15 @@ async function* iterate<T>(source: Source<T>): AsyncGenerator<T> {
   yield* source as AsyncIterable<T>;
 }
 
+// `promise`, marked as handled: awaiting it still throws, but if it is abandoned (a sibling of
+// an element that failed first) its rejection is not reported as unhandled.
+function markHandled<T>(promise: Promise<T>): Promise<T> {
+  promise.catch(ignore);
+  return promise;
+}
+
+function ignore(): void {}
+
 /**
  * The stream pipeline: build with a static (`from`/`unfold`/`lines`), shape with lazy
  * transforms (`map`/`filter`/`flatMap`/`take`), finish with a Task-returning consumer
@@ -464,7 +473,8 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
    * durations vary). Each element may deadline (`timeoutMs`) into a declared
    * `Failure('AsyncTimeout')` **element** — the railway, not a crash; the element's signal
    * fires so cancellation-aware work stops. A throw from `fn` stays a bug. Failure elements
-   * from the source pass through unmapped.
+   * from the source pass through unmapped. When the consumer stops early (a throw, a `break`, a
+   * `take`), the elements still running are shut down and their signals fire.
    *
    * ```ts
    * const doubled = await Stream.asyncStream([1, 2, 3, 4], (n) => n * 2, { maxConcurrency: 2 }).collect();
@@ -477,63 +487,87 @@ class StreamClass<T, E = never> implements AsyncIterable<T | E> {
     options: { maxConcurrency?: number; timeoutMs?: number; ordered?: boolean } = {},
   ): StreamClass<Exclude<R, AnyFailure>, Extract<U | R, AnyFailure> | AnyFailure> {
     const { maxConcurrency = 4, timeoutMs, ordered = true } = options;
-    const runOne = (element: Exclude<U, AnyFailure>): Promise<unknown> => {
+    const runOne = (
+      element: Exclude<U, AnyFailure>,
+      running: Set<Task<unknown>>,
+    ): Promise<unknown> => {
       // Executor form: `fn` needs the signal so `shutdown` below can cancel it. Its result goes
       // to the resolver rather than being returned, because `fn` may answer with a plain value
       // and only a returned *promise* settles a Task on its own.
       const work = new Task<unknown>((resolve, _reject, signal) =>
         resolve(fn(element, signal)),
       ).perform();
-      if (timeoutMs === undefined) return Promise.resolve(work);
-      return work.yield(timeoutMs).then((settled) => {
-        if (settled !== null) return isFailure(settled) ? settled : settled;
-        work.shutdown(0).then(
-          () => undefined,
-          () => undefined,
-        );
-        return new Failure('AsyncTimeout', `element timed out after ${timeoutMs}ms`, {
-          ms: timeoutMs,
-        });
-      });
+      running.add(work);
+      const done = () => running.delete(work);
+      work.then(done, done);
+      if (timeoutMs === undefined) return markHandled(Promise.resolve(work));
+      return markHandled(
+        work.yield(timeoutMs).then((settled) => {
+          if (settled !== null) return isFailure(settled) ? settled : settled;
+          work.shutdown(0).then(
+            () => undefined,
+            () => undefined,
+          );
+          return new Failure('AsyncTimeout', `element timed out after ${timeoutMs}ms`, {
+            ms: timeoutMs,
+          });
+        }),
+      );
     };
     return new StreamClass(async function* () {
       const iterator = iterate(source);
-      if (ordered) {
-        const inflight: Promise<unknown>[] = [];
-        for (;;) {
-          for (let room = maxConcurrency - inflight.length; room > 0; room--) {
-            const { value, done } = await iterator.next();
-            if (done) break;
-            inflight.push(isFailure(value) ? Promise.resolve(value) : runOne(value as never));
-          }
-          if (inflight.length === 0) return;
-          yield (await inflight.shift()!) as never;
-        }
-      } else {
-        // Completion order: race a tagged window, refill as slots free up.
-        const window = new Map<number, Promise<[number, unknown]>>();
-        let nextId = 0;
-        let exhausted = false;
-        for (;;) {
-          for (let room = maxConcurrency - window.size; room > 0 && !exhausted; room--) {
-            const { value, done } = await iterator.next();
-            if (done) exhausted = true;
-            else {
-              const id = nextId++;
-              const run = isFailure(value) ? Promise.resolve(value) : runOne(value as never);
-              window.set(
-                id,
-                run.then((out) => [id, out]),
-              );
-            }
-          }
-          if (window.size === 0) return;
-          const [id, out] = await Promise.race(window.values());
-          window.delete(id);
-          yield out as never;
-        }
+      // What is still running when the consumer stops (a throw, a `break`, an early `take`) is
+      // shut down, as Elixir's async_stream takes its linked tasks with it.
+      const running = new Set<Task<unknown>>();
+      try {
+        yield* ordered ? inOrder(iterator, running) : asCompleted(iterator, running);
+      } finally {
+        for (const work of running) work.shutdown(0).then(ignore, ignore);
       }
     }) as never;
+
+    async function* inOrder(
+      iterator: AsyncIterator<U>,
+      running: Set<Task<unknown>>,
+    ): AsyncGenerator<unknown> {
+      const inflight: Promise<unknown>[] = [];
+      for (;;) {
+        for (let room = maxConcurrency - inflight.length; room > 0; room--) {
+          const { value, done } = await iterator.next();
+          if (done) break;
+          inflight.push(
+            isFailure(value) ? Promise.resolve(value) : runOne(value as never, running),
+          );
+        }
+        if (inflight.length === 0) return;
+        yield await inflight.shift()!;
+      }
+    }
+
+    // Completion order: race a tagged window, refill as slots free up.
+    async function* asCompleted(
+      iterator: AsyncIterator<U>,
+      running: Set<Task<unknown>>,
+    ): AsyncGenerator<unknown> {
+      const window = new Map<number, Promise<[number, unknown]>>();
+      let nextId = 0;
+      let exhausted = false;
+      for (;;) {
+        for (let room = maxConcurrency - window.size; room > 0 && !exhausted; room--) {
+          const { value, done } = await iterator.next();
+          if (done) exhausted = true;
+          else {
+            const id = nextId++;
+            const run = isFailure(value) ? Promise.resolve(value) : runOne(value as never, running);
+            window.set(id, markHandled(run.then((out) => [id, out])));
+          }
+        }
+        if (window.size === 0) return;
+        const [id, out] = await Promise.race(window.values());
+        window.delete(id);
+        yield out;
+      }
+    }
   }
 
   /**
