@@ -1,8 +1,8 @@
 /**
- * The single left-to-right classification of a qunitx argv (already sliced past the node binary
- * and script path). Both `Args.parse` and the daemon's `isDaemonEligible` consume these tokens,
- * so the one thing they must agree on — how many argv entries a value flag swallows — is decided
- * here, in one place, and can never drift between the two scanners again.
+ * Why argv is tokenized before it is parsed: two readers, `Args.parse` and the daemon's
+ * `isDaemonEligible`, must agree on how many argv entries a value flag swallows, so it is
+ * decided once, here. (A command with one reader, like `qunitx record`, parses in a single walk.)
+ * The argv is already sliced past the node binary and script path.
  */
 
 /**

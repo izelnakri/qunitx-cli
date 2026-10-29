@@ -42,7 +42,8 @@ under [Installation](#installation).
 - [Writing tests](#writing-tests) · [Usage](#usage) · [CLI reference](#cli-reference)
 - [Configuration](#configuration) · [Environment variables](#environment-variables) ·
   [JSX / TSX](#jsx--tsx) · [esbuild plugins](#esbuild-plugins)
-- [REPL](#repl) · [Running a script](#running-a-script) · [Benchmarks](#benchmarks) ·
+- [REPL](#repl) · [Running a script](#running-a-script) · [Screenshots and GIFs](#screenshots-and-gifs) ·
+  [Benchmarks](#benchmarks) ·
   [JavaScript API](#javascript-api) ·
   [Daemon mode](#daemon-mode)
 - [JUnit reports](#junit-reports) · [Code coverage](#code-coverage) · [Timezone](#timezone)
@@ -623,6 +624,58 @@ test file that reaches qunitx through a barrel or a helper is recognised just th
 The alternative was to run it as a script, which registers the tests, runs none of them, and exits
 0 in silence. Reporting success for tests that never ran is the one thing a test runner must not
 do.
+
+## Screenshots and GIFs
+
+`qunitx record` shoots pages, URLs and scripts in a real browser.
+
+```sh
+qunitx record https://example.com                  # example.com.jpg
+qunitx record https://example.com -f home.png -w 1200 -h 800
+qunitx record home.html pricing.html               # home.jpg, pricing.jpg and recording.gif of both
+qunitx record http://a.com -f a.gif, a.jpg         # exactly those files
+qunitx record demo.ts -w 1200 -h 1200              # demo.gif of the script running, demo.jpg of its end
+qunitx record dist/ -f png --full-page --scale=2 -o shots
+```
+
+- **Inputs:** an `http(s)://` or `file://` URL, an `.html` file or a directory with an
+  `index.html` (served from a local origin, so relative assets and module scripts load), or a
+  `.js`/`.ts`/`.jsx`/`.tsx` script, run as [`qunitx run`](#running-a-script) runs it and recorded
+  while it runs.
+- **`-f`:** formats (`png`, `jpg`, `gif`) or file names ending in one, comma-separated. By default
+  one page is a `.jpg`; several inputs, or a script, add one `.gif` of them all.
+- **`-w` / `-h`:** viewport in CSS pixels (default 1280×720); `--scale` multiplies it.
+- `--wait-for=<ms|selector>`, `--page-duration`, `--last-frame-duration`, `--fps`, `--quality`, `--browser` — see
+  `qunitx record --help`.
+- **Scripts:** frames are sampled about 10 times a second. To be sure a step is in the recording,
+  `await globalThis.qunitxRecordFrame?.()` after drawing it (a no-op under `qunitx run`).
+
+**PDF:** `-f pdf` prints each page as it ended. In Chromium the PDF is vector: text stays
+selectable and links clickable. Firefox and WebKit can't print, so there it is the page's
+screenshots laid onto pages (`--pdf-mode=raster` forces that anywhere).
+
+```sh
+qunitx record invoice.html -f pdf --pdf-paper=A4 --pdf-margin=12mm --pdf-media=print --pdf-footer=footer.html
+```
+
+| Flag                                               | JS (`pdf: { … }`)                                                                                | Default                         |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------- |
+| `--pdf-paper=A4` (`Letter`, `A3`…, or `20cmx30cm`) | `paper`                                                                                          | `fit`: one page the page's size |
+| `--pdf-landscape`                                  | `landscape`                                                                                      | portrait                        |
+| `--pdf-margin=12mm`                                | `margin` (or `{ top, right, bottom, left }`)                                                     | 0                               |
+| `--pdf-scale=0.8`                                  | `scale`                                                                                          | 1                               |
+| `--pdf-media=print`                                | `media` (which media queries match and stylesheets apply)                                        | `screen`                        |
+| `--pdf-header=h.html`, `--pdf-footer=f.html`       | `header`, `footer` (HTML; `.pageNumber`, `.totalPages`, `.title`, `.date`, `.url` are filled in) | none                            |
+| `--pdf-pages=1-3,5`                                | `pageRanges`                                                                                     | every page                      |
+| `--pdf-outline`                                    | `outline` (PDF bookmarks from the page's h1–h6 headings, shown in a reader's sidebar)            | off                             |
+| `--no-pdf-background`                              | `background: false`                                                                              | backgrounds printed             |
+| `--pdf-mode=raster`                                | `mode` (`auto`, `vector`, `raster`)                                                              | `auto`                          |
+
+Header, footer, page ranges and the outline need vector mode; asking for them elsewhere fails and
+names them.
+
+GIFs are encoded in-process (per-frame palettes, only the changed region of each frame), with no
+ffmpeg or other dependency. From JS: `import { record } from 'qunitx-cli'`.
 
 ## Benchmarks
 

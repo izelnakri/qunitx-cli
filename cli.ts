@@ -103,6 +103,12 @@ const WATCH_EXIT_CODES = { SIGTERM: 143, SIGINT: 130, SIGHUP: 129 };
     exitOnSignal();
     const BenchCommand = await import('./lib/commands/bench.ts');
     return exitAfterFlush(await BenchCommand.command());
+  } else if (cmd === 'record') {
+    // Never routed through the daemon either: it sizes and records pages of its own, and a page in
+    // the daemon's shared browser would be neither. Its browser is the pre-launched Chrome.
+    exitOnSignal();
+    const Record = await import('./lib/commands/record/index.ts');
+    return exitAfterFlush(await Record.run());
   } else if (cmd === 'repl') {
     // Never routed through the daemon: a REPL is a page kept open for one terminal, and the
     // daemon's browser is shared. It uses the pre-launched Chrome like any other local run.

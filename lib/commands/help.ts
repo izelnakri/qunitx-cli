@@ -69,6 +69,8 @@ ${color('$ qunitx run $scriptFile')}                 # Runs one file as a plain 
   accepts ${color('--browser')}, ${color('--port')}, ${color('--open')}, ${color('--timeout')} and ${color('--watch')}
 ${color('$ qunitx bench [files]')}                   # Deno.bench files, measured in a real browser: deno bench's table, --json, markdown, csv
   ${color('--save=base.json')} then ${color('--compare=base.json')} fails on a regression; see ${color('qunitx bench --help')}
+${color('$ qunitx record <url|page|script>...')}     # Screenshots and GIFs in a real browser: ${color('-f home.png,home.gif -w 1200 -h 800')}
+  one page is a .jpg; several inputs, or a script recorded while it runs, add a .gif — see ${color('qunitx record --help')}
 ${color('$ qunitx repl [files]')}                    # A prompt that evaluates in a real Chrome page; [files] are preloaded
   open ${color('<url>/repl')} in any Chromium browser for DevTools on the very page the prompt drives
   ${color('--open')} evaluates in a window you can see instead of a headless one (not on macOS)
