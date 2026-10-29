@@ -23,6 +23,10 @@ import type { ChromeHandle, EarlyChrome } from '../types.ts';
 // window where a parent process.exit() between spawn and CDP-ready would orphan Chrome (the
 // detached process group outlives the parent).
 let earlyChrome: ChromeHandle | null = null;
+// Settles once Chrome is spawned, or once the pre-launch knows it never will be. A command that
+// is done before then (`record --nope` is, while the spawn's mkdtemp waits behind module loading)
+// still has a Chrome on its way, which shutdownPrelaunch() waits for so it can reap it.
+let spawnSettled: Promise<unknown> = Promise.resolve();
 
 /**
  * Kills the pre-launched Chrome process and awaits its async temp-dir cleanup.
@@ -35,6 +39,7 @@ let earlyChrome: ChromeHandle | null = null;
  * ```
  */
 export async function shutdownPrelaunch(): Promise<void> {
+  await spawnSettled;
   if (!earlyChrome) return;
   const { shutdown } = earlyChrome;
   earlyChrome = null; // prevent double-shutdown
@@ -104,25 +109,29 @@ export function startPrelaunch(): void {
   // A deliberately local argv scan rather than the shared tokenizer: this module is statically
   // imported first so Chrome spawns at ~t=5ms, and it stays free of avoidable imports.
   const SEARCH_FLAG = /^(-s|--search|--print|--preview)(=|$)/;
-  const { browserFromArgv, openFromArgv, watchFromArgv, searchFromArgv } = process.argv.reduce(
-    (flags, arg) => {
-      if (arg.startsWith('--browser=')) flags.browserFromArgv = arg.slice(10);
-      // `record` spells output and width `-o` and `-w`; it never opens or watches anything.
-      else if (cmd === 'record') return flags;
-      else if (arg === '--open' || arg === '-o') flags.openFromArgv = true;
-      else if (arg === '--watch' || arg === '-w') flags.watchFromArgv = true;
-      else if (SEARCH_FLAG.test(arg)) flags.searchFromArgv = true;
-      return flags;
-    },
-    // QUNITX_BROWSER env var seeds the default so prelaunch is skipped for firefox/webkit
-    // even when --browser is not passed on the command line (e.g. browser-compat CI).
-    {
-      browserFromArgv: process.env.QUNITX_BROWSER || 'chromium',
-      openFromArgv: false,
-      watchFromArgv: false,
-      searchFromArgv: false,
-    },
-  );
+  const { browserFromArgv, openFromArgv, watchFromArgv, searchFromArgv, helpFromArgv } =
+    process.argv.reduce(
+      (flags, arg, index, argv) => {
+        if (arg.startsWith('--browser=')) flags.browserFromArgv = arg.slice(10);
+        else if (arg === '--browser' && argv[index + 1]) flags.browserFromArgv = argv[index + 1];
+        // `record` spells output and width `-o` and `-w`; it never opens or watches anything, and
+        // its help opens no browser at all.
+        else if (cmd === 'record') flags.helpFromArgv ||= arg === '--help';
+        else if (arg === '--open' || arg === '-o') flags.openFromArgv = true;
+        else if (arg === '--watch' || arg === '-w') flags.watchFromArgv = true;
+        else if (SEARCH_FLAG.test(arg)) flags.searchFromArgv = true;
+        return flags;
+      },
+      // QUNITX_BROWSER env var seeds the default so prelaunch is skipped for firefox/webkit
+      // even when --browser is not passed on the command line (e.g. browser-compat CI).
+      {
+        browserFromArgv: process.env.QUNITX_BROWSER || 'chromium',
+        openFromArgv: false,
+        watchFromArgv: false,
+        searchFromArgv: false,
+        helpFromArgv: false,
+      },
+    );
   // If the run will go through the daemon (existing socket OR QUNITX_DAEMON=1
   // auto-spawn) and the invocation is daemon-eligible, no local Chrome is needed —
   // skipping the prelaunch saves the ~150ms spawn cost. CI is bypassed by default
@@ -165,10 +174,13 @@ export function startPrelaunch(): void {
     isRunCommand &&
     !isDaemonClientRun &&
     !searchFromArgv &&
+    !helpFromArgv &&
     browserFromArgv === 'chromium' &&
     process.platform !== 'darwin';
   if (!shouldSpawn) return;
 
+  const { promise: spawned, resolve: markSpawned } = Promise.withResolvers<void>();
+  spawnSettled = spawned;
   inFlight = find()
     .then((chromePath) => {
       perfLog('chrome-prelaunch.ts: Chrome.find resolved', chromePath);
@@ -177,12 +189,17 @@ export function startPrelaunch(): void {
       // process lifetime, including the spawn→CDP-ready gap.
       return spawn(chromePath, CHROMIUM_ARGS, !openWatchMode, (handle) => {
         earlyChrome = handle;
+        markSpawned();
       });
     })
     .then((info) => {
       perfLog('chrome-prelaunch.ts: Chrome CDP ready', info?.cdpEndpoint ?? null);
       return info;
     });
+  inFlight.then(
+    () => markSpawned(),
+    () => markSpawned(),
+  );
 }
 
 let started = false;
