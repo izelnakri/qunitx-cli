@@ -66,7 +66,10 @@ module('Record | inputs', { concurrency: true }, () => {
       /cannot record nope\.html: no such file/,
     );
     await assert.rejects(Inputs.resolve(['empty'], root), /a directory with no index\.html/);
-    await assert.rejects(Inputs.resolve(['notes.txt'], root), /not an \.html page, a URL, or a/);
+    await assert.rejects(
+      Inputs.resolve(['notes.txt'], root),
+      /not an \.html page, a URL, a \.js\/\.ts\/\.jsx\/\.tsx script, a \.tour\.ts tour, a \.md deck or an image/,
+    );
   });
 
   test('a tour is one by its name or by exporting tour(…); a script that only mentions it is not', async (assert) => {

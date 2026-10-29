@@ -2,6 +2,7 @@
   "nodeModulesDir": "auto",
   "imports": {
     "esbuild": "npm:esbuild",
+    "marked": "npm:marked",
     "ws": "npm:ws"
   },
   "tasks": {

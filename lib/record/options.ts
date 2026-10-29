@@ -63,6 +63,11 @@ export type Settings = Required<
     | 'waitFor'
     | 'timeout'
     | 'update'
+    | 'panel'
+    | 'css'
+    | 'backdrop'
+    | 'slide'
+    | 'player'
     | 'prComment'
     | 'imagesUrl'
     | 'reportUrl'
@@ -150,6 +155,8 @@ const RULES: Record<string, Rule> = {
   fullPage: TRUE_OR_FALSE,
   cwd: NON_EMPTY_PATH,
   output: NON_EMPTY_PATH,
+  css: defineRule(isString, 'a stylesheet'),
+  backdrop: defineRule((value) => isString(value) && value.trim() !== '', 'a CSS background'),
   formats: defineRule(
     (value) => Array.isArray(value) && value.every(isString),
     'a list of formats or file names',
@@ -195,6 +202,43 @@ const PDF_RULES: Record<string, Rule> = {
   landscape: TRUE_OR_FALSE,
   background: TRUE_OR_FALSE,
   outline: TRUE_OR_FALSE,
+};
+
+// Whether the browser takes each declaration is checked once it is up; here, only its shape.
+const STYLE = defineRule(
+  (value) =>
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every(
+      (declaration) =>
+        declaration === undefined || isString(declaration) || typeof declaration === 'number',
+    ),
+  'an object of CSS declarations',
+);
+
+// The options that are objects of settings, each setting held to its own rule; `name` says
+// what the object is when it is not one.
+const NESTED: Record<string, { name: string; rules: Record<string, Rule> }> = {
+  pdf: { name: 'PDF settings', rules: PDF_RULES },
+  panel: {
+    name: 'placement, height, style',
+    rules: {
+      placement: oneOf(['above', 'below'], "'above' or 'below'"),
+      height: wholeNumberBetween(24, 600, 'of pixels '),
+      style: STYLE,
+    },
+  },
+  slide: { name: 'style', rules: { style: STYLE } },
+  player: {
+    name: 'advance, loop, autoplay, assets',
+    rules: {
+      advance: oneOf(['auto', 'click'], "'auto' or 'click'"),
+      loop: TRUE_OR_FALSE,
+      autoplay: TRUE_OR_FALSE,
+      assets: oneOf(['inline', 'files'], "'inline' or 'files'"),
+    },
+  },
 };
 
 /**
@@ -269,7 +313,7 @@ export function invalidOptionReason(
   value: unknown,
   shown: string = JSON.stringify(value) ?? String(value),
 ): string | null {
-  if (option === 'pdf') return invalidPdfReason(value, shown);
+  if (option in NESTED) return invalidSettingsReason(value, shown, NESTED[option]);
   const rule = RULES[option];
   return !rule || rule.test(value)
     ? null
@@ -352,22 +396,26 @@ export function findPRCommentSettingsProblem(
       : null;
 }
 
-function invalidPdfReason(value: unknown, shown: string): string | null {
+function invalidSettingsReason(
+  value: unknown,
+  shown: string,
+  { name, rules }: { name: string; rules: Record<string, Rule> },
+): string | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return `expected an object of PDF settings, got ${shown}`;
+    return `expected an object of ${name}, got ${shown}`;
   }
   // The first setting that is not one, or does not hold to its rule.
   const [field, entry] =
     Object.entries(value).find(
-      ([field, entry]) => entry !== undefined && !PDF_RULES[field]?.test(entry),
+      ([field, entry]) => entry !== undefined && !rules[field]?.test(entry),
     ) ?? [];
   if (field === undefined) return null;
-  else if (!(field in PDF_RULES)) {
-    return `has no setting ${field}; expected ${Object.keys(PDF_RULES).join(', ')}`;
+  else if (!(field in rules)) {
+    return `has no setting ${field}; expected ${Object.keys(rules).join(', ')}`;
   }
   // A function, say, has no JSON: its type says what it is.
   const got = JSON.stringify(entry) ?? typeof entry;
-  return `${field}: expected ${describeExpected(PDF_RULES[field], entry)}, got ${got}`;
+  return `${field}: expected ${describeExpected(rules[field], entry)}, got ${got}`;
 }
 
 function describeExpected(rule: Rule, value: unknown): string {

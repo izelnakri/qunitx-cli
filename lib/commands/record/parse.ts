@@ -17,9 +17,12 @@ interface Flag {
   sets:
     | keyof RecordOptions
     | `pdf.${keyof PdfOptions}`
+    | `panel.${keyof NonNullable<RecordOptions['panel']>}`
+    | `player.${keyof NonNullable<RecordOptions['player']>}`
     | 'help'
     | 'pdfHeaderFile'
     | 'pdfFooterFile'
+    | 'cssFile'
     | null;
   /** Reads the flag's text into its value; a flag without one is a switch. */
   read?: (text: string) => unknown;
@@ -100,6 +103,13 @@ const FLAGS: Record<string, Flag> = {
   '--no-pdf-background': { sets: 'pdf.background', value: false },
   '--pdf-header': { sets: 'pdfHeaderFile', read: String },
   '--pdf-footer': { sets: 'pdfFooterFile', read: String },
+  '--panel': { sets: 'panel.placement', read: String },
+  '--css': { sets: 'cssFile', read: String },
+  '--backdrop': { sets: 'backdrop', read: String },
+  '--advance': { sets: 'player.advance', read: String },
+  '--loop': { sets: 'player.loop', value: true },
+  '--no-autoplay': { sets: 'player.autoplay', value: false },
+  '--html-assets': { sets: 'player.assets', read: String },
 };
 
 /**
@@ -135,6 +145,8 @@ export interface RecordRequest {
   sources: string[];
   /** What the flags set. */
   options: RecordOptions;
+  /** `--css`: a stylesheet file, read relative to where the command runs. */
+  cssFile?: string;
   /** `--pdf-header` and `--pdf-footer`: HTML template files, read relative to where it runs. */
   pdfHeaderFile?: string;
   /** `--pdf-footer`, likewise. */
@@ -250,7 +262,12 @@ function applyFlagToRecordRequest(
   const { sets, read, value, list } = known;
   const parsed = read && text !== undefined ? read(text) : value;
   if (sets === null) return recordRequest;
-  else if (sets === 'help' || sets === 'pdfHeaderFile' || sets === 'pdfFooterFile') {
+  else if (
+    sets === 'help' ||
+    sets === 'pdfHeaderFile' ||
+    sets === 'pdfFooterFile' ||
+    sets === 'cssFile'
+  ) {
     return { ...recordRequest, [sets]: parsed };
   }
   const [option, setting] = sets.split('.') as [keyof RecordOptions, string?];

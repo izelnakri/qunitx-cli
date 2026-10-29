@@ -2,6 +2,7 @@ import { DEFAULT_FPS } from '../options.ts';
 import { progress } from '../progress.ts';
 import type { Browser, Page } from 'playwright-core';
 import type { Beat } from './timeline.ts';
+import { PANEL_CSS, PANEL_SCRIPT, panelHTML, type Panel } from '../panel.ts';
 
 /**
  * Height of the browser frame drawn above the page — tab strip and address bar — in CSS pixels.
@@ -85,7 +86,8 @@ export interface Look {
   /** The caption, `#caption`. */
   caption: {
     /** Over the top or the bottom of the page. */
-    placement: 'top' | 'bottom';
+    /** Over the top or bottom of the page, or in the steps' panel when there is one. */
+    placement: 'top' | 'bottom' | 'panel';
     style: Style;
   };
   /** A lit-up region, `#highlight`: the box itself, whose `box-shadow` dims the rest. */
@@ -129,9 +131,53 @@ export const DEFAULT_LOOK: Look = {
 };
 
 /**
- * Checks every declaration of a look against the browser's own CSS, and returns the look with each
- * one as the browser takes it: kebab-case names, and a bare number given its `px` where it needs
- * one. A property the browser doesn't know, or a value it won't take, throws with its name.
+ * Checks CSS declarations against the browser's own CSS and returns them as it takes them, or
+ * throws naming the first it will not: the rule every `style` option is held to. `part` names
+ * them in the error; `as` checks every value as that one property.
+ *
+ * ```ts
+ * import { checkStyle } from './compose.ts';
+ * import type { Page } from 'playwright-core';
+ *
+ * // Defined, not invoked: needs a live page.
+ * async function check(page: Page) {
+ *   return await checkStyle(page, 'panel.style', { fontSize: 18 }); // { 'font-size': '18px' }
+ * }
+ * ```
+ */
+export async function checkStyle(
+  page: Page,
+  part: string,
+  style: Style,
+  as?: string,
+): Promise<Style> {
+  const declarations = Object.entries(style).map(([name, value]) => ({
+    name,
+    property: as ?? kebabCase(name),
+    value,
+  }));
+  // A string or the value as given if CSS takes it, else a number with px, else null; unknown
+  // property names are told apart by not even taking 'initial'.
+  const verdicts: (string | null | false)[] = await page.evaluate(
+    `${JSON.stringify(declarations)}.map(({ property, value }) => !CSS.supports(property, 'initial')
+      ? false
+      : [String(value), value + 'px'].find((candidate, index) =>
+          (index === 0 || typeof value === 'number') && CSS.supports(property, candidate)) ?? null)`,
+  );
+  return Object.fromEntries(
+    declarations.map(({ name, property, value }, index) => {
+      const verdict = verdicts[index];
+      if (verdict === false) throw new Error(`${part}.${name} is not a CSS property`);
+      if (verdict === null)
+        throw new Error(`${part}.${name}: ${JSON.stringify(value)} is not a valid ${property}`);
+      return [property, verdict];
+    }),
+  );
+}
+
+/**
+ * Checks every declaration of a look against the browser's own CSS (see {@link checkStyle}) and
+ * returns the look with each one as the browser takes it.
  *
  * ```ts
  * import { checkLook, DEFAULT_LOOK } from './compose.ts';
@@ -145,30 +191,7 @@ export const DEFAULT_LOOK: Look = {
  * ```
  */
 export async function checkLook(page: Page, look: Look): Promise<Look> {
-  const check = async (part: string, style: Style, as?: string): Promise<Style> => {
-    const declarations = Object.entries(style).map(([name, value]) => ({
-      name,
-      property: as ?? kebabCase(name),
-      value,
-    }));
-    // A string or the value as given if CSS takes it, else a number with px, else null; unknown
-    // property names are told apart by not even taking 'initial'.
-    const verdicts: (string | null | false)[] = await page.evaluate(
-      `${JSON.stringify(declarations)}.map(({ property, value }) => !CSS.supports(property, 'initial')
-        ? false
-        : [String(value), value + 'px'].find((candidate, index) =>
-            (index === 0 || typeof value === 'number') && CSS.supports(property, candidate)) ?? null)`,
-    );
-    return Object.fromEntries(
-      declarations.map(({ name, property, value }, index) => {
-        const verdict = verdicts[index];
-        if (verdict === false) throw new Error(`${part}.${name} is not a CSS property`);
-        if (verdict === null)
-          throw new Error(`${part}.${name}: ${JSON.stringify(value)} is not a valid ${property}`);
-        return [property, verdict];
-      }),
-    );
-  };
+  const check = (part: string, style: Style, as?: string) => checkStyle(page, part, style, as);
   return {
     ...look,
     cursor: { ...look.cursor, style: await check('cursor.style', look.cursor.style) },
@@ -235,6 +258,25 @@ export function framedSize(
 }
 
 /**
+ * One drawn frame: its image, how long it shows, and what it shows — which step of the whole
+ * recording, and the caption — for a player to show beside it.
+ *
+ * ```ts
+ * const frame: ComposedFrame = { image: new Uint8Array(0), durationMs: 100, step: 2, caption: 'Pay' };
+ * ```
+ */
+export interface ComposedFrame {
+  /** PNG, or JPEG when asked for. */
+  image: Uint8Array;
+  /** How long it shows. */
+  durationMs: number;
+  /** Its step among the whole recording's. */
+  step: number;
+  /** The caption to show beside it, when captions go in the panel; null otherwise. */
+  caption: string | null;
+}
+
+/**
  * Draws each beat — a screenshot under the camera, the pointer, a tap or click's ripple, the
  * caption, inside the frame asked for — into a PNG, in an ordinary page of the same browser. Drawn
  * with HTML and CSS because that is what renders text, curves and shadows well, and because the
@@ -262,58 +304,65 @@ export async function compose(
   browser: Browser,
   shots: Uint8Array[],
   beats: Beat[],
-  options: {
-    viewport: { width: number; height: number };
-    scale: number;
-    frame: Frame;
-    pointer: Pointer;
-    /** How the tour looks. Defaults to {@link DEFAULT_LOOK}. */
-    look?: Look;
-    /** Frames per second, for CSS animations in the look, which are drawn a frame per tick. */
-    fps?: number;
-    /** Whether the browser or phone frame shows an address bar. Defaults to true. */
-    addressBar?: boolean;
-    /** Readies the drawing page as `record` readies its own (Chrome needs its window enlarged). */
-    prepare?: (page: Page) => Promise<void>;
-  },
-): Promise<{ png: Uint8Array; durationMs: number }[]> {
+  options: ComposeOptions,
+): Promise<ComposedFrame[]> {
+  const layout = layoutOf(options);
   const context = await browser.newContext({
-    viewport: framedSize(options.frame, options.viewport, options.addressBar),
+    viewport: layout.size,
     deviceScaleFactor: options.scale,
   });
   try {
     const page = await context.newPage();
     await options.prepare?.(page);
-    await page.setContent(
-      stageHTML(options.viewport, options.frame, options.pointer, options.addressBar ?? true),
+    await page.setContent(stageHTML(options, layout));
+    const given = options.look ?? DEFAULT_LOOK;
+    const look = await checkLook(page, {
+      ...given,
+      phone: { ...given.phone, backdrop: options.backdrop ?? given.phone.backdrop },
+    });
+    // A panel the player draws for itself is not drawn here, but captions still go to it.
+    const captionOutside = look.caption.placement === 'panel' && Boolean(options.panel);
+    const panel = options.panel &&
+      options.panel.drawn !== false && {
+        ...options.panel,
+        style: await checkStyle(page, 'panel.style', options.panel.style),
+      };
+    await page.evaluate(
+      `globalThis.__configure(${JSON.stringify({ ...look, panel: panel || null, captionOutside })})`,
     );
-    const look = await checkLook(page, options.look ?? DEFAULT_LOOK);
-    await page.evaluate(`globalThis.__configure(${JSON.stringify(look)})`);
     for (const [index, shot] of shots.entries()) {
       await page.evaluate(
         `globalThis.__load(${index}, ${JSON.stringify(Buffer.from(shot).toString('base64'))})`,
       );
     }
-    const frames: { png: Uint8Array; durationMs: number }[] = [];
+    const frames: ComposedFrame[] = [];
     const step = 1000 / (options.fps ?? DEFAULT_FPS);
+    const offset = options.panel?.offset ?? 0;
+    const shoot = () =>
+      options.type === 'jpeg'
+        ? page.screenshot({ type: 'jpeg', quality: options.quality ?? 90 })
+        : page.screenshot({ type: 'png' });
     let atMs = 0;
-    // How far along the drawing is, for the phase the caller entered.
+    // How far along the drawing is, for the phase the caller entered; a recording of steps draws
+    // its parts one by one, each from the start.
+    progress.done = 0;
     progress.total = beats.length;
     for (const beat of beats) {
       await page.evaluate(`globalThis.__show(${JSON.stringify(beat)}, ${atMs})`);
+      const about = { step: offset + beat.step, caption: captionOutside ? beat.caption : null };
       // A held beat is one frame, unless a CSS animation is still moving: then one per tick
       // until it stops, each drawn at its exact time on the tour's clock.
       let shownMs = 0;
       for (;;) {
-        const png = await page.screenshot({ type: 'png' });
+        const image = await shoot();
         const moving =
           shownMs + step < beat.durationMs &&
           (await page.evaluate<boolean>(`globalThis.__tick(${atMs + shownMs + step}, ${step})`));
         if (!moving) {
-          frames.push({ png, durationMs: beat.durationMs - shownMs });
+          frames.push({ image, durationMs: beat.durationMs - shownMs, ...about });
           break;
         }
-        frames.push({ png, durationMs: step });
+        frames.push({ image, durationMs: step, ...about });
         shownMs += step;
       }
       atMs += beat.durationMs;
@@ -325,24 +374,105 @@ export async function compose(
   }
 }
 
+/**
+ * How {@link compose} draws a tour's beats: the page's size and scale, the frame and pointer, the
+ * look, and where the frame sits in a recording of several parts.
+ *
+ * ```ts
+ * const options: ComposeOptions = { viewport: { width: 390, height: 844 }, scale: 1, frame: 'phone', pointer: 'finger' };
+ * ```
+ */
+export interface ComposeOptions {
+  /** The page's size in CSS pixels. */
+  viewport: { width: number; height: number };
+  /** Device pixels per CSS pixel of the drawn frames. */
+  scale: number;
+  /** What the page is drawn inside. */
+  frame: Frame;
+  /** A cursor, or a fingertip. */
+  pointer: Pointer;
+  /** How the tour looks. Defaults to {@link DEFAULT_LOOK}. */
+  look?: Look;
+  /** Frames per second, for CSS animations in the look, which are drawn a frame per tick. */
+  fps?: number;
+  /** Whether the browser or phone frame shows an address bar. Defaults to true. */
+  addressBar?: boolean;
+  /**
+   * What the frame is centered on, when other parts of the same recording are bigger: the
+   * recording's size, the panel aside. Defaults to the frame's own size.
+   */
+  canvas?: { width: number; height: number };
+  /**
+   * The steps' panel to draw into every frame, with every step's title in the recording, and
+   * where this part's steps start among them.
+   */
+  panel?: (Panel & { titles: string[]; offset: number; drawn?: boolean }) | null;
+  /** The CSS background around the frame, for every part of a recording alike; see `phone.backdrop`. */
+  backdrop?: string;
+  /** `png` (the default) for the encoders, or `jpeg` at `quality` for the HTML player. */
+  type?: 'png' | 'jpeg';
+  /** JPEG quality, 0–100. */
+  quality?: number;
+  /** Readies the drawing page as `record` readies its own (Chrome needs its window enlarged). */
+  prepare?: (page: Page) => Promise<void>;
+}
+
+// Where everything sits: the whole picture, and the frame's top-left corner in it.
+function layoutOf(options: {
+  viewport: { width: number; height: number };
+  frame: Frame;
+  addressBar?: boolean;
+  canvas?: { width: number; height: number };
+  panel?: (Panel & { drawn?: boolean }) | null;
+}): {
+  size: { width: number; height: number };
+  at: { x: number; y: number };
+  framed: { width: number; height: number };
+} {
+  const framed = framedSize(options.frame, options.viewport, options.addressBar);
+  const canvas = options.canvas ?? framed;
+  const band = options.panel && options.panel.drawn !== false ? options.panel.height : 0;
+  return {
+    size: { width: canvas.width, height: canvas.height + band },
+    at: {
+      x: Math.round((canvas.width - framed.width) / 2),
+      y:
+        Math.round((canvas.height - framed.height) / 2) +
+        (options.panel?.placement === 'above' ? band : 0),
+    },
+    framed,
+  };
+}
+
 // The stage every beat is drawn on. Kept as source because lib/ is typechecked without the DOM.
 function stageHTML(
-  viewport: { width: number; height: number },
-  frame: Frame,
-  pointer: Pointer,
-  addressBar: boolean,
+  options: {
+    viewport: { width: number; height: number };
+    frame: Frame;
+    pointer: Pointer;
+    addressBar?: boolean;
+    panel?: (Panel & { titles: string[]; drawn?: boolean }) | null;
+  },
+  layout: ReturnType<typeof layoutOf>,
 ): string {
+  const { viewport, frame, pointer } = options;
+  const panel = options.panel && options.panel.drawn !== false ? options.panel : null;
+  const addressBar = options.addressBar ?? true;
   const { width, height } = viewport;
-  const outer = framedSize(frame, viewport, addressBar);
+  const outer = layout.size;
   const phone = frame === 'phone';
+  // Centered on a bigger canvas, the frame sits on the backdrop, as a phone always does.
+  const letterboxed =
+    layout.framed.width !== outer.width ||
+    layout.framed.height !== outer.height - (panel ? panel.height : 0);
   return `<!doctype html>
 <html><head><meta charset="utf-8"><style>
 * { box-sizing: border-box; }
 /* The hidden attribute hides HTML elements only; the arrow is an <svg>, so it is said here. */
 [hidden] { display: none !important; }
-html, body { margin: 0; width: ${outer.width}px; height: ${outer.height}px; overflow: hidden; background: ${phone ? 'var(--backdrop)' : '#fff'};
+html, body { margin: 0; width: ${outer.width}px; height: ${outer.height}px; overflow: hidden; background: ${phone || letterboxed ? 'var(--backdrop)' : '#fff'};
   font: 12px/1 system-ui, -apple-system, "Segoe UI", sans-serif; color: #202124; }
-#device { position: absolute; left: ${phone ? PHONE.margin : 0}px; top: ${phone ? PHONE.margin : 0}px;
+#device { position: absolute; left: ${layout.at.x + (phone ? PHONE.margin : 0)}px; top: ${layout.at.y + (phone ? PHONE.margin : 0)}px;
   ${phone ? `padding: ${PHONE.bezel}px; border-radius: 44px; background: #15171c; box-shadow: 0 10px 30px rgba(0,0,0,.25);` : ''} }
 #chrome { display: ${frame === 'browser' ? 'block' : 'none'}; height: ${addressBar ? CHROME_HEIGHT : TAB_STRIP_HEIGHT}px; background: var(--chrome); }
 #tabs { display: flex; gap: 2px; height: ${TAB_STRIP_HEIGHT}px; padding: 6px 8px 0 72px; position: relative; }
@@ -381,6 +511,8 @@ html, body { margin: 0; width: ${outer.width}px; height: ${outer.height}px; over
   background: #11141c; color: #fff; text-align: center; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; z-index: 6; }
 #chapter .title { font-size: clamp(22px, 6cqw, 60px); font-weight: 700; line-height: 1.15; }
 #chapter .subtitle { font-size: clamp(14px, 2.6cqw, 26px); line-height: 1.4; opacity: .72; }
+${PANEL_CSS}
+#panel { position: absolute; left: 0; width: 100%; height: ${panel ? panel.height : 0}px; ${panel?.placement === 'above' ? 'top: 0' : 'bottom: 0'}; z-index: 7; }
 </style><style id="user-css"></style><style>
 /* Every frame is drawn from the tour's timeline: @keyframes run on its clock (see __tick), and
    transitions, which would start on the browser's own, stay off. */
@@ -402,7 +534,9 @@ html, body { margin: 0; width: ${outer.width}px; height: ${outer.height}px; over
     <div id="chapter" hidden><div class="title"></div><div class="subtitle"></div></div>
   </div>
 </div>
+${panel ? panelHTML(false) : ''}
 <script>
+${PANEL_SCRIPT}
   const urls = [];
   const finger = ${pointer === 'finger'};
   let style = null;
@@ -424,8 +558,13 @@ html, body { margin: 0; width: ${outer.width}px; height: ${outer.height}px; over
     const imported = /@import/.test(style.css) && new Promise((done) => { userCss.onload = userCss.onerror = done; });
     userCss.textContent = style.css;
     await imported;
+    if (style.panel) {
+      globalThis.__panelSetup(style.panel.titles, false);
+      dress($('panel'), style.panel.style);
+    }
     dress($('caption'), style.caption.style);
-    $('caption').className = style.caption.placement;
+    // A caption meant for a panel the recording does not have stays over the page.
+    $('caption').className = style.caption.placement === 'panel' ? 'bottom' : style.caption.placement;
     dress($('menu'), style.menu.style);
     dress($('highlight'), style.highlight.style);
     if (style.keys) dress($('keys'), style.keys.style);
@@ -557,7 +696,11 @@ html, body { margin: 0; width: ${outer.width}px; height: ${outer.height}px; over
       Object.assign(ripple.style, { left: at.x - radius + 'px', top: at.y - radius + 'px', width: radius * 2 + 'px', height: radius * 2 + 'px', opacity: String(1 - beat.ripple * 0.8) });
     });
     const caption = $('caption');
-    caption.hidden = !beat.caption;
+    // In the panel, when there is one, rather than over the page.
+    if (style.panel) {
+      globalThis.__panel(style.panel.offset + beat.step, style.captionOutside ? beat.caption : '', '');
+    }
+    caption.hidden = !beat.caption || style.captionOutside;
     caption.textContent = beat.caption || '';
     const highlight = $('highlight');
     highlight.hidden = !beat.highlight;

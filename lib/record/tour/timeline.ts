@@ -137,6 +137,7 @@ export function menuItemPoint(menu: Menu, index: number): Point {
  *   keys: null,
  *   chapter: null,
  *   tabs: { titles: ['Home'], active: 0, url: 'http://localhost/' },
+ *   step: 0,
  *   durationMs: 100,
  * };
  * ```
@@ -164,6 +165,8 @@ export interface Beat {
   chapter: { title: string; subtitle: string | null; strength: number } | null;
   /** The tabs, for the tab strip. */
   tabs: TabStrip;
+  /** Which of the timeline's {@link Timeline.steps} this frame belongs to. */
+  step: number;
   /** How long this frame shows, in ms. */
   durationMs: number;
 }
@@ -241,6 +244,11 @@ export function zoomedCamera(
 export class Timeline {
   /** Every beat so far, in order. */
   readonly beats: Beat[] = [];
+  /**
+   * The steps the beats are grouped into, in order. There is always one: until `step()` names it,
+   * its title is null, for whoever records the tour to fill in.
+   */
+  readonly steps: { title: string | null; notes: string | null }[] = [{ title: null, notes: null }];
   readonly #fps: number;
   readonly #viewport: { width: number; height: number };
   #state: Omit<Beat, 'durationMs' | 'ripple'>;
@@ -269,6 +277,7 @@ export class Timeline {
       keys: null,
       chapter: null,
       tabs,
+      step: 0,
     };
   }
 
@@ -366,6 +375,32 @@ export class Timeline {
         highlight: { rect: shown.rect, strength: 1 - progress },
       }));
       this.#state = { ...this.#state, highlight: null };
+    }
+  }
+
+  /**
+   * Starts a step: the frames from here on belong to it, until the next. A step named before any
+   * frame names the first one rather than leaving it empty.
+   *
+   * ```ts
+   * import { Timeline } from './timeline.ts';
+   *
+   * const timeline = new Timeline({ width: 800, height: 600 }, 10, { titles: [''], active: 0, url: '' });
+   * timeline.step('Sign in');
+   * timeline.hold(500);
+   * timeline.step('Pay', 'The card form validates as you type.');
+   * timeline.hold(500);
+   * timeline.steps.map((step) => step.title); // ['Sign in', 'Pay']
+   * timeline.beats.map((beat) => beat.step); // [0, 1]
+   * ```
+   */
+  step(title: string, notes: string | null = null): void {
+    const index = this.steps.length - 1;
+    if (!this.beats.some((beat) => beat.step === index)) {
+      this.steps[index] = { title, notes };
+    } else {
+      this.steps.push({ title, notes });
+      this.#state = { ...this.#state, step: this.steps.length - 1 };
     }
   }
 

@@ -7,6 +7,8 @@
     "npm:esbuild@*": "0.28.2",
     "npm:esbuild@0.28.2": "0.28.2",
     "npm:js-yaml@^5.5.0": "5.5.0",
+    "npm:marked@*": "18.1.1",
+    "npm:marked@18.1.1": "18.1.1",
     "npm:playwright-core@1.64.1": "1.64.1",
     "npm:prettier@^3.9.10": "3.9.10",
     "npm:promises-aplus-tests@^2.1.2": "2.1.2",
@@ -913,6 +915,10 @@
         "semver"
       ]
     },
+    "marked@18.1.1": {
+      "integrity": "sha512-zEGgrtUG8crk+TrMacJSVABU4DYDDkS8uqgU3ohrn/2fW9C2AEfUrO3m6IhpIpQpl7YcVpiXXC9cSMWDANT3dg==",
+      "bin": true
+    },
     "math-intrinsics@1.1.0": {
       "integrity": "sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g=="
     },
@@ -1347,6 +1353,7 @@
   "workspace": {
     "dependencies": [
       "npm:esbuild@*",
+      "npm:marked@*",
       "npm:ws@*"
     ],
     "packageJson": {
@@ -1354,6 +1361,7 @@
         "npm:c8@12",
         "npm:esbuild@0.28.2",
         "npm:js-yaml@^5.5.0",
+        "npm:marked@18.1.1",
         "npm:playwright-core@1.64.1",
         "npm:prettier@^3.9.10",
         "npm:promises-aplus-tests@^2.1.2",

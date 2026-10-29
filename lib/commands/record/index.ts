@@ -71,6 +71,7 @@ export async function run(
       ...parsedRecordRequest.options,
       pdf: { ...config.options.pdf, ...parsedRecordRequest.options.pdf },
     },
+    cssFile: parsedRecordRequest.cssFile,
     pdfHeaderFile: parsedRecordRequest.pdfHeaderFile,
     pdfFooterFile: parsedRecordRequest.pdfFooterFile,
   };
@@ -79,7 +80,7 @@ export async function run(
     return 2;
   }
 
-  const options = await readPDFHeaderAndFooterFiles(recordRequest, cwd).result();
+  const options = await readCSSAndPDFHeaderAndFooterFiles(recordRequest, cwd).result();
   if (Failure.is(options)) {
     out.error(`${options.message}\n\n${usage()}`);
     return 2;
@@ -146,33 +147,38 @@ export async function run(
     });
 }
 
-// The options with `--pdf-header` and `--pdf-footer` read in as the PDF's header and footer HTML. A
-// file that cannot be read is a bad argument.
-function readPDFHeaderAndFooterFiles(
+// The options with the files their flags name read in: `--css` becomes the stylesheet, and
+// `--pdf-header` and `--pdf-footer` the PDF's header and footer HTML. A file that cannot be read
+// is a bad argument.
+function readCSSAndPDFHeaderAndFooterFiles(
   recordRequest: RecordRequest,
   cwd: string,
 ): Task<RecordOptions, Failure.Of<typeof InvalidRecordArgument>> {
-  const files = { header: recordRequest.pdfHeaderFile, footer: recordRequest.pdfFooterFile };
+  const named: [flag: string, file: string | undefined, into: (text: string) => RecordOptions][] = [
+    ['--css', recordRequest.cssFile, (css) => ({ css })],
+    ['--pdf-header', recordRequest.pdfHeaderFile, (header) => ({ pdf: { header } })],
+    ['--pdf-footer', recordRequest.pdfFooterFile, (footer) => ({ pdf: { footer } })],
+  ];
   return Task(async () => {
     const read = await Promise.all(
-      Object.entries(files)
-        .filter((entry): entry is [string, string] => entry[1] !== undefined)
-        .map(async ([setting, file]) => {
-          const html = await readFile(path.resolve(cwd, file), 'utf8').catch(() => {
+      named
+        .filter(([, file]) => file !== undefined)
+        .map(async ([flag, file, into]) => {
+          const full = path.resolve(cwd, file!);
+          const text = await readFile(full, 'utf8').catch(() => {
             throw InvalidRecordArgument({
-              argument: `--pdf-${setting} ${file}`,
-              reason: 'no such file',
+              argument: `${flag} ${file}`,
+              reason: `no such file (${full})`,
             });
           });
-          return [setting, html] as const;
+          return into(text);
         }),
     );
-    return read.length
-      ? {
-          ...recordRequest.options,
-          pdf: { ...recordRequest.options.pdf, ...Object.fromEntries(read) },
-        }
-      : recordRequest.options;
+    return read.reduce<RecordOptions>(
+      (options, part) =>
+        part.pdf ? { ...options, pdf: { ...options.pdf, ...part.pdf } } : { ...options, ...part },
+      recordRequest.options,
+    );
   });
 }
 
@@ -218,6 +224,8 @@ ${blue('$ qunitx record demo.ts -w 1200 -h 1200')}                  # demo.gif o
 ${blue('$ qunitx record demo.ts -f demo.mp4,demo.webm')}            # the same as video: H.264 and VP9, encoded by the browser
 ${blue('$ qunitx record dist/ -f png --full-page -o shots')}        # shots/dist.png, the whole page
 ${blue('$ qunitx record dist/ about.html -o snapshots --compare')}   # compare with the pngs already there; exit 1 on a change
+
+${blue('$ qunitx record intro.md app.tour.ts -f demo.html --panel=below')} # demo.html: every step, clickable
 ${blue('$ qunitx record invoice.html -f pdf --pdf-paper=A4 --pdf-media=print')} # invoice.pdf, printed on A4
 
 ${magenta().bold('Inputs:')} a ${blue('http(s)://')} or ${blue('file://')} URL, an ${blue('.html')} file or a directory with an ${blue('index.html')} (served from a local origin),
@@ -234,9 +242,13 @@ A ${blue('.tour.ts')} file, or any script that does ${blue('export default tour(
   ${blue('ripple')}, ${blue('menu')}, ${blue('phone')} and ${blue('browser')}, or a whole stylesheet in ${blue('css')};
   ${blue("rightClick(target, { menu: ['Copy', 'Paste'], choose: 'Paste' })")} draws a menu the page itself doesn't.
   Touch gestures take ${blue('fingers: 1-10')} (${blue("t.swipe('#map', 'left', { fingers: 3 })")}); ${blue('pinch(target, { fingers: 5, rotate: 90 })')} twists.
+  ${blue("t.step('Pay', { notes })")} starts a step: titled in the panel, and a stop in the HTML player.
+A ${blue('.md')} file is a deck, a slide per ${blue('---')} (${blue('Note:')} starts a slide's speaker notes); an image (${blue('.png .jpg .gif .webp .svg')}) is one slide.
+Every input becomes steps of one recording: a GIF, or with ${blue('-f demo.html')} a player to click or key through (← →, Home, End, K),
+or with ${blue('-f demo.pdf')} a document, a page a step, its panel and notes on it.
 
 ${magenta().bold('Flags:')}
-${blue('-f, --format')}    : formats (${blue('png')}, ${blue('jpg')}, ${blue('gif')}, ${blue('webm')}, ${blue('mp4')}, ${blue('pdf')}) or file names ending in one, comma-separated. Default: ${blue('jpg')} for one page, ${blue('jpg,gif')} for several inputs or a script
+${blue('-f, --format')}    : formats (${blue('png')}, ${blue('jpg')}, ${blue('gif')}, ${blue('webm')}, ${blue('mp4')}, ${blue('html')}, ${blue('pdf')}) or file names ending in one, comma-separated. Default: ${blue('jpg')} for one page, ${blue('jpg,gif')} for several inputs or a script
 ${blue('-w, --width')}     : viewport width in CSS pixels (default ${DEFAULT_SIZE.width})
 ${blue('-h, --height')}    : viewport height in CSS pixels (default ${DEFAULT_SIZE.height})
 ${blue('-o, --output')}    : directory the files are written to (default: the current one)
@@ -250,6 +262,13 @@ ${blue('--quality')}       : jpg quality, 0-100 (default 90)
 ${blue('--browser')}       : chromium, firefox or webkit (default chromium)
 ${blue('--timeout')}       : ms a script may run, or a page may take to load, before giving up
 ${blue('-p, --port')}      : first port tried for the local server
+${blue('--panel')}         : ${blue('above')} or ${blue('below')}: a band with each step's title, caption and progress
+${blue('--css')}           : a stylesheet file for the panel, the player, slides and every frame (${blue('#panel')}, ${blue('.slide h1')}…)
+${blue('--backdrop')}      : the CSS background around parts smaller than the recording, and the player's page
+${blue('--advance')}       : the player: ${blue('click')} (default) waits after each step, ${blue('auto')} plays on
+${blue('--loop')}          : the player starts again after the last step
+${blue('--no-autoplay')}   : the player waits for the first click or key
+${blue('--html-assets')}   : ${blue('inline')} (default): one file; ${blue('files')}: its pictures in a folder beside it
 
 ${magenta().bold('Visual diff:')}
 ${blue('--compare')}       : a png already at an output path is the baseline: compare instead of overwriting, writing
