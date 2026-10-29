@@ -775,6 +775,33 @@ installed app whose users never see a URL.
 See [`examples/shop.tour.ts`](examples/shop.tour.ts) and
 [`examples/phone.tour.ts`](examples/phone.tour.ts).
 
+### Slides, steps and the player
+
+Several inputs make one recording, each a step or more of it: a page, an image, every
+`---`-separated slide of a Markdown deck (a `Note:` paragraph is its speaker notes), every
+`t.step('Title', { notes })` of a tour. Tours merge the same way. Parts of different sizes are
+centered on one canvas, on `--backdrop`.
+
+```sh
+qunitx record intro.md screenshot.png checkout.tour.ts -f demo.gif,demo.html --panel=below --css=brand.css
+```
+
+- `--panel=above|below` adds a band outside the frame with the step's title, its caption (a tour's,
+  with `caption: { placement: 'panel' }`) and progress dots: drawn into a GIF, live in the player.
+- `-f demo.html` writes a player: each step plays, then waits; → / Space / Enter or a click go on,
+  ← back, Home / End, K plays and pauses, the dots jump, and `#3` in the URL opens at step 3.
+  `--advance=auto` plays straight through, `--loop` starts over, `--no-autoplay` waits for the
+  first key, and `--html-assets=files` puts its pictures in a folder beside it instead of inline.
+- `-f demo.pdf` prints the recording as one PDF, a page a step: its last frame and its panel
+  (title, caption and notes). Slides stay text where the engine prints (Chromium). A page is
+  exactly a step, or with `--pdf-paper=A4` each step is fitted to the paper; every `--pdf-*`
+  setting applies.
+- `--css=brand.css` styles all of it: `#panel`, `#panel .title`, `.caption`, `.notes`, `.step`,
+  `.step.active`, `.controls button` (`.prev`, `.play`, `.next`), `#player`, `#frame`, and slides
+  (`.slide`, `.slide h1`, `.slide pre`, `.slide.image`), and it is laid under every tour's own
+  `css`. From JS the same are `panel: { placement, height, style }`, `css`, `backdrop`,
+  `slide: { style }` and `player: { advance, loop, autoplay, assets }`.
+
 GIFs are encoded in-process (per-frame palettes, only the changed region of each frame). `.webm`
 (VP9) and `.mp4` (H.264) are encoded by the browser's own WebCodecs encoder and written by
 qunitx, so none of the three needs ffmpeg or any other dependency. From JS: `import { record } from 'qunitx-cli'`.

@@ -10,6 +10,10 @@ const SCRIPT_FILE = /\.(m?[jt]sx?|cjs|cts)$/i;
 const TOUR_FILE = /\.tour\.m?[jt]s$/i;
 const TOUR_SOURCE = /\bexport\s+default\s+tour\s*\(/;
 const PAGE_FILE = /\.html?$/i;
+// A Markdown deck: slides separated by `---` lines.
+const SLIDES_FILE = /\.(md|markdown)$/i;
+// An image shown as a slide of its own.
+const IMAGE_FILE = /\.(png|jpe?g|gif|webp|avif|svg)$/i;
 const URL_INPUT = /^(https?|file):\/\//i;
 
 /**
@@ -41,6 +45,8 @@ export const UnrecordableInput: Failure.FailureFactory<
  *   is the recording.
  * - `tour`: a `.tour.ts` file, or a script whose default export is `tour(…)`, run in Node, driving
  *   the browser through the tour API.
+ * - `slides`: a Markdown deck, a slide per `---`-separated part.
+ * - `image`: a picture, shown as a slide: a file, or a URL to one.
  *
  * ```ts
  * const input: Input = { kind: 'url', source: 'https://example.com', url: 'https://example.com', name: 'example.com' };
@@ -51,7 +57,15 @@ export type Input =
   | { kind: 'url'; source: string; url: string; name: string }
   | { kind: 'html'; source: string; path: string; root: string; name: string }
   | { kind: 'script'; source: string; path: string; name: string }
-  | { kind: 'tour'; source: string; path: string; name: string };
+  | { kind: 'tour'; source: string; path: string; name: string }
+  | { kind: 'slides'; source: string; path: string; name: string }
+  | {
+      kind: 'image';
+      source: string;
+      /** A URL, or the absolute path of a file. */
+      location: string;
+      name: string;
+    };
 
 /**
  * Works out what each input is: a page to load or a script to run. Given a list, resolves every
@@ -90,6 +104,8 @@ export async function resolve(source: string | string[], cwd: string): Promise<I
     if (url.protocol === 'file:') return await resolve(fileURLToPath(url), cwd);
     else if (SCRIPT_FILE.test(url.pathname)) {
       return { kind: 'script', source, path: source, name: generateFileNameFromURL(url) };
+    } else if (IMAGE_FILE.test(url.pathname)) {
+      return { kind: 'image', source, location: source, name: generateFileNameFromURL(url) };
     }
     return { kind: 'url', source, url: source, name: generateFileNameFromURL(url) };
   }
@@ -105,6 +121,20 @@ export async function resolve(source: string | string[], cwd: string): Promise<I
     return buildHTMLInput(source, index, path.basename(absolute));
   } else if (PAGE_FILE.test(absolute)) {
     return buildHTMLInput(source, absolute, path.basename(absolute).replace(PAGE_FILE, ''));
+  } else if (SLIDES_FILE.test(absolute)) {
+    return {
+      kind: 'slides',
+      source,
+      path: absolute,
+      name: path.basename(absolute).replace(SLIDES_FILE, ''),
+    };
+  } else if (IMAGE_FILE.test(absolute)) {
+    return {
+      kind: 'image',
+      source,
+      location: absolute,
+      name: path.basename(absolute).replace(IMAGE_FILE, ''),
+    };
   } else if (TOUR_FILE.test(absolute)) {
     return {
       kind: 'tour',
@@ -122,7 +152,8 @@ export async function resolve(source: string | string[], cwd: string): Promise<I
   }
   throw UnrecordableInput({
     input: source,
-    reason: 'not an .html page, a URL, or a .js/.ts/.jsx/.tsx script',
+    reason:
+      'not an .html page, a URL, a .js/.ts/.jsx/.tsx script, a .tour.ts tour, a .md deck or an image',
   });
 }
 
