@@ -102,13 +102,13 @@ const WATCH_EXIT_CODES = { SIGTERM: 143, SIGINT: 130, SIGHUP: 129 };
     // a shared one, and it uses the pre-launched Chrome like any other local run.
     exitOnSignal();
     const BenchCommand = await import('./lib/commands/bench.ts');
-    return exitAfterFlush(await BenchCommand.command());
+    return exitAfterReapingPrelaunch(await BenchCommand.command());
   } else if (cmd === 'record') {
     // Never routed through the daemon either: it sizes and records pages of its own, and a page in
     // the daemon's shared browser would be neither. Its browser is the pre-launched Chrome.
     exitOnSignal();
     const Record = await import('./lib/commands/record/index.ts');
-    return exitAfterFlush(await Record.run());
+    return exitAfterReapingPrelaunch(await Record.run());
   } else if (cmd === 'repl') {
     // Never routed through the daemon: a REPL is a page kept open for one terminal, and the
     // daemon's browser is shared. It uses the pre-launched Chrome like any other local run.
@@ -272,6 +272,18 @@ const WATCH_EXIT_CODES = { SIGTERM: 143, SIGINT: 130, SIGHUP: 129 };
   await shutdownPrelaunch();
   exitAfterFlush(1);
 });
+
+/**
+ * Exits with `exitCode` once the pre-launched Chrome is shut down: `--help`, a bad flag or no
+ * input return before any browser is opened, and the Chrome spawned at startup would otherwise
+ * outlive the process, its profile directory left in the temp dir. The code is set before the
+ * await, as on the paths above, so a loop that drains inside it cannot report success.
+ */
+async function exitAfterReapingPrelaunch(exitCode: number): Promise<void> {
+  process.exitCode = exitCode;
+  await shutdownPrelaunch();
+  return exitAfterFlush(exitCode);
+}
 
 /**
  * Reports a `qunitx run` failure and exits 1 — printing BEFORE anything is torn down.
