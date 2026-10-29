@@ -701,7 +701,9 @@ qunitx record http://localhost:4200/ http://localhost:4200/pricing -o snapshots 
 - `--report` also writes `report.html` beside the snapshots: changed ones first, each with its
   diff and a slider to wipe from baseline to new. Open it from disk or upload it as a
   CI artifact. `--report=pdf` writes `report.pdf` instead, printed with the `--pdf-*` settings,
-  and `--report=html,pdf` writes both.
+  and `--report=html,pdf` writes both. `--report=xlsx` writes `report.xlsx`: a row a snapshot
+  (status, pixels changed, links to its files) to sort and filter, and a summary sheet;
+  `--report=csv` or `tsv` the same rows for scripts. Any list of these works.
 - `--pr-comment` also writes `comment.md`, a pull-request comment with each changed snapshot's
   diff, or "No visual changes in this PR, good job". `--images-url` is where CI publishes the
   snapshots folder, for its images to link to; `--report-url` adds a link to the full report.

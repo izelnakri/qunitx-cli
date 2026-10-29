@@ -18,11 +18,12 @@ import * as Inputs from './inputs.ts';
 import * as JPEG from './jpeg.ts';
 import * as Outputs from './outputs.ts';
 import * as Options from './options.ts';
-import type { Settings } from './options.ts';
+import type { ReportFormat, Settings } from './options.ts';
 import * as PDF from './pdf.ts';
 import type { PdfOptions } from './pdf.ts';
 import * as PNG from './png.ts';
 import * as Report from './report.ts';
+import { writeXlsx } from './xlsx.ts';
 import { Stream } from '../stream/index.ts';
 import { HTTPServer, MIME_TYPES } from '../web/index.ts';
 import * as Failure from '../result/failure.ts';
@@ -35,7 +36,7 @@ import type { BrowserContext, Page } from 'playwright-core';
 
 export { FRAME_FUNCTION } from './capture.ts';
 export { UnrecordableInput } from './inputs.ts';
-export { DEFAULT_SIZE, InvalidRecordOption } from './options.ts';
+export { DEFAULT_SIZE, InvalidRecordOption, type ReportFormat } from './options.ts';
 export { UnknownFormat, type Format } from './outputs.ts';
 
 /**
@@ -134,9 +135,11 @@ export interface RecordOptions {
   /**
    * Write the report into the output directory: every snapshot, the changed ones first with
    * their diff and a wipe from baseline to new. `true` or `'html'` is `report.html`; `'pdf'` is
-   * `report.pdf`, printed with the `pdf` settings; `['html', 'pdf']` both. Implies `compare`.
+   * `report.pdf`, printed with the `pdf` settings; `'xlsx'` is `report.xlsx`, a sortable sheet of
+   * every snapshot and a summary; `'csv'` and `'tsv'` the same rows for scripts. A list asks for
+   * several. Implies `compare`.
    */
-  report?: boolean | 'html' | 'pdf' | ('html' | 'pdf')[];
+  report?: boolean | ReportFormat | ReportFormat[];
   /**
    * Write `comment.md` into the output directory: a pull-request comment with each changed
    * snapshot's diff (before and after side by side), or "No visual changes" when there are none.
@@ -208,7 +211,7 @@ export interface RecordedFile {
  * What a recording produced.
  *
  * ```ts
- * const result: RecordResult = { ok: true, files: [], failedScripts: [], changedSnapshots: [], reportPath: null, reportPdfPath: null, commentPath: null };
+ * const result: RecordResult = { ok: true, files: [], failedScripts: [], changedSnapshots: [], reportPath: null, reportPdfPath: null, reportPaths: {}, commentPath: null };
  * result.ok; // true
  * ```
  */
@@ -225,6 +228,8 @@ export interface RecordResult {
   reportPath: string | null;
   /** `report.pdf`, when the report was asked for as a PDF. */
   reportPdfPath: string | null;
+  /** Every report file written, by format: `report.html`, `report.pdf`, `report.xlsx`… */
+  reportPaths: Partial<Record<ReportFormat, string>>;
   /** Where `prComment` wrote the pull-request comment, or null without it. */
   commentPath: string | null;
 }
@@ -375,7 +380,10 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
     // Where each review goes, when asked for. A PDF report is printed from the HTML one, which is
     // removed after unless it was asked for too.
     const commentPath = options.prComment ? path.join(directory, 'comment.md') : null;
-    const htmlPath = settings.report.length ? path.join(directory, 'report.html') : null;
+    const htmlPath =
+      settings.report.includes('html') || settings.report.includes('pdf')
+        ? path.join(directory, 'report.html')
+        : null;
     const reportPdfPath = settings.report.includes('pdf')
       ? path.join(directory, 'report.pdf')
       : null;
@@ -397,6 +405,22 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
       await writeFile(reportPdfPath, printed.bytes);
       if (!settings.report.includes('html')) await rm(htmlPath, { force: true });
     }
+    if (settings.report.includes('xlsx')) {
+      await writeFile(
+        path.join(directory, 'report.xlsx'),
+        writeXlsx('Visual changes', Report.sheets(snapshots, { directory })),
+      );
+    }
+    await Promise.all(
+      (['csv', 'tsv'] as const)
+        .filter((format) => settings.report.includes(format))
+        .map((format) =>
+          writeFile(
+            path.join(directory, `report.${format}`),
+            Report.delimited(snapshots, { directory }, format === 'csv' ? ',' : '\t'),
+          ),
+        ),
+    );
     return {
       ok: failedScripts.length === 0 && changedSnapshots.length === 0,
       files,
@@ -404,6 +428,10 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
       changedSnapshots,
       reportPath: settings.report.includes('html') ? htmlPath : null,
       reportPdfPath,
+      // Each format is written as report.<format>.
+      reportPaths: Object.fromEntries(
+        settings.report.map((format) => [format, path.join(directory, `report.${format}`)]),
+      ),
       commentPath,
     };
   } finally {

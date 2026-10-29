@@ -7,6 +7,7 @@ import type { RecordOptions } from './index.ts';
 // Past this a single frame is hundreds of megabytes of pixels, which is a typo, not a request.
 const MAX_SIDE = 16_384;
 const PAPER_NAMES = ['fit', ...Object.keys(PAPERS)];
+const REPORT_FORMATS = ['html', 'pdf', 'xlsx', 'csv', 'tsv'];
 const MARGIN_SIDES = ['top', 'right', 'bottom', 'left'];
 const PAGE_RANGES_PATTERN = /^\s*\d+(\s*-\s*\d+)?(\s*,\s*\d+(\s*-\s*\d+)?)*\s*$/;
 
@@ -73,8 +74,8 @@ export type Settings = Required<
   Pick<RecordOptions, 'pageDuration' | 'waitFor'> & {
     timeout: number | null;
     accept: boolean;
-    /** The report formats asked for: none, `html`, `pdf`, or both. */
-    report: ('html' | 'pdf')[];
+    /** The report formats asked for: none, or any of {@link ReportFormat}. */
+    report: ReportFormat[];
   };
 
 // A rule a value is held to: its test, and what it expects, for the message when it fails.
@@ -126,8 +127,8 @@ const RULES: Record<string, Rule> = {
     (value) =>
       typeof value === 'boolean' ||
       ([value].flat().length > 0 &&
-        [value].flat().every((format) => format === 'html' || format === 'pdf')),
-    "true, 'html', 'pdf' or ['html', 'pdf']",
+        [value].flat().every((format) => REPORT_FORMATS.includes(format as string))),
+    `true, or one or a list of ${REPORT_FORMATS.map((format) => `'${format}'`).join(', ')}`,
   ),
   prComment: TRUE_OR_FALSE,
   imagesUrl: HTTP_URL,
@@ -373,3 +374,12 @@ function invalidPdfReason(value: unknown, shown: string): string | null {
 function describeExpected(rule: Rule, value: unknown): string {
   return typeof rule.expected === 'function' ? rule.expected(value) : rule.expected;
 }
+
+/**
+ * A format the report is written in: the review page, printed, a workbook, or rows for scripts.
+ *
+ * ```ts
+ * const format: ReportFormat = 'xlsx';
+ * ```
+ */
+export type ReportFormat = 'html' | 'pdf' | 'xlsx' | 'csv' | 'tsv';

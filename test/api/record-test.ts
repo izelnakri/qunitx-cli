@@ -395,6 +395,7 @@ module('API | record | report, comment and package.json', { concurrency: true },
 
     assert.equal(path.basename(result.reportPath!), 'report.html');
     assert.equal(result.reportPdfPath, null, 'no PDF unless asked for');
+    assert.deepEqual(Object.keys(result.reportPaths), ['html'], 'every report file, by format');
     assert.includes(await fs.readFile(result.reportPath!, 'utf8'), 'shot');
     assert.equal(path.basename(result.commentPath!), 'comment.md');
     assert.includes(comment, '<!-- qunitx-visual-diff -->');
