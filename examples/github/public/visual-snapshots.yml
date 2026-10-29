@@ -1,0 +1,54 @@
+# Visual snapshots for a PUBLIC repository, part 1 of 2. Copy both files to .github/workflows/.
+#
+# A pull request from a fork runs with a read-only token: it cannot push images or comment. So this
+# half runs the PR's code with no write access and no secrets, and hands the results over as an
+# artifact; visual-snapshots-comment.yml, which never runs the PR's code, publishes and comments.
+#
+# Expects package.json#qunitx.record with the pages to shoot and "output": "snapshots".
+name: Visual snapshots
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: |
+          npx --yes serve@14 dist --listen 4200 &
+          npx --yes wait-on@8 http://localhost:4200
+
+      - name: Compare with the baselines
+        id: compare
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set +e
+          # Public images are served by raw.githubusercontent.com, where part 2 publishes them.
+          npx qunitx record --report \
+            --pr-comment \
+            --images-url "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/visual/pr-$PR_NUMBER/run-$GITHUB_RUN_ID/" \
+            --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID#artifacts"
+          code=$?
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          echo "$PR_NUMBER" > snapshots/pr-number.txt
+          echo "$code" > snapshots/exit-code.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-report
+          path: snapshots/
+
+      - if: steps.compare.outputs.exit != '0'
+        run: exit 1

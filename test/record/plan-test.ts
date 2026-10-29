@@ -227,6 +227,26 @@ module('Record | parse', { concurrency: true }, () => {
     });
   });
 
+  test('--pr-comment, or --comment, writes the comment; --images-url and --report-url are its links', (assert) => {
+    const urls = ['--images-url', 'https://e.x/shots/', '--report-url=https://e.x/run/1'];
+    const options = {
+      prComment: true,
+      imagesUrl: 'https://e.x/shots/',
+      reportUrl: 'https://e.x/run/1',
+    };
+
+    assert.deepEqual(parse(['a.html', '--pr-comment', ...urls]), {
+      help: false,
+      sources: ['a.html'],
+      options,
+    });
+    assert.deepEqual(parse(['a.html', '--comment', ...urls]), {
+      help: false,
+      sources: ['a.html'],
+      options,
+    });
+  });
+
   test('a glob of tens of thousands of inputs is read in one pass, without running out of stack', (assert) => {
     const inputs = Array.from({ length: 50_000 }, (_input, index) => `page-${index}.html`);
     const parsed = parse([...inputs, '-f', 'png'], {});

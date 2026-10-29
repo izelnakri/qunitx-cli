@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import * as PNG from '../../lib/record/png.ts';
+import { LAYOUT } from '../../lib/record/diff.ts';
 import { execute as shell, shellFails } from '../helpers/shell.ts';
 import { tempDir } from '../helpers/temp-dir.ts';
 import { decodeGif } from '../helpers/gif-decode.ts';
@@ -339,6 +340,32 @@ module('Commands | record | visual diff', { concurrency: true }, (_hooks, module
       <div id="clock" style="font:20px monospace;padding:0 20px">${Date.now()}</div>`,
     );
 
+  test('in a terminal each line is colored by what happened: new green, changed red, updated yellow, files to open cyan', async (assert, testMetadata) => {
+    await using dir = await tempDir('record-compare-colors');
+    const metadata = { ...moduleMetadata, ...testMetadata, cwd: dir.path };
+    const record = `FORCE_COLOR=1 node ${CLI} record home.html -w 200 -h 100 --mask #clock --output=snapshots --compare`;
+    const paint = (code: number, text: string) => `\x1b[${code}m${text}\x1b[39m`;
+    const shot = path.join('snapshots', 'home.png');
+    await fs.writeFile(path.join(dir.path, 'home.html'), cards('$8.2k'));
+
+    const first = await shell(record, metadata);
+    const second = await shell(record, metadata);
+    await fs.writeFile(path.join(dir.path, 'home.html'), cards('$12.9k'));
+    const third = await shellFails(
+      `${record} --report --pr-comment --images-url https://example.com`,
+      metadata,
+    );
+    const fourth = await shell(`${record} --update`, metadata);
+
+    assert.includes(first.stdout, paint(32, `${shot}  200×100  new`));
+    assert.includes(second.stdout, `${shot}  200×100  unchanged\n`);
+    assert.notIncludes(second.stdout, '\x1b[', 'a snapshot that held keeps the terminal color');
+    assert.includes(third.stdout, `\x1b[31m${shot}  200×100  changed: `);
+    assert.includes(third.stdout, paint(36, `${path.join('snapshots', 'report.html')}  report`));
+    assert.includes(third.stdout, paint(36, `${path.join('snapshots', 'comment.md')}  comment`));
+    assert.includes(fourth.stdout, paint(33, `${shot}  200×100  updated`));
+  });
+
   test('first run makes baselines, an unchanged run leaves them, a change exits 1 with a diff, --update accepts', async (assert, testMetadata) => {
     await using dir = await tempDir('record-compare');
     const run = (extra = '') =>
@@ -385,17 +412,99 @@ module('Commands | record | visual diff', { concurrency: true }, (_hooks, module
     );
     assert.includes(third.stderr, '1 snapshot changed');
     assert.deepEqual(afterThird, baseline, 'a change does not overwrite the baseline');
-    let red = 0;
-    for (let offset = 0; offset < diff.data.length; offset += 4) {
-      if (diff.data[offset] === 255 && diff.data[offset + 1] === 0) red++;
-    }
-    assert.true(red > 20, `the diff marks the new figure in red (${red} pixels)`);
+    // The box's line, counted on each half: the change is boxed on both before and after.
+    const boxed = [0, 1].map((side) => {
+      let count = 0;
+      for (let offset = 0; offset < diff.data.length; offset += 4) {
+        const x = (offset / 4) % diff.width;
+        const onSide = side === 0 ? x < diff.width / 2 : x >= diff.width / 2;
+        const [r, g, b] = diff.data.subarray(offset, offset + 3);
+        if (onSide && r === 232 && g === 23 && b === 93) count++;
+      }
+      return count;
+    });
+    assert.equal(diff.width, 2 * 300 + 3 * LAYOUT.gap, 'before and after side by side');
+    assert.true(
+      boxed.every((count) => count > 20),
+      `the new figure boxed on both sides (${boxed})`,
+    );
     assert.includes(fourth.stdout, `${shot}  300×120  updated`);
     assert.deepEqual(
       (await fs.readdir(snapshots)).sort(),
       ['home.png'],
       'the review files are cleaned up',
     );
+  });
+
+  test('--report writes a review page beside the snapshots whose every image is a file there', async (assert, testMetadata) => {
+    await using dir = await tempDir('record-report');
+    const metadata = { ...moduleMetadata, ...testMetadata, cwd: dir.path };
+    await fs.writeFile(path.join(dir.path, 'a.html'), page('rgb(255,0,0)'));
+    await fs.writeFile(path.join(dir.path, 'b.html'), page('rgb(0,0,255)'));
+    await shell(`node ${CLI} record a.html b.html -w 40 -h 30 --output=shots --report`, metadata);
+    await fs.writeFile(path.join(dir.path, 'a.html'), page('rgb(0,160,0)'));
+
+    const result = await shellFails(
+      `node ${CLI} record a.html b.html -w 40 -h 30 --output=shots --report`,
+      metadata,
+    );
+    const html = await fs.readFile(path.join(dir.path, 'shots', 'report.html'), 'utf8');
+    const sources = [...html.matchAll(/src="([^"]+)"/g)].map((match) =>
+      decodeURIComponent(match[1]),
+    );
+
+    assert.exitCode(result, 1);
+    assert.includes(result.stdout, `${path.join('shots', 'report.html')}  report`);
+    assert.includes(html, '<h1>1 changed</h1>');
+    assert.true(html.indexOf('a.png</h2>') < html.indexOf('b.png</h2>'), 'the changed one first');
+    assert.deepEqual([...new Set(sources)].sort(), ['a.diff.png', 'a.new.png', 'a.png', 'b.png']);
+    for (const source of sources) await fs.access(path.join(dir.path, 'shots', source));
+  });
+
+  test('package.json#qunitx.record configures a bare `qunitx record`, from any folder, down to comment.md', async (assert, testMetadata) => {
+    await using dir = await tempDir('record-config');
+    const base = 'https://raw.githubusercontent.com/acme/app/visual/pr-1/run-1/';
+    const manifest = (record: object) =>
+      fs.writeFile(
+        path.join(dir.path, 'package.json'),
+        JSON.stringify({ name: 'app', qunitx: { record } }),
+      );
+    await fs.mkdir(path.join(dir.path, 'pages'));
+    await fs.mkdir(path.join(dir.path, 'nested', 'deeper'), { recursive: true });
+    await fs.writeFile(path.join(dir.path, 'pages', 'a.html'), page('rgb(255,0,0)'));
+    await manifest({
+      inputs: ['pages/a.html'],
+      width: 40,
+      height: 30,
+      output: 'shots',
+      prComment: true,
+      imagesUrl: base,
+    });
+    const metadata = {
+      ...moduleMetadata,
+      ...testMetadata,
+      cwd: path.join(dir.path, 'nested', 'deeper'),
+    };
+
+    const first = await shell(`node ${CLI} record`, metadata);
+    const quiet = await fs.readFile(path.join(dir.path, 'shots', 'comment.md'), 'utf8');
+    await fs.writeFile(path.join(dir.path, 'pages', 'a.html'), page('rgb(0,0,255)'));
+    const second = await shellFails(`node ${CLI} record`, metadata);
+    const loud = await fs.readFile(path.join(dir.path, 'shots', 'comment.md'), 'utf8');
+    await manifest({ inputs: ['pages/a.html'], width: 'wide' });
+    const broken = await shellFails(`node ${CLI} record`, metadata);
+
+    assert.includes(
+      first.stdout,
+      `${path.join('shots', 'a.png')}  40×30  new`,
+      'inputs and output relative to package.json',
+    );
+    assert.includes(quiet, 'No visual changes in this PR, good job');
+    assert.exitCode(second, 1);
+    assert.includes(loud, '### Visual changes: 1 of 1 snapshot');
+    assert.includes(loud, `src="${base}a.diff.png"`);
+    assert.exitCode(broken, 2);
+    assert.includes(broken.stderr, 'package.json#qunitx.record.width: expected a whole number');
   });
 
   test('--max-diff tolerates a few pixels; --compare refuses a jpg', async (assert, testMetadata) => {
@@ -427,12 +536,13 @@ module('Commands | record | visual diff', { concurrency: true }, (_hooks, module
 });
 
 module('Commands | record | arguments', { concurrency: true }, (_hooks, moduleMetadata) => {
-  test('--help exits 0 with the usage; a bad flag exits 2 with it; no input exits 2', async (assert, testMetadata) => {
+  test('--help exits 0 with the usage; a bad flag, no input or a comment without its images exit 2', async (assert, testMetadata) => {
     const metadata = { ...moduleMetadata, ...testMetadata };
-    const [help, badFlag, noInput] = await Promise.all([
+    const [help, badFlag, noInput, commentWithoutImages] = await Promise.all([
       shell(`node ${CLI} record --help`, metadata),
       shellFails(`node ${CLI} record page.html -w wide`, metadata),
       shellFails(`node ${CLI} record`, metadata),
+      shellFails(`node ${CLI} record page.html --pr-comment`, metadata),
     ]);
 
     assert.includes(help.stdout, 'Usage: qunitx record');
@@ -440,6 +550,8 @@ module('Commands | record | arguments', { concurrency: true }, (_hooks, moduleMe
     assert.includes(badFlag.stderr, 'qunitx record -w: expected a whole number of pixels');
     assert.exitCode(noInput, 2);
     assert.includes(noInput.stderr, 'needs at least one URL, page or script');
+    assert.exitCode(commentWithoutImages, 2);
+    assert.includes(commentWithoutImages.stderr, 'prComment: needs imagesUrl (--images-url)');
   });
 
   test('an input that is not there exits 1 naming it, before any browser starts', async (assert, testMetadata) => {
@@ -583,3 +695,76 @@ module('Commands | record | pdf', { concurrency: true }, (_hooks, moduleMetadata
     assert.includes(missing.stderr, '--pdf-header nope.html: no such file');
   });
 });
+
+module(
+  'Commands | record | report and settings as PDF',
+  { concurrency: true },
+  (_hooks, moduleMetadata) => {
+    test('--report=html,pdf writes both, --report=pdf the PDF alone, and an unknown format is refused', async (assert, testMetadata) => {
+      await using dir = await tempDir('record-report-pdf');
+      const metadata = { ...moduleMetadata, ...testMetadata, cwd: dir.path };
+      await fs.writeFile(path.join(dir.path, 'a.html'), page('rgb(0,0,255)'));
+      const shoot = (flags: string, output: string) =>
+        shell(`node ${CLI} record a.html -w 120 -h 80 -o ${output} ${flags}`, metadata).catch(
+          (error) => error,
+        );
+      await Promise.all([shoot('--compare', 'both'), shoot('--compare', 'pdf-only')]);
+      await fs.writeFile(path.join(dir.path, 'a.html'), page('rgb(255,0,0)'));
+      const [both, alone, unknown] = await Promise.all([
+        shoot('--report=html,pdf', 'both'),
+        shoot('--report=pdf', 'pdf-only'),
+        shellFails(`node ${CLI} record a.html --report=xml`, metadata),
+      ]);
+      const pdf = parsePdf(await fs.readFile(path.join(dir.path, 'both', 'report.pdf')));
+
+      assert.includes(both.stdout, `${path.join('both', 'report.html')}  report`);
+      assert.includes(both.stdout, `${path.join('both', 'report.pdf')}  report`);
+      assert.true(
+        pdf.pages.length >= 1 && /1 changed/.test(pdf.title ?? ''),
+        `a PDF of it, titled as the report is (${pdf.pages.length} pages, ${pdf.title})`,
+      );
+      assert.includes(alone.stdout, `${path.join('pdf-only', 'report.pdf')}  report`);
+      assert.false(
+        await fs.stat(path.join(dir.path, 'pdf-only', 'report.html')).then(
+          () => true,
+          () => false,
+        ),
+        'and no report.html when only the PDF was asked for',
+      );
+      assert.includes(
+        unknown.stderr,
+        "expected true, 'html', 'pdf' or ['html', 'pdf'], got \"xml\"",
+      );
+    });
+
+    test('package.json sets the PDF settings and the report formats; a flag changes one setting of them', async (assert, testMetadata) => {
+      await using dir = await tempDir('record-config-pdf');
+      const metadata = { ...moduleMetadata, ...testMetadata, cwd: dir.path };
+      const manifest = (record: unknown) =>
+        fs.writeFile(path.join(dir.path, 'package.json'), JSON.stringify({ qunitx: { record } }));
+      await fs.writeFile(path.join(dir.path, 'a.html'), page('rgb(0,0,255)', '<p>Hello</p>'));
+      await manifest({
+        inputs: ['a.html'],
+        formats: ['a.pdf'],
+        pdf: { paper: 'A5', landscape: true, mode: 'raster' },
+      });
+      await shell(`node ${CLI} record --pdf-margin=5mm`, metadata);
+      const configured = parsePdf(await fs.readFile(path.join(dir.path, 'a.pdf')));
+      await manifest({ inputs: ['a.html'], formats: ['a.pdf'], pdf: { paper: 'B9' } });
+      const broken = await shellFails(`node ${CLI} record`, metadata);
+
+      assert.true(
+        configured.pages.every(
+          ([, , width, height]) => Math.abs(width - 595.3) < 1 && Math.abs(height - 419.5) < 1,
+        ),
+        `A5, sideways, from package.json (${configured.pages})`,
+      );
+      assert.deepEqual(
+        [configured.fonts, configured.jpegs > 0],
+        [false, true],
+        'its raster mode, kept beside the flag',
+      );
+      assert.includes(broken.stderr, 'package.json#qunitx.record.pdf: paper: expected one of fit');
+    });
+  },
+);

@@ -21,6 +21,10 @@ module('Utils | color | enabled', { concurrency: true }, () => {
     assert.equal(on.blue('hello'), '\x1b[34mhello\x1b[39m');
   });
 
+  test('cyan wraps text with ANSI cyan codes', (assert) => {
+    assert.equal(on.cyan('hello'), '\x1b[36mhello\x1b[39m');
+  });
+
   test('magenta(text) wraps text with ANSI magenta codes', (assert) => {
     assert.equal(on.magenta('hello'), '\x1b[35mhello\x1b[39m');
   });
@@ -53,6 +57,10 @@ module('Utils | color | disabled', { concurrency: true }, () => {
 
   test('blue returns plain text', (assert) => {
     assert.equal(off.blue('hello'), 'hello');
+  });
+
+  test('cyan returns plain text', (assert) => {
+    assert.equal(off.cyan('hello'), 'hello');
   });
 
   test('magenta(text) returns plain text', (assert) => {

@@ -199,8 +199,8 @@ export function getDimensions(png: Uint8Array): { width: number; height: number 
 
 /**
  * A PNG of `page` as it is: the viewport, or the whole page with `fullPage`, with each `mask`
- * selector painted over. Under `compare` it is taken to come out the same twice: animations
- * finished and the text caret hidden.
+ * selector covered, so comparing ignores what changes on its own. Under `compare` it is taken to
+ * come out the same twice: animations finished and the text caret hidden.
  *
  * ```ts
  * import * as PNG from './png.ts';

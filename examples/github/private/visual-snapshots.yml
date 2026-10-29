@@ -1,0 +1,94 @@
+# Visual snapshots on every pull request, for a PRIVATE repository: compares the app's pages with
+# the baselines committed under snapshots/, and comments once per PR with the changes side by side,
+# or "No visual changes in this PR, good job". Copy to .github/workflows/.
+#
+# Expects package.json#qunitx.record with the pages to shoot and "output": "snapshots", e.g.
+#   "qunitx": { "record": { "inputs": ["http://localhost:4200/"], "width": 1280, "output": "snapshots" } }
+# and the review files kept out of git (.gitignore): snapshots/*.new.png, snapshots/*.diff.png,
+# snapshots/report.html, snapshots/comment.md
+name: Visual snapshots
+
+on:
+  pull_request:
+
+permissions:
+  contents: write # pushes the changed snapshots' images to visual/pr-<number>
+  pull-requests: write # posts, then edits, the one comment
+
+concurrency:
+  group: visual-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  snapshots:
+    runs-on: ubuntu-latest # has Chrome, which qunitx uses
+    env:
+      IMAGES_BRANCH: visual/pr-${{ github.event.pull_request.number }}
+      RUN_FOLDER: run-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Serve the build where package.json#qunitx.record's inputs point. Replace with your own server.
+      - run: |
+          npx --yes serve@14 dist --listen 4200 &
+          npx --yes wait-on@8 http://localhost:4200
+
+      - name: Compare with the baselines
+        id: compare
+        run: |
+          set +e
+          # Private images are served from github.com, to people who can see the repository.
+          npx qunitx record --report \
+            --pr-comment \
+            --images-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/$IMAGES_BRANCH/$RUN_FOLDER/" \
+            --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID#artifacts"
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-report
+          path: snapshots/
+
+      # Only what the comment shows: each changed snapshot's diff.
+      - name: Publish the changed snapshots' images
+        if: steps.compare.outputs.exit == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          publish="$RUNNER_TEMP/publish/$RUN_FOLDER"
+          mkdir -p "$publish"
+          (cd snapshots && find . -type f -name '*.diff.png' -exec cp --parents {} "$publish/" \;)
+          # Exit 1 without a changed snapshot is an error, already reported: nothing to publish.
+          [ -n "$(find "$publish" -type f)" ] || exit 0
+          cd "$RUNNER_TEMP/publish"
+          git init -q
+          git checkout -q -b "$IMAGES_BRANCH"
+          git add -A
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m "Visual snapshots for #${{ github.event.pull_request.number }}"
+          # A bot-only branch, replaced on every run: only the latest run's images are kept.
+          git push -qf "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" "HEAD:refs/heads/$IMAGES_BRANCH"
+
+      - name: Comment
+        if: hashFiles('snapshots/comment.md') != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = require('fs').readFileSync('snapshots/comment.md', 'utf8');
+            const marker = body.split('\n')[0];
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const earlier = comments.find((comment) => comment.user.type === 'Bot' && comment.body.startsWith(marker));
+            if (earlier) await github.rest.issues.updateComment({ owner, repo, comment_id: earlier.id, body });
+            else await github.rest.issues.createComment({ owner, repo, issue_number, body });
+
+      # Red until the baselines are updated (update-snapshots.yml), or the change is reverted.
+      - if: steps.compare.outputs.exit != '0'
+        run: exit 1

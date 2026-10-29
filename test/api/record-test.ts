@@ -370,6 +370,85 @@ module('API | record | snapshots', { concurrency: true }, () => {
   });
 });
 
+module('API | record | report, comment and package.json', { concurrency: true }, () => {
+  test('report and prComment write their files and hand back where', async (assert) => {
+    await using dir = await tempDir('api-record-report');
+    await fs.writeFile(path.join(dir.path, 'page.html'), PAGE);
+    const shoot = () =>
+      recorded('page.html', {
+        cwd: dir.path,
+        formats: ['shot.png'],
+        width: 240,
+        height: 120,
+        report: true,
+        prComment: true,
+        imagesUrl: 'https://example.com/snapshots/',
+        reportUrl: 'https://example.com/run/1',
+      });
+    await shoot();
+    await fs.writeFile(
+      path.join(dir.path, 'page.html'),
+      PAGE.replace('rgb(0,128,255)', 'rgb(255,0,0)'),
+    );
+    const result = await shoot();
+    const comment = await fs.readFile(result.commentPath!, 'utf8');
+
+    assert.equal(path.basename(result.reportPath!), 'report.html');
+    assert.equal(result.reportPdfPath, null, 'no PDF unless asked for');
+    assert.includes(await fs.readFile(result.reportPath!, 'utf8'), 'shot');
+    assert.equal(path.basename(result.commentPath!), 'comment.md');
+    assert.includes(comment, '<!-- qunitx-visual-diff -->');
+    assert.includes(comment, 'https://example.com/snapshots/');
+    assert.includes(comment, 'https://example.com/run/1');
+  });
+
+  test('package.json#qunitx.record is read as the command reads it; what is given wins', async (assert) => {
+    await using dir = await tempDir('api-record-config');
+    await fs.writeFile(path.join(dir.path, 'page.html'), PAGE);
+    await fs.writeFile(path.join(dir.path, 'other.html'), PAGE);
+    await fs.writeFile(
+      path.join(dir.path, 'package.json'),
+      JSON.stringify({
+        qunitx: {
+          record: { inputs: ['page.html'], formats: ['cfg.png'], width: 300, height: 150 },
+        },
+      }),
+    );
+    const [configured, overridden] = await Promise.all([
+      recorded([], { cwd: dir.path }),
+      recorded('other.html', { cwd: dir.path, width: 200 }),
+    ]);
+    const shape = (result: RecordResult) =>
+      result.files.map((file) => [path.basename(file.path), file.width, file.height]);
+
+    assert.deepEqual(shape(configured), [['cfg.png', 300, 150]], 'its inputs, formats and size');
+    assert.deepEqual(
+      shape(overridden),
+      [['cfg.png', 200, 150]],
+      'inputs given replace its inputs; width given wins',
+    );
+  });
+
+  test('a bad setting there, or nothing to record anywhere, rejects', async (assert) => {
+    await using bad = await tempDir('api-record-bad-config');
+    await using empty = await tempDir('api-record-no-inputs');
+    await fs.writeFile(
+      path.join(bad.path, 'package.json'),
+      JSON.stringify({ qunitx: { record: { update: true } } }),
+    );
+    await fs.writeFile(path.join(empty.path, 'package.json'), '{}');
+    const [invalid, nothing] = await Promise.all([
+      QUnitX.record('https://example.com', { cwd: bad.path }).result(),
+      QUnitX.record([], { cwd: empty.path }).result(),
+    ]);
+
+    assert.equal((invalid as { code: string }).code, 'InvalidRecordConfig');
+    assert.includes((invalid as Error).message, 'update');
+    assert.equal((nothing as { code: string }).code, 'UnrecordableInput');
+    assert.includes((nothing as Error).message, 'package.json#qunitx.record');
+  });
+});
+
 module('API | record | pdf', { concurrency: true }, () => {
   test('pdf settings are an object like any option; the result counts its pages', async (assert) => {
     await using dir = await tempDir('api-record-pdf');
@@ -431,7 +510,7 @@ module('API | record | pdf', { concurrency: true }, () => {
       [
         'record option pdf: scale: expected a number from 0.1 to 2, got 5',
         'record option pdf: paper: expected one of fit, Letter, Legal, Tabloid, Ledger, A0, A1, A2, A3, A4, A5, A6, got "B9"',
-        'record option pdf: expected an object of PDF settings, got "A4"',
+        'record option pdf: has no setting 0; expected mode, paper, margin, scale, media, header, footer, pageRanges, landscape, background, outline',
       ],
     );
   });
@@ -469,6 +548,29 @@ module('API | record | refusals', { concurrency: true }, () => {
         'record option waitFor: expected a number of ms or a CSS selector, got -1',
         'record option fullPage: expected true or false, got "yes"',
         'record option formats: expected a list of formats or file names, got "png"',
+      ],
+    );
+  });
+
+  test('a PR comment needs imagesUrl, and the comment URLs need a PR comment', async (assert) => {
+    const outcomes = await Promise.all(
+      (
+        [
+          { prComment: true },
+          { imagesUrl: 'https://example.com/shots/' },
+          { reportUrl: 'https://example.com/run/1' },
+          { prComment: true, imagesUrl: 'shots/' },
+        ] as RecordOptions[]
+      ).map((options) => QUnitX.record('https://example.com', options).result()),
+    );
+
+    assert.deepEqual(
+      outcomes.map((outcome) => (outcome as Error).message),
+      [
+        'record option prComment: needs imagesUrl (--images-url), where the snapshot images are published for it to link to',
+        'record option imagesUrl: is only used by prComment (--pr-comment), which was not asked for',
+        'record option reportUrl: is only used by prComment (--pr-comment), which was not asked for',
+        'record option imagesUrl: expected an http(s) URL, got "shots/"',
       ],
     );
   });
