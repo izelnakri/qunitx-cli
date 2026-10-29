@@ -147,6 +147,8 @@ export interface ScriptConfig {
   timeout: number | null;
   /** Where the script's own output goes. `processConsole` for the CLI. */
   console: Console;
+  /** A page the caller owns, to run in and leave open. See {@link ScriptSettings.page}. */
+  page?: Page;
   /**
    * Reporting settings that only matter if the entry turns out to declare tests.
    *
@@ -306,6 +308,13 @@ export interface ScriptSettings {
    * process's stdout and stderr; pass `false` to capture it from the result instead.
    */
   console?: ConsoleOption;
+  /**
+   * The page to run in, which the caller opened and keeps: the script runs there, and the page,
+   * its browser and the pre-launched Chrome are all still open when `run` returns. `qunitx record`
+   * hands one in already sized and being recorded. Without it, `run` launches a browser of its own
+   * and closes everything when the script is done. Ignored in watch mode.
+   */
+  page?: Page;
 }
 
 /** The two ways naming an entry can fail, before any flag or option is even looked at. */
@@ -344,6 +353,7 @@ async function configFor(entry: string, settings: ScriptSettings = {}): Promise<
     open: settings.open ?? false,
     timeout: settings.timeout ?? null,
     console: fromConsoleOptionOrElse(settings.console, processConsole),
+    page: settings.watch ? undefined : settings.page,
     reporter: settings.reporter,
     junit: settings.junit,
     debug: settings.debug,
@@ -393,8 +403,11 @@ export async function run(entry: string, settings: ScriptSettings = {}): Promise
     response.end();
   });
 
-  const browser = await Browser.launch(config);
-  const [page] = await Promise.all([browser.newPage(), bindServerToPort(server, config)]);
+  const browser = config.page ? null : await Browser.launch(config);
+  const [page] = await Promise.all([
+    config.page ?? browser!.newPage(),
+    bindServerToPort(server, config),
+  ]);
   const url = `http://localhost:${config.port}/`;
 
   if (!config.watch) {
@@ -409,10 +422,11 @@ export async function run(entry: string, settings: ScriptSettings = {}): Promise
       // `browser.close()` on a loaded Windows runner regularly outlives the first grace, and
       // returning there hands the caller a settled Task while playwright still holds the browser's
       // transport and process handle — so a script that awaited `run()` and ended could not.
+      // A page handed in is the caller's, and so is the browser it lives in.
       const pending = await closeCompletely({
         server: server.close(),
-        browser: browser.close(),
-        prelaunch: shutdownPrelaunch(),
+        browser: browser?.close() ?? Promise.resolve(),
+        prelaunch: browser ? shutdownPrelaunch() : Promise.resolve(),
       });
       // Said out loud rather than swallowed: nothing else is going to release these, so a caller
       // whose process will not end deserves to know what is holding it.
