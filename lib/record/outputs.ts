@@ -16,19 +16,25 @@ const FORMATS: Record<string, Format> = {
 
   html: 'html',
   pdf: 'pdf',
+  pptx: 'pptx',
+  docx: 'docx',
 };
+
+// Formats besides the animations that are one file of every input: a player, a deck, a document.
+const WHOLE: Format[] = ['html', 'pptx', 'docx'];
 
 /**
  * What a recording can be written as. `png` and `jpeg` are stills, one per input, and `pdf` a
  * document of each; `gif`, `webm` and `mp4` are animations of every input in turn, and `html` the
  * same as an interactive player: steps to click through, or play. In a recording of steps (see
- * `record`), `pdf` is one document of them all, a page a step.
+ * `record`), `pdf` is one document of them all, a page a step. `pptx` is a deck of every step, a
+ * slide each, and `docx` a document of them, each a heading, its picture and its caption.
  *
  * ```ts
  * const format: Format = 'gif';
  * ```
  */
-export type Format = 'png' | 'jpeg' | 'gif' | 'webm' | 'mp4' | 'html' | 'pdf';
+export type Format = 'png' | 'jpeg' | 'gif' | 'webm' | 'mp4' | 'html' | 'pdf' | 'pptx' | 'docx';
 
 /**
  * Whether a format is an animation of every input rather than a still of one.
@@ -57,7 +63,7 @@ export const UnknownFormat: Failure.FailureFactory<'UnknownFormat', { entry: str
   Failure.define(
     'UnknownFormat',
     (data: { entry: string }) =>
-      `unknown format: ${data.entry}. Expected png, jpg, gif, webm, mp4, html or pdf, or a file name ending in one (-f home.png).`,
+      `unknown format: ${data.entry}. Expected png, jpg, gif, webm, mp4, html, pdf, pptx or docx, or a file name ending in one (-f home.png).`,
   );
 
 /**
@@ -135,7 +141,7 @@ export function plan(
   return requests.flatMap(({ format, fileName }): Output[] => {
     const extension = fileName ? path.extname(fileName) : `.${extensionOf(format)}`;
     // A recording of steps prints as one document, a page a step, as it animates as one GIF.
-    if (isAnimated(format) || format === 'html' || (steps && format === 'pdf')) {
+    if (isAnimated(format) || WHOLE.includes(format) || (steps && format === 'pdf')) {
       const absolutePath = path.resolve(
         outputDir,
         makeAnimationFileName(fileName, extension, inputs),
