@@ -7,6 +7,7 @@ import { Task } from '../task/index.ts';
 import { findAPIReporterFrom } from './reporter.ts';
 import { JUnitReporter } from '../reporters/junit.ts';
 import { buildRows } from '../coverage/report.ts';
+import type { SnapshotResult, StepRecording } from '../snapshots/index.ts';
 import type { BrowserLog, Notice, TestAssertion } from '../reporters/types.ts';
 import type { InvalidOptionFailure, UserRunOptions } from './options.ts';
 import type { ConfigFailure } from '../setup/config.ts';
@@ -273,6 +274,19 @@ export interface RunResult {
   coverage: CoverageSummary | null;
   /** The JUnit XML document, when `junit` was requested. Written to disk as well. */
   junitXml: string | null;
+  /**
+   * Every `qunitxSnapshot()` the tests took, with how it compared. A `changed` one that was not
+   * accepted (`snapshots.update`) makes the run fail, `ok: false`, as a failed test does.
+   */
+  snapshots: SnapshotResult[];
+  /** Every step recorded with `qunitxRecording.start()` … `.stop()`. */
+  recordings: StepRecording[];
+  /** `report.html` beside the snapshots, when `snapshots.report` asked for it. */
+  snapshotReportPath: string | null;
+  /** `report.pdf` beside the snapshots, when `snapshots.report` asked for a PDF. */
+  snapshotReportPdfPath: string | null;
+  /** `comment.md` beside the snapshots, when `snapshots.prComment` asked for it. */
+  snapshotCommentPath: string | null;
   /** Epoch ms when the test phase began. */
   startedAt: number;
   /** Epoch ms when it ended. */
@@ -368,6 +382,12 @@ export function buildResult(config: ResolvedConfig, outcome: RunOutcome): RunRes
     browserLogsDropped: reporter.browserLogsDropped,
     coverage: coverage ? summarizeCoverage(config) : null,
     junitXml,
+    // Copied for the same reason as `counts`: a watch rerun clears the live arrays.
+    snapshots: config.state.results.snapshots.taken.map((snapshot) => ({ ...snapshot })),
+    recordings: config.state.results.snapshots.recordings.slice(),
+    snapshotReportPath: config.state.results.snapshots.reportPath,
+    snapshotReportPdfPath: config.state.results.snapshots.reportPdfPath,
+    snapshotCommentPath: config.state.results.snapshots.commentPath,
     startedAt: outcome.startedAt,
     finishedAt: outcome.finishedAt,
     // Watch never goes through the concurrent split, so it records none; there its one group is

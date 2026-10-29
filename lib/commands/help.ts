@@ -49,6 +49,11 @@ ${color('--browser')} : browser engine to run tests in: chromium, firefox, webki
 ${color('--reporter')} : stdout format: tap, spec, dot, github[default: tap] (short: ${color('-r')})
 ${color('--junit')} : also write a JUnit XML report[default path: <output>/junit.xml; ${color('--junit=<path>')} to override]
 ${color('--coverage')} : collect V8 line coverage (chromium only); ${color('--coverage=lcov,html')} also writes <output>/coverage/ reports
+${color('--update-snapshots')} : accept changed ${color('qunitxSnapshot()')} snapshots: new screenshots replace their baselines
+${color('--snapshot-dir')} : where ${color('qunitxSnapshot()')} keeps baselines, from the project root[default: snapshots]
+${color('--snapshot-threshold')}, ${color('--snapshot-max-diff')}, ${color('--snapshot-mask')} : as ${color('qunitx record')}'s ${color('--threshold')}, ${color('--max-diff')}, ${color('--mask')}
+${color('--snapshot-report')}, ${color('--snapshot-pr-comment')} (${color('--snapshot-images-url=<url>')}, ${color('--snapshot-report-url=<url>')}) : also write report.html / comment.md into the snapshot dir
+${color('--snapshot-report=pdf')} : the report as report.pdf too (${color('=html,pdf')} for both), printed with ${color('snapshots.pdf')} from package.json or the JS API
 ${color('--before')} : run a script before the tests(i.e start a new web server before tests)
 ${color('--after')} : run a script after the tests(i.e save test results to a file)
 ${color('--no-daemon')} : don't use the daemon for this run — skips a running daemon and prevents ${color('QUNITX_DAEMON')} auto-spawn
