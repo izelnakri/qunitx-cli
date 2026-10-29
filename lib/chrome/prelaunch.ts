@@ -107,6 +107,8 @@ export function startPrelaunch(): void {
   const { browserFromArgv, openFromArgv, watchFromArgv, searchFromArgv } = process.argv.reduce(
     (flags, arg) => {
       if (arg.startsWith('--browser=')) flags.browserFromArgv = arg.slice(10);
+      // `record` spells output and width `-o` and `-w`; it never opens or watches anything.
+      else if (cmd === 'record') return flags;
       else if (arg === '--open' || arg === '-o') flags.openFromArgv = true;
       else if (arg === '--watch' || arg === '-w') flags.watchFromArgv = true;
       else if (SEARCH_FLAG.test(arg)) flags.searchFromArgv = true;
@@ -133,6 +135,7 @@ export function startPrelaunch(): void {
     cmd !== 'repl' &&
     // Nor does `bench`: it measures in a browser of its own.
     cmd !== 'bench' &&
+    cmd !== 'record' &&
     !watchFromArgv &&
     !openFromArgv &&
     !process.env.QUNITX_NO_DAEMON &&

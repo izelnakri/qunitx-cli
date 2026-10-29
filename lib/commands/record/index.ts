@@ -1,0 +1,183 @@
+import { readFile, realpath } from 'node:fs/promises';
+import path from 'node:path';
+import process from 'node:process';
+import { processConsole, type Console } from '../../console.ts';
+import { Failure } from '../../result/index.ts';
+import { Task } from '../../task/index.ts';
+import { blue, magenta } from '../../utils/color.ts';
+import { DEFAULT_SIZE } from '../../record/options.ts';
+import type { RecordOptions, RecordResult } from '../../record/index.ts';
+import { InvalidRecordArgument, parse, type RecordRequest } from './parse.ts';
+import pkg from '../../../package.json' with { type: 'json' };
+
+// `qunitx record`. Its flags are its own rather than the test runner's: `-w`, `-h`, `-f` and `-o`
+// mean width, height, format and output here, which is what anyone recording a page reaches for.
+
+/**
+ * Runs `qunitx record`: records the inputs, writes the files, and lists them.
+ *
+ * ```ts
+ * import * as Record from './index.ts';
+ *
+ * // Defined, not invoked: launches a browser and writes files.
+ * async function recordCommand(): Promise<number> {
+ *   return await Record.run(['https://example.com', '-f', 'png']); // 0 recorded · 1 failed · 2 bad args
+ * }
+ * ```
+ *
+ * @returns the process exit code.
+ */
+export async function run(
+  argv: string[] = process.argv.slice(3),
+  out: Console = processConsole,
+  cwd: string = process.cwd(),
+): Promise<number> {
+  const recordRequest = parse(argv);
+  if (Failure.is(recordRequest)) {
+    out.error(`${recordRequest.message}\n\n${usage()}`);
+    return 2;
+  } else if (recordRequest.help) {
+    out.log(usage());
+    return 0;
+  } else if (recordRequest.sources.length === 0) {
+    out.error(`qunitx record needs at least one URL, page or script.\n\n${usage()}`);
+    return 2;
+  }
+
+  const options = await readPDFHeaderAndFooterFiles(recordRequest, cwd).result();
+  if (Failure.is(options)) {
+    out.error(`${options.message}\n\n${usage()}`);
+    return 2;
+  }
+  // Loaded once the arguments are known good: it is the browser stack, which help and a typo
+  // do not need.
+  const { record } = await import('../../record/index.ts');
+  return await Task(() => record(recordRequest.sources, { ...options, cwd }))
+    .map(async (result) => {
+      // Shown relative to where the command ran, compared with symlinks resolved: on macOS the temp
+      // directory is `/var/…` to whoever typed it and `/private/var/…` to `process.cwd()`. Only
+      // directories are resolved, each once: a run's files are in one or two of them.
+      const realDirectories = new Map<string, Promise<string>>();
+      const realDirectory = (directory: string) => {
+        const real = realDirectories.get(directory) ?? realpath(directory).catch(() => directory);
+        realDirectories.set(directory, real);
+        return real;
+      };
+      const root = await realDirectory(cwd);
+      const displayPath = async (file: string) =>
+        path.relative(
+          root,
+          path.join(await realDirectory(path.dirname(file)), path.basename(file)),
+        );
+      for (const file of result.files) {
+        out.log(`${describeOutputFileDetails(file, await displayPath(file.path))}\n`);
+      }
+      for (const script of result.failedScripts) {
+        out.error(`# ${await displayPath(script.path)} exited ${script.exitCode}\n`);
+      }
+      return result.ok ? 0 : 1;
+    })
+    .recover((error) => {
+      out.error(`${Failure.is(error) ? error.message : Failure.format(error)}\n`);
+      return 1;
+    });
+}
+
+// The options with `--pdf-header` and `--pdf-footer` read in as the PDF's header and footer HTML. A
+// file that cannot be read is a bad argument.
+function readPDFHeaderAndFooterFiles(
+  recordRequest: RecordRequest,
+  cwd: string,
+): Task<RecordOptions, Failure.Of<typeof InvalidRecordArgument>> {
+  const files = { header: recordRequest.pdfHeaderFile, footer: recordRequest.pdfFooterFile };
+  return Task(async () => {
+    const read = await Promise.all(
+      Object.entries(files)
+        .filter((entry): entry is [string, string] => entry[1] !== undefined)
+        .map(async ([setting, file]) => {
+          const html = await readFile(path.resolve(cwd, file), 'utf8').catch(() => {
+            throw InvalidRecordArgument({
+              argument: `--pdf-${setting} ${file}`,
+              reason: 'no such file',
+            });
+          });
+          return [setting, html] as const;
+        }),
+    );
+    return read.length
+      ? {
+          ...recordRequest.options,
+          pdf: { ...recordRequest.options.pdf, ...Object.fromEntries(read) },
+        }
+      : recordRequest.options;
+  });
+}
+
+function describeOutputFileDetails(
+  file: RecordResult['files'][number],
+  displayedPath: string,
+): string {
+  const frames =
+    file.format === 'pdf'
+      ? `  ${file.frames} page${file.frames === 1 ? '' : 's'}`
+      : file.frames > 1
+        ? `  ${file.frames} frames`
+        : '';
+  return `${displayedPath}  ${file.width}×${file.height}${frames}  ${size(file.bytes)}`;
+}
+
+function size(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  else if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+// `qunitx record --help`: built when it is shown, not every time the module loads.
+function usage(): string {
+  return `${magenta().bold(`[qunitx v${pkg.version}] Usage:`)} qunitx ${blue('record <url | page.html | dir | script.ts>... [-f formats] [-w width] [-h height]')}
+
+${magenta().bold('Examples:')}
+${blue('$ qunitx record https://example.com')}                     # example.com.jpg
+${blue('$ qunitx record https://example.com -f home.png -w 1200')} # home.png, 1200px wide
+${blue('$ qunitx record a.html b.html')}                           # a.jpg, b.jpg and recording.gif of both
+${blue('$ qunitx record http://a.com -f a.gif, a.jpg')}            # exactly those two files
+${blue('$ qunitx record demo.ts -w 1200 -h 1200')}                  # demo.gif of the script running, demo.jpg of where it ended
+${blue('$ qunitx record dist/ -f png --full-page -o shots')}        # shots/dist.png, the whole page
+${blue('$ qunitx record invoice.html -f pdf --pdf-paper=A4 --pdf-media=print')} # invoice.pdf, printed on A4
+
+${magenta().bold('Inputs:')} a ${blue('http(s)://')} or ${blue('file://')} URL, an ${blue('.html')} file or a directory with an ${blue('index.html')} (served from a local origin),
+or a ${blue('.js/.ts/.jsx/.tsx')} script, run as ${blue('qunitx run')} would and recorded while it runs.
+A script can ${blue('await globalThis.qunitxRecordFrame?.()')} after drawing a step to make sure that step is in the recording.
+
+${magenta().bold('Flags:')}
+${blue('-f, --format')}    : formats (${blue('png')}, ${blue('jpg')}, ${blue('gif')}, ${blue('pdf')}) or file names ending in one, comma-separated. Default: ${blue('jpg')} for one page, ${blue('jpg,gif')} for several inputs or a script
+${blue('-w, --width')}     : viewport width in CSS pixels (default ${DEFAULT_SIZE.width})
+${blue('-h, --height')}    : viewport height in CSS pixels (default ${DEFAULT_SIZE.height})
+${blue('-o, --output')}    : directory the files are written to (default: the current one)
+${blue('--scale')}         : device pixel ratio, e.g. ${blue('2')} for retina (default 1)
+${blue('--full-page')}     : stills capture the whole scrollable page, not just the viewport
+${blue('--wait-for')}      : after a page loads, wait this many ms, or until this CSS selector is on it
+${blue('--page-duration')} : record each page for this many ms in a GIF, instead of one still
+${blue('--last-frame-duration')} : ms each input's last frame stays on screen in a GIF (default 1000)
+${blue('--fps')}           : most frames per second a GIF keeps (default 10)
+${blue('--quality')}       : jpg quality, 0-100 (default 90)
+${blue('--browser')}       : chromium, firefox or webkit (default chromium)
+${blue('--timeout')}       : ms a script may run, or a page may take to load, before giving up
+${blue('-p, --port')}      : first port tried for the local server
+
+${magenta().bold('PDF:')} ${blue('-f pdf')} prints each page where it ended: vector (text and links kept) in chromium, its screenshots on pages elsewhere.
+${blue('--pdf-paper')}     : ${blue('fit')} (default: one page the page's size), ${blue('A4')}, ${blue('Letter')}, ${blue('Legal')}, ${blue('A3')}…, or ${blue('20cmx30cm')}
+${blue('--pdf-landscape')} : turn a named paper sideways
+${blue('--pdf-margin')}    : around the content, e.g. ${blue('12mm')}, ${blue('0.5in')} (default 0)
+${blue('--pdf-scale')}     : zoom of the printed page, 0.1-2 (default 1)
+${blue('--pdf-media')}     : the CSS media the page is laid out for — which media queries match and stylesheets apply:
+                  ${blue('screen')} (default: as the browser shows it) or ${blue('print')} (its print styles, as Ctrl+P would)
+${blue('--pdf-mode')}      : ${blue('auto')} (default), ${blue('vector')} (default on chromium only) or ${blue('raster')}
+${blue('--pdf-header')}, ${blue('--pdf-footer')} : HTML template files (${blue('.pageNumber')}, ${blue('.totalPages')}, ${blue('.title')}, ${blue('.date')}, ${blue('.url')} filled in; vector)
+${blue('--pdf-pages')}     : which pages to keep, e.g. ${blue('1-3,5')} (vector)
+${blue('--pdf-outline')}   : add PDF bookmarks — a reader's clickable sidebar — from the page's h1–h6 headings (vector)
+${blue('--no-pdf-background')} : leave backgrounds out, as a printer would
+
+${magenta().bold('Exit codes:')} ${blue('0')} recorded, ${blue('1')} a script failed or an input could not be recorded, ${blue('2')} bad arguments.
+`;
+}
