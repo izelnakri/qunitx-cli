@@ -11,6 +11,7 @@ import { parseMp4, parseWebM } from '../helpers/video-parse.ts';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { parsePdf } from '../helpers/pdf-parse.ts';
+import { unzip } from '../helpers/unzip.ts';
 import '../helpers/custom-asserts.ts';
 
 // `qunitx record`, through the real binary, against pages and scripts written into a temp dir.
@@ -733,7 +734,55 @@ module(
       );
       assert.includes(
         unknown.stderr,
-        "expected true, 'html', 'pdf' or ['html', 'pdf'], got \"xml\"",
+        "expected true, or one or a list of 'html', 'pdf', 'xlsx', 'csv', 'tsv', got \"xml\"",
+      );
+    });
+
+    test('--report=xlsx,csv,tsv writes a workbook and rows for scripts, and no page unless asked', async (assert, testMetadata) => {
+      await using dir = await tempDir('record-report-sheets');
+      const metadata = { ...moduleMetadata, ...testMetadata, cwd: dir.path };
+      await fs.writeFile(path.join(dir.path, 'a.html'), page('rgb(0,0,255)'));
+      await fs.writeFile(path.join(dir.path, 'b.html'), page('rgb(0,255,0)'));
+      await shell(`node ${CLI} record a.html b.html -w 40 -h 30 -o shots --compare`, metadata);
+      await fs.writeFile(path.join(dir.path, 'a.html'), page('rgb(255,0,0)'));
+      const result = await shell(
+        `node ${CLI} record a.html b.html -w 40 -h 30 -o shots --report=xlsx,csv,tsv`,
+        metadata,
+      ).catch((error) => error);
+      const read = (name: string) => fs.readFile(path.join(dir.path, 'shots', name));
+      const workbook = new Map(
+        unzip(await read('report.xlsx')).map((entry) => [
+          entry.name,
+          new TextDecoder().decode(entry.bytes),
+        ]),
+      );
+      const csv = new TextDecoder().decode(await read('report.csv'));
+
+      for (const name of ['report.xlsx', 'report.csv', 'report.tsv']) {
+        assert.includes(result.stdout, `${path.join('shots', name)}  report`);
+      }
+      assert.deepEqual(
+        csv
+          .split('\n')
+          .slice(1, 3)
+          .map((line) => line.split(',').slice(0, 2)),
+        [
+          ['a.png', 'changed'],
+          ['b.png', 'unchanged'],
+        ],
+      );
+      assert.includes(workbook.get('xl/worksheets/sheet1.xml')!, '>a.png</t>');
+      assert.includes(
+        workbook.get('xl/worksheets/_rels/sheet1.xml.rels')!,
+        'Target="a.diff.png" TargetMode="External"',
+      );
+      assert.includes(new TextDecoder().decode(await read('report.tsv')), 'a.png\tchanged\t');
+      assert.false(
+        await fs.stat(path.join(dir.path, 'shots', 'report.html')).then(
+          () => true,
+          () => false,
+        ),
+        'no report.html unless asked for',
       );
     });
 

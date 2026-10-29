@@ -114,10 +114,8 @@ export async function run(
         out.log(`${file.comparison ? STATUS_COLORS[file.comparison.status](line) : line}\n`);
       }
       // The files to open next, in cyan.
-      if (result.reportPath)
-        out.log(`${cyan(`${await displayPath(result.reportPath)}  report`)}\n`);
-      if (result.reportPdfPath) {
-        out.log(`${cyan(`${await displayPath(result.reportPdfPath)}  report`)}\n`);
+      for (const file of Object.values(result.reportPaths)) {
+        out.log(`${cyan(`${await displayPath(file)}  report`)}\n`);
       }
       if (result.commentPath) {
         out.log(`${cyan(`${await displayPath(result.commentPath)}  comment`)}\n`);
@@ -240,7 +238,8 @@ ${blue('--update')}        : accept the changes: new screenshots replace their b
 ${blue('--threshold')}     : how far a pixel's color may move before it counts, 0-1 (default 0.1)
 ${blue('--max-diff')}      : how many pixels may change before a snapshot counts as changed (default 0)
 ${blue('--report')}        : also write ${blue('report.html')} beside the snapshots: changed ones first, each diff with a wipe from baseline to new;
-                  ${blue('--report=pdf')} writes ${blue('report.pdf')} (with the ${blue('--pdf-*')} settings), ${blue('--report=html,pdf')} both
+                  ${blue('--report=pdf')} writes ${blue('report.pdf')} (with the ${blue('--pdf-*')} settings), ${blue('--report=xlsx')} a sortable
+                  ${blue('report.xlsx')}, ${blue('--report=csv')} or ${blue('tsv')} rows for scripts; ${blue('--report=html,xlsx')} several
 ${blue('--pr-comment')}    : also write ${blue('comment.md')}, a pull-request comment with each changed snapshot's diff (alias ${blue('--comment')})
 ${blue('--images-url')}    : the URL the workflow publishes the snapshots folder at, which the comment's images link to (needed by ${blue('--pr-comment')})
 ${blue('--report-url')}    : where the comment's "Download the full report" link points, e.g. the CI run's artifacts
