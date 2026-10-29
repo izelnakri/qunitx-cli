@@ -11,6 +11,8 @@ import { tempDir } from '../helpers/temp-dir.ts';
 import { decodeGif } from '../helpers/gif-decode.ts';
 import { parsePdf } from '../helpers/pdf-parse.ts';
 import { parseWebM } from '../helpers/video-parse.ts';
+
+import { unzip } from '../helpers/unzip.ts';
 import { CHROME_HEIGHT } from '../../lib/record/tour/index.ts';
 import { DEFAULT_PANEL_HEIGHT } from '../../lib/record/panel.ts';
 import '../helpers/custom-asserts.ts';
@@ -354,6 +356,69 @@ module('Commands | record | decks', { concurrency: true }, (_hooks, moduleMetada
     assert.true(
       Math.abs(webm.durationMs - gifMs) <= 100,
       `as long as the GIF (${webm.durationMs}ms, ${gifMs}ms)`,
+    );
+  });
+
+  test('a recording of steps is a PowerPoint deck and a Word document: a slide, and a section, a step', async (assert, testMetadata) => {
+    await using dir = await tempDir('record-deck-office');
+    await writeDeck(dir.path);
+    const metadata = { ...moduleMetadata, ...testMetadata, cwd: dir.path };
+    const result = await shell(
+      `node ${CLI} record deck.md photo.png app.tour.ts -w 320 -h 200 -f deck.pptx,deck.docx --pdf-paper=Letter --output=${dir.path}`,
+      metadata,
+    );
+    const read = async (name: string) =>
+      new Map(
+        unzip(await fs.readFile(path.join(dir.path, name))).map((entry) => [
+          entry.name,
+          new TextDecoder().decode(entry.bytes),
+        ]),
+      );
+    const [pptx, docx] = await Promise.all([read('deck.pptx'), read('deck.docx')]);
+    const slides = [...pptx.keys()]
+      .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+      .sort();
+    const titles = slides.map(
+      (name) => /<p:ph type="title"\/>[^]*?<a:t>([^<]*)<\/a:t>/.exec(pptx.get(name)!)?.[1],
+    );
+    const document = docx.get('word/document.xml')!;
+
+    assert.includes(result.stdout, 'deck.pptx  320×296  5 slides');
+    assert.includes(result.stdout, 'deck.docx');
+    assert.includes(result.stdout, '5 steps');
+    assert.deepEqual(
+      titles,
+      ['One', 'Two', 'photo', 'Three', 'Four'],
+      'every step a slide, in order, titled',
+    );
+    assert.includes(
+      pptx.get('ppt/notesSlides/notesSlide2.xml')!,
+      '<a:t>n2</a:t>',
+      "a slide's notes, as speaker notes",
+    );
+    assert.includes(
+      pptx.get('ppt/slides/slide4.xml')!,
+      '<a:t>Hello</a:t>',
+      "the tour's caption, in the panel",
+    );
+    assert.equal(
+      [...pptx.keys()].filter((name) => name.startsWith('ppt/media/')).length,
+      5,
+      'a picture a slide',
+    );
+    assert.deepEqual(
+      [
+        ...document.matchAll(
+          /<w:pStyle w:val="Heading1"\/><w:keepNext\/><\/w:pPr><w:r><w:t xml:space="preserve">([^<]*)</g,
+        ),
+      ].map((match) => match[1]),
+      ['One', 'Two', 'photo', 'Three', 'Four'],
+      'a heading a step',
+    );
+    assert.includes(
+      document,
+      '<w:pgSz w:w="12240" w:h="15840"/>',
+      'on Letter, as --pdf-paper asks',
     );
   });
 
