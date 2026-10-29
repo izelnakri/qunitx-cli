@@ -1,0 +1,19 @@
+# Deletes a pull request's visual/pr-<number> image branch once the PR is merged or closed, so
+# the review images never outlive the review. Copy to .github/workflows/.
+name: Clean up visual snapshots
+
+on:
+  pull_request_target: # runs for fork PRs too; it never checks out or runs the PR's code
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: visual/pr-${{ github.event.pull_request.number }}
+        run: gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH" || echo "No $BRANCH to delete."

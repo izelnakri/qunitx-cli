@@ -56,10 +56,26 @@ export const DEFAULT_SIZE: { width: number; height: number } = { width: 1280, he
 export type Settings = Required<
   Omit<
     RecordOptions,
-    'cwd' | 'output' | 'formats' | 'pageDuration' | 'waitFor' | 'timeout' | 'update' | 'pdf'
+    | 'cwd'
+    | 'output'
+    | 'formats'
+    | 'pageDuration'
+    | 'waitFor'
+    | 'timeout'
+    | 'update'
+    | 'prComment'
+    | 'imagesUrl'
+    | 'reportUrl'
+    | 'pdf'
+    | 'report'
   >
 > &
-  Pick<RecordOptions, 'pageDuration' | 'waitFor'> & { timeout: number | null; accept: boolean };
+  Pick<RecordOptions, 'pageDuration' | 'waitFor'> & {
+    timeout: number | null;
+    accept: boolean;
+    /** The report formats asked for: none, `html`, `pdf`, or both. */
+    report: ('html' | 'pdf')[];
+  };
 
 // A rule a value is held to: its test, and what it expects, for the message when it fails.
 interface Rule {
@@ -79,6 +95,10 @@ const oneOf = (values: readonly unknown[], expected: string): Rule =>
   defineRule((value) => values.includes(value), expected);
 const TRUE_OR_FALSE = defineRule((value) => typeof value === 'boolean', 'true or false');
 const NON_EMPTY_PATH = defineRule((value) => isString(value) && value !== '', 'a path');
+const HTTP_URL = defineRule(
+  (value) => isString(value) && /^https?:\/\//.test(value),
+  'an http(s) URL',
+);
 // A length a PDF takes: CSS pixels as a number, or a number with px, in, cm, mm or pt.
 const isCSSLength = (value: unknown, positive = false): boolean => {
   const pixels = typeof value === 'number' || isString(value) ? CSS.toPixels(value) : NaN;
@@ -102,6 +122,16 @@ const RULES: Record<string, Rule> = {
   ),
   compare: TRUE_OR_FALSE,
   update: TRUE_OR_FALSE,
+  report: defineRule(
+    (value) =>
+      typeof value === 'boolean' ||
+      ([value].flat().length > 0 &&
+        [value].flat().every((format) => format === 'html' || format === 'pdf')),
+    "true, 'html', 'pdf' or ['html', 'pdf']",
+  ),
+  prComment: TRUE_OR_FALSE,
+  imagesUrl: HTTP_URL,
+  reportUrl: HTTP_URL,
   mask: defineRule(
     (value) => Array.isArray(value) && value.every(isString),
     'a list of CSS selectors',
@@ -197,6 +227,8 @@ export const InvalidRecordOption: Failure.FailureFactory<
  * ```
  */
 export function from(options: RecordOptions): Settings {
+  // `report: true` is the HTML one; a format or a list of them is as given.
+  const report = options.report === true ? ['html' as const] : [options.report || []].flat();
   return {
     width: options.width ?? DEFAULT_SIZE.width,
     height: options.height ?? DEFAULT_SIZE.height,
@@ -211,7 +243,8 @@ export function from(options: RecordOptions): Settings {
     timeout: options.timeout ?? null,
     port: options.port ?? 1234,
     console: fromConsoleOptionOrElse(options.console, processConsole),
-    compare: Boolean(options.compare || options.update),
+    compare: Boolean(options.compare || options.update || report.length || options.prComment),
+    report,
     accept: options.update ?? false,
     threshold: options.threshold ?? 0.1,
     maxDiff: options.maxDiff ?? 0,
@@ -244,6 +277,20 @@ export function invalidOptionReason(
 }
 
 /**
+ * Whether `option` is one `record` takes and holds to a rule: every option but `console`, which is
+ * a function to call, not a value to check.
+ *
+ * ```ts
+ * import { isOption } from './options.ts';
+ *
+ * [isOption('fullPage'), isOption('pdf'), isOption('colour')]; // [true, true, false]
+ * ```
+ */
+export function isOption(option: string): boolean {
+  return Object.hasOwn(RULES, option) || option === 'pdf';
+}
+
+/**
  * Throws the first option of `options` that {@link invalidOptionReason} turns down, as an
  * {@link InvalidRecordOption}; returns when they all will do. `timeout: null` is the API's way to
  * say "no timeout", and is fine.
@@ -266,6 +313,43 @@ export function validate(options: RecordOptions): void {
       .map(([option, value]) => [option, invalidOptionReason(option, value)] as const)
       .find(([, reason]) => reason !== null) ?? [];
   if (option && reason) throw InvalidRecordOption({ option, reason });
+  const comment = findPRCommentSettingsProblem(options);
+  if (comment) throw InvalidRecordOption(comment);
+}
+
+/**
+ * The problem with the pull-request comment's settings together, as the setting to blame and why,
+ * or null when there is none: `prComment` needs `imagesUrl`, since a comment's images are links,
+ * and `imagesUrl` or `reportUrl` without `prComment` would do nothing. Each is checked on its own by its rule. The
+ * flags are named with `flagPrefix`, which `qunitx run`'s `--snapshot-*` ones have.
+ *
+ * ```ts
+ * import { findPRCommentSettingsProblem } from './options.ts';
+ *
+ * findPRCommentSettingsProblem({ prComment: true, imagesUrl: 'https://example.com/shots/' }); // null
+ * findPRCommentSettingsProblem({ prComment: true })?.option; // 'prComment'
+ * findPRCommentSettingsProblem({ prComment: true }, 'snapshot-')?.reason.includes('--snapshot-images-url'); // true
+ * findPRCommentSettingsProblem({ reportUrl: 'https://example.com/run/1' })?.option; // 'reportUrl'
+ * ```
+ */
+export function findPRCommentSettingsProblem(
+  settings: Pick<RecordOptions, 'prComment' | 'imagesUrl' | 'reportUrl'>,
+  flagPrefix = '',
+): { option: string; reason: string } | null {
+  const unused = (['imagesUrl', 'reportUrl'] as const).find(
+    (option) => settings[option] !== undefined && !settings.prComment,
+  );
+  return settings.prComment && !settings.imagesUrl
+    ? {
+        option: 'prComment',
+        reason: `needs imagesUrl (--${flagPrefix}images-url), where the snapshot images are published for it to link to`,
+      }
+    : unused
+      ? {
+          option: unused,
+          reason: `is only used by prComment (--${flagPrefix}pr-comment), which was not asked for`,
+        }
+      : null;
 }
 
 function invalidPdfReason(value: unknown, shown: string): string | null {

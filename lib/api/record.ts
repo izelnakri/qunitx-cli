@@ -1,7 +1,9 @@
+import process from 'node:process';
 import * as Record from '../record/index.ts';
 import * as Failure from '../result/failure.ts';
 import { Task } from '../task/index.ts';
-import type { RecordOptions, RecordResult } from '../record/index.ts';
+import type { RecordResult } from '../record/index.ts';
+import * as Config from '../record/config.ts';
 
 export type {
   RecordedFile,
@@ -28,11 +30,16 @@ export type RecordFailure = Failure.Of<
   | typeof Record.UnknownFormat
   | typeof Record.CompareNeedsPng
   | typeof Record.InvalidRecordOption
+  | typeof Config.InvalidRecordConfig
 >;
 
 /**
  * Screenshots and GIFs of pages, URLs and scripts, taken in a real browser — the API twin of
  * `qunitx record`. Resolves with the files it wrote.
+ *
+ * Like the command, it starts from `package.json#qunitx.record`: options given win setting by
+ * setting, inputs given replace the configured ones, and with none given the configured inputs
+ * are recorded.
  *
  * **A script that exits non-zero is a result, not a rejection** — `ok: false`, its files written
  * all the same, the way a red suite is a result for `test()`.
@@ -52,8 +59,19 @@ export type RecordFailure = Failure.Of<
  * ```
  */
 export function record(
-  inputs: string | string[],
-  options: RecordOptions = {},
+  inputs: string | string[] = [],
+  options: Record.RecordOptions = {},
 ): Task<RecordResult, RecordFailure> {
-  return Task(() => Record.record(Array.isArray(inputs) ? inputs : [inputs], options));
+  return Task(async () => {
+    const config = await Config.read(options.cwd ?? process.cwd());
+    if (Failure.is(config)) throw config;
+    // One input, or a list of them.
+    const inputsGiven = [inputs].flat();
+    // As the command does: options given win, `pdf` field by field.
+    return await Record.record(inputsGiven.length ? inputsGiven : config.inputs, {
+      ...config.options,
+      ...options,
+      pdf: { ...config.options.pdf, ...options.pdf },
+    });
+  });
 }

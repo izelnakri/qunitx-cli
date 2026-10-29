@@ -4,11 +4,26 @@ import process from 'node:process';
 import { processConsole, type Console } from '../../console.ts';
 import { Failure } from '../../result/index.ts';
 import { Task } from '../../task/index.ts';
-import { blue, magenta } from '../../utils/color.ts';
-import { DEFAULT_SIZE } from '../../record/options.ts';
+import { blue, cyan, green, magenta, red, yellow } from '../../utils/color.ts';
+import {
+  DEFAULT_SIZE,
+  InvalidRecordOption,
+  findPRCommentSettingsProblem,
+} from '../../record/options.ts';
 import type { RecordOptions, RecordResult } from '../../record/index.ts';
+import * as Config from '../../record/config.ts';
 import { InvalidRecordArgument, parse, type RecordRequest } from './parse.ts';
 import pkg from '../../../package.json' with { type: 'json' };
+
+// A snapshot's line in the color of what happened to it, so a run is read at a glance: green for
+// a new baseline, red for a change waiting for review, yellow for a change accepted, and the
+// terminal's own color for one that held.
+const STATUS_COLORS: Record<string, (text: string) => string> = {
+  new: green,
+  changed: red,
+  updated: yellow,
+  unchanged: (text) => text,
+};
 
 // `qunitx record`. Its flags are its own rather than the test runner's: `-w`, `-h`, `-f` and `-o`
 // mean width, height, format and output here, which is what anyone recording a page reaches for.
@@ -32,14 +47,33 @@ export async function run(
   out: Console = processConsole,
   cwd: string = process.cwd(),
 ): Promise<number> {
-  const recordRequest = parse(argv);
-  if (Failure.is(recordRequest)) {
-    out.error(`${recordRequest.message}\n\n${usage()}`);
+  const parsedRecordRequest = parse(argv);
+  if (Failure.is(parsedRecordRequest)) {
+    out.error(`${parsedRecordRequest.message}\n\n${usage()}`);
     return 2;
-  } else if (recordRequest.help) {
+  } else if (parsedRecordRequest.help) {
     out.log(usage());
     return 0;
-  } else if (recordRequest.sources.length === 0) {
+  }
+  const config = await Config.read(cwd);
+  if (Failure.is(config)) {
+    out.error(`${config.message}\n`);
+    return 2;
+  }
+  // The command line wins, setting by setting, and `pdf` field by field; inputs typed replace the
+  // configured inputs outright.
+  const recordRequest: RecordRequest = {
+    help: false,
+    sources: parsedRecordRequest.sources.length ? parsedRecordRequest.sources : config.inputs,
+    options: {
+      ...config.options,
+      ...parsedRecordRequest.options,
+      pdf: { ...config.options.pdf, ...parsedRecordRequest.options.pdf },
+    },
+    pdfHeaderFile: parsedRecordRequest.pdfHeaderFile,
+    pdfFooterFile: parsedRecordRequest.pdfFooterFile,
+  };
+  if (recordRequest.sources.length === 0) {
     out.error(`qunitx record needs at least one URL, page or script.\n\n${usage()}`);
     return 2;
   }
@@ -49,13 +83,19 @@ export async function run(
     out.error(`${options.message}\n\n${usage()}`);
     return 2;
   }
+  // Settings that only work together, checked once the command line and package.json are merged.
+  const comment = findPRCommentSettingsProblem(options);
+  if (comment) {
+    out.error(`${InvalidRecordOption(comment).message}\n\n${usage()}`);
+    return 2;
+  }
   // Loaded once the arguments are known good: it is the browser stack, which help and a typo
   // do not need.
   const { record } = await import('../../record/index.ts');
   return await Task(() => record(recordRequest.sources, { ...options, cwd }))
     .map(async (result) => {
       // Shown relative to where the command ran, compared with symlinks resolved: on macOS the temp
-      // directory is `/var/…` to whoever typed it and `/private/var/…` to `process.cwd()`. Only
+      // directory is `/var/…` to whoever parsedRecordRequest it and `/private/var/…` to `process.cwd()`. Only
       // directories are resolved, each once: a run's files are in one or two of them.
       const realDirectories = new Map<string, Promise<string>>();
       const realDirectory = (directory: string) => {
@@ -70,7 +110,17 @@ export async function run(
           path.join(await realDirectory(path.dirname(file)), path.basename(file)),
         );
       for (const file of result.files) {
-        out.log(`${await describeOutputFileDetails(file, displayPath)}\n`);
+        const line = await describeOutputFileDetails(file, displayPath);
+        out.log(`${file.comparison ? STATUS_COLORS[file.comparison.status](line) : line}\n`);
+      }
+      // The files to open next, in cyan.
+      if (result.reportPath)
+        out.log(`${cyan(`${await displayPath(result.reportPath)}  report`)}\n`);
+      if (result.reportPdfPath) {
+        out.log(`${cyan(`${await displayPath(result.reportPdfPath)}  report`)}\n`);
+      }
+      if (result.commentPath) {
+        out.log(`${cyan(`${await displayPath(result.commentPath)}  comment`)}\n`);
       }
       for (const script of result.failedScripts) {
         out.error(`# ${await displayPath(script.path)} exited ${script.exitCode}\n`);
@@ -189,7 +239,17 @@ ${blue('--compare')}       : a png already at an output path is the baseline: co
 ${blue('--update')}        : accept the changes: new screenshots replace their baselines
 ${blue('--threshold')}     : how far a pixel's color may move before it counts, 0-1 (default 0.1)
 ${blue('--max-diff')}      : how many pixels may change before a snapshot counts as changed (default 0)
-${blue('--mask')}          : CSS selector to paint over in every still, e.g. a clock or an avatar; repeatable
+${blue('--report')}        : also write ${blue('report.html')} beside the snapshots: changed ones first, each diff with a wipe from baseline to new;
+                  ${blue('--report=pdf')} writes ${blue('report.pdf')} (with the ${blue('--pdf-*')} settings), ${blue('--report=html,pdf')} both
+${blue('--pr-comment')}    : also write ${blue('comment.md')}, a pull-request comment with each changed snapshot's diff (alias ${blue('--comment')})
+${blue('--images-url')}    : the URL the workflow publishes the snapshots folder at, which the comment's images link to (needed by ${blue('--pr-comment')})
+${blue('--report-url')}    : where the comment's "Download the full report" link points, e.g. the CI run's artifacts
+${blue('--mask')}          : CSS selector of something that changes on its own, e.g. a clock or an avatar: covered on both sides, so comparing ignores it; repeatable
+
+${magenta().bold('package.json:')} ${blue('"qunitx": { "record": { "inputs": [...], "width": 1280, "mask": ["#clock"], ... } }')}
+sets the same options by their long names (${blue('fullPage')}, ${blue('maxDiff')}, ${blue('prComment')}…), paths relative to package.json,
+and ${blue('"pdf": { "paper": "A4", "margin": "12mm", … }')} the PDF settings (HTML in ${blue('header')}/${blue('footer')}).
+${blue('qunitx record')} with no inputs records the configured ones; flags given on the command line win.
 
 ${magenta().bold('PDF:')} ${blue('-f pdf')} prints each page where it ended: vector (text and links kept) in chromium, its screenshots on pages elsewhere.
 ${blue('--pdf-paper')}     : ${blue('fit')} (default: one page the page's size), ${blue('A4')}, ${blue('Letter')}, ${blue('Legal')}, ${blue('A3')}…, or ${blue('20cmx30cm')}

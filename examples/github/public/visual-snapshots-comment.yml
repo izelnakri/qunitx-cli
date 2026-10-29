@@ -1,0 +1,83 @@
+# Visual snapshots for a PUBLIC repository, part 2 of 2: publishes the changed snapshots' images
+# and comments on the PR, with the write access part 1 deliberately does not have.
+#
+# The artifact was made by a PR's code, so it is treated as data: the PR number must name an open
+# PR whose head is the commit part 1 ran on, only .png files are published, and the comment must
+# start with qunitx's marker.
+name: Visual snapshots comment
+
+on:
+  workflow_run:
+    workflows: [Visual snapshots]
+    types: [completed]
+
+permissions:
+  actions: read # downloads part 1's artifact
+  contents: write # pushes visual/pr-<number>
+  pull-requests: write # posts, then edits, the one comment
+
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: visual-report
+          path: snapshots
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Check the hand-over
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const number = fs.readFileSync('snapshots/pr-number.txt', 'utf8').trim();
+            if (!/^\d+$/.test(number)) throw new Error(`not a PR number: ${number}`);
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(number) });
+            if (pr.head.sha !== context.payload.workflow_run.head_sha) {
+              throw new Error(`#${number} is not the PR this run tested`);
+            }
+            core.setOutput('number', number);
+            core.setOutput('exit', fs.readFileSync('snapshots/exit-code.txt', 'utf8').trim());
+
+      - name: Publish the changed snapshots' images
+        if: steps.pr.outputs.exit == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGES_BRANCH: visual/pr-${{ steps.pr.outputs.number }}
+          RUN_FOLDER: run-${{ github.event.workflow_run.id }}
+        run: |
+          publish="$RUNNER_TEMP/publish/$RUN_FOLDER"
+          mkdir -p "$publish"
+          # The comment shows each change's .diff.png: before and after side by side. Regular files
+          # only: a symlink in a fork's artifact must not publish what it points at.
+          (cd snapshots && find . -type f -name '*.diff.png' -exec cp --parents {} "$publish/" \;)
+          find "$publish" -type f ! -name '*.png' -delete
+          # Exit 1 without a changed snapshot is an error, already reported: nothing to publish.
+          [ -n "$(find "$publish" -type f)" ] || exit 0
+          cd "$RUNNER_TEMP/publish"
+          git init -q
+          git checkout -q -b "$IMAGES_BRANCH"
+          git add -A
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m "Visual snapshots for #${{ steps.pr.outputs.number }}"
+          git push -qf "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" "HEAD:refs/heads/$IMAGES_BRANCH"
+
+      - name: Comment
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        with:
+          script: |
+            const body = require('fs').readFileSync('snapshots/comment.md', 'utf8');
+            const marker = '<!-- qunitx-visual-diff -->';
+            if (!body.startsWith(marker) || body.length > 60000) throw new Error('not a qunitx comment');
+            const { owner, repo } = context.repo;
+            const issue_number = Number(process.env.PR_NUMBER);
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const earlier = comments.find((comment) => comment.user.type === 'Bot' && comment.body.startsWith(marker));
+            if (earlier) await github.rest.issues.updateComment({ owner, repo, comment_id: earlier.id, body });
+            else await github.rest.issues.createComment({ owner, repo, issue_number, body });

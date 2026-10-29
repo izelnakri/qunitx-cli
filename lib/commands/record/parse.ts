@@ -9,18 +9,10 @@ import type { PdfOptions } from '../../record/pdf.ts';
 // own arguments are tokenized first, in lib/args, because two readers share those tokens; this
 // has one.)
 
-/**
- * What a `qunitx record` flag sets — an option (`width`), a PDF setting (`pdf.paper`), part of the
- * request (`help`), or nothing — and how: `read` turns the text typed after it into the value;
- * a switch, which takes no text, sets `value`.
- *
- * ```ts
- * import type { Flag } from './parse.ts';
- *
- * const width: Flag = { sets: 'width', read: Number };
- * ```
- */
-export interface Flag {
+// What a `qunitx record` flag sets — an option (`width`), a PDF setting (`pdf.paper`), part of the
+// request (`help`), or nothing — and how: `read` turns the text typed after it into the value; a
+// switch, which takes no text, sets `value`.
+interface Flag {
   /** Where the value goes: an option, `pdf.<setting>`, the request's own fields, or nowhere. */
   sets:
     | keyof RecordOptions
@@ -35,6 +27,11 @@ export interface Flag {
   value?: unknown;
   /** Repeatable: each use adds to a list (`read` returns the items one use adds). */
   list?: true;
+  /**
+   * A switch that may also take a value, only after `=` (`--report=pdf`), never as the next
+   * argument: `--report a.html` is the switch and an input.
+   */
+  optionalValue?: true;
 }
 
 // How a flag's text is read: a number, a number or a selector, a length, or a paper size.
@@ -46,6 +43,11 @@ const asMsOrCSSSelector = (text: string): number | string =>
 // A bare number is CSS pixels, as it is from the JS API.
 const asCSSLength = (text: string): number | string =>
   /^\d+(\.\d+)?$/.test(text) ? Number(text) : text;
+// One report format, or a comma-separated list of them.
+const asReport = (text: string): string | string[] => {
+  const formats = text.split(',').map((format) => format.trim());
+  return formats.length === 1 ? formats[0] : formats;
+};
 // A paper is a name, `fit`, or WIDTHxHEIGHT (`20cmx30cm`, `800x600`).
 const asPaperDimensions = (text: string): unknown => {
   const sized = /^([\d.]+[a-z]*)x([\d.]+[a-z]*)$/i.exec(text);
@@ -53,16 +55,8 @@ const asPaperDimensions = (text: string): unknown => {
 };
 const asFormatEntries = (text: string): string[] => Outputs.splitEntries([text]);
 
-/**
- * Every flag `qunitx record` takes, by each of its spellings.
- *
- * ```ts
- * import { FLAGS } from './parse.ts';
- *
- * FLAGS['-w'].sets; // 'width'
- * ```
- */
-export const FLAGS: Record<string, Flag> = {
+// Every flag `qunitx record` takes, by each of its spellings.
+const FLAGS: Record<string, Flag> = {
   '--help': { sets: 'help', value: true },
   // Read straight off argv by the perf logger, as for every command.
   '--trace-perf': { sets: null, value: true },
@@ -81,6 +75,11 @@ export const FLAGS: Record<string, Flag> = {
   '--threshold': { sets: 'threshold', read: asNumber },
   '--max-diff': { sets: 'maxDiff', read: asNumber },
   '--mask': { sets: 'mask', read: (text) => [text], list: true },
+  '--report': { sets: 'report', read: asReport, value: true, optionalValue: true },
+  '--pr-comment': { sets: 'prComment', value: true },
+  '--comment': { sets: 'prComment', value: true },
+  '--images-url': { sets: 'imagesUrl', read: String },
+  '--report-url': { sets: 'reportUrl', read: String },
   '--wait-for': { sets: 'waitFor', read: asMsOrCSSSelector },
   '--page-duration': { sets: 'pageDuration', read: asNumber },
   '--last-frame-duration': { sets: 'lastFrameDuration', read: asNumber },
@@ -192,7 +191,8 @@ export function parse(
 }
 
 // The flag at `argv[index]`, the text it takes (glued on with `=`, or the next argument for a flag
-// that reads one), and how many arguments that was.
+// that reads one, but never for one with an `optionalValue`: `--report` alone is a switch), and
+// how many arguments that was.
 function parseFlag(
   argv: readonly string[],
   index: number,
@@ -207,7 +207,7 @@ function parseFlag(
       index + 1,
       1,
     );
-  } else if (!FLAGS[argument]?.read || index + 1 === argv.length) {
+  } else if (!FLAGS[argument]?.read || FLAGS[argument].optionalValue || index + 1 === argv.length) {
     return { flag: argument, length: 1 };
   }
   return parseFlagsListValue(argument, argv[index + 1], argv, index + 2, 2);
@@ -244,11 +244,11 @@ function applyFlagToRecordRequest(
       argument: quoted,
       reason: 'unknown flag (see qunitx record --help)',
     });
-  } else if (known.read && text === undefined) {
+  } else if (known.read && !known.optionalValue && text === undefined) {
     return InvalidRecordArgument({ argument: quoted, reason: 'needs a value' });
   }
   const { sets, read, value, list } = known;
-  const parsed = read ? read(text as string) : value;
+  const parsed = read && text !== undefined ? read(text) : value;
   if (sets === null) return recordRequest;
   else if (sets === 'help' || sets === 'pdfHeaderFile' || sets === 'pdfFooterFile') {
     return { ...recordRequest, [sets]: parsed };
@@ -260,7 +260,8 @@ function applyFlagToRecordRequest(
     : list
       ? [...((current as unknown[]) ?? []), ...(parsed as unknown[])]
       : parsed;
-  const problem = invalidOptionReason(option, next, setting || list ? undefined : `"${text}"`);
+  const shown = setting || list || text === undefined ? undefined : `"${text}"`;
+  const problem = invalidOptionReason(option, next, shown);
   return problem
     ? InvalidRecordArgument({ argument: quoted, reason: problem })
     : { ...recordRequest, options: { ...recordRequest.options, [option]: next } };

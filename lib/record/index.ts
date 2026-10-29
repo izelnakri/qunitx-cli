@@ -8,6 +8,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { availableParallelism } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
 import * as Browser from '../setup/browser.ts';
 import * as Capture from './capture.ts';
 import * as Diff from './diff.ts';
@@ -21,6 +22,7 @@ import type { Settings } from './options.ts';
 import * as PDF from './pdf.ts';
 import type { PdfOptions } from './pdf.ts';
 import * as PNG from './png.ts';
+import * as Report from './report.ts';
 import { Stream } from '../stream/index.ts';
 import { HTTPServer, MIME_TYPES } from '../web/index.ts';
 import * as Failure from '../result/failure.ts';
@@ -29,7 +31,7 @@ import { closeCompletely } from '../utils/close-with-grace.ts';
 import { withLoopAlive } from '../utils/with-loop-alive.ts';
 import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import type { ConsoleOption } from '../console.ts';
-import type { Page } from 'playwright-core';
+import type { BrowserContext, Page } from 'playwright-core';
 
 export { FRAME_FUNCTION } from './capture.ts';
 export { UnrecordableInput } from './inputs.ts';
@@ -124,8 +126,30 @@ export interface RecordOptions {
   threshold?: number;
   /** How many pixels may change before a snapshot counts as changed. Default 0. */
   maxDiff?: number;
-  /** CSS selectors of regions to paint over in every still: clocks, avatars, ads. */
+  /**
+   * CSS selectors of what changes on its own (clocks, avatars, ads): covered in every still, so
+   * comparing ignores it.
+   */
   mask?: string[];
+  /**
+   * Write the report into the output directory: every snapshot, the changed ones first with
+   * their diff and a wipe from baseline to new. `true` or `'html'` is `report.html`; `'pdf'` is
+   * `report.pdf`, printed with the `pdf` settings; `['html', 'pdf']` both. Implies `compare`.
+   */
+  report?: boolean | 'html' | 'pdf' | ('html' | 'pdf')[];
+  /**
+   * Write `comment.md` into the output directory: a pull-request comment with each changed
+   * snapshot's diff (before and after side by side), or "No visual changes" when there are none.
+   * Needs `imagesUrl`. Implies `compare`.
+   */
+  prComment?: boolean;
+  /**
+   * The public URL the output directory is published at, by the workflow that posts the comment:
+   * the comment's images are linked under it, since a comment cannot carry images of its own.
+   */
+  imagesUrl?: string;
+  /** Where the comment's "Download the full report" link points, such as the CI run's artifacts. */
+  reportUrl?: string;
   /** How `pdf` outputs are made: paper, margins, header and footer, vector or raster. */
   pdf?: PdfOptions;
 }
@@ -149,7 +173,7 @@ export interface SnapshotComparison {
   changedPixels: number;
   /** Pixels in the screenshot. */
   totalPixels: number;
-  /** The red-on-grey picture of what changed, when it did and was not accepted. */
+  /** Before and after side by side, what changed boxed on both, when it changed and was not accepted. */
   diffPath: string | null;
   /** The new screenshot, written beside the baseline when it changed and was not accepted. */
   currentPath: string | null;
@@ -184,7 +208,7 @@ export interface RecordedFile {
  * What a recording produced.
  *
  * ```ts
- * const result: RecordResult = { ok: true, files: [], failedScripts: [], changedSnapshots: [] };
+ * const result: RecordResult = { ok: true, files: [], failedScripts: [], changedSnapshots: [], reportPath: null, reportPdfPath: null, commentPath: null };
  * result.ok; // true
  * ```
  */
@@ -197,6 +221,12 @@ export interface RecordResult {
   failedScripts: { path: string; exitCode: number }[];
   /** Baselines that changed and were not accepted, under `compare`. */
   changedSnapshots: string[];
+  /** Where `report` wrote the review page, or null without it. */
+  reportPath: string | null;
+  /** `report.pdf`, when the report was asked for as a PDF. */
+  reportPdfPath: string | null;
+  /** Where `prComment` wrote the pull-request comment, or null without it. */
+  commentPath: string | null;
 }
 
 // The local server of each directory an HTML input is in, started the first time it is needed.
@@ -228,32 +258,40 @@ export function record(sources: string[], options: RecordOptions = {}): Promise<
 }
 
 async function recordAll(sources: string[], options: RecordOptions): Promise<RecordResult> {
+  if (!sources.length) {
+    throw Inputs.UnrecordableInput({
+      input: 'nothing',
+      reason: 'give it a URL, page or script, or list them in package.json#qunitx.record',
+    });
+  }
   // The JS API's options are held to the command line's rules: an fps of 0 is a mistake to name,
   // not a division to attempt.
   Options.validate(options);
   const cwd = options.cwd ?? process.cwd();
   const settings = Options.from(options);
   const inputs = await Inputs.resolve(sources, cwd);
+  const directory = path.resolve(cwd, options.output ?? '.');
   const outputs = Outputs.plan(
     options.formats ?? (settings.compare ? ['png'] : []),
     inputs,
-    path.resolve(cwd, options.output ?? '.'),
+    directory,
   );
   if (Outputs.UnknownFormat.is(outputs)) throw outputs;
   const notPng = outputs.find((output) => output.format !== 'png');
   if (settings.compare && notPng) throw CompareNeedsPng({ path: notPng.absolutePath });
   // Whether this engine can print as asked is known now, before anything is recorded.
-  const pdfMode = outputs.some((output) => output.format === 'pdf')
-    ? PDF.getMode(options.pdf ?? {}, settings.browser)
-    : 'raster';
+  const pdfMode =
+    outputs.some((output) => output.format === 'pdf') || settings.report.includes('pdf')
+      ? PDF.getMode(options.pdf ?? {}, settings.browser)
+      : 'raster';
   if (PDF.UnprintablePdf.is(pdfMode)) {
     throw Options.InvalidRecordOption({ option: 'pdf', reason: pdfMode.data.reason });
   }
   // Made before the browser launches: a directory that cannot be written to fails now, not after
   // every input has been recorded.
   await Promise.all(
-    [...new Set(outputs.map((output) => path.dirname(output.absolutePath)))].map((directory) =>
-      mkdir(directory, { recursive: true }),
+    [...new Set([directory, ...outputs.map((output) => path.dirname(output.absolutePath))])].map(
+      (made) => mkdir(made, { recursive: true }),
     ),
   );
 
@@ -315,30 +353,58 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
     const videos = videoOutputs.length
       ? await Video.record(videoOutputs, clips, settings.fps, context)
       : [];
-    const filesByOutput = new Map([
+    const written = new Map([
       ...recordings.flatMap((recording) => recording.files),
       ...videoOutputs.map((output, index) => [output, videos[index]] as const),
     ]);
     // In the order they were asked for: stills, PDFs and videos are written, and a GIF is written
     // now, of every clip.
     const files = await Promise.all(
-      outputs.map((output) =>
-        output.format === 'gif'
-          ? GIF.record(output, clips, settings.fps)
-          : filesByOutput.get(output)!,
-      ),
+      outputs.map((output) => written.get(output) ?? GIF.record(output, clips, settings.fps)),
     );
     const failedScripts = recordings.flatMap(({ input, exitCode }) =>
       input.kind === 'script' && exitCode !== 0 ? [{ path: input.path, exitCode }] : [],
     );
-    const changedSnapshots = files.flatMap((file) =>
-      file.comparison?.status === 'changed' ? [file.path] : [],
+    // Under `compare` every file is a snapshot, compared.
+    const snapshots = files.filter(
+      (file): file is RecordedFile & { comparison: SnapshotComparison } => !!file.comparison,
     );
+    const changedSnapshots = snapshots
+      .filter((snapshot) => snapshot.comparison.status === 'changed')
+      .map((snapshot) => snapshot.path);
+    // Where each review goes, when asked for. A PDF report is printed from the HTML one, which is
+    // removed after unless it was asked for too.
+    const commentPath = options.prComment ? path.join(directory, 'comment.md') : null;
+    const htmlPath = settings.report.length ? path.join(directory, 'report.html') : null;
+    const reportPdfPath = settings.report.includes('pdf')
+      ? path.join(directory, 'report.pdf')
+      : null;
+    await Promise.all([
+      commentPath &&
+        writeFile(
+          commentPath,
+          Report.renderComment(snapshots, {
+            directory,
+            imagesUrl: options.imagesUrl!,
+            reportUrl: options.reportUrl,
+          }),
+        ),
+      htmlPath &&
+        writeFile(htmlPath, Report.render(snapshots, { directory, generatedAt: new Date() })),
+    ]);
+    if (htmlPath && reportPdfPath) {
+      const printed = await printReport(context, htmlPath, options.pdf ?? {}, pdfMode, settings);
+      await writeFile(reportPdfPath, printed.bytes);
+      if (!settings.report.includes('html')) await rm(htmlPath, { force: true });
+    }
     return {
       ok: failedScripts.length === 0 && changedSnapshots.length === 0,
       files,
       failedScripts,
       changedSnapshots,
+      reportPath: settings.report.includes('html') ? htmlPath : null,
+      reportPdfPath,
+      commentPath,
     };
   } finally {
     await closeCompletely({
@@ -365,6 +431,27 @@ async function enlargeChromeWindow(page: Page, settings: Settings): Promise<void
     });
   } finally {
     await session.detach().catch(() => {});
+  }
+}
+
+// The report as a PDF: loaded from where it was written, so the pictures it links relatively
+// load, for as long as --timeout allows, as a recorded page's do.
+async function printReport(
+  context: BrowserContext,
+  htmlPath: string,
+  pdf: PdfOptions,
+  mode: 'vector' | 'raster',
+  settings: Settings,
+): Promise<PDF.PdfDocument> {
+  const page = await context.newPage();
+  try {
+    await page.goto(pathToFileURL(htmlPath).href, { timeout: settings.timeout ?? 0 });
+    return await PDF.fromPage(page, pdf, mode, {
+      title: await page.title(),
+      quality: settings.quality,
+    });
+  } finally {
+    await page.close().catch(() => {});
   }
 }
 
@@ -395,61 +482,41 @@ async function writeSnapshot(
   };
 }
 
-// Compares a new screenshot with the baseline at `file`, and writes whatever that calls for.
+// Compares a new screenshot with the baseline at `file`, and writes whatever that calls for: a new
+// or accepted screenshot becomes the baseline, and a change not accepted gets its diff and the new
+// screenshot beside it, which anything else clears away.
 async function snapshot(
   file: string,
   current: Uint8Array,
   settings: Settings,
 ): Promise<SnapshotComparison> {
   const stem = file.slice(0, -path.extname(file).length);
-  const diffPath = `${stem}.diff.png`;
-  const currentPath = `${stem}.new.png`;
-  const clearReview = () =>
-    Promise.all([diffPath, currentPath].map((stale) => rm(stale, { force: true })));
+  const [diffPath, currentPath] = [`${stem}.diff.png`, `${stem}.new.png`];
   const image = PNG.decode(current);
-  const totalPixels = image.width * image.height;
   const baseline = await readFile(file).catch(() => null);
-  if (!baseline) {
-    await writeFile(file, current);
-    await clearReview();
-    return { status: 'new', changedPixels: 0, totalPixels, diffPath: null, currentPath: null };
-  }
-
-  const result = Diff.compare(PNG.decode(baseline), image, {
-    threshold: settings.threshold,
-  });
-  if (result.sameSize && result.changedPixels <= settings.maxDiff) {
-    await clearReview();
-    return {
-      status: 'unchanged',
-      changedPixels: result.changedPixels,
-      totalPixels,
-      diffPath: null,
-      currentPath: null,
-    };
-  } else if (settings.accept) {
-    await writeFile(file, current);
-    await clearReview();
-    return {
-      status: 'updated',
-      changedPixels: result.changedPixels,
-      totalPixels,
-      diffPath: null,
-      currentPath: null,
-    };
-  }
+  const before = baseline && PNG.decode(baseline);
+  const result = before && Diff.compare(before, image, { threshold: settings.threshold });
+  const status = !result
+    ? 'new'
+    : result.sameSize && result.changedPixels <= settings.maxDiff
+      ? 'unchanged'
+      : settings.accept
+        ? 'updated'
+        : 'changed';
+  const changed = status === 'changed';
   await Promise.all([
-    writeFile(currentPath, current),
-    result.diff
-      ? PNG.encode(result.diff).then((png) => writeFile(diffPath, png))
+    status === 'new' || status === 'updated' ? writeFile(file, current) : null,
+    changed ? writeFile(currentPath, current) : rm(currentPath, { force: true }),
+    changed
+      ? PNG.encode(Diff.draw(before!, image, result!)).then((png) => writeFile(diffPath, png))
       : rm(diffPath, { force: true }),
   ]);
   return {
-    status: 'changed',
-    changedPixels: result.changedPixels,
-    totalPixels,
-    diffPath: result.diff ? diffPath : null,
-    currentPath,
+    status,
+    changedPixels: result?.changedPixels ?? 0,
+    totalPixels: result?.totalPixels ?? image.width * image.height,
+    diffPath: changed ? diffPath : null,
+    currentPath: changed ? currentPath : null,
   };
 }
 

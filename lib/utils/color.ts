@@ -38,6 +38,7 @@ export function createColors(enabled: boolean) {
   const green = makeColor(32, 39);
   const yellow = makeColor(33, 39);
   const blue = makeColor(34, 39);
+  const cyan = makeColor(36, 39);
 
   /** `magenta(text)` — colored text. `magenta()` — chainable: `.bold(text)`. */
   const magenta = ((text?: string): string | MagentaReturn => {
@@ -64,7 +65,7 @@ export function createColors(enabled: boolean) {
   const onBlue = makeBadge(44);
   const onRed = makeBadge(41);
 
-  return { red, green, yellow, blue, magenta, onGreen, onYellow, onBlue, onRed };
+  return { red, green, yellow, blue, cyan, magenta, onGreen, onYellow, onBlue, onRed };
 }
 
 /**
@@ -126,6 +127,16 @@ export function yellow(text: string): string {
  */
 export function blue(text: string): string {
   return colors.blue(text);
+}
+/**
+ * ANSI cyan text: easier to read than blue on a dark terminal.
+ *
+ * ```ts
+ * cyan('report.html'); // '\x1b[36mreport.html\x1b[39m' when color is enabled; 'report.html' otherwise
+ * ```
+ */
+export function cyan(text: string): string {
+  return colors.cyan(text);
 }
 /**
  * The terminal's own text on a green ground, padded — a 2xx.

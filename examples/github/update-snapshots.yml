@@ -1,0 +1,39 @@
+# Accepts the visual changes on a branch: re-shoots every page with --update and commits the new
+# baselines to that branch. Run it from the Actions tab ("Run workflow", pick the PR's branch).
+# Works for private and public repositories alike. Copy to .github/workflows/.
+#
+# A commit pushed with the default GITHUB_TOKEN does not start new workflow runs, so the PR's
+# "Visual snapshots" check would stay red. Give this workflow a token that does: a GitHub App
+# token or a fine-grained personal access token with "Contents: read and write", saved as the
+# SNAPSHOTS_TOKEN secret. Without it, push any commit to the branch afterwards to re-run the check.
+name: Update visual snapshots
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest # the same image the comparisons run on, so baselines match
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.SNAPSHOTS_TOKEN || github.token }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: |
+          npx --yes serve@14 dist --listen 4200 &
+          npx --yes wait-on@8 http://localhost:4200
+      - run: npx qunitx record --update
+      - run: |
+          git add snapshots
+          if git diff --cached --quiet; then echo "The baselines are already current."; exit 0; fi
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m "Update visual snapshots"
+          git push -q

@@ -692,11 +692,23 @@ qunitx record http://localhost:4200/ http://localhost:4200/pricing -o snapshots 
 qunitx record http://localhost:4200/ http://localhost:4200/pricing -o snapshots --update
 ```
 
-- Exit 1 when a snapshot changed; `<name>.diff.png` (changes in red) and `<name>.new.png` sit beside
-  the untouched baseline. `--update` accepts them.
+- Exit 1 when a snapshot changed; `<name>.diff.png` (before and after side by side, each change
+  boxed) and `<name>.new.png` sit beside the untouched baseline. `--update` accepts them.
 - Pixels are compared the way people see them, with anti-aliased edges told apart from real
   changes. `--threshold` (default 0.1) and `--max-diff` (pixels, default 0) set the tolerance.
-- Animations are frozen and the caret hidden; `--mask '#clock'` paints over dynamic regions.
+- Animations are frozen and the caret hidden; `--mask '#clock'` covers what changes on its own, so
+  comparing ignores it.
+- `--report` also writes `report.html` beside the snapshots: changed ones first, each with its
+  diff and a slider to wipe from baseline to new. Open it from disk or upload it as a
+  CI artifact. `--report=pdf` writes `report.pdf` instead, printed with the `--pdf-*` settings,
+  and `--report=html,pdf` writes both.
+- `--pr-comment` also writes `comment.md`, a pull-request comment with each changed snapshot's
+  diff, or "No visual changes in this PR, good job". `--images-url` is where CI publishes the
+  snapshots folder, for its images to link to; `--report-url` adds a link to the full report.
+- Settings can live in `package.json#qunitx.record` (`inputs`, `width`, `mask`, `output`,
+  `report: ["html", "pdf"]`, `pdf: { "paper": "A4", "margin": "12mm" }`…), so `qunitx record`
+  alone runs them; flags given on the command line win, a `pdf` setting at a time.
+- [`examples/github/`](examples/github/) has ready-to-copy workflows for private and public repos.
 
 ## Benchmarks
 
