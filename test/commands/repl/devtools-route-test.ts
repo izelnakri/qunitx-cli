@@ -14,9 +14,12 @@ async function session(port: number): Promise<{ said: string; status: number; lo
       { text: '.exit\n', delayMs: 3000 },
     ],
   });
-  // Knocked on until it answers something final: the port binds before the browser is up, and
+  // Knocked on until it answers something final, for as long as the session runs: it may wait
+  // for a browser slot before it even starts, the port binds before the browser is up, and
   // "still starting" is the route working rather than the answer being asked for.
-  for (let waited = 0; waited < 25_000; waited += 250) {
+  const ended = { now: false };
+  running.finally(() => (ended.now = true)).catch(() => {});
+  for (; !ended.now;) {
     const response = await fetch(`http://localhost:${port}/repl`, { redirect: 'manual' }).catch(
       () => null,
     );
