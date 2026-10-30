@@ -11,6 +11,7 @@ import process from 'node:process';
 import * as Browser from '../setup/browser.ts';
 import * as Capture from './capture.ts';
 import * as GIF from './gif.ts';
+import * as Video from './video.ts';
 import * as Inputs from './inputs.ts';
 import * as JPEG from './jpeg.ts';
 import * as Outputs from './outputs.ts';
@@ -50,7 +51,7 @@ export interface RecordOptions {
   /** Directory the files are written to; relative to `cwd`. Defaults to `cwd`. */
   output?: string;
   /**
-   * What to write: formats (`png`, `jpg`, `gif`) and file names ending in one (`home.gif`). By
+   * What to write: formats (`png`, `jpg`, `gif`, `webm`, `mp4`) and file names ending in one (`home.gif`). By
    * default a single page is a `.jpg`, and two or more inputs, or a script, add one `.gif`.
    */
   formats?: string[];
@@ -192,7 +193,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
     ),
   );
 
-  const needsFrames = outputs.some((output) => output.format === 'gif');
+  const needsFrames = outputs.some((output) => Outputs.isAnimated(output.format));
   const browser = await Browser.launch({ browser: settings.browser });
   const servers: Servers = new Map();
   const context = await browser.newContext({
@@ -242,10 +243,20 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
       },
       { maxConcurrency },
     ).collect();
-    const filesByOutput = new Map(recordings.flatMap((recording) => recording.files));
     const clips = recordings.map((recording) => recording.clip);
-    // In the order they were asked for: stills and PDFs were written while their page was open, and
-    // a GIF is written now, of every clip.
+    // Every video output from one encode: each frame goes to the browser and is decoded once.
+    const videoOutputs = outputs.filter(
+      (output) => output.format === 'webm' || output.format === 'mp4',
+    );
+    const videos = videoOutputs.length
+      ? await Video.record(videoOutputs, clips, settings.fps, context)
+      : [];
+    const filesByOutput = new Map([
+      ...recordings.flatMap((recording) => recording.files),
+      ...videoOutputs.map((output, index) => [output, videos[index]] as const),
+    ]);
+    // In the order they were asked for: stills, PDFs and videos are written, and a GIF is written
+    // now, of every clip.
     const files = await Promise.all(
       outputs.map((output) =>
         output.format === 'gif'

@@ -5,6 +5,7 @@ import process from 'node:process';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
 import { tempDir } from '../helpers/temp-dir.ts';
 import { decodeGif } from '../helpers/gif-decode.ts';
+import { parseMp4, parseWebM } from '../helpers/video-parse.ts';
 import { parsePdf } from '../helpers/pdf-parse.ts';
 import * as PNG from '../../lib/record/png.ts';
 import * as QUnitX from '../../lib/api/index.ts';
@@ -176,6 +177,41 @@ module('API | record | stills and options', { concurrency: true }, () => {
     assert.true(
       decoded.frames.every((frame) => frame.delayMs >= 200),
       'no faster than 5 fps',
+    );
+  });
+
+  test('webm and mp4 are formats like any other: written, sized, and as long as the recording', async (assert) => {
+    await using dir = await tempDir('api-record-video');
+    await fs.writeFile(path.join(dir.path, 'a.html'), PAGE);
+    await fs.writeFile(
+      path.join(dir.path, 'b.html'),
+      PAGE.replace('rgb(0,128,255)', 'rgb(255,128,0)'),
+    );
+    const result = await recorded(['a.html', 'b.html'], {
+      cwd: dir.path,
+      formats: ['clip.webm', 'clip.mp4'],
+      width: 320,
+      height: 180,
+      lastFrameDuration: 500,
+    });
+    const [webm, mp4] = result.files;
+    const parsedWebm = parseWebM(await fs.readFile(webm.path));
+    const parsedMp4 = parseMp4(await fs.readFile(mp4.path));
+
+    assert.deepEqual(
+      result.files.map((file) => [path.basename(file.path), file.format, file.width, file.height]),
+      [
+        ['clip.webm', 'webm', 320, 180],
+        ['clip.mp4', 'mp4', 320, 180],
+      ],
+    );
+    assert.deepEqual(
+      [parsedWebm.width, parsedWebm.height, parsedMp4.width, parsedMp4.height],
+      [320, 180, 320, 180],
+    );
+    assert.true(
+      Math.abs(parsedWebm.durationMs - 1000) < 150 && Math.abs(parsedMp4.durationMs - 1000) < 150,
+      `two pages held 500 ms each (${parsedWebm.durationMs}, ${parsedMp4.durationMs} ms)`,
     );
   });
 

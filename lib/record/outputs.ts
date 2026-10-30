@@ -11,18 +11,34 @@ const FORMATS: Record<string, Format> = {
   jpg: 'jpeg',
   jpeg: 'jpeg',
   gif: 'gif',
+  webm: 'webm',
+  mp4: 'mp4',
   pdf: 'pdf',
 };
 
 /**
  * What a recording can be written as. `png` and `jpeg` are stills, one per input, and `pdf` a
- * document of each; `gif` is an animation of every input in turn.
+ * document of each; `gif`, `webm` and `mp4` are animations of every input in turn.
  *
  * ```ts
  * const format: Format = 'gif';
  * ```
  */
-export type Format = 'png' | 'jpeg' | 'gif' | 'pdf';
+export type Format = 'png' | 'jpeg' | 'gif' | 'webm' | 'mp4' | 'pdf';
+
+/**
+ * Whether a format is an animation of every input rather than a still of one.
+ *
+ * ```ts
+ * import { isAnimated } from './outputs.ts';
+ *
+ * isAnimated('mp4'); // true
+ * isAnimated('png'); // false
+ * ```
+ */
+export function isAnimated(format: Format): boolean {
+  return format === 'gif' || format === 'webm' || format === 'mp4';
+}
 
 /**
  * A `-f` entry that is neither a format nor a file name ending in one.
@@ -37,7 +53,7 @@ export const UnknownFormat: Failure.FailureFactory<'UnknownFormat', { entry: str
   Failure.define(
     'UnknownFormat',
     (data: { entry: string }) =>
-      `unknown format: ${data.entry}. Expected png, jpg, gif or pdf, or a file name ending in one (-f home.png).`,
+      `unknown format: ${data.entry}. Expected png, jpg, gif, webm, mp4 or pdf, or a file name ending in one (-f home.png).`,
   );
 
 /**
@@ -112,8 +128,11 @@ export function plan(
 
   return requests.flatMap(({ format, fileName }): Output[] => {
     const extension = fileName ? path.extname(fileName) : `.${extensionOf(format)}`;
-    if (format === 'gif') {
-      const absolutePath = path.resolve(outputDir, makeGIFFileName(fileName, extension, inputs));
+    if (isAnimated(format)) {
+      const absolutePath = path.resolve(
+        outputDir,
+        makeAnimationFileName(fileName, extension, inputs),
+      );
       return [{ format, absolutePath, inputIndex: null }];
     }
     return makeStaticMediaFileNames(fileName, extension, inputs).map((name, inputIndex) => ({
@@ -166,8 +185,13 @@ function parseEntry(
     : UnknownFormat({ entry });
 }
 
-// One GIF of every input: `fileName` as given, or named after its input when there is only one.
-function makeGIFFileName(fileName: string | null, extension: string, inputs: Input[]): string {
+// One animation of every input: `fileName` as given, or named after its input when there is only
+// one.
+function makeAnimationFileName(
+  fileName: string | null,
+  extension: string,
+  inputs: Input[],
+): string {
   return fileName ?? (inputs.length === 1 ? inputs[0].name : 'recording') + extension;
 }
 

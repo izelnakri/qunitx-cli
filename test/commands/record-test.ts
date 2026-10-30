@@ -6,6 +6,9 @@ import * as PNG from '../../lib/record/png.ts';
 import { execute as shell, shellFails } from '../helpers/shell.ts';
 import { tempDir } from '../helpers/temp-dir.ts';
 import { decodeGif } from '../helpers/gif-decode.ts';
+import { parseMp4, parseWebM } from '../helpers/video-parse.ts';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { parsePdf } from '../helpers/pdf-parse.ts';
 import '../helpers/custom-asserts.ts';
 
@@ -238,6 +241,93 @@ module('Commands | record | scripts', { concurrency: true }, (_hooks, moduleMeta
     assert.exitCode(result, 1);
     assert.includes(result.stderr, '# broken.js exited 3');
     assert.true(near(pixel(await png(path.join(dir.path, 'broken.png')), 5, 5), [0, 0, 0]));
+  });
+});
+
+// ffmpeg is the strictest reader there is, and the one that caught Firefox's malformed avcC. It is
+// on GitHub's Ubuntu runners and often on a developer's machine; where it is not, the structure
+// checks above it still run.
+const execFileAsync = promisify(execFile);
+const FFMPEG = await execFileAsync('ffmpeg', ['-version']).then(
+  () => true,
+  () => false,
+);
+
+module('Commands | record | video', { concurrency: true }, (_hooks, moduleMetadata) => {
+  test('a script recorded as .webm (VP9) and .mp4 (H.264), each frame with its own time', async (assert, testMetadata) => {
+    await using dir = await tempDir('record-video');
+    await fs.writeFile(
+      path.join(dir.path, 'steps.ts'),
+      `document.documentElement.style.cssText = 'height:100%';
+      for (const color of ['rgb(255,0,0)', 'rgb(0,255,0)', 'rgb(0,0,255)']) {
+        document.documentElement.style.background = color;
+        await (globalThis as { qunitxRecordFrame?: () => Promise<void> }).qunitxRecordFrame?.();
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }`,
+    );
+
+    const result = await shell(
+      `node ${CLI} record steps.ts -f steps.webm,steps.mp4 -w 321 -h 181 --last-frame-duration=700 --output=${dir.path}`,
+      { ...moduleMetadata, ...testMetadata, cwd: dir.path },
+    );
+    const webmBytes = await fs.readFile(path.join(dir.path, 'steps.webm'));
+    const mp4Bytes = await fs.readFile(path.join(dir.path, 'steps.mp4'));
+    const webm = parseWebM(webmBytes);
+    const mp4 = parseMp4(mp4Bytes);
+
+    assert.includes(result.stdout, 'steps.webm  321×181');
+    assert.includes(result.stdout, 'steps.mp4  320×180', 'H.264 crops an odd side to even');
+    assert.equal(webm.codecId, 'V_VP9');
+    assert.true(webm.blocks.length >= 3, `a frame per color at least (${webm.blocks.length})`);
+    assert.true(webm.blocks[0].key, 'opens on a keyframe');
+    assert.true(
+      webm.blocks.at(-1)!.durationMs! >= 700,
+      'the last frame stays for --last-frame-duration',
+    );
+    assert.true(
+      webm.durationMs >= 1500,
+      `about the script's length plus the hold (${webm.durationMs}ms)`,
+    );
+    assert.deepEqual(mp4.topLevel, ['ftyp', 'moov', 'mdat']);
+    assert.equal(mp4.sampleDurations.length, mp4.sampleSizes.length);
+    assert.true(mp4.sampleDurations.at(-1)! >= 700);
+    assert.equal(mp4.syncSamples[0], 1);
+    if (FFMPEG) {
+      // `-v error` prints what it could not decode to stderr, and exits 0 when it carried on.
+      await Promise.all(
+        ['steps.webm', 'steps.mp4'].map(async (file) => {
+          const { stderr } = await execFileAsync('ffmpeg', [
+            '-v',
+            'error',
+            '-i',
+            path.join(dir.path, file),
+            '-f',
+            'null',
+            '-',
+          ]);
+          assert.equal(stderr, '', `${file} decodes without a single error`);
+        }),
+      );
+    }
+  });
+
+  test('pages make a slideshow video, a still that sat unchanged staying one frame', async (assert, testMetadata) => {
+    await using dir = await tempDir('record-video-pages');
+    await fs.writeFile(path.join(dir.path, 'a.html'), page('rgb(255,0,0)'));
+    await fs.writeFile(path.join(dir.path, 'b.html'), page('rgb(0,0,255)'));
+
+    await shell(
+      `node ${CLI} record a.html b.html -f mp4 -w 64 -h 48 --last-frame-duration=900 --output=${dir.path}`,
+      {
+        ...moduleMetadata,
+        ...testMetadata,
+        cwd: dir.path,
+      },
+    );
+    const mp4 = parseMp4(await fs.readFile(path.join(dir.path, 'recording.mp4')));
+
+    assert.deepEqual(mp4.sampleDurations, [900, 900]);
+    assert.equal(mp4.durationMs, 1800);
   });
 });
 

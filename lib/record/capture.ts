@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import * as Browser from '../setup/browser.ts';
@@ -184,6 +185,53 @@ export function limitFrameRate(shots: Shot[], fps: number): Shot[] {
     }
     return kept;
   }, []);
+}
+
+/**
+ * A picture of an animation and how long it stays on screen: what a GIF or a video is made of.
+ *
+ * ```ts
+ * const frame: Frame = { png: new Uint8Array(0), durationMs: 1000 };
+ * frame.durationMs; // 1000 — on screen for a second
+ * ```
+ */
+export interface Frame {
+  /** The screen, losslessly. */
+  png: Uint8Array;
+  /** How long it is shown, in ms. */
+  durationMs: number;
+}
+
+/**
+ * Every clip's shots in order, kept to `fps`, each with how long it stays on screen: until the
+ * next shot was taken, and the last for its clip's `lastFrameDurationMs`. A screen that did not
+ * change between two shots is one frame shown for both: the same engine encodes the same pixels
+ * as the same PNG bytes, so nothing decodes or encodes it twice.
+ *
+ * ```ts
+ * import * as Capture from './capture.ts';
+ *
+ * const [red, blue] = [Uint8Array.of(1), Uint8Array.of(2)];
+ * const shots = [{ png: red, atMs: 0 }, { png: red, atMs: 200 }, { png: blue, atMs: 400 }];
+ * Capture.timeline([{ shots, lastFrameDurationMs: 1000 }], 10).map((frame) => frame.durationMs); // [400, 1000]
+ * ```
+ */
+export function timeline(clips: Clip[], fps: number): Frame[] {
+  return clips
+    .flatMap(({ shots, lastFrameDurationMs }) => {
+      const kept = limitFrameRate(shots, fps);
+      return kept.map((shot, index) => ({
+        png: shot.png,
+        durationMs: kept[index + 1] ? kept[index + 1].atMs - shot.atMs : lastFrameDurationMs,
+      }));
+    })
+    .reduce<Frame[]>((frames, frame) => {
+      const previous = frames.at(-1);
+      if (previous && Buffer.compare(previous.png, frame.png) === 0) {
+        previous.durationMs += frame.durationMs;
+      } else frames.push(frame);
+      return frames;
+    }, []);
 }
 
 /**
