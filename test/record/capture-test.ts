@@ -1,4 +1,5 @@
 import { module, test } from 'qunitx';
+import { setTimeout as delay } from 'node:timers/promises';
 import * as Capture from '../../lib/record/capture.ts';
 import type { Page } from 'playwright-core';
 
@@ -28,13 +29,19 @@ module('Record | capture', { concurrency: true }, () => {
   });
 
   test('stop() returns once the shot in flight ends, not after the rest of its interval', async (assert) => {
-    const capture = Capture.start(slowPage(5), { fps: 1 });
+    // One frame an hour: once the first shot is in, stop() can only return by cutting that wait
+    // short, so the test holds on any machine, however loaded. The guard keeps a regression a
+    // failure, not an hour-long hang.
+    const capture = Capture.start(slowPage(5), { fps: 1 / 3600 });
     await new Promise((resolve) => setTimeout(resolve, 50));
-    const stoppedAt = performance.now();
-    await capture.stop();
+    const guard = new AbortController();
+    const outcome = await Promise.race([
+      capture.stop().then((shots) => shots.length),
+      delay(60_000, 'still waiting', { signal: guard.signal }),
+    ]);
+    guard.abort();
 
-    // At 1 fps the timed loop is 950ms into a wait: stopping cuts it short.
-    assert.true(performance.now() - stoppedAt < 500, `${performance.now() - stoppedAt}ms`);
+    assert.strictEqual(outcome, 2, 'the first shot and the one stop() takes');
   });
 });
 
