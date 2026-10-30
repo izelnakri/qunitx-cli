@@ -204,12 +204,8 @@ export function record(
   fps: number,
 ): Promise<RecordedFile> {
   const encoder = new Encoder();
-  for (const { shots, lastFrameDurationMs } of clips) {
-    const kept = Capture.limitFrameRate(shots, fps);
-    kept.forEach((shot, index) => {
-      const next = kept[index + 1];
-      encoder.add(PNG.decode(shot.png), next ? next.atMs - shot.atMs : lastFrameDurationMs);
-    });
+  for (const { png, durationMs } of Capture.timeline(clips, fps)) {
+    encoder.add(PNG.decode(png), durationMs);
   }
   const bytes = encoder.finish();
   // Every frame has the dimensions of the last, which a PNG states in its header.

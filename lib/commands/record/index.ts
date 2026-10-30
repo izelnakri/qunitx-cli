@@ -142,6 +142,7 @@ ${blue('$ qunitx record https://example.com -f home.png -w 1200')} # home.png, 1
 ${blue('$ qunitx record a.html b.html')}                           # a.jpg, b.jpg and recording.gif of both
 ${blue('$ qunitx record http://a.com -f a.gif, a.jpg')}            # exactly those two files
 ${blue('$ qunitx record demo.ts -w 1200 -h 1200')}                  # demo.gif of the script running, demo.jpg of where it ended
+${blue('$ qunitx record demo.ts -f demo.mp4,demo.webm')}            # the same as video: H.264 and VP9, encoded by the browser
 ${blue('$ qunitx record dist/ -f png --full-page -o shots')}        # shots/dist.png, the whole page
 ${blue('$ qunitx record invoice.html -f pdf --pdf-paper=A4 --pdf-media=print')} # invoice.pdf, printed on A4
 
@@ -150,7 +151,7 @@ or a ${blue('.js/.ts/.jsx/.tsx')} script, run as ${blue('qunitx run')} would and
 A script can ${blue('await globalThis.qunitxRecordFrame?.()')} after drawing a step to make sure that step is in the recording.
 
 ${magenta().bold('Flags:')}
-${blue('-f, --format')}    : formats (${blue('png')}, ${blue('jpg')}, ${blue('gif')}, ${blue('pdf')}) or file names ending in one, comma-separated. Default: ${blue('jpg')} for one page, ${blue('jpg,gif')} for several inputs or a script
+${blue('-f, --format')}    : formats (${blue('png')}, ${blue('jpg')}, ${blue('gif')}, ${blue('webm')}, ${blue('mp4')}, ${blue('pdf')}) or file names ending in one, comma-separated. Default: ${blue('jpg')} for one page, ${blue('jpg,gif')} for several inputs or a script
 ${blue('-w, --width')}     : viewport width in CSS pixels (default ${DEFAULT_SIZE.width})
 ${blue('-h, --height')}    : viewport height in CSS pixels (default ${DEFAULT_SIZE.height})
 ${blue('-o, --output')}    : directory the files are written to (default: the current one)

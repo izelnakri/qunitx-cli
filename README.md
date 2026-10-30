@@ -635,6 +635,7 @@ qunitx record https://example.com -f home.png -w 1200 -h 800
 qunitx record home.html pricing.html               # home.jpg, pricing.jpg and recording.gif of both
 qunitx record http://a.com -f a.gif, a.jpg         # exactly those files
 qunitx record demo.ts -w 1200 -h 1200              # demo.gif of the script running, demo.jpg of its end
+qunitx record demo.ts -f demo.mp4                  # the same, as H.264 video
 qunitx record dist/ -f png --full-page --scale=2 -o shots
 ```
 
@@ -642,8 +643,9 @@ qunitx record dist/ -f png --full-page --scale=2 -o shots
   `index.html` (served from a local origin, so relative assets and module scripts load), or a
   `.js`/`.ts`/`.jsx`/`.tsx` script, run as [`qunitx run`](#running-a-script) runs it and recorded
   while it runs.
-- **`-f`:** formats (`png`, `jpg`, `gif`) or file names ending in one, comma-separated. By default
-  one page is a `.jpg`; several inputs, or a script, add one `.gif` of them all.
+- **`-f`:** formats (`png`, `jpg`, `gif`, `webm`, `mp4`) or file names ending in one,
+  comma-separated. By default one page is a `.jpg`; several inputs, or a script, add one `.gif`
+  of them all.
 - **`-w` / `-h`:** viewport in CSS pixels (default 1280×720); `--scale` multiplies it.
 - `--wait-for=<ms|selector>`, `--page-duration`, `--last-frame-duration`, `--fps`, `--quality`, `--browser` — see
   `qunitx record --help`.
@@ -674,8 +676,9 @@ qunitx record invoice.html -f pdf --pdf-paper=A4 --pdf-margin=12mm --pdf-media=p
 Header, footer, page ranges and the outline need vector mode; asking for them elsewhere fails and
 names them.
 
-GIFs are encoded in-process (per-frame palettes, only the changed region of each frame), with no
-ffmpeg or other dependency. From JS: `import { record } from 'qunitx-cli'`.
+GIFs are encoded in-process (per-frame palettes, only the changed region of each frame). `.webm`
+(VP9) and `.mp4` (H.264) are encoded by the browser's own WebCodecs encoder and written by
+qunitx, so none of the three needs ffmpeg or any other dependency. From JS: `import { record } from 'qunitx-cli'`.
 
 ## Benchmarks
 
