@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.41.0] - 2026-10-30
+[`v0.40.0...v0.41.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.40.0...v0.41.0)
+
+### Bug Fixes
+- AsyncStream shuts down what is still running when its consumer stops — 2026-10-29 by [@izelnakri](https://github.com/izelnakri) ([`471c450`](https://github.com/izelnakri/qunitx-cli/commit/471c450ae31b525be870147fc117517b1e5ce3fc))
+- Record and bench reap the pre-launched Chrome when they end before opening it — 2026-10-29 by [@izelnakri](https://github.com/izelnakri) ([`15396d0`](https://github.com/izelnakri/qunitx-cli/commit/15396d08b1d1c1e47efe18131d397a5f604e0237))
+
+### Features
+- Run a script in a page the caller owns, and leave it open — 2026-10-29 by [@izelnakri](https://github.com/izelnakri) ([`d768beb`](https://github.com/izelnakri/qunitx-cli/commit/d768beb67544fd19127401c350ffc7d3a9c3d389))
+- Qunitx record — screenshots, GIFs and PDFs of pages, URLs and scripts — 2026-10-29 by [@izelnakri](https://github.com/izelnakri) ([`805962d`](https://github.com/izelnakri/qunitx-cli/commit/805962d442d247825a6535dc661c9278ae72d684))
+- .webm and .mp4 output, encoded by the browser — 2026-10-30 by [@izelnakri](https://github.com/izelnakri) ([`7863c65`](https://github.com/izelnakri/qunitx-cli/commit/7863c6587f227df1deb97d7044d72d710d686164))
+- --compare for Percy-style visual snapshots — 2026-10-29 by [@izelnakri](https://github.com/izelnakri) ([`6480716`](https://github.com/izelnakri/qunitx-cli/commit/6480716948d3c79c9653752a4745efeae87b59ad))
+
+### Refactoring
+- The pieces qunitx record shares with the rest of the CLI — 2026-10-29 by [@izelnakri](https://github.com/izelnakri) ([`1c7dbfa`](https://github.com/izelnakri/qunitx-cli/commit/1c7dbfa8050f42ece8848aec77d03cfa142065d7))
+
 ## [0.40.0] - 2026-10-28
 [`v0.39.0...v0.40.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.39.0...v0.40.0)
 
