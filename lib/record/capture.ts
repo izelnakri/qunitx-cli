@@ -338,9 +338,17 @@ async function recordScript(
 }
 
 // Waits until the page is what its stills should show: its web fonts loaded (they often finish
-// after `load`, and a still taken before shows the fallback face), then `waitFor`.
+// after `load`, and a still taken before shows the fallback face) and painted, then `waitFor`.
+// Chrome has no frame to copy before its first paint, or while a resized window repaints, and
+// fails the screenshot ("Unable to capture screenshot"); two animation frames, or a second at
+// most, are a frame painted.
 async function settled(page: Page, settings: Settings): Promise<void> {
   await page.evaluate('document.fonts && document.fonts.ready.then(() => {})').catch(() => {});
+  await page
+    .evaluate(
+      'new Promise((painted) => { requestAnimationFrame(() => requestAnimationFrame(painted)); setTimeout(painted, 1000); })',
+    )
+    .catch(() => {});
   if (typeof settings.waitFor === 'number') await page.waitForTimeout(settings.waitFor);
   else if (settings.waitFor) {
     await page.waitForSelector(settings.waitFor, {
