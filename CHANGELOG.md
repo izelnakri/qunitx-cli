@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.42.0] - 2026-10-31
+[`v0.41.0...v0.42.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.41.0...v0.42.0)
+
+### Bug Fixes
+- Stills wait for a painted frame, which Chrome needs to take one — 2026-10-30 by [@izelnakri](https://github.com/izelnakri) ([`3d73804`](https://github.com/izelnakri/qunitx-cli/commit/3d738048e0bc853f5043fed92272060ede3c7081))
+
+### Features
+- --report, comment.md for PRs, package.json settings and GitHub workflows — 2026-10-29 by [@izelnakri](https://github.com/izelnakri) ([`577c5cd`](https://github.com/izelnakri/qunitx-cli/commit/577c5cdba2566efeb9bcae52ea00bada8d971380))
+
 ## [0.41.0] - 2026-10-30
 [`v0.40.0...v0.41.0`](https://github.com/izelnakri/qunitx-cli/compare/v0.40.0...v0.41.0)
 
