@@ -26,7 +26,7 @@ import type { PdfOptions } from './pdf.ts';
 import * as PNG from './png.ts';
 import * as Report from './report.ts';
 
-import { progress } from './progress.ts';
+import { enterPhase } from './progress.ts';
 import { Stream } from '../stream/index.ts';
 import { HTTPServer, MIME_TYPES } from '../web/index.ts';
 import * as Failure from '../result/failure.ts';
@@ -281,6 +281,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
   // The JS API's options are held to the command line's rules: an fps of 0 is a mistake to name,
   // not a division to attempt.
   Options.validate(options);
+  enterPhase('reading the inputs');
   const cwd = options.cwd ?? process.cwd();
   const settings = Options.from(options);
   const inputs = await Inputs.resolve(sources, cwd);
@@ -310,7 +311,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
   );
 
   const needsFrames = outputs.some((output) => Outputs.isAnimated(output.format));
-  progress.phase = `launching ${settings.browser}`;
+  enterPhase(`launching ${settings.browser}`);
   const browser = await Browser.launch({ browser: settings.browser });
   const servers: Servers = new Map();
   const context = await browser.newContext({
@@ -329,7 +330,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
     const recordings = await Stream.asyncStream(
       inputs.entries(),
       async ([index, input]) => {
-        progress.phase = `recording ${input.name}`;
+        enterPhase(`recording ${input.name}`);
         const page = await context.newPage();
         try {
           if (settings.browser === 'chromium') await enlargeChromeWindow(page, settings);
@@ -381,7 +382,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
               ] as const,
           );
           // A tour's frames are drawn after its stills are taken; see recordTour.
-          progress.phase = `drawing ${input.name}`;
+          if (recorded.draw) enterPhase(`drawing ${input.name}`);
           const clip = recorded.draw ? clipOf(await recorded.draw()) : recorded.clip;
           return { input, clip, exitCode: recorded.exitCode, files };
         } finally {
@@ -395,6 +396,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
     const videoOutputs = outputs.filter(
       (output) => output.format === 'webm' || output.format === 'mp4',
     );
+    if (videoOutputs.length) enterPhase('encoding video');
     const videos = videoOutputs.length
       ? await Video.record(videoOutputs, clips, settings.fps, context)
       : [];
@@ -452,7 +454,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
       commentPath,
     };
   } finally {
-    progress.phase = 'closing the browser';
+    enterPhase('closing the browser');
     await closeCompletely({
       servers: Promise.all(
         [...servers.values()].map(async (pending) => (await pending).server.close()),

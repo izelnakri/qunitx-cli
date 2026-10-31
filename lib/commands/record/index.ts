@@ -13,6 +13,7 @@ import {
 import type { RecordOptions, RecordResult } from '../../record/index.ts';
 import * as Config from '../../record/config.ts';
 import { InvalidRecordArgument, parse, type RecordRequest } from './parse.ts';
+import * as StatusLine from './status-line.ts';
 import pkg from '../../../package.json' with { type: 'json' };
 
 // A snapshot's line in the color of what happened to it, so a run is read at a glance: green for
@@ -92,7 +93,13 @@ export async function run(
   // Loaded once the arguments are known good: it is the browser stack, which help and a typo
   // do not need.
   const { record } = await import('../../record/index.ts');
-  return await Task(() => record(recordRequest.sources, { ...options, cwd }))
+  // A recording can take a minute: a terminal is shown what it is doing meanwhile, on stderr, and
+  // the line is gone before the files are listed.
+  const hideStatusLine =
+    out === processConsole && process.stderr.isTTY ? StatusLine.show(process.stderr) : () => {};
+  return await Task(() =>
+    record(recordRequest.sources, { ...options, cwd }).finally(hideStatusLine),
+  )
     .map(async (result) => {
       // Shown relative to where the command ran, compared with symlinks resolved: on macOS the temp
       // directory is `/var/…` to whoever parsedRecordRequest it and `/private/var/…` to `process.cwd()`. Only

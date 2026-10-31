@@ -1,4 +1,5 @@
 import { DEFAULT_FPS } from '../options.ts';
+import { progress } from '../progress.ts';
 import type { Browser, Page } from 'playwright-core';
 import type { Beat } from './timeline.ts';
 
@@ -296,6 +297,8 @@ export async function compose(
     const frames: { png: Uint8Array; durationMs: number }[] = [];
     const step = 1000 / (options.fps ?? DEFAULT_FPS);
     let atMs = 0;
+    // How far along the drawing is, for the phase the caller entered.
+    progress.total = beats.length;
     for (const beat of beats) {
       await page.evaluate(`globalThis.__show(${JSON.stringify(beat)}, ${atMs})`);
       // A held beat is one frame, unless a CSS animation is still moving: then one per tick
@@ -314,6 +317,7 @@ export async function compose(
         shownMs += step;
       }
       atMs += beat.durationMs;
+      progress.done += 1;
     }
     return frames;
   } finally {
