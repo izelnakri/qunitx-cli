@@ -83,6 +83,8 @@ export { search, type SearchMatch, type SearchResult, type UnlistableCounts } fr
 export { repl, type ReplFailure } from './repl.ts';
 export {
   record,
+  type PdfField,
+  type PdfOptions,
   type RecordedFile,
   type RecordFailure,
   type RecordOptions,

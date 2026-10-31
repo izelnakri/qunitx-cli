@@ -184,7 +184,7 @@ export interface RecordedFile {
  * What a recording produced.
  *
  * ```ts
- * const result: RecordResult = { ok: true, files: [], failedScripts: [], changedSnapshots: [] };
+ * const result: RecordResult = { ok: true, files: [], failedScripts: [], changedSnapshots: [], notices: [] };
  * result.ok; // true
  * ```
  */
@@ -197,7 +197,13 @@ export interface RecordResult {
   failedScripts: { path: string; exitCode: number }[];
   /** Baselines that changed and were not accepted, under `compare`. */
   changedSnapshots: string[];
+
+  /** What a file was written without, and why: a form field left printed, not fillable. */
+  notices: Notice[];
 }
+
+// What a file was written without, and why.
+type Notice = { path: string; message: string };
 
 // The local server of each directory an HTML input is in, started the first time it is needed.
 type Servers = Map<string, Promise<{ server: HTTPServer; origin: string }>>;
@@ -288,19 +294,27 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
             cwd,
           );
           // Stills and PDFs show the page where it ended, so they are made before it closes.
-          const files = await Array.fromAsync(
+          const made = await Array.fromAsync(
             outputs.filter((output) => output.inputIndex === index),
             async (output) =>
-              [
-                output,
-                output.format === 'pdf'
-                  ? await PDF.record(page, output, options.pdf ?? {}, pdfMode, input.name, settings)
-                  : output.format === 'png'
-                    ? await (settings.compare ? writeSnapshot : PNG.record)(page, output, settings)
-                    : await JPEG.record(page, output, settings),
-              ] as const,
+              output.format === 'pdf'
+                ? await recordPdf(page, output, options.pdf ?? {}, pdfMode, input.name, settings)
+                : {
+                    output,
+                    file:
+                      output.format === 'png'
+                        ? await (settings.compare ? writeSnapshot : PNG.record)(
+                            page,
+                            output,
+                            settings,
+                          )
+                        : await JPEG.record(page, output, settings),
+                    notices: [],
+                  },
           );
-          return { input, clip, exitCode, files };
+          const files = made.map(({ output, file }) => [output, file] as const);
+          const notices = made.flatMap(({ notices }) => notices);
+          return { input, clip, exitCode, files, notices };
         } finally {
           await page.close().catch(() => {});
         }
@@ -339,6 +353,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
       files,
       failedScripts,
       changedSnapshots,
+      notices: recordings.flatMap((recording) => recording.notices),
     };
   } finally {
     await closeCompletely({
@@ -366,6 +381,19 @@ async function enlargeChromeWindow(page: Page, settings: Settings): Promise<void
   } finally {
     await session.detach().catch(() => {});
   }
+}
+
+// A PDF of the page, with its notices put to the file they are about.
+async function recordPdf(
+  page: Page,
+  output: Outputs.Output,
+  pdf: PdfOptions,
+  mode: 'vector' | 'raster',
+  name: string,
+  settings: Settings,
+): Promise<{ output: Outputs.Output; file: RecordedFile; notices: Notice[] }> {
+  const { file, notices } = await PDF.record(page, output, pdf, mode, name, settings);
+  return { output, file, notices: notices.map((message) => ({ path: file.path, message })) };
 }
 
 // How many pages are recorded at once: one per core, less one for Node and the browser itself,

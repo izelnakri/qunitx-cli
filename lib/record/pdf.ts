@@ -7,6 +7,12 @@ import * as Outputs from './outputs.ts';
 import type { RecordedFile } from './index.ts';
 import type { Settings } from './options.ts';
 import type { Page } from 'playwright-core';
+import { hideFields, layoutAt, pageBreaks, readLayout, type PageLayout } from './pdf-layout.ts';
+import { nameFields, placeFields, type PaperGeometry, type PdfField } from './pdf-fields.ts';
+import { fillPdf, slicePdf } from './pdf-forms.ts';
+import { openPdf, readObject, resolve, type PdfValue } from './pdf-edit.ts';
+
+export type { PdfField } from './pdf-fields.ts';
 
 /**
  * The named paper sizes a PDF can be printed on, as Chromium knows them.
@@ -90,6 +96,45 @@ export interface PdfOptions {
   pageRanges?: string;
   /** A document outline from the page's headings, for a PDF reader's sidebar (vector only). */
   outline?: boolean;
+  /**
+   * The page's form controls become form fields a PDF reader fills in — text, check boxes, radio
+   * buttons, selects, submit and reset — holding what the page holds. Defaults to true.
+   */
+  forms?: boolean;
+  /**
+   * Called with every PDF made, and its fields, before it is written: returns the bytes to write.
+   * For what this does not do — signatures, other fonts, scripts — with a PDF library of your own.
+   */
+  postProcess?: (
+    pdf: Uint8Array,
+    made: { fields: PdfField[]; pageCount: number },
+  ) => Uint8Array | Promise<Uint8Array>;
+}
+
+/**
+ * A PDF made from a page: its bytes, how many pages it has and the size of each in CSS pixels, its
+ * form fields, and anything it could not do as asked, for whoever made it to know.
+ *
+ * ```ts
+ * import type { PdfDocument } from './pdf.ts';
+ *
+ * const pdf: PdfDocument = { bytes: new Uint8Array(0), pageCount: 2, width: 794, height: 1123, fields: [], notices: [] };
+ * pdf.pageCount; // 2 — an A4 page, twice
+ * ```
+ */
+export interface PdfDocument {
+  /** The PDF file, ready to write. */
+  bytes: Uint8Array;
+  /** Pages in it. */
+  pageCount: number;
+  /** Each page's width, in CSS pixels. */
+  width: number;
+  /** Each page's height, in CSS pixels. */
+  height: number;
+  /** Its fillable fields. */
+  fields: PdfField[];
+  /** What it could not do as asked, and why. */
+  notices: string[];
 }
 
 // Options only a browser's own printing can honor.
@@ -149,30 +194,9 @@ export function getMode(
 }
 
 /**
- * A PDF made from a page: its bytes, how many pages it has, and the size of each, in CSS pixels.
- *
- * ```ts
- * import type { PdfDocument } from './pdf.ts';
- *
- * const pdf: PdfDocument = { bytes: new Uint8Array(0), pageCount: 2, width: 794, height: 1123 };
- * pdf.pageCount; // 2 — an A4 page, twice
- * ```
- */
-export interface PdfDocument {
-  /** The PDF file, ready to write. */
-  bytes: Uint8Array;
-  /** Pages in it. */
-  pageCount: number;
-  /** Each page's width, in CSS pixels. */
-  width: number;
-  /** Each page's height, in CSS pixels. */
-  height: number;
-}
-
-/**
  * What `page` shows, as a PDF made the way `options` say: printed by the browser (vector), or its
- * screenshots laid onto pages (raster). `mode` is what {@link getMode} decided. Nothing is
- * written; the bytes are returned.
+ * screenshots laid onto pages (raster), its form controls made fields to fill in. `mode` is what
+ * {@link getMode} decided. Nothing is written; the bytes are returned.
  *
  * ```ts
  * import * as PDF from './pdf.ts';
@@ -193,23 +217,120 @@ export async function fromPage(
 ): Promise<PdfDocument> {
   await page.emulateMedia({ media: options.media ?? 'screen' });
   try {
-    const paper = await paperDimensionsOf(page, options);
-    const margin = marginsOf(options.margin);
-    return mode === 'vector'
-      ? await vectorPdf(page, options, paper, margin)
-      : await rasterPdf(page, options, paper, margin, document);
+    const printed =
+      mode === 'vector' ? await vectorPdf(page, options) : await rasterPdf(page, options, document);
+    if (!options.postProcess) return printed;
+    const bytes = await options.postProcess(printed.bytes, {
+      fields: printed.fields,
+      pageCount: printed.pageCount,
+    });
+    if (!(bytes instanceof Uint8Array)) {
+      throw new TypeError(`pdf.postProcess returned ${typeof bytes}, not the PDF's bytes`);
+    }
+    return { ...printed, bytes, pageCount: getTotalPageCount(bytes) };
   } finally {
     await page.emulateMedia({ media: null });
   }
 }
 
-// Printed by the browser: text and links kept.
-async function vectorPdf(
+// Printed by Chromium: as it paginates, or, when the page has a form to fill in, as one tall
+// sheet cut into pages where its layout says, so each field lands where its control printed.
+async function vectorPdf(page: Page, options: PdfOptions): Promise<PdfDocument> {
+  const margin = pixelMargins(options.margin);
+  const scale = options.scale ?? 1;
+  const notices: string[] = [];
+  const controls =
+    options.forms !== false &&
+    (await page.evaluate<boolean>(`Boolean(document.querySelector('input, textarea, select'))`));
+  if (controls && (options.header || options.footer)) {
+    notices.push(
+      "forms: printed, not fillable: a header or footer needs the browser's own page breaks",
+    );
+  }
+  if (!controls || options.header || options.footer) {
+    return { ...(await nativePdf(page, options)), fields: [], notices };
+  }
+  const named = (options.paper ?? 'fit') !== 'fit';
+  const paper = named ? await paperDimensionsOf(page, options) : null;
+  const inner = paper && {
+    width: CSS.toPixels(paper.width) - margin.left - margin.right,
+    height: CSS.toPixels(paper.height) - margin.top - margin.bottom,
+  };
+  const viewport =
+    page.viewportSize() ??
+    (await page.evaluate<{ width: number; height: number }>(
+      '({ width: innerWidth, height: innerHeight })',
+    ));
+  const { layout, restore } = await layoutAt(
+    page,
+    inner ? { width: inner.width / scale, height: inner.height / scale } : viewport,
+  );
+  // Hidden inputs, file pickers and the like have no field: Chromium paginates as it would.
+  if (!layout.fields.length) {
+    await restore();
+    return { ...(await nativePdf(page, options)), fields: [], notices };
+  }
+  try {
+    const width = inner ? inner.width / scale : layout.width;
+    const size = paper
+      ? { width: CSS.toPixels(paper.width), height: CSS.toPixels(paper.height) }
+      : {
+          width: Math.ceil(width * scale + margin.left + margin.right),
+          height: Math.ceil(layout.height * scale + margin.top + margin.bottom),
+        };
+    const pageHeight = inner ? inner.height / scale : layout.height;
+    const geometry: PaperGeometry = {
+      starts: inner ? pageBreaks(layout.height, pageHeight, layout.blocks, layout.forced) : [0],
+      pageHeight,
+      paper: size,
+      margin,
+      scale,
+    };
+    const keep = options.pageRanges
+      ? keptPages(options.pageRanges, geometry.starts.length)
+      : geometry.starts.map((_, index) => index);
+    const placed = formFields(layout, geometry, notices);
+    const fields = placed.flatMap((field) =>
+      keep.includes(field.page) ? [{ ...field, page: keep.indexOf(field.page) }] : [],
+    );
+    const unhide = await hideFields(page, hiddenIndices(placed));
+    let tall: Uint8Array;
+    try {
+      tall = await page.pdf({
+        width: `${width}px`,
+        // A pixel to spare, so rounding never spills the last line onto a sheet of its own.
+        height: `${Math.ceil(layout.height) + 1}px`,
+        margin: { top: '0px', right: '0px', bottom: '0px', left: '0px' },
+        printBackground: options.background ?? true,
+      });
+    } finally {
+      await unhide();
+    }
+    const bytes = slicePdf(
+      tall,
+      { ...geometry, height: layout.height, keep },
+      fields,
+      options.outline ? layout.headings : null,
+    );
+    return {
+      bytes,
+      pageCount: keep.length,
+      width: Math.round(size.width),
+      height: Math.round(size.height),
+      fields: fields.filter((field) => field.editable),
+      notices,
+    };
+  } finally {
+    await restore();
+  }
+}
+
+async function nativePdf(
   page: Page,
   options: PdfOptions,
-  { width, height }: { width: string | number; height: string | number },
-  margin: Record<'top' | 'right' | 'bottom' | 'left', string | number>,
-): Promise<PdfDocument> {
+): Promise<Omit<PdfDocument, 'fields' | 'notices'>> {
+  const { width, height } = await paperDimensionsOf(page, options);
+  const margin = marginsOf(options.margin);
   const header = options.header ?? '';
   const footer = options.footer ?? '';
   // A Buffer, whose slice() shares its bytes: copied into the plain Uint8Array this returns.
@@ -217,9 +338,12 @@ async function vectorPdf(
     await page.pdf({
       width: cssLength(width),
       height: cssLength(height),
-      margin: Object.fromEntries(
-        Object.entries(margin).map(([side, length]) => [side, cssLength(length)]),
-      ),
+      margin: {
+        top: cssLength(margin.top),
+        right: cssLength(margin.right),
+        bottom: cssLength(margin.bottom),
+        left: cssLength(margin.left),
+      },
       scale: options.scale ?? 1,
       printBackground: options.background ?? true,
       displayHeaderFooter: Boolean(options.header || options.footer),
@@ -239,6 +363,46 @@ async function vectorPdf(
   };
 }
 
+// The layout's controls as fields on their pages, named; a notice names those left printed.
+function formFields(layout: PageLayout, geometry: PaperGeometry, notices: string[]): PdfField[] {
+  const fields = nameFields(placeFields(layout.fields, geometry));
+  const printed = fields.filter((field) => !field.editable).map((field) => field.name);
+  if (printed.length) {
+    notices.push(
+      `forms: ${printed.join(', ')} printed, not fillable: a PDF's built-in font writes Latin script only`,
+    );
+  }
+  return fields;
+}
+
+// The controls whose own drawing a field replaces: all but buttons, which stay as they print.
+function hiddenIndices(fields: PdfField[]): number[] {
+  return fields.flatMap((field, index) =>
+    field.editable && field.kind !== 'submit' && field.kind !== 'reset' ? [index] : [],
+  );
+}
+
+/**
+ * The pages, from 0, that print-dialog ranges such as `1-3, 5` keep of `count`, in order, each
+ * once. Throws when they keep none.
+ *
+ * ```ts
+ * import { keptPages } from './pdf.ts';
+ *
+ * keptPages('2-3, 1, 3', 4); // [0, 1, 2]
+ * keptPages('3-9', 4); // [2, 3]
+ * ```
+ */
+export function keptPages(ranges: string, count: number): number[] {
+  const kept = new Set<number>();
+  for (const range of ranges.split(',')) {
+    const [first, last = first] = range.split('-').map((page) => Number(page.trim()));
+    for (let page = Math.max(first, 1); page <= Math.min(last, count); page++) kept.add(page - 1);
+  }
+  if (!kept.size) throw new RangeError(`pageRanges ${ranges}: the PDF has ${count} pages`);
+  return [...kept].sort((a, b) => a - b);
+}
+
 // The page size, with `fit` measured from the page itself and a named paper turned if asked.
 async function paperDimensionsOf(
   page: Page,
@@ -248,7 +412,7 @@ async function paperDimensionsOf(
   if (paper === 'fit') {
     const scale = options.scale ?? 1;
     const size = await page.evaluate<{ width: number; height: number }>(CODE_TO_GET_DOCUMENT_SIZE);
-    const margin = marginsInPixels(marginsOf(options.margin));
+    const margin = pixelMargins(options.margin);
     return {
       width: Math.ceil(size.width * scale + margin.left + margin.right),
       height: Math.ceil(size.height * scale + margin.top + margin.bottom),
@@ -273,14 +437,15 @@ function marginsOf(
   };
 }
 
-function marginsInPixels(
-  margin: Record<'top' | 'right' | 'bottom' | 'left', string | number>,
+function pixelMargins(
+  margin: PdfOptions['margin'],
 ): Record<'top' | 'right' | 'bottom' | 'left', number> {
+  const sides = marginsOf(margin);
   return {
-    top: CSS.toPixels(margin.top),
-    right: CSS.toPixels(margin.right),
-    bottom: CSS.toPixels(margin.bottom),
-    left: CSS.toPixels(margin.left),
+    top: CSS.toPixels(sides.top),
+    right: CSS.toPixels(sides.right),
+    bottom: CSS.toPixels(sides.bottom),
+    left: CSS.toPixels(sides.left),
   };
 }
 
@@ -288,29 +453,36 @@ function cssLength(length: string | number): string {
   return typeof length === 'number' ? `${length}px` : length;
 }
 
-// Screenshots on pages: the whole page shot once, then cut into page-high slices that each fill
-// the space inside the margins, as a printer would break it, minus the browser's reflow.
+// Screenshots on pages: page-high slices of the page as the screen lays it out, each filling the
+// space inside the margins, broken where a printer would (between lines, not through them), with
+// its form controls made fields over them.
 async function rasterPdf(
   page: Page,
   options: PdfOptions,
-  paper: { width: string | number; height: string | number },
-  margin: Record<'top' | 'right' | 'bottom' | 'left', string | number>,
   document: { title: string; quality: number },
 ): Promise<PdfDocument> {
-  const scale = options.scale ?? 1;
+  const paper = await paperDimensionsOf(page, options);
+  const margin = pixelMargins(options.margin);
   const pageWidth = CSS.toPixels(paper.width);
   const pageHeight = CSS.toPixels(paper.height);
-  const edges = marginsInPixels(margin);
   const inner = {
-    x: edges.left,
-    y: edges.top,
-    width: pageWidth - edges.left - edges.right,
-    height: pageHeight - edges.top - edges.bottom,
+    width: pageWidth - margin.left - margin.right,
+    height: pageHeight - margin.top - margin.bottom,
   };
-  const content = await page.evaluate<{ width: number; height: number }>(CODE_TO_GET_DOCUMENT_SIZE);
-  // CSS pixels of the page that one page of paper holds, at the asked-for zoom.
-  const across = inner.width / scale;
-  const slice = Math.max(1, Math.floor((inner.height / scale) * (content.width / across)));
+  const layout = await readLayout(page);
+  // CSS pixels of paper per CSS pixel of the page: the page's width fills the paper's.
+  const scale = inner.width / layout.width;
+  const geometry: PaperGeometry = {
+    starts: [0],
+    pageHeight: Math.max(1, inner.height / scale),
+    paper: { width: pageWidth, height: pageHeight },
+    margin,
+    scale,
+  };
+  geometry.starts = pageBreaks(layout.height, geometry.pageHeight, layout.blocks, layout.forced);
+  const notices: string[] = [];
+  const fields = options.forms === false ? [] : formFields(layout, geometry, notices);
+  const unhide = await hideFields(page, hiddenIndices(fields));
   const images: PdfImage[] = [];
   // Taken off again after: the page's stills, made after the PDF, keep their background.
   const noBackground =
@@ -318,30 +490,38 @@ async function rasterPdf(
       ? null
       : await page.addStyleTag({ content: 'html, body { background: #fff !important; }' });
   try {
-    for (let top = 0; top < content.height; top += slice) {
+    for (const [index, top] of geometry.starts.entries()) {
+      const end = Math.min(geometry.starts[index + 1] ?? layout.height, top + geometry.pageHeight);
       const jpeg = await page.screenshot({
         type: 'jpeg',
         quality: document.quality,
         fullPage: true,
-        clip: { x: 0, y: top, width: content.width, height: Math.min(slice, content.height - top) },
+        clip: { x: 0, y: top, width: layout.width, height: Math.max(1, end - top) },
       });
       const pixels = JPEG.getDimensions(jpeg);
-      const drawn = { width: inner.width, height: (inner.width * pixels.height) / pixels.width };
       images.push({
         jpeg,
         pixels,
         page: { width: pageWidth, height: pageHeight },
-        at: { x: inner.x, y: inner.y, ...drawn },
+        at: {
+          x: margin.left,
+          y: margin.top,
+          width: inner.width,
+          height: (inner.width * pixels.height) / pixels.width,
+        },
       });
     }
   } finally {
+    await unhide();
     await noBackground?.evaluate((style: { remove(): void }) => style.remove());
   }
   return {
-    bytes: encode(images, { title: document.title }),
+    bytes: fillPdf(encode(images, { title: document.title }), fields),
     pageCount: images.length,
     width: Math.round(pageWidth),
     height: Math.round(pageHeight),
+    fields: fields.filter((field) => field.editable),
+    notices,
   };
 }
 
@@ -438,7 +618,8 @@ function pdfString(text: string): string {
 }
 
 /**
- * How many pages a PDF has, from its page objects.
+ * How many pages a PDF has: its page tree's count, read through its cross-reference tables; or,
+ * when those are streams this reader leaves alone, its page objects.
  *
  * ```ts
  * import { getTotalPageCount, encode } from './pdf.ts';
@@ -447,13 +628,21 @@ function pdfString(text: string): string {
  * ```
  */
 export function getTotalPageCount(pdf: Uint8Array): number {
-  const text = new TextDecoder('latin1').decode(pdf);
-  return (text.match(/\/Type\s*\/Page(?![s\w])/g) ?? []).length;
+  try {
+    const file = openPdf(pdf);
+    const catalog = readObject(file, (file.trailer.get('Root') as { ref: number }).ref);
+    const pages = resolve(file, (catalog as Map<string, PdfValue>).get('Pages'));
+    return Number((pages as Map<string, PdfValue>).get('Count'));
+  } catch {
+    const text = new TextDecoder('latin1').decode(pdf);
+    return (text.match(/\/Type\s*\/Page(?![s\w])/g) ?? []).length;
+  }
 }
 
 /**
  * Writes a PDF of `page` where it ended to `output`, made as {@link fromPage} makes it, titled
- * after the page, or `name` when it has none.
+ * after the page, or `name` when it has none. `notices` say what the file was written without,
+ * such as a form field left printed rather than fillable.
  *
  * ```ts
  * import * as PDF from './pdf.ts';
@@ -462,7 +651,8 @@ export function getTotalPageCount(pdf: Uint8Array): number {
  *
  * // Defined, not invoked: needs a live page.
  * async function print(page: Page, output: Output) {
- *   return (await PDF.record(page, output, { paper: 'A4' }, 'vector', 'home', { quality: 90 })).frames;
+ *   const { file } = await PDF.record(page, output, { paper: 'A4' }, 'vector', 'home', { quality: 90 });
+ *   return file.frames;
  * }
  * ```
  */
@@ -473,11 +663,14 @@ export async function record(
   mode: 'vector' | 'raster',
   name: string,
   { quality }: Pick<Settings, 'quality'>,
-): Promise<RecordedFile> {
+): Promise<{ file: RecordedFile; notices: string[] }> {
   const title = (await page.title().catch(() => '')) || name;
-  const { bytes, width, height, pageCount } = await fromPage(page, options, mode, {
+  const { bytes, width, height, pageCount, notices } = await fromPage(page, options, mode, {
     title,
     quality,
   });
-  return Outputs.write(output, bytes, { width, height, frames: pageCount });
+  return {
+    file: await Outputs.write(output, bytes, { width, height, frames: pageCount }),
+    notices,
+  };
 }

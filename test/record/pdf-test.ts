@@ -134,6 +134,8 @@ module('Record | pdf | mode and settings', { concurrency: true }, () => {
         footer: '',
         pageRanges: '1-3, 5',
         outline: true,
+        forms: false,
+        postProcess: (pdf: Uint8Array) => pdf,
       }),
       null,
     );
@@ -147,6 +149,9 @@ module('Record | pdf | mode and settings', { concurrency: true }, () => {
         invalidOptionReason('pdf', { media: 'tv' }),
         invalidOptionReason('pdf', { pageRanges: 'odd' }),
         invalidOptionReason('pdf', { size: 'A4' }),
+        invalidOptionReason('pdf', { forms: 'yes' }),
+        invalidOptionReason('pdf', { postProcess: 'upload.js' }),
+        invalidOptionReason('pdf', { header: () => '' }),
       ],
       [
         'expected an object of PDF settings, got "A4"',
@@ -156,7 +161,10 @@ module('Record | pdf | mode and settings', { concurrency: true }, () => {
         'scale: expected a number from 0.1 to 2, got 3',
         "media: expected 'screen' or 'print', got \"tv\"",
         'pageRanges: expected page ranges such as \'1-3, 5\', got "odd"',
-        'has no setting size; expected mode, paper, margin, scale, media, header, footer, pageRanges, landscape, background, outline',
+        'has no setting size; expected mode, paper, margin, scale, media, header, footer, pageRanges, landscape, background, outline, forms, postProcess',
+        'forms: expected true or false, got "yes"',
+        'postProcess: expected a function, got "upload.js"',
+        'header: expected an HTML template, got function',
       ],
     );
   });
@@ -175,6 +183,7 @@ module('Record | pdf | mode and settings', { concurrency: true }, () => {
         '--pdf-scale=0.9',
         '--pdf-pages=2',
         '--pdf-mode=vector',
+        '--no-pdf-forms',
       ],
       {},
     );
@@ -191,6 +200,7 @@ module('Record | pdf | mode and settings', { concurrency: true }, () => {
       scale: 0.9,
       pageRanges: '2',
       mode: 'vector',
+      forms: false,
     });
     assert.true(Failure.is(bad));
     assert.includes((bad as Error).message, 'scale: expected a number from 0.1 to 2, got "big"');

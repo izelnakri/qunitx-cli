@@ -165,6 +165,8 @@ const PDF_RULES: Record<string, Rule> = {
   landscape: TRUE_OR_FALSE,
   background: TRUE_OR_FALSE,
   outline: TRUE_OR_FALSE,
+  forms: TRUE_OR_FALSE,
+  postProcess: defineRule((value) => typeof value === 'function', 'a function'),
 };
 
 /**

@@ -99,6 +99,7 @@ export const FLAGS: Record<string, Flag> = {
   '--pdf-landscape': { sets: 'pdf.landscape', value: true },
   '--pdf-outline': { sets: 'pdf.outline', value: true },
   '--no-pdf-background': { sets: 'pdf.background', value: false },
+  '--no-pdf-forms': { sets: 'pdf.forms', value: false },
   '--pdf-header': { sets: 'pdfHeaderFile', read: String },
   '--pdf-footer': { sets: 'pdfFooterFile', read: String },
 };
