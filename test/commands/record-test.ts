@@ -708,10 +708,15 @@ module('Commands | record | tours', { concurrency: true }, (_hooks, moduleMetada
   test('a desktop tour scrolls down and back up, and swipes a carousel with the mouse', async (assert, testMetadata) => {
     await using dir = await tempDir('record-tour-scroll');
     await using server = await serveGallery();
-    // A tour by what it exports, with no .tour in its name.
+    // A tour by what it exports, with no .tour in its name. Its tour() is a stand-in beside it:
+    // CI's deno-compiled binary cannot resolve the repo's own imports from a temp directory.
+    await fs.writeFile(
+      path.join(dir.path, 'tour.ts'),
+      'export const tour = (run) => ({ options: {}, run });',
+    );
     await fs.writeFile(
       path.join(dir.path, 'scroll.ts'),
-      `import { tour } from '${pathToFileURL(path.resolve('lib/api/index.ts')).href}';
+      `import { tour } from './tour.ts';
 
       export default tour(async (t) => {
         await t.goto('http://127.0.0.1:${server.port}/');
