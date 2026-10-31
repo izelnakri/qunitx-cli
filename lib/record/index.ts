@@ -19,6 +19,7 @@ import * as Outputs from './outputs.ts';
 import * as Options from './options.ts';
 import type { Settings } from './options.ts';
 import * as PDF from './pdf.ts';
+import * as Google from './google.ts';
 import type { PdfOptions } from './pdf.ts';
 import * as PNG from './png.ts';
 import { Stream } from '../stream/index.ts';
@@ -34,6 +35,7 @@ import type { Page } from 'playwright-core';
 export { FRAME_FUNCTION } from './capture.ts';
 export { UnrecordableInput } from './inputs.ts';
 export { DEFAULT_SIZE, InvalidRecordOption } from './options.ts';
+export { GoogleRefused, NoGoogleCredentials, type GoogleUpload, type Uploaded } from './google.ts';
 export { UnknownFormat, type Format } from './outputs.ts';
 
 /**
@@ -128,6 +130,12 @@ export interface RecordOptions {
   mask?: string[];
   /** How `pdf` outputs are made: paper, margins, header and footer, vector or raster. */
   pdf?: PdfOptions;
+  /**
+   * Put every file written on Google Drive: `'google'`, or `{ to: 'google', folder, convert }`.
+   * Office files and CSV become Docs, Sheets and Slides unless `convert` is false. Credentials
+   * come from the environment (see `googleToken`), checked before anything is recorded.
+   */
+  upload?: 'google' | Google.GoogleUpload;
 }
 
 /**
@@ -184,7 +192,7 @@ export interface RecordedFile {
  * What a recording produced.
  *
  * ```ts
- * const result: RecordResult = { ok: true, files: [], failedScripts: [], changedSnapshots: [] };
+ * const result: RecordResult = { ok: true, files: [], failedScripts: [], changedSnapshots: [], uploads: [], failedUploads: [] };
  * result.ok; // true
  * ```
  */
@@ -197,6 +205,11 @@ export interface RecordResult {
   failedScripts: { path: string; exitCode: number }[];
   /** Baselines that changed and were not accepted, under `compare`. */
   changedSnapshots: string[];
+
+  /** Each file put on Google Drive, with its link, when `upload` asked for it. */
+  uploads: Google.Uploaded[];
+  /** Each file Drive turned down, and why. They are written all the same. */
+  failedUploads: { path: string; message: string }[];
 }
 
 // The local server of each directory an HTML input is in, started the first time it is needed.
@@ -249,6 +262,9 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
   if (PDF.UnprintablePdf.is(pdfMode)) {
     throw Options.InvalidRecordOption({ option: 'pdf', reason: pdfMode.data.reason });
   }
+  // Credentials are checked now: a recording is no use to an upload that could never happen.
+  const upload = typeof options.upload === 'string' ? { to: options.upload } : options.upload;
+  const token = upload ? await Google.googleToken(process.env) : null;
   // Made before the browser launches: a directory that cannot be written to fails now, not after
   // every input has been recorded.
   await Promise.all(
@@ -257,6 +273,54 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
     ),
   );
 
+  const { files, failedScripts } = await recordInBrowser(inputs, outputs, settings, options, {
+    pdfMode,
+    cwd,
+  });
+  // Once the browser has closed: an upload can take a while, and needs no browser.
+  // One at a time, in the order asked; a file Drive turns down is reported, not thrown.
+  const sent =
+    upload && token
+      ? await Array.fromAsync(files.flatMap(writtenPaths), (written) =>
+          Google.uploadToDrive(written, token, upload).then(
+            (uploaded) => ({ uploaded }),
+            (error: Error) => ({ failed: { path: written, message: error.message } }),
+          ),
+        )
+      : [];
+  const failedUploads = sent.flatMap((result) => ('failed' in result ? [result.failed] : []));
+  const changedSnapshots = files.flatMap((file) =>
+    file.comparison?.status === 'changed' ? [file.path] : [],
+  );
+  return {
+    ok: failedScripts.length === 0 && changedSnapshots.length === 0 && failedUploads.length === 0,
+    files,
+    failedScripts,
+    changedSnapshots,
+    uploads: sent.flatMap((result) => ('uploaded' in result ? [result.uploaded] : [])),
+    failedUploads,
+  };
+}
+
+// What a recorded file put on disk: itself, or under `compare`, nothing for a snapshot that did not
+// change and the diff and new screenshot beside the baseline for one that did.
+function writtenPaths({ path, comparison }: RecordedFile): string[] {
+  return comparison?.status === 'unchanged'
+    ? []
+    : comparison?.diffPath && comparison.currentPath
+      ? [comparison.diffPath, comparison.currentPath]
+      : [path];
+}
+
+// Records every input in one browser, writes its files and closes the browser: the files in the
+// order they were asked for, and the scripts that failed.
+async function recordInBrowser(
+  inputs: Inputs.Input[],
+  outputs: Outputs.Output[],
+  settings: Settings,
+  options: RecordOptions,
+  { pdfMode, cwd }: { pdfMode: 'vector' | 'raster'; cwd: string },
+): Promise<Pick<RecordResult, 'files' | 'failedScripts'>> {
   const needsFrames = outputs.some((output) => Outputs.isAnimated(output.format));
   const browser = await Browser.launch({ browser: settings.browser });
   const servers: Servers = new Map();
@@ -331,15 +395,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
     const failedScripts = recordings.flatMap(({ input, exitCode }) =>
       input.kind === 'script' && exitCode !== 0 ? [{ path: input.path, exitCode }] : [],
     );
-    const changedSnapshots = files.flatMap((file) =>
-      file.comparison?.status === 'changed' ? [file.path] : [],
-    );
-    return {
-      ok: failedScripts.length === 0 && changedSnapshots.length === 0,
-      files,
-      failedScripts,
-      changedSnapshots,
-    };
+    return { files, failedScripts };
   } finally {
     await closeCompletely({
       servers: Promise.all(

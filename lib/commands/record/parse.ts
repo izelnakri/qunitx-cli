@@ -1,4 +1,5 @@
 import process from 'node:process';
+import type { GoogleUpload } from '../../record/google.ts';
 import * as Outputs from '../../record/outputs.ts';
 import { Failure, type Result } from '../../result/index.ts';
 import { invalidOptionReason } from '../../record/options.ts';
@@ -21,10 +22,11 @@ import type { PdfOptions } from '../../record/pdf.ts';
  * ```
  */
 export interface Flag {
-  /** Where the value goes: an option, `pdf.<setting>`, the request's own fields, or nowhere. */
+  /** Where the value goes: an option, `pdf.<setting>` or `upload.<setting>`, the request's own fields, or nowhere. */
   sets:
     | keyof RecordOptions
     | `pdf.${keyof PdfOptions}`
+    | `upload.${keyof GoogleUpload}`
     | 'help'
     | 'pdfHeaderFile'
     | 'pdfFooterFile'
@@ -101,7 +103,14 @@ export const FLAGS: Record<string, Flag> = {
   '--no-pdf-background': { sets: 'pdf.background', value: false },
   '--pdf-header': { sets: 'pdfHeaderFile', read: String },
   '--pdf-footer': { sets: 'pdfFooterFile', read: String },
+  '--upload': { sets: 'upload.to', read: String },
+  '--upload-folder': { sets: 'upload.folder', read: String },
+  '--no-upload-convert': { sets: 'upload.convert', value: false },
 };
+
+// What a nested setting starts from: naming a folder, or turning conversion off, is an upload to
+// Google Drive, the one service there is.
+const NESTED_START: Partial<Record<keyof RecordOptions, object>> = { upload: { to: 'google' } };
 
 /**
  * An argument `qunitx record` will not accept.
@@ -256,7 +265,7 @@ function applyFlagToRecordRequest(
   const [option, setting] = sets.split('.') as [keyof RecordOptions, string?];
   const current = recordRequest.options[option];
   const next = setting
-    ? { ...(current as object), [setting]: parsed }
+    ? { ...NESTED_START[option], ...(current as object), [setting]: parsed }
     : list
       ? [...((current as unknown[]) ?? []), ...(parsed as unknown[])]
       : parsed;

@@ -81,6 +81,10 @@ export async function run(
           `# ${count} snapshot${count === 1 ? '' : 's'} changed: see the .diff.png beside each, then run again with --update to accept\n`,
         );
       }
+
+      for (const uploaded of result.uploads)
+        out.log(`${await displayPath(uploaded.path)}  → ${uploaded.url}\n`);
+      for (const failed of result.failedUploads) out.error(`# ${failed.message}\n`);
       return result.ok ? 0 : 1;
     })
     .recover((error) => {
@@ -203,6 +207,12 @@ ${blue('--pdf-header')}, ${blue('--pdf-footer')} : HTML template files (${blue('
 ${blue('--pdf-pages')}     : which pages to keep, e.g. ${blue('1-3,5')} (vector)
 ${blue('--pdf-outline')}   : add PDF bookmarks — a reader's clickable sidebar — from the page's h1–h6 headings (vector)
 ${blue('--no-pdf-background')} : leave backgrounds out, as a printer would
+
+${magenta().bold('Upload:')} ${blue('--upload=google')} puts every file written on Google Drive and prints its link; Office files and CSV become
+Docs, Sheets and Slides. Credentials: ${blue('GOOGLE_OAUTH_ACCESS_TOKEN')}, ${blue('GOOGLE_APPLICATION_CREDENTIALS')} (a service account key),
+or ${blue('gcloud auth application-default login --scopes=https://www.googleapis.com/auth/drive.file,https://www.googleapis.com/auth/cloud-platform')}.
+${blue('--upload-folder')}   : a Drive folder's id, from its URL (a shared drive's, for a service account)
+${blue('--no-upload-convert')} : keep Office files and CSV as they are
 
 ${magenta().bold('Exit codes:')} ${blue('0')} recorded, ${blue('1')} a script failed, a snapshot changed, or an input could not be recorded, ${blue('2')} bad arguments.
 `;

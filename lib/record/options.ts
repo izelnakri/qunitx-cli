@@ -56,7 +56,15 @@ export const DEFAULT_SIZE: { width: number; height: number } = { width: 1280, he
 export type Settings = Required<
   Omit<
     RecordOptions,
-    'cwd' | 'output' | 'formats' | 'pageDuration' | 'waitFor' | 'timeout' | 'update' | 'pdf'
+    | 'cwd'
+    | 'output'
+    | 'formats'
+    | 'pageDuration'
+    | 'waitFor'
+    | 'timeout'
+    | 'update'
+    | 'pdf'
+    | 'upload'
   >
 > &
   Pick<RecordOptions, 'pageDuration' | 'waitFor'> & { timeout: number | null; accept: boolean };
@@ -78,6 +86,12 @@ const wholeNumberBetween = (min: number, max: number, unit = ''): Rule =>
 const oneOf = (values: readonly unknown[], expected: string): Rule =>
   defineRule((value) => values.includes(value), expected);
 const TRUE_OR_FALSE = defineRule((value) => typeof value === 'boolean', 'true or false');
+// What each field of an upload holds.
+const UPLOAD_FIELDS: Record<string, (entry: unknown) => boolean> = {
+  to: (entry) => entry === 'google',
+  folder: (entry) => isString(entry) && entry !== '',
+  convert: (entry) => typeof entry === 'boolean',
+};
 const NON_EMPTY_PATH = defineRule((value) => isString(value) && value !== '', 'a path');
 // A length a PDF takes: CSS pixels as a number, or a number with px, in, cm, mm or pt.
 const isCSSLength = (value: unknown, positive = false): boolean => {
@@ -120,6 +134,17 @@ const RULES: Record<string, Rule> = {
   fullPage: TRUE_OR_FALSE,
   cwd: NON_EMPTY_PATH,
   output: NON_EMPTY_PATH,
+  upload: defineRule(
+    (value) =>
+      value === 'google' ||
+      (typeof value === 'object' &&
+        value !== null &&
+        (value as { to?: unknown }).to === 'google' &&
+        Object.entries(value).every(
+          ([field, entry]) => entry === undefined || UPLOAD_FIELDS[field]?.(entry),
+        )),
+    "'google' or { to: 'google', folder, convert }",
+  ),
   formats: defineRule(
     (value) => Array.isArray(value) && value.every(isString),
     'a list of formats or file names',
