@@ -186,12 +186,12 @@ async function describeOutputFileDetails(
   file: RecordResult['files'][number],
   displayPath: (file: string) => Promise<string>,
 ): Promise<string> {
-  const frames =
-    file.format === 'pdf'
-      ? `  ${file.frames} page${file.frames === 1 ? '' : 's'}`
-      : file.frames > 1
-        ? `  ${file.frames} frames`
-        : '';
+  const unit = { pdf: 'page', pptx: 'slide', docx: 'step' }[file.format as string];
+  const frames = unit
+    ? `  ${file.frames} ${unit}${file.frames === 1 ? '' : 's'}`
+    : file.frames > 1
+      ? `  ${file.frames} frames`
+      : '';
   const line = `${await displayPath(file.path)}  ${file.width}×${file.height}${frames}`;
   const comparison = file.comparison;
   if (!comparison) return `${line}  ${size(file.bytes)}`;
@@ -245,10 +245,11 @@ A ${blue('.tour.ts')} file, or any script that does ${blue('export default tour(
   ${blue("t.step('Pay', { notes })")} starts a step: titled in the panel, and a stop in the HTML player.
 A ${blue('.md')} file is a deck, a slide per ${blue('---')} (${blue('Note:')} starts a slide's speaker notes); an image (${blue('.png .jpg .gif .webp .svg')}) is one slide.
 Every input becomes steps of one recording: a GIF, or with ${blue('-f demo.html')} a player to click or key through (← →, Home, End, K),
-or with ${blue('-f demo.pdf')} a document, a page a step, its panel and notes on it.
+or with ${blue('-f demo.pdf')} a document, a page a step, its panel and notes on it; ${blue('-f demo.pptx')} a deck, a slide a step with
+its notes as speaker notes; ${blue('-f demo.docx')} a document of each step's heading, picture and caption (paper from ${blue('--pdf-paper')}).
 
 ${magenta().bold('Flags:')}
-${blue('-f, --format')}    : formats (${blue('png')}, ${blue('jpg')}, ${blue('gif')}, ${blue('webm')}, ${blue('mp4')}, ${blue('html')}, ${blue('pdf')}) or file names ending in one, comma-separated. Default: ${blue('jpg')} for one page, ${blue('jpg,gif')} for several inputs or a script
+${blue('-f, --format')}    : formats (${blue('png')}, ${blue('jpg')}, ${blue('gif')}, ${blue('webm')}, ${blue('mp4')}, ${blue('html')}, ${blue('pdf')}, ${blue('pptx')}, ${blue('docx')}) or file names ending in one, comma-separated. Default: ${blue('jpg')} for one page, ${blue('jpg,gif')} for several inputs or a script
 ${blue('-w, --width')}     : viewport width in CSS pixels (default ${DEFAULT_SIZE.width})
 ${blue('-h, --height')}    : viewport height in CSS pixels (default ${DEFAULT_SIZE.height})
 ${blue('-o, --output')}    : directory the files are written to (default: the current one)

@@ -317,7 +317,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
   // Steps, a canvas and a panel: when anything but pages and scripts is recorded, or asked for.
   const deck =
     inputs.some((input) => !['url', 'html', 'script'].includes(input.kind)) ||
-    planned.some((output) => output.format === 'html') ||
+    planned.some((output) => ['html', 'pptx', 'docx'].includes(output.format)) ||
     options.panel !== undefined;
   // A recording of steps prints as one PDF of them all, so its pdf is planned as one output.
   const outputs = deck
