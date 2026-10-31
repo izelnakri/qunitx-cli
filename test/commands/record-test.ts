@@ -708,24 +708,24 @@ module('Commands | record | tours', { concurrency: true }, (_hooks, moduleMetada
   test('a desktop tour scrolls down and back up, and swipes a carousel with the mouse', async (assert, testMetadata) => {
     await using dir = await tempDir('record-tour-scroll');
     await using server = await serveGallery();
+    // A tour by what it exports, with no .tour in its name.
     await fs.writeFile(
-      path.join(dir.path, 'scroll.tour.ts'),
-      `export default async (tour) => {
-        await tour.goto('http://127.0.0.1:${server.port}/');
-        await tour.swipe('#carousel', 'left');
-        await tour.scroll({ y: 1500 });
-        await tour.scroll({ y: -1500 });
-      };`,
+      path.join(dir.path, 'scroll.ts'),
+      `import { tour } from '${pathToFileURL(path.resolve('lib/api/index.ts')).href}';
+
+      export default tour(async (t) => {
+        await t.goto('http://127.0.0.1:${server.port}/');
+        await t.swipe('#carousel', 'left');
+        await t.scroll({ y: 1500 });
+        await t.scroll({ y: -1500 });
+      });`,
     );
 
-    await shell(
-      `node ${CLI} record scroll.tour.ts -w 390 -h 600 -f scroll.gif --output=${dir.path}`,
-      {
-        ...moduleMetadata,
-        ...testMetadata,
-        cwd: dir.path,
-      },
-    );
+    await shell(`node ${CLI} record scroll.ts -w 390 -h 600 -f scroll.gif --output=${dir.path}`, {
+      ...moduleMetadata,
+      ...testMetadata,
+      cwd: dir.path,
+    });
     const gif = decodeGif(await fs.readFile(path.join(dir.path, 'scroll.gif')));
     const yellowAt = gif.frames.findIndex((frame) =>
       near(frameAt(gif, frame.rgba, 200, 450), [255, 212, 0]),

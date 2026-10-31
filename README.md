@@ -678,7 +678,8 @@ names them.
 
 ### Walkthroughs
 
-A `.tour.ts` file drives the browser like a person would, and `record` turns it into a tutorial:
+A `.tour.ts` file, or any script that does `export default tour(…)`, drives the browser like a
+person would, and `record` turns it into a tutorial:
 an animated cursor with click ripples, typing, smooth scrolling, drags and swipes, a camera that
 zooms onto what matters, captions, and a browser frame with tabs once a second tab opens.
 

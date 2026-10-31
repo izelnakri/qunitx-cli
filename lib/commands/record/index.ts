@@ -216,7 +216,7 @@ ${blue('$ qunitx record invoice.html -f pdf --pdf-paper=A4 --pdf-media=print')} 
 ${magenta().bold('Inputs:')} a ${blue('http(s)://')} or ${blue('file://')} URL, an ${blue('.html')} file or a directory with an ${blue('index.html')} (served from a local origin),
 or a ${blue('.js/.ts/.jsx/.tsx')} script, run as ${blue('qunitx run')} would and recorded while it runs.
 A script can ${blue('await globalThis.qunitxRecordFrame?.()')} after drawing a step to make sure that step is in the recording.
-A ${blue('.tour.ts')} file drives the browser for a walkthrough: a cursor that clicks, hovers and types, zooms, captions, tabs.
+A ${blue('.tour.ts')} file, or any script that does ${blue('export default tour(…)')}, drives the browser for a walkthrough: a cursor that clicks, hovers and types, zooms, captions, tabs.
   ${blue("export default tour(async (t) => { await t.goto(url); await t.click('#add'); await t.zoom('#cart'); })")}
   Steps: goto, move, click, doubleClick, tap, hover, rightClick, longPress, pinch, type, fill, press, select, upload,
   scroll ({ y: -600 } up, { within: '#list' }), drag, swipe,
