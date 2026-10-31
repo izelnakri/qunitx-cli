@@ -337,12 +337,26 @@ async function recordScript(
   };
 }
 
-// Waits until the page is what its stills should show: its web fonts loaded (they often finish
-// after `load`, and a still taken before shows the fallback face) and painted, then `waitFor`.
-// Chrome has no frame to copy before its first paint, or while a resized window repaints, and
-// fails the screenshot ("Unable to capture screenshot"); two animation frames, or a second at
-// most, are a frame painted.
-async function settled(page: Page, settings: Settings): Promise<void> {
+/**
+ * Waits until the page is what its stills should show: its web fonts loaded (they often finish
+ * after `load`, and a still taken before shows the fallback face) and painted, then `waitFor`.
+ * Chrome has no frame to copy before its first paint, or while a resized window repaints, and
+ * fails the screenshot ("Unable to capture screenshot"); two animation frames, or a second at
+ * most, are a frame painted.
+ *
+ * ```ts
+ * import * as Capture from './capture.ts';
+ * import type { Settings } from './options.ts';
+ * import type { Page } from 'playwright-core';
+ *
+ * // Defined, not invoked: needs a live page.
+ * async function shootWhenReady(page: Page, settings: Settings) {
+ *   await Capture.settled(page, settings);
+ *   return await page.screenshot();
+ * }
+ * ```
+ */
+export async function settled(page: Page, settings: Settings): Promise<void> {
   await page.evaluate('document.fonts && document.fonts.ready.then(() => {})').catch(() => {});
   await page
     .evaluate(

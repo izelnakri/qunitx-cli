@@ -9,7 +9,17 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as Capture from '../capture.ts';
 import { NAVIGATION_TIMEOUT_MS } from '../../setup/browser.ts';
-import { DEFAULT_LOOK, checkLook, compose, type Frame, type Look, type Style } from './compose.ts';
+import {
+  DEFAULT_LOOK,
+  checkLook,
+  compose,
+  framedSize,
+  type ComposedFrame,
+  type ComposeOptions,
+  type Frame,
+  type Look,
+  type Style,
+} from './compose.ts';
 import {
   menuItemPoint,
   menuLayout,
@@ -249,6 +259,12 @@ export interface Tour {
    * fades in, holds and fades out, 2 seconds in all unless `durationMs` says otherwise.
    */
   chapter(title: string, options?: { subtitle?: string; durationMs?: number }): Promise<void>;
+  /**
+   * Starts a step: what follows, until the next, is one stop of the walkthrough, titled `title`
+   * in the steps' panel and in the HTML player, which can jump to it. `notes` is shown beside it
+   * in the player. A tour that never calls it is one step, named after its file.
+   */
+  step(title: string, options?: { notes?: string }): Promise<void>;
   /** Holds the frame as it is. */
   wait(durationMs: number): Promise<void>;
   /** Records the page as it moves on its own, in real time, for `durationMs`: animations, video. */
@@ -325,8 +341,11 @@ export interface TourOptions {
   finger?: { size?: number; spacing?: number; labels?: boolean; style?: Style };
   /** A click's or tap's ripple, drawn in its `color` (`style: { color: '#0c8' }`), or `false` for none. */
   ripple?: false | { style?: Style };
-  /** The caption: over the `'bottom'` (the default) or `'top'` of the page, and its `style`. */
-  caption?: { placement?: 'top' | 'bottom'; style?: Style };
+  /**
+   * The caption: over the `'bottom'` (the default) or `'top'` of the page, or in the steps'
+   * `'panel'` when the recording has one (`qunitx record --panel`), and its `style`.
+   */
+  caption?: { placement?: 'top' | 'bottom' | 'panel'; style?: Style };
   /**
    * How far `zoom` can go and stay sharp: screenshots are taken at this many device pixels per
    * CSS pixel. 2 by default, up to 4; higher costs memory and time on every step.
@@ -386,7 +405,10 @@ export function lookOf(options: TourOptions, directory: string): Look {
     if (value === undefined) return fallback;
     if (!choices.includes(value))
       throw new Error(
-        `${name} must be ${choices.map((choice) => `'${choice}'`).join(' or ')}, not '${value}'`,
+        `${name} must be ${choices
+          .map((choice) => `'${choice}'`)
+          .join(', ')
+          .replace(/, ([^,]*)$/, ' or $1')}, not '${value}'`,
       );
     return value;
   };
@@ -425,7 +447,7 @@ export function lookOf(options: TourOptions, directory: string): Look {
     caption: {
       placement: oneOf(
         caption.placement,
-        ['bottom', 'top'],
+        ['bottom', 'top', 'panel'],
         fallback.caption.placement,
         'caption.placement',
       ),
@@ -580,6 +602,37 @@ export function definitionOf(module: { default?: unknown }): TourDefinition | st
 }
 
 /**
+ * A tour once it has run: its last page and context (for stills), its steps (a null title for
+ * whoever recorded it to name), the size its frames are drawn at, and `draw` to draw them, onto a
+ * bigger `canvas`, with a steps `panel`, or as jpeg for a player. `css` goes under the tour's own.
+ *
+ * ```ts
+ * import type { RecordedTour } from './index.ts';
+ *
+ * // Defined, not invoked: needs a recorded tour.
+ * async function frames(tour: RecordedTour) {
+ *   return (await tour.draw({ type: 'jpeg', quality: 80 })).length;
+ * }
+ * ```
+ */
+export interface RecordedTour {
+  /** The tab it ended on, for stills. */
+  page: Page;
+  /** Its own browser context, for the caller to close. */
+  context: BrowserContext;
+  /** Its steps, in order; a null title for whoever recorded it to name. */
+  steps: { title: string | null; notes: string | null }[];
+  /** The size its frames are drawn at, frame included. */
+  size: { width: number; height: number };
+  /** Draws its frames. */
+  draw: (
+    extra?: Pick<ComposeOptions, 'canvas' | 'panel' | 'type' | 'quality' | 'backdrop'> & {
+      css?: string;
+    },
+  ) => Promise<ComposedFrame[]>;
+}
+
+/**
  * Runs the tour in `file`, in a browser context of its own (touch is decided when a context is
  * made). Returns the tab it ended on, for stills of where it finished; `draw`, which composes the
  * frames; and the context, for the caller to close. Drawing is a separate step on purpose: it uses
@@ -613,11 +666,7 @@ export async function recordTour(
     /** Readies every page the tour opens, as `record` readies its own. */
     prepare: (page: Page) => Promise<void>;
   },
-): Promise<{
-  page: Page;
-  context: BrowserContext;
-  draw: () => Promise<{ png: Uint8Array; durationMs: number }[]>;
-}> {
+): Promise<RecordedTour> {
   const definition = definitionOf(await import(pathToFileURL(file).href));
   if (typeof definition === 'string') throw new Error(`${file}: ${definition}`);
   const touch = definition.options.touch ?? false;
@@ -646,19 +695,24 @@ export async function recordTour(
     await definition.run(run);
     await run.wait(setup.settings.lastFrameDurationMs);
 
+    const viewport = { width: setup.settings.width, height: setup.settings.height };
+    const frame = resolveFrame(definition.options, run.openedTabs);
     return {
       page: run.page,
       context,
-      draw: () =>
+      steps: run.timeline.steps,
+      size: framedSize(frame, viewport, addressBar),
+      draw: (extra = {}) =>
         compose(setup.browser, run.shots, run.timeline.beats, {
-          viewport: { width: setup.settings.width, height: setup.settings.height },
+          viewport,
           scale: setup.settings.scale,
-          frame: resolveFrame(definition.options, run.openedTabs),
+          frame,
           addressBar,
           pointer: touch ? 'finger' : 'cursor',
-          look,
+          look: extra.css ? { ...look, css: `${extra.css}\n${look.css}` } : look,
           fps: setup.settings.fps,
           prepare: setup.prepare,
+          ...extra,
         }),
     };
   } catch (error) {
@@ -1135,6 +1189,14 @@ class TourRun implements Tour {
     if (!this.#highlighted) return;
     const box = await this.page.locator(this.#highlighted.target).first().boundingBox();
     if (box) this.timeline.highlightAt(padded(box, this.#highlighted.padding));
+  }
+
+  step(title: string, options: { notes?: string } = {}): Promise<void> {
+    if (typeof title !== 'string' || !title.trim()) {
+      throw new Error('step() needs a title, which the panel and the player show');
+    }
+    this.timeline.step(title, options.notes ?? null);
+    return Promise.resolve();
   }
 
   chapter(title: string, options: { subtitle?: string; durationMs?: number } = {}): Promise<void> {

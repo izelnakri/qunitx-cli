@@ -1532,7 +1532,7 @@ module('Commands | record | tours', { concurrency: true }, (_hooks, moduleMetada
     assert.includes(bad.stderr, 'addressBar must be true or false, not "no"');
   });
 
-  test('-f pdf prints the tab a tour ended on', async (assert, testMetadata) => {
+  test("-f pdf prints a tour's steps, a page each, in its frame and with its panel", async (assert, testMetadata) => {
     await using dir = await tempDir('record-tour-pdf');
     await fs.writeFile(path.join(dir.path, 'home.html'), '<title>Home</title><p>Home');
     await fs.writeFile(path.join(dir.path, 'checkout.html'), '<title>Checkout</title><p>Pay');
@@ -1547,8 +1547,9 @@ module('Commands | record | tours', { concurrency: true }, (_hooks, moduleMetada
     );
     const pdf = parsePdf(await fs.readFile(path.join(dir.path, 'buy.pdf')));
 
-    assert.includes(result.stdout, 'buy.pdf  300×200  1 page');
-    assert.equal(pdf.title, 'Checkout', 'the second tab, where it ended');
+    // One step: the page, the browser frame its second tab brought (74), and the panel (96).
+    assert.includes(result.stdout, 'buy.pdf  300×370  1 page');
+    assert.equal(pdf.title, 'buy', "the recording's name");
   });
 
   test('a gesture of 2 to 10 fingers is that many real touches, each finger drawn, each with its ripple', async (assert, testMetadata) => {

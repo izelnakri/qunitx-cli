@@ -14,6 +14,11 @@ import * as Capture from './capture.ts';
 import * as Diff from './diff.ts';
 
 import * as Tour from './tour/index.ts';
+import * as Deck from './deck.ts';
+import * as Slides from './slides.ts';
+import { DEFAULT_PANEL_HEIGHT, type Panel } from './panel.ts';
+import { DEFAULT_PLAYER, type PlayerSettings } from './player.ts';
+import { checkStyle, type ComposedFrame, type Style } from './tour/compose.ts';
 import * as GIF from './gif.ts';
 import * as Video from './video.ts';
 import * as Inputs from './inputs.ts';
@@ -154,6 +159,24 @@ export interface RecordOptions {
   imagesUrl?: string;
   /** Where the comment's "Download the full report" link points, such as the CI run's artifacts. */
   reportUrl?: string;
+
+  /**
+   * A band above the frame or below the page with each step's title, its caption (a tour's, with
+   * `caption: { placement: 'panel' }`) and where it is among the steps: drawn into a GIF, and the
+   * HTML player's own. `height` in CSS pixels (96 by default), `style` CSS for `#panel`.
+   */
+  panel?: { placement?: 'above' | 'below'; height?: number; style?: Style };
+  /**
+   * A stylesheet over everything drawn around and over the pages: the panel, the player, slides,
+   * and every tour's frame (under a tour's own `css`). Its selectors are in the README.
+   */
+  css?: string;
+  /** The CSS background behind parts smaller than the biggest, and around the player. */
+  backdrop?: string;
+  /** Markdown and image slides: CSS declarations for each `.slide`. */
+  slide?: { style?: Style };
+  /** The HTML player (`-f demo.html`): how it advances, loops and starts, and where its pictures go. */
+  player?: Partial<PlayerSettings>;
   /** How `pdf` outputs are made: paper, margins, header and footer, vector or raster. */
   pdf?: PdfOptions;
 }
@@ -240,7 +263,9 @@ interface Recorded {
   clip: Capture.Clip;
   exitCode: number;
   stillScale?: 'css' | 'device';
-  draw?: () => Promise<{ png: Uint8Array; durationMs: number }[]>;
+  draw?: () => Promise<ComposedFrame[]>;
+  /** In a recording of steps: the input's steps, instead of a clip. */
+  part?: Deck.Part;
 }
 
 // The local server of each directory an HTML input is in, started the first time it is needed.
@@ -286,12 +311,18 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
   const settings = Options.from(options);
   const inputs = await Inputs.resolve(sources, cwd);
   const directory = path.resolve(cwd, options.output ?? '.');
-  const outputs = Outputs.plan(
-    options.formats ?? (settings.compare ? ['png'] : []),
-    inputs,
-    directory,
-  );
-  if (Outputs.UnknownFormat.is(outputs)) throw outputs;
+  const formats = options.formats ?? (settings.compare ? ['png'] : []);
+  const planned = Outputs.plan(formats, inputs, directory);
+  if (Outputs.UnknownFormat.is(planned)) throw planned;
+  // Steps, a canvas and a panel: when anything but pages and scripts is recorded, or asked for.
+  const deck =
+    inputs.some((input) => !['url', 'html', 'script'].includes(input.kind)) ||
+    planned.some((output) => output.format === 'html') ||
+    options.panel !== undefined;
+  // A recording of steps prints as one PDF of them all, so its pdf is planned as one output.
+  const outputs = deck
+    ? (Outputs.plan(formats, inputs, directory, true) as Outputs.Output[])
+    : planned;
   const notPng = outputs.find((output) => output.format !== 'png');
   if (settings.compare && notPng) throw CompareNeedsPng({ path: notPng.absolutePath });
   // Whether this engine can print as asked is known now, before anything is recorded.
@@ -310,7 +341,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
     ),
   );
 
-  const needsFrames = outputs.some((output) => Outputs.isAnimated(output.format));
+  const needsFrames = outputs.some((output) => output.inputIndex === null);
   enterPhase(`launching ${settings.browser}`);
   const browser = await Browser.launch({ browser: settings.browser });
   const servers: Servers = new Map();
@@ -327,6 +358,66 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
       needsFrames || inputs.some((input) => input.kind === 'script' || input.kind === 'tour')
         ? 1
         : maxParallelPageProcessingAtOnce();
+    const look = deck ? await deckLook(context, options) : null;
+    const prepare = (opened: Page) =>
+      settings.browser === 'chromium' ? enlargeChromeWindow(opened, settings) : Promise.resolve();
+    const shotsPart = (shots: Parameters<typeof Deck.shotsPart>[1], steps: Deck.Part['steps']) =>
+      Deck.shotsPart(browser, shots, steps, {
+        viewport: { width: settings.width, height: settings.height },
+        scale: settings.scale,
+        fps: settings.fps,
+        prepare,
+      });
+    // What `input` showed on `page`: in a recording of steps, a part; otherwise a clip of the GIF.
+    const recordInput = async (page: Page, input: Inputs.Input): Promise<Recorded> => {
+      if (input.kind === 'tour') {
+        return recordTour(input, browser, settings, needsFrames, deck, prepare, tourContexts);
+      } else if (input.kind === 'slides' || input.kind === 'image') {
+        const shown = await recordSlides(
+          page,
+          input,
+          look!,
+          { ...settings, css: options.css },
+          (root, file) => serve(servers, { root, path: file }, settings),
+        );
+        return {
+          page,
+          clip: { shots: [], lastFrameDurationMs: settings.lastFrameDuration },
+          exitCode: 0,
+          part: { ...shotsPart(shown.shots, shown.steps), sheets: shown.sheets },
+        };
+      } else if (input.kind === 'script') {
+        const { clip, exitCode } = await Capture.record(
+          page,
+          { script: input.path },
+          settings,
+          needsFrames,
+          cwd,
+        );
+        const steps = [{ title: input.name, notes: null }];
+        return {
+          page,
+          clip,
+          exitCode,
+          part: deck ? shotsPart(shotsOf(clip, settings.fps), steps) : undefined,
+        };
+      }
+      const { clip } = await Capture.record(
+        page,
+        { url: input.kind === 'html' ? await serve(servers, input, settings) : input.url },
+        settings,
+        needsFrames,
+        cwd,
+      );
+      if (!deck) return { page, clip, exitCode: 0 };
+      const title = (await page.title().catch(() => '')) || input.name;
+      return {
+        page,
+        clip,
+        exitCode: 0,
+        part: shotsPart(shotsOf(clip, settings.fps), [{ title, notes: null }]),
+      };
+    };
     const recordings = await Stream.asyncStream(
       inputs.entries(),
       async ([index, input]) => {
@@ -335,26 +426,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
         try {
           if (settings.browser === 'chromium') await enlargeChromeWindow(page, settings);
           // A tour may end on another tab than it started on; stills show where it ended.
-          const recorded: Recorded =
-            input.kind === 'tour'
-              ? await recordTour(input, browser, settings, needsFrames, tourContexts)
-              : {
-                  page,
-                  ...(await Capture.record(
-                    page,
-                    input.kind === 'script'
-                      ? { script: input.path }
-                      : {
-                          url:
-                            input.kind === 'html'
-                              ? await serve(servers, input, settings)
-                              : input.url,
-                        },
-                    settings,
-                    needsFrames,
-                    cwd,
-                  )),
-                };
+          const recorded = await recordInput(page, input);
           // Stills and PDFs show the page where it ended, so they are made before it closes.
           const files = await Array.fromAsync(
             outputs.filter((output) => output.inputIndex === index),
@@ -383,29 +455,65 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
           );
           // A tour's frames are drawn after its stills are taken; see recordTour.
           if (recorded.draw) enterPhase(`drawing ${input.name}`);
-          const clip = recorded.draw ? clipOf(await recorded.draw()) : recorded.clip;
-          return { input, clip, exitCode: recorded.exitCode, files };
+          const clip = recorded.draw
+            ? clipOf(
+                (await recorded.draw()).map(({ image, durationMs }) => ({
+                  png: image,
+                  durationMs,
+                })),
+              )
+            : recorded.clip;
+          return { input, clip, exitCode: recorded.exitCode, files, part: recorded.part };
         } finally {
           await page.close().catch(() => {});
         }
       },
       { maxConcurrency },
     ).collect();
+    // A recording of steps is drawn now, part by part: its GIF, player and PDF.
+    if (deck && needsFrames) enterPhase('drawing the recording');
+    const deckFiles =
+      deck && needsFrames
+        ? await Deck.writeDeck(
+            recordings.flatMap((recording) => (recording.part ? [recording.part] : [])),
+            outputs.filter((output) => output.inputIndex === null),
+            {
+              title: inputs.length === 1 ? inputs[0].name : 'Recording',
+              panel: look!.panel,
+              css: options.css ?? '',
+              backdrop: options.backdrop,
+              quality: settings.quality,
+              player: { ...DEFAULT_PLAYER, ...options.player },
+              pdf: options.pdf ?? {},
+              pdfMode,
+              open: () => context.newPage(),
+              recordVideos: (videoOutputs, frames) =>
+                Video.record(
+                  videoOutputs,
+                  [clipOf(frames.map(({ image, durationMs }) => ({ png: image, durationMs })))],
+                  settings.fps,
+                  context,
+                ),
+            },
+          )
+        : [];
     const clips = recordings.map((recording) => recording.clip);
-    // Every video output from one encode: each frame goes to the browser and is decoded once.
-    const videoOutputs = outputs.filter(
-      (output) => output.format === 'webm' || output.format === 'mp4',
-    );
+    // Every video output from one encode: each frame goes to the browser and is decoded once. A
+    // recording of steps drew its own, above.
+    const videoOutputs = deckFiles.length
+      ? []
+      : outputs.filter((output) => output.format === 'webm' || output.format === 'mp4');
     if (videoOutputs.length) enterPhase('encoding video');
     const videos = videoOutputs.length
       ? await Video.record(videoOutputs, clips, settings.fps, context)
       : [];
     const written = new Map([
       ...recordings.flatMap((recording) => recording.files),
+      ...deckFiles,
       ...videoOutputs.map((output, index) => [output, videos[index]] as const),
     ]);
-    // In the order they were asked for: stills, PDFs and videos are written, and a GIF is written
-    // now, of every clip.
+    // In the order they were asked for: stills, PDFs, videos and a recording of steps are written,
+    // and a GIF of pages and scripts is written now, of every clip.
     const files = await Promise.all(
       outputs.map((output) => written.get(output) ?? GIF.record(output, clips, settings.fps)),
     );
@@ -467,6 +575,95 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
   }
 }
 
+// The recording-wide look, its CSS checked by the browser before anything is recorded: a typo in
+// panel.style fails now, not after every tour has run.
+async function deckLook(
+  context: BrowserContext,
+  options: RecordOptions,
+): Promise<{ panel: Panel | null; slide: Style }> {
+  const page = await context.newPage();
+  // Refused CSS is a refused option, as from the command line, not a crash.
+  const check = (part: string, style: Style) =>
+    checkStyle(page, part, style).catch((error: Error) => {
+      throw Options.InvalidRecordOption({
+        option: part,
+        reason: error.message.replace(`${part}.`, ''),
+      });
+    });
+  try {
+    const panel = options.panel && {
+      placement: options.panel.placement ?? 'below',
+      height: options.panel.height ?? DEFAULT_PANEL_HEIGHT,
+      style: await check('panel.style', options.panel.style ?? {}),
+    };
+    return {
+      panel: panel || null,
+      slide: await check('slide.style', options.slide?.style ?? {}),
+    };
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
+// A page's or a script's frames as a part's shots: thinned to the frame rate, each held until the
+// next, the last for the clip's lastFrameDurationMs.
+function shotsOf(
+  clip: Capture.Clip,
+  fps: number,
+): { png: Uint8Array; durationMs: number; step: number }[] {
+  const kept = Capture.limitFrameRate(clip.shots, fps);
+  return kept.map((shot, index) => ({
+    png: shot.png,
+    durationMs: kept[index + 1] ? kept[index + 1].atMs - shot.atMs : clip.lastFrameDurationMs,
+    step: 0,
+  }));
+}
+
+// A Markdown deck's slides, or an image, each shown in the page and shot: one step a slide, held
+// for `lastFrameDuration`. They are loaded from a local origin so a slide's relative images resolve.
+async function recordSlides(
+  page: Page,
+  input: Extract<Inputs.Input, { kind: 'slides' | 'image' }>,
+  look: { slide: Style },
+  settings: Settings & { css?: string },
+  serveFile: (root: string, file: string) => Promise<string>,
+): Promise<{
+  shots: { png: Uint8Array; durationMs: number; step: number }[];
+  steps: { title: string; notes: string | null }[];
+  sheets: string[];
+}> {
+  const local = !/^[a-z]+:\/\//i.test(input.kind === 'image' ? input.location : input.path);
+  const file = input.kind === 'image' ? input.location : input.path;
+  const located = local ? await serveFile(path.dirname(file), file) : file;
+  const slides =
+    input.kind === 'image'
+      ? [{ html: Slides.imageSlide(located, input.name), title: input.name, notes: null }]
+      : await Slides.parseSlides(await readFile(input.path, 'utf8'));
+  if (!slides.length)
+    throw Inputs.UnrecordableInput({ input: input.source, reason: 'it has no slides' });
+  const base = `<base href="${new URL('.', located).href}">`;
+  const shots = [];
+  // Each slide's own page too, for a printed recording to show as text rather than a picture.
+  const sheets: string[] = [];
+  for (const [index, slide] of slides.entries()) {
+    const html = Slides.slidePage(slide.html, {
+      css: settings.css,
+      style: look.slide,
+      image: input.kind === 'image',
+    }).replace('<head>', `<head>${base}`);
+    sheets.push(html);
+    // A slide's pictures load as long as --timeout allows, as a recorded page's do.
+    await page.setContent(html, { waitUntil: 'load', timeout: settings.timeout ?? 0 });
+    await Capture.settled(page, settings);
+    shots.push({
+      png: await page.screenshot({ type: 'png' }),
+      durationMs: settings.lastFrameDuration,
+      step: index,
+    });
+  }
+  return { shots, steps: slides.map(({ title, notes }) => ({ title, notes })), sheets };
+}
+
 // Chrome opens a new context's window at exactly the viewport's size, and a small one leaves the
 // window no room to paint in: screenshots of it never get a frame and wait forever. The window is
 // made bigger instead; the viewport stays what was asked for, emulated inside it.
@@ -504,19 +701,22 @@ async function printReport(
   }
 }
 
-// A tour, on pages of its own; its context is closed with the browser's.
+// A tour, on pages of its own; its context is closed with the browser's. In a recording of steps
+// it is a part whose frames the deck draws; otherwise its frames are drawn into a clip after its
+// stills.
 async function recordTour(
   input: Extract<Inputs.Input, { kind: 'tour' }>,
   browser: PlaywrightBrowser,
   settings: Settings,
   needsFrames: boolean,
+  deck: boolean,
+  prepare: (opened: Page) => Promise<void>,
   tourContexts: BrowserContext[],
 ): Promise<Recorded> {
   const recorded = await Tour.recordTour(input.path, {
     browser,
     settings: { ...settings, lastFrameDurationMs: settings.lastFrameDuration },
-    prepare: (opened) =>
-      settings.browser === 'chromium' ? enlargeChromeWindow(opened, settings) : Promise.resolve(),
+    prepare,
   });
   tourContexts.push(recorded.context);
   return {
@@ -524,7 +724,17 @@ async function recordTour(
     clip: { shots: [], lastFrameDurationMs: settings.lastFrameDuration },
     exitCode: 0,
     stillScale: settings.scale < 2 ? 'css' : 'device',
-    draw: needsFrames ? recorded.draw : undefined,
+    draw: !deck && needsFrames ? recorded.draw : undefined,
+    part: deck
+      ? {
+          steps: recorded.steps.map((step) => ({
+            title: step.title ?? input.name,
+            notes: step.notes,
+          })),
+          size: recorded.size,
+          draw: recorded.draw,
+        }
+      : undefined,
   };
 }
 
@@ -610,7 +820,7 @@ async function snapshot(
 // another's.
 async function serve(
   servers: Servers,
-  input: Extract<Inputs.Input, { kind: 'html' }>,
+  input: { root: string; path: string },
   settings: Settings,
 ): Promise<string> {
   const started = servers.get(input.root) ?? startServer(input.root, settings.port);

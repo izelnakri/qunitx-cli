@@ -283,7 +283,7 @@ module('Record | tour | look', { concurrency: true }, () => {
   test('a choice outside its options, or a declaration that is not a string or number, is refused by name', (assert) => {
     assert.throws(
       () => lookOf({ caption: { placement: 'middle' as 'top' } }, '/proj'),
-      /caption\.placement must be 'bottom' or 'top', not 'middle'/,
+      /caption\.placement must be 'bottom', 'top' or 'panel', not 'middle'/,
     );
     assert.throws(
       () => lookOf({ browser: { theme: 'blue' as 'dark' } }, '/proj'),
