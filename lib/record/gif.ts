@@ -183,9 +183,35 @@ export class Encoder {
 }
 
 /**
- * Writes one GIF of every clip in turn to `output`: each clip's shots kept to `fps`, each shown
- * until the next was taken, and its last for the clip's `lastFrameDurationMs`. Frames are decoded
- * one at a time as they are added, so a long recording never holds them all.
+ * One GIF of every clip in turn: each clip's shots kept to `fps`, each shown until the next was
+ * taken, and its last for the clip's `lastFrameDurationMs`. Frames are decoded one at a time as
+ * they are added, so a long recording never holds them all.
+ *
+ * ```ts
+ * import * as GIF from './gif.ts';
+ * import * as PNG from './png.ts';
+ *
+ * const png = await PNG.encode({ width: 1, height: 1, data: Uint8Array.of(0, 0, 255, 255) });
+ * GIF.fromClips([{ shots: [{ png, atMs: 0 }], lastFrameDurationMs: 500 }], 10).frames; // 1
+ * ```
+ */
+export function fromClips(
+  clips: Capture.Clip[],
+  fps: number,
+): { bytes: Uint8Array; width: number; height: number; frames: number } {
+  const encoder = new Encoder();
+  for (const { png, durationMs } of Capture.timeline(clips, fps)) {
+    encoder.add(PNG.decode(png), durationMs);
+  }
+  const bytes = encoder.finish();
+  // Every frame has the dimensions of the last, which a PNG states in its header.
+  const last = clips.flatMap((clip) => clip.shots).at(-1);
+  const dimensions = last ? PNG.getDimensions(last.png) : { width: 0, height: 0 };
+  return { bytes, ...dimensions, frames: encoder.frames };
+}
+
+/**
+ * Writes {@link fromClips}'s GIF of every clip to `output`.
  *
  * ```ts
  * import * as GIF from './gif.ts';
@@ -203,17 +229,8 @@ export function record(
   clips: Capture.Clip[],
   fps: number,
 ): Promise<RecordedFile> {
-  const encoder = new Encoder();
-  for (const { png, durationMs } of Capture.timeline(clips, fps)) {
-    encoder.add(PNG.decode(png), durationMs);
-  }
-  const bytes = encoder.finish();
-  // Every frame has the dimensions of the last, which a PNG states in its header.
-  const last = clips.flatMap((clip) => clip.shots).at(-1);
-  return Outputs.write(output, bytes, {
-    ...(last ? PNG.getDimensions(last.png) : { width: 0, height: 0 }),
-    frames: encoder.frames,
-  });
+  const { bytes, ...contents } = fromClips(clips, fps);
+  return Outputs.write(output, bytes, contents);
 }
 
 // The part of `image` that differs from `previous`, encoded as a frame; null when nothing does.

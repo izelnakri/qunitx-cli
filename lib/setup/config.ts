@@ -12,6 +12,9 @@ import * as Args from '../args/index.ts';
 import * as FailureCache from '../utils/failure-cache.ts';
 import * as Reporter from '../reporters/index.ts';
 import * as RunState from './run-state.ts';
+import * as Snapshots from '../snapshots/index.ts';
+import * as PDF from '../record/pdf.ts';
+import { findPRCommentSettingsProblem } from '../record/options.ts';
 import * as Result from '../result/index.ts';
 import { Task } from '../task/index.ts';
 import type { Config, FSTree as FSTreeShape } from '../types.ts';
@@ -72,7 +75,9 @@ export type ConfigFailure =
   | Args.ParseFailure
   | ProjectRootNotFoundFailure
   | FSTree.InputUnreadableFailure
-  | Result.Failure.Of<typeof InvalidPlugins | typeof PluginLoadFailed>;
+  | Result.Failure.Of<
+      typeof InvalidPlugins | typeof PluginLoadFailed | typeof Snapshots.InvalidSnapshotSetting
+    >;
 
 /**
  * Resolved settings handed to {@link setup} in place of an argv, by the JS API and by anyone
@@ -166,10 +171,25 @@ export function setup(options?: ConfigOptions): Task<Config, ConfigFailure> {
       ? Args.applyInputs({ ...provided, inputs: [] }, projectRoot, cwd, provided.inputs ?? [])
       : Result.unwrap(Args.parse(projectRoot, process.argv.slice(2), cwd));
     const projectPackageJSON = await readConfigFromPackageJSON(projectRoot);
-    const { plugins: rawPlugins, ...userQUnitX } =
-      (projectPackageJSON.qunitx as Partial<Config> & {
-        plugins?: unknown;
-      }) ?? {};
+    const {
+      plugins: rawPlugins,
+      snapshots: rawSnapshots,
+      ...userQUnitX
+    } = (projectPackageJSON.qunitx as Partial<Config> & {
+      plugins?: unknown;
+      snapshots?: unknown;
+    }) ?? {};
+    // Merged setting by setting, unlike the rest of package.json#qunitx: `--update-snapshots` adds
+    // to the configured snapshot settings rather than replacing them all.
+    const configuredSnapshots = Snapshots.checkSettings(rawSnapshots);
+    if (Result.Failure.is(configuredSnapshots)) throw configuredSnapshots;
+    const snapshots = Snapshots.checkSettings({ ...configuredSnapshots, ...flags.snapshots });
+    if (Result.Failure.is(snapshots)) throw snapshots;
+    // Checked once merged: package.json can turn the comment on and a flag say where its images are.
+    const problem = findPRCommentSettingsProblem(snapshots, 'snapshot-');
+    if (problem) {
+      throw Snapshots.InvalidSnapshotSetting({ setting: problem.option, reason: problem.reason });
+    }
     const inputs = flags.inputs.concat(readInputsFromPackageJSON(projectPackageJSON));
     const config = {
       ...defaultProjectConfigValues,
@@ -179,6 +199,7 @@ export function setup(options?: ConfigOptions): Task<Config, ConfigFailure> {
       projectRoot,
       cwd,
       inputs,
+      snapshots,
       testFileLookupPaths: TestFilePaths.setup(inputs),
       state: RunState.create(),
       // Asserted rather than inferred because fsTree and plugins are filled in by the awaits
@@ -196,6 +217,13 @@ export function setup(options?: ConfigOptions): Task<Config, ConfigFailure> {
     // one flag lights every deliberate swallow. (QUNITX_DEBUG covers the env path at
     // failure.ts load; enable-only, so a daemon run without the flag never turns it off.)
     if (config.debug) Result.Failure.setDebug(true);
+    // Whether report.pdf can be printed as asked is known now, not after every test has run.
+    if ([config.snapshots?.report].flat().includes('pdf')) {
+      const mode = PDF.getMode(config.snapshots?.pdf ?? {}, config.browser ?? 'chromium');
+      if (PDF.UnprintablePdf.is(mode)) {
+        throw Snapshots.InvalidSnapshotSetting({ setting: 'pdf', reason: mode.data.reason });
+      }
+    }
     config.htmlPaths = normalizeHTMLPaths(config.projectRoot, config.htmlPaths);
     // Started together, so plugin dynamic-imports overlap fsTree's I/O. The two used to be kicked
     // off on separate lines to get that overlap; they didn't need to be, because everything between

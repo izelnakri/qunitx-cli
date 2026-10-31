@@ -710,6 +710,30 @@ qunitx record http://localhost:4200/ http://localhost:4200/pricing -o snapshots 
   alone runs them; flags given on the command line win, a `pdf` setting at a time.
 - [`examples/github/`](examples/github/) has ready-to-copy workflows for private and public repos.
 
+### Snapshots inside tests
+
+During a test run, a test can take a snapshot of the page, or of one element, compared the same way:
+
+```ts
+test('the empty cart', async (assert) => {
+  await visit('/cart');
+  const shot = await globalThis.qunitxSnapshot?.('cart/empty', { selector: '#cart' });
+  assert.notEqual(shot?.status, 'changed');
+});
+```
+
+- Baselines live in `snapshots/` (`--snapshot-dir`). A changed snapshot fails the run and prints
+  where its `.diff.png` is; `--update-snapshots` accepts it.
+- `--snapshot-threshold`, `--snapshot-max-diff`, `--snapshot-mask`, `--snapshot-report`,
+  `--snapshot-pr-comment`, `--snapshot-images-url` and `--snapshot-report-url` work like record's flags. They can also go in `package.json#qunitx.snapshots`
+  (`{ "dir": …, "threshold": …, "mask": […], "report": true }`) or the JS API's `snapshots` option.
+- `--snapshot-report=pdf` (or `html,pdf`) also prints the report to `report.pdf`, with
+  `snapshots.pdf` taking record's PDF settings (`{ "paper": "A4", "margin": "12mm" }`).
+- `await qunitxRecording?.start('checkout')` … `await qunitxRecording?.stop()` records a step as
+  `snapshots/checkout.gif`; `await qunitxRecordFrame?.()` makes sure a frame is in it.
+- The calls are optional (`?.`), so the same test runs anywhere. In TypeScript,
+  `import type {} from 'qunitx-cli'` types them.
+
 ## Benchmarks
 
 `qunitx bench` is `deno bench` in a real browser. Bench files are written for Deno — the same

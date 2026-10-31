@@ -1,3 +1,4 @@
+import * as Snapshots from '../snapshots/index.ts';
 import * as TestCommand from '../commands/test.ts';
 import { Task } from '../task/index.ts';
 import { closeWithGrace } from '../utils/close-with-grace.ts';
@@ -603,7 +604,8 @@ class Session implements WatchSession {
  * `failed` answers for the batch runner.
  */
 function snapshot(config: ResolvedConfig, durationMs: number): RunResult {
-  const failed = config.state.results.counter.failed > 0;
+  // A changed snapshot nobody accepted fails a rerun as it fails a batch run.
+  const failed = config.state.results.counter.failed > 0 || Snapshots.anyChanged(config);
   const finishedAt = Date.now();
   const result = TestRun.buildResult(config, {
     exitCode: failed ? 1 : 0,

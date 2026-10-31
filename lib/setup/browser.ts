@@ -1,6 +1,7 @@
 import { format } from 'node:util';
 import * as WebServer from './web-server.ts';
 import * as Reporter from '../reporters/index.ts';
+import * as Snapshots from '../snapshots/index.ts';
 import { Task } from '../task/index.ts';
 import { bindServerToPort } from './bind-server-to-port.ts';
 import * as Chrome from '../chrome/index.ts';
@@ -250,6 +251,9 @@ export async function setup(
   // runs on load. Per-Page, so a remote QUnit page opened on this same browser never sees it —
   // and skipped for a reused daemon page, which was given the flag when it was first created.
   if (!slotPage) await page.addInitScript({ content: 'window.__QUNITX_RUNNER__ = true;' });
+  // `qunitxSnapshot()` and `qunitxRecording` for the tests. A reused daemon page was wired when it
+  // was first created; this hands it the new run's config instead.
+  await Snapshots.install(page, config);
 
   // Firefox BiDi sends all object console args by handle (no inline value), so
   // arg.jsonValue() always fails for objects — even plain ones with no special types.

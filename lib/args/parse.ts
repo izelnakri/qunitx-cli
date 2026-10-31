@@ -3,6 +3,8 @@ import { isRemoteInput } from '../setup/remote-inputs.ts';
 import { tokenize, type QueryToken } from './tokenize.ts';
 import { REPORTERS, type ReporterName } from '../reporters/types.ts';
 import { type Result, Failure } from '../result/index.ts';
+import { invalidOptionReason } from '../record/options.ts';
+import type { SnapshotSettings } from '../snapshots/index.ts';
 
 /**
  * A flag was given a value this parser will not accept.
@@ -115,6 +117,8 @@ export interface ParsedFlags {
   search?: string | true;
   /** Absolute path → the `#34` line targets given for it. */
   lineTargets?: Record<string, number[]>;
+  /** `--update-snapshots`, `--snapshot-*` and `qunitx.snapshots`: how `qunitxSnapshot()` keeps and compares. */
+  snapshots?: SnapshotSettings;
   /** Absolute paths mentioned WITHOUT a line target — whole-file requests that supersede a line target. */
   inputsWithoutLineTargets?: string[];
 }
@@ -321,6 +325,10 @@ function applyFlag(result: ParsedFlags, arg: string): ParseFailure | undefined {
     }
     result.coverage = true;
     result.coverageFormats = formats.filter((format) => format !== 'text');
+  } else if (arg.startsWith('--update-snapshots')) {
+    (result.snapshots ??= {}).update = parseBoolean(value);
+  } else if (arg.startsWith('--snapshot-')) {
+    return applySnapshotFlag(result, arg);
   } else if (arg === '--trace-perf') {
     // consumed by perf-log.ts at module load time, not stored in config
   } else {
@@ -332,6 +340,74 @@ function applyFlag(result: ParsedFlags, arg: string): ParseFailure | undefined {
 }
 
 /** Adds a positional target: an `.html` fixture, or a test path with an optional `#34` line suffix. */
+// The `--snapshot-*` flags: one per `qunitx.snapshots` setting, held to `qunitx record`'s rules.
+// Read past the first `=` only: a mask selector such as `[data-x=y]` has its own.
+const SNAPSHOT_FLAGS: Record<string, keyof SnapshotSettings> = {
+  '--snapshot-dir': 'dir',
+  '--snapshot-threshold': 'threshold',
+  '--snapshot-max-diff': 'maxDiff',
+  '--snapshot-mask': 'mask',
+  '--snapshot-report': 'report',
+  '--snapshot-pr-comment': 'prComment',
+  '--snapshot-comment': 'prComment',
+  '--snapshot-images-url': 'imagesUrl',
+  '--snapshot-report-url': 'reportUrl',
+};
+
+function applySnapshotFlag(result: ParsedFlags, arg: string): ParseFailure | undefined {
+  const equals = arg.indexOf('=');
+  const flag = equals === -1 ? arg : arg.slice(0, equals);
+  const raw = equals === -1 ? undefined : arg.slice(equals + 1);
+  const setting = SNAPSHOT_FLAGS[flag];
+  if (!setting) {
+    console.warn(`# Warning: Unknown flag "${arg}" — ignored`);
+    return undefined;
+  }
+  const settings = (result.snapshots ??= {});
+  // A switch, like --update-snapshots: bare is on.
+  if (setting === 'prComment') {
+    settings.prComment = parseBoolean(raw ?? '');
+    return undefined;
+  }
+  if (setting === 'report') {
+    // Bare or a boolean: report.html or none; otherwise formats, `pdf` or `html,pdf`.
+    const formats = raw?.split(',').map((format) => format.trim()) ?? [];
+    const report =
+      raw === undefined || /^(true|false|1|0|yes|no)$/i.test(raw)
+        ? parseBoolean(raw ?? '')
+        : formats.length === 1
+          ? formats[0]
+          : formats;
+    const reason = invalidOptionReason('report', report, `"${raw}"`);
+    if (reason)
+      return InvalidFlag({
+        flag,
+        value: raw ?? '',
+        expected: `${reason[0].toUpperCase()}${reason.slice(1)}.`,
+      });
+    settings.report = report as SnapshotSettings['report'];
+    return undefined;
+  }
+  if (setting === 'mask') {
+    if (!raw) return InvalidFlag({ flag, value: '', expected: 'Expected a CSS selector.' });
+    settings.mask = [...(settings.mask ?? []), raw];
+    return undefined;
+  }
+  const numeric = (setting === 'threshold' || setting === 'maxDiff') && raw;
+  const value = numeric ? Number(raw) : (raw ?? '');
+  const reason = invalidOptionReason(
+    setting === 'dir' ? 'output' : setting,
+    value,
+    `"${raw ?? ''}"`,
+  );
+  if (reason) {
+    const expected = `${reason[0].toUpperCase()}${reason.slice(1)}.`;
+    return InvalidFlag({ flag, value: raw ?? '', expected });
+  }
+  (settings as Record<string, unknown>)[setting] = value;
+  return undefined;
+}
+
 function addInput(
   result: ParsedFlags,
   inputs: Set<string>,
