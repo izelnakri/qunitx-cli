@@ -12,6 +12,8 @@ import { pathToFileURL } from 'node:url';
 import * as Browser from '../setup/browser.ts';
 import * as Capture from './capture.ts';
 import * as Diff from './diff.ts';
+
+import * as Tour from './tour/index.ts';
 import * as GIF from './gif.ts';
 import * as Video from './video.ts';
 import * as Inputs from './inputs.ts';
@@ -23,6 +25,8 @@ import * as PDF from './pdf.ts';
 import type { PdfOptions } from './pdf.ts';
 import * as PNG from './png.ts';
 import * as Report from './report.ts';
+
+import { enterPhase } from './progress.ts';
 import { Stream } from '../stream/index.ts';
 import { HTTPServer, MIME_TYPES } from '../web/index.ts';
 import * as Failure from '../result/failure.ts';
@@ -31,7 +35,7 @@ import { closeCompletely } from '../utils/close-with-grace.ts';
 import { withLoopAlive } from '../utils/with-loop-alive.ts';
 import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import type { ConsoleOption } from '../console.ts';
-import type { BrowserContext, Page } from 'playwright-core';
+import type { Browser as PlaywrightBrowser, BrowserContext, Page } from 'playwright-core';
 
 export { FRAME_FUNCTION } from './capture.ts';
 export { UnrecordableInput } from './inputs.ts';
@@ -229,6 +233,16 @@ export interface RecordResult {
   commentPath: string | null;
 }
 
+// An input recorded: the page its stills are shot from, and what its GIF frames are. A tour's
+// frames are drawn by `draw`, after its stills are taken.
+interface Recorded {
+  page: Page;
+  clip: Capture.Clip;
+  exitCode: number;
+  stillScale?: 'css' | 'device';
+  draw?: () => Promise<{ png: Uint8Array; durationMs: number }[]>;
+}
+
 // The local server of each directory an HTML input is in, started the first time it is needed.
 type Servers = Map<string, Promise<{ server: HTTPServer; origin: string }>>;
 
@@ -267,6 +281,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
   // The JS API's options are held to the command line's rules: an fps of 0 is a mistake to name,
   // not a division to attempt.
   Options.validate(options);
+  enterPhase('reading the inputs');
   const cwd = options.cwd ?? process.cwd();
   const settings = Options.from(options);
   const inputs = await Inputs.resolve(sources, cwd);
@@ -296,35 +311,50 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
   );
 
   const needsFrames = outputs.some((output) => Outputs.isAnimated(output.format));
+  enterPhase(`launching ${settings.browser}`);
   const browser = await Browser.launch({ browser: settings.browser });
   const servers: Servers = new Map();
   const context = await browser.newContext({
     viewport: { width: settings.width, height: settings.height },
     deviceScaleFactor: settings.scale,
   });
+  const tourContexts: BrowserContext[] = [];
   try {
     // Frames are sampled on a clock, so a capture shares the CPU with no other page or it drops
-    // them, and two scripts' console output would interleave. Stills and PDFs of pages need
-    // neither, so those pages are recorded side by side.
+    // them, and two scripts' console output would interleave; a tour is timed too. Stills and
+    // PDFs of pages need neither, so those pages are recorded side by side.
     const maxConcurrency =
-      needsFrames || inputs.some((input) => input.kind === 'script')
+      needsFrames || inputs.some((input) => input.kind === 'script' || input.kind === 'tour')
         ? 1
         : maxParallelPageProcessingAtOnce();
     const recordings = await Stream.asyncStream(
       inputs.entries(),
       async ([index, input]) => {
+        enterPhase(`recording ${input.name}`);
         const page = await context.newPage();
         try {
           if (settings.browser === 'chromium') await enlargeChromeWindow(page, settings);
-          const { clip, exitCode } = await Capture.record(
-            page,
-            input.kind === 'script'
-              ? { script: input.path }
-              : { url: input.kind === 'html' ? await serve(servers, input, settings) : input.url },
-            settings,
-            needsFrames,
-            cwd,
-          );
+          // A tour may end on another tab than it started on; stills show where it ended.
+          const recorded: Recorded =
+            input.kind === 'tour'
+              ? await recordTour(input, browser, settings, needsFrames, tourContexts)
+              : {
+                  page,
+                  ...(await Capture.record(
+                    page,
+                    input.kind === 'script'
+                      ? { script: input.path }
+                      : {
+                          url:
+                            input.kind === 'html'
+                              ? await serve(servers, input, settings)
+                              : input.url,
+                        },
+                    settings,
+                    needsFrames,
+                    cwd,
+                  )),
+                };
           // Stills and PDFs show the page where it ended, so they are made before it closes.
           const files = await Array.fromAsync(
             outputs.filter((output) => output.inputIndex === index),
@@ -332,13 +362,29 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
               [
                 output,
                 output.format === 'pdf'
-                  ? await PDF.record(page, output, options.pdf ?? {}, pdfMode, input.name, settings)
+                  ? await PDF.record(
+                      recorded.page,
+                      output,
+                      options.pdf ?? {},
+                      pdfMode,
+                      input.name,
+                      settings,
+                    )
                   : output.format === 'png'
-                    ? await (settings.compare ? writeSnapshot : PNG.record)(page, output, settings)
-                    : await JPEG.record(page, output, settings),
+                    ? await (settings.compare ? writeSnapshot : PNG.record)(recorded.page, output, {
+                        ...settings,
+                        scale: recorded.stillScale,
+                      })
+                    : await JPEG.record(recorded.page, output, {
+                        ...settings,
+                        scale: recorded.stillScale,
+                      }),
               ] as const,
           );
-          return { input, clip, exitCode, files };
+          // A tour's frames are drawn after its stills are taken; see recordTour.
+          if (recorded.draw) enterPhase(`drawing ${input.name}`);
+          const clip = recorded.draw ? clipOf(await recorded.draw()) : recorded.clip;
+          return { input, clip, exitCode: recorded.exitCode, files };
         } finally {
           await page.close().catch(() => {});
         }
@@ -350,6 +396,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
     const videoOutputs = outputs.filter(
       (output) => output.format === 'webm' || output.format === 'mp4',
     );
+    if (videoOutputs.length) enterPhase('encoding video');
     const videos = videoOutputs.length
       ? await Video.record(videoOutputs, clips, settings.fps, context)
       : [];
@@ -407,11 +454,13 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
       commentPath,
     };
   } finally {
+    enterPhase('closing the browser');
     await closeCompletely({
       servers: Promise.all(
         [...servers.values()].map(async (pending) => (await pending).server.close()),
       ),
       context: context.close(),
+      tours: Promise.all(tourContexts.map((opened) => opened.close())),
       browser: browser.close(),
       prelaunch: shutdownPrelaunch(),
     });
@@ -455,6 +504,41 @@ async function printReport(
   }
 }
 
+// A tour, on pages of its own; its context is closed with the browser's.
+async function recordTour(
+  input: Extract<Inputs.Input, { kind: 'tour' }>,
+  browser: PlaywrightBrowser,
+  settings: Settings,
+  needsFrames: boolean,
+  tourContexts: BrowserContext[],
+): Promise<Recorded> {
+  const recorded = await Tour.recordTour(input.path, {
+    browser,
+    settings: { ...settings, lastFrameDurationMs: settings.lastFrameDuration },
+    prepare: (opened) =>
+      settings.browser === 'chromium' ? enlargeChromeWindow(opened, settings) : Promise.resolve(),
+  });
+  tourContexts.push(recorded.context);
+  return {
+    page: recorded.page,
+    clip: { shots: [], lastFrameDurationMs: settings.lastFrameDuration },
+    exitCode: 0,
+    stillScale: settings.scale < 2 ? 'css' : 'device',
+    draw: needsFrames ? recorded.draw : undefined,
+  };
+}
+
+// A tour's frames are drawn with their durations already decided, so each is kept as drawn.
+function clipOf(frames: { png: Uint8Array; durationMs: number }[]): Capture.Clip {
+  let atMs = 0;
+  const shots = frames.map(({ png, durationMs }) => {
+    const shot = { png, atMs, requested: true };
+    atMs += durationMs;
+    return shot;
+  });
+  return { shots, lastFrameDurationMs: frames.at(-1)?.durationMs ?? 0 };
+}
+
 // How many pages are recorded at once: one per core, less one for Node and the browser itself,
 // and no more than memory holds. availableMemory counts a container's limit, not only the host's.
 function maxParallelPageProcessingAtOnce(): number {
@@ -469,7 +553,7 @@ function maxParallelPageProcessingAtOnce(): number {
 async function writeSnapshot(
   page: Page,
   output: Outputs.Output,
-  settings: Settings,
+  settings: Omit<Settings, 'scale'> & { scale?: 'css' | 'device' },
 ): Promise<RecordedFile> {
   const bytes = await PNG.screenshot(page, settings);
   return {
@@ -488,7 +572,7 @@ async function writeSnapshot(
 async function snapshot(
   file: string,
   current: Uint8Array,
-  settings: Settings,
+  settings: Pick<Settings, 'threshold' | 'maxDiff' | 'accept'>,
 ): Promise<SnapshotComparison> {
   const stem = file.slice(0, -path.extname(file).length);
   const [diffPath, currentPath] = [`${stem}.diff.png`, `${stem}.new.png`];

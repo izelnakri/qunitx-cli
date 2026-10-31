@@ -13,6 +13,7 @@ import {
 import type { RecordOptions, RecordResult } from '../../record/index.ts';
 import * as Config from '../../record/config.ts';
 import { InvalidRecordArgument, parse, type RecordRequest } from './parse.ts';
+import * as StatusLine from './status-line.ts';
 import pkg from '../../../package.json' with { type: 'json' };
 
 // A snapshot's line in the color of what happened to it, so a run is read at a glance: green for
@@ -92,7 +93,13 @@ export async function run(
   // Loaded once the arguments are known good: it is the browser stack, which help and a typo
   // do not need.
   const { record } = await import('../../record/index.ts');
-  return await Task(() => record(recordRequest.sources, { ...options, cwd }))
+  // A recording can take a minute: a terminal is shown what it is doing meanwhile, on stderr, and
+  // the line is gone before the files are listed.
+  const hideStatusLine =
+    out === processConsole && process.stderr.isTTY ? StatusLine.show(process.stderr) : () => {};
+  return await Task(() =>
+    record(recordRequest.sources, { ...options, cwd }).finally(hideStatusLine),
+  )
     .map(async (result) => {
       // Shown relative to where the command ran, compared with symlinks resolved: on macOS the temp
       // directory is `/var/…` to whoever parsedRecordRequest it and `/private/var/…` to `process.cwd()`. Only
@@ -216,6 +223,17 @@ ${blue('$ qunitx record invoice.html -f pdf --pdf-paper=A4 --pdf-media=print')} 
 ${magenta().bold('Inputs:')} a ${blue('http(s)://')} or ${blue('file://')} URL, an ${blue('.html')} file or a directory with an ${blue('index.html')} (served from a local origin),
 or a ${blue('.js/.ts/.jsx/.tsx')} script, run as ${blue('qunitx run')} would and recorded while it runs.
 A script can ${blue('await globalThis.qunitxRecordFrame?.()')} after drawing a step to make sure that step is in the recording.
+A ${blue('.tour.ts')} file, or any script that does ${blue('export default tour(…)')}, drives the browser for a walkthrough: a cursor that clicks, hovers and types, zooms, captions, tabs.
+  ${blue("export default tour(async (t) => { await t.goto(url); await t.click('#add'); await t.zoom('#cart'); })")}
+  Steps: goto, move, click, doubleClick, tap, hover, rightClick, longPress, pinch, type, fill, press, select, upload,
+  scroll ({ y: -600 } up, { within: '#list' }), drag, swipe,
+  zoom, zoomOut, caption, highlight, chapter, wait,
+  live, snap, open, switchTo, close; t.tabs lists every tab. ${blue('tour({ touch: true }, …)')} records a phone: real taps and
+  swipes, a fingertip instead of the cursor, a phone frame (${blue("frame: 'phone' | 'browser' | 'none'")}, ${blue('addressBar: false')} for an app).
+  Restyle with CSS: ${blue("caption: { placement: 'top', style: { borderRadius: 0 } }")}, and ${blue('style')} on ${blue('cursor')}, ${blue('finger')},
+  ${blue('ripple')}, ${blue('menu')}, ${blue('phone')} and ${blue('browser')}, or a whole stylesheet in ${blue('css')};
+  ${blue("rightClick(target, { menu: ['Copy', 'Paste'], choose: 'Paste' })")} draws a menu the page itself doesn't.
+  Touch gestures take ${blue('fingers: 1-10')} (${blue("t.swipe('#map', 'left', { fingers: 3 })")}); ${blue('pinch(target, { fingers: 5, rotate: 90 })')} twists.
 
 ${magenta().bold('Flags:')}
 ${blue('-f, --format')}    : formats (${blue('png')}, ${blue('jpg')}, ${blue('gif')}, ${blue('webm')}, ${blue('mp4')}, ${blue('pdf')}) or file names ending in one, comma-separated. Default: ${blue('jpg')} for one page, ${blue('jpg,gif')} for several inputs or a script

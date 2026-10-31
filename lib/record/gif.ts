@@ -1,9 +1,12 @@
 import { Buffer } from 'node:buffer';
+import path from 'node:path';
+import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import { exactPalette, quantize } from './quantize.ts';
 import { concatBytes } from '../utils/concat-bytes.ts';
 import * as Capture from './capture.ts';
 import * as Outputs from './outputs.ts';
 import * as PNG from './png.ts';
+import { enterPhase, progress } from './progress.ts';
 import type { Image } from './png.ts';
 import type { RecordedFile } from './index.ts';
 
@@ -198,19 +201,24 @@ export class Encoder {
  * }
  * ```
  */
-export function record(
+export async function record(
   output: Outputs.Output,
   clips: Capture.Clip[],
   fps: number,
 ): Promise<RecordedFile> {
+  const frames = Capture.timeline(clips, fps);
+  enterPhase(`encoding ${path.basename(output.absolutePath)}`, frames.length);
   const encoder = new Encoder();
-  for (const { png, durationMs } of Capture.timeline(clips, fps)) {
+  for (const { png, durationMs } of frames) {
     encoder.add(PNG.decode(png), durationMs);
+    progress.done += 1;
+    // Back to the event loop between frames: a long GIF takes seconds, and the CLI shows how far.
+    await yieldToLoop();
   }
   const bytes = encoder.finish();
   // Every frame has the dimensions of the last, which a PNG states in its header.
   const last = clips.flatMap((clip) => clip.shots).at(-1);
-  return Outputs.write(output, bytes, {
+  return await Outputs.write(output, bytes, {
     ...(last ? PNG.getDimensions(last.png) : { width: 0, height: 0 }),
     frames: encoder.frames,
   });

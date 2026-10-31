@@ -1,5 +1,5 @@
 import { module, test } from 'qunitx';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from '../../lib/chrome/spawn.ts';
@@ -72,6 +72,40 @@ module('Chrome | spawn shutdown handle', { concurrency: true }, () => {
       ]);
       assert.equal(outcome, 'resolved', 'shutdown does not wait for a close that already fired');
     } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  // `close` waits for every holder of Chrome's stderr, and a helper Chrome started in a session of
+  // its own outlives the group kill holding it. shutdown() then waited on a `close` that would
+  // never come, with nothing else keeping the loop alive, and `record` exited 0 having done
+  // nothing — CI's "launching chromium" with an empty stderr.
+  test('shutdown() resolves when a helper outside the group still holds stderr open', async (assert) => {
+    if (process.platform !== 'linux') return assert.ok(true, 'skipped: needs setsid');
+
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'qunitx-fake-chrome-'));
+    const helperPid = path.join(dir, 'helper.pid');
+    try {
+      const fakeChrome = path.join(dir, 'chrome');
+      await writeFile(
+        fakeChrome,
+        // The helper is started, and out of the group, before Chrome says it's ready.
+        `#!/bin/sh\nsetsid sh -c 'echo $$ > "${helperPid}"; exec sleep 60' &\n` +
+          `while [ ! -s "${helperPid}" ]; do sleep 0.05; done\n` +
+          'echo "DevTools listening on ws://127.0.0.1:1/devtools/browser/x" >&2\nexec sleep 60\n',
+        { mode: 0o755 },
+      );
+      const chrome = await spawn(fakeChrome, []);
+      assert.ok(chrome, 'resolved an EarlyChrome once the CDP line was printed');
+
+      const outcome = await Promise.race([
+        chrome!.shutdown().then(() => 'resolved'),
+        new Promise((resolve) => setTimeout(resolve, 5_000, 'hung')),
+      ]);
+      assert.equal(outcome, 'resolved', 'shutdown waits for Chrome to exit, not for its pipe');
+    } finally {
+      const pid = Number(await readFile(helperPid, 'utf8').catch(() => ''));
+      if (pid) process.kill(pid, 'SIGKILL');
       await rm(dir, { recursive: true, force: true });
     }
   });

@@ -108,7 +108,13 @@ const WATCH_EXIT_CODES = { SIGTERM: 143, SIGINT: 130, SIGHUP: 129 };
     // the daemon's shared browser would be neither. Its browser is the pre-launched Chrome.
     exitOnSignal();
     const Record = await import('./lib/commands/record/index.ts');
-    return exitAfterReapingPrelaunch(await Record.run());
+    const { progress } = await import('./lib/record/progress.ts');
+    // The same window a test run has: an await that never comes back would exit 0 having recorded
+    // nothing, with nothing on stderr.
+    guard = armExitGuard(() => `record: ${progress.phase}`);
+    const code = await Record.run();
+    guard.reported(code);
+    return exitAfterReapingPrelaunch(code);
   } else if (cmd === 'repl') {
     // Never routed through the daemon: a REPL is a page kept open for one terminal, and the
     // daemon's browser is shared. It uses the pre-launched Chrome like any other local run.

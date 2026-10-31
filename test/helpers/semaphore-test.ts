@@ -5,13 +5,26 @@ import { createSemaphoreServer } from './semaphore-server.ts';
 // Connects to the semaphore server, writes the request byte, and resolves once
 // the server replies 'ok'. Returns the socket so the caller can call .destroy()
 // to release the slot (or simulate a crash).
-function acquireSlot(port: number): Promise<net.Socket> {
+function acquireSlot(port: number, request = 'r'): Promise<net.Socket> {
   return new Promise<net.Socket>((resolve, reject) => {
     const socket = net.createConnection({ port, host: '127.0.0.1' });
     socket.once('error', reject);
     socket.once('data', () => resolve(socket));
-    socket.write('r');
+    socket.write(request);
   });
+}
+
+// A request whose grant is recorded rather than awaited, so a test can see who holds slots now.
+function watchSlot(
+  port: number,
+  request: string,
+): { socket: Promise<net.Socket>; granted: () => boolean } {
+  let granted = false;
+  const socket = acquireSlot(port, request).then((held) => {
+    granted = true;
+    return held;
+  });
+  return { socket, granted: () => granted };
 }
 
 // Connects and queues (does NOT wait for 'ok'). Returns the socket.
@@ -72,6 +85,47 @@ module('Helpers | SemaphoreServer', { concurrency: true }, () => {
     try {
       const granted = await tryAcquireWithinMs(sem.port, 2000);
       assert.true(granted, 'first connection receives ok within 2000 ms');
+    } finally {
+      await sem.close();
+    }
+  });
+
+  test('a weighted request takes that many slots and waits its turn: never overtaken by a lighter one', async (assert) => {
+    const sem = await createSemaphoreServer(3);
+    try {
+      const light = await acquireSlot(sem.port);
+      const heavy = watchSlot(sem.port, '3');
+      await until(() => sem.stats().queued === 1, 'one request queued');
+      const after = watchSlot(sem.port, '1');
+      await until(() => sem.stats().queued === 2, 'two requests queued');
+
+      assert.false(heavy.granted(), 'three slots do not fit beside one');
+      assert.false(after.granted(), 'one would fit, but it is behind the heavy request');
+
+      light.destroy();
+      const held = await heavy.socket;
+      await until(() => sem.stats().queued === 1, 'one request queued');
+      assert.false(after.granted(), 'the heavy request holds all three');
+
+      held.destroy();
+      (await after.socket).destroy();
+      assert.true(after.granted());
+    } finally {
+      await sem.close();
+    }
+  });
+
+  test('a request heavier than the server runs once it is idle, alone', async (assert) => {
+    const sem = await createSemaphoreServer(2);
+    try {
+      const huge = await acquireSlot(sem.port, '9');
+      const next = watchSlot(sem.port, 'r');
+      await until(() => sem.stats().queued === 1, 'one request queued');
+
+      assert.false(next.granted());
+      huge.destroy();
+      (await next.socket).destroy();
+      assert.true(next.granted());
     } finally {
       await sem.close();
     }

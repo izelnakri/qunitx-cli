@@ -20,14 +20,17 @@ export interface BrowserPermit {
  * Protocol: open a TCP connection, send one byte; server replies with 'ok' when a slot
  * is available. The slot is held until `permit.release()` destroys the socket.
  *
+ * `weight` takes that many slots at once, for a command that holds several browsers: a `record`
+ * tour records in one and composes its frames in another.
+ *
  * Returns a no-op permit when QUNITX_SEMAPHORE_PORT is unset (single-file run).
  */
-export function acquireBrowser(): Promise<BrowserPermit> {
+export function acquireBrowser(weight = 1): Promise<BrowserPermit> {
   if (!port) return Promise.resolve({ release: () => {} });
   return new Promise<BrowserPermit>((resolve, reject) => {
     const socket = net.createConnection({ port, host: '127.0.0.1' });
     socket.once('error', reject);
     socket.once('data', () => resolve({ release: () => socket.destroy() }));
-    socket.write('r');
+    socket.write(weight > 1 ? String(Math.min(9, weight)) : 'r');
   });
 }
