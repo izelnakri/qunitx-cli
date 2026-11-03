@@ -815,13 +815,15 @@ module('Commands | repl | values', { concurrency: true }, () => {
     test('a second scratchpad runs after a first was abandoned', async (assert) => {
       // The reported sequence exactly: the first `.e` is quit without saving, which must run
       // nothing, and the second is saved, which must run. Two opens, one stand-in editor that
-      // only writes the second time.
+      // only writes the second time. It says when it closes, on the terminal it shares with the
+      // session: an abandoned scratchpad prints nothing, and a second `.e` sent on a clock instead
+      // landed while a slow runner was still in the first and was never asked about.
       await using directory = await tempDir('repl-scratch-twice');
       const editor = path.join(directory.path, 'stand-in');
       const counter = path.join(directory.path, 'opens');
       await fs.writeFile(
         editor,
-        `#!/bin/sh\nN=$(cat "${counter}" 2>/dev/null || echo 0)\nN=$((N+1))\necho "$N" > "${counter}"\n[ "$N" -ge 2 ] && printf '6 * 7\\n' > "$1"\ntrue\n`,
+        `#!/bin/sh\nN=$(cat "${counter}" 2>/dev/null || echo 0)\nN=$((N+1))\necho "$N" > "${counter}"\n[ "$N" -ge 2 ] && printf '6 * 7\\n' > "$1"\necho "stand-in closed $N"\n`,
       );
       await fs.chmod(editor, 0o755);
       const result = await execute(
@@ -829,7 +831,8 @@ module('Commands | repl | values', { concurrency: true }, () => {
         {
           stdin: [
             { text: '.e\n', after: READY },
-            { text: '.e\n', delayMs: 4000 },
+            // Once the first is closed, and a beat for the session to take the terminal back.
+            { text: '.e\n', after: /stand-in closed 1/, delayMs: 500 },
             { text: 'y\n', after: ASKED },
             { text: '.exit\n', delayMs: 3000 },
           ],
