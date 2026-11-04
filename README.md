@@ -647,6 +647,9 @@ qunitx record dist/ -f png --full-page --scale=2 -o shots
   comma-separated. By default one page is a `.jpg`; several inputs, or a script, add one `.gif`
   of them all.
 - **`-w` / `-h`:** viewport in CSS pixels (default 1280×720); `--scale` multiplies it.
+- **`--live`:** draws and encodes while it records instead of after, and opens a page that plays
+  the frames as they are made. A tour's `frame: 'auto'` is then decided up front: the phone for a
+  touch tour, otherwise the browser window.
 - `--wait-for=<ms|selector>`, `--page-duration`, `--last-frame-duration`, `--fps`, `--quality`, `--browser` — see
   `qunitx record --help`.
 - **Scripts:** frames are sampled about 10 times a second. To be sure a step is in the recording,

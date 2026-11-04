@@ -1,5 +1,7 @@
 import { module, test } from 'qunitx';
 import fs from 'node:fs/promises';
+import http from 'node:http';
+import { Buffer } from 'node:buffer';
 import path from 'node:path';
 import process from 'node:process';
 import { acquireBrowser } from '../helpers/browser-semaphore-queue.ts';
@@ -601,3 +603,153 @@ module('API | record | refusals', { concurrency: true }, () => {
     assert.equal(outcome, 'ENOTDIR');
   });
 });
+
+module('API | record | live', { concurrency: true }, () => {
+  // A tour of a page that changes as it is used, framed in the browser window either way, so the
+  // live recording and the one drawn after it have every frame in common.
+  const app = `<!doctype html><meta charset="utf-8"><title>App</title>
+    <style>html,body{margin:0;height:100%;background:#fff} #go{position:absolute;left:120px;top:80px;width:120px;height:40px}</style>
+    <input id="field"><button id="go" onclick="document.body.style.background = 'rgb(0,160,0)'">Go</button>`;
+  const tourOf = (port: number) => `export default {
+    options: { frame: 'browser' },
+    run: async (tour) => {
+      await tour.goto('http://127.0.0.1:${port}/').caption('Typing').type('#field', 'hi');
+      await tour.click('#go').caption(null).wait(300);
+    },
+  };`;
+
+  test('a live tour is the same GIF, frame for frame, as one drawn after it ran', async (assert) => {
+    // Not byte for byte: two runs of a page differ by a pixel here and there (text antialiasing as
+    // it is typed), live or not. Every frame, and how long it shows, is the same.
+    await using dir = await tempDir('api-record-live');
+    await using server = await listen((_request, response) => {
+      response.setHeader('Content-Type', 'text/html');
+      response.end(app);
+    });
+    await fs.writeFile(path.join(dir.path, 'app.tour.ts'), tourOf(server.port));
+    const options = { cwd: dir.path, width: 400, height: 240 };
+
+    await recorded('app.tour.ts', { ...options, formats: ['after.gif'] });
+    const previews: string[] = [];
+    await recorded('app.tour.ts', {
+      ...options,
+      formats: ['live.gif', 'live.webm'],
+      live: (url) => previews.push(url),
+    });
+    const [after, live] = await Promise.all(
+      ['after.gif', 'live.gif'].map(async (name) =>
+        decodeGif(await fs.readFile(path.join(dir.path, name))),
+      ),
+    );
+    const changedPixels = (one: Uint8Array, other: Uint8Array) => {
+      let count = 0;
+      for (let pixel = 0; pixel < one.length; pixel += 4) {
+        if (one.subarray(pixel, pixel + 3).some((value, index) => value !== other[pixel + index])) {
+          count++;
+        }
+      }
+      return count;
+    };
+
+    assert.true(live.frames.length > 3, 'a recording that moves');
+    assert.deepEqual(
+      live.frames.map((frame) => frame.delayMs),
+      after.frames.map((frame) => frame.delayMs),
+      'the same frames, each as long',
+    );
+    assert.deepEqual(
+      live.frames
+        .map((frame, index) => changedPixels(frame.rgba, after.frames[index].rgba))
+        .filter((changed) => changed > 400 * (240 + 74) * 0.02),
+      [],
+      'each showing the same, to within what two runs of a page differ by',
+    );
+    assert.equal(previews.length, 1, 'the preview was served, and its address given once');
+    assert.equal(parseWebM(await fs.readFile(path.join(dir.path, 'live.webm'))).width, 400);
+  });
+
+  test('the preview plays every frame as it is made, then says the recording ended', async (assert) => {
+    await using dir = await tempDir('api-record-live-preview');
+    await using server = await listen((_request, response) => {
+      response.setHeader('Content-Type', 'text/html');
+      response.end(app);
+    });
+    await fs.writeFile(path.join(dir.path, 'app.tour.ts'), tourOf(server.port));
+    let streamed: Promise<string> | null = null;
+    let page: Promise<string> | null = null;
+
+    const result = await recorded('app.tour.ts', {
+      cwd: dir.path,
+      width: 400,
+      height: 240,
+      formats: ['app.gif'],
+      live: (url) => {
+        page = fetch(url).then((response) => response.text());
+        streamed = fetch(new URL('/frames', url)).then((response) => response.text());
+      },
+    });
+    const events = (await streamed!).split('\n\n').filter(Boolean);
+
+    assert.includes(await page!, 'EventSource', 'a page that listens for frames');
+    assert.equal(events.at(-1), 'event: end\ndata:', 'and the stream ends with the recording');
+    assert.equal(events.length - 1, result.files[0].frames, 'one event per frame of the GIF');
+    const first = JSON.parse(events[0].replace(/^data: /, ''));
+    assert.deepEqual(
+      PNG.getDimensions(Buffer.from(first.png, 'base64')),
+      { width: 400, height: 240 + 74 },
+      'each a PNG of the framed page',
+    );
+  });
+
+  test('a page is previewed too, in input order, with the tour after it', async (assert) => {
+    await using dir = await tempDir('api-record-live-mixed');
+    await using server = await listen((_request, response) => {
+      response.setHeader('Content-Type', 'text/html');
+      response.end(app);
+    });
+    await fs.writeFile(path.join(dir.path, 'page.html'), PAGE);
+    // Unframed, as one GIF of a page and a tour has to be: every frame of a GIF is one size.
+    await fs.writeFile(
+      path.join(dir.path, 'app.tour.ts'),
+      tourOf(server.port).replace("frame: 'browser'", "frame: 'none'"),
+    );
+    let streamed: Promise<string> | null = null;
+
+    const result = await recorded(['page.html', 'app.tour.ts'], {
+      cwd: dir.path,
+      width: 400,
+      height: 240,
+      formats: ['both.gif'],
+      live: (url) => {
+        streamed = fetch(new URL('/frames', url)).then((response) => response.text());
+      },
+    });
+    const corners = (await streamed!)
+      .split('\n\n')
+      .filter((event) => event.startsWith('data: '))
+      .map((event) => [
+        ...PNG.decode(Buffer.from(JSON.parse(event.slice(6)).png, 'base64')).data.subarray(0, 3),
+      ]);
+
+    assert.deepEqual(corners[0], [0, 128, 255], 'the page first, in its blue');
+    const [red, green, blue] = corners.at(-1)!;
+    assert.true(green > red + 80 && green > blue + 80, 'the tour after it, ending on its green');
+    assert.equal(corners.length, result.files[0].frames, 'one event per frame of the GIF');
+  });
+});
+
+// A throwaway HTTP server on a free port, closed when the scope ends.
+async function listen(
+  handler: http.RequestListener,
+): Promise<{ port: number; [Symbol.asyncDispose](): Promise<void> }> {
+  const server = http.createServer(handler);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    port: (server.address() as { port: number }).port,
+    [Symbol.asyncDispose]: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
+}

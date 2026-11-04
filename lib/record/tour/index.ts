@@ -462,11 +462,18 @@ export async function recordTour(
     };
     /** Readies every page the tour opens, as `record` readies its own. */
     prepare: (page: Page) => Promise<void>;
+    /**
+     * Draws the frames as the tour runs, handing them over a step at a time, instead of returning
+     * `draw` for after. The frame `'auto'` is then decided before the first one: see
+     * `DeviceFrame.resolveBeforeRun`.
+     */
+    live?: { onFrames: (frames: Capture.Frame[]) => Promise<void> };
   },
 ): Promise<{
   page: Page;
   context: BrowserContext;
-  draw: () => Promise<Capture.Frame[]>;
+  /** Draws the frames, once the stills are taken; null when `live` already drew them. */
+  draw: (() => Promise<Capture.Frame[]>) | null;
 }> {
   const definition = definitionOf(await import(pathToFileURL(file).href));
   if (typeof definition === 'string') throw new Error(`${file}: ${definition}`);
@@ -494,35 +501,73 @@ export async function recordTour(
     await setup.prepare(page);
     const spacing = look.finger.spacing ?? look.finger.size * 1.15;
     const run = new TourRun({ ...setup, file, context, page, touch, spacing });
-    await run.start();
-    const steps = new StepQueue(run);
-    await definition.run(steps.tour(run));
-    steps.checkEveryStepRan();
-    await run.wait(setup.settings.lastFrameDurationMs);
+    const drawing = (deviceFrame: DeviceFrame.Kind): Stage.Options => ({
+      viewport: { width: setup.settings.width, height: setup.settings.height },
+      scale: setup.settings.scale,
+      deviceFrame,
+      addressBar,
+      pointer: touch ? 'finger' : 'cursor',
+      look,
+      fps: setup.settings.fps,
+      preparePage: setup.prepare,
+    });
+    const live = setup.live
+      ? drawLive(
+          await Stage.open(
+            setup.browser,
+            drawing(DeviceFrame.resolveBeforeRun(definition.options)),
+          ),
+          run,
+          setup.live.onFrames,
+        )
+      : null;
+    try {
+      await run.start();
+      const steps = new StepQueue(run, live?.drawSettled ?? null);
+      await definition.run(steps.tour(run));
+      steps.checkEveryStepRan();
+      await run.wait(setup.settings.lastFrameDurationMs);
+      await live?.drawRest();
+    } finally {
+      await live?.close();
+    }
 
     return {
       page: run.page,
       context,
-      draw: () =>
-        Stage.drawFrames(
-          setup.browser,
-          { screenshots: run.shots, beats: run.timeline.beats },
-          {
-            viewport: { width: setup.settings.width, height: setup.settings.height },
-            scale: setup.settings.scale,
-            deviceFrame: DeviceFrame.resolve(definition.options, run.openedTabs),
-            addressBar,
-            pointer: touch ? 'finger' : 'cursor',
-            look,
-            fps: setup.settings.fps,
-            preparePage: setup.prepare,
-          },
-        ),
+      draw: live
+        ? null
+        : () =>
+            Stage.drawFrames(
+              setup.browser,
+              { screenshots: run.shots, beats: run.timeline.beats },
+              drawing(DeviceFrame.resolve(definition.options, run.openedTabs)),
+            ),
     };
   } catch (error) {
     await context.close().catch(() => {});
     throw error;
   }
+}
+
+// Draws a running tour on `stage` and hands the frames to `onFrames`: after each step, every beat
+// but the last, which a step that leaves the frame as it was still lengthens; the rest at the end.
+function drawLive(
+  stage: Stage.Stage,
+  run: TourRun,
+  onFrames: (frames: Capture.Frame[]) => Promise<void>,
+): { drawSettled(): Promise<void>; drawRest(): Promise<void>; close(): Promise<void> } {
+  let drawn = 0;
+  const drawUpTo = async (end: number) => {
+    for (; drawn < end; drawn++) {
+      await onFrames(await stage.draw(run.timeline.beats[drawn], run.shots));
+    }
+  };
+  return {
+    drawSettled: () => drawUpTo(run.timeline.beats.length - 1),
+    drawRest: () => drawUpTo(run.timeline.beats.length),
+    close: () => stage.close(),
+  };
 }
 
 // One tour as it runs: the real pages, the screenshots taken so far, and the timeline of beats.

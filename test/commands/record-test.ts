@@ -246,6 +246,23 @@ module('Commands | record | scripts', { concurrency: true }, (_hooks, moduleMeta
     assert.includes(result.stderr, '# broken.js exited 3');
     assert.true(near(pixel(await png(path.join(dir.path, 'broken.png')), 5, 5), [0, 0, 0]));
   });
+
+  test('--live tells a script where its preview is, and writes the files as ever', async (assert, testMetadata) => {
+    await using dir = await tempDir('record-live');
+    await fs.writeFile(path.join(dir.path, 'page.html'), '<body style="background:rgb(0,0,255)">');
+
+    const result = await shell(
+      `node ${CLI} record page.html -f page.gif,page.png -w 40 -h 30 --live --output=${dir.path}`,
+      { ...moduleMetadata, ...testMetadata, cwd: dir.path },
+    );
+
+    assert.true(
+      /^Live preview: http:\/\/127\.0\.0\.1:\d+\/$/m.test(result.stderr),
+      'the address, on a line of its own',
+    );
+    assert.includes(result.stdout, 'page.gif');
+    assert.true(near(pixel(await png(path.join(dir.path, 'page.png')), 5, 5), [0, 0, 255]));
+  });
 });
 
 // ffmpeg is the strictest reader there is, and the one that caught Firefox's malformed avcC. It is

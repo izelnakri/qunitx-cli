@@ -160,11 +160,13 @@ export interface TourChain<T> extends Chained<TourSteps> {}
  */
 export class StepQueue {
   readonly #steps: TourSteps;
+  readonly #afterEachStep: (() => Promise<void>) | null;
   #tail: Promise<unknown> = Promise.resolve();
   readonly #called: { name: StepName; ran: boolean }[] = [];
 
   /**
-   * A queue for the steps of one run.
+   * A queue for the steps of one run; `afterEachStep`, when given, runs after every step that
+   * succeeds, before the next one starts.
    *
    * ```ts
    * import { StepQueue } from './chain.ts';
@@ -174,8 +176,9 @@ export class StepQueue {
    * const queueFor = (run: TourSteps) => new StepQueue(run);
    * ```
    */
-  constructor(steps: TourSteps) {
+  constructor(steps: TourSteps, afterEachStep: (() => Promise<void>) | null = null) {
     this.#steps = steps;
+    this.#afterEachStep = afterEachStep;
   }
 
   /**
@@ -272,7 +275,11 @@ export class StepQueue {
   // One step, once every step queued before it has finished, failed or not.
   #run(name: StepName, args: unknown[]): Promise<unknown> {
     const step = this.#steps[name] as (...args: unknown[]) => Promise<unknown>;
-    const result = this.#tail.then(() => step.apply(this.#steps, args));
+    const result = this.#tail.then(async () => {
+      const value = await step.apply(this.#steps, args);
+      await this.#afterEachStep?.();
+      return value;
+    });
     this.#tail = result.catch(() => {});
     return result;
   }

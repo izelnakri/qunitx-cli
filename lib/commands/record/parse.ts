@@ -18,6 +18,7 @@ interface Flag {
     | keyof RecordOptions
     | `pdf.${keyof PdfOptions}`
     | 'help'
+    | 'live'
     | 'pdfHeaderFile'
     | 'pdfFooterFile'
     | null;
@@ -58,6 +59,7 @@ const asFormatEntries = (text: string): string[] => Outputs.splitEntries([text])
 // Every flag `qunitx record` takes, by each of its spellings.
 const FLAGS: Record<string, Flag> = {
   '--help': { sets: 'help', value: true },
+  '--live': { sets: 'live', value: true },
   // Read straight off argv by the perf logger, as for every command.
   '--trace-perf': { sets: null, value: true },
   '-f': { sets: 'formats', read: asFormatEntries, list: true },
@@ -135,6 +137,8 @@ export interface RecordRequest {
   sources: string[];
   /** What the flags set. */
   options: RecordOptions;
+  /** `--live`: encode as it records, and open a page that plays the frames as they are made. */
+  live?: boolean;
   /** `--pdf-header` and `--pdf-footer`: HTML template files, read relative to where it runs. */
   pdfHeaderFile?: string;
   /** `--pdf-footer`, likewise. */
@@ -250,7 +254,12 @@ function applyFlagToRecordRequest(
   const { sets, read, value, list } = known;
   const parsed = read && text !== undefined ? read(text) : value;
   if (sets === null) return recordRequest;
-  else if (sets === 'help' || sets === 'pdfHeaderFile' || sets === 'pdfFooterFile') {
+  else if (
+    sets === 'help' ||
+    sets === 'live' ||
+    sets === 'pdfHeaderFile' ||
+    sets === 'pdfFooterFile'
+  ) {
     return { ...recordRequest, [sets]: parsed };
   }
   const [option, setting] = sets.split('.') as [keyof RecordOptions, string?];

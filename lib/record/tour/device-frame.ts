@@ -99,3 +99,22 @@ export function resolve(options: TourOptions, openedTabs: number): Kind {
   if (frame !== 'auto') return frame;
   return options.touch ? 'phone' : openedTabs > 1 ? 'browser' : 'none';
 }
+
+/**
+ * The frame a tour is drawn in when that has to be known before it runs, as under `--live`, where
+ * every frame is drawn at one size from the first: `'auto'` is the phone for a touch tour and
+ * otherwise the browser window, since a tab could open at any step.
+ *
+ * ```ts
+ * import * as DeviceFrame from './device-frame.ts';
+ *
+ * DeviceFrame.resolveBeforeRun({}); // 'browser'
+ * DeviceFrame.resolveBeforeRun({ touch: true }); // 'phone'
+ * DeviceFrame.resolveBeforeRun({ frame: 'none' }); // 'none'
+ * ```
+ */
+export function resolveBeforeRun(options: TourOptions): Kind {
+  const frame = options.frame ?? 'auto';
+  if (frame !== 'auto') return frame;
+  return options.touch ? 'phone' : 'browser';
+}

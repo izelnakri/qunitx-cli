@@ -16,6 +16,7 @@ import * as Diff from './diff.ts';
 import * as Tour from './tour/index.ts';
 import * as GIF from './gif.ts';
 import * as Video from './video.ts';
+import * as Live from './live.ts';
 import * as Inputs from './inputs.ts';
 import * as JPEG from './jpeg.ts';
 import * as Outputs from './outputs.ts';
@@ -156,6 +157,12 @@ export interface RecordOptions {
   reportUrl?: string;
   /** How `pdf` outputs are made: paper, margins, header and footer, vector or raster. */
   pdf?: PdfOptions;
+  /**
+   * Draw and encode as the recording runs instead of after it, and serve a page that plays the
+   * frames as they come: called with that page's address once it is up. A tour's `frame: 'auto'`
+   * is then decided before it runs: the phone for a touch tour, otherwise the browser window.
+   */
+  live?: (previewUrl: string) => void;
 }
 
 /**
@@ -240,7 +247,7 @@ interface Recorded {
   clip: Capture.Clip;
   exitCode: number;
   stillScale?: 'css' | 'device';
-  draw?: () => Promise<{ png: Uint8Array; durationMs: number }[]>;
+  draw?: (() => Promise<Capture.Frame[]>) | null;
 }
 
 // The local server of each directory an HTML input is in, started the first time it is needed.
@@ -310,7 +317,8 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
     ),
   );
 
-  const needsFrames = outputs.some((output) => Outputs.isAnimated(output.format));
+  // Live, every input is drawn for the preview, whatever the outputs ask for.
+  const needsFrames = !!options.live || outputs.some((output) => Outputs.isAnimated(output.format));
   enterPhase(`launching ${settings.browser}`);
   const browser = await Browser.launch({ browser: settings.browser });
   const servers: Servers = new Map();
@@ -319,7 +327,14 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
     deviceScaleFactor: settings.scale,
   });
   const tourContexts: BrowserContext[] = [];
+  let live: Live.Recording | null = null;
   try {
+    live = options.live
+      ? await Live.open(
+          outputs.filter((output) => Outputs.isAnimated(output.format)),
+          { fps: settings.fps, context, onPreview: options.live },
+        )
+      : null;
     // Frames are sampled on a clock, so a capture shares the CPU with no other page or it drops
     // them, and two scripts' console output would interleave; a tour is timed too. Stills and
     // PDFs of pages need neither, so those pages are recorded side by side.
@@ -337,7 +352,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
           // A tour may end on another tab than it started on; stills show where it ended.
           const recorded: Recorded =
             input.kind === 'tour'
-              ? await recordTour(input, browser, settings, needsFrames, tourContexts)
+              ? await recordTour(input, browser, settings, needsFrames, tourContexts, live)
               : {
                   page,
                   ...(await Capture.record(
@@ -381,9 +396,11 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
                       }),
               ] as const,
           );
-          // A tour's frames are drawn after its stills are taken; see recordTour.
+          // A tour's frames are drawn after its stills are taken; see recordTour. Live, they were
+          // drawn as it ran, and a page's or script's go out once it is recorded, in input order.
           if (recorded.draw) enterPhase(`drawing ${input.name}`);
           const clip = recorded.draw ? clipOf(await recorded.draw()) : recorded.clip;
+          if (live && input.kind !== 'tour') await live.frames.addClip(clip);
           return { input, clip, exitCode: recorded.exitCode, files };
         } finally {
           await page.close().catch(() => {});
@@ -392,10 +409,11 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
       { maxConcurrency },
     ).collect();
     const clips = recordings.map((recording) => recording.clip);
-    // Every video output from one encode: each frame goes to the browser and is decoded once.
-    const videoOutputs = outputs.filter(
-      (output) => output.format === 'webm' || output.format === 'mp4',
-    );
+    // Every video output from one encode: each frame goes to the browser and is decoded once. Live,
+    // every animated output was encoded as its frames came, and only has to be written.
+    const videoOutputs = live
+      ? []
+      : outputs.filter((output) => output.format === 'webm' || output.format === 'mp4');
     if (videoOutputs.length) enterPhase('encoding video');
     const videos = videoOutputs.length
       ? await Video.record(videoOutputs, clips, settings.fps, context)
@@ -403,6 +421,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
     const written = new Map([
       ...recordings.flatMap((recording) => recording.files),
       ...videoOutputs.map((output, index) => [output, videos[index]] as const),
+      ...(live ? await live.finish() : []),
     ]);
     // In the order they were asked for: stills, PDFs and videos are written, and a GIF is written
     // now, of every clip.
@@ -456,6 +475,7 @@ async function recordAll(sources: string[], options: RecordOptions): Promise<Rec
   } finally {
     enterPhase('closing the browser');
     await closeCompletely({
+      live: live?.close(),
       servers: Promise.all(
         [...servers.values()].map(async (pending) => (await pending).server.close()),
       ),
@@ -511,12 +531,20 @@ async function recordTour(
   settings: Settings,
   needsFrames: boolean,
   tourContexts: BrowserContext[],
+  live: Live.Recording | null,
 ): Promise<Recorded> {
   const recorded = await Tour.recordTour(input.path, {
     browser,
     settings: { ...settings, lastFrameDurationMs: settings.lastFrameDuration },
     prepare: (opened) =>
       settings.browser === 'chromium' ? enlargeChromeWindow(opened, settings) : Promise.resolve(),
+    live: live
+      ? {
+          onFrames: async (frames) => {
+            for (const frame of frames) await live.frames.addFrame(frame);
+          },
+        }
+      : undefined,
   });
   tourContexts.push(recorded.context);
   return {

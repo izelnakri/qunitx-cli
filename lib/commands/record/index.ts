@@ -14,6 +14,7 @@ import type { RecordOptions, RecordResult } from '../../record/index.ts';
 import * as Config from '../../record/config.ts';
 import { InvalidRecordArgument, parse, type RecordRequest } from './parse.ts';
 import * as StatusLine from './status-line.ts';
+import { openInBrowser } from '../repl/open-in-browser.ts';
 import pkg from '../../../package.json' with { type: 'json' };
 
 // A snapshot's line in the color of what happened to it, so a run is read at a glance: green for
@@ -71,6 +72,7 @@ export async function run(
       ...parsedRecordRequest.options,
       pdf: { ...config.options.pdf, ...parsedRecordRequest.options.pdf },
     },
+    live: parsedRecordRequest.live,
     pdfHeaderFile: parsedRecordRequest.pdfHeaderFile,
     pdfFooterFile: parsedRecordRequest.pdfFooterFile,
   };
@@ -95,10 +97,18 @@ export async function run(
   const { record } = await import('../../record/index.ts');
   // A recording can take a minute: a terminal is shown what it is doing meanwhile, on stderr, and
   // the line is gone before the files are listed.
-  const hideStatusLine =
-    out === processConsole && process.stderr.isTTY ? StatusLine.show(process.stderr) : () => {};
+  const statusLineShown = out === processConsole && process.stderr.isTTY;
+  const hideStatusLine = statusLineShown ? StatusLine.show(process.stderr) : () => {};
+  // The preview's address on a line of its own, above the status line rather than inside it. At a
+  // terminal it is opened where the desktop opens addresses; a script or CI is only told where.
+  const live = recordRequest.live
+    ? (previewUrl: string) => {
+        out.error(`${statusLineShown ? '\r\x1b[2K' : ''}Live preview: ${previewUrl}`);
+        if (statusLineShown) void openInBrowser(previewUrl);
+      }
+    : undefined;
   return await Task(() =>
-    record(recordRequest.sources, { ...options, cwd }).finally(hideStatusLine),
+    record(recordRequest.sources, { ...options, cwd, live }).finally(hideStatusLine),
   )
     .map(async (result) => {
       // Shown relative to where the command ran, compared with symlinks resolved: on macOS the temp
@@ -232,6 +242,7 @@ ${blue('-h, --height')}    : viewport height in CSS pixels (default ${DEFAULT_SI
 ${blue('-o, --output')}    : directory the files are written to (default: the current one)
 ${blue('--scale')}         : device pixel ratio, e.g. ${blue('2')} for retina (default 1)
 ${blue('--full-page')}     : stills capture the whole scrollable page, not just the viewport
+${blue('--live')}          : draw and encode while recording, and open a page that plays the frames as they are made
 ${blue('--wait-for')}      : after a page loads, wait this many ms, or until this CSS selector is on it
 ${blue('--page-duration')} : record each page for this many ms in a GIF, instead of one still
 ${blue('--last-frame-duration')} : ms each input's last frame stays on screen in a GIF (default 1000)
