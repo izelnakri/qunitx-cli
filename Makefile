@@ -49,6 +49,8 @@ build:
 # native esbuild executable. cli.ts auto-discovers an `esbuild` (or `esbuild.exe`)
 # adjacent to the binary at runtime; we copy the local @esbuild/<target> sidecar
 # next to dist/qunitx so the binary works out of the box without env vars.
+# `--node-modules-dir=none --exclude-unused-npm` (here and in deno.json's build:binary) embed only
+# the npm packages cli.ts reaches; without them every devDependency shipped too, 213 MB → 132 MB.
 build-deno:
 	@mkdir -p dist
 	deno task build:binary
@@ -71,11 +73,11 @@ build-deno:
 # or download from registry.npmjs.org). Distribution scripts handle the pairing.
 build-deno-all:
 	@mkdir -p dist
-	deno task build:binary --target x86_64-unknown-linux-gnu --output dist/qunitx-linux-x64
-	deno task build:binary --target aarch64-unknown-linux-gnu --output dist/qunitx-linux-arm64
-	deno task build:binary --target x86_64-apple-darwin --output dist/qunitx-darwin-x64
-	deno task build:binary --target aarch64-apple-darwin --output dist/qunitx-darwin-arm64
-	deno task build:binary --target x86_64-pc-windows-msvc --output dist/qunitx-windows-x64.exe
+	deno compile --allow-all --no-check --node-modules-dir=none --exclude-unused-npm --target x86_64-unknown-linux-gnu --include templates --include lib --include package.json --output dist/qunitx-linux-x64 cli.ts
+	deno compile --allow-all --no-check --node-modules-dir=none --exclude-unused-npm --target aarch64-unknown-linux-gnu --include templates --include lib --include package.json --output dist/qunitx-linux-arm64 cli.ts
+	deno compile --allow-all --no-check --node-modules-dir=none --exclude-unused-npm --target x86_64-apple-darwin --include templates --include lib --include package.json --output dist/qunitx-darwin-x64 cli.ts
+	deno compile --allow-all --no-check --node-modules-dir=none --exclude-unused-npm --target aarch64-apple-darwin --include templates --include lib --include package.json --output dist/qunitx-darwin-arm64 cli.ts
+	deno compile --allow-all --no-check --node-modules-dir=none --exclude-unused-npm --target x86_64-pc-windows-msvc --include templates --include lib --include package.json --output dist/qunitx-windows-x64.exe cli.ts
 
 # Builds a Node.js SEA binary for the current platform and leaves it in the matching
 # npm/<target>/bin/ directory. Does NOT publish — `make publish-sea` does that.
