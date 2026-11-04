@@ -693,7 +693,9 @@ module('Commands | repl | values', { concurrency: true }, () => {
     const editing = async (label: string, script: string, answer: string | null = 'y') => {
       const directory = await tempDir(label);
       const editor = path.join(directory.path, 'stand-in');
-      await fs.writeFile(editor, `#!/bin/sh\n${script}\n`);
+      // It says when it closes, however its script ends: a scratchpad that runs nothing prints
+      // nothing, and an `.exit` sent on a clock landed while a slow runner was still in the editor.
+      await fs.writeFile(editor, `#!/bin/sh\ntrap 'echo stand-in closed' EXIT\n${script}\n`);
       await fs.chmod(editor, 0o755);
       // `script -c` hands its argument to a shell, so the editor goes in as an assignment rather
       // than through an env option the capture helper does not take.
@@ -705,7 +707,9 @@ module('Commands | repl | values', { concurrency: true }, () => {
             // Gated on the question rather than a clock: on a loaded machine a fixed wait let the
             // answer arrive first, where readline ate it as a line of JavaScript.
             ...(answer === null ? [] : [{ text: `${answer}\n`, after: ASKED }]),
-            { text: '.exit\n', delayMs: answer === null ? 6000 : 3000 },
+            answer === null
+              ? { text: '.exit\n', after: /stand-in closed/, delayMs: 1000 }
+              : { text: '.exit\n', delayMs: 3000 },
           ],
         },
       );
@@ -747,12 +751,11 @@ module('Commands | repl | values', { concurrency: true }, () => {
         {
           stdin: [
             { text: '.e\n', after: READY },
-            // Only the FIRST answer is gated on the question: `appears` tests CUMULATIVE output,
-            // so a second `after: ASKED` matches the question already on screen and fires at once.
-            // What is unpredictable is the browser starting, and READY has covered that by here.
+            // `after` tests CUMULATIVE output, so the second answer waits for the question to be
+            // on screen twice: on a clock it could land while a slow runner was still in the editor.
             { text: 'n\n', after: ASKED },
             { text: '.e\n', delayMs: 3000 },
-            { text: 'y\n', delayMs: 4000 },
+            { text: 'y\n', after: /(run 1 line from the scratchpad\?[\s\S]*){2}/ },
             { text: '.exit\n', delayMs: 3000 },
           ],
         },
