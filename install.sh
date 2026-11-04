@@ -1,14 +1,15 @@
 #!/usr/bin/env sh
 # qunitx-cli installer — downloads the latest standalone binary + esbuild
-# sidecar from GitHub Releases and unpacks them into $INSTALL_DIR (default
-# ~/.qunitx). Idiomatic curl-pipe-sh install with no runtime prerequisite
+# sidecar from GitHub Releases, unpacks them into $INSTALL_DIR (default ~/.qunitx)
+# and links `qunitx` into $BIN_DIR (default ~/.local/bin, on PATH on most Linux
+# desktops). Idiomatic curl-pipe-sh install with no runtime prerequisite
 # beyond `curl`, `tar` (or `unzip` on Windows), and a system Chrome on PATH.
 #
 # Quick install:
 #   curl -fsSL https://raw.githubusercontent.com/izelnakri/qunitx-cli/main/install.sh | sh
 #
 # Override version or location:
-#   VERSION=v0.25.0 INSTALL_DIR=$HOME/.local/bin sh install.sh
+#   VERSION=v0.25.0 INSTALL_DIR=$HOME/opt/qunitx BIN_DIR=$HOME/bin sh install.sh
 #
 # Supported platforms: linux x64/arm64 (glibc or musl), macOS arm64, and
 # Windows x64/arm64 (Git Bash / MSYS2). Other targets exit 1 with a message
@@ -18,6 +19,7 @@ set -eu
 
 REPO="izelnakri/qunitx-cli"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.qunitx}"
+BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 VERSION="${VERSION:-}"
 
 case "$(uname -s)" in
@@ -75,6 +77,7 @@ echo "qunitx-cli installer: $VERSION → $INSTALL_DIR"
 echo "  fetching $URL"
 
 mkdir -p "$INSTALL_DIR"
+INSTALL_DIR=$(cd "$INSTALL_DIR" && pwd) # absolute, since the link below points at it
 TMP=$(mktemp -d 2>/dev/null || mktemp -d -t qunitx)
 # shellcheck disable=SC2064
 trap "rm -rf '$TMP'" EXIT
@@ -105,17 +108,31 @@ else
   chmod +x "$INSTALL_DIR/qunitx" "$INSTALL_DIR/esbuild"
 fi
 
+# Only `qunitx` is linked into BIN_DIR: the files stay together in INSTALL_DIR, so esbuild never
+# lands loose beside other tools there. A real file already at the link's path is someone else's.
+CALLABLE_FROM="$INSTALL_DIR"
+if [ "$OS" != "windows" ] && [ "$BIN_DIR" != "$INSTALL_DIR" ]; then
+  if [ -L "$BIN_DIR/qunitx" ] || [ ! -e "$BIN_DIR/qunitx" ]; then
+    mkdir -p "$BIN_DIR"
+    ln -sf "$INSTALL_DIR/qunitx" "$BIN_DIR/qunitx"
+    CALLABLE_FROM="$BIN_DIR"
+  else
+    echo "qunitx-cli installer: $BIN_DIR/qunitx is not a link, so it was left as it is" >&2
+  fi
+fi
+
 echo ""
 echo "qunitx-cli $VERSION installed to $INSTALL_DIR"
+if [ "$CALLABLE_FROM" = "$BIN_DIR" ]; then echo "  linked as $BIN_DIR/qunitx"; fi
 echo ""
 
-# PATH hint — only print when INSTALL_DIR is not already on PATH so users who
+# PATH hint — only print when qunitx is not already reachable, so users who
 # already configured it (e.g. on re-install) don't get noisy reminders.
 case ":$PATH:" in
-  *":$INSTALL_DIR:"*) ;;
+  *":$INSTALL_DIR:"*|*":$CALLABLE_FROM:"*) ;;
   *)
     echo "Add to your shell rc to make 'qunitx' callable from anywhere:"
-    echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+    echo "  export PATH=\"$CALLABLE_FROM:\$PATH\""
     echo ""
     ;;
 esac

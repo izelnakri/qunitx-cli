@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { realExecPath } from '../../utils/real-exec-path.ts';
 
 // Which install channel is running, decided from facts rather than guesses: `process.execPath`
 // (the binary IS the install for a SEA / `deno compile` build, whereas node and deno report the
@@ -57,7 +58,7 @@ export type InstallChannel =
  * ```
  */
 export interface ChannelProbe {
-  /** `process.execPath`: the compiled binary itself, or the node/deno that is running it. */
+  /** `process.execPath`, links resolved: the compiled binary itself, or the node/deno running it. */
   execPath?: string;
   /** Absolute path of a file inside the installed package — `undefined` inside a SEA bundle. */
   modulePath?: string;
@@ -84,7 +85,7 @@ export interface ChannelProbe {
 export function detect(probe: ChannelProbe = {}): InstallChannel {
   const platform = probe.platform ?? process.platform;
   const paths = platform === 'win32' ? path.win32 : path.posix;
-  const execPath = probe.execPath ?? process.execPath;
+  const execPath = probe.execPath ?? realExecPath();
   const fileExists = probe.fileExists ?? existsSync;
 
   if (BINARY_NAMES.has(paths.basename(execPath).toLowerCase())) {
