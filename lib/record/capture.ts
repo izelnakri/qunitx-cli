@@ -218,20 +218,119 @@ export interface Frame {
  */
 export function timeline(clips: Clip[], fps: number): Frame[] {
   return clips
-    .flatMap(({ shots, lastFrameDurationMs }) => {
-      const kept = limitFrameRate(shots, fps);
-      return kept.map((shot, index) => ({
-        png: shot.png,
-        durationMs: kept[index + 1] ? kept[index + 1].atMs - shot.atMs : lastFrameDurationMs,
-      }));
-    })
+    .flatMap((clip) => framesOf(clip, fps))
     .reduce<Frame[]>((frames, frame) => {
       const previous = frames.at(-1);
       if (previous && Buffer.compare(previous.png, frame.png) === 0) {
         previous.durationMs += frame.durationMs;
-      } else frames.push(frame);
+      } else frames.push({ ...frame });
       return frames;
     }, []);
+}
+
+/**
+ * {@link timeline} a clip or a frame at a time, for frames that are encoded while a recording is
+ * still running: each frame is handed on once the next one shows it changed, or at `finish`, so
+ * what comes out is exactly what `timeline` makes of the same clips.
+ *
+ * ```ts
+ * import * as Capture from './capture.ts';
+ *
+ * const durations: number[] = [];
+ * const stream = new Capture.FrameStream(10, async (frame) => void durations.push(frame.durationMs));
+ * const [red, blue] = [Uint8Array.of(1), Uint8Array.of(2)];
+ * await stream.addFrame({ png: red, durationMs: 300 });
+ * await stream.addFrame({ png: red, durationMs: 200 }); // the same screen: held longer
+ * await stream.addFrame({ png: blue, durationMs: 100 });
+ * await stream.finish();
+ * durations; // [500, 100]
+ * ```
+ */
+export class FrameStream {
+  readonly #fps: number;
+  readonly #onFrame: (frame: Frame) => Promise<void>;
+  #held: Frame | null = null;
+
+  /**
+   * A stream that keeps clips to `fps` and hands each finished frame to `onFrame`, in order, one
+   * at a time.
+   *
+   * ```ts
+   * import * as Capture from './capture.ts';
+   *
+   * const frames: Capture.Frame[] = [];
+   * new Capture.FrameStream(10, async (frame) => void frames.push(frame));
+   * ```
+   */
+  constructor(fps: number, onFrame: (frame: Frame) => Promise<void>) {
+    this.#fps = fps;
+    this.#onFrame = onFrame;
+  }
+
+  /**
+   * A whole clip, kept to `fps` as {@link timeline} keeps it.
+   *
+   * ```ts
+   * import * as Capture from './capture.ts';
+   *
+   * // Defined, not invoked: a clip from a capture.
+   * async function add(stream: Capture.FrameStream, clip: Capture.Clip) {
+   *   await stream.addClip(clip);
+   * }
+   * ```
+   */
+  async addClip(clip: Clip): Promise<void> {
+    for (const frame of framesOf(clip, this.#fps)) await this.addFrame(frame);
+  }
+
+  /**
+   * One frame whose duration is already decided, as a tour's are: shown for its own `durationMs`.
+   *
+   * ```ts
+   * import * as Capture from './capture.ts';
+   *
+   * // Defined, not invoked: a frame drawn by a tour.
+   * async function add(stream: Capture.FrameStream, frame: Capture.Frame) {
+   *   await stream.addFrame(frame);
+   * }
+   * ```
+   */
+  async addFrame(frame: Frame): Promise<void> {
+    if (this.#held && Buffer.compare(this.#held.png, frame.png) === 0) {
+      this.#held.durationMs += frame.durationMs;
+      return;
+    }
+    const finished = this.#held;
+    this.#held = { ...frame };
+    if (finished) await this.#onFrame(finished);
+  }
+
+  /**
+   * Hands on the last frame, which nothing after it can lengthen any more.
+   *
+   * ```ts
+   * import * as Capture from './capture.ts';
+   *
+   * // Defined, not invoked: once every clip is in.
+   * async function end(stream: Capture.FrameStream) {
+   *   await stream.finish();
+   * }
+   * ```
+   */
+  async finish(): Promise<void> {
+    const last = this.#held;
+    this.#held = null;
+    if (last) await this.#onFrame(last);
+  }
+}
+
+// One clip's shots kept to `fps`, each shown until the next, and the last for the clip's own time.
+function framesOf({ shots, lastFrameDurationMs }: Clip, fps: number): Frame[] {
+  const kept = limitFrameRate(shots, fps);
+  return kept.map((shot, index) => ({
+    png: shot.png,
+    durationMs: kept[index + 1] ? kept[index + 1].atMs - shot.atMs : lastFrameDurationMs,
+  }));
 }
 
 /**

@@ -68,6 +68,7 @@ export type Settings = Required<
     | 'reportUrl'
     | 'pdf'
     | 'report'
+    | 'live'
   >
 > &
   Pick<RecordOptions, 'pageDuration' | 'waitFor'> & {

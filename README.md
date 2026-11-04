@@ -648,6 +648,9 @@ qunitx record dist/ -f png --full-page --scale=2 -o shots
   comma-separated. By default one page is a `.jpg`; several inputs, or a script, add one `.gif`
   of them all.
 - **`-w` / `-h`:** viewport in CSS pixels (default 1280×720); `--scale` multiplies it.
+- **`--live`:** draws and encodes while it records instead of after, and opens a page that plays
+  the frames as they are made. A tour's `frame: 'auto'` is then decided up front: the phone for a
+  touch tour, otherwise the browser window.
 - `--wait-for=<ms|selector>`, `--page-duration`, `--last-frame-duration`, `--fps`, `--quality`, `--browser` — see
   `qunitx record --help`.
 - **Scripts:** frames are sampled about 10 times a second. To be sure a step is in the recording,
@@ -676,6 +679,110 @@ qunitx record invoice.html -f pdf --pdf-paper=A4 --pdf-margin=12mm --pdf-media=p
 
 Header, footer, page ranges and the outline need vector mode; asking for them elsewhere fails and
 names them.
+
+### Walkthroughs
+
+A `.tour.ts` file, or any script that does `export default tour(…)`, drives the browser like a
+person would, and `record` turns it into a tutorial:
+an animated cursor with click ripples, typing, smooth scrolling, drags and swipes, a camera that
+zooms onto what matters, captions, and a browser frame with tabs once a second tab opens.
+
+```ts
+// checkout.tour.ts — qunitx record checkout.tour.ts -f checkout.gif -w 1280 -h 720
+import { tour } from 'qunitx-cli';
+
+export default tour(async (t) => {
+  await t
+    .goto('http://localhost:4200/')
+    .caption('Add something to the cart')
+    .click('button.add-to-cart')
+    .zoom('#cart', { scale: 2 })
+    .wait(1000)
+    .zoomOut();
+  const checkout = await t.open('http://localhost:4200/checkout');
+});
+```
+
+Steps chain under one `await`, or take one each; a chain resolves to its last step's value. Every
+step is a `Task`, so `.retry(2)` and the rest work on it. A step nobody awaits never runs, and the
+recording fails naming it.
+
+Steps: `goto`, `move` (glides the cursor to a selector or `{ x, y }`, or along a path of them),
+`click`, `doubleClick`, `tap`, `hover`,
+`rightClick`, `longPress`, `pinch`, `type`, `fill` (replaces a field's value), `press`, `select` (a
+`<select>`, its options drawn as a list), `upload` (paths relative to the tour), `scroll` (`{ y: 600 }`
+down, `{ y: -600 }` up, `{ x }` sideways, or a selector; `{ within: '#list' }` scrolls an element), `drag`, `swipe` (`'left'`, `'right'`, `'up'`,
+`'down'`), `zoom`, `zoomOut`,
+`caption`, `highlight` (light up a target and dim the rest, following it as you scroll; `null` clears
+it), `chapter` (a title
+card between scenes), `wait`, `live` (record the page's own animation in real time), `snap`, `open`,
+`switchTo`, `close`, `t.tabs` (every open tab, `t.tabs[0]` the first), and `t.page` for anything
+else. `press('Control+K')` shows its keys as badges. Each step lasts as long as the tour says, not as long as the machine took, so the same tour
+gives the same GIF everywhere.
+
+**Phones and touch:** `tour({ touch: true }, …)` with a phone-sized viewport records a mobile
+walkthrough: the page gets touch input, a fingertip replaces the cursor and shows only while it
+touches, `tap` and `click` are real taps, `swipe` and `drag` are touch gestures, `scroll` shows a
+thumb pushing the page, and the frames are drawn inside a phone. `tap`, `longPress`, `swipe`,
+`drag` and `scroll` take `fingers: 1–10` (side by side, as a hand holds them) and `pinch` takes
+`fingers: 2–10` and `rotate` (degrees): each finger is a real touch, drawn with its own ripple, and
+styled through `finger: { size, spacing, labels }` or `.finger[data-finger="3"]` in `css`.
+
+```sh
+qunitx record phone.tour.ts -w 390 -h 844 -f phone.gif
+```
+
+**Right-click and long press:** `rightClick` (desktop) and `longPress` (touch, held in real time)
+reach the page for real, so a menu your app draws itself is recorded as it is. The browser's own
+menu is never part of a page, so `{ menu: ['Copy', 'Paste'], choose: 'Paste' }` draws an
+illustrative one over the frame and picks from it.
+
+**Look:** everything drawn over the page is an option of `tour({ … }, run)`, styled with CSS.
+Each `style` is CSS declarations, as in a `style` attribute (`fontSize: 20` is `20px`):
+
+```ts
+tour(
+  {
+    caption: {
+      placement: 'top',
+      style: { background: '#5f3dc4', borderRadius: 0, fontFamily: 'Georgia' },
+    },
+    cursor: { size: 36, style: { color: '#ffd43b', stroke: '#1d2433' } },
+    css: '#caption::before { content: "▶ "; }',
+  },
+  run,
+);
+```
+
+| Option      | Fields                                                                                                                                               |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cursor`    | `size` (28 px), `style` (the arrow's fill is `color`, its outline `stroke`), or an `image` (a path relative to the tour, or a URL) and its `hotspot` |
+| `finger`    | `size` (44 px), `style`                                                                                                                              |
+| `ripple`    | `style` (drawn in its `color`), or `false` for none                                                                                                  |
+| `caption`   | `placement` (`'bottom'` or `'top'`), `style`                                                                                                         |
+| `menu`      | `style`, `highlightStyle` (for drawn menus)                                                                                                          |
+| `highlight` | `style` (an `outline`, and a `boxShadow` that dims the rest)                                                                                         |
+| `keys`      | `style` of the keystroke badges, or `false` for none                                                                                                 |
+| `chapter`   | `style` of the title card                                                                                                                            |
+| `phone`     | `style` (its `background` is the bezel), `backdrop` (a CSS background)                                                                               |
+| `browser`   | `theme` (`'light'` or `'dark'`), `style`                                                                                                             |
+| `css`       | a stylesheet for the rest: `#caption`, `#keys kbd`, `#chapter .title`, `#menu .highlighted`, `.finger`, `#device`, `.tab`…                           |
+
+`@keyframes` in `css` run on the tour's clock from when their part appears, a frame per tick, so an
+animated caption comes out the same every run:
+`css: '@keyframes rise { from { opacity: 0; translate: 0 12px; } } #caption { animation: rise .4s; }'`.
+
+The browser checks every declaration before the tour runs. An unknown property or a value it
+won't take fails with its name, e.g. `caption.style.colr is not a CSS property`.
+
+**Zoom:** `zoom` stays sharp up to `maxZoom` (2 by default, up to 4, at a cost in memory).
+
+**Frames:** `frame: 'phone' | 'browser' | 'none'`. By default a touch tour gets a phone, and a
+desktop tour gets a browser window with its tab strip once it opens a second tab. The address bar
+follows every navigation, SPA routes included; `addressBar: false` leaves it out, for a hybrid or
+installed app whose users never see a URL.
+See [`examples/shop.tour.ts`](examples/shop.tour.ts) and
+[`examples/phone.tour.ts`](examples/phone.tour.ts).
 
 GIFs are encoded in-process (per-frame palettes, only the changed region of each frame). `.webm`
 (VP9) and `.mp4` (H.264) are encoded by the browser's own WebCodecs encoder and written by

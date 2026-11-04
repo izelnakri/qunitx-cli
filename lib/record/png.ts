@@ -200,7 +200,8 @@ export function getDimensions(png: Uint8Array): { width: number; height: number 
 /**
  * A PNG of `page` as it is: the viewport, or the whole page with `fullPage`, with each `mask`
  * selector covered, so comparing ignores what changes on its own. Under `compare` it is taken to
- * come out the same twice: animations finished and the text caret hidden.
+ * come out the same twice: animations finished and the text caret hidden. `scale: 'css'` shoots one pixel per CSS pixel, as a tour's
+ * stills are below a scale of 2.
  *
  * ```ts
  * import * as PNG from './png.ts';
@@ -214,11 +215,17 @@ export function getDimensions(png: Uint8Array): { width: number; height: number 
  */
 export function screenshot(
   page: Page,
-  { fullPage, mask, compare }: Pick<Settings, 'fullPage' | 'mask' | 'compare'>,
+  {
+    fullPage,
+    mask,
+    compare,
+    scale = 'device',
+  }: Pick<Settings, 'fullPage' | 'mask' | 'compare'> & { scale?: 'css' | 'device' },
 ): Promise<Uint8Array> {
   return page.screenshot({
     type: 'png',
     fullPage,
+    scale,
     // A snapshot has to come out the same twice: a CSS transition caught mid-way or a blinking
     // caret is a difference nobody made.
     ...(compare ? { animations: 'disabled' as const, caret: 'hide' as const } : {}),
@@ -244,7 +251,7 @@ export function screenshot(
 export async function record(
   page: Page,
   output: Outputs.Output,
-  settings: Pick<Settings, 'fullPage' | 'mask' | 'compare'>,
+  settings: Pick<Settings, 'fullPage' | 'mask' | 'compare'> & { scale?: 'css' | 'device' },
 ): Promise<RecordedFile> {
   const bytes = await screenshot(page, settings);
   return Outputs.write(output, bytes, { ...getDimensions(bytes), frames: 1 });

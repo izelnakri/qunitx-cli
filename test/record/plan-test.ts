@@ -69,6 +69,32 @@ module('Record | inputs', { concurrency: true }, () => {
     await assert.rejects(Inputs.resolve(['notes.txt'], root), /not an \.html page, a URL, or a/);
   });
 
+  test('a tour is one by its name or by exporting tour(…); a script that only mentions it is not', async (assert) => {
+    await using dir = await tempDir('record-tour-inputs');
+    await Promise.all([
+      fs.writeFile(path.join(dir.path, 'cart.tour.ts'), 'export default async () => {};'),
+      fs.writeFile(
+        path.join(dir.path, 'shop.ts'),
+        "import { tour } from 'qunitx-cli';\n\nexport default tour(async (t) => {});\n",
+      ),
+      fs.writeFile(
+        path.join(dir.path, 'seed.ts'),
+        '// a tour(…) is recorded elsewhere\nexport {};',
+      ),
+    ]);
+
+    const inputs = await Inputs.resolve(['cart.tour.ts', 'shop.ts', 'seed.ts'], dir.path);
+
+    assert.deepEqual(
+      inputs.map((input) => [input.kind, input.name]),
+      [
+        ['tour', 'cart'],
+        ['tour', 'shop'],
+        ['script', 'seed'],
+      ],
+    );
+  });
+
   test('a file:// URL is the file it names', async (assert) => {
     await using dir = await tempDir('record-file-url');
     const file = path.join(dir.path, 'a page.html');

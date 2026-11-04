@@ -13,6 +13,8 @@ import {
 import type { RecordOptions, RecordResult } from '../../record/index.ts';
 import * as Config from '../../record/config.ts';
 import { InvalidRecordArgument, parse, type RecordRequest } from './parse.ts';
+import * as StatusLine from './status-line.ts';
+import { openInBrowser } from '../repl/open-in-browser.ts';
 import pkg from '../../../package.json' with { type: 'json' };
 
 // A snapshot's line in the color of what happened to it, so a run is read at a glance: green for
@@ -70,6 +72,7 @@ export async function run(
       ...parsedRecordRequest.options,
       pdf: { ...config.options.pdf, ...parsedRecordRequest.options.pdf },
     },
+    live: parsedRecordRequest.live,
     pdfHeaderFile: parsedRecordRequest.pdfHeaderFile,
     pdfFooterFile: parsedRecordRequest.pdfFooterFile,
   };
@@ -92,7 +95,21 @@ export async function run(
   // Loaded once the arguments are known good: it is the browser stack, which help and a typo
   // do not need.
   const { record } = await import('../../record/index.ts');
-  return await Task(() => record(recordRequest.sources, { ...options, cwd }))
+  // A recording can take a minute: a terminal is shown what it is doing meanwhile, on stderr, and
+  // the line is gone before the files are listed.
+  const statusLineShown = out === processConsole && process.stderr.isTTY;
+  const hideStatusLine = statusLineShown ? StatusLine.show(process.stderr) : () => {};
+  // The preview's address on a line of its own, above the status line rather than inside it. At a
+  // terminal it is opened where the desktop opens addresses; a script or CI is only told where.
+  const live = recordRequest.live
+    ? (previewUrl: string) => {
+        out.error(`${statusLineShown ? '\r\x1b[2K' : ''}Live preview: ${previewUrl}`);
+        if (statusLineShown) void openInBrowser(previewUrl);
+      }
+    : undefined;
+  return await Task(() =>
+    record(recordRequest.sources, { ...options, cwd, live }).finally(hideStatusLine),
+  )
     .map(async (result) => {
       // Shown relative to where the command ran, compared with symlinks resolved: on macOS the temp
       // directory is `/var/…` to whoever parsedRecordRequest it and `/private/var/…` to `process.cwd()`. Only
@@ -216,6 +233,7 @@ ${blue('$ qunitx record invoice.html -f pdf --pdf-paper=A4 --pdf-media=print')} 
 ${magenta().bold('Inputs:')} a ${blue('http(s)://')} or ${blue('file://')} URL, an ${blue('.html')} file or a directory with an ${blue('index.html')} (served from a local origin),
 or a ${blue('.js/.ts/.jsx/.tsx')} script, run as ${blue('qunitx run')} would and recorded while it runs.
 A script can ${blue('await globalThis.qunitxRecordFrame?.()')} after drawing a step to make sure that step is in the recording.
+A ${blue('tour.ts')} script that does ${blue('export default tour(…)')} drives the browser for a walkthrough: a cursor that clicks, hovers and types, zooms, captions, tabs.
 
 ${magenta().bold('Flags:')}
 ${blue('-f, --format')}    : formats (${blue('png')}, ${blue('jpg')}, ${blue('gif')}, ${blue('webm')}, ${blue('mp4')}, ${blue('pdf')}) or file names ending in one, comma-separated. Default: ${blue('jpg')} for one page, ${blue('jpg,gif')} for several inputs or a script
@@ -224,6 +242,7 @@ ${blue('-h, --height')}    : viewport height in CSS pixels (default ${DEFAULT_SI
 ${blue('-o, --output')}    : directory the files are written to (default: the current one)
 ${blue('--scale')}         : device pixel ratio, e.g. ${blue('2')} for retina (default 1)
 ${blue('--full-page')}     : stills capture the whole scrollable page, not just the viewport
+${blue('--live')}          : draw and encode while recording, and open a page that plays the frames as they are made
 ${blue('--wait-for')}      : after a page loads, wait this many ms, or until this CSS selector is on it
 ${blue('--page-duration')} : record each page for this many ms in a GIF, instead of one still
 ${blue('--last-frame-duration')} : ms each input's last frame stays on screen in a GIF (default 1000)

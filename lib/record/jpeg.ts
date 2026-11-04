@@ -39,7 +39,8 @@ export function getDimensions(jpeg: Uint8Array): { width: number; height: number
 
 /**
  * Writes a JPEG of `page` as it is to `output`, at `quality`: the viewport, or the whole page with
- * `fullPage`, with each `mask` selector painted over, sized by the JPEG's own header.
+ * `fullPage`, with each `mask` selector painted over, sized by the JPEG's own header. `scale: 'css'`
+ * shoots one pixel per CSS pixel.
  *
  * ```ts
  * import * as JPEG from './jpeg.ts';
@@ -55,12 +56,18 @@ export function getDimensions(jpeg: Uint8Array): { width: number; height: number
 export async function record(
   page: Page,
   output: Outputs.Output,
-  { fullPage, quality, mask }: Pick<Settings, 'fullPage' | 'quality' | 'mask'>,
+  {
+    fullPage,
+    quality,
+    mask,
+    scale = 'device',
+  }: Pick<Settings, 'fullPage' | 'quality' | 'mask'> & { scale?: 'css' | 'device' },
 ): Promise<RecordedFile> {
   const bytes = await page.screenshot({
     type: 'jpeg',
     fullPage,
     quality,
+    scale,
     ...(mask.length ? { mask: mask.map((selector) => page.locator(selector)) } : {}),
   });
   return Outputs.write(output, bytes, { ...getDimensions(bytes), frames: 1 });

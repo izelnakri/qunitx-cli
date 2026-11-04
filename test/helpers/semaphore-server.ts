@@ -25,9 +25,25 @@ export interface SemaphoreServer {
  * parallel test workers. The same function is directly tested by test/setup/semaphore-test.ts.
  */
 export async function createSemaphoreServer(max: number): Promise<SemaphoreServer> {
-  const holders = new Set<net.Socket>();
-  const queue: Array<() => void> = [];
+  // Each holder's weight: a slot, or several for a client that holds several browsers at once.
+  const holders = new Map<net.Socket, number>();
+  const queue: { socket: net.Socket; weight: number; grant: () => void }[] = [];
+  let used = 0;
   let closes = 0;
+  // An idle server takes any request, however heavy, so a weight above `max` still runs, alone.
+  const fits = (weight: number) => used === 0 || used + weight <= max;
+  // First come, first served: a waiter is never overtaken by a lighter one behind it, so a heavy
+  // request cannot be starved by a stream of light ones. A waiter that died is passed over.
+  const drain = () => {
+    for (
+      let head = queue[0];
+      head && (head.socket.destroyed || fits(head.weight));
+      head = queue[0]
+    ) {
+      queue.shift();
+      if (!head.socket.destroyed) head.grant();
+    }
+  };
 
   const server = net.createServer((socket) => {
     // Prevent uncaught 'error' events from crashing the semaphore server.
@@ -36,23 +52,27 @@ export async function createSemaphoreServer(max: number): Promise<SemaphoreServe
 
     socket.once('close', () => {
       closes += 1;
-      if (!holders.delete(socket)) return; // was never granted — no-op
-      queue.shift()?.();
+      const weight = holders.get(socket);
+      if (weight !== undefined) {
+        holders.delete(socket);
+        used -= weight;
+      }
+      // A waiter that died frees nothing, but may have been the head of the line.
+      drain();
     });
 
-    const grant = () => {
-      if (socket.destroyed) {
-        // Socket died while waiting in the queue. Its 'close' event already fired
-        // and holders.delete was a no-op. Pass the freed capacity on to the next waiter
-        // so no slot is permanently lost.
-        queue.shift()?.();
-        return;
-      }
-      holders.add(socket);
-      socket.write('ok');
-    };
-
-    socket.once('data', () => (holders.size < max ? grant() : queue.push(grant)));
+    socket.once('data', (data) => {
+      // A digit asks for that many slots; anything else is one.
+      const asked = Number.parseInt(data.toString('latin1', 0, 1), 10);
+      const weight = Number.isInteger(asked) && asked > 0 ? Math.min(asked, max) : 1;
+      const grant = () => {
+        holders.set(socket, weight);
+        used += weight;
+        socket.write('ok');
+      };
+      if (!queue.length && fits(weight)) grant();
+      else queue.push({ socket, weight, grant });
+    });
   });
 
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

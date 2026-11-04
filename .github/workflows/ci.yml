@@ -62,7 +62,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 15 || 25 }}
+    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 20 || 25 }}
     strategy:
       fail-fast: false
       matrix:
@@ -405,7 +405,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
     name: test-deno (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 15 || 25 }}
+    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 20 || 25 }}
     strategy:
       fail-fast: false
       matrix:
