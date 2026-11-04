@@ -23,12 +23,6 @@ concurrency:
 # forks don't fire here. Applied to lint / test / bench only — every other job
 # already filters on `refs/heads/main` or `refs/tags/v*`.
 
-# The most the deno-compiled binary may weigh, checked wherever it is built. A binary that carries
-# dead weight still runs, so nothing else notices: 0.42.0 shipped at 213 MB with 84 MB of embedded
-# devDependencies. Without them it is ~130 MB; raise this on purpose, when Deno's runtime grows.
-env:
-  DENO_BINARY_BUDGET_MB: 150
-
 jobs:
   lint:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork
@@ -441,13 +435,7 @@ jobs:
         run: |
           mkdir -p dist
           deno task build:binary
-          BIN=dist/qunitx; [ -f "$BIN" ] || BIN=dist/qunitx.exe
-          MB=$(( $(wc -c < "$BIN") / 1048576 ))
-          echo "$BIN: $MB MB (budget: $DENO_BINARY_BUDGET_MB MB)"
-          if [ "$MB" -gt "$DENO_BINARY_BUDGET_MB" ]; then
-            echo "::error::$BIN is $MB MB, over the $DENO_BINARY_BUDGET_MB MB budget — is a devDependency embedded?"
-            exit 1
-          fi
+          node scripts/check-binary-size.ts dist/qunitx
           # @esbuild/<pkg> layout differs by platform: POSIX ships under bin/,
           case "${{ runner.os }}-${{ runner.arch }}" in
             Linux-X64)   SRC=node_modules/@esbuild/linux-x64/bin/esbuild;    DST=dist/esbuild;;
@@ -961,6 +949,10 @@ jobs:
           npx --yes postject qunitx.exe NODE_SEA_BLOB sea.blob `
             --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
 
+      - name: Check the binary's size
+        shell: bash
+        run: node scripts/check-binary-size.ts qunitx
+
       # The check that would have caught a binary runnable on one machine only. Cheap, and placed
       # before packaging so a bad artifact is never uploaded.
       - name: Verify the binary can start anywhere
@@ -1056,13 +1048,7 @@ jobs:
         run: |
           mkdir -p dist/qunitx-deno-${{ matrix.target }}
           deno task build:binary
-          BIN=dist/qunitx; [ -f "$BIN" ] || BIN=dist/qunitx.exe
-          MB=$(( $(wc -c < "$BIN") / 1048576 ))
-          echo "$BIN: $MB MB (budget: $DENO_BINARY_BUDGET_MB MB)"
-          if [ "$MB" -gt "$DENO_BINARY_BUDGET_MB" ]; then
-            echo "::error::$BIN is $MB MB, over the $DENO_BINARY_BUDGET_MB MB budget — is a devDependency embedded?"
-            exit 1
-          fi
+          node scripts/check-binary-size.ts dist/qunitx
           if [ "${{ runner.os }}" = "Windows" ]; then
             mv dist/qunitx.exe dist/qunitx-deno-${{ matrix.target }}/qunitx.exe
           else
@@ -1132,6 +1118,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: make build-sea-musl
+      - run: node scripts/check-binary-size.ts dist/qunitx-${{ matrix.target }}/qunitx
       - name: Package
         run: tar czf qunitx-${{ matrix.target }}.tar.gz -C dist qunitx-${{ matrix.target }}
       - uses: actions/upload-artifact@v7
