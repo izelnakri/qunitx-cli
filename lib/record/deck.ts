@@ -7,6 +7,8 @@ import { DEFAULT_PANEL_HEIGHT, PANEL_CSS, filledPanelHTML, type Panel } from './
 import * as PDF from './pdf.ts';
 import { enterPhase, progress } from './progress.ts';
 import { renderPlayer, type PlayerSettings } from './player.ts';
+import { writePptx, type OfficeStep } from './pptx.ts';
+import { writeDocx, type DocxPage } from './docx.ts';
 import { DEFAULT_LOOK, compose, type ComposedFrame, type ComposeOptions } from './tour/compose.ts';
 import type { Beat } from './tour/timeline.ts';
 import type { Browser, Page } from 'playwright-core';
@@ -244,6 +246,7 @@ export async function writeDeck(
   }
   const pages = outputs.filter((output) => output.format === 'html');
   const documents = outputs.filter((output) => output.format === 'pdf');
+  const offices = outputs.filter((output) => output.format === 'pptx' || output.format === 'docx');
   // The player and a printed recording always have a panel: the player's controls live there,
   // and a page has its step's title. Without one asked for, below. Their frames are drawn once.
   const panel: Panel = settings.panel ?? {
@@ -252,7 +255,7 @@ export async function writeDeck(
     style: {},
   };
   const frames =
-    pages.length || documents.length
+    pages.length || documents.length || offices.length
       ? await drawAll((offset) => ({ ...panel, titles, offset, drawn: false }), {
           type: 'jpeg',
           quality: settings.quality,
@@ -281,6 +284,40 @@ export async function writeDeck(
       written.push([
         output,
         await Outputs.write(output, printed.bytes, { width, height, frames: pageCount }),
+      ]);
+    }
+  }
+  if (offices.length) {
+    const pictured: OfficeStep[] = steps.map((step, index) => {
+      const last = frames.findLast((frame) => frame.step === index);
+      return {
+        title: step.title,
+        caption: last?.caption ?? null,
+        notes: step.notes,
+        jpeg: last?.image ?? new Uint8Array(0),
+      };
+    });
+    const shown = pictured.filter((step) => step.jpeg.length);
+    for (const output of offices) {
+      const bytes =
+        output.format === 'pptx'
+          ? writePptx(settings.title, shown, {
+              canvas,
+              panel: {
+                placement: panel.placement,
+                height: panel.height,
+                background: panel.style.background ?? panel.style['background-color'],
+                color: panel.style.color,
+              },
+            })
+          : writeDocx(settings.title, shown, documentPage(settings.pdf));
+      written.push([
+        output,
+        await Outputs.write(output, bytes, {
+          width: canvas.width,
+          height: canvas.height + (output.format === 'pptx' ? panel.height : 0),
+          frames: shown.length,
+        }),
       ]);
     }
   }
@@ -481,6 +518,23 @@ async function pictureSteps(
     pageCount: images.length,
     width: Math.round(size.width),
     height: Math.round(size.height),
+  };
+}
+
+// A document's page: the PDF's paper and margins when they name one, else A4 with inch margins.
+function documentPage(pdf: PDF.PdfOptions): DocxPage {
+  const paper = pdf.paper ?? 'fit';
+  const base =
+    paper === 'fit' ? PDF.PAPERS.A4 : typeof paper === 'string' ? PDF.PAPERS[paper] : paper;
+  const sideways = paper !== 'fit' && pdf.landscape;
+  const side = (key: 'top' | 'right' | 'bottom' | 'left') =>
+    pdf.margin === undefined
+      ? 96
+      : CSS.toPixels(typeof pdf.margin === 'object' ? (pdf.margin[key] ?? 0) : pdf.margin);
+  return {
+    width: CSS.toPixels(sideways ? base.height : base.width),
+    height: CSS.toPixels(sideways ? base.width : base.height),
+    margin: { top: side('top'), right: side('right'), bottom: side('bottom'), left: side('left') },
   };
 }
 

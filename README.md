@@ -796,6 +796,11 @@ qunitx record intro.md screenshot.png checkout.tour.ts -f demo.gif,demo.html --p
   (title, caption and notes). Slides stay text where the engine prints (Chromium). A page is
   exactly a step, or with `--pdf-paper=A4` each step is fitted to the paper; every `--pdf-*`
   setting applies.
+- `-f demo.pptx` writes a PowerPoint deck, a slide a step: its picture, its title (a real slide
+  title) and caption in the panel's band and colors, its notes as speaker notes. `-f demo.docx`
+  writes a Word document: a heading, the picture and its caption a step, on `--pdf-paper` (A4
+  by default) within `--pdf-margin` (1in). Both open in Office, Google Docs and Slides, Proton
+  Docs, Apple's apps and LibreOffice, and need no dependency.
 - `--css=brand.css` styles all of it: `#panel`, `#panel .title`, `.caption`, `.notes`, `.step`,
   `.step.active`, `.controls button` (`.prev`, `.play`, `.next`), `#player`, `#frame`, and slides
   (`.slide`, `.slide h1`, `.slide pre`, `.slide.image`), and it is laid under every tour's own
