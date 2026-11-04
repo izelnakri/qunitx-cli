@@ -94,6 +94,7 @@ export {
   type MenuOptions,
   type Target,
   type Tour,
+  type TourChain,
   type TourDefinition,
   type TourOptions,
   type Style as TourStyle,

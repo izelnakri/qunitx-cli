@@ -688,15 +688,20 @@ zooms onto what matters, captions, and a browser frame with tabs once a second t
 import { tour } from 'qunitx-cli';
 
 export default tour(async (t) => {
-  await t.goto('http://localhost:4200/');
-  await t.caption('Add something to the cart');
-  await t.click('button.add-to-cart');
-  await t.zoom('#cart', { scale: 2 });
-  await t.wait(1000);
-  await t.zoomOut();
-  await t.open('http://localhost:4200/checkout');
+  await t
+    .goto('http://localhost:4200/')
+    .caption('Add something to the cart')
+    .click('button.add-to-cart')
+    .zoom('#cart', { scale: 2 })
+    .wait(1000)
+    .zoomOut();
+  const checkout = await t.open('http://localhost:4200/checkout');
 });
 ```
+
+Steps chain under one `await`, or take one each; a chain resolves to its last step's value. Every
+step is a `Task`, so `.retry(2)` and the rest work on it. A step nobody awaits never runs, and the
+recording fails naming it.
 
 Steps: `goto`, `move` (glides the cursor to a selector or `{ x, y }`, or along a path of them),
 `click`, `doubleClick`, `tap`, `hover`,

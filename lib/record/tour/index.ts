@@ -12,6 +12,7 @@ import { NAVIGATION_TIMEOUT_MS } from '../../setup/browser.ts';
 import * as DeviceFrame from './device-frame.ts';
 import * as Look from './look.ts';
 import * as Stage from './stage.ts';
+import { StepQueue, type Chained } from './chain.ts';
 import {
   menuItemPoint,
   menuLayout,
@@ -29,6 +30,7 @@ import type { Browser, BrowserContext, CDPSession, Page } from 'playwright-core'
 
 export type { Point, Rect } from './timeline.ts';
 export type { Style } from './look.ts';
+export type { TourChain } from './chain.ts';
 
 // How long each kind of step shows when the script does not say, in ms: long enough to follow,
 // short enough not to drag.
@@ -112,27 +114,18 @@ export interface TourTab {
 }
 
 /**
- * What a tour script is handed. Every step happens in the real browser — clicks land, hovers
- * hover, typing types — and shows in the recording for its own `durationMs`, so the recording
- * plays the same however fast the machine ran it.
+ * Every step a tour can take, each a promise of when it is done: what a run implements. A script
+ * is handed them as {@link Tour}, where each returns a chainable {@link TourChain} instead.
  *
  * ```ts
- * // Defined, not invoked: a tour script, as a `.tour.ts` file exports it.
- * async function checkout(tour: Tour) {
- *   await tour.goto('http://localhost:4200/');
- *   await tour.caption('Add something to the cart');
- *   await tour.click('button.add-to-cart');
- *   await tour.zoom('#cart', { scale: 2 });
- *   await tour.wait(1000);
- *   await tour.zoomOut();
+ * // Defined, not invoked: a run's steps, called directly.
+ * async function intro(steps: TourSteps) {
+ *   await steps.goto('http://localhost:4200/');
+ *   await steps.caption('Welcome');
  * }
  * ```
  */
-export interface Tour {
-  /** The active tab's page, for anything the tour API does not cover; call `snap()` after. */
-  readonly page: Page;
-  /** Every open tab, in strip order: `tabs[0]` is the one the tour started in. */
-  readonly tabs: readonly TourTab[];
+export interface TourSteps {
   /** Loads `url` in the active tab. */
   goto(url: string): Promise<void>;
   /** Moves the cursor onto `target` and clicks it; on a touch tour, taps it. */
@@ -256,6 +249,32 @@ export interface Tour {
   switchTo(tab: TourTab): Promise<void>;
   /** Closes a tab, the active one by default, and switches to the one before it. */
   close(tab?: TourTab): Promise<void>;
+}
+
+/**
+ * What a tour script is handed. Every step happens in the real browser — clicks land, hovers
+ * hover, typing types — and shows in the recording for its own `durationMs`, so the recording
+ * plays the same however fast the machine ran it. Steps chain: `await` once for a run of them,
+ * or once per step. A step nobody awaits never runs, and fails the tour by name.
+ *
+ * ```ts
+ * // Defined, not invoked: a tour script, as a `.tour.ts` file exports it.
+ * async function checkout(tour: Tour) {
+ *   await tour
+ *     .goto('http://localhost:4200/')
+ *     .caption('Add something to the cart')
+ *     .click('button.add-to-cart')
+ *     .zoom('#cart', { scale: 2 })
+ *     .wait(1000)
+ *     .zoomOut();
+ * }
+ * ```
+ */
+export interface Tour extends Chained<TourSteps> {
+  /** The active tab's page, for anything the tour API does not cover; call `snap()` after. */
+  readonly page: Page;
+  /** Every open tab, in strip order: `tabs[0]` is the one the tour started in. */
+  readonly tabs: readonly TourTab[];
 }
 
 /**
@@ -476,7 +495,9 @@ export async function recordTour(
     const spacing = look.finger.spacing ?? look.finger.size * 1.15;
     const run = new TourRun({ ...setup, file, context, page, touch, spacing });
     await run.start();
-    await definition.run(run);
+    const steps = new StepQueue(run);
+    await definition.run(steps.tour(run));
+    steps.checkEveryStepRan();
     await run.wait(setup.settings.lastFrameDurationMs);
 
     return {
@@ -505,7 +526,7 @@ export async function recordTour(
 }
 
 // One tour as it runs: the real pages, the screenshots taken so far, and the timeline of beats.
-class TourRun implements Tour {
+class TourRun implements TourSteps {
   readonly shots: Uint8Array[] = [];
   readonly timeline: Timeline;
   openedTabs = 1;
