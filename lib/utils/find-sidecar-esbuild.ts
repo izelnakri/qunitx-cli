@@ -18,6 +18,7 @@
 
 import { accessSync, constants } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { realExecPath } from './real-exec-path.ts';
 
 /**
  * Returns the path to an executable esbuild sidecar sitting next to `execDir`, or
@@ -49,6 +50,6 @@ export function findSidecarEsbuild(
 // Side-effect on import: populate ESBUILD_BINARY_PATH from the sidecar unless it is
 // already set (including to an empty string, meaning "use esbuild's install default").
 if (!('ESBUILD_BINARY_PATH' in process.env)) {
-  const found = findSidecarEsbuild(dirname(process.execPath));
+  const found = findSidecarEsbuild(dirname(realExecPath()));
   if (found) process.env.ESBUILD_BINARY_PATH = found;
 }

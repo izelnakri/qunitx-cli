@@ -21,7 +21,6 @@ in that page's DevTools.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/izelnakri/qunitx-cli/main/install.sh | sh
-export PATH="$HOME/.qunitx:$PATH"
 ```
 
 Then, in any project with a `package.json`:
@@ -98,8 +97,10 @@ No Node or Deno needed to run it:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/izelnakri/qunitx-cli/main/install.sh | sh
-export PATH="$HOME/.qunitx:$PATH"   # add this to your shell profile
 ```
+
+It installs into `~/.qunitx` and links `~/.local/bin/qunitx`. Where that directory is not on your
+`PATH` (macOS, some Linux distributions), the installer prints the line to add.
 
 | Platform                           | Notes                                                                  |
 | ---------------------------------- | ---------------------------------------------------------------------- |

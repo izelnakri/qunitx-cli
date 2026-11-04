@@ -9,6 +9,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { realExecPath } from './real-exec-path.ts';
 
 /**
  * The file URL of a playwright-core shipped in `<execDir>/node_modules`, or null where none is.
@@ -38,7 +39,7 @@ export function findSidecarPlaywrightCore(execDir: string): string | null {
  * ```
  */
 export function importPlaywrightCore(): Promise<typeof import('playwright-core')> {
-  const sidecar = isSea() ? findSidecarPlaywrightCore(dirname(process.execPath)) : null;
+  const sidecar = isSea() ? findSidecarPlaywrightCore(dirname(realExecPath())) : null;
 
   // The literal stays a literal so `deno compile` and esbuild still see the dependency.
   return sidecar ? import(sidecar) : import('playwright-core');
