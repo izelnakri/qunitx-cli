@@ -38,56 +38,89 @@ export interface Recording {
 }
 
 /**
- * Draws every beat of a recording as the frame it shows, in order, each with how long it stays on
- * screen: the frames a GIF or video is encoded from. A held beat is one frame, unless a CSS
- * animation of the look is still moving; then it is one per tick of `fps` until it stops.
+ * How the stage draws: the page's size and scale, what it sits inside, and how the tour looks.
  *
- * Drawn with HTML and CSS because that is what renders text, curves and shadows well, and the
- * frames then look like the browser they came from. Done after the tour has run, so nothing here
- * races the page being recorded: every beat is drawn exactly as described, however long it takes.
- * Advances `progress` by one per beat.
+ * ```ts
+ * import * as Look from './look.ts';
+ * import type { Options } from './stage.ts';
+ *
+ * const options: Options = {
+ *   viewport: { width: 390, height: 844 },
+ *   scale: 1,
+ *   deviceFrame: 'phone',
+ *   addressBar: true,
+ *   pointer: 'finger',
+ *   look: Look.DEFAULT,
+ *   fps: 10,
+ *   preparePage: async () => {},
+ * };
+ * ```
+ */
+export interface Options {
+  /** The recorded page's size, in CSS pixels. */
+  viewport: { width: number; height: number };
+  /** Device pixels per CSS pixel of the drawn frames. */
+  scale: number;
+  /** What the page is drawn inside. */
+  deviceFrame: DeviceFrame.Kind;
+  /** Whether the browser window or the phone shows its address bar. */
+  addressBar: boolean;
+  /** A mouse cursor, or a fingertip on a touch tour. */
+  pointer: Pointer;
+  /** How the tour looks, its CSS already checked by `Look.validateCSS`. */
+  look: Look;
+  /** Frames per second, at which a CSS animation of the look is drawn. */
+  fps: number;
+  /** Readies the stage's page as `record` readies its own (Chrome needs its window enlarged). */
+  preparePage: (page: Page) => Promise<void>;
+}
+
+/**
+ * An open stage: a page that draws beats one at a time, in the order they are shown, keeping the
+ * tour's clock as it goes. Drawn with HTML and CSS because that is what renders text, curves and
+ * shadows well, and the frames then look like the browser they came from.
  *
  * ```ts
  * import * as Stage from './stage.ts';
- * import * as Look from './look.ts';
- * import type { Browser } from 'playwright-core';
+ * import type { Beat } from './timeline.ts';
  *
- * // Defined, not invoked: needs a live browser.
- * async function draw(browser: Browser, recording: Stage.Recording) {
- *   return await Stage.drawFrames(browser, recording, {
- *     viewport: { width: 390, height: 844 },
- *     scale: 1,
- *     deviceFrame: 'phone',
- *     addressBar: true,
- *     pointer: 'finger',
- *     look: Look.DEFAULT,
- *     fps: 10,
- *     preparePage: async () => {},
- *   });
+ * // Defined, not invoked: needs an open stage.
+ * async function drawOne(stage: Stage.Stage, beat: Beat, screenshots: Uint8Array[]) {
+ *   return await stage.draw(beat, screenshots); // the frames this beat shows
  * }
  * ```
  */
-export async function drawFrames(
-  browser: Browser,
-  recording: Recording,
-  options: {
-    /** The recorded page's size, in CSS pixels. */
-    viewport: { width: number; height: number };
-    /** Device pixels per CSS pixel of the drawn frames. */
-    scale: number;
-    /** What the page is drawn inside. */
-    deviceFrame: DeviceFrame.Kind;
-    /** Whether the browser window or the phone shows its address bar. */
-    addressBar: boolean;
-    pointer: Pointer;
-    /** How the tour looks, its CSS already checked by `Look.validateCSS`. */
-    look: Look;
-    /** Frames per second, at which a CSS animation of the look is drawn. */
-    fps: number;
-    /** Readies the stage's page as `record` readies its own (Chrome needs its window enlarged). */
-    preparePage: (page: Page) => Promise<void>;
-  },
-): Promise<Frame[]> {
+export interface Stage {
+  /**
+   * The frames `beat` shows, each with how long it stays on screen: one, unless a CSS animation of
+   * the look is still moving; then one per tick of `fps` until it stops, each at its exact time on
+   * the tour's clock. `screenshots` are the run's so far; any the stage hasn't seen are loaded.
+   */
+  draw(beat: Beat, screenshots: readonly Uint8Array[]): Promise<Frame[]>;
+  /** Closes the stage's page. */
+  close(): Promise<void>;
+}
+
+/**
+ * Opens a stage in a context of its own in `browser`, so nothing it does reaches the pages being
+ * recorded.
+ *
+ * ```ts
+ * import * as Stage from './stage.ts';
+ * import type { Browser } from 'playwright-core';
+ *
+ * // Defined, not invoked: needs a live browser.
+ * async function drawAll(browser: Browser, recording: Stage.Recording, options: Stage.Options) {
+ *   const stage = await Stage.open(browser, options);
+ *   try {
+ *     return (await Array.fromAsync(recording.beats, (beat) => stage.draw(beat, recording.screenshots))).flat();
+ *   } finally {
+ *     await stage.close();
+ *   }
+ * }
+ * ```
+ */
+export async function open(browser: Browser, options: Options): Promise<Stage> {
   const context = await browser.newContext({
     viewport: DeviceFrame.size(options.deviceFrame, options.viewport, options.addressBar),
     deviceScaleFactor: options.scale,
@@ -99,39 +132,73 @@ export async function drawFrames(
       html(options.viewport, options.deviceFrame, options.pointer, options.addressBar),
     );
     await page.evaluate(`globalThis.__configure(${JSON.stringify(options.look)})`);
-    for (const [index, screenshot] of recording.screenshots.entries()) {
-      await page.evaluate(
-        `globalThis.__load(${index}, ${JSON.stringify(Buffer.from(screenshot).toString('base64'))})`,
-      );
-    }
-    const frames: Frame[] = [];
     const step = 1000 / options.fps;
+    let loaded = 0;
     let atMs = 0;
+    return {
+      async draw(beat, screenshots) {
+        for (; loaded < screenshots.length; loaded++) {
+          const base64 = Buffer.from(screenshots[loaded]).toString('base64');
+          await page.evaluate(`globalThis.__load(${loaded}, ${JSON.stringify(base64)})`);
+        }
+        await page.evaluate(`globalThis.__show(${JSON.stringify(beat)}, ${atMs})`);
+        const frames: Frame[] = [];
+        let shownMs = 0;
+        for (;;) {
+          const png = await page.screenshot({ type: 'png' });
+          const moving =
+            shownMs + step < beat.durationMs &&
+            (await page.evaluate<boolean>(`globalThis.__tick(${atMs + shownMs + step}, ${step})`));
+          if (!moving) {
+            frames.push({ png, durationMs: beat.durationMs - shownMs });
+            break;
+          }
+          frames.push({ png, durationMs: step });
+          shownMs += step;
+        }
+        atMs += beat.durationMs;
+        return frames;
+      },
+      close: () => context.close().catch(() => {}),
+    };
+  } catch (error) {
+    await context.close().catch(() => {});
+    throw error;
+  }
+}
+
+/**
+ * Draws every beat of a recording, once the tour has run, as the frames a GIF or video is encoded
+ * from. Nothing here races the page being recorded: every beat is drawn exactly as described,
+ * however long it takes. Advances `progress` by one per beat.
+ *
+ * ```ts
+ * import * as Stage from './stage.ts';
+ * import type { Browser } from 'playwright-core';
+ *
+ * // Defined, not invoked: needs a live browser.
+ * async function draw(browser: Browser, recording: Stage.Recording, options: Stage.Options) {
+ *   return await Stage.drawFrames(browser, recording, options);
+ * }
+ * ```
+ */
+export async function drawFrames(
+  browser: Browser,
+  recording: Recording,
+  options: Options,
+): Promise<Frame[]> {
+  const stage = await open(browser, options);
+  try {
+    const frames: Frame[] = [];
     // How far along the drawing is, for the phase the caller entered.
     progress.total = recording.beats.length;
     for (const beat of recording.beats) {
-      await page.evaluate(`globalThis.__show(${JSON.stringify(beat)}, ${atMs})`);
-      // A held beat is one frame, unless a CSS animation is still moving: then one per tick
-      // until it stops, each drawn at its exact time on the tour's clock.
-      let shownMs = 0;
-      for (;;) {
-        const png = await page.screenshot({ type: 'png' });
-        const moving =
-          shownMs + step < beat.durationMs &&
-          (await page.evaluate<boolean>(`globalThis.__tick(${atMs + shownMs + step}, ${step})`));
-        if (!moving) {
-          frames.push({ png, durationMs: beat.durationMs - shownMs });
-          break;
-        }
-        frames.push({ png, durationMs: step });
-        shownMs += step;
-      }
-      atMs += beat.durationMs;
+      frames.push(...(await stage.draw(beat, recording.screenshots)));
       progress.done += 1;
     }
     return frames;
   } finally {
-    await context.close().catch(() => {});
+    await stage.close();
   }
 }
 
