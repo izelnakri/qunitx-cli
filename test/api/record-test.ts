@@ -449,6 +449,113 @@ module('API | record | report, comment and package.json', { concurrency: true },
   });
 });
 
+module('API | record | tours', { concurrency: true }, () => {
+  test('a tour written with the exported tour() records like any input: frames, stills and its look', async (assert) => {
+    await using dir = await tempDir('api-record-tour');
+    await fs.writeFile(path.join(dir.path, 'page.html'), PAGE);
+    const api = new URL('../../lib/api/index.ts', import.meta.url).href;
+    await fs.writeFile(
+      path.join(dir.path, 'demo.tour.ts'),
+      `import { tour } from '${api}';
+      import { pathToFileURL } from 'node:url';
+      export default tour({ caption: { style: { background: 'rgb(255,0,255)' } } }, async (t) => {
+        await t.goto(pathToFileURL(import.meta.dirname + '/page.html').href);
+        await t.caption('Hello');
+        await t.move({ x: 150, y: 80 });
+        await t.wait(300);
+      });`,
+    );
+    const result = await recorded('demo.tour.ts', {
+      cwd: dir.path,
+      width: 300,
+      height: 160,
+      lastFrameDuration: 0,
+    });
+    const gif = result.files.find((file) => file.format === 'gif')!;
+    const last = decodeGif(await fs.readFile(gif.path)).frames.at(-1)!;
+    let magenta = 0;
+    for (let index = 0; index < last.rgba.length; index += 4) {
+      const [red, green, blue] = last.rgba.subarray(index, index + 3);
+      if (red > 220 && green < 40 && blue > 220) magenta++;
+    }
+
+    assert.deepEqual(
+      result.files.map((file) => [path.basename(file.path), file.width, file.height]),
+      [
+        ['demo.jpg', 300, 160],
+        ['demo.gif', 300, 160],
+      ],
+      'a still of where it ended, and the walkthrough',
+    );
+    assert.true(gif.frames > 3, `animated (${gif.frames} frames)`);
+    assert.true(magenta > 500, `its look applied: a magenta caption (${magenta} px)`);
+  });
+});
+
+module('API | record | decks', { concurrency: true }, () => {
+  test('slides, a panel, css and the player are options like any other, the player a file on the result', async (assert) => {
+    await using dir = await tempDir('api-record-deck');
+    await fs.writeFile(path.join(dir.path, 'talk.md'), '# One\n\n---\n\n# Two\n\nNote: why');
+    const result = await recorded('talk.md', {
+      cwd: dir.path,
+      formats: ['talk.html', 'talk.gif'],
+      width: 320,
+      height: 180,
+      lastFrameDuration: 200,
+      panel: { placement: 'above', height: 80, style: { background: 'rgb(0, 0, 255)' } },
+      css: '.slide { background: rgb(0, 200, 0); }',
+      backdrop: '#123456',
+      slide: { style: { color: 'rgb(255, 255, 255)' } },
+      player: { advance: 'auto', loop: true, assets: 'files' },
+    });
+    const [html, gif] = result.files;
+    const page = await fs.readFile(html.path, 'utf8');
+    const data = JSON.parse(
+      page.slice(
+        page.indexOf('id="recording">') + 15,
+        page.indexOf('</script>', page.indexOf('id="recording">')),
+      ),
+    );
+    const decoded = decodeGif(await fs.readFile(gif.path));
+
+    assert.deepEqual(
+      [html.format, html.width, html.height],
+      ['html', 320, 180],
+      'the player, at the canvas size',
+    );
+    assert.deepEqual(data.steps, [
+      { title: 'One', notes: null },
+      { title: 'Two', notes: 'why' },
+    ]);
+    assert.deepEqual(
+      [data.player.advance, data.player.loop, data.player.assets],
+      ['auto', true, 'files'],
+    );
+    assert.includes(page, 'html, body { background: #123456; }');
+    assert.deepEqual(
+      [decoded.width, decoded.height],
+      [320, 180 + 80],
+      'the GIF has the panel drawn in',
+    );
+    assert.true(
+      (await fs.readdir(path.join(dir.path, 'talk-files'))).length >= 1,
+      "the player's pictures beside it",
+    );
+    const printed = await recorded('talk.md', {
+      cwd: dir.path,
+      formats: ['talk.pdf'],
+      width: 320,
+      height: 180,
+      pdf: { mode: 'raster', paper: 'A5' },
+    });
+    assert.deepEqual(
+      printed.files.map((file) => [file.format, file.frames]),
+      [['pdf', 2]],
+      'a deck prints a page a slide, as `pdf` settings say',
+    );
+  });
+});
+
 module('API | record | pdf', { concurrency: true }, () => {
   test('pdf settings are an object like any option; the result counts its pages', async (assert) => {
     await using dir = await tempDir('api-record-pdf');
