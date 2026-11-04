@@ -186,9 +186,62 @@ export class Encoder {
 }
 
 /**
+ * A GIF being written to its output a frame at a time, as the frames come: each decoded and
+ * encoded when it is added, so a long recording never holds them all.
+ *
+ * ```ts
+ * import * as GIF from './gif.ts';
+ * import type { Frame } from './capture.ts';
+ * import type { Output } from './outputs.ts';
+ *
+ * // Defined, not invoked: writes a file.
+ * async function animate(output: Output, frames: Frame[]) {
+ *   const gif = GIF.open(output);
+ *   for (const frame of frames) await gif.add(frame);
+ *   return (await gif.finish()).frames;
+ * }
+ * ```
+ */
+export interface Writer {
+  /** Encodes one frame, shown for its `durationMs`. */
+  add(frame: Capture.Frame): Promise<void>;
+  /** Writes the GIF, sized as its last frame is. */
+  finish(): Promise<RecordedFile>;
+}
+
+/**
+ * Starts a GIF for `output`, written by {@link Writer.finish} once every frame is added.
+ *
+ * ```ts
+ * import * as GIF from './gif.ts';
+ * import type { Output } from './outputs.ts';
+ *
+ * // Defined, not invoked: an output from Outputs.plan.
+ * const writerFor = (output: Output) => GIF.open(output);
+ * ```
+ */
+export function open(output: Outputs.Output): Writer {
+  const encoder = new Encoder();
+  let last: Uint8Array | null = null;
+  return {
+    async add({ png, durationMs }) {
+      encoder.add(PNG.decode(png), durationMs);
+      last = png;
+      // Back to the event loop between frames: a long GIF takes seconds, and the CLI shows how far.
+      await yieldToLoop();
+    },
+    // Every frame has the dimensions of the last, which a PNG states in its header.
+    finish: () =>
+      Outputs.write(output, encoder.finish(), {
+        ...(last ? PNG.getDimensions(last) : { width: 0, height: 0 }),
+        frames: encoder.frames,
+      }),
+  };
+}
+
+/**
  * Writes one GIF of every clip in turn to `output`: each clip's shots kept to `fps`, each shown
- * until the next was taken, and its last for the clip's `lastFrameDurationMs`. Frames are decoded
- * one at a time as they are added, so a long recording never holds them all.
+ * until the next was taken, and its last for the clip's `lastFrameDurationMs`.
  *
  * ```ts
  * import * as GIF from './gif.ts';
@@ -208,20 +261,12 @@ export async function record(
 ): Promise<RecordedFile> {
   const frames = Capture.timeline(clips, fps);
   enterPhase(`encoding ${path.basename(output.absolutePath)}`, frames.length);
-  const encoder = new Encoder();
-  for (const { png, durationMs } of frames) {
-    encoder.add(PNG.decode(png), durationMs);
+  const gif = open(output);
+  for (const frame of frames) {
+    await gif.add(frame);
     progress.done += 1;
-    // Back to the event loop between frames: a long GIF takes seconds, and the CLI shows how far.
-    await yieldToLoop();
   }
-  const bytes = encoder.finish();
-  // Every frame has the dimensions of the last, which a PNG states in its header.
-  const last = clips.flatMap((clip) => clip.shots).at(-1);
-  return await Outputs.write(output, bytes, {
-    ...(last ? PNG.getDimensions(last.png) : { width: 0, height: 0 }),
-    frames: encoder.frames,
-  });
+  return await gif.finish();
 }
 
 // The part of `image` that differs from `previous`, encoded as a frame; null when nothing does.

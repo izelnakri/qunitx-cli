@@ -207,10 +207,120 @@ interface EncodedInPage {
 }
 
 /**
+ * Videos being encoded a frame at a time, as the frames come, by the browser: one `.webm` or `.mp4`
+ * per output, each frame sent to the browser and decoded once however many outputs it is in.
+ *
+ * ```ts
+ * import * as Video from './video.ts';
+ * import type { Frame } from './capture.ts';
+ *
+ * // Defined, not invoked: needs a live browser.
+ * async function film(videos: Video.Writer, frames: Frame[]) {
+ *   for (const frame of frames) await videos.add(frame);
+ *   return await videos.finish();
+ * }
+ * ```
+ */
+export interface Writer {
+  /** Encodes one frame, shown for its `durationMs`. */
+  add(frame: Capture.Frame): Promise<void>;
+  /** Writes every output, in the order they were given; there must have been a frame. */
+  finish(): Promise<RecordedFile[]>;
+}
+
+/**
+ * Opens the encoder page in `context` for `outputs`: VP9 (or VP8 where VP9 is missing) for .webm,
+ * H.264 for .mp4. Every engine ships encoders, so nothing is installed; frames carry their own
+ * timestamps, so encoding runs as fast as the encoder goes.
+ *
+ * ```ts
+ * import * as Video from './video.ts';
+ * import type { Output } from './outputs.ts';
+ * import type { BrowserContext } from 'playwright-core';
+ *
+ * // Defined, not invoked: needs a live browser.
+ * const open = (outputs: Output[], context: BrowserContext) => Video.open(outputs, 10, context);
+ * ```
+ */
+export async function open(
+  outputs: Outputs.Output[],
+  fps: number,
+  context: BrowserContext,
+): Promise<Writer> {
+  const containerOf = (output: Outputs.Output): Container =>
+    output.format === 'mp4' ? 'mp4' : 'webm';
+  const containers = [...new Set(outputs.map(containerOf))];
+  const page = await context.newPage();
+  try {
+    await page.route(ENCODER_URL, (route) =>
+      route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>encoder</title>' }),
+    );
+    await page.goto(ENCODER_URL);
+    await page.evaluate(ENCODER_SOURCE);
+    await page.evaluate(
+      (settings) => (globalThis as unknown as EncoderGlobal).__qunitxEncoder.setup(settings),
+      {
+        targets: containers.map((container) => ({ container, candidates: CANDIDATES[container] })),
+        fps,
+        keyframeEveryMs: KEYFRAME_EVERY_MS,
+      },
+    );
+  } catch (error) {
+    await page.close().catch(() => {});
+    throw error;
+  }
+  let timestampMs = 0;
+  let frames = 0;
+  return {
+    async add({ png, durationMs }) {
+      // As base64, by hand: Playwright's own transfer of a typed array measured ~3× slower on Node 24.
+      const call = {
+        png: Buffer.from(png.buffer, png.byteOffset, png.byteLength).toString('base64'),
+        timestampMs,
+        durationMs,
+      };
+      const problem = await page.evaluate(
+        (call) => (globalThis as unknown as EncoderGlobal).__qunitxEncoder.add(call),
+        call,
+      );
+      if (problem) throw new Error(problem);
+      timestampMs += durationMs;
+      frames += 1;
+    },
+    async finish() {
+      try {
+        if (frames === 0) throw new Error('a video needs at least one frame');
+        const done = await page.evaluate(() =>
+          (globalThis as unknown as EncoderGlobal).__qunitxEncoder.finish(),
+        );
+        if ('error' in done) throw new Error(done.error);
+        const videos: EncodedVideo[] = done.videos.map((video) => ({
+          ...video,
+          description: video.description === null ? null : fromBase64(video.description),
+          frames: video.frames.map((frame) => ({ ...frame, data: fromBase64(frame.data) })),
+        }));
+        return await Promise.all(
+          outputs.map((output) => {
+            const container = containerOf(output);
+            const video = videos[containers.indexOf(container)];
+            return Outputs.write(output, container === 'mp4' ? MP4.mux(video) : WebM.mux(video), {
+              width: video.width,
+              height: video.height,
+              frames: video.frames.length,
+            });
+          }),
+        );
+      } finally {
+        await page.close().catch(() => {});
+      }
+    },
+  };
+}
+
+/**
  * Writes `.webm` and `.mp4` files of every clip in turn, one per output, encoded by the browser in
  * `context`: each clip's shots kept to `fps`, each shown until the next was taken, and its last for
- * the clip's `lastFrameDurationMs`. Each frame goes to the browser and is decoded once, however
- * many outputs it ends up in.
+ * the clip's `lastFrameDurationMs`.
  *
  * ```ts
  * import * as Video from './video.ts';
@@ -230,75 +340,11 @@ export async function record(
   fps: number,
   context: BrowserContext,
 ): Promise<RecordedFile[]> {
-  const containerOf = (output: Outputs.Output): Container =>
-    output.format === 'mp4' ? 'mp4' : 'webm';
-  const containers = [...new Set(outputs.map(containerOf))];
-  const videos = await encodeInBrowser(context, Capture.timeline(clips, fps), containers, fps);
-  return Promise.all(
-    outputs.map((output) => {
-      const container = containerOf(output);
-      const video = videos[containers.indexOf(container)];
-      return Outputs.write(output, container === 'mp4' ? MP4.mux(video) : WebM.mux(video), {
-        width: video.width,
-        height: video.height,
-        frames: video.frames.length,
-      });
-    }),
-  );
-}
-
-// Encodes frames with the browser's own video encoder (WebCodecs), one video per container: VP9
-// (or VP8 where VP9 is missing) for .webm, H.264 for .mp4. Every engine ships encoders, so nothing
-// is installed; frames carry their own timestamps, so encoding runs as fast as the encoder goes.
-async function encodeInBrowser(
-  context: BrowserContext,
-  frames: Capture.Frame[],
-  containers: Container[],
-  fps: number,
-): Promise<EncodedVideo[]> {
+  const frames = Capture.timeline(clips, fps);
   if (frames.length === 0) throw new Error('a video needs at least one frame');
-  const page = await context.newPage();
-  try {
-    await page.route(ENCODER_URL, (route) =>
-      route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>encoder</title>' }),
-    );
-    await page.goto(ENCODER_URL);
-    await page.evaluate(ENCODER_SOURCE);
-    await page.evaluate(
-      (settings) => (globalThis as unknown as EncoderGlobal).__qunitxEncoder.setup(settings),
-      {
-        targets: containers.map((container) => ({ container, candidates: CANDIDATES[container] })),
-        fps,
-        keyframeEveryMs: KEYFRAME_EVERY_MS,
-      },
-    );
-    let timestampMs = 0;
-    for (const { png, durationMs } of frames) {
-      // As base64, by hand: Playwright's own transfer of a typed array measured ~3× slower on Node 24.
-      const call = {
-        png: Buffer.from(png.buffer, png.byteOffset, png.byteLength).toString('base64'),
-        timestampMs,
-        durationMs,
-      };
-      const problem = await page.evaluate(
-        (call) => (globalThis as unknown as EncoderGlobal).__qunitxEncoder.add(call),
-        call,
-      );
-      if (problem) throw new Error(problem);
-      timestampMs += durationMs;
-    }
-    const done = await page.evaluate(() =>
-      (globalThis as unknown as EncoderGlobal).__qunitxEncoder.finish(),
-    );
-    if ('error' in done) throw new Error(done.error);
-    return done.videos.map((video) => ({
-      ...video,
-      description: video.description === null ? null : fromBase64(video.description),
-      frames: video.frames.map((frame) => ({ ...frame, data: fromBase64(frame.data) })),
-    }));
-  } finally {
-    await page.close().catch(() => {});
-  }
+  const videos = await open(outputs, fps, context);
+  for (const frame of frames) await videos.add(frame);
+  return await videos.finish();
 }
 
 // Plain bytes, not a Buffer: a Buffer's slice is a view, which callers do not expect.

@@ -70,3 +70,47 @@ module('Record | capture | limitFrameRate', { concurrency: true }, () => {
     );
   });
 });
+
+module('Record | capture | FrameStream', { concurrency: true }, () => {
+  test('clip by clip or frame by frame, it hands on exactly what timeline makes of them', async (assert) => {
+    // Clips of shots on uneven clocks, some screens repeating, some asked for: every rule timeline
+    // has (fps, a clip's last frame, requested frames, repeats merged across clips) gets a turn.
+    const screen = (index: number) => Uint8Array.of(index % 3);
+    const clips: Capture.Clip[] = [0, 1, 2, 3, 4].map((clip) => ({
+      shots: Array.from({ length: 3 + clip * 2 }, (_, index) => ({
+        png: screen(index + clip),
+        atMs: index * (35 + clip * 20),
+        requested: (index + clip) % 4 === 0,
+      })),
+      lastFrameDurationMs: 500 + clip,
+    }));
+    const streamed: Capture.Frame[] = [];
+    const stream = new Capture.FrameStream(10, (frame) => {
+      streamed.push(frame);
+      return Promise.resolve();
+    });
+
+    for (const clip of clips.slice(0, 3)) await stream.addClip(clip);
+    // The rest as frames already timed, as a tour's arrive.
+    for (const frame of Capture.timeline(clips.slice(3), 10)) await stream.addFrame(frame);
+    await stream.finish();
+
+    assert.deepEqual(streamed, Capture.timeline(clips, 10));
+  });
+
+  test('a frame is handed on only once the next shows it is finished', async (assert) => {
+    const handed: number[] = [];
+    const stream = new Capture.FrameStream(10, (frame) => {
+      handed.push(frame.durationMs);
+      return Promise.resolve();
+    });
+
+    await stream.addFrame({ png: Uint8Array.of(1), durationMs: 100 });
+    assert.deepEqual(handed, [], 'the next frame could still be the same screen');
+    await stream.addFrame({ png: Uint8Array.of(1), durationMs: 50 });
+    await stream.addFrame({ png: Uint8Array.of(2), durationMs: 70 });
+    assert.deepEqual(handed, [150], 'held for both, handed on when the screen changed');
+    await stream.finish();
+    assert.deepEqual(handed, [150, 70]);
+  });
+});
