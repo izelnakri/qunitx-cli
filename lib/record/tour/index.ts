@@ -6,10 +6,12 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import * as Capture from '../capture.ts';
 import { NAVIGATION_TIMEOUT_MS } from '../../setup/browser.ts';
-import { DEFAULT_LOOK, checkLook, compose, type Frame, type Look, type Style } from './compose.ts';
+import * as DeviceFrame from './device-frame.ts';
+import * as Look from './look.ts';
+import * as Stage from './stage.ts';
 import {
   menuItemPoint,
   menuLayout,
@@ -26,14 +28,7 @@ import {
 import type { Browser, BrowserContext, CDPSession, Page } from 'playwright-core';
 
 export type { Point, Rect } from './timeline.ts';
-export {
-  CHROME_HEIGHT,
-  DEFAULT_LOOK,
-  framedSize,
-  type Frame,
-  type Look,
-  type Style,
-} from './compose.ts';
+export type { Style } from './look.ts';
 
 // How long each kind of step shows when the script does not say, in ms: long enough to follow,
 // short enough not to drag.
@@ -291,7 +286,7 @@ export interface TourOptions {
    * `'auto'`, the default, is `'phone'` for a touch tour, `'browser'` once a tour opens a second
    * tab, and `'none'` otherwise. Decided for the whole recording: every frame is the same size.
    */
-  frame?: 'auto' | Frame;
+  frame?: 'auto' | DeviceFrame.Kind;
   /**
    * Whether the browser window or the phone shows its address bar. True by default; false draws
    * the window with its tabs only, and the phone as an app's screen, for a hybrid or installed app
@@ -315,35 +310,35 @@ export interface TourOptions {
     size?: number;
     image?: string;
     hotspot?: { x: number; y: number };
-    style?: Style;
+    style?: Look.Style;
   };
   /**
    * A fingertip on a touch tour: its `size` (diameter, 8–256, 44 by default), the `spacing`
    * between the fingers of a several-finger gesture (8–256, 1.15 × size by default), `labels` to
    * number them 1 to 10, and `style`. Each is a `.finger` with its `data-finger` number, for `css`.
    */
-  finger?: { size?: number; spacing?: number; labels?: boolean; style?: Style };
+  finger?: { size?: number; spacing?: number; labels?: boolean; style?: Look.Style };
   /** A click's or tap's ripple, drawn in its `color` (`style: { color: '#0c8' }`), or `false` for none. */
-  ripple?: false | { style?: Style };
+  ripple?: false | { style?: Look.Style };
   /** The caption: over the `'bottom'` (the default) or `'top'` of the page, and its `style`. */
-  caption?: { placement?: 'top' | 'bottom'; style?: Style };
+  caption?: { placement?: 'top' | 'bottom'; style?: Look.Style };
   /**
    * How far `zoom` can go and stay sharp: screenshots are taken at this many device pixels per
    * CSS pixel. 2 by default, up to 4; higher costs memory and time on every step.
    */
   maxZoom?: number;
   /** A highlighted region's `style`: an outline, and a `boxShadow` that dims the rest. */
-  highlight?: { style?: Style };
+  highlight?: { style?: Look.Style };
   /** The keystroke badges `press()` shows, bottom center: their `style`, or `false` for none. */
-  keys?: false | { style?: Style };
+  keys?: false | { style?: Look.Style };
   /** A chapter's title card: its `style` (`.title` and `.subtitle` are reached through `css`). */
-  chapter?: { style?: Style };
+  chapter?: { style?: Look.Style };
   /** A drawn menu's `style`, and its highlighted item's `highlightStyle`. */
-  menu?: { style?: Style; highlightStyle?: Style };
+  menu?: { style?: Look.Style; highlightStyle?: Look.Style };
   /** The phone frame's `style` (its `background` is the bezel), and the CSS `backdrop` it sits on. */
-  phone?: { backdrop?: string; style?: Style };
+  phone?: { backdrop?: string; style?: Look.Style };
   /** The browser frame: its `theme`, `'light'` (the default) or `'dark'`, and `style`. */
-  browser?: { theme?: 'light' | 'dark'; style?: Style };
+  browser?: { theme?: 'light' | 'dark'; style?: Look.Style };
   /**
    * A stylesheet for whatever the options above don't reach, added after the stage's own. It can
    * select `#caption`, `#highlight`, `#keys kbd`, `#chapter .title` and `.subtitle`, `#menu`,
@@ -354,170 +349,6 @@ export interface TourOptions {
    * so they come out the same every time; transitions stay off.
    */
   css?: string;
-}
-
-/**
- * How a tour looks: its options laid over the defaults, sizes and choices checked, and a cursor
- * image's path made a `file:` URL (relative to `directory`, the tour file's own), for
- * {@link readCursorImage} to read. Whether the browser takes each CSS declaration is for `checkLook`.
- *
- * ```ts
- * import { lookOf } from './index.ts';
- *
- * lookOf({ cursor: { size: 40, style: { color: '#e03131' } } }, '/proj').cursor.size; // 40
- * lookOf({ ripple: false }, '/proj').ripple; // null
- * lookOf({ caption: { placement: 'top' } }, '/proj').caption.style; // {} — the stage's own CSS
- * ```
- */
-export function lookOf(options: TourOptions, directory: string): Look {
-  const size = (value: number | undefined, fallback: number, name: string) => {
-    if (value === undefined) return fallback;
-    if (!Number.isFinite(value) || value < 8 || value > 256) {
-      throw new Error(`${name} must be a number of CSS pixels from 8 to 256, not ${value}`);
-    }
-    return value;
-  };
-  const oneOf = <T extends string>(
-    value: T | undefined,
-    choices: T[],
-    fallback: T,
-    name: string,
-  ): T => {
-    if (value === undefined) return fallback;
-    if (!choices.includes(value))
-      throw new Error(
-        `${name} must be ${choices.map((choice) => `'${choice}'`).join(' or ')}, not '${value}'`,
-      );
-    return value;
-  };
-  // Whether the browser takes each declaration is checked by checkLook, once it is up.
-  const style = (value: Style | undefined, name: string): Style => {
-    const declarations = definedOnly(value ?? {});
-    for (const [property, entry] of Object.entries(declarations)) {
-      if (typeof entry !== 'string' && typeof entry !== 'number')
-        throw new Error(`${name}.${property} must be a string or a number, not ${typeof entry}`);
-    }
-    return declarations as Style;
-  };
-  const flag = (value: boolean | undefined, name: string): boolean => {
-    if (value !== undefined && typeof value !== 'boolean') {
-      throw new Error(`${name} must be true or false, not ${JSON.stringify(value)}`);
-    }
-    return value ?? false;
-  };
-  const { cursor = {}, finger = {}, caption = {}, menu = {}, phone = {}, browser = {} } = options;
-  const fallback = DEFAULT_LOOK;
-  return {
-    cursor: {
-      image: cursor.image ? imageUrl(cursor.image, directory) : null,
-      size: size(cursor.size, fallback.cursor.size, 'cursor.size'),
-      hotspot: cursor.hotspot ?? (cursor.image ? { x: 0, y: 0 } : fallback.cursor.hotspot),
-      style: style(cursor.style, 'cursor.style'),
-    },
-    finger: {
-      size: size(finger.size, fallback.finger.size, 'finger.size'),
-      spacing: finger.spacing === undefined ? null : size(finger.spacing, 0, 'finger.spacing'),
-      labels: flag(finger.labels, 'finger.labels'),
-      style: style(finger.style, 'finger.style'),
-    },
-    ripple:
-      options.ripple === false ? null : { style: style(options.ripple?.style, 'ripple.style') },
-    caption: {
-      placement: oneOf(
-        caption.placement,
-        ['bottom', 'top'],
-        fallback.caption.placement,
-        'caption.placement',
-      ),
-      style: style(caption.style, 'caption.style'),
-    },
-    highlight: { style: style(options.highlight?.style, 'highlight.style') },
-    keys: options.keys === false ? null : { style: style(options.keys?.style, 'keys.style') },
-    chapter: { style: style(options.chapter?.style, 'chapter.style') },
-    menu: {
-      style: style(menu.style, 'menu.style'),
-      highlightStyle: style(menu.highlightStyle, 'menu.highlightStyle'),
-    },
-    phone: {
-      backdrop: phone.backdrop ?? fallback.phone.backdrop,
-      style: style(phone.style, 'phone.style'),
-    },
-    browser: {
-      theme: oneOf(browser.theme, ['light', 'dark'], fallback.browser.theme, 'browser.theme'),
-      style: style(browser.style, 'browser.style'),
-    },
-    css: options.css ?? '',
-  };
-}
-
-// Keys set to undefined would otherwise spread over a default and erase it.
-function definedOnly<T extends object>(value: T): Partial<T> {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as Partial<T>;
-}
-
-// The image types a browser draws, by extension, for a cursor image read from disk.
-const IMAGE_TYPES: Record<string, string> = {
-  '.png': 'image/png',
-  '.svg': 'image/svg+xml',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp',
-  '.gif': 'image/gif',
-};
-
-function imageUrl(image: string, directory: string): string {
-  if (/^(data:|https?:\/\/)/i.test(image)) return image;
-  const file = path.resolve(directory, image);
-  if (!IMAGE_TYPES[path.extname(file).toLowerCase()]) {
-    throw new Error(`cursor.image ${image}: expected a .png, .svg, .jpg, .webp or .gif`);
-  }
-  return pathToFileURL(file).href;
-}
-
-/**
- * `look` with a cursor image on disk read into a data URL, as the page that draws the tour takes
- * it; a URL or no image is left as it is.
- *
- * ```ts
- * import { DEFAULT_LOOK } from './compose.ts';
- * import { readCursorImage } from './index.ts';
- *
- * (await readCursorImage(DEFAULT_LOOK)).cursor.image; // null
- * ```
- */
-export async function readCursorImage(look: Look): Promise<Look> {
-  const { image } = look.cursor;
-  if (!image?.startsWith('file:')) return look;
-  const file = fileURLToPath(image);
-  const bytes = await fs.promises.readFile(file).catch(() => {
-    throw new Error(`cursor.image ${path.basename(file)}: no such file (${file})`);
-  });
-  const type = IMAGE_TYPES[path.extname(file).toLowerCase()];
-  return {
-    ...look,
-    cursor: { ...look.cursor, image: `data:${type};base64,${bytes.toString('base64')}` },
-  };
-}
-
-/**
- * The frame a tour is drawn in, once it has run: `'auto'` resolved by whether it touched and how
- * many tabs it opened.
- *
- * ```ts
- * import { resolveFrame } from './index.ts';
- *
- * resolveFrame({}, 1); // 'none'
- * resolveFrame({}, 2); // 'browser'
- * resolveFrame({ touch: true }, 1); // 'phone'
- * resolveFrame({ frame: 'none' }, 3); // 'none'
- * ```
- */
-export function resolveFrame(options: TourOptions, openedTabs: number): Frame {
-  const frame = options.frame ?? 'auto';
-  if (frame !== 'auto') return frame;
-  return options.touch ? 'phone' : openedTabs > 1 ? 'browser' : 'none';
 }
 
 /**
@@ -581,8 +412,8 @@ export function definitionOf(module: { default?: unknown }): TourDefinition | st
 
 /**
  * Runs the tour in `file`, in a browser context of its own (touch is decided when a context is
- * made). Returns the tab it ended on, for stills of where it finished; `draw`, which composes the
- * frames; and the context, for the caller to close. Drawing is a separate step on purpose: it uses
+ * made). Returns the tab it ended on, for stills of where it finished; `draw`, which draws its
+ * frames on the stage; and the context, for the caller to close. Drawing is a separate step on purpose: it uses
  * another page of the same browser, and a still taken after it could show a page that lost focus.
  *
  * ```ts
@@ -616,13 +447,15 @@ export async function recordTour(
 ): Promise<{
   page: Page;
   context: BrowserContext;
-  draw: () => Promise<{ png: Uint8Array; durationMs: number }[]>;
+  draw: () => Promise<Capture.Frame[]>;
 }> {
   const definition = definitionOf(await import(pathToFileURL(file).href));
   if (typeof definition === 'string') throw new Error(`${file}: ${definition}`);
   const touch = definition.options.touch ?? false;
   // Checked before the browser does anything: a typo in a cursor image fails in a moment.
-  const options = await readCursorImage(lookOf(definition.options, path.dirname(file)));
+  const options = await Look.embedCursorImage(
+    Look.fromOptions(definition.options, path.dirname(file)),
+  );
   const addressBar = definition.options.addressBar ?? true;
   if (typeof addressBar !== 'boolean') {
     throw new Error(`addressBar must be true or false, not ${JSON.stringify(addressBar)}`);
@@ -638,7 +471,7 @@ export async function recordTour(
   try {
     const page = await context.newPage();
     // Its CSS too, by the browser that will draw it, before the tour spends any time running.
-    const look = await checkLook(page, options);
+    const look = await Look.validateCSS(page, options);
     await setup.prepare(page);
     const spacing = look.finger.spacing ?? look.finger.size * 1.15;
     const run = new TourRun({ ...setup, file, context, page, touch, spacing });
@@ -650,16 +483,20 @@ export async function recordTour(
       page: run.page,
       context,
       draw: () =>
-        compose(setup.browser, run.shots, run.timeline.beats, {
-          viewport: { width: setup.settings.width, height: setup.settings.height },
-          scale: setup.settings.scale,
-          frame: resolveFrame(definition.options, run.openedTabs),
-          addressBar,
-          pointer: touch ? 'finger' : 'cursor',
-          look,
-          fps: setup.settings.fps,
-          prepare: setup.prepare,
-        }),
+        Stage.drawFrames(
+          setup.browser,
+          { screenshots: run.shots, beats: run.timeline.beats },
+          {
+            viewport: { width: setup.settings.width, height: setup.settings.height },
+            scale: setup.settings.scale,
+            deviceFrame: DeviceFrame.resolve(definition.options, run.openedTabs),
+            addressBar,
+            pointer: touch ? 'finger' : 'cursor',
+            look,
+            fps: setup.settings.fps,
+            preparePage: setup.prepare,
+          },
+        ),
     };
   } catch (error) {
     await context.close().catch(() => {});

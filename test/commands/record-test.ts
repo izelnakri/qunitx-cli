@@ -12,7 +12,7 @@ import { parseMp4, parseWebM } from '../helpers/video-parse.ts';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-import { CHROME_HEIGHT, framedSize } from '../../lib/record/tour/index.ts';
+import * as DeviceFrame from '../../lib/record/tour/device-frame.ts';
 import { parsePdf } from '../helpers/pdf-parse.ts';
 import '../helpers/custom-asserts.ts';
 
@@ -660,7 +660,7 @@ module('Commands | record | tours', { concurrency: true }, (_hooks, moduleMetada
 
     assert.deepEqual(
       [first.width, first.height],
-      [400, 240 + CHROME_HEIGHT],
+      [400, 240 + DeviceFrame.BROWSER_HEIGHT],
       'page plus browser frame',
     );
     assert.deepEqual([still.width, still.height], [400, 240], 'stills stay the page');
@@ -773,7 +773,7 @@ module('Commands | record | tours', { concurrency: true }, (_hooks, moduleMetada
       },
     );
     const gif = decodeGif(await fs.readFile(path.join(dir.path, 'phone.gif')));
-    const size = framedSize('phone', { width: 390, height: 600 });
+    const size = DeviceFrame.size('phone', { width: 390, height: 600 });
     // The page's top-left corner inside the phone: past the backdrop, the bezel and the address bar.
     const inset = { x: (size.width - 390) / 2, y: size.height - 600 - (size.width - 390) / 2 };
     const page = (rgba: Uint8Array, x: number, y: number) =>
@@ -1015,7 +1015,7 @@ module('Commands | record | tours', { concurrency: true }, (_hooks, moduleMetada
     ]);
     const phone = decodeGif(await fs.readFile(path.join(dir.path, 'phone.gif')));
     const dark = decodeGif(await fs.readFile(path.join(dir.path, 'dark.gif')));
-    const size = framedSize('phone', { width: 400, height: 600 });
+    const size = DeviceFrame.size('phone', { width: 400, height: 600 });
     const inset = { x: (size.width - 400) / 2, y: size.height - 600 - (size.width - 400) / 2 };
     const last = phone.frames.at(-1)!.rgba;
     const page: [number, number, number, number] = [inset.x, inset.y, inset.x + 400, inset.y + 600];
@@ -1521,7 +1521,7 @@ module('Commands | record | tours', { concurrency: true }, (_hooks, moduleMetada
     ]);
     const window = decodeGif(await fs.readFile(path.join(dir.path, 'window.gif')));
     const app = decodeGif(await fs.readFile(path.join(dir.path, 'app.gif')));
-    const phone = framedSize('phone', { width: 300, height: 500 }, false);
+    const phone = DeviceFrame.size('phone', { width: 300, height: 500 }, false);
     const inset = (phone.width - 300) / 2;
     const green = (gif: ReturnType<typeof decodeGif>, x: number, y: number) =>
       near(frameAt(gif, gif.frames[0].rgba, x, y), [0, 160, 0], 30);

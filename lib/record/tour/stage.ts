@@ -1,305 +1,115 @@
-import { DEFAULT_FPS } from '../options.ts';
 import { progress } from '../progress.ts';
+import * as DeviceFrame from './device-frame.ts';
 import type { Browser, Page } from 'playwright-core';
+import type { Frame } from '../capture.ts';
 import type { Beat } from './timeline.ts';
+import type { Look } from './look.ts';
 
-/**
- * Height of the browser frame drawn above the page — tab strip and address bar — in CSS pixels.
- *
- * ```ts
- * import { CHROME_HEIGHT } from './compose.ts';
- *
- * 720 + CHROME_HEIGHT; // 794 — the height of a 1280×720 tour's frames in a browser window
- * ```
- */
-export const CHROME_HEIGHT = 74;
-
-// The part of the browser frame that is its tab strip; the rest is the address bar.
-const TAB_STRIP_HEIGHT = 36;
-
-/**
- * What a tour's frames are drawn inside: nothing, a desktop browser window with its tabs, or a
- * phone with its address bar.
- *
- * ```ts
- * const frame: Frame = 'phone';
- * ```
- */
-export type Frame = 'none' | 'browser' | 'phone';
+// The stage: an ordinary page of the same browser that draws a tour's frames once it has run. Each
+// beat lays a screenshot under the camera, then the pointer, a ripple, the caption and the rest of
+// the overlays, inside the device frame, and is screenshot as the frame a GIF or video is made of.
 
 /**
  * How the pointer is drawn: a mouse cursor, always on screen, or a fingertip, only while it touches.
  *
  * ```ts
+ * import type { Pointer } from './stage.ts';
+ *
  * const pointer: Pointer = 'finger';
  * ```
  */
 export type Pointer = 'cursor' | 'finger';
 
 /**
- * CSS declarations, as a `style` attribute would hold them. Names are camelCase or kebab-case
- * (`borderRadius`, `border-radius`, `--accent`), and a bare number is pixels wherever CSS needs a
- * unit (`fontSize: 20`) and a number where it doesn't (`opacity: 0.8`, `lineHeight: 1.4`).
- * `undefined` leaves the default, as if the property weren't there.
+ * What a tour run leaves for the stage to draw: the page's screenshots, and the beats that say what
+ * each frame shows of them (which screenshot, under which camera) and for how long.
  *
  * ```ts
- * const style: Style = { background: '#5f3dc4', borderRadius: 0, fontFamily: 'Georgia, serif' };
+ * import type { Recording } from './stage.ts';
+ *
+ * const empty: Recording = { screenshots: [], beats: [] };
  * ```
  */
-export type Style = { [property: string]: string | number | undefined };
-
-/**
- * How a tour looks, resolved from its options. The defaults are the stage's own stylesheet; each
- * `style` here is laid over its part as inline CSS, so it wins over the stylesheet and over `css`.
- *
- * ```ts
- * import { DEFAULT_LOOK } from './compose.ts';
- *
- * const look: Look = { ...DEFAULT_LOOK, caption: { placement: 'top', style: { borderRadius: 0 } } };
- * look.caption.placement; // 'top'
- * ```
- */
-export interface Look {
-  /** The mouse cursor: `#cursor`, an `<svg>` whose arrow is filled with `color` and outlined with `stroke`. */
-  cursor: {
-    /** A URL (data:, http:) to an image drawn instead of the arrow, or null for the arrow. */
-    image: string | null;
-    /** Height in CSS pixels; an image keeps its aspect ratio. */
-    size: number;
-    /** The point of the cursor inside it, in CSS pixels from its top-left corner. */
-    hotspot: { x: number; y: number };
-    style: Style;
-  };
-  /** A fingertip on a touch tour: `.finger`, a circle with a border. */
-  finger: {
-    /** Diameter in CSS pixels. */
-    size: number;
-    /** Between the centers of two fingers of a several-finger gesture; null for 1.15 × size. */
-    spacing: number | null;
-    /** Number each fingertip, 1 to 10, as its `data-finger` is. */
-    labels: boolean;
-    style: Style;
-  };
-  /** A click's or tap's ripple, `#ripple`, ringed and filled in its `color`; null for none. */
-  ripple: { style: Style } | null;
-  /** The caption, `#caption`. */
-  caption: {
-    /** Over the top or the bottom of the page. */
-    placement: 'top' | 'bottom';
-    style: Style;
-  };
-  /** A lit-up region, `#highlight`: the box itself, whose `box-shadow` dims the rest. */
-  highlight: { style: Style };
-  /** Keystroke badges, `#keys`, one `<kbd>` per key; null shows none. */
-  keys: { style: Style } | null;
-  /** A title card, `#chapter`, with its `.title` and `.subtitle`. */
-  chapter: { style: Style };
-  /** A drawn menu, `#menu`, and its highlighted item, `#menu .highlighted`. */
-  menu: { style: Style; highlightStyle: Style };
-  /** The phone frame, `#device`, and the CSS `background` of what it sits on. */
-  phone: { backdrop: string; style: Style };
-  /** The browser frame, `#chrome`: light or dark tabs and address bar. */
-  browser: { theme: 'light' | 'dark'; style: Style };
-  /** A stylesheet for anything else: added after the stage's own, so it overrides its defaults. */
-  css: string;
+export interface Recording {
+  /** PNG screenshots of the page, at the tour's `maxZoom` scale; beats refer to them by index. */
+  screenshots: Uint8Array[];
+  /** Each beat of the timeline, in order, with how long it stays on screen. */
+  beats: Beat[];
 }
 
 /**
- * How a tour looks unless it says otherwise.
+ * Draws every beat of a recording as the frame it shows, in order, each with how long it stays on
+ * screen: the frames a GIF or video is encoded from. A held beat is one frame, unless a CSS
+ * animation of the look is still moving; then it is one per tick of `fps` until it stops.
+ *
+ * Drawn with HTML and CSS because that is what renders text, curves and shadows well, and the
+ * frames then look like the browser they came from. Done after the tour has run, so nothing here
+ * races the page being recorded: every beat is drawn exactly as described, however long it takes.
+ * Advances `progress` by one per beat.
  *
  * ```ts
- * import { DEFAULT_LOOK } from './compose.ts';
- *
- * DEFAULT_LOOK.finger.size; // 44 — about a real fingertip on a phone
- * DEFAULT_LOOK.caption.placement; // 'bottom'
- * ```
- */
-export const DEFAULT_LOOK: Look = {
-  cursor: { image: null, size: 28, hotspot: { x: 2, y: 2 }, style: {} },
-  finger: { size: 44, spacing: null, labels: false, style: {} },
-  ripple: { style: {} },
-  caption: { placement: 'bottom', style: {} },
-  highlight: { style: {} },
-  keys: { style: {} },
-  chapter: { style: {} },
-  menu: { style: {}, highlightStyle: {} },
-  phone: { backdrop: '#e8ebf0', style: {} },
-  browser: { theme: 'light', style: {} },
-  css: '',
-};
-
-/**
- * Checks every declaration of a look against the browser's own CSS, and returns the look with each
- * one as the browser takes it: kebab-case names, and a bare number given its `px` where it needs
- * one. A property the browser doesn't know, or a value it won't take, throws with its name.
- *
- * ```ts
- * import { checkLook, DEFAULT_LOOK } from './compose.ts';
- * import type { Page } from 'playwright-core';
- *
- * // Defined, not invoked: needs a live page.
- * async function check(page: Page) {
- *   const look = { ...DEFAULT_LOOK, caption: { placement: 'top' as const, style: { borderRadius: 0 } } };
- *   return (await checkLook(page, look)).caption.style; // { 'border-radius': '0' }
- * }
- * ```
- */
-export async function checkLook(page: Page, look: Look): Promise<Look> {
-  const check = async (part: string, style: Style, as?: string): Promise<Style> => {
-    const declarations = Object.entries(style).map(([name, value]) => ({
-      name,
-      property: as ?? kebabCase(name),
-      value,
-    }));
-    // A string or the value as given if CSS takes it, else a number with px, else null; unknown
-    // property names are told apart by not even taking 'initial'.
-    const verdicts: (string | null | false)[] = await page.evaluate(
-      `${JSON.stringify(declarations)}.map(({ property, value }) => !CSS.supports(property, 'initial')
-        ? false
-        : [String(value), value + 'px'].find((candidate, index) =>
-            (index === 0 || typeof value === 'number') && CSS.supports(property, candidate)) ?? null)`,
-    );
-    return Object.fromEntries(
-      declarations.map(({ name, property, value }, index) => {
-        const verdict = verdicts[index];
-        if (verdict === false) throw new Error(`${part}.${name} is not a CSS property`);
-        if (verdict === null)
-          throw new Error(`${part}.${name}: ${JSON.stringify(value)} is not a valid ${property}`);
-        return [property, verdict];
-      }),
-    );
-  };
-  return {
-    ...look,
-    cursor: { ...look.cursor, style: await check('cursor.style', look.cursor.style) },
-    finger: { ...look.finger, style: await check('finger.style', look.finger.style) },
-    ripple: look.ripple && { style: await check('ripple.style', look.ripple.style) },
-    caption: { ...look.caption, style: await check('caption.style', look.caption.style) },
-    highlight: { style: await check('highlight.style', look.highlight.style) },
-    keys: look.keys && { style: await check('keys.style', look.keys.style) },
-    chapter: { style: await check('chapter.style', look.chapter.style) },
-    menu: {
-      style: await check('menu.style', look.menu.style),
-      highlightStyle: await check('menu.highlightStyle', look.menu.highlightStyle),
-    },
-    phone: {
-      backdrop: String(
-        (await check('phone', { backdrop: look.phone.backdrop }, 'background')).background,
-      ),
-      style: await check('phone.style', look.phone.style),
-    },
-    browser: { ...look.browser, style: await check('browser.style', look.browser.style) },
-  };
-}
-
-// `borderRadius` → `border-radius`, `WebkitMask` → `-webkit-mask`; custom properties stay as named.
-function kebabCase(name: string): string {
-  return name.startsWith('--')
-    ? name
-    : name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
-}
-
-// A phone: a dark bezel with rounded corners, an address bar above the screen, and a margin of
-// backdrop around it all so the rounded corners have something to round against.
-const PHONE = { margin: 18, bezel: 12, bar: 44 } as const;
-
-/**
- * The size of a tour's drawn frames, in CSS pixels, for a page of `viewport` inside `frame`, with
- * or without its address bar.
- *
- * ```ts
- * import { framedSize } from './compose.ts';
- *
- * framedSize('none', { width: 390, height: 844 }); // { width: 390, height: 844 }
- * framedSize('browser', { width: 1280, height: 720 }); // { width: 1280, height: 794 }
- * framedSize('browser', { width: 1280, height: 720 }, false); // { width: 1280, height: 756 } — tabs only
- * framedSize('phone', { width: 390, height: 844 }); // { width: 450, height: 948 }
- * framedSize('phone', { width: 390, height: 844 }, false); // { width: 450, height: 904 } — an app's screen
- * ```
- */
-export function framedSize(
-  frame: Frame,
-  viewport: { width: number; height: number },
-  addressBar = true,
-): { width: number; height: number } {
-  if (frame === 'browser') {
-    const chrome = addressBar ? CHROME_HEIGHT : TAB_STRIP_HEIGHT;
-    return { width: viewport.width, height: viewport.height + chrome };
-  }
-  if (frame === 'phone') {
-    const around = 2 * (PHONE.margin + PHONE.bezel);
-    const bar = addressBar ? PHONE.bar : 0;
-    return { width: viewport.width + around, height: viewport.height + around + bar };
-  }
-  return viewport;
-}
-
-/**
- * Draws each beat — a screenshot under the camera, the pointer, a tap or click's ripple, the
- * caption, inside the frame asked for — into a PNG, in an ordinary page of the same browser. Drawn
- * with HTML and CSS because that is what renders text, curves and shadows well, and because the
- * frames then look like the browser they came from.
- *
- * Done after the tour has run, so nothing here races the page being recorded: every beat is drawn
- * exactly as described, however long it takes.
- *
- * ```ts
- * import { compose } from './compose.ts';
+ * import * as Stage from './stage.ts';
+ * import * as Look from './look.ts';
  * import type { Browser } from 'playwright-core';
  *
  * // Defined, not invoked: needs a live browser.
- * async function draw(browser: Browser, shots: Uint8Array[]) {
- *   return await compose(browser, shots, [], {
+ * async function draw(browser: Browser, recording: Stage.Recording) {
+ *   return await Stage.drawFrames(browser, recording, {
  *     viewport: { width: 390, height: 844 },
  *     scale: 1,
- *     frame: 'phone',
+ *     deviceFrame: 'phone',
+ *     addressBar: true,
  *     pointer: 'finger',
+ *     look: Look.DEFAULT,
+ *     fps: 10,
+ *     preparePage: async () => {},
  *   });
  * }
  * ```
  */
-export async function compose(
+export async function drawFrames(
   browser: Browser,
-  shots: Uint8Array[],
-  beats: Beat[],
+  recording: Recording,
   options: {
+    /** The recorded page's size, in CSS pixels. */
     viewport: { width: number; height: number };
+    /** Device pixels per CSS pixel of the drawn frames. */
     scale: number;
-    frame: Frame;
+    /** What the page is drawn inside. */
+    deviceFrame: DeviceFrame.Kind;
+    /** Whether the browser window or the phone shows its address bar. */
+    addressBar: boolean;
     pointer: Pointer;
-    /** How the tour looks. Defaults to {@link DEFAULT_LOOK}. */
-    look?: Look;
-    /** Frames per second, for CSS animations in the look, which are drawn a frame per tick. */
-    fps?: number;
-    /** Whether the browser or phone frame shows an address bar. Defaults to true. */
-    addressBar?: boolean;
-    /** Readies the drawing page as `record` readies its own (Chrome needs its window enlarged). */
-    prepare?: (page: Page) => Promise<void>;
+    /** How the tour looks, its CSS already checked by `Look.validateCSS`. */
+    look: Look;
+    /** Frames per second, at which a CSS animation of the look is drawn. */
+    fps: number;
+    /** Readies the stage's page as `record` readies its own (Chrome needs its window enlarged). */
+    preparePage: (page: Page) => Promise<void>;
   },
-): Promise<{ png: Uint8Array; durationMs: number }[]> {
+): Promise<Frame[]> {
   const context = await browser.newContext({
-    viewport: framedSize(options.frame, options.viewport, options.addressBar),
+    viewport: DeviceFrame.size(options.deviceFrame, options.viewport, options.addressBar),
     deviceScaleFactor: options.scale,
   });
   try {
     const page = await context.newPage();
-    await options.prepare?.(page);
+    await options.preparePage(page);
     await page.setContent(
-      stageHTML(options.viewport, options.frame, options.pointer, options.addressBar ?? true),
+      html(options.viewport, options.deviceFrame, options.pointer, options.addressBar),
     );
-    const look = await checkLook(page, options.look ?? DEFAULT_LOOK);
-    await page.evaluate(`globalThis.__configure(${JSON.stringify(look)})`);
-    for (const [index, shot] of shots.entries()) {
+    await page.evaluate(`globalThis.__configure(${JSON.stringify(options.look)})`);
+    for (const [index, screenshot] of recording.screenshots.entries()) {
       await page.evaluate(
-        `globalThis.__load(${index}, ${JSON.stringify(Buffer.from(shot).toString('base64'))})`,
+        `globalThis.__load(${index}, ${JSON.stringify(Buffer.from(screenshot).toString('base64'))})`,
       );
     }
-    const frames: { png: Uint8Array; durationMs: number }[] = [];
-    const step = 1000 / (options.fps ?? DEFAULT_FPS);
+    const frames: Frame[] = [];
+    const step = 1000 / options.fps;
     let atMs = 0;
     // How far along the drawing is, for the phase the caller entered.
-    progress.total = beats.length;
-    for (const beat of beats) {
+    progress.total = recording.beats.length;
+    for (const beat of recording.beats) {
       await page.evaluate(`globalThis.__show(${JSON.stringify(beat)}, ${atMs})`);
       // A held beat is one frame, unless a CSS animation is still moving: then one per tick
       // until it stops, each drawn at its exact time on the tour's clock.
@@ -325,15 +135,15 @@ export async function compose(
   }
 }
 
-// The stage every beat is drawn on. Kept as source because lib/ is typechecked without the DOM.
-function stageHTML(
+// The page every beat is drawn on. Kept as source because lib/ is typechecked without the DOM.
+function html(
   viewport: { width: number; height: number },
-  frame: Frame,
+  frame: DeviceFrame.Kind,
   pointer: Pointer,
   addressBar: boolean,
 ): string {
   const { width, height } = viewport;
-  const outer = framedSize(frame, viewport, addressBar);
+  const outer = DeviceFrame.size(frame, viewport, addressBar);
   const phone = frame === 'phone';
   return `<!doctype html>
 <html><head><meta charset="utf-8"><style>
@@ -342,17 +152,17 @@ function stageHTML(
 [hidden] { display: none !important; }
 html, body { margin: 0; width: ${outer.width}px; height: ${outer.height}px; overflow: hidden; background: ${phone ? 'var(--backdrop)' : '#fff'};
   font: 12px/1 system-ui, -apple-system, "Segoe UI", sans-serif; color: #202124; }
-#device { position: absolute; left: ${phone ? PHONE.margin : 0}px; top: ${phone ? PHONE.margin : 0}px;
-  ${phone ? `padding: ${PHONE.bezel}px; border-radius: 44px; background: #15171c; box-shadow: 0 10px 30px rgba(0,0,0,.25);` : ''} }
-#chrome { display: ${frame === 'browser' ? 'block' : 'none'}; height: ${addressBar ? CHROME_HEIGHT : TAB_STRIP_HEIGHT}px; background: var(--chrome); }
-#tabs { display: flex; gap: 2px; height: ${TAB_STRIP_HEIGHT}px; padding: 6px 8px 0 72px; position: relative; }
+#device { position: absolute; left: ${phone ? DeviceFrame.PHONE.margin : 0}px; top: ${phone ? DeviceFrame.PHONE.margin : 0}px;
+  ${phone ? `padding: ${DeviceFrame.PHONE.bezel}px; border-radius: 44px; background: #15171c; box-shadow: 0 10px 30px rgba(0,0,0,.25);` : ''} }
+#chrome { display: ${frame === 'browser' ? 'block' : 'none'}; height: ${addressBar ? DeviceFrame.BROWSER_HEIGHT : DeviceFrame.TAB_STRIP_HEIGHT}px; background: var(--chrome); }
+#tabs { display: flex; gap: 2px; height: ${DeviceFrame.TAB_STRIP_HEIGHT}px; padding: 6px 8px 0 72px; position: relative; }
 #tabs::before { content: ""; position: absolute; left: 14px; top: 13px; width: 44px; height: 12px;
   background: radial-gradient(circle at 6px 6px, #ff5f57 5px, transparent 6px), radial-gradient(circle at 22px 6px, #febc2e 5px, transparent 6px), radial-gradient(circle at 38px 6px, #28c840 5px, transparent 6px); }
 .tab { width: 200px; max-width: 30%; padding: 9px 12px; border-radius: 8px 8px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--tab-text); }
 .tab.active { background: var(--bar); color: var(--text); }
-#bar { height: ${CHROME_HEIGHT - TAB_STRIP_HEIGHT}px; background: var(--bar); display: ${addressBar ? 'flex' : 'none'}; align-items: center; padding: 0 12px; border-bottom: 1px solid var(--rule); }
+#bar { height: ${DeviceFrame.BROWSER_HEIGHT - DeviceFrame.TAB_STRIP_HEIGHT}px; background: var(--bar); display: ${addressBar ? 'flex' : 'none'}; align-items: center; padding: 0 12px; border-bottom: 1px solid var(--rule); }
 #url, #mobile-url { flex: 1; height: 26px; border-radius: 13px; background: var(--field); padding: 7px 14px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#mobile-bar { display: ${phone && addressBar ? 'flex' : 'none'}; height: ${PHONE.bar}px; align-items: center; gap: 8px; padding: 0 10px; background: #fff; border-radius: 32px 32px 0 0; }
+#mobile-bar { display: ${phone && addressBar ? 'flex' : 'none'}; height: ${DeviceFrame.PHONE.bar}px; align-items: center; gap: 8px; padding: 0 10px; background: #fff; border-radius: 32px 32px 0 0; }
 #mobile-url { text-align: center; }
 #tab-count { min-width: 22px; height: 22px; border: 2px solid #3c4043; border-radius: 6px; font-weight: 700; display: grid; place-items: center; }
 #stage { position: relative; width: ${width}px; height: ${height}px; overflow: hidden; ${phone ? `border-radius: ${addressBar ? '0 0 32px 32px' : '32px'};` : ''} }

@@ -14,15 +14,9 @@ import {
 } from '../../lib/record/tour/timeline.ts';
 import { tempDir } from '../helpers/temp-dir.ts';
 import * as PNG from '../../lib/record/png.ts';
-import {
-  DEFAULT_LOOK,
-  definitionOf,
-  framedSize,
-  lookOf,
-  readCursorImage,
-  resolveFrame,
-  tour,
-} from '../../lib/record/tour/index.ts';
+import { definitionOf, tour } from '../../lib/record/tour/index.ts';
+import * as DeviceFrame from '../../lib/record/tour/device-frame.ts';
+import * as Look from '../../lib/record/tour/look.ts';
 
 const tabs = { titles: ['Home'], active: 0, url: 'http://localhost/' };
 const viewport = { width: 1000, height: 600 };
@@ -137,11 +131,18 @@ module('Record | tour | touch and frames', { concurrency: true }, () => {
 
   test("'auto' picks a phone for touch, a browser window for a second tab, else nothing", (assert) => {
     assert.deepEqual(
-      [resolveFrame({}, 1), resolveFrame({}, 2), resolveFrame({ touch: true }, 3)],
+      [
+        DeviceFrame.resolve({}, 1),
+        DeviceFrame.resolve({}, 2),
+        DeviceFrame.resolve({ touch: true }, 3),
+      ],
       ['none', 'browser', 'phone'],
     );
     assert.deepEqual(
-      [resolveFrame({ frame: 'browser' }, 1), resolveFrame({ touch: true, frame: 'none' }, 1)],
+      [
+        DeviceFrame.resolve({ frame: 'browser' }, 1),
+        DeviceFrame.resolve({ touch: true, frame: 'none' }, 1),
+      ],
       ['browser', 'none'],
       'an explicit frame always wins',
     );
@@ -150,11 +151,15 @@ module('Record | tour | touch and frames', { concurrency: true }, () => {
   test('every frame kind has a fixed size, so every frame of a recording matches', (assert) => {
     const page = { width: 390, height: 600 };
 
-    assert.deepEqual(framedSize('none', page), page);
-    assert.deepEqual(framedSize('browser', page), { width: 390, height: 674 });
-    assert.deepEqual(framedSize('phone', page), { width: 450, height: 704 });
-    assert.deepEqual(framedSize('browser', page, false), { width: 390, height: 636 }, 'tabs only');
-    assert.deepEqual(framedSize('phone', page, false), { width: 450, height: 660 }, 'no bar');
+    assert.deepEqual(DeviceFrame.size('none', page), page);
+    assert.deepEqual(DeviceFrame.size('browser', page), { width: 390, height: 674 });
+    assert.deepEqual(DeviceFrame.size('phone', page), { width: 450, height: 704 });
+    assert.deepEqual(
+      DeviceFrame.size('browser', page, false),
+      { width: 390, height: 636 },
+      'tabs only',
+    );
+    assert.deepEqual(DeviceFrame.size('phone', page, false), { width: 450, height: 660 }, 'no bar');
   });
 });
 
@@ -202,7 +207,7 @@ module('Record | tour | menus', { concurrency: true }, () => {
 
 module('Record | tour | look', { concurrency: true }, () => {
   test('without options, the defaults; each part takes its own CSS, sizes and choices', (assert) => {
-    const look = lookOf(
+    const look = Look.fromOptions(
       {
         cursor: { size: 40, style: { color: '#e03131', strokeWidth: 2 } },
         finger: { size: 60, style: { background: 'rgba(255,0,0,.3)' } },
@@ -216,9 +221,9 @@ module('Record | tour | look', { concurrency: true }, () => {
       '/proj',
     );
 
-    assert.deepEqual(lookOf({}, '/proj'), DEFAULT_LOOK);
+    assert.deepEqual(Look.fromOptions({}, '/proj'), Look.DEFAULT);
     assert.deepEqual(look.cursor, {
-      ...DEFAULT_LOOK.cursor,
+      ...Look.DEFAULT.cursor,
       size: 40,
       style: { color: '#e03131', strokeWidth: 2 },
     });
@@ -237,9 +242,9 @@ module('Record | tour | look', { concurrency: true }, () => {
     assert.deepEqual(look.phone, { backdrop: 'linear-gradient(#fff, #ddd)', style: {} });
     assert.deepEqual(look.browser, { theme: 'dark', style: {} });
     assert.equal(look.css, '#url { display: none; }');
-    assert.equal(lookOf({ ripple: false }, '/proj').ripple, null, 'no ripple at all');
+    assert.equal(Look.fromOptions({ ripple: false }, '/proj').ripple, null, 'no ripple at all');
     assert.deepEqual(
-      lookOf({ caption: { style: { color: undefined } } }, '/proj').caption.style,
+      Look.fromOptions({ caption: { style: { color: undefined } } }, '/proj').caption.style,
       {},
       'undefined is not a value',
     );
@@ -251,46 +256,50 @@ module('Record | tour | look', { concurrency: true }, () => {
       path.join(dir.path, 'hand.png'),
       await PNG.encode({ width: 1, height: 1, data: Uint8Array.of(0, 255, 255, 255) }),
     );
-    const styled = await readCursorImage(
-      lookOf({ cursor: { image: 'hand.png', hotspot: { x: 6, y: 1 } } }, dir.path),
+    const styled = await Look.embedCursorImage(
+      Look.fromOptions({ cursor: { image: 'hand.png', hotspot: { x: 6, y: 1 } } }, dir.path),
     );
 
     assert.true(styled.cursor.image!.startsWith('data:image/png;base64,'));
     assert.deepEqual(styled.cursor.hotspot, { x: 6, y: 1 });
     assert.deepEqual(
-      lookOf({ cursor: { image: 'https://cdn.test/hand.svg' } }, dir.path).cursor.image,
+      Look.fromOptions({ cursor: { image: 'https://cdn.test/hand.svg' } }, dir.path).cursor.image,
       'https://cdn.test/hand.svg',
     );
     assert.deepEqual(
-      lookOf({ cursor: { image: 'https://cdn.test/hand.svg' } }, dir.path).cursor.hotspot,
+      Look.fromOptions({ cursor: { image: 'https://cdn.test/hand.svg' } }, dir.path).cursor.hotspot,
       { x: 0, y: 0 },
     );
     await assert.rejects(
-      readCursorImage(lookOf({ cursor: { image: 'missing.png' } }, dir.path)),
+      Look.embedCursorImage(Look.fromOptions({ cursor: { image: 'missing.png' } }, dir.path)),
       /cursor\.image missing\.png: no such file/,
     );
     assert.throws(
-      () => lookOf({ cursor: { image: 'hand.bmp' } }, dir.path),
+      () => Look.fromOptions({ cursor: { image: 'hand.bmp' } }, dir.path),
       /expected a \.png, \.svg, \.jpg, \.webp or \.gif/,
     );
     assert.throws(
-      () => lookOf({ cursor: { size: 2 } }, dir.path),
+      () => Look.fromOptions({ cursor: { size: 2 } }, dir.path),
       /cursor\.size must be a number of CSS pixels from 8 to 256, not 2/,
     );
-    assert.throws(() => lookOf({ finger: { size: 999 } }, dir.path), /finger\.size must be/);
+    assert.throws(
+      () => Look.fromOptions({ finger: { size: 999 } }, dir.path),
+      /finger\.size must be/,
+    );
   });
 
   test('a choice outside its options, or a declaration that is not a string or number, is refused by name', (assert) => {
     assert.throws(
-      () => lookOf({ caption: { placement: 'middle' as 'top' } }, '/proj'),
+      () => Look.fromOptions({ caption: { placement: 'middle' as 'top' } }, '/proj'),
       /caption\.placement must be 'bottom' or 'top', not 'middle'/,
     );
     assert.throws(
-      () => lookOf({ browser: { theme: 'blue' as 'dark' } }, '/proj'),
+      () => Look.fromOptions({ browser: { theme: 'blue' as 'dark' } }, '/proj'),
       /browser\.theme must be 'light' or 'dark', not 'blue'/,
     );
     assert.throws(
-      () => lookOf({ menu: { style: { padding: [4, 8] as unknown as string } } }, '/proj'),
+      () =>
+        Look.fromOptions({ menu: { style: { padding: [4, 8] as unknown as string } } }, '/proj'),
       /menu\.style\.padding must be a string or a number, not object/,
     );
   });
@@ -362,7 +371,7 @@ module('Record | tour | highlights, keystrokes and chapters', { concurrency: tru
   });
 
   test('each takes its own style, and keystroke badges can be turned off', (assert) => {
-    const look = lookOf(
+    const look = Look.fromOptions(
       {
         highlight: { style: { outlineColor: '#e03131' } },
         keys: { style: { bottom: 40 } },
@@ -379,7 +388,7 @@ module('Record | tour | highlights, keystrokes and chapters', { concurrency: tru
         { style: { background: '#5f3dc4' } },
       ],
     );
-    assert.equal(lookOf({ keys: false }, '/proj').keys, null);
+    assert.equal(Look.fromOptions({ keys: false }, '/proj').keys, null);
   });
 });
 
@@ -439,16 +448,16 @@ module('Record | tour | fingers', { concurrency: true }, () => {
   });
 
   test('finger spacing and labels are options, held to rules', (assert) => {
-    const look = lookOf({ finger: { spacing: 60, labels: true } }, '/proj');
+    const look = Look.fromOptions({ finger: { spacing: 60, labels: true } }, '/proj');
 
     assert.deepEqual([look.finger.spacing, look.finger.labels], [60, true]);
-    assert.deepEqual([DEFAULT_LOOK.finger.spacing, DEFAULT_LOOK.finger.labels], [null, false]);
+    assert.deepEqual([Look.DEFAULT.finger.spacing, Look.DEFAULT.finger.labels], [null, false]);
     assert.throws(
-      () => lookOf({ finger: { spacing: 2 } }, '/proj'),
+      () => Look.fromOptions({ finger: { spacing: 2 } }, '/proj'),
       /finger\.spacing must be a number of CSS pixels from 8 to 256/,
     );
     assert.throws(
-      () => lookOf({ finger: { labels: 'yes' as unknown as boolean } }, '/proj'),
+      () => Look.fromOptions({ finger: { labels: 'yes' as unknown as boolean } }, '/proj'),
       /finger\.labels must be true or false, not "yes"/,
     );
   });
