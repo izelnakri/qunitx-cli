@@ -8,7 +8,7 @@
     "bench": "deno bench --allow-all benches/esbuild.bench.ts benches/server.bench.ts benches/tap.bench.ts benches/e2e.bench.ts benches/api.bench.ts",
     "bench:check": "deno run --allow-all scripts/check-benchmarks.ts --files benches/esbuild.bench.ts benches/server.bench.ts benches/tap.bench.ts benches/e2e.bench.ts benches/api.bench.ts benches/daemon.bench.ts",
     "bench:update": "deno run --allow-all scripts/check-benchmarks.ts --save --files benches/esbuild.bench.ts benches/server.bench.ts benches/tap.bench.ts benches/e2e.bench.ts benches/api.bench.ts benches/daemon.bench.ts",
-    "build:binary": "deno compile --allow-all --no-check --include templates --include lib --include package.json --output dist/qunitx cli.ts"
+    "build:binary": "deno run --allow-all scripts/build-deno-binary.ts"
   },
   "lint": {
     "plugins": ["./scripts/deno-lint-plugins/no-while.ts"],

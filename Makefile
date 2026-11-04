@@ -71,11 +71,11 @@ build-deno:
 # or download from registry.npmjs.org). Distribution scripts handle the pairing.
 build-deno-all:
 	@mkdir -p dist
-	deno compile --allow-all --no-check --target x86_64-unknown-linux-gnu  --include templates --include lib --include package.json --output dist/qunitx-linux-x64       cli.ts
-	deno compile --allow-all --no-check --target aarch64-unknown-linux-gnu --include templates --include lib --include package.json --output dist/qunitx-linux-arm64     cli.ts
-	deno compile --allow-all --no-check --target x86_64-apple-darwin       --include templates --include lib --include package.json --output dist/qunitx-darwin-x64      cli.ts
-	deno compile --allow-all --no-check --target aarch64-apple-darwin      --include templates --include lib --include package.json --output dist/qunitx-darwin-arm64    cli.ts
-	deno compile --allow-all --no-check --target x86_64-pc-windows-msvc    --include templates --include lib --include package.json --output dist/qunitx-windows-x64.exe cli.ts
+	deno task build:binary --target x86_64-unknown-linux-gnu --output dist/qunitx-linux-x64
+	deno task build:binary --target aarch64-unknown-linux-gnu --output dist/qunitx-linux-arm64
+	deno task build:binary --target x86_64-apple-darwin --output dist/qunitx-darwin-x64
+	deno task build:binary --target aarch64-apple-darwin --output dist/qunitx-darwin-arm64
+	deno task build:binary --target x86_64-pc-windows-msvc --output dist/qunitx-windows-x64.exe
 
 # Builds a Node.js SEA binary for the current platform and leaves it in the matching
 # npm/<target>/bin/ directory. Does NOT publish — `make publish-sea` does that.
