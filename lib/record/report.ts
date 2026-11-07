@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { SnapshotComparison } from './index.ts';
+import type { Cell, Sheet, Tone } from './xlsx.ts';
 
 /**
  * One snapshot as the report shows it: where its files are, and how it compared.
@@ -60,11 +61,8 @@ export function render(
   entries: ReportEntry[],
   options: { directory: string; generatedAt?: Date },
 ): string {
-  const sorted = [...entries].sort(
-    (a, b) =>
-      ORDER[a.comparison.status] - ORDER[b.comparison.status] || a.path.localeCompare(b.path),
-  );
-  const counts = sorted.reduce<Record<string, number>>((tally, entry) => {
+  const ordered = sorted(entries);
+  const counts = ordered.reduce<Record<string, number>>((tally, entry) => {
     tally[entry.comparison.status] = (tally[entry.comparison.status] ?? 0) + 1;
     return tally;
   }, {});
@@ -76,7 +74,7 @@ export function render(
     escape(path.relative(options.directory, file).split(path.sep).join('/'));
   const verdict = counts.changed
     ? `${counts.changed} changed`
-    : sorted.length
+    : ordered.length
       ? 'No visual changes'
       : 'No snapshots';
   const summary = (['changed', 'new', 'updated', 'unchanged'] as const)
@@ -84,7 +82,7 @@ export function render(
     .map((status) => `<li class="${status}"><b>${counts[status]}</b> ${status}</li>`)
     .join('');
 
-  const cards = sorted
+  const cards = ordered
     .map((entry) => {
       const { status, changedPixels, totalPixels, diffPath, currentPath } = entry.comparison;
       const size = `${entry.width}×${entry.height}`;
@@ -252,6 +250,156 @@ export function renderComment(
     ...footer,
     '',
   ].join('\n\n');
+}
+
+// A status's tone in a workbook: what needs a look stands out.
+const TONES: Record<SnapshotComparison['status'], Tone> = {
+  changed: 'red',
+  new: 'blue',
+  updated: 'yellow',
+  unchanged: 'green',
+};
+
+/**
+ * The run as a workbook's sheets: `Snapshots`, a row each — changed first, as the page has them —
+ * with its status, how much changed, its size and links to its baseline, new screenshot and diff
+ * beside the workbook; and `Summary`, how many of each status, totalled. Sort and filter in Excel,
+ * Google Sheets or anything else that opens a `.xlsx`.
+ *
+ * ```ts
+ * import { sheets } from './report.ts';
+ *
+ * const changed = { status: 'changed' as const, changedPixels: 4, totalPixels: 16, diffPath: '/shots/a.diff.png', currentPath: '/shots/a.new.png' };
+ * const [snapshots] = sheets([{ path: '/shots/a.png', width: 4, height: 4, comparison: changed }], { directory: '/shots' });
+ * snapshots.rows[0].slice(0, 2); // ['a.png', { value: 'changed', look: 'red' }]
+ * ```
+ */
+export function sheets(entries: ReportEntry[], options: { directory: string }): Sheet[] {
+  const relative = (file: string) =>
+    path.relative(options.directory, file).split(path.sep).join('/');
+  const link = (file: string | null, label: string): Cell =>
+    file
+      ? { value: label, link: relative(file).split('/').map(encodeURIComponent).join('/') }
+      : null;
+  const rows: Cell[][] = sorted(entries).map((entry) => {
+    const { status, changedPixels, totalPixels, diffPath, currentPath } = entry.comparison;
+    return [
+      relative(entry.path),
+      { value: status, look: TONES[status] },
+      { value: changedPixels, look: 'count' },
+      { value: totalPixels, look: 'count' },
+      { value: totalPixels ? changedPixels / totalPixels : 0, look: 'percent' },
+      entry.width,
+      entry.height,
+      link(entry.path, 'baseline'),
+      link(currentPath, 'new'),
+      link(diffPath, 'diff'),
+    ];
+  });
+  const statuses = Object.keys(ORDER) as SnapshotComparison['status'][];
+  const count = (status: string) =>
+    entries.filter((entry) => entry.comparison.status === status).length;
+  return [
+    {
+      name: 'Snapshots',
+      columns: [
+        { header: 'Snapshot', width: 36 },
+        { header: 'Status', width: 12 },
+        { header: 'Changed pixels', width: 16 },
+        { header: 'Total pixels', width: 14 },
+        { header: 'Changed', width: 10 },
+        { header: 'Width', width: 8 },
+        { header: 'Height', width: 8 },
+        { header: 'Baseline', width: 10 },
+        { header: 'New', width: 8 },
+        { header: 'Diff', width: 8 },
+      ],
+      rows,
+    },
+    {
+      name: 'Summary',
+      columns: [
+        { header: 'Status', width: 12 },
+        { header: 'Snapshots', width: 12 },
+      ],
+      rows: [
+        ...statuses.map((status): Cell[] => [
+          { value: status, look: TONES[status] },
+          count(status),
+        ]),
+        [
+          { value: 'total', look: 'strong' },
+          { value: entries.length, look: 'strong', formula: `SUM(B2:B${statuses.length + 1})` },
+        ],
+      ],
+    },
+  ];
+}
+
+/**
+ * The run as CSV (`,`) or TSV (`\t`) for scripts: a header, then a row a snapshot in the order of
+ * {@link sheets}, its share changed as a percentage and its files as paths relative to the report.
+ * Fields are quoted as RFC 4180 has it; TSV, which cannot quote, has tabs and line breaks as spaces.
+ *
+ * ```ts
+ * import { delimited } from './report.ts';
+ *
+ * const unchanged = { status: 'unchanged' as const, changedPixels: 0, totalPixels: 16, diffPath: null, currentPath: null };
+ * delimited([{ path: '/shots/a,b.png', width: 4, height: 4, comparison: unchanged }], { directory: '/shots' }, ',');
+ * // 'snapshot,status,changed_pixels,total_pixels,changed_percent,width,height,baseline,new,diff\n"a,b.png",unchanged,0,16,0,4,4,"a,b.png",,\n'
+ * ```
+ */
+export function delimited(
+  entries: ReportEntry[],
+  options: { directory: string },
+  separator: ',' | '\t',
+): string {
+  const relative = (file: string | null) =>
+    file ? path.relative(options.directory, file).split(path.sep).join('/') : '';
+  const field = (value: string | number) => {
+    const text = String(value);
+    if (separator === '\t') return text.replace(/[\t\r\n]/g, ' ');
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  const header = [
+    'snapshot',
+    'status',
+    'changed_pixels',
+    'total_pixels',
+    'changed_percent',
+    'width',
+    'height',
+    'baseline',
+    'new',
+    'diff',
+  ];
+  const rows = sorted(entries).map((entry) => {
+    const { status, changedPixels, totalPixels, diffPath, currentPath } = entry.comparison;
+    const percent = totalPixels
+      ? Math.round((changedPixels / totalPixels) * 1_000_000) / 10_000
+      : 0;
+    return [
+      relative(entry.path),
+      status,
+      changedPixels,
+      totalPixels,
+      percent,
+      entry.width,
+      entry.height,
+      relative(entry.path),
+      relative(currentPath),
+      relative(diffPath),
+    ];
+  });
+  return [header, ...rows].map((row) => row.map(field).join(separator)).join('\n') + '\n';
+}
+
+// Changed first, then new, updated and unchanged; by path within each.
+function sorted(entries: ReportEntry[]): ReportEntry[] {
+  return [...entries].sort(
+    (a, b) =>
+      ORDER[a.comparison.status] - ORDER[b.comparison.status] || a.path.localeCompare(b.path),
+  );
 }
 
 function escape(text: string): string {
