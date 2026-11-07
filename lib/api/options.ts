@@ -11,6 +11,7 @@ import { REPORTERS } from '../reporters/types.ts';
 import { Failure } from '../task/index.ts';
 import type { Reporter, ReporterName } from '../reporters/types.ts';
 import type { ConfigOptions } from '../setup/config.ts';
+import type { SnapshotSettings } from '../snapshots/index.ts';
 import type { Plugin as EsbuildPlugin } from 'esbuild';
 
 /** `--reporter` by name, a reporter of your own, or `false` for none. */
@@ -105,6 +106,12 @@ export interface UserRunOptions {
    * An already-aborted signal short-circuits: no browser is launched at all.
    */
   signal?: AbortSignal;
+  /**
+   * How `qunitxSnapshot()` keeps and compares the snapshots tests take: `dir`, `update`,
+   * `threshold`, `maxDiff`, `mask`, `report`, `prComment`, `imagesUrl`, `reportUrl`. Laid over
+   * `package.json#qunitx.snapshots` setting by setting, as the `--snapshot-*` flags are.
+   */
+  snapshots?: SnapshotSettings;
 }
 
 /**
@@ -281,6 +288,7 @@ export function from(
     open: userRunOptions.open,
     esbuildPlugins: userRunOptions.plugins,
     signal: userRunOptions.signal,
+    snapshots: userRunOptions.snapshots,
     reporters,
     // A reporter NAME asks for the CLI's text; a reporter OBJECT is a request to observe, not to
     // print, so it stays silent. A `console` of your own wins either way.

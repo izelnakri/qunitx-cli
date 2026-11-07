@@ -1,4 +1,5 @@
 import * as Browser from '../setup/browser.ts';
+import * as Snapshots from '../snapshots/index.ts';
 import { shutdownPrelaunch } from '../chrome/prelaunch.ts';
 import { HTTPServer } from '../web/index.ts';
 import { bindServerToPort } from '../setup/bind-server-to-port.ts';
@@ -808,6 +809,11 @@ async function runConcurrentMode(
     }),
   );
 
+  // Closed before the verdict: a changed snapshot nobody accepted fails the run, as a test does.
+  const changedSnapshots = await Snapshots.finish(
+    config,
+    Snapshots.reportPrinter(() => browser.newPage(), config),
+  );
   let exitCode = groupResults.reduce(
     (code, result) => {
       // `reason` only exists on the rejected arm of the union, so narrow before reading it.
@@ -820,7 +826,7 @@ async function runConcurrentMode(
       });
       return 1;
     },
-    config.state.results.counter.failed > 0 ? 1 : 0,
+    config.state.results.counter.failed > 0 || changedSnapshots > 0 ? 1 : 0,
   );
 
   if (config.state.results.counter.total === 0 && exitCode === 0) {

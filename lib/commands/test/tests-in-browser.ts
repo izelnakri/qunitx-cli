@@ -1,3 +1,4 @@
+import * as Snapshots from '../../snapshots/index.ts';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { blue, yellow } from '../../utils/color.ts';
@@ -406,6 +407,10 @@ export async function run(
         ).ignore('no-tests fallback page write');
       }
 
+      await Snapshots.finish(
+        config,
+        Snapshots.reportPrinter(() => connections.page.context().newPage(), config),
+      );
       await Reporter.runEnd(config, { durationMs: TIME_TAKEN });
 
       // Persist failures for the next `--only-failed`. Skip partial reruns — whether scoped to

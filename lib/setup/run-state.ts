@@ -116,6 +116,14 @@ export function create(): RunState {
       failedTests: [],
       coverage: null,
       aborted: false,
+      snapshots: {
+        taken: [],
+        recordings: [],
+        open: [],
+        reportPath: null,
+        reportPdfPath: null,
+        commentPath: null,
+      },
     },
   };
 }
@@ -144,6 +152,12 @@ export function reset(results: RunResults, coverageEnabled: boolean): void {
   results.failedTests.length = 0;
   results.coverage = coverageEnabled ? new Map() : null;
   results.aborted = false;
+  results.snapshots.taken.length = 0;
+  results.snapshots.recordings.length = 0;
+  results.snapshots.open.length = 0;
+  results.snapshots.reportPath = null;
+  results.snapshots.reportPdfPath = null;
+  results.snapshots.commentPath = null;
 }
 
 /**
