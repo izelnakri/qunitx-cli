@@ -6,6 +6,7 @@ import { PassThrough, type Readable } from 'node:stream';
 import * as Args from '../../args/index.ts';
 import * as Config from '../../setup/config.ts';
 import * as Reporter from '../../reporters/index.ts';
+import { isRuntime } from '../../setup/targets.ts';
 import * as Repl from '../../repl/session.ts';
 import * as Http from '../../repl/http-service.ts';
 import type { HttpService } from '../../repl/http-service.ts';
@@ -173,7 +174,11 @@ function banner(config: ResolvedConfig, session: ReplSession): void {
   // would not work — a window has F12 already, and a session that fell back to a browser
   // Playwright launched has no debugging endpoint to serve DevTools from.
   if (session.inspector !== null) {
-    Reporter.info(config, blue(`inspect the same page at ${session.inspector} — or \`.devtools\``));
+    const what = isRuntime(config.browser) ? 'process' : 'page';
+    Reporter.info(
+      config,
+      blue(`inspect the same ${what} at ${session.inspector} — or \`.devtools\``),
+    );
   }
   for (const [file, names] of session.loaded) {
     // One name is the module and nothing else — several files were preloaded, so their exports
@@ -192,10 +197,13 @@ function banner(config: ResolvedConfig, session: ReplSession): void {
 /**
  * Which page is yours, in the words that tell one from the other.
  *
- * A headless Chrome you cannot see and a window that just opened are two different answers to
- * "where is my session", and the banner is the only place anybody is told.
+ * A headless Chrome you cannot see, a window that just opened, and a node process with an
+ * inspector on it are three different answers to "where is my session", and the banner is the
+ * only place anybody is told.
  */
 function where(config: ResolvedConfig, url: string): string {
+  if (isRuntime(config.browser)) return `evaluating in ${config.browser}, served at ${url}`;
+
   return config.open === true
     ? `evaluating in the window that just opened (${url})`
     : `evaluating in Chrome at ${url}`;
